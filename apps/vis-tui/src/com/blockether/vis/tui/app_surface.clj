@@ -111,9 +111,36 @@
                                   :description nil))
                      width))))
 
+(defn- diff-toolbar
+  [view width opts]
+  (let [key-label
+        (fn [k]
+          (if (some #(= k (:key %)) (:shortcuts view)) (str "C-x " k) k))
+
+        groups
+        [(str (key-label "u") " " (if (:unified? opts) "stacked" "split"))
+         (str (key-label "w") " wrap:" (if (:wrap? opts) "on" "off"))
+         (str (key-label "f") " files:" (if (:files? opts) "on" "off"))
+         (str (key-label "t") " tests:" (if (:hide-tests? opts) "off" "on"))
+         (str (key-label "i") " spaces:" (if (:hide-whitespace? opts) "off" "on"))
+         (str (key-label "a") " fold all") (str (key-label "c") " copy path")
+         (str (key-label "/") " find")]
+
+        lines
+        (reduce (fn [lines group]
+                  (let [joined (str (peek lines) "  " group)]
+                    (if (<= (long (p/display-width joined)) (long width))
+                      (conj (pop lines) joined)
+                      (conj lines group))))
+                [(first groups)]
+                (rest groups))]
+
+    (mapv #(hash-map :kind :diff-tools :text %) lines)))
+
 (defn- node-rows
   [view node width folded opts]
-  (cond (= :diff (:type node)) (model/diff-rows node width folded opts)
+  (cond (= :diff (:type node)) (let [[head & rows] (model/diff-rows node width folded opts)]
+                                 (into [head] (concat (diff-toolbar view width opts) rows)))
         (= :thread (:type node))
         (into [{:kind :thread-node
                 :node-id (:id node)
@@ -197,8 +224,11 @@
    :scroll 0
    :hscroll 0
    :folded #{}
-   :unified? false
-   :wrap? false
+   :unified? true
+   :wrap? true
+   :files? false
+   :hide-tests? false
+   :hide-whitespace? false
    :editor nil
    :save nil
    :send nil})
@@ -285,38 +315,51 @@
   [send fresh]
   (if (and (:key send) (not= :sent (:state send))) (:key send) (fresh)))
 
+(defn- save-editor
+  [state view save!]
+  (if (= :saving (get-in state [:save :state]))
+    state
+    (let [{:keys [action skip]} (save-request view (:editor state))]
+      (cond skip (assoc state
+                   :editor nil
+                   :save {:state :skipped :message skip})
+            action (do (save! action (:editor state))
+                       (assoc state
+                         :save {:state :saving :target (get-in state [:editor :target])}))
+            :else state))))
+
+(defn- save-shortcut?
+  [^KeyStroke key]
+  (and (.isCtrlDown key)
+       (or (= KeyType/Enter (.getKeyType key))
+           (and (= KeyType/Character (.getKeyType key)) (#{\s \S} (.getCharacter key))))))
+
+(defn- edit-input-key
+  [in ^KeyStroke key]
+  (if (= KeyType/Character (.getKeyType key))
+    (if (or (.isCtrlDown key) (.isAltDown key)) in (input/insert-char in (.getCharacter key)))
+    ((get {KeyType/Enter input/insert-newline
+           KeyType/Backspace input/delete-backward
+           KeyType/Delete input/delete-forward
+           KeyType/ArrowLeft input/move-left
+           KeyType/ArrowRight input/move-right
+           KeyType/ArrowUp input/move-up
+           KeyType/ArrowDown input/move-down
+           KeyType/Home input/move-line-start
+           KeyType/End input/move-line-end}
+          (.getKeyType key)
+          identity)
+      in)))
+
 (defn- editor-key
   [state ^KeyStroke key view {:keys [save!]}]
-  (let [kt
-        (.getKeyType key)
-
-        ed
-        (fn [f]
-          (update-in state [:editor :input] f))]
-
-    (cond (= KeyType/Escape kt) (assoc state :editor nil)
-          (and (= KeyType/Character kt) (.isCtrlDown key) (#{\s \S} (.getCharacter key)))
-          (let [{:keys [action skip]} (save-request view (:editor state))]
-            (cond skip (assoc state
-                         :editor nil
-                         :save {:state :skipped :message skip})
-                  action (do (save! action (:editor state))
-                             (assoc state
-                               :save {:state :saving :target (get-in state [:editor :target])}))
-                  :else state))
-          (= KeyType/Character kt) (if (or (.isCtrlDown key) (.isAltDown key))
-                                     state
-                                     (ed #(input/insert-char % (.getCharacter key))))
-          (= KeyType/Enter kt) (ed input/insert-newline)
-          (= KeyType/Backspace kt) (ed input/delete-backward)
-          (= KeyType/Delete kt) (ed input/delete-forward)
-          (= KeyType/ArrowLeft kt) (ed input/move-left)
-          (= KeyType/ArrowRight kt) (ed input/move-right)
-          (= KeyType/ArrowUp kt) (ed input/move-up)
-          (= KeyType/ArrowDown kt) (ed input/move-down)
-          (= KeyType/Home kt) (ed input/move-line-start)
-          (= KeyType/End kt) (ed input/move-line-end)
-          :else state)))
+  (cond (= KeyType/Escape (.getKeyType key)) (assoc state :editor nil)
+        (save-shortcut? key) (if (and (= KeyType/Enter (.getKeyType key))
+                                      (app/blank-text? (input/input->text
+                                                         (get-in state [:editor :input]))))
+                               state
+                               (save-editor state view save!))
+        :else (update-in state [:editor :input] edit-input-key key)))
 
 (defn- input-values
   "The value of every input of `view`: what a Send carries."
@@ -469,9 +512,16 @@
 
 (defn- toggle-fold [state k] (update state :folded #(if (contains? % k) (disj % k) (conj % k))))
 
+(defn- selected-row
+  [state rows]
+  (let [row (nth rows (:selected state) nil)]
+    (if (and (= :split (:kind row)) (:diff-side state))
+      (merge (dissoc row :anchor) (get row (:diff-side state)))
+      row)))
+
 (defn- enter-row
   [state {:keys [view rows]} effects]
-  (let [row (nth rows (:selected state) nil)]
+  (let [row (selected-row state rows)]
     (case (:kind row)
       :file-item
       (if-let [i (file-row-of rows (:path row))]
@@ -517,31 +567,82 @@
     (assoc state :save {:state :closed})
     (send-app state view nil effects)))
 
-(defn- character-key
-  [state ch geom effects]
-  (case ch
-    (\< \>)
-    (horizontal-key state (if (= \< ch) -8 8))
+(defn- fold-all-files
+  [state rows]
+  (let [paths (set (keep #(when (= :file (:kind %)) (:path %)) rows))]
+    (assoc state :folded (if (every? (:folded state) paths) #{} paths))))
 
-    (\u \w)
-    (diff-mode-key state geom (if (= \u ch) :unified? :wrap?))
-
-    \v
-    (compare-key state geom)
-
-    \s
-    (send-key-action state geom effects)
-
-    \r
-    (do ((:reload! effects)) state)
-
-    \l
-    (do (when (seq (:log (:view geom))) ((:log! effects))) state)
-
+(defn- copy-path
+  [state rows copy!]
+  (if-let [path (:path (nth rows (:selected state) nil))]
+    (do (copy! path) (assoc state :notice (str "Copied " path)))
     state))
 
+(defn- find-code
+  [state rows text after]
+  (if-let [i (model/find-code rows text after)]
+    (assoc state
+      :selected i
+      :notice (str "Find: " text))
+    (assoc state :notice (str "Find: " text (when-not (str/blank? text) " · No matches")))))
+
+(defn- search-key
+  [state ^KeyStroke key rows]
+  (let [kt
+        (.getKeyType key)
+
+        text
+        (get-in state [:search :text] "")]
+
+    (cond (= KeyType/Escape kt) (dissoc state :search :notice)
+          (= KeyType/Enter kt) (find-code state rows text (:selected state))
+          :else (let [text (cond (and (= KeyType/Character kt)
+                                      (not (.isCtrlDown key))
+                                      (not (.isAltDown key)))
+                                 (str text (.getCharacter key))
+                                 (= KeyType/Backspace kt) (subs text 0 (max 0 (dec (count text))))
+                                 :else text)]
+                  (find-code (assoc-in state [:search :text] text) rows text -1)))))
+
+(defn- character-key
+  [state ch geom effects]
+  (let [actions {\< #(horizontal-key state -8)
+                 \> #(horizontal-key state 8)
+                 \u #(diff-mode-key state geom :unified?)
+                 \w #(diff-mode-key state geom :wrap?)
+                 \/ #(assoc state
+                       :search {:text ""}
+                       :notice "Find: ")
+                 \f #(update state :files? not)
+                 \t #(update state :hide-tests? not)
+                 \i #(update state :hide-whitespace? not)
+                 \a #(fold-all-files state (:rows geom))
+                 \c #(copy-path state (:rows geom) (:copy! effects))
+                 \v #(compare-key state geom)
+                 \s #(send-key-action state geom effects)
+                 \r #(do ((:reload! effects)) state)
+                 \l #(do (when (seq (:log (:view geom))) ((:log! effects))) state)}]
+    ((get actions ch (constantly state)))))
+
+(defn- tab-row
+  [state rows]
+  (if (= :split (:kind (nth rows (:selected state) nil)))
+    (update state :diff-side #(if (= :left %) :right :left))
+    state))
+
+(defn- row-key
+  [state kt key geom effects]
+  (let [actions {KeyType/Escape (constantly {::dlg/done nil})
+                 KeyType/ArrowLeft #(fold geom state)
+                 KeyType/ArrowRight #(unfold geom state)
+                 KeyType/Tab #(tab-row state (:rows geom))
+                 KeyType/Enter #(enter-row state geom effects)
+                 KeyType/Character
+                 #(character-key state (.getCharacter ^KeyStroke key) geom effects)}]
+    ((get actions kt (constantly state)))))
+
 (defn- surface-key
-  "The surface's own meaning of `key`, without app shortcuts."
+  "The surface's own meaning of key, without app shortcuts."
   [state ^KeyStroke key {:keys [rows list-h] :as geom} effects]
   (let [kt
         (.getKeyType key)
@@ -556,13 +657,7 @@
 
     (cond (.isCtrlDown key) state
           (contains? steps kt) (move geom state (get steps kt))
-          :else (condp = kt
-                  KeyType/Escape {::dlg/done nil}
-                  KeyType/ArrowLeft (fold geom state)
-                  KeyType/ArrowRight (unfold geom state)
-                  KeyType/Enter (enter-row state geom effects)
-                  KeyType/Character (character-key state (.getCharacter key) geom effects)
-                  state))))
+          :else (row-key state kt key geom effects))))
 
 (defn log-chip
   "Where the log chip of `view` sits on the top border of box `bounds`, or nil for an
@@ -620,6 +715,40 @@
   [state text paste]
   (if (:editor state) (update-in state [:editor :input] input/paste-text (paste text)) state))
 
+(defn mouse-target
+  "The selectable row under a click inside the content area, or nil on chrome."
+  [{:keys [bounds content-top list-h rows]} scroll col row]
+  (when (and bounds
+             content-top
+             list-h
+             (< (long (:left bounds))
+                (long col)
+                (+ (long (:left bounds)) (long (:inner-w bounds)) 1)))
+    (let [dy
+          (- (long row) (long content-top))
+
+          i
+          (+ (long scroll) dy)]
+
+      (when (and (<= 0 dy) (< dy (long list-h)) (:is-selectable (nth rows i nil))) i))))
+
+(defn- mouse-key
+  [state ^MouseAction key geom effects]
+  (if (= MouseActionType/CLICK_RELEASE (.getActionType key))
+    (let [pos (.getPosition key)]
+      (if-let [i (mouse-target geom (:scroll state) (.getColumn pos) (.getRow pos))]
+        (let [row (nth (:rows geom) i)
+              midpoint (+ (long (get-in geom [:bounds :left]))
+                          (quot (long (get-in geom [:bounds :inner-w])) 2))
+              selected (assoc state
+                         :selected i
+                         :cell nil
+                         :diff-side (if (< (.getColumn pos) midpoint) :left :right))]
+
+          (if (= :file (:kind row)) (enter-row selected geom effects) selected))
+        state))
+    state))
+
 (defn handle-key
   "The next surface state for `key`. `geom` holds `:rows`, `:view` and `:list-h`;
    `effects` holds `:save!`, `:send!`, `:activate!`, `:select!`, `:edit!`,
@@ -632,8 +761,9 @@
   (cond (pasted-key? key) (paste-key state (:paste key) paste)
         (not (instance? KeyStroke key)) state
         (log-chip-click? key (:log-chip geom)) (do ((:log! effects)) state)
-        (instance? MouseAction key) state
+        (instance? MouseAction key) (mouse-key state key geom effects)
         (:editor state) (editor-key state key view effects)
+        (:search state) (search-key state key (:rows geom))
         :else (command-key state key geom effects)))
 
 ;;; ── Outcomes ───────────────────────────────────────────────────────────────
@@ -712,7 +842,7 @@
             room (- w (long (p/display-width gutter)) (long (p/display-width counts)) 2)]
 
         (if (pos? room)
-          (str gutter (p/pad-right (p/ellipsize body room) (+ room 2)) counts)
+          (str gutter (p/pad-right (model/file-title row room) (+ room 2)) counts)
           (p/ellipsize (str gutter body) w)))
       (p/ellipsize (str gutter body) (max 1 (long w))))))
 
@@ -749,36 +879,64 @@
 
 (def ^:private muted-ink "T3 secondary text on a dark paper." (TextColor$RGB. 155 155 155))
 
+(def ^:private light-diff
+  {:add-paper (TextColor$RGB. 235 248 244)
+   :del-paper (TextColor$RGB. 253 240 239)
+   :paper (TextColor$RGB. 252 252 252)
+   :body (TextColor$RGB. 10 10 10)
+   :gutter (TextColor$RGB. 86 86 86)
+   :selected-paper (TextColor$RGB. 238 245 251)
+   :selected-ink (TextColor$RGB. 30 89 160)
+   :hunk-paper (TextColor$RGB. 245 245 245)
+   :add-ink (TextColor$RGB. 18 116 76)
+   :del-ink (TextColor$RGB. 184 32 46)
+   :add-word (TextColor$RGB. 202 235 221)
+   :del-word (TextColor$RGB. 251 205 207)})
+
+(def ^:private dark-diff
+  {:add-paper add-paper
+   :del-paper del-paper
+   :paper (TextColor$RGB. 0 0 0)
+   :body code-ink
+   :gutter muted-ink
+   :selected-paper (TextColor$RGB. 13 38 56)
+   :selected-ink (TextColor$RGB. 112 180 246)
+   :hunk-paper (TextColor$RGB. 7 7 7)
+   :add-ink add-ink
+   :del-ink del-ink
+   :add-word add-word
+   :del-word del-word})
+
+(defn- diff-palette
+  []
+  (let [^TextColor$RGB bg
+        t/dialog-bg
+
+        brightness
+        (+ (* 0.2126 (.getRed bg)) (* 0.7152 (.getGreen bg)) (* 0.0722 (.getBlue bg)))]
+
+    (if (> brightness 160) light-diff dark-diff)))
+
 (defn row-paper
   "The paper of a diff row, as T3 tints it: green for an added line, red for a removed
    one, else the dialog paper."
   [row]
-  (case (:kind row)
-    :add
-    add-paper
-
-    :del
-    del-paper
-
-    nil))
-
-(defn- code-fg
-  "The code ink of a diff row: light on the dark tinted paper, else the dialog ink."
-  [row]
-  (if (row-paper row) code-ink t/dialog-fg))
+  (get (diff-palette) (get {:add :add-paper :del :del-paper} (:kind row))))
 
 (defn row-inks
   "The colors of one diff code row: `:paper`, the change `:bar` (nil for an unchanged
    line), the `:gutter` ink of the line numbers and the `:body` ink of the code."
   [row]
-  (let [change (case (:kind row)
-                 :add add-ink
-                 :del del-ink
-                 nil)]
-    {:paper (or (row-paper row) t/dialog-bg)
+  (let [palette
+        (diff-palette)
+
+        change
+        (get palette (get {:add :add-ink :del :del-ink} (:kind row)))]
+
+    {:paper (if (:selected? row) (:selected-paper palette) (or (row-paper row) (:paper palette)))
      :bar change
-     :gutter (or change t/dialog-hint)
-     :body (code-fg row)}))
+     :gutter (if (:selected? row) (:selected-ink palette) (or change (:gutter palette)))
+     :body (:body palette)}))
 
 (defn mark-span
   "The `[from to]` of word mark `mark` inside a painted body of `n` characters that
@@ -789,6 +947,7 @@
           n (long n)
           from (min n (max 0 (- (long from) hs)))
           to (min n (max 0 (- (long to) hs)))]
+
       (when (< from to) [from to]))))
 
 (defn- paint-code-row!
@@ -821,7 +980,7 @@
     (p/set-colors! g body-ink paper)
     (p/put-str! g (+ (long left) 2 gw) row-y body)
     (when-let [[from to] (mark-span (:mark row) hscroll (count body))]
-      (p/set-colors! g code-ink (if (= :add (:kind row)) add-word del-word))
+      (p/set-colors! g body-ink (get (diff-palette) (if (= :add (:kind row)) :add-word :del-word)))
       (p/put-str! g
                   (+ (long left) 2 (long gw) (long (p/display-width (subs body 0 from))))
                   row-y
@@ -943,6 +1102,80 @@
   (p/fill-rect! g (inc (long left)) row-y inner-w 1)
   (p/put-str! g (+ (long left) 2) row-y text))
 
+(defn- file-ink
+  [row]
+  (t/legible-ink
+    (get {:added t/status-ok
+          :deleted t/footer-error-fg
+          :renamed (get {:file-item t/footer-warning-fg} (:kind row) t/header-active-tab-accent)}
+         (:status row)
+         t/header-active-tab-accent)
+    t/dialog-bg))
+
+(defn- file-count-runs
+  [text row]
+  (let [counts (str (model/file-counts row))]
+    (when-let [start (str/last-index-of text counts)]
+      (let [parts (str/split counts #" ")
+            offsets (reductions +
+                                (p/display-width (subs text 0 start))
+                                (map #(inc (long (p/display-width %))) parts))]
+
+        (map vector offsets parts)))))
+
+(defn- paint-file-counts!
+  [g x y text row]
+  (doseq [[col part] (file-count-runs text row)]
+    (p/set-colors! g
+                   (t/legible-ink (get {\- t/footer-error-fg} (first part) t/status-ok) t/dialog-bg)
+                   t/dialog-bg)
+    (p/put-str! g (+ (long x) (long col)) y part)))
+
+(defn- paint-file-label!
+  [g x y row text]
+  (let [end
+        (count text)
+
+        from
+        (min 2 end)
+
+        to
+        (if (= :file-item (:kind row)) end (min 3 end))]
+
+    (p/set-colors! g (file-ink row) t/dialog-bg)
+    (p/put-str! g (+ (long x) from) y (subs text from to))))
+
+(defn- paint-old-path!
+  [g x y text]
+  (when-let [old (second (re-find #"^..R (.*?) → " text))]
+    (p/set-colors! g t/dialog-hint t/dialog-bg)
+    (p/put-str! g (+ (long x) 4) y old)))
+
+(defn- paint-file-row!
+  [g left row-y inner-w row text]
+  (paint-plain-row! g left row-y inner-w row text)
+  (let [x (+ (long left) 2)]
+    (paint-file-label! g x row-y row text)
+    (paint-old-path! g x row-y text)
+    (paint-file-counts! g x row-y text row)))
+
+(defn- paint-empty-row!
+  [g left row-y inner-w row text]
+  (paint-plain-row! g left row-y inner-w row "")
+  (p/set-colors! g t/dialog-hint t/dialog-bg)
+  (p/put-str! g
+              (+ (long left) 2 (quot (max 0 (- (long inner-w) 3 (long (p/display-width text)))) 2))
+              row-y
+              text))
+
+(defn- paint-hunk-row!
+  [g left row-y inner-w text]
+  (let [palette (diff-palette)]
+    (p/set-colors! g (:gutter palette) (:paper palette))
+    (p/fill-rect! g (inc (long left)) row-y inner-w 1)
+    (p/set-colors! g (:gutter palette) (:hunk-paper palette))
+    (p/put-str! g (+ (long left) 2) row-y (p/pad-right text (max 1 (- (long inner-w) 3))))))
+
 (defn- paint-text-row!
   [g left row-y inner-w hscroll row]
   (let [text
@@ -957,7 +1190,11 @@
         paints
         (merge (zipmap [:add :del :ctx] (repeat paint-code))
                (zipmap thread-kinds (repeat paint-thread))
-               {:split #(paint-split-row! g left row-y inner-w row hscroll)})]
+               {:split #(paint-split-row! g left row-y inner-w row hscroll)
+                :file #(paint-file-row! g left row-y inner-w row text)
+                :file-item #(paint-file-row! g left row-y inner-w row text)
+                :diff-empty #(paint-empty-row! g left row-y inner-w row text)
+                :hunk #(paint-hunk-row! g left row-y inner-w text)})]
 
     ((get paints (:kind row) #(paint-plain-row! g left row-y inner-w row text)))))
 
@@ -970,16 +1207,29 @@
   (lv/paint-plan-entry! g left row-y inner-w view-id (:entry row))
   (when selected? (paint-selected-plan! g left row-y inner-w row cell)))
 
+(defn- selected-source-row
+  [row]
+  (if (= :split (:kind row))
+    (update row (get row :selected-side :right) #(when % (assoc % :selected? true)))
+    (assoc row :selected? true)))
+
 (defn- paint-source-row!
   [g left row-y inner-w selected? hscroll row]
-  (if selected?
-    (dlg/draw-selectable-row! g
-                              left
-                              row-y
-                              inner-w
-                              true
-                              (str " " (row-text row hscroll (- (long inner-w) 3))))
-    (paint-text-row! g left row-y inner-w hscroll row)))
+  (let [selected-code
+        #(paint-text-row! g left row-y inner-w hscroll (selected-source-row row))
+
+        selected-plain
+        #(dlg/draw-selectable-row! g
+                                   left
+                                   row-y
+                                   inner-w
+                                   true
+                                   (str " " (row-text row hscroll (- (long inner-w) 3))))
+
+        selected-paint
+        (get (zipmap [:add :del :ctx :split] (repeat selected-code)) (:kind row) selected-plain)]
+
+    (if selected? (selected-paint) (paint-text-row! g left row-y inner-w hscroll row))))
 
 (defn- paint-row!
   [g left row-y inner-w view-id selected? cell hscroll row]
@@ -1014,23 +1264,26 @@
 
     (when (editor-target view row) "comment")))
 
+(defn- diff-mode-footer
+  [state view rows]
+  [[(hidden-key view "u" "u") (if (some #(= :split (:kind %)) rows) "unified" "split")]
+   [(hidden-key view "w" "w") (if (:wrap? state) "cut" "wrap")]])
+
+(defn- file-footer
+  [state view]
+  (into (mapv (fn [[key flag yes no]]
+                [(hidden-key view key key) (get {true yes false no} (boolean (get state flag)))])
+              [["f" :files? "hide files" "files"] ["t" :hide-tests? "show tests" "hide tests"]
+               ["i" :hide-whitespace? "show spaces" "hide spaces"]])
+        [[(hidden-key view "a" "a") "fold all"] [(hidden-key view "c" "c") "copy path"]]))
+
 (defn- review-footer
   [state view rows row]
-  (cond-> []
-    (seq (:log view))
-    (conj [(hidden-key view "l" "l") "log"])
-
-    (compare-image view row)
-    (conj [(hidden-key view "v" "v") "Before/After"])
-
-    (some #(= :split (:kind %)) rows)
-    (conj [(hidden-key view "u" "u") "unified"])
-
-    (and (diff-view? rows) (:unified? state))
-    (conj [(hidden-key view "u" "u") "split"])
-
-    (diff-view? rows)
-    (conj [(hidden-key view "w" "w") (if (:wrap? state) "cut" "wrap")])))
+  (into []
+        (concat (when (seq (:log view)) [[(hidden-key view "l" "l") "log"]])
+                (when (compare-image view row) [[(hidden-key view "v" "v") "Before/After"]])
+                (when (diff-view? rows) (diff-mode-footer state view rows))
+                (when (some #(= :file (:kind %)) rows) (file-footer state view)))))
 
 (defn- footer
   [state view rows]
@@ -1052,7 +1305,8 @@
           (not (model/read-only? view))
           (conj [(hidden-key view "s" "s") "send"]))]
 
-    (cond (:editor state) [["Ctrl+S" "save"] ["Esc" "cancel"]]
+    (cond (:editor state) [["Ctrl+Enter" "save"] ["Esc" "cancel"]]
+          (:search state) [["Enter" "next match"] ["Esc" "leave search"]]
           (:prefix state) [["C-x" "next key is a surface key"] ["s" "send"] ["r" "reload"]
                            ["Esc" "cancel"]]
           :else (into (into verbs (review-footer state view rows row))
@@ -1097,7 +1351,10 @@
         (max 20 (- (long (:inner-w bounds)) 3))
 
         rows
-        (surface-rows view width (:folded state) (select-keys state [:unified? :wrap?]))
+        (surface-rows view
+                      width
+                      (:folded state)
+                      (select-keys state [:unified? :wrap? :files? :hide-tests? :hide-whitespace?]))
 
         editor-rows
         (if (:editor state) (+ 2 (long editor-h)) 0)
@@ -1280,7 +1537,7 @@
                   (= idx (:selected state))
                   (:cell state)
                   (:hscroll state)
-                  (nth rows idx)))))
+                  (assoc (nth rows idx) :selected-side (get state :diff-side :right))))))
 
 (defn- paint-body!
   [g state {:keys [bounds content-top content-h rows] :as geom}]
@@ -1555,6 +1812,7 @@
               (read-view! box session-id view-id))
    :inspect! (partial inspect-effect! box open-picture!)
    :log! (partial log-effect! screen modal! current)
+   :copy! input/clipboard-copy!
    :paste identity})
 
 (defn- paste-start?

@@ -194,3 +194,144 @@
                           (let [{:keys [gutter body]} (model/row-parts row)]
                             (<= (count (str gutter body)) 30)))
                         rows)))))
+
+;; Real T3 fixture, Council #9489: binary and rename-only files disappeared.
+(defdescribe
+  real-git-patches
+  (it "keeps header-only files and does not treat metadata as code"
+      (let [patch
+            (str "diff --git a/blob.bin b/blob.bin\nindex 1..2 100644\n"
+                 "Binary files a/blob.bin and b/blob.bin differ\n"
+                 "diff --git a/old.py b/new.py\nsimilarity index 100%\n"
+                 "rename from old.py\nrename to new.py\n"
+                 "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n" "@@ -1 +1 @@\n-old\n+new\n"
+                 "diff --git a/b.py b/b.py\nnew file mode 100644\n"
+                 "--- /dev/null\n+++ b/b.py\n@@ -0,0 +1 @@\n+created\n")
+
+            rows
+            (model/parse-patch patch)
+
+            files
+            (filter #(= :file (:kind %)) rows)]
+
+        (expect (= ["blob.bin" "new.py" "a.py" "b.py"] (mapv :path files)))
+        (expect (= [:modified :renamed :modified :added] (mapv :status files)))
+        (expect (= "old.py" (:old-path (second files))))
+        (expect (= ["old" "new" "created"] (mapv :text (filter #(#{:add :del} (:kind %)) rows))))))
+  (it
+    "keeps deleted files under their old path"
+    (let
+      [rows
+       (model/parse-patch
+         "diff --git a/gone b/gone\ndeleted file mode 100644\n--- a/gone\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n")]
+      (expect (= "gone" (:path (first rows))))
+      (expect (= :deleted (:status (first rows))))))
+  (it "sizes line numbers per file rather than for the whole patch"
+      (let [rows
+            (model/diff-shape (model/parse-patch
+                                (str "--- a/short\n+++ b/short\n@@ -1 +1 @@\n-a\n+b\n"
+                                     "--- a/long\n+++ b/long\n@@ -1234 +1234 @@\n-a\n+b\n")))
+
+            widths
+            (into {} (map (juxt :path :num-w)) (filter #(= :add (:kind %)) rows))]
+
+        (expect (= {"short" 1 "long" 4} widths)))))
+
+;; Real T3 scenarios S05/S06/S07/S21, Council #9489.
+(defdescribe
+  review-filters
+  (it "hides test-file bodies and their file-list entries without hiding source files"
+      (let [node
+            {:id "d"
+             :type :diff
+             :patch (str "--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-a\n+b\n"
+                         "--- a/tests/a_test.py\n+++ b/tests/a_test.py\n@@ -1 +1 @@\n-a\n+b\n")}
+
+            rows
+            (model/diff-rows node 40 #{} {:hide-tests? true :files? true})]
+
+        (expect (= ["src/a.py"] (mapv :path (filter #(= :file (:kind %)) rows))))
+        (expect (not-any? #(= "tests/a_test.py" (:path %)) rows))))
+  (it "shows the file list only when requested and keeps the file headers"
+      (let [node
+            {:id "d"
+             :type :diff
+             :patch
+             "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-a\n+b\n"}
+
+            rows
+            (model/diff-rows node 40 #{} {:files? false})]
+
+        (expect (= 2 (count (filter #(= :file (:kind %)) rows))))
+        (expect (not-any? #(= :file-item (:kind %)) rows))))
+  (it "shows an empty-state row when the selection has no file changes"
+      (let [rows (model/diff-rows {:id "d" :type :diff :patch ""} 40 #{})]
+        (expect (some #(= :diff-empty (:kind %)) rows)))))
+
+;; T3 S05, Council #9489: whitespace-only edits must not obscure real edits.
+(defdescribe
+  whitespace-selection
+  (it "removes whitespace-only changes but keeps semantic changes and their anchors"
+      (let [node
+            {:id "d"
+             :type :diff
+             :patch
+             "--- a/a.py\n+++ b/a.py\n@@ -1,3 +1,3 @@\n-x = 1\n+x=1\n context\n-y = 2\n+y = 3\n"}
+
+            rows
+            (model/diff-rows node 40 #{} {:hide-whitespace? true})
+
+            changes
+            (filter #(#{:add :del} (:kind %)) rows)]
+
+        (expect (= ["y = 2" "y = 3"] (mapv :text changes)))
+        (expect (= [3 3] (mapv (comp :line :anchor) changes))))))
+
+;; T3 code search, Council #9489: matches must navigate real code rows only.
+(defdescribe code-search
+             (it "wraps to matching code, ignores chrome, and leaves no result for an empty query"
+                 (let [rows [{:kind :file :text "needle"} {:kind :add :text "a needle"}
+                             {:kind :ctx :text "plain"} {:kind :split :right {:text "Needle b"}}]]
+                   (expect (= 3 (model/find-code rows "needle" 2)))
+                   (expect (= 1 (model/find-code rows "needle" 4)))
+                   (expect (nil? (model/find-code rows "missing" 0)))
+                   (expect (nil? (model/find-code rows " " 0)))
+                   (expect (nil? (model/find-code [] "needle" 0))))))
+
+;; Real Git path quoting, Council #9489: quoted names must stay valid anchors.
+(defdescribe git-path-names
+             (it "decodes Git octal UTF-8 and keeps spaces in ordinary file names"
+                 (doseq [[header old-line new-line path]
+                         [["diff --git a/a name.py b/a name.py" "--- a/a name.py" "+++ b/a name.py"
+                           "a name.py"]
+                          ["diff --git \"a/caf\\303\\251.py\" \"b/caf\\303\\251.py\""
+                           "--- \"a/caf\\303\\251.py\"" "+++ \"b/caf\\303\\251.py\"" "café.py"]]]
+                   (let [rows (model/parse-patch
+                                (str header "\n" old-line "\n" new-line "\n@@ -1 +1 @@\n-a\n+b\n"))]
+                     (expect (= path (:path (first rows))))
+                     (expect (= path (get-in (last rows) [:anchor :path])))))))
+
+;; T3 S06, Council #9489: comments on a hidden test file must stay hidden with it.
+(defdescribe
+  hidden-test-threads
+  (it
+    "hides the anchored comments with their test file and keeps source-file comments"
+    (let
+      [node
+       {:id "d"
+        :type :diff
+        :patch
+        "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n--- a/test_a.py\n+++ b/test_a.py\n@@ -1 +1 @@\n-a\n+b\n"
+        :threads [{:id "source" :anchor {:path "a.py" :side "new" :line 1} :messages []}
+                  {:id "test" :anchor {:path "test_a.py" :side "new" :line 1} :messages []}]}
+
+       rows
+       (model/diff-rows node 40 #{} {:hide-tests? true})]
+
+      (expect (some #(= "source" (:thread-id %)) rows))
+      (expect (not-any? #(= "test" (:thread-id %)) rows))))
+  (it "recognizes test directories, prefix names, and suffix names without hiding source files"
+      (doseq [[path test?] [["tests/a.py" true] ["pkg/__tests__/a.ts" true] ["test_a.py" true]
+                            ["pkg/a.test.tsx" true] ["pkg/a_spec.rb" true] ["src/contest.py" false]
+                            ["src/testkit.py" false]]]
+        (expect (= test? (model/test-file? path))))))

@@ -15,7 +15,7 @@
             [com.blockether.vis.tui.picture :as picture]
             [com.blockether.vis.tui.view-materializer :as materializer]
             [lazytest.core :refer [defdescribe describe expect it]])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
 (defn- image-node
@@ -284,7 +284,9 @@
   review-surface-controls
   (it "wrap resets horizontal scrolling and keeps wrapped lines unshifted"
       (let [state
-            (assoc (surface/initial-state) :hscroll 8)
+            (assoc (surface/initial-state)
+              :hscroll 8
+              :wrap? false)
 
             geom
             {:view {:nodes []} :rows [{:kind :add :text "code"}] :list-h 10}
@@ -348,20 +350,29 @@
         (expect (contains? verbs ["v" "Before/After"]))
         (expect (= ["Esc" "close"] (peek (#'surface/footer state {} []))))
         (expect (not (contains? (set (#'surface/footer state {} [])) ["l" "log"])))
-        (expect (= [["Ctrl+S" "save"] ["Esc" "cancel"]]
+        (expect (= [["Ctrl+Enter" "save"] ["Esc" "cancel"]]
                    (#'surface/footer (assoc state :editor {}) {} []))))))
 
-(defdescribe code-paint-decisions
-             (it "keeps code and line numbers at a contrast of at least 4.5 on each diff paper"
-                 (doseq [kind [:add :del :ctx]]
-                   (let [{:keys [paper body gutter]} (surface/row-inks {:kind kind})]
-                     (expect (>= (theme/contrast-ratio body paper) 4.5))
-                     (expect (>= (theme/contrast-ratio gutter paper) 4.5)))))
-             (it "a word mark is clipped against the visible text after scrolling"
-                 (doseq [[mark scroll n want] [[nil 0 10 nil] [[2 6] 0 10 [2 6]] [[2 6] 4 10 [0 2]]
-                                               [[2 6] 0 4 [2 4]] [[2 6] 6 10 nil]
-                                               [[12 16] 0 10 nil]]]
-                   (expect (= want (surface/mark-span mark scroll n))))))
+(defdescribe
+  code-paint-decisions
+  (it "keeps code and line numbers at a contrast of at least 4.5 on each diff paper"
+      (doseq [bg
+              [(TextColor$RGB. 250 250 250) (TextColor$RGB. 10 10 10)]
+
+              kind
+              [:add :del :ctx]
+
+              selected?
+              [false true]]
+
+        (binding [theme/dialog-bg bg]
+          (let [{:keys [paper body gutter]} (surface/row-inks {:kind kind :selected? selected?})]
+            (expect (>= (theme/contrast-ratio body paper) 4.5))
+            (expect (>= (theme/contrast-ratio gutter paper) 4.5))))))
+  (it "a word mark is clipped against the visible text after scrolling"
+      (doseq [[mark scroll n want] [[nil 0 10 nil] [[2 6] 0 10 [2 6]] [[2 6] 4 10 [0 2]]
+                                    [[2 6] 0 4 [2 4]] [[2 6] 6 10 nil] [[12 16] 0 10 nil]]]
+        (expect (= want (surface/mark-span mark scroll n))))))
 
 (defdescribe
   diff-layout-controls
@@ -433,16 +444,16 @@
           (expect (= 3 (count times)))
           (expect (= 1 (count (distinct columns))))))))
 
-(defdescribe review-footer-modes
-             (it "shows wrap and layout choices for the current diff mode"
-                 (doseq [[state rows layout wrap]
-                         [[{:unified? false} [{:kind :split}] ["u" "unified"] ["w" "wrap"]]
-                          [{:unified? true :wrap? true} [{:kind :add}] ["u" "split"] ["w" "cut"]]]]
-                   (let [verbs (set
-                                 (#'surface/footer (merge (surface/initial-state) state) {} rows))]
-                     (expect (contains? verbs layout))
-                     (expect (contains? verbs wrap))
-                     (expect (= (not (:wrap? state)) (contains? verbs ["</>" "scroll"])))))))
+(defdescribe
+  review-footer-modes
+  (it "shows wrap and layout choices for the current diff mode"
+      (doseq [[state rows layout wrap]
+              [[{:unified? false :wrap? false} [{:kind :split}] ["u" "unified"] ["w" "wrap"]]
+               [{:unified? true :wrap? true} [{:kind :add}] ["u" "split"] ["w" "cut"]]]]
+        (let [verbs (set (#'surface/footer (merge (surface/initial-state) state) {} rows))]
+          (expect (contains? verbs layout))
+          (expect (contains? verbs wrap))
+          (expect (= (not (:wrap? state)) (contains? verbs ["</>" "scroll"])))))))
 
 ;; Council #9442: comparison labels started at the pane edge, not the centered image.
 (defdescribe picture-caption-alignment

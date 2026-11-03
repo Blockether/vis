@@ -5,7 +5,8 @@
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.state :as state]
             [lazytest.core :refer [defdescribe describe expect it]])
-  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
 (def ^:private view
   {:id "app-1"
@@ -81,7 +82,7 @@
             (harness view)
 
             st
-            (press start (k \> false))]
+            (press (assoc start :wrap? false) (k \> false))]
 
         (expect (= 8 (:hscroll st)))
         (expect (= 0 (:hscroll (press (press st (k \< false)) (k \< false)))))
@@ -566,3 +567,180 @@
                                            {:key "h" :label "Left" :action "left"}
                                            {:key "l" :label "Right" :action "right"}
                                            {:key "Delete" :label "Delete" :action "delete"}]})))))
+
+;; Real T3 S06/S07/S18/S22, Council #9489.
+(defdescribe
+  review-panel-controls
+  (it "toggles the file list and test filter without losing the selected row"
+      (let [st
+            (surface/initial-state)
+
+            geom
+            {:view {} :rows [{:kind :file :path "a.py"}] :list-h 10}
+
+            toggle
+            #(surface/handle-key %1 (k %2 false) geom {})]
+
+        (expect (:files? (toggle st \f)))
+        (expect (false? (:files? (toggle (toggle st \f) \f))))
+        (expect (:hide-tests? (toggle st \t)))))
+  (it "collapses and expands all file headers on repeated presses"
+      (let [geom
+            {:view {} :rows [{:kind :file :path "a"} {:kind :file :path "b"}] :list-h 10}
+
+            fold-all
+            #(surface/handle-key % (k \a false) geom {})
+
+            folded
+            (fold-all (surface/initial-state))]
+
+        (expect (= #{"a" "b"} (:folded folded)))
+        (expect (empty? (:folded (fold-all folded))))))
+  (it "copies the current code row path, not its shortened header"
+      (let [copied
+            (atom nil)
+
+            geom
+            {:view {} :rows [{:kind :add :path "src/a.py"}] :list-h 10}]
+
+        (surface/handle-key (surface/initial-state) (k \c false) geom {:copy! #(reset! copied %)})
+        (expect (= "src/a.py" @copied))))
+  (it "saves a nonblank comment with Ctrl Enter once and keeps blank comments open"
+      (let [calls
+            (atom [])
+
+            base
+            (surface/open-editor (surface/initial-state)
+                                 {:node-id "diff" :anchor {:path "x.clj" :side "new" :line 2}})
+
+            geom
+            {:view view :rows [] :list-h 10}
+
+            enter
+            (KeyStroke. KeyType/Enter true false)
+
+            effects
+            {:save! (fn [action _]
+                      (swap! calls conj action))}
+
+            blank
+            (surface/handle-key base enter geom effects)
+
+            typed
+            (assoc-in base [:editor :input] (input/paste-text (input/empty-input) "Comment"))
+
+            saving
+            (surface/handle-key typed enter geom effects)]
+
+        (expect (= base blank))
+        (expect (= :saving (get-in saving [:save :state])))
+        (surface/handle-key saving enter geom effects)
+        (expect (= 1 (count @calls))))))
+
+;; T3 S11/S12, Council #9489: split comments must use the selected side.
+(defdescribe split-comment-side
+             (it "opens the editor on the old or new anchor chosen by the person"
+                 (doseq [[side line] [[:left {:path "x.clj" :side "old" :line 2}]
+                                      [:right {:path "x.clj" :side "new" :line 2}]]]
+                   (let [row {:kind :split
+                              :node-id "diff"
+                              :anchor {:path "x.clj" :side "new" :line 2}
+                              :left {:anchor {:path "x.clj" :side "old" :line 2}}
+                              :right {:anchor {:path "x.clj" :side "new" :line 2}}}
+                         geom {:view view :rows [row] :list-h 10}
+                         state (assoc (surface/initial-state) :diff-side side)
+                         edited (surface/handle-key state (k KeyType/Enter) geom {})]
+
+                     (expect (= line (get-in edited [:editor :target :anchor])))))))
+
+;; T3 S11, Council #9489: row selection must not capture clicks on chrome.
+(defdescribe diff-mouse-target
+             (it "maps only clicks inside the visible row area to a selectable row"
+                 (let [geom {:bounds {:left 2 :inner-w 30}
+                             :content-top 5
+                             :list-h 3
+                             :rows [{:kind :diff-head} {:kind :file :is-selectable true}
+                                    {:kind :add :is-selectable true}
+                                    {:kind :ctx :is-selectable true}]}]
+                   (doseq [[scroll col row expected] [[0 4 5 nil] [0 4 6 1] [1 4 5 1] [0 2 6 nil]
+                                                      [0 33 6 nil] [0 4 8 nil]]]
+                     (expect (= expected (surface/mouse-target geom scroll col row)))))))
+
+;; Real T3 S22, Council #9489: search must navigate without posting an app action.
+(defdescribe
+  code-search-keys
+  (it
+    "finds and cycles code matches, edits the query, and closes only the search"
+    (let [geom
+          {:view {}
+           :rows [{:kind :file :text "Needle"} {:kind :add :text "needle one" :is-selectable true}
+                  {:kind :ctx :text "plain" :is-selectable true}
+                  {:kind :add :text "needle two" :is-selectable true}]
+           :list-h 10}
+
+          press
+          #(surface/handle-key %1 %2 geom {})
+
+          start
+          (press (surface/initial-state) (k \/ false))
+
+          found
+          (reduce #(press %1 (k %2 false)) start "needle")
+
+          next
+          (press found (k KeyType/Enter))
+
+          wrapped
+          (press next (k KeyType/Enter))
+
+          back
+          (press found (k KeyType/Backspace))]
+
+      (expect (= 1 (:selected found)))
+      (expect (= 3 (:selected next)))
+      (expect (= 1 (:selected wrapped)))
+      (expect (= "needl" (get-in back [:search :text])))
+      (expect (= "needle" (get-in (press found (k \a true)) [:search :text])))
+      (expect (nil? (:search (press found (k KeyType/Escape)))))
+      (expect (not (contains? (press found (k KeyType/Escape)) ::dlg/done))))))
+
+;; Real T3 S11/S22, Council #9489: clicks and Tab must select the correct diff side.
+(defdescribe
+  diff-mouse-keys
+  (it
+    "selects code on release, changes split sides with Tab, and folds a clicked header"
+    (let [geom
+          {:view view
+           :bounds {:left 2 :inner-w 30}
+           :content-top 5
+           :list-h 3
+           :rows [{:kind :file :path "x.clj" :is-selectable true}
+                  {:kind :split
+                   :node-id "diff"
+                   :path "x.clj"
+                   :is-selectable true
+                   :left {:anchor {:path "x.clj" :side "old" :line 2}}
+                   :right {:anchor {:path "x.clj" :side "new" :line 2}}}]}
+
+          click
+          (fn [type col row]
+            (MouseAction. type 1 (TerminalPosition. col row)))
+
+          press
+          #(surface/handle-key %1 %2 geom {})
+
+          start
+          (surface/initial-state)
+
+          left
+          (press start (click MouseActionType/CLICK_RELEASE 4 6))
+
+          right
+          (press left (k KeyType/Tab))]
+
+      (expect (= start (press start (click MouseActionType/CLICK_DOWN 4 6))))
+      (expect (= 1 (:selected left)))
+      (expect (= :left (:diff-side left)))
+      (expect (= :right (:diff-side right)))
+      (expect (= "new" (get-in (press right (k KeyType/Enter)) [:editor :target :anchor :side])))
+      (expect (= #{"x.clj"} (:folded (press start (click MouseActionType/CLICK_RELEASE 4 5))))))))
