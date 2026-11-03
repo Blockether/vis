@@ -624,7 +624,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
       </div>
       <ul aria-label="Legend" className="mt-1 border-t border-dialog-edge/50 pt-1.5">
         {leader && (
-          <li className={LEGEND_ROW}>
+          <li className={LEGEND_ROW} data-hover-note-frame>
             <span className={`font-bold ${LEADER_INK}`}>{LEADER_KEY}</span>
             <span className={`font-bold uppercase ${LEADER_INK}`}>{LEADER_ROLE}</span>
             <span className="whitespace-nowrap text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
@@ -637,7 +637,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
           const role = agentRole(agent);
           const update = agentUpdate(agent);
           return (
-            <li key={agent.session_id} className={LEGEND_ROW}>
+            <li key={agent.session_id} className={LEGEND_ROW} data-hover-note-frame>
               <span className={role.ink}>{keys[index]}</span>
               <span className={`uppercase ${role.ink}`}>{role.text}</span>
               <HoverNote className="min-w-0" note={taskNote(agent.task)}>

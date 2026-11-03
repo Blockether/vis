@@ -2652,8 +2652,8 @@ const HOVER_NOTE_WARM = 400;
 /** When the last note closed. One mouse shows one note at a time, so the page shares it. */
 let hoverNoteClosedAt = -Infinity;
 
-/** The controls that a note spans when its label sits inside one. */
-const HOVER_NOTE_FRAME = 'button, a[href], [role="button"]';
+/** The controls that a note spans when its label sits inside one, and rows marked `data-hover-note-frame`. */
+const HOVER_NOTE_FRAME = 'button, a[href], [role="button"], [data-hover-note-frame]';
 
 /** The area that holds a note, such as a session. Without one, the note uses the window. */
 const HOVER_NOTE_BOUNDS = '[data-hover-note-bounds]';
@@ -2674,7 +2674,7 @@ function hoverNoteArea(trigger: HTMLElement): DOMRect {
  * Use it instead of `title`. The system paints a `title` as its own grey box in a system
  * font, at any size: a long subagent task covered most of the window. This note uses the
  * floating surface of the app. Inside a control, such as a table row, the note spans that
- * control and shows its whole text under or over it, as tall as its area allows: the
+ * control, or a row marked `data-hover-note-frame`, and shows its whole text under or over it, as tall as its area allows: the
  * nearest `data-hover-note-bounds` below its own `header`, such as a session, else the
  * window. Outside a control, the note starts at the label. A note that its area cannot hold fades at its foot. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
  * A press, a scroll, Escape or leaving the window closes it. It never takes the pointer
