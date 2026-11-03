@@ -141,4 +141,18 @@ describe('a subagent session', () => {
     expect(screen.queryByRole('textbox', { name: 'Message Vis' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^(Send|Queue) message$/ })).toBeNull();
   });
+
+  // User request: the back chevron of a subagent session leads to its parent, one mark beside
+  // both header lines, not a second chevron next to the way back to the list.
+  it('goes back to its parent from the phone back button', async () => {
+    const opened: string[] = [];
+    renderSessionScreen({
+      session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
+      client: { agents: () => Promise.resolve([]) },
+      onOpenSession: (sid) => void opened.push(sid),
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to the parent session' }));
+    expect(opened).toEqual(['lead']);
+    expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
+  });
 });

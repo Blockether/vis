@@ -16,7 +16,6 @@ import {
   CopyIcon,
   DotsIcon,
   LivePanelIcon,
-  MARK_NUDGE,
   SettingsIcon,
   ZenIcon,
 } from './icons';
@@ -50,12 +49,13 @@ function GoalTime({ goal }: { goal: SessionGoal }) {
  * THE WAY BACK, and there is only one of it.
  *
  * On a phone a session stands ON its list, so it leaves by the leading half of its own
- * title band: the band's edge column carrying one chevron.
+ * title band: the band's edge column carrying one chevron. A subagent session goes back to
+ * its parent, and its larger chevron stands beside both lines of the title.
  */
-function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
+function BackButton({ label, onClick, isLarge = false }: { label: string; onClick: () => void; isLarge?: boolean }) {
   return (
     <button type="button" aria-label={label} className={BAND_EDGE_CLASS} onClick={onClick}>
-      <ChevronIcon back className="size-4" aria-hidden />
+      <ChevronIcon back className={isLarge ? 'size-6' : 'size-4'} aria-hidden />
     </button>
   );
 }
@@ -172,6 +172,9 @@ export function SessionHeader({
   const goal = model.goal;
   const path = model.agentPath;
   const openParent = commands.openParent;
+  const backToParent = path && openParent ? () => openParent(path.parentId) : undefined;
+  /** On a desk the edge column holds the list toggle, so the way to the parent takes its own column. */
+  const parentColumn = isDesk && backToParent;
   return (
     /* On iPhone the entire session row sits below the island, with the header
        background extending behind it. iPad has no island; browsers keep their
@@ -179,9 +182,28 @@ export function SessionHeader({
     <header
       className={`z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : 'mouse:pt-0'}`}
     >
-      {!isDesk && <BackButton label="Back to sessions" onClick={commands.back} />}
+      {!isDesk &&
+        (backToParent ? (
+          <BackButton label="Back to the parent session" onClick={backToParent} isLarge />
+        ) : (
+          <BackButton label="Back to sessions" onClick={commands.back} />
+        ))}
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
-      <div className="min-w-0 flex-1 self-center px-4 py-1.5 mouse:py-1">
+      {/* The way to the parent stands as one mark beside both lines. The path below is the
+          same control for keys and screen readers, so this mark is for the pointer only. */}
+      {parentColumn && (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden
+          title="Open the parent session"
+          className="flex shrink-0 items-center self-stretch pl-3 text-white hover:text-accent"
+          onClick={backToParent}
+        >
+          <ChevronIcon back className="size-6" />
+        </button>
+      )}
+      <div className={`min-w-0 flex-1 self-center ${parentColumn ? 'pl-2' : 'pl-4'} pr-4 py-1.5 mouse:py-1`}>
         {/* The title is the sentence the screen is about. It stays one step above
             the connection line by size and weight — all in the app's one mono face. */}
         <h1 className="truncate text-title font-semibold text-white mouse:text-body">
@@ -194,7 +216,6 @@ export function SessionHeader({
               className="block max-w-full truncate rounded-none text-left hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               onClick={() => openParent(path.parentId)}
             >
-              <ChevronIcon back className={`mr-1 inline-block size-3.5 align-baseline ${MARK_NUDGE}`} />
               <PathStep step={path.parent} />
               {' → '}
               <PathStep step={path.self} />
