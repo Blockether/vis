@@ -1645,8 +1645,8 @@ export function Header({
             pupil, a highlight, a smile and seven rays share the box, so barely a
             third of it is ink and it reads smaller than it measures; under 24px a
             1x screen washes the pupil to grey and closes the smile. It takes the
-            scale's own rung, five sixths of the bar's height, never a pixel fitted
-            by hand to the file's proportion. */}
+            scale's own rung, two thirds of the bar's height, never a pixel fitted
+            by hand to the file's proportion. Five sixths outweighed the wordmark. */}
         {/* AND ITS CANVAS IS NOT ITS CENTRE. The ink's centre of mass sits about
             1px under the box's centre at this rung, so the nudge is exactly 1px.
             A larger nudge pushes the mark against the bar's top edge and leaves
@@ -1654,7 +1654,7 @@ export function Header({
             stays where the row put it. */}
         {/* `data-wordmark` places the memory overlay's dot just after the wordmark. */}
         <div className="flex h-12 items-center gap-2.5" aria-label="Vis" data-wordmark>
-          <img src="/vis-logo.png" alt="" className="h-10 w-11 -translate-y-px object-contain" />
+          <img src="/vis-logo.png" alt="" className="h-8 w-9 -translate-y-px object-contain" />
           {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
               hard offset rather than the dialog's black shadow. */}
           <span className="font-mono text-head font-extrabold tracking-[0.14em] text-white [text-shadow:2px_2px_0_var(--dialog-shadow)] blockether-dark:[text-shadow:2px_2px_0_var(--primary)]">
