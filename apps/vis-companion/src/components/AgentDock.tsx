@@ -28,7 +28,7 @@ export function AgentDock({ agents, sid, runningTurnId, ...team }: Omit<TeamProp
     'agent-team': teams.length > 0 && (() => setOpen(true)),
   });
   if (teams.length === 0) return null;
-  const toggle = isWide && teams.some(hasTimeline) ? (
+  const toggle = isWide && teams.some((members) => hasTimeline(members, team.leader)) ? (
     <TimelineToggle
       isOn={open && isTimeline}
       onToggle={() => {

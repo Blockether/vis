@@ -19,7 +19,7 @@ import {
   UserMessage,
 } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, dockTeams, useAgentTeam } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -4753,8 +4753,13 @@ export function SessionScreen({
     () => new Set(dockTeams(team.agents, sid, runningTurnId).map((members) => members[0].team_id)),
     [team.agents, sid, runningTurnId],
   );
+  // The leader lane of the running turn heads the chart of the dock.
+  const runningLeader = useMemo(
+    () => (runningTurn ? leaderLane(runningTurn.createdAt ?? runningTurn.startedAt, undefined, runningTurn.iterations) : undefined),
+    [runningTurn],
+  );
   const teamFor = useCallback(
-    (turnId: string | undefined) => {
+    (turnId: string | undefined, leader?: LeaderLane) => {
       const agents = turnId && !docked.has(turnId) ? teams.get(turnId) : undefined;
       return agents ? (
         <TurnAgents
@@ -4764,6 +4769,7 @@ export function SessionScreen({
           onOpen={onOpenSession}
           onCancel={team.cancel}
           timeline={team.timeline}
+          leader={leader}
         />
       ) : undefined;
     },
@@ -5021,7 +5027,7 @@ export function SessionScreen({
               client={client}
               sid={sid}
               onOpenAttachment={openLinkedArtifact}
-              team={teamFor(turn.turn_id)}
+              team={teamFor(turn.turn_id, storedLeaderLane(turn))}
             />
           </div>
         );
@@ -5888,6 +5894,7 @@ export function SessionScreen({
               onOpen={onOpenSession}
               onCancel={team.cancel}
               timeline={team.timeline}
+              leader={runningLeader}
             />
 
             {/* A subagent session takes no input: its leader gives it work. */}

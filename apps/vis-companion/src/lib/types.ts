@@ -1405,6 +1405,8 @@ export interface TranscriptForm {
    */
   op?: string;
   silent?: boolean;
+  /** Wall clock in epoch ms when the block started; with `duration_ms` it places the block in time. */
+  started_at_ms?: number;
   duration_ms?: number;
   /**
    * WHAT THIS FORM DID, and protocol 7 is why it lives here.

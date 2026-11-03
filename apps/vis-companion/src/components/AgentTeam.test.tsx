@@ -14,6 +14,8 @@ import {
   agentBars,
   agentUpdate,
   agentsByTurn,
+  leaderLane,
+  leaderParts,
   axisMarks,
   clockTime,
   dockTeams,
@@ -94,6 +96,48 @@ describe('agent rows', () => {
     expect(agentBars([{ ...child, created_at: undefined }], T0).size).toBe(0);
   });
 
+  // User report: two agents resumed two hours after their spawn stood as slivers at the right end of a 2h axis.
+  it('starts the chart at the current tasks, so a resume does not squeeze them to the end', () => {
+    const later = T0 + 7_200_000;
+    const team = [
+      { ...child, session_id: 'done', status: 'completed', resumed_at: later, finished_at: later + 40_000 },
+      { ...child, session_id: 'run', resumed_at: later + 40_000 },
+    ] as Subagent[];
+    expect(Object.fromEntries(agentBars(team, later + 80_000))).toEqual({
+      done: { start: 0, end: 0.5, isWaiting: false },
+      run: { start: 0.5, end: 1, isWaiting: false },
+    });
+    // The leader lane widens the chart to the start of its turn.
+    const leader = { start: later - 80_000, waits: [] };
+    expect(agentBars(team, later + 80_000, leader).get('done')).toEqual({ start: 0.5, end: 0.75, isWaiting: false });
+  });
+
+  // The leader lane shows where the leader waited for its agents: in the blocks that call council.run or council.wait.
+  it('reads the waits of a leader from its council.run and council.wait blocks', () => {
+    const form = (code: string, started_at_ms?: number, duration_ms?: number) => ({ code, started_at_ms, duration_ms });
+    const steps = [{ forms: [
+      form('print(grep({"query": ["x"]}))', T0 + 1_000, 500),
+      form('r = await council.run([task])', T0 + 2_000, 3_000),
+      form('council.wait(session_ids=ids)', T0 + 9_000),
+      form('await council.wait()'),
+    ] }];
+    expect(leaderLane(T0, undefined, steps)).toEqual({
+      start: T0, end: undefined, waits: [{ start: T0 + 2_000, end: T0 + 5_000 }, { start: T0 + 9_000 }],
+    });
+    // A finished turn drops a wait that never ended; a turn without a start has no lane.
+    expect(leaderLane(T0, T0 + 20_000, steps)?.waits).toEqual([{ start: T0 + 2_000, end: T0 + 5_000 }]);
+    expect(leaderLane(undefined, undefined, steps)).toBeUndefined();
+  });
+
+  it('splits the leader lane into work and waits, cut to the lane, an overlap counted once', () => {
+    const leader = { start: T0, end: T0 + 10_000, waits: [
+      { start: T0 + 2_000, end: T0 + 4_000 }, { start: T0 + 3_000, end: T0 + 5_000 }, { start: T0 + 8_000 },
+    ] };
+    expect(leaderParts(leader, T0 + 60_000).map((part) => [part.start - T0, part.end - T0, part.isWaiting])).toEqual([
+      [0, 2_000, false], [2_000, 4_000, true], [4_000, 5_000, true], [5_000, 8_000, false], [8_000, 10_000, true],
+    ]);
+  });
+
   it('marks the time axis on a round step, with at most five marks', () => {
     expect(axisMarks(262_000)).toEqual([0, 60_000, 120_000, 180_000, 240_000]);
     expect(axisMarks(40_000)).toEqual([0, 10_000, 20_000, 30_000, 40_000]);
@@ -116,6 +160,24 @@ describe('agent rows', () => {
     const [, done] = screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row'));
     await act(async () => { fireEvent.click(done); });
     expect(screen.getByRole('dialog', { name: '#2' })).toBeInTheDocument();
+  });
+
+  // User request: the chart names each lane by a short key, L for the leader and A1, A2 for the agents,
+  // and the legend under it gives each key its role and title.
+  it('keys the lanes of the chart, with the leader first, and explains each key in the legend', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
+    }));
+    const leader = { start: T0 - 10_000, end: T0 + 20_000, waits: [{ start: T0, end: T0 + 12_000 }] };
+    render(<TurnAgents {...props} leader={leader} agents={[
+      { ...child, title: 'Companion review', role: 'verify', status: 'completed', finished_at: T0 + 9_000 },
+      { ...child, session_id: 'tui', title: 'TUI review', role: 'audit', status: 'completed', finished_at: T0 + 15_000 },
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent);
+    expect(lanes).toEqual(['L leader30sdone', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
+    const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
+    expect(legend).toEqual(['Lleaderwaited 12s of 30s', 'A1verifyCompanion review', 'A2auditTUI review']);
   });
 
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {

@@ -208,6 +208,7 @@ function formFromEvent(event: SseEvent): TranscriptForm {
     stdout: eventString(event, 'stdout') || undefined,
     cards,
     silent: event.silent === true,
+    started_at_ms: typeof event.started_at_ms === 'number' ? event.started_at_ms : undefined,
     duration_ms: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
   };
 }

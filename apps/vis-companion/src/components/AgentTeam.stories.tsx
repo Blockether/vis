@@ -53,3 +53,13 @@ export const Timeline: Story = {
 
 /** A finished team. The untitled failed verifier has a long task, which the sheet cuts to four lines. */
 export const Finished: Story = {};
+
+// The leader worked, waited in council.run, worked again and waits in council.wait now.
+const LEAD_NOW = Date.now();
+const LEADER = { start: LEAD_NOW - 150_000, waits: [{ start: LEAD_NOW - 75_000, end: LEAD_NOW - 30_000 }, { start: LEAD_NOW - 15_000 }] };
+
+/** Open timeline keys each lane, L for the leader and A1, A2 for the agents. The legend explains each key. */
+export const LeaderChart: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  args: { agents: STORY_LIVE_TEAM, leader: LEADER },
+};
