@@ -389,7 +389,7 @@ export function ThreadNodeView({ node, actions }: { node: LiveThreadNode; action
   );
 }
 
-/** T3 reserves three character slots, with a smaller gutter for single digits. */
+/** A gutter reserves three character slots, and a smaller one for single digits. */
 function numberWidth(digits: number): number {
   return digits === 1 ? 33.28 : Math.max(41.11, (digits + 2.25) * 7.83);
 }
@@ -670,7 +670,7 @@ const CHANGE_MARK: Record<ReturnType<typeof fileChange>, { letter: string; word:
   modified: { letter: 'M', word: 'Modified', ink: 'text-link-fg' },
 };
 
-/** The +N and -N of a file or a diff: removals first, as T3 puts them. */
+/** The +N and -N of a file or a diff: removals first. */
 function DiffStat({ additions, deletions }: { additions: number; deletions: number }) {
   return (
     <span className="diff-stat flex shrink-0 items-center gap-1 font-mono tabular-nums">
@@ -1109,7 +1109,7 @@ function diffMenuAt(trigger: HTMLElement): MenuPosition | null {
 
 /**
  * The compact popover of a toolbar menu. It is drawn like the rest of the review
- * surface, after the T3 Code pickers, not like the app menus around it.
+ * surface, not like the app menus around it.
  */
 function DiffMenu({
   label,

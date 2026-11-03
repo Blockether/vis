@@ -1,6 +1,6 @@
 """Pictures in apps: `vis.ui.image` reads bytes or a file, and compares two pictures.
 
-The review app shows a changed picture as its old and new version (T3 style).
+The review app shows a changed picture as its old and new version.
 """
 
 import json

@@ -124,8 +124,8 @@
                  (expect (model/app-row? {:media-type model/media-type}))
                  (expect (not (model/app-row? {:media-type "text/plain"})))))
 
-(defdescribe diff-t3-shape
-             ;; Council #9354: the review app follows the T3 Code diff look.
+(defdescribe diff-shape
+             ;; Council #9354: a file row counts its changes and a hunk names its gap.
              (it "a file row counts its changes and a hunk names the lines it skips"
                  (let [two
                        (str patch "@@ -40,2 +40,2 @@\n" " a\n" "-b\n" "+c\n")
@@ -156,7 +156,7 @@
                    (expect (= #{4} (set (map :num-w code))))
                    (expect (apply = (map (comp count :gutter model/row-parts) code))))))
 
-;; T3 review look (Council #9363): a changed word shows on the paired lines.
+;; Review look (Council #9363): a changed word shows on the paired lines.
 (defdescribe diff-word-marks
              (it "marks only the changed word of a paired line"
                  (expect (= [[6 9] [6 9]] (model/word-span "(defn foo [x])" "(defn bar [x])")))
@@ -195,7 +195,7 @@
                             (<= (count (str gutter body)) 30)))
                         rows)))))
 
-;; Real T3 fixture, Council #9489: binary and rename-only files disappeared.
+;; Review fixture, Council #9489: binary and rename-only files disappeared.
 (defdescribe
   real-git-patches
   (it "keeps header-only files and does not treat metadata as code"
@@ -237,7 +237,7 @@
 
         (expect (= {"short" 1 "long" 4} widths)))))
 
-;; Real T3 scenarios S05/S06/S07/S21, Council #9489.
+;; Review scenarios S05/S06/S07/S21, Council #9489.
 (defdescribe
   review-filters
   (it "hides test-file bodies and their file-list entries without hiding source files"
@@ -268,7 +268,7 @@
       (let [rows (model/diff-rows {:id "d" :type :diff :patch ""} 40 #{})]
         (expect (some #(= :diff-empty (:kind %)) rows)))))
 
-;; T3 S05, Council #9489: whitespace-only edits must not obscure real edits.
+;; Review scenario S05, Council #9489: whitespace-only edits must not obscure real edits.
 (defdescribe
   whitespace-selection
   (it "removes whitespace-only changes but keeps semantic changes and their anchors"
@@ -287,7 +287,7 @@
         (expect (= ["y = 2" "y = 3"] (mapv :text changes)))
         (expect (= [3 3] (mapv (comp :line :anchor) changes))))))
 
-;; T3 code search, Council #9489: matches must navigate real code rows only.
+;; Code search, Council #9489: matches must navigate real code rows only.
 (defdescribe code-search
              (it "wraps to matching code, ignores chrome, and leaves no result for an empty query"
                  (let [rows [{:kind :file :text "needle"} {:kind :add :text "a needle"}
@@ -311,7 +311,7 @@
                      (expect (= path (:path (first rows))))
                      (expect (= path (get-in (last rows) [:anchor :path])))))))
 
-;; T3 S06, Council #9489: comments on a hidden test file must stay hidden with it.
+;; Review scenario S06, Council #9489: comments on a hidden test file must stay hidden with it.
 (defdescribe
   hidden-test-threads
   (it

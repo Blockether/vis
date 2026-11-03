@@ -9,7 +9,7 @@ One package `vis_review` holds all the logic. Two thin doors use it:
 
 ## Write journal
 
-The journal keeps checkpoints of the files of one root, like T3 Code checkpoints, but without Git refs.
+The journal keeps checkpoints of the files of one root, without Git refs.
 
 - The first checkpoint is the baseline. It records every file of the root.
 - A later checkpoint records only the files that changed. A step that changes nothing records nothing.

@@ -264,7 +264,7 @@ def repo(tmp_path):
 def test_against_head_shows_each_uncommitted_file_with_its_committed_content(
     tmp_path,
 ):
-    # T3 Code "Uncommitted" scope (scenario S08): the old side is the commit.
+    # "Uncommitted" scope (scenario S08): the old side is the commit.
     top = repo(tmp_path)
     sub = top / "sub"
     (sub / "a.py").write_text("two\n")
@@ -303,7 +303,7 @@ def test_against_is_none_without_a_git_commit(tmp_path):
 
 
 def test_the_base_branch_is_where_head_left_main(tmp_path):
-    # T3 Code comparison "Automatic" (scenario S09).
+    # Comparison "Automatic" (scenario S09).
     top = repo(tmp_path)
     first = git(top, "rev-parse", "HEAD").strip()
     git(top, "switch", "-q", "-c", "feature")

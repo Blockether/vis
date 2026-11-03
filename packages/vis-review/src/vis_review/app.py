@@ -31,7 +31,7 @@ ui = vis.ui
 
 # Characters of patch text the diff node shows; the contract allows 1 MB.
 MOST_PATCH_CHARS = 900_000
-# Unchanged lines around each change; full files show every line, like T3 "Expand all".
+# Unchanged lines around each change; full files show every line, as "Expand all" does.
 CONTEXT_LINES = 3
 FULL_CONTEXT = 1_000_000
 # Checkpoints and files that a toolbar menu lists, newest checkpoint first.
@@ -72,7 +72,7 @@ KEYS = {
 }
 # Buttons that call a tool or a model: they run outside the lock.
 SLOW = ("checks", "tests", "ai")
-# Git scopes, like the T3 "Uncommitted" scope and its "Automatic" base branch.
+# Git scopes: the "Uncommitted" scope and the "Automatic" base branch.
 _AGAINST = {"HEAD": "uncommitted changes", "base": "changes against the base branch"}
 # Changed pictures the app shows at most.
 MOST_IMAGES = 8
@@ -223,7 +223,7 @@ class ReviewApp:
         return found + [f for f in self.findings if not f.path or f.path in shown]
 
     def render(self) -> list[dict]:
-        """Every node of the app for the current state: the diff first, like T3 Code."""
+        """Every node of the app for the current state: the diff first."""
         diffs_all = self._scope_diffs()
         if all(d.path != self.path for d in diffs_all):
             # An undo or a new range can take the chosen file out of the list.

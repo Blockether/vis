@@ -24,7 +24,7 @@
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.view-model :as view-model]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextColor$RGB]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]))
@@ -883,84 +883,51 @@
       (p/ellipsize (str (side (:left row)) " │ " (side (:right row))) (max 1 (long w))))
     (single-row-text row hscroll w)))
 
-(def ^:private add-paper (TextColor$RGB. 2 17 11))
-
-(def ^:private del-paper (TextColor$RGB. 23 7 5))
-
-(def ^:private add-ink (TextColor$RGB. 7 196 128))
-
-(def ^:private del-ink (TextColor$RGB. 255 46 63))
-
-(def ^:private add-word
-  "T3 word highlight: 20% of rgb(5,195,130) over the added paper."
-  (TextColor$RGB. 3 53 35))
-
-(def ^:private del-word
-  "T3 word highlight: 20% of rgb(255,45,65) over the removed paper."
-  (TextColor$RGB. 69 15 17))
-
-(def ^:private code-ink "T3 code text on a dark tinted paper." (TextColor$RGB. 250 250 250))
-
-(def ^:private muted-ink "T3 secondary text on a dark paper." (TextColor$RGB. 155 155 155))
-
-(def ^:private light-diff
-  {:add-paper (TextColor$RGB. 235 248 244)
-   :del-paper (TextColor$RGB. 253 240 239)
-   :paper (TextColor$RGB. 252 252 252)
-   :body (TextColor$RGB. 10 10 10)
-   :gutter (TextColor$RGB. 86 86 86)
-   :selected-paper (TextColor$RGB. 238 245 251)
-   :selected-ink (TextColor$RGB. 30 89 160)
-   :hunk-paper (TextColor$RGB. 245 245 245)
-   :add-ink (TextColor$RGB. 18 116 76)
-   :del-ink (TextColor$RGB. 184 32 46)
-   :add-word (TextColor$RGB. 202 235 221)
-   :del-word (TextColor$RGB. 251 205 207)})
-
-(def ^:private dark-diff
-  {:add-paper add-paper
-   :del-paper del-paper
-   :paper (TextColor$RGB. 0 0 0)
-   :body code-ink
-   :gutter muted-ink
-   :selected-paper (TextColor$RGB. 13 38 56)
-   :selected-ink (TextColor$RGB. 112 180 246)
-   :hunk-paper (TextColor$RGB. 7 7 7)
-   :add-ink add-ink
-   :del-ink del-ink
-   :add-word add-word
-   :del-word del-word})
-
 (defn- diff-palette
+  "The theme colors of a diff: the code tokens that the transcript also uses for a patch."
   []
-  (let [^TextColor$RGB bg
-        t/dialog-bg
-
-        brightness
-        (+ (* 0.2126 (.getRed bg)) (* 0.7152 (.getGreen bg)) (* 0.0722 (.getBlue bg)))]
-
-    (if (> brightness 160) light-diff dark-diff)))
+  {:paper t/dialog-bg
+   :add-paper t/code-ok-bg
+   :del-paper t/code-err-bg
+   :hunk-paper (t/mix-color t/dialog-bg t/dialog-fg 0.06)
+   :body t/dialog-fg
+   :gutter t/dialog-hint
+   :add-ink t/code-success-fg
+   :del-ink t/code-error-fg})
 
 (defn row-paper
-  "The paper of a diff row, as T3 tints it: green for an added line, red for a removed
+  "The paper of a diff row: the theme's green for an added line, its red for a removed
    one, else the dialog paper."
   [row]
   (get (diff-palette) (get {:add :add-paper :del :del-paper} (:kind row))))
 
 (defn row-inks
   "The colors of one diff code row: `:paper`, the change `:bar` (nil for an unchanged
-   line), the `:gutter` ink of the line numbers and the `:body` ink of the code."
+   line), the `:gutter` ink of the line numbers and the `:body` ink of the code. A
+   selected row moves its paper toward the text ink; each ink stays legible on it."
   [row]
   (let [palette
         (diff-palette)
 
         change
-        (get palette (get {:add :add-ink :del :del-ink} (:kind row)))]
+        (get palette (get {:add :add-ink :del :del-ink} (:kind row)))
 
-    {:paper (if (:selected? row) (:selected-paper palette) (or (row-paper row) (:paper palette)))
-     :bar change
-     :gutter (if (:selected? row) (:selected-ink palette) (or change (:gutter palette)))
-     :body (:body palette)}))
+        tinted
+        (or (row-paper row) (:paper palette))
+
+        paper
+        (if (:selected? row) (t/mix-color tinted t/dialog-fg 0.18) tinted)]
+
+    {:paper paper
+     :bar (some-> change
+                  (t/legible-ink paper))
+     :gutter (t/legible-ink (or change (:gutter palette)) paper)
+     :body (t/legible-ink (:body palette) paper)}))
+
+(defn word-paper
+  "The paper of a changed word: the row paper moved toward the change ink."
+  [row paper]
+  (t/mix-color paper (get (diff-palette) (if (= :add (:kind row)) :add-ink :del-ink)) 0.2))
 
 (defn mark-span
   "The `[from to]` of word mark `mark` inside a painted body of `n` characters that
@@ -1004,7 +971,8 @@
     (p/set-colors! g body-ink paper)
     (p/put-str! g (+ (long left) 2 gw) row-y body)
     (when-let [[from to] (mark-span (:mark row) hscroll (count body))]
-      (p/set-colors! g body-ink (get (diff-palette) (if (= :add (:kind row)) :add-word :del-word)))
+      (let [mark-paper (word-paper row paper)]
+        (p/set-colors! g (t/legible-ink body-ink mark-paper) mark-paper))
       (p/put-str! g
                   (+ (long left) 2 (long gw) (long (p/display-width (subs body 0 from))))
                   row-y
@@ -1025,15 +993,9 @@
 
 (def ^:private thread-kinds #{:thread-head :message-head :message :draft-head :draft :thread-empty})
 
-(def ^:private thread-paper (TextColor$RGB. 23 23 23))
-
-(def ^:private card-paper (TextColor$RGB. 24 27 32))
-
-(def ^:private card-edge (TextColor$RGB. 40 69 142))
-
 (defn- paint-thread-row!
-  "One thread row as a T3 comment card: a blue edge on the rail and the text on the
-   card paper, inside a darker row."
+  "One thread row as a comment card: an accent edge on the rail and the text on the
+   code paper of the theme, inside a row a step off the dialog paper."
   [g left row-y inner-w row text]
   (let [rail
         (count "    ")
@@ -1042,17 +1004,24 @@
         (+ (long left) 2 rail)
 
         body
-        (subs text (min (count text) (+ rail 2)))]
+        (subs text (min (count text) (+ rail 2)))
+
+        thread-paper
+        (t/mix-color t/dialog-bg t/dialog-fg 0.04)
+
+        card-paper
+        t/code-block-bg
+
+        head?
+        (#{:thread-head :message-head :draft-head} (:kind row))]
 
     (p/set-colors! g t/dialog-fg thread-paper)
     (p/fill-rect! g (inc (long left)) row-y inner-w 1)
     (p/set-colors! g t/dialog-fg card-paper)
     (p/fill-rect! g x row-y (max 0 (- (long inner-w) rail 2)) 1)
-    (p/set-colors! g card-edge card-paper)
+    (p/set-colors! g (t/legible-ink t/header-active-tab-accent card-paper) card-paper)
     (p/put-str! g x row-y "┃")
-    (p/set-colors! g
-                   (if (#{:thread-head :message-head :draft-head} (:kind row)) muted-ink code-ink)
-                   card-paper)
+    (p/set-colors! g (t/legible-ink (if head? t/dialog-hint t/code-block-fg) card-paper) card-paper)
     (p/put-str! g (+ x 2) row-y body)))
 
 (defn- row-ink
@@ -1204,10 +1173,10 @@
 
 (defn- paint-hunk-row!
   [g left row-y inner-w text]
-  (let [palette (diff-palette)]
-    (p/set-colors! g (:gutter palette) (:paper palette))
+  (let [{:keys [gutter paper hunk-paper]} (diff-palette)]
+    (p/set-colors! g (t/legible-ink gutter paper) paper)
     (p/fill-rect! g (inc (long left)) row-y inner-w 1)
-    (p/set-colors! g (:gutter palette) (:hunk-paper palette))
+    (p/set-colors! g (t/legible-ink gutter hunk-paper) hunk-paper)
     (p/put-str! g (+ (long left) 2) row-y (p/pad-right text (max 1 (- (long inner-w) 3))))))
 
 (defn- paint-text-row!

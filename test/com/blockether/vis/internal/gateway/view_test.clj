@@ -1325,7 +1325,7 @@
 (def ^:private app-line {"path" "src/a.py" "side" "new" "line" 2})
 
 ;; T18 user report: the review app needs its scope menu and actions in the diff
-;; toolbar, as in T3 Code, and each of them must still press.
+;; toolbar, and each of them must still press.
 (defdescribe
   diff-toolbar-buttons-use-the-shared-http-action-test
   (it "buttons in a diff toolbar and its menu use the shared http action"

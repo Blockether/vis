@@ -541,7 +541,7 @@ def _git(root: str, *args: str, timeout_s: int = 60) -> str | None:
 
 
 def base_ref(root: str) -> str | None:
-    """The commit where HEAD left the default branch, like T3 "Automatic"; None if unknown."""
+    """The commit where HEAD left the default branch, for "Automatic"; None if unknown."""
     default = _git(root, "rev-parse", "--abbrev-ref", "origin/HEAD")
     names = [default.strip()] if default and default.strip() != "origin/HEAD" else []
     for name in [*names, "origin/main", "origin/master", "main", "master"]:

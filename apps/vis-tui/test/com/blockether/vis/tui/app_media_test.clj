@@ -8,6 +8,7 @@
             [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.capture :as capture]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.app-surface :as surface]
             [com.blockether.vis.tui.human-input :as hi]
@@ -355,20 +356,24 @@
 
 (defdescribe
   code-paint-decisions
+  ;; User report (T19): the diff takes the theme colors, so every shipped theme must stay legible.
   (it "keeps code and line numbers at a contrast of at least 4.5 on each diff paper"
-      (doseq [bg
-              [(TextColor$RGB. 250 250 250) (TextColor$RGB. 10 10 10)]
+      (let [before @theme/active-theme-id]
+        (try (doseq [id (shared-theme/available-theme-ids)
+                     kind [:add :del :ctx]
+                     selected? [false true]]
 
-              kind
-              [:add :del :ctx]
+               (theme/apply-theme! (keyword id))
+               (let [row {:kind kind :selected? selected?}
+                     {:keys [paper body gutter]} (surface/row-inks row)]
 
-              selected?
-              [false true]]
-
-        (binding [theme/dialog-bg bg]
-          (let [{:keys [paper body gutter]} (surface/row-inks {:kind kind :selected? selected?})]
-            (expect (>= (theme/contrast-ratio body paper) 4.5))
-            (expect (>= (theme/contrast-ratio gutter paper) 4.5))))))
+                 (expect (>= (theme/contrast-ratio body paper) 4.5) (str id " code " kind))
+                 (expect (>= (theme/contrast-ratio gutter paper) 4.5) (str id " line number " kind))
+                 (when (not= :ctx kind)
+                   (let [mark (surface/word-paper row paper)]
+                     (expect (>= (theme/contrast-ratio (theme/legible-ink body mark) mark) 4.5)
+                             (str id " changed word " kind))))))
+             (finally (theme/apply-theme! before)))))
   (it "a word mark is clipped against the visible text after scrolling"
       (doseq [[mark scroll n want] [[nil 0 10 nil] [[2 6] 0 10 [2 6]] [[2 6] 4 10 [0 2]]
                                     [[2 6] 0 4 [2 4]] [[2 6] 6 10 nil] [[12 16] 0 10 nil]]]

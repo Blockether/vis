@@ -94,7 +94,7 @@ describe('DiffNodeView', () => {
     expect(screen.getByText('Looks fine')).toBeInTheDocument();
   });
 
-  // The T3 parity report requires split mode to preserve comment anchors.
+  // The review parity report requires split mode to preserve comment anchors.
   it('pairs changed lines in split mode and saves a comment on the old side', async () => {
     const app = actions();
     render(<DiffNodeView node={DIFF} actions={app} />);
@@ -142,7 +142,7 @@ describe('DiffNodeView', () => {
     expect(screen.getAllByText('Keep this context.')).toHaveLength(1);
   });
 
-  // The T3 parity report requires the file tree to open folded files.
+  // The review parity report requires the file tree to open folded files.
   it('unfolds a file selected from the tree after Collapse all', () => {
     const { container } = render(<DiffNodeView node={DIFF} />);
     fireEvent.click(screen.getByRole('button', { name: 'Files' }));
@@ -267,7 +267,7 @@ describe('Send', () => {
   });
 });
 
-// Report: match T3 line selection and prevent repeated keyboard submissions.
+// Report: select review lines by click and prevent repeated keyboard submissions.
 describe('selected line comments', () => {
   it('selects a line before opening its editor', () => {
     render(<DiffNodeView node={DIFF} actions={actions()} />);

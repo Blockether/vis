@@ -98,7 +98,7 @@ describe('live views on session open', () => {
 });
 
 // User report: review keys must work without opening the app list first.
-it('toggles the session review with the T3 primary-modifier key', async () => {
+it('toggles the session review with the primary-modifier key', async () => {
   const review = {
     id: 'shortcut-review', title: 'Review shortcuts', placement: 'attachment' as const, seq: 1,
     nodes: [{ id: 'review', type: 'diff' as const, patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new', threads: [] }],

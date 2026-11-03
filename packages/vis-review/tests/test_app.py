@@ -377,7 +377,7 @@ def buttons_of(recorder):
 
 
 def test_show_full_files_puts_every_unchanged_line_in_the_diff(tmp_path, recorder):
-    # T3 Code "Expand all" (scenario S15): the far apart changes join in one hunk.
+    # "Expand all" (scenario S15): the far apart changes join in one hunk.
     root, journal, app = setup(tmp_path, recorder)
     lines = [f"line {n}\n" for n in range(40)]
     edit(root, "a.py", "".join(lines))
@@ -395,7 +395,7 @@ def test_show_full_files_puts_every_unchanged_line_in_the_diff(tmp_path, recorde
 
 
 def test_latest_change_shows_only_the_newest_checkpoint(tmp_path, recorder):
-    # T3 Code "Latest turn" scope (scenario S08).
+    # "Latest turn" scope (scenario S08).
     root, journal, app = setup(tmp_path, recorder)
     assert buttons_of(recorder)["latest"]
     edit(root, "a.py", "a = 2\n")
@@ -411,7 +411,7 @@ def test_latest_change_shows_only_the_newest_checkpoint(tmp_path, recorder):
 def test_uncommitted_compares_with_the_commit_and_falls_back_without_git(
     tmp_path, recorder
 ):
-    # T3 Code "Uncommitted" scope (scenario S08). Outside git, the app says so.
+    # "Uncommitted" scope (scenario S08). Outside git, the app says so.
     root, journal, app = setup(tmp_path, recorder)
     recorder.send("activate", "uncommitted")
     assert wait_for(lambda: recorder.node("notice")["tone"] == "warn")
@@ -490,7 +490,7 @@ def test_each_key_presses_a_button_that_the_app_shows(tmp_path, recorder):
 
 
 def test_a_finding_on_no_line_shows_in_the_notice(tmp_path, recorder):
-    # T18 user report: the findings table went away with the T3 layout, so a finding
+    # T18 user report: the findings table went away with the diff-only layout, so a finding
     # that no diff line holds must still reach the person.
     root, journal, app = setup(tmp_path, recorder)
     edit(root, "a.py", "a = 2\n")
@@ -506,7 +506,7 @@ def test_a_finding_on_no_line_shows_in_the_notice(tmp_path, recorder):
 
 
 def test_an_idle_app_shows_only_the_diff(tmp_path, recorder):
-    # T18 user report: the app must look like the T3 Code diff panel, with no status rows.
+    # T18 user report: the app must show only the diff and its toolbar, with no status rows.
     root, journal, app = setup(tmp_path, recorder)
     edit(root, "a.py", "a = 2\n")
     journal.checkpoint("block")

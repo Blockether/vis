@@ -168,7 +168,7 @@ describe('the diff model', () => {
   });
 });
 
-// Report: the real T3 panel classifies header-only files and filters review noise.
+// Report: the review panel classifies header-only files and filters review noise.
 describe('review display filters', () => {
   it('classifies new and deleted binary files without text headers', () => {
     const files = parseUnifiedDiff(
@@ -201,7 +201,7 @@ describe('review display filters', () => {
   });
 });
 
-// Report: the T3 file tree can collapse a folder without hiding sibling folders.
+// Report: the review file tree can collapse a folder without hiding sibling folders.
 it('does not list descendants of a collapsed folder', () => {
   const files = parseUnifiedDiff(
     ['src/a.ts', 'test/a.ts']
@@ -211,7 +211,7 @@ it('does not list descendants of a collapsed folder', () => {
   expect(fileTree(files, new Set(['src/'])).map((row) => row.key)).toEqual(['src/', 'test/', 'test/a.ts']);
 });
 
-// Report: T3 find-in-diff counts occurrences and supports case, word, and regex modes.
+// Report: find-in-diff counts occurrences and supports case, word, and regex modes.
 it('finds occurrences and applies each search mode without throwing for invalid regex', () => {
   const files = parseUnifiedDiff('--- a/a\n+++ b/a\n@@ -1 +1 @@\n-Name names NAME\n+name name');
   expect(findDiffMatches(files, 'name').map((m) => [m.line.anchor.side, m.start, m.end])).toEqual([

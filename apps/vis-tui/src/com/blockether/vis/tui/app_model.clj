@@ -440,7 +440,7 @@
             (recur (max (inc i) j) out)))))))
 
 (defn diff-shape
-  "Code `rows` of a parsed patch with what the T3 look needs: each file row holds its
+  "Code `rows` of a parsed patch with what the review look needs: each file row holds its
    `:added` and `:removed` counts, each hunk row its `:gap` (the unchanged lines
    before it), and each code row the `:num-w` of the widest line number."
   [rows]

@@ -276,7 +276,7 @@ export interface SplitRow {
 }
 
 /**
- * The rows of a hunk side by side, as T3 draws them. A context line is on both
+ * The rows of a hunk side by side. A context line is on both
  * sides. A block of removed lines and the added lines after it share rows in
  * order; the longer block leaves the other side empty.
  */
@@ -322,7 +322,7 @@ interface TreeFolder {
 
 /**
  * The files of a diff as a tree, folders first and each level sorted by name. A
- * folder that holds only one folder joins it into one row (`src / lib`), as T3 does.
+ * folder that holds only one folder joins it into one row (`src / lib`).
  */
 export function fileTree(
   files: readonly AppDiffFile[],

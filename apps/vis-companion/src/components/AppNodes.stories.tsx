@@ -4,7 +4,7 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { LiveViewPanel } from './LiveView';
-import { T3_REVIEW_PATCH } from '../dev/t3-review-patch';
+import { REVIEW_PATCH } from '../dev/review-patch';
 import { sameAnchor } from '../lib/app-diff';
 import { DiffNodeView, type AppNodeActions } from './AppNodes';
 import type { LiveDiffNode } from '../lib/live-view';
@@ -276,13 +276,12 @@ export const LineTargets: Story = {
   },
 };
 
-/** The real T3 comparison input in its 540px panel width. */
-export const T3Fixture: Story = {
-  parameters: { __id: 'session-artifacts-code-review--t3-fixture' },
+/** The review panel with its toolbar, in a 540px panel width. */
+export const ReviewPanel: Story = {
   decorators: width('540px'),
-  render: () => <T3FixturePanel />,
+  render: () => <ReviewPanelFixture />,
   args: {
-    view: { ...review(), nodes: [{ id: 'review', type: 'diff', patch: T3_REVIEW_PATCH, threads: [] }] },
+    view: { ...review(), nodes: [{ id: 'review', type: 'diff', patch: REVIEW_PATCH, threads: [] }] },
     app: { ...app, submissions: [] },
   },
 };
@@ -338,11 +337,11 @@ const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
 ];
 
 /** An interactive review fixture: save a draft, send it, and keep its anchored card. */
-function T3FixturePanel() {
+function ReviewPanelFixture() {
   const [node, setNode] = useState<LiveDiffNode>({
     id: 'review',
     type: 'diff',
-    patch: T3_REVIEW_PATCH,
+    patch: REVIEW_PATCH,
     threads: [],
     children: REVIEW_TOOLBAR,
   });
@@ -385,9 +384,8 @@ function T3FixturePanel() {
   return <DiffNodeView node={node} actions={actions} commands={{ onActivate: () => {}, isSettled: false }} />;
 }
 
-/** The T3 empty selection has no file headers or line controls. */
-export const T3Empty: Story = {
-  parameters: { __id: 'session-artifacts-code-review--t3-empty' },
+/** An empty selection has no file headers or line controls. */
+export const NoChanges: Story = {
   decorators: width('540px'),
   render: () => <DiffNodeView node={{ id: 'review', type: 'diff', patch: '', threads: [] }} />,
 };

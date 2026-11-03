@@ -201,30 +201,22 @@
      ink it stays unmistakably red and reads: light 5.9:1, dark on the dark
      surface the same way, because --fg flips with the palette. */
   --color-err-ink: color-mix(in oklab, var(--err) 68%, var(--fg));
-  /* Diff colours (T3 Code, @pierre/diffs pierre-dark). A dark theme draws a diff on a
-     paper darker than its panel, with T3's own green and red: on pure black the rows
-     are rgb(2,17,11) and rgb(23,7,5), as in T3. The darker paper keeps the red line
-     number at 4.79:1 or more in every shipped dark theme. A light theme keeps its own
-     ink and tints. `light-dark()` follows the `color-scheme` of each theme. */
-  --color-diff-paper: light-dark(var(--surface), #000);
-  --color-diff-add: light-dark(var(--ok), #07c480);
-  --color-diff-del: light-dark(var(--err), #ff2e3f);
-  --color-diff-add-ink: light-dark(color-mix(in oklab, var(--ok) 68%, var(--fg)), #07c480);
-  --color-diff-del-ink: light-dark(color-mix(in oklab, var(--err) 68%, var(--fg)), #ff2e3f);
-  --color-diff-add-row: light-dark(color-mix(in srgb, var(--ok) 10%, var(--surface)), #02110b);
-  --color-diff-del-row: light-dark(color-mix(in srgb, var(--err) 10%, var(--surface)), #170705);
-  --color-diff-add-word: light-dark(
-    color-mix(in srgb, var(--ok) 15%, transparent),
-    color-mix(in srgb, #07c480 20%, transparent)
-  );
-  --color-diff-del-word: light-dark(
-    color-mix(in srgb, var(--err) 15%, transparent),
-    color-mix(in srgb, #ff2e3f 20%, transparent)
-  );
-  --color-diff-hunk: light-dark(
-    color-mix(in srgb, var(--fg) 6%, var(--surface)),
-    color-mix(in srgb, var(--fg) 3%, var(--color-diff-paper))
-  );
+  /* Diff colours are the theme's own code tokens, the same tokens that the TUI uses for
+     a patch in the transcript: a green and a red row paper and a green and a red change
+     ink, on the code paper. Each change ink and the code ink measure 4.5:1 or more on
+     each row paper in every shipped theme. */
+  --color-diff-paper: var(--code-bg);
+  --color-diff-code: var(--code-fg);
+  --color-diff-gutter: var(--dialog-hint);
+  --color-diff-add: var(--code-success);
+  --color-diff-del: var(--code-error);
+  --color-diff-add-ink: var(--code-success);
+  --color-diff-del-ink: var(--code-error);
+  --color-diff-add-row: var(--code-ok-bg);
+  --color-diff-del-row: var(--code-err-bg);
+  --color-diff-add-word: color-mix(in srgb, var(--code-success) 20%, transparent);
+  --color-diff-del-word: color-mix(in srgb, var(--code-error) 20%, transparent);
+  --color-diff-hunk: color-mix(in srgb, var(--fg) 6%, var(--color-diff-paper));
   --color-diff-filler: color-mix(in srgb, var(--fg) 9%, var(--color-diff-paper));
   --color-dialog-title: var(--dialog-title-bg);
   --color-dialog-title-foreground: var(--dialog-title-fg);
@@ -663,9 +655,9 @@ ol.markdown-list > li::before {
   }
 }
 
-/* Review geometry follows T3 Code. Each file owns its horizontal scroll. */
+/* Each file of a review owns its horizontal scroll. */
 .app-diff {
-  --diff-paper: light-dark(oklch(0.992 0 0), #000);
+  --diff-paper: var(--color-diff-paper);
 }
 .diff-file {
   container-type: inline-size;
@@ -741,6 +733,8 @@ ol.markdown-list > li::before {
   border-radius: 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+  /* The page ink, not the code ink: it keeps 4.5:1 on the tint in every shipped theme. */
+  color: var(--fg);
   background-image: linear-gradient(var(--diff-word-tint), var(--diff-word-tint));
   background-position: center;
   background-size: 100% 15px;
@@ -998,15 +992,16 @@ ol.markdown-list > li::before {
   line-height: 20px;
 }
 
-/* Real T3 review geometry; touch controls retain the app's 44px floor. */
+/* A code row is 20px high; touch controls keep the app's 44px floor. A selected line takes
+   the amber pair of the theme. */
 .diff-table td {
   height: 20px;
 }
 .diff-table tr[data-selected-line] > td {
-  background-color: light-dark(lab(96.6 -1.9 -3.8), #102a3e);
+  background-color: var(--color-accent-surface);
 }
 .diff-table tr[data-selected-line] > .diff-gutter {
-  color: light-dark(lab(40.6 -5.4 -37.9), #68baff);
+  color: var(--color-accent-ink);
   z-index: 4;
 }
 .diff-add-comment {
@@ -1019,8 +1014,8 @@ ol.markdown-list > li::before {
   display: grid;
   place-items: center;
   border-radius: 4px;
-  background: rgb(0, 159, 255);
-  color: white;
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
 }
 .diff-file-header {
   display: flex;
@@ -1051,15 +1046,17 @@ ol.markdown-list > li::before {
 .diff-old-path {
   opacity: 0.7;
 }
-.diff-change-modified,
+.diff-change-modified {
+  color: var(--color-accent-ink);
+}
 .diff-change-renamed {
-  color: light-dark(color(srgb 0.26 0.36 0.69), #8d9ed8);
+  color: var(--warn);
 }
 .diff-change-added {
-  color: light-dark(oklch(0.508 0.118 165.6), #07c480);
+  color: var(--color-ok-ink);
 }
 .diff-change-deleted {
-  color: light-dark(oklch(0.505 0.213 27.5), #ff2e3f);
+  color: var(--color-err-ink);
 }
 .diff-copy {
   display: grid;
@@ -1098,7 +1095,7 @@ ol.markdown-list > li::before {
   border-radius: 0 6px 6px 0;
   font-size: 11px;
   line-height: 20px;
-  color: light-dark(color(srgb 0.54 0.54 0.54), color(srgb 0.48 0.48 0.48));
+  color: var(--color-diff-gutter);
   background: var(--color-diff-hunk);
   overflow: hidden;
   white-space: nowrap;
@@ -1137,13 +1134,13 @@ ol.markdown-list > li::before {
   font-weight: 600;
 }
 .diff-tree-modified {
-  color: rgb(28, 161, 199);
+  color: var(--color-accent-ink);
 }
 .diff-tree-added {
-  color: rgb(22, 169, 148);
+  color: var(--color-ok-ink);
 }
 .diff-tree-deleted {
-  color: var(--color-diff-del-ink);
+  color: var(--color-err-ink);
 }
 .diff-tree-renamed {
   color: var(--warn);
@@ -1152,8 +1149,8 @@ ol.markdown-list > li::before {
   background: var(--hover);
 }
 .diff-tree-file[aria-current='true'] {
-  background: light-dark(lab(96.6 -1.9 -3.8), #102a3e);
-  color: light-dark(lab(40.6 -5.4 -37.9), #68baff);
+  background: var(--color-accent-surface);
+  color: var(--color-accent-ink);
 }
 .diff-no-changes {
   display: grid;
@@ -1201,20 +1198,11 @@ ol.markdown-list > li::before {
   }
 }
 
-.app-diff {
-  --color-diff-add: light-dark(rgb(24, 164, 108), #07c480);
-  --color-diff-del: light-dark(rgb(220, 38, 38), #ff2e3f);
-  --color-diff-add-ink: light-dark(rgb(24, 164, 108), #07c480);
-  --color-diff-del-ink: light-dark(rgb(220, 38, 38), #ff2e3f);
-  --color-diff-add-row: light-dark(lab(96.8 -4.98 0.57), #02110b);
-  --color-diff-del-row: light-dark(lab(95.9 4.83 1.79), #170705);
-  --color-diff-hunk: light-dark(color(srgb 0.962 0.962 0.962), color(srgb 0.029 0.029 0.029));
-}
 .diff-code {
-  color: light-dark(rgb(10, 10, 10), rgb(250, 250, 250));
+  color: var(--color-diff-code);
 }
 .diff-gutter {
-  color: light-dark(lab(36.5 0 0), lab(63.9 0 0));
+  color: var(--color-diff-gutter);
 }
 .diff-threads {
   padding: 8px 12px;
@@ -1248,10 +1236,6 @@ ol.markdown-list > li::before {
   }
 }
 
-.app-diff {
-  --color-diff-add-word: light-dark(rgba(24, 164, 108, 0.15), rgba(7, 196, 128, 0.2));
-  --color-diff-del-word: light-dark(rgba(213, 44, 54, 0.15), rgba(255, 46, 63, 0.2));
-}
 .diff-code {
   padding-left: 7.83px;
   padding-right: 7.83px;
@@ -1282,8 +1266,11 @@ ol.markdown-list > li::before {
   min-height: 44px;
   padding: 0 8px;
 }
+/* The current match keeps the row paper, so the code keeps its contrast. Amber rules mark it. */
 .diff-table tr[data-search-current] > td {
-  background-color: light-dark(#fff0aa, #483d16);
+  box-shadow:
+    inset 0 1px var(--color-accent),
+    inset 0 -1px var(--color-accent);
 }
 @media (pointer: fine) {
   .diff-search button {
@@ -1310,8 +1297,8 @@ ol.markdown-list > li::before {
 }
 
 .diff-code mark[data-search-hit] {
-  background: light-dark(#e3b52e, #e3b52e);
-  color: #17120a;
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
   border-radius: 2px;
 }
 .diff-search button[aria-pressed='true'] {

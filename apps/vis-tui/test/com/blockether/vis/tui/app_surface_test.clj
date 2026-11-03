@@ -576,7 +576,7 @@
                                            {:key "l" :label "Right" :action "right"}
                                            {:key "Delete" :label "Delete" :action "delete"}]})))))
 
-;; Real T3 S06/S07/S18/S22, Council #9489.
+;; Review scenarios S06/S07/S18/S22, Council #9489.
 (defdescribe
   review-panel-controls
   (it "toggles the file list and test filter without losing the selected row"
@@ -645,7 +645,7 @@
         (surface/handle-key saving enter geom effects)
         (expect (= 1 (count @calls))))))
 
-;; T3 S11/S12, Council #9489: split comments must use the selected side.
+;; Review scenarios S11/S12, Council #9489: split comments must use the selected side.
 (defdescribe split-comment-side
              (it "opens the editor on the old or new anchor chosen by the person"
                  (doseq [[side line] [[:left {:path "x.clj" :side "old" :line 2}]
@@ -661,7 +661,7 @@
 
                      (expect (= line (get-in edited [:editor :target :anchor])))))))
 
-;; T3 S11, Council #9489: row selection must not capture clicks on chrome.
+;; Review scenario S11, Council #9489: row selection must not capture clicks on chrome.
 (defdescribe diff-mouse-target
              (it "maps only clicks inside the visible row area to a selectable row"
                  (let [geom {:bounds {:left 2 :inner-w 30}
@@ -674,7 +674,7 @@
                                                       [0 33 6 nil] [0 4 8 nil]]]
                      (expect (= expected (surface/mouse-target geom scroll col row)))))))
 
-;; Real T3 S22, Council #9489: search must navigate without posting an app action.
+;; Review scenario S22, Council #9489: search must navigate without posting an app action.
 (defdescribe
   code-search-keys
   (it
@@ -712,7 +712,7 @@
       (expect (nil? (:search (press found (k KeyType/Escape)))))
       (expect (not (contains? (press found (k KeyType/Escape)) ::dlg/done))))))
 
-;; Real T3 S11/S22, Council #9489: clicks and Tab must select the correct diff side.
+;; Review scenarios S11/S22, Council #9489: clicks and Tab must select the correct diff side.
 (defdescribe
   diff-mouse-keys
   (it
@@ -753,7 +753,7 @@
       (expect (= "new" (get-in (press right (k KeyType/Enter)) [:editor :target :anchor :side])))
       (expect (= #{"x.clj"} (:folded (press start (click MouseActionType/CLICK_RELEASE 4 5))))))))
 
-;; User report: review search must support the terminal-safe T3 shortcuts.
+;; User report: review search must support its terminal-safe shortcuts.
 (defdescribe review-search-shortcuts-test
              (it "opens find with Ctrl F and returns to the review on Escape"
                  (let [geom
