@@ -1285,9 +1285,9 @@
                           [{:text (str (p/pad-right (p/ellipsize (said lane) label-w) label-w) "  ")
                             :fg t/dialog-fg
                             :styles (if is-fresh [p/BOLD] [])}
-                           {:text (apply str (repeat a "░")) :fg t/dialog-hint}
+                           {:text (apply str (repeat a "·")) :fg t/dialog-hint}
                            {:text (apply str (repeat (- (long b) (long a)) "█")) :fg ink}
-                           {:text (apply str (repeat (- bar-w (long b)) "░")) :fg t/dialog-hint}
+                           {:text (apply str (repeat (- bar-w (long b)) "·")) :fg t/dialog-hint}
                            {:text (str "  " (p/pad-left took dur-w) "  ") :fg t/dialog-hint}
                            {:text (get tone-glyph (:tone lane) "·") :fg ink}]
                           text-w)]
