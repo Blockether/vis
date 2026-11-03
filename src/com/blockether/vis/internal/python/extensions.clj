@@ -630,12 +630,33 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (str "vis_ext_" (.incrementAndGet ^AtomicLong context-seq)
        "_" (str/replace (str label) #"[^A-Za-z0-9_]" "_")))
 
+(defonce ^:private ^java.util.concurrent.ConcurrentHashMap evaluation-locks
+  ;; trusted worker key -> monitor. One worker holds every extension namespace of a session.
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- evaluation-lock
+  "The monitor that serializes extension evaluations in the worker of namespace `ctx`.
+   Each evaluation puts its own SDK module in the shared `sys.modules`, so two evaluations
+   in one interpreter must not interleave."
+  [ctx]
+  (.computeIfAbsent evaluation-locks
+                    (get @context-workers ctx ctx)
+                    (reify
+                      java.util.function.Function
+                        (apply [_ _] (Object.)))))
+
+(defn- stop-trusted-worker!
+  "Stop trusted worker `worker` and drop its evaluation monitor."
+  [worker]
+  (pyext/stop-worker! worker)
+  (.remove evaluation-locks worker))
+
 (defn- stop-unused-worker!
   "Stop trusted worker `worker` when no extension namespace uses it. The shared
    registration worker stays."
   [worker]
   (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
-    (pyext/stop-worker! worker)))
+    (stop-trusted-worker! worker)))
 
 (defn- open-context!
   "The body both `build-context` arities share.
@@ -1547,14 +1568,49 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   [source]
   (cached-exec-python source "<string>" "__import__('__future__').annotations.compiler_flag"))
 
+(def ^:private site-first-python
+  "Move a site and the path lines of its `.pth` files right after the extension directory.
+   site appends those lines behind the shared packages, so an extension imported a shared
+   copy of its own editable project (#226). Runs after the snapshot preamble, which binds
+   `__vis_pathsys__`, `__vis_pathos__` and `__vis_packages__`."
+  "__vis_site__ = [__vis_packages__]
+if __vis_pathos__.path.isdir(__vis_packages__):
+    for __vis_pth__ in sorted(__vis_pathos__.listdir(__vis_packages__)):
+        if not __vis_pth__.endswith('.pth'):
+            continue
+        try:
+            with open(__vis_pathos__.path.join(__vis_packages__, __vis_pth__),
+                      encoding='utf-8') as __vis_lines__:
+                for __vis_line__ in __vis_lines__:
+                    __vis_line__ = __vis_line__.rstrip()
+                    if (not __vis_line__ or __vis_line__.startswith('#')
+                            or __vis_line__.startswith(('import ', 'import\t'))):
+                        continue
+                    __vis_dir__ = __vis_pathos__.path.abspath(
+                        __vis_pathos__.path.join(__vis_packages__, __vis_line__))
+                    if __vis_pathos__.path.isdir(__vis_dir__) and __vis_dir__ not in __vis_site__:
+                        __vis_site__.append(__vis_dir__)
+        except (OSError, UnicodeDecodeError):
+            continue
+__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path
+                          if __vis_p__ not in __vis_site__]
+__vis_pathsys__.path[1:1] = __vis_site__
+__import__('importlib').invalidate_caches()
+")
+
 (defn- evaluate-extension!
   "Evaluate admitted extension `source` in the open namespace `ctx`.
    `entry-path` is the canonical source entry file exposed through Python's
    conventional module globals. Returns the sealed registration data."
   [ctx label ^File snap entry-path source packages bound-env]
-  (let [frozen-home (.getCanonicalPath (.getParentFile snap))]
+  (let [frozen-home
+        (.getCanonicalPath (.getParentFile snap))
+
+        monitor
+        (evaluation-lock ctx)]
+
     (bind-host! ctx label bound-env)
-    (locking ctx
+    (locking monitor
       (extension/with-context
         {:ext {:ext/name label} :env (or bound-env {:workspace/root (workspace/cwd-root)})}
         (python-host/conveying
@@ -1600,6 +1656,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                  "            and (__vis_pathos__.path.exists(__vis_top__)\n"
                  "                 or __vis_pathos__.path.exists(__vis_top__ + '.py'))):\n"
                  "        del __vis_pathsys__.modules[__vis_name__]\n"))
+          (exec-in! ctx site-first-python)
           (exec-in! ctx stale-sdk-modules-python)
           (exec-in! ctx bootstrap-python)
           (exec-in! ctx (postponed-annotations-python source)))))
@@ -3805,13 +3862,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                            (assoc k (assoc build :closed? true))))
                                        builds
                                        builds)))
-    (pyext/stop-worker! (pyext/extension-worker-key worker))
+    (stop-trusted-worker! (pyext/extension-worker-key worker))
     (let [locals (into []
                        (filter (fn [[[k _] _]]
                                  (= worker k)))
                        @session-contexts)]
       (doseq [extension-worker (distinct (map #(worker-for (:context (second %))) locals))]
-        (pyext/stop-worker! extension-worker))
+        (stop-trusted-worker! extension-worker))
       (when (seq locals)
         (swap! session-contexts #(apply dissoc % (map first locals)))
         (doseq [[_ row] locals]

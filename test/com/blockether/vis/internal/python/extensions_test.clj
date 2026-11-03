@@ -8298,6 +8298,53 @@ vis.register_extension(vis.Extension(
                    (finally (#'pyx/delete-tree! (:dir frozen)))))))
         (finally (#'pyx/delete-tree! project))))))
 
+(defdescribe
+  project-editable-before-shared-test
+  ;; Regression #226 (native-python-extension-environment-isolation-test): one worker holds
+  ;; every extension, and site appended the project's .pth path behind the shared ones. The
+  ;; extension then imported the shared copy of its own editable package.
+  (it
+    "imports the project's editable package before a shared one with the same name"
+    (with-shared-packages
+      (fn [^java.io.File packages]
+        (let [ext-dir
+              (temp-dir)
+
+              project
+              (io/file ext-dir "project")
+
+              site
+              (io/file project ".venv/lib/site-packages")]
+
+          (write-ext! packages "shared_code/order_probe_pkg/__init__.py" "VALUE = 1\n")
+          (write-ext! packages
+                      "shared.pth"
+                      (str (.getCanonicalPath (io/file packages "shared_code")) "\n"))
+          (write-ext! project "editable/order_probe_pkg/__init__.py" "VALUE = 226\n")
+          (write-ext! project "pyproject.toml" "[project]\nname='order-probe'\nversion='1.0.0'\n")
+          (write-ext! project "uv.lock" "version = 1\n")
+          (write-ext! site
+                      "project.pth"
+                      (str (.getCanonicalPath (io/file project "editable")) "\n"))
+          (write-ext! ext-dir
+                      ".vis/extensions/order_probe.py"
+                      (str "# /// script\n# [tool.vis]\n# project = '../../project'\n# ///\n"
+                           "import blockether.vis.extension as vis\n"
+                           "import order_probe_pkg\n"
+                           "assert order_probe_pkg.VALUE == 226, order_probe_pkg.VALUE\n"
+                           "vis.register_extension(vis.Extension(name='order-probe',\n"
+                           "    description='Imports its own project first'))\n"))
+          (try (with-redefs [python-runtime/prepared-project (fn [_]
+                                                               (.getCanonicalFile site))]
+                 (let [loaded (pyx/reload-python-extensions!
+                                {:dirs [(str (io/file ext-dir ".vis/extensions"))]})
+                       failed @@#'pyx/failures]
+
+                   (expect (= {:loaded 1 :failed 0} (select-keys loaded [:loaded :failed]))
+                           (pr-str failed))
+                   (expect (registered "order-probe"))))
+               (finally (pyx/reload-python-extensions! {:dirs []}))))))))
+
 ;; Issue #378: `python.environment: shared` prepares the project's own uv projects like
 ;; `vis-agent python --shared uv sync`; packages outside the project tree keep their environment.
 (defdescribe
@@ -8451,7 +8498,41 @@ vis.register_extension(vis.Extension(
           (doseq [name ["one" "two"]]
             (expect (true? (first (:result ((symbol-fn (registered (str "shared-worker-" name))
                                                        'probe)))))
-                    name))))))
+                    name)))))
+  ;; Regression (native-language-repair-test): session contexts of one worker built in
+  ;; parallel shared one `sys.modules` SDK slot, so vis-lang-clojure registered nothing and
+  ;; a context could answer with another extension's data.
+  (it "builds the session contexts of one worker in parallel, each with its own registration"
+      (with-fresh-loaded (into {}
+                               (for [n (range 4)]
+                                 [(str "par_" n ".py")
+                                  (str "import blockether.vis.extension as vis\n"
+                                       "def context(env):\n"
+                                       "    return {'who': 'par-"
+                                       n
+                                       "'}\n"
+                                       "vis.register_extension(vis.Extension(name='par-" n
+                                       "'," " description='Parallel probe', ctx=context))\n")]))
+                         (fn [_ {:keys [ext-dir store]}]
+                           (dotimes [_ 3]
+                             (let [exts (mapv #(registered (str "par-" %)) (range 4))
+                                   ctx (:python-context
+                                         (ep/create-python-context {} nil {:worker? true} nil))
+                                   env {:python-context ctx
+                                        :db-info store
+                                        :cwd (str ext-dir)
+                                        :session-id (str "par-" (random-uuid))
+                                        :extensions (atom exts)
+                                        :active-extensions (atom [])}
+                                   gate (promise)]
+
+                               (try (let [answers (mapv (fn [ext]
+                                                          (future @gate ((:ext/ctx-fn ext) env)))
+                                                        exts)]
+                                      (deliver gate true)
+                                      (expect (= (mapv #(hash-map "who" (str "par-" %)) (range 4))
+                                                 (mapv deref answers))))
+                                    (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
   registration-manifest-test

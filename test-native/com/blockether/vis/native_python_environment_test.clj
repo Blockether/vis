@@ -224,7 +224,7 @@
   native-python-extension-environment-isolation-test
   ;; Regression #226: a shared .pth can cache the wrong dependency before registration.
   (it
-    "boots a declared-project extension without shared packages or preload hooks"
+    "boots a declared-project extension with its own project paths before shared packages"
     (with-environment
       (fn [{:keys [bin home plain project environment site python] :as fixture}]
         ;; A declared local dependency requires a private environment under the shared-source contract.
@@ -245,22 +245,22 @@
                                  ["uv" "sync" "--offline" "--python" (str python)
                                   "--no-python-downloads"])]
           (expect (= 0 (:exit synced)) (:output synced)))
-        (write-file! home
-                     ".vis/extensions/environment_probe.py"
-                     (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
-                          "# project = '../../project'\n# ///\n" "import importlib.util, os, sys\n"
-                          "import blockether.vis.extension as vis\n"
-                          "from native_env_project import VALUE\n"
-                          "assert VALUE == 226\n"
-                          "import vis_cli_fixture\nassert vis_cli_fixture.VALUE == 42\n"
-                          "assert importlib.util.find_spec('native_shared_only') is None\n"
-                          "assert importlib.util.find_spec('native_shared_editable') is None\n"
-                          "assert importlib.util.find_spec('native_shared_preload') is None\n"
-                          "assert 'native_shared_preload' not in sys.modules\n"
-                          "assert 'VIS_SHARED_HOOK_RAN' not in os.environ\n"
-                          "vis.register_extension(vis.Extension(\n"
-                          "    name='native-project-isolated',\n"
-                          "    description='Verified project environment and bundled SDK'))\n"))
+        (write-file!
+          home
+          ".vis/extensions/environment_probe.py"
+          (str
+            "# /// script\n# dependencies = []\n# [tool.vis]\n"
+            "# project = '../../project'\n# ///\n" "import os, sys\n"
+            "import blockether.vis.extension as vis\n"
+            ;; All extensions of a session share one worker, so a module that a shared
+            ;; hook imported first stays. The project's own paths must still come first.
+            "def at(tail):\n"
+            "    return next(i for i, p in enumerate(sys.path) if p.endswith(tail))\n"
+            "assert at(os.sep + 'project' + os.sep + 'editable-code') < at(os.sep + 'shared'), sys.path\n"
+            "import vis_cli_fixture\nassert vis_cli_fixture.VALUE == 42\n"
+            "vis.register_extension(vis.Extension(\n"
+            "    name='native-project-isolated',\n"
+            "    description='Verified project environment and bundled SDK'))\n"))
         (let [lock-before
               (slurp (io/file project "uv.lock"))
 
