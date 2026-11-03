@@ -20,7 +20,7 @@ import { useClampMotion } from '../lib/clamp-motion';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
 export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
-import { CheckIcon, CloseIcon } from './icons';
+import { CheckIcon, CloseIcon, MARK_NUDGE } from './icons';
 import { Button, DialogFrame, Modal, TextButton } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
@@ -270,10 +270,11 @@ const BAR_INK: Record<string, string> = {
   failed: 'bg-err-ink',
 };
 
-// The mark of a status word on a wide screen. The word stays for a screen reader.
+// The mark of a status word on a wide screen. The word stays for a screen reader. The mark sits on
+// the baseline of the row's first line, and a 12px mark takes the nudge down to the caps.
 function StatusMark({ status }: { status: string }) {
-  if (status === 'done') return <CheckIcon className="size-3 text-ok-ink" />;
-  if (status === 'failed') return <CloseIcon className="size-3 text-err-ink" />;
+  if (status === 'done') return <CheckIcon className={`size-3 text-ok-ink ${MARK_NUDGE}`} />;
+  if (status === 'failed') return <CloseIcon className={`size-3 text-err-ink ${MARK_NUDGE}`} />;
   if (status === 'queued') return <span className="inline-block size-2 rounded-full border border-dialog-hint" />;
   return <span className="inline-block size-2 rounded-full bg-accent-ink motion-safe:animate-pulse" />;
 }
@@ -397,7 +398,7 @@ function WideAgentTable({ rows, now, error, onSelect, isTimeline = false }: Tabl
                   <span className="truncate text-dialog-hint" title={update}>{update ?? ''}</span>
                 )}
                 <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
-                <span className={`self-center text-center ${status.ink}`}>
+                <span className={`text-center ${status.ink}`}>
                   <span className="sr-only">{status.text}</span>
                   <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
                 </span>
