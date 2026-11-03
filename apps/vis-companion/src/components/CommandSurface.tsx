@@ -139,7 +139,10 @@ function BandRow({ keyName, title, description }: { keyName: string; title: stri
   return (
     <li className="flex min-w-0 items-baseline gap-2.5">
       <KeyCap keyName={keyName} size="text" />
-      <span className="shrink-0 text-ui text-dialog-foreground mouse:text-title">{title}</span>
+      <span className="shrink-0 text-ui italic text-dialog-foreground mouse:text-title">{title}</span>
+      <span aria-hidden="true" className="shrink-0 text-dialog-hint">
+        —
+      </span>
       <span className="min-w-0 text-meta text-dialog-hint mouse:text-ui">{description}</span>
     </li>
   );
@@ -327,7 +330,10 @@ export function CommandPalette({
                   onMouseMove={() => setActive(index)}
                   onClick={() => run(verb)}
                 >
-                  <span className="shrink-0">{verb.title}</span>
+                  <span className="shrink-0 italic">{verb.title}</span>
+                  <span aria-hidden="true" className={`shrink-0 ${index === at ? '' : 'text-dialog-hint'}`}>
+                    —
+                  </span>
                   <span className={`min-w-0 flex-1 truncate text-meta mouse:text-ui ${index === at ? '' : 'text-dialog-hint'}`}>
                     {verb.description}
                   </span>
