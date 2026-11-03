@@ -188,3 +188,17 @@
                         not-empty)))
        (take (long n))
        vec))
+
+(defn picker-state
+  "Whether an app picker is blocked, empty, or ready. Session pickers need a session."
+  [dialog-open? views session-required? session-id]
+  (cond dialog-open? :blocked
+        (or (empty? views) (and session-required? (nil? session-id))) :empty
+        :else :ready))
+
+(defn picked-target
+  "The effect of a session app pick: close its pane, open its pane, or cover the chat."
+  [live-panel view]
+  (if (= :sidebar (session-target view))
+    (if (= :close (pane-pick live-panel view)) :close :pane)
+    :chat))

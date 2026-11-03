@@ -123,3 +123,74 @@
                  (expect (nil? (model/row-view-id {})))
                  (expect (model/app-row? {:media-type model/media-type}))
                  (expect (not (model/app-row? {:media-type "text/plain"})))))
+
+(defdescribe diff-t3-shape
+             ;; Council #9354: the review app follows the T3 Code diff look.
+             (it "a file row counts its changes and a hunk names the lines it skips"
+                 (let [two
+                       (str patch "@@ -40,2 +40,2 @@\n" " a\n" "-b\n" "+c\n")
+
+                       rows
+                       (model/diff-shape (model/parse-patch two))
+
+                       file
+                       (first (filter #(= :file (:kind %)) rows))
+
+                       hunks
+                       (filter #(= :hunk (:kind %)) rows)]
+
+                   (expect (= "-2 +2" (model/file-counts file)))
+                   (expect (= [9 27] (mapv :gap hunks)))
+                   (expect (= ["⋯ 9 unmodified lines" "⋯ 27 unmodified lines"]
+                              (mapv model/hunk-text hunks)))))
+             (it "a new file shows only its added count"
+                 (expect (= "+3" (model/file-counts {:added 3 :removed 0}))))
+             (it "every code row takes the width of the widest line number"
+                 (let [rows
+                       (model/diff-shape (model/parse-patch
+                                           (str patch "@@ -1200,1 +1200,1 @@\n" "-x\n" "+y\n")))
+
+                       code
+                       (filter #(#{:add :del :ctx} (:kind %)) rows)]
+
+                   (expect (= #{4} (set (map :num-w code))))
+                   (expect (apply = (map (comp count :gutter model/row-parts) code))))))
+
+;; T3 review look (Council #9363): a changed word shows on the paired lines.
+(defdescribe diff-word-marks
+             (it "marks only the changed word of a paired line"
+                 (expect (= [[6 9] [6 9]] (model/word-span "(defn foo [x])" "(defn bar [x])")))
+                 (expect (= [[4 4] [4 12]] (model/word-span "let total = 1" "let subtotal = 1"))))
+             (it "marks nothing when the lines are equal or the whole line changed"
+                 (expect (nil? (model/word-span "same" "same")))
+                 (expect (nil? (model/word-span "alpha" "omega"))))
+             (it "pairs the n-th removed line with the n-th added line of a block"
+                 (let [rows (model/pair-words [{:kind :ctx :text "a b"} {:kind :del :text "x = 1"}
+                                               {:kind :del :text "y = 2"} {:kind :add :text "x = 3"}
+                                               {:kind :ctx :text "z"} {:kind :add :text "q = 9"}])]
+                   (expect (= [nil [4 5] nil [4 5] nil nil] (mapv :mark rows))))))
+
+;; Frame dump at 40 columns (Council #9379): thread text was cut with an ellipsis.
+(defdescribe
+  thread-text-fits
+  (it "wraps each message so its rail and text fit the width"
+      (let [node
+            {:id "d"
+             :type :diff
+             :patch "--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+             :threads [{:id "t"
+                        :anchor {:path "x" :side "new" :line 1}
+                        :messages
+                        [{:id "m"
+                          :author {:kind "agent"}
+                          :body "Why rename total to subtotal? Callers in cart.clj still use total."
+                          :created-at 1}]}]}
+
+            rows
+            (filter #(= :message (:kind %)) (model/diff-rows node 30 #{}))]
+
+        (expect (< 1 (count rows)))
+        (expect (every? (fn [row]
+                          (let [{:keys [gutter body]} (model/row-parts row)]
+                            (<= (count (str gutter body)) 30)))
+                        rows)))))

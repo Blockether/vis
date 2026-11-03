@@ -52,6 +52,7 @@
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.markdown-layout :as layout]
+            [com.blockether.vis.tui.picture :as picture]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr]
@@ -894,6 +895,95 @@
             {:kind :scene :node-id id :scene-row r :pad pad :frame frame})
           (range (quot (long ph) 2)))))
 
+(def ^:private picture-max-rows
+  "Cell rows one picture may take, so the nodes under it stay on screen."
+  12)
+
+(defn- picture-box
+  "The placeholder lines of a picture that does not decode: `alt` and `info` in a box
+   `cols` wide."
+  [alt info cols]
+  (let [inner
+        (max 1 (- (long cols) 4))
+
+        line
+        (fn [s]
+          (str "│ " (p/pad-right (p/ellipsize (str s) inner) inner) " │"))]
+
+    [(str "┌" (apply str (repeat (- (long cols) 2) "─")) "┐") (line alt) (line info)
+     (str "└" (apply str (repeat (- (long cols) 2) "─")) "┘")]))
+
+(defn- picture-lines
+  "The lines of one pane: pixel rows of its frame, or placeholder text."
+  [{:keys [picture cols]} alt]
+  (let [cols
+        (max 6 (long cols))
+
+        frame
+        (picture/raster picture cols picture-max-rows)]
+
+    (if frame
+      (let [pad (quot (- cols (long (:width frame))) 2)]
+        (mapv (fn [r]
+                {:frame frame :pixel-row r :pad pad})
+              (range (quot (long (:height frame)) 2))))
+      (mapv (fn [s]
+              {:text s})
+            (picture-box alt (picture/info-text picture) cols)))))
+
+;; A picture paints as half blocks. With an old picture the rows compare Before and
+;; After: side by side when both fit, else one above the other.
+(defmethod node-rows :image
+  [{:keys [id alt before is-flipped] :as node} {:keys [text-w]}]
+  (let [text-w
+        (max 8 (long text-w))
+
+        shape
+        (picture/layout text-w (some? before) is-flipped)
+
+        panes
+        (mapv #(assoc % :lines (picture-lines % alt)) (picture/panes node text-w shape))
+
+        row
+        (fn [parts]
+          {:kind :picture :node-id id :parts parts})
+
+        caption
+        (fn [ps]
+          (row (mapv (fn [{:keys [col label lines]}]
+                       {:col (+ (long col) (long (or (:pad (first lines)) 0))) :text label})
+                     ps)))
+
+        lines
+        (fn [ps]
+          (let [per (mapv :lines ps)]
+            (mapv (fn [i]
+                    (row (into []
+                               (keep (fn [[pane ls]]
+                                       (when-let [l (get ls i)]
+                                         (assoc l :col (:col pane)))))
+                               (map vector ps per))))
+                  (range (reduce max 0 (map count per))))))
+
+        body
+        (case shape
+          :single
+          (lines panes)
+
+          :side
+          (into [(caption panes)] (lines panes))
+
+          :stacked
+          (into [] (mapcat #(into [(caption [%])] (lines [%]))) panes))]
+
+    (conj body
+          {:kind :picture-open
+           :node-id id
+           :text (str "[ Open ]  "
+                      (picture/info-text (select-keys node
+                                                      [:media-type :data :width :height :bytes]))
+                      (when before (str "  ·  " (if (= :side shape) "side by side" "stacked"))))})))
+
 (defn- app-entries
   [rows text-w]
   (mapv (fn [row]
@@ -1688,28 +1778,31 @@
               :item-id (:item-id lead))))
         (columns/zip-columns sections)))
 
+(defn- row-content-width
+  "The natural content width, before indentation and the search control."
+  [text-w row]
+  (case (:kind row)
+    (:columns :picture)
+    (long text-w)
+
+    (:field :progress)
+    (max (long columns/min-cell-width) (+ 3 (long (p/display-width (str (:text row))))))
+
+    :stats
+    (reduce + 0 (map #(+ 4 (runs-width (:label %)) (runs-width (:value %))) (:items row)))
+
+    :scene
+    (long (:width (:frame row)))
+
+    (if-let [runs (or (:segments row) (:runs row))]
+      (runs-width runs)
+      (p/display-width (str (:text row))))))
+
 (defn- row-text-width
-  "Columns ONE plan row puts down inside `text-w`: what a `wrap` group measures
-   its children by. A field and a progress bar fill whatever cell they get, so
-   they ask for a readable cell; a nested split row asks for the whole width."
+  "The natural width of a plan row, including indentation and its search control."
   ^long [text-w row]
   (+ (long (or (:indent row) 0))
-     (long (case (:kind row)
-             :columns
-             (long text-w)
-
-             (:field :progress)
-             (max (long columns/min-cell-width) (+ 3 (long (p/display-width (str (:text row))))))
-
-             :stats
-             (reduce + 0 (map #(+ 4 (runs-width (:label %)) (runs-width (:value %))) (:items row)))
-
-             (cond (= :scene (:kind row)) (long (:width (:frame row)))
-                   (:segments row) (runs-width (:segments row))
-                   (:runs row) (runs-width (:runs row))
-                   :else (p/display-width (str (:text row))))))
-     ;; A log's Search control stands beside its title: ` Search `, its four
-     ;; columns of air to the scrollbar lane and the three before the title.
+     (long (row-content-width text-w row))
      (if (:search-label row) 15 0)))
 
 (defn- wrap-sections
@@ -2445,6 +2538,26 @@
       (p/set-colors! g (rgb-ink (aget pixels (+ top c))) (rgb-ink (aget pixels (+ top w c))))
       (.setCharacter g (int (+ (long left) 2 pad c)) (int row) \▀))))
 
+(defn- paint-picture-text!
+  [g x row {:keys [text width caption?]}]
+  (p/set-colors! g (if caption? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
+  (p/put-str! g x row (p/ellipsize text (long width))))
+
+(defn- paint-picture-cell!
+  [^TextGraphics g left row {:keys [col top bottom text] :as cell}]
+  (let [x (+ (long left) 2 (long col))]
+    (if text
+      (paint-picture-text! g x row cell)
+      (do (p/set-colors! g (rgb-ink top) (rgb-ink bottom))
+          (.setCharacter g (int x) (int row) \▀)))))
+
+(defn- paint-picture!
+  "One cell row of an image node: half-block pixels or placeholder text for each pane."
+  [g left row inner-w {:keys [parts]}]
+  (fill! g left row inner-w t/dialog-fg)
+  (doseq [cell (picture/cells parts (max 0 (- (long inner-w) 3)))]
+    (paint-picture-cell! g left row cell)))
+
 (defn- paint-runs!
   "One row of styled markdown runs over a base ink. [[run-segments]] decides which
    run leaves that ink — a code span and a link take the accent the transcript
@@ -2696,6 +2809,12 @@
 
     :scene
     (paint-scene! g left row inner-w entry)
+
+    :picture
+    (paint-picture! g left row inner-w entry)
+
+    :picture-open
+    (paint-plain! g left row inner-w t/dialog-hint (:text entry))
 
     :trule
     (paint-plain! g left row inner-w t/dialog-hint (:text entry))

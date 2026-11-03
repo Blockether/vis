@@ -30,6 +30,7 @@
    bound and the node, and the model's own budget always says how many lines it left
    behind."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.view :as spec]
             [com.blockether.vis.contract.wire :as wire]))
@@ -446,63 +447,70 @@
         (spec/value-in-domain? node value) (assoc node :value value)
         :else (invalid-patch! (:id node) "the value is outside the input domain")))
 
-(defn- apply-op
-  "The view after ONE operation."
+(defn- required-node-path
   [view op]
-  (case (:op op)
-    :add-node
-    (apply-add-node view op)
+  (or (node-path view (:node-id op))
+      (invalid-patch! (:node-id op)
+                      (str "the view has no such node; it has " (str/join ", " (node-ids view))))))
 
-    :remove-node
-    (apply-remove-node view op)
+(defn- apply-node-op
+  "Apply an operation to its named node, or refuse a missing node."
+  [view op]
+  (let [path
+        (required-node-path view op)
 
-    ;; A Send receipt belongs to the view, not to one node.
-    :submission
-    (app/upsert-submission view (:submission op))
+        node
+        (get-in view path)
 
-    ;; The shortcut list belongs to the app. An empty list removes every shortcut.
-    :shortcuts
-    (if (seq (:shortcuts op))
-      (assoc view :shortcuts (vec (:shortcuts op)))
-      (dissoc view :shortcuts))
+        patched
+        (case (:op op)
+          :set
+          (apply-set node op)
 
-    ;; The note for the model belongs to the app. A blank text removes it.
-    :agent-note
-    (app-rule nil #(app/set-agent-note view (:text op)))
+          :append
+          (apply-append node op)
 
-    (let [path
-          (or (node-path view (:node-id op))
-              (invalid-patch! (:node-id op)
-                              (str "the view has no such node; it has "
-                                   (str/join ", " (node-ids view)))))
+          :remove
+          (apply-remove node op)
 
-          node
-          (get-in view path)
+          :clear
+          (apply-clear node)
 
-          patched
-          (case (:op op)
-            :set
-            (apply-set node op)
+          :replace
+          (apply-replace node op)
 
-            :append
-            (apply-append node op)
+          :set-value
+          (apply-set-value node op)
 
-            :remove
-            (apply-remove node op)
+          :thread
+          (app-rule (:id node) #(app/upsert-thread node (:thread op))))]
 
-            :clear
-            (apply-clear node)
+    (assoc-in view path patched)))
 
-            :replace
-            (apply-replace node op)
+(defn- apply-shortcuts
+  [view op]
+  (if (seq (:shortcuts op)) (assoc view :shortcuts (vec (:shortcuts op))) (dissoc view :shortcuts)))
 
-            :set-value
-            (apply-set-value node op)
+(defn- apply-app-log
+  [view op]
+  (app-rule nil
+            #(app/append-log view
+                             (merge {:at 0 :source "app"}
+                                    (select-keys op [:level :message :detail :at :source])))))
 
-            :thread
-            (app-rule (:id node) #(app/upsert-thread node (:thread op))))]
+(def ^:private view-operations
+  {:add-node apply-add-node :remove-node apply-remove-node
+   :submission (fn [view op] (app/upsert-submission view (:submission op)))
+   :shortcuts apply-shortcuts
+   :agent-note (fn [view op] (app-rule nil #(app/set-agent-note view (:text op))))
+   :log apply-app-log})
 
-      (assoc-in view path patched))))
+(defn- apply-op
+  "The view after one view-level or node-level operation."
+  [view op]
+  (if-let [f (get view-operations (:op op))]
+    (f view op)
+    (apply-node-op view op)))
 
 (defn apply-patch
   "`view` after every operation in `patch`, or a refusal naming the first one
@@ -796,6 +804,41 @@
                  (data-line (select-keys node
                                          [:width :height :background :fov :is-wrapping :tick-ms
                                           :meshes :objects]))]))
+
+(defn- picture-facts
+  "What a reader learns of picture `p` without its bytes: media type, size in
+   bytes and the width and height."
+  [{:keys [media-type data width height bytes]}]
+  (let [text
+        (str data)
+
+        padding
+        (count (take-while #{\=} (reverse text)))]
+
+    (cond-> {:media-type media-type :bytes (if data (- (quot (* 3 (count text)) 4) padding) bytes)}
+      width
+      (assoc :width width)
+
+      height
+      (assoc :height height))))
+
+(defn- image-facts
+  "Image node `node` as the engine writes it: picture facts, alt text and the facts
+   of the `:before` picture. The base64 bytes never go into the document."
+  [{:keys [alt before] :as node}]
+  (cond-> (picture-facts node)
+    alt
+    (assoc :alt alt)
+
+    before
+    (assoc :before (picture-facts before))))
+
+(defmethod node->markdown :image
+  [node _]
+  (marked-lines :image
+                [(str "image "
+                      (wire/json-str (walk/postwalk #(if (map? %) (into (sorted-map) %) %)
+                                                    (wire/->wire (image-facts node)))))]))
 
 (defmethod node->markdown :thread
   [{:keys [anchor messages draft is-resolved]} _]
@@ -1230,7 +1273,7 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene}
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1402,6 +1445,13 @@
 (defmethod markdown->node :scene
   [_ {:keys [at lines]}]
   (merge {:type :scene} (read-data at (nth lines 2 nil))))
+
+(defmethod markdown->node :image
+  [_ {:keys [at lines]}]
+  (let [line (second lines)]
+    (when-not (and (string? line) (str/starts-with? line "image "))
+      (invalid-markdown! at "expected an `image` line"))
+    (merge {:type :image} (wire/->engine (wire/parse-json (subs line (count "image ")))))))
 
 (defmethod markdown->node :thread
   [_ {:keys [at lines]}]

@@ -534,6 +534,15 @@
             (subvec pairs 0 i)
             (recur (inc i) (+ (long used) w))))))))
 
+(defn fit-hint-keeping-last
+  "Hint pairs that fit `text-w`, like [[fit-hint-pairs]], but the last pair (the
+   close or cancel key) always stays: the pairs before it drop from the end first."
+  [hint text-w]
+  (loop [pairs (vec hint)]
+    (if (or (<= (count pairs) 1) (= (count pairs) (count (fit-hint-pairs pairs text-w))))
+      pairs
+      (recur (conj (subvec pairs 0 (- (count pairs) 2)) (peek pairs))))))
+
 (defn draw-hint-bar!
   "Draw hint bar. `hint` can be:
    - a string: rendered as-is, left-aligned

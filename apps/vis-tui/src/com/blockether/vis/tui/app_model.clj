@@ -6,7 +6,8 @@
    namespace only reads a materialized view and builds gateway actions. It never
    paints and never calls the gateway."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.app :as app])
+            [com.blockether.vis.contract.app :as app]
+            [com.blockether.vis.tui.primitives :as p])
   (:import [java.util UUID]))
 
 (set! *warn-on-reflection* true)
@@ -52,80 +53,115 @@
           (re-find #"^[ab]/" path) (subs path 2)
           :else path)))
 
+(defn- patch-code-kind
+  [line]
+  (case (first line)
+    \+
+    :add
+
+    \-
+    :del
+
+    \space
+    :ctx
+
+    nil
+    (when (= "" line) :ctx)
+
+    nil))
+
+(defn- patch-line-kind
+  [path line]
+  (cond (str/starts-with? line "--- ") :old-path
+        (str/starts-with? line "+++ ") :new-path
+        (str/starts-with? line "@@") :hunk
+        path (patch-code-kind line)
+        :else nil))
+
+(defn- patch-hunk
+  [at rows line]
+  (let [[_ o n]
+        (re-find #"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@" line)
+
+        old
+        (or (some-> o
+                    parse-long)
+            (:old at))
+
+        new
+        (or (some-> n
+                    parse-long)
+            (:new at))]
+
+    [(assoc at
+       :old old
+       :new new) (conj rows {:kind :hunk :text line :path (:path at) :old-start old})]))
+
+(defn- patch-code-line
+  [{:keys [path old new] :as at} rows line kind]
+  (let [text
+        (if (= "" line) "" (subs line 1))
+
+        base
+        {:kind kind :text text :path path}]
+
+    (case kind
+      :add
+      [(update at :new inc)
+       (conj rows
+             (assoc base
+               :new new
+               :anchor {:path path :side "new" :line new}))]
+
+      :del
+      [(update at :old inc)
+       (conj rows
+             (assoc base
+               :old old
+               :anchor {:path path :side "old" :line old}))]
+
+      :ctx
+      [(-> at
+           (update :old inc)
+           (update :new inc))
+       (conj rows
+             (assoc base
+               :old old
+               :new new
+               :anchor {:path path :side "new" :line new}))])))
+
+(defn- patch-line
+  [[at rows] line]
+  (let [kind (patch-line-kind (:path at) line)]
+    (case kind
+      :old-path
+      [(assoc at :old-path (strip-prefix (subs line 4))) (conj rows {:kind :meta :text line})]
+
+      :new-path
+      (let [file (or (strip-prefix (subs line 4)) (:old-path at) "file")]
+        [(assoc at :path file)
+         (conj rows {:kind :meta :text line} {:kind :file :text file :path file})])
+
+      :hunk
+      (patch-hunk at rows line)
+
+      (:add :del :ctx)
+      (patch-code-line at rows line kind)
+
+      [at (conj rows {:kind :meta :text line})])))
+
+(defn- patch-header?
+  [row]
+  (and (= :meta (:kind row))
+       (or (str/blank? (:text row)) (re-find #"^(--- |\+\+\+ |diff --git |index )" (:text row)))))
+
 (defn parse-patch
-  "The rows of unified diff text `patch`, in order. Each row has `:kind` (`:file`,
-   `:meta`, `:hunk`, `:add`, `:del` or `:ctx`) and `:text`. A code row also has
-   `:path`, `:old` and `:new` line numbers and its stable `:anchor`
-   `{:path :side :line}`: side \"old\" for a removed line, else \"new\"."
+  "Parse unified diff text into file, hunk, and anchored code rows."
   [patch]
-  (loop [lines
-         (str/split-lines (str patch))
-
-         {:keys [old-path path old new] :as at}
-         {:old-path nil :path nil :old 0 :new 0}
-
-         rows
-         []]
-
-    (if-let [line (first lines)]
-      (let [more (rest lines)]
-        (cond (str/starts-with? line "--- ") (recur more
-                                                    (assoc at
-                                                      :old-path (strip-prefix (subs line 4)))
-                                                    (conj rows {:kind :meta :text line}))
-              (str/starts-with? line "+++ ")
-              (let [file (or (strip-prefix (subs line 4)) old-path "file")]
-                (recur more
-                       (assoc at :path file)
-                       (conj rows {:kind :meta :text line} {:kind :file :text file :path file})))
-              (str/starts-with? line "@@")
-              (let [[_ o n] (re-find #"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@" line)]
-                (recur more
-                       (assoc at
-                         :old (or (some-> o
-                                          parse-long)
-                                  old)
-                         :new (or (some-> n
-                                          parse-long)
-                                  new))
-                       (conj rows {:kind :hunk :text line :path path})))
-              (and path (str/starts-with? line "+"))
-              (recur more
-                     (update at :new inc)
-                     (conj rows
-                           {:kind :add
-                            :text (subs line 1)
-                            :path path
-                            :new new
-                            :anchor {:path path :side "new" :line new}}))
-              (and path (str/starts-with? line "-"))
-              (recur more
-                     (update at :old inc)
-                     (conj rows
-                           {:kind :del
-                            :text (subs line 1)
-                            :path path
-                            :old old
-                            :anchor {:path path :side "old" :line old}}))
-              (and path (or (str/starts-with? line " ") (= "" line)))
-              (recur more
-                     (-> at
-                         (update :old inc)
-                         (update :new inc))
-                     (conj rows
-                           {:kind :ctx
-                            :text (if (= "" line) "" (subs line 1))
-                            :path path
-                            :old old
-                            :new new
-                            :anchor {:path path :side "new" :line new}}))
-              :else (recur more at (conj rows {:kind :meta :text line}))))
-      ;; A `diff --git` header before the file name is noise once the file row exists,
-      ;; and so is a blank line outside a file.
-      (vec (remove #(and (= :meta (:kind %))
-                         (or (str/blank? (:text %))
-                             (re-find #"^(--- |\+\+\+ |diff --git |index )" (:text %))))
-             rows)))))
+  (let [[_ rows] (reduce patch-line
+                         [{:old-path nil :path nil :old 0 :new 0} []]
+                         (str/split-lines (str patch)))]
+    (vec (remove patch-header? rows))))
 
 (defn anchor-key
   "One comparable key for an anchor map."
@@ -181,6 +217,12 @@
                             (recur (str/triml (subs left cut)) (conj out (subs left 0 cut)))))))))
           (str/split (str text) #"\n" -1))))
 
+(def ^:private thread-rail "    │ ")
+
+(def ^:private message-indent
+  "Columns before the text of a thread message: the rail and two spaces."
+  (+ (count thread-rail) 2))
+
 (defn thread-rows
   "Rows of one thread, `width` columns wide: each message as an author line and
    its wrapped body, then the saved draft. `base` is merged into every row."
@@ -199,21 +241,217 @@
                                                           name)
                                      :message-id (:id message)})]
                             (map #(merge base {:kind :message :text %}))
-                            (wrap-text (:body message) (- (long width) 2)))))
+                            (wrap-text (:body message) (- (long width) (long message-indent))))))
             messages)
 
       (:draft thread)
       (into (cons (merge base {:kind :draft-head :text "Draft (saved, not sent)"})
                   (map #(merge base {:kind :draft :text %})
-                       (wrap-text (:draft thread) (- (long width) 2)))))
+                       (wrap-text (:draft thread) (- (long width) (long message-indent))))))
 
       (:is-resolved thread)
       (conj (merge base {:kind :thread-empty :text "Resolved"})))))
+
+(defn- word-char? [c] (or (Character/isLetterOrDigit (char c)) (= \_ c)))
+
+(defn- common-edges
+  [^String a ^String b]
+  (let [na
+        (count a)
+
+        nb
+        (count b)
+
+        pre
+        (loop [i 0]
+          (if (and (< i na) (< i nb) (= (.charAt a i) (.charAt b i))) (recur (inc i)) i))
+
+        suf
+        (loop [i 0]
+          (if (and (< i (- na pre))
+                   (< i (- nb pre))
+                   (= (.charAt a (- na 1 i)) (.charAt b (- nb 1 i))))
+            (recur (inc i))
+            i))]
+
+    [pre suf]))
+
+(defn- widen-word
+  [^String s ^long from ^long to]
+  (let [from
+        (loop [i from]
+          (if (and (pos? i) (word-char? (.charAt s (dec i)))) (recur (dec i)) i))
+
+        to
+        (loop [i to]
+          (if (and (< i (count s))
+                   (pos? i)
+                   (word-char? (.charAt s (dec i)))
+                   (word-char? (.charAt s i)))
+            (recur (inc i))
+            i))]
+
+    [from to]))
+
+(defn word-span
+  "The changed `[from to]` of `a` and `b`, widened to whole words. Nil for equal
+   lines or a change that covers a whole line, where the row tint is enough."
+  [^String a ^String b]
+  (let [[pre suf]
+        (common-edges a b)
+
+        [af at]
+        (widen-word a pre (- (count a) (long suf)))
+
+        [bf bt]
+        (widen-word b pre (- (count b) (long suf)))]
+
+    (when-not (or (= a b)
+                  (and (zero? (long af)) (= (count a) at))
+                  (and (zero? (long bf)) (= (count b) bt)))
+      [[af at] [bf bt]])))
+
+(defn pair-words
+  "Code `rows` with a `:mark` `[from to]` on each removed line and its paired added
+   line: the n-th removed line of a change block pairs with its n-th added line."
+  [rows]
+  (let [rows
+        (vec rows)
+
+        n
+        (count rows)]
+
+    (loop [i
+           0
+
+           out
+           rows]
+
+      (if (>= i n)
+        out
+        (let [dels
+              (take-while #(= :del (:kind (nth rows %))) (range i n))
+
+              j
+              (+ i (count dels))
+
+              adds
+              (take-while #(= :add (:kind (nth rows %))) (range j n))]
+
+          (if (and (seq dels) (seq adds))
+            (recur (+ j (count adds))
+                   (reduce (fn [out [d a]]
+                             (if-let [[dm am] (word-span (str (:text (nth rows d)))
+                                                         (str (:text (nth rows a))))]
+                               (-> out
+                                   (assoc-in [d :mark] dm)
+                                   (assoc-in [a :mark] am))
+                               out))
+                           out
+                           (map vector dels adds)))
+            (recur (max (inc i) j) out)))))))
+
+(defn diff-shape
+  "Code `rows` of a parsed patch with what the T3 look needs: each file row holds its
+   `:added` and `:removed` counts, each hunk row its `:gap` (the unchanged lines
+   before it), and each code row the `:num-w` of the widest line number."
+  [rows]
+  (let [num-w
+        (max 3 (count (str (reduce max 0 (mapcat #(keep % [:old :new]) rows)))))
+
+        counts
+        (reduce (fn [m {:keys [kind path]}]
+                  (case kind
+                    :add
+                    (update-in m [path :added] (fnil inc 0))
+
+                    :del
+                    (update-in m [path :removed] (fnil inc 0))
+
+                    m))
+                {}
+                rows)]
+
+    (pair-words
+      (:rows
+        (reduce (fn [{:keys [old-end] :as acc} {:keys [kind path old] :as row}]
+                  (case kind
+                    :file
+                    (-> acc
+                        (assoc :old-end 0)
+                        (update :rows conj (merge row {:added 0 :removed 0} (get counts path))))
+
+                    :hunk
+                    (update acc
+                            :rows
+                            conj
+                            (assoc row :gap (max 0 (- (long (:old-start row)) 1 (long old-end)))))
+
+                    (:add :del :ctx)
+                    (cond-> (update acc :rows conj (assoc row :num-w num-w))
+                      old
+                      (assoc :old-end old))
+
+                    (update acc :rows conj row)))
+                {:old-end 0 :rows []}
+                rows)))))
+
+(defn revision-text
+  "The revisions of a diff header: `a → b`, only the revision that is known, or nil."
+  [old-revision new-revision]
+  (cond (and old-revision new-revision) (str old-revision " → " new-revision)
+        new-revision (str new-revision)
+        old-revision (str "from " old-revision)))
+
+(defn file-list
+  "One selectable `:file-item` row for each file of diff `rows`, with its counts,
+   when the diff has more than one file."
+  [rows]
+  (let [files (filterv #(= :file (:kind %)) rows)]
+    (when (< 1 (count files))
+      (mapv #(-> %
+                 (select-keys [:path :text :added :removed :node-id])
+                 (assoc :kind :file-item :is-selectable true))
+            files))))
+
+(declare split-rows wrap-rows diff-rows*)
+
+(def split-min "Columns from which a diff can show side by side." 100)
+
+(defn diff-layout
+  "How a diff shows `width` columns wide: `:split` side by side when the width allows
+   and the human did not ask for `unified?`, else `:unified`."
+  [width unified?]
+  (if (and (not unified?) (>= (long width) (long split-min))) :split :unified))
+
+(defn split-side-w
+  "Text columns of one side of a split diff `width` columns wide."
+  ^long [width]
+  (max 1 (- (quot (+ (long width) 3) 2) 3)))
 
 (defn diff-rows
   "Rows of diff node `node`, `width` columns wide for thread text. A folded file in
    `folded` (a set of paths) shows only its file row. Threads paint under their
    anchor line; a thread whose anchor is not in the patch paints at the end."
+  ([node width folded] (diff-rows node width folded nil))
+  ([node width folded {:keys [unified? wrap?]}]
+   (let [layout (diff-layout width unified?)
+         [head & body] (diff-rows* node width folded)
+         files (map #(assoc % :node-id (:id node))
+                    (file-list (diff-shape (parse-patch (:patch node)))))
+         rows (into [head] (concat files body))]
+     (cond-> rows
+       (= :split layout) (split-rows (split-side-w width))
+       wrap? (wrap-rows width)))))
+
+(defn- thread-summary
+  [thread]
+  (str (count (:messages thread))
+       " message"
+       (when (not= 1 (count (:messages thread))) "s")
+       (when (:draft thread) " · draft")))
+
+(defn- diff-rows*
   [node width folded]
   (let [node-id
         (:id node)
@@ -222,7 +460,7 @@
         (group-by (comp anchor-key :anchor) (app/threads node))
 
         lines
-        (parse-patch (:patch node))
+        (diff-shape (parse-patch (:patch node)))
 
         anchored
         (set (keep #(some-> (:anchor %)
@@ -236,20 +474,14 @@
         (fn [thread]
           (let [base {:node-id node-id :thread-id (:id thread) :anchor (:anchor thread)}]
             (into [(merge base
-                          {:kind :thread-head
-                           :text (str (count (:messages thread))
-                                      " message"
-                                      (when (not= 1 (count (:messages thread))) "s")
-                                      (when (:draft thread) " · draft"))
-                           :is-selectable true})]
+                          {:kind :thread-head :text (thread-summary thread) :is-selectable true})]
                   (thread-rows thread width base))))]
 
     (into [{:kind :diff-head
             :node-id node-id
             :text (str (or (:label node) "Changes")
-                       (when (or (:old-revision node) (:new-revision node))
-                         (str "  " (or (:old-revision node) "?")
-                              " → " (or (:new-revision node) "?"))))}]
+                       (some->> (revision-text (:old-revision node) (:new-revision node))
+                                (str "  ")))}]
           (concat (:rows
                     (reduce (fn [{:keys [file] :as acc} row]
                               (let [file
@@ -282,11 +514,50 @@
 (def ^:private gutter-w 5)
 
 (defn- num-cell
-  [n]
+  [row n]
   (let [s (if n (str n) "")]
-    (str (apply str (repeat (max 0 (- (long gutter-w) (count s))) " ")) s)))
+    (str (apply str (repeat (max 0 (- (long (or (:num-w row) gutter-w)) (count s))) " ")) s)))
 
-(def ^:private thread-rail "    │ ")
+(defn file-counts
+  "The change counts of a file row, as T3 shows them: `-12 +9`, or `+11` for a new file."
+  [{:keys [added removed]}]
+  (when (or added removed)
+    (str/join " "
+              (cond-> []
+                (pos? (long (or removed 0)))
+                (conj (str "-" removed))
+
+                true
+                (conj (str "+" (or added 0)))))))
+
+(defn hunk-text
+  "The separator text of a hunk row: how many unchanged lines it skips."
+  [{:keys [gap]}]
+  (let [gap (long (or gap 0))]
+    (if (pos? gap) (str "⋯ " gap " unmodified line" (when (not= 1 gap) "s")) "⋯")))
+
+(declare row-parts)
+
+(defn- split-side-text
+  "One side of a split row as plain text, `w` columns wide."
+  [row w]
+  (let [{:keys [gutter body]} (if row (row-parts row) {:gutter "" :body ""})]
+    (p/pad-right (p/truncate-cols (str gutter body) w) w)))
+
+(defn- thread-row-parts
+  "The rail and text of a comment row."
+  [row]
+  (case (:kind row)
+    :thread-head
+    {:gutter thread-rail :body (str "Thread · " (:text row))}
+
+    (:message-head :draft-head :thread-empty)
+    {:gutter thread-rail :body (str (:text row))}
+
+    (:message :draft)
+    {:gutter (str thread-rail "  ") :body (str (:text row))}
+
+    {:gutter "" :body (str (:text row))}))
 
 (defn row-parts
   "The fixed `:gutter` and the scrollable `:body` text of one diff or thread row.
@@ -297,27 +568,28 @@
     {:gutter (if (:is-folded row) "▸ " "▾ ") :body (str (:text row))}
 
     :add
-    {:gutter (str (num-cell nil) " " (num-cell (:new row)) " + ") :body (str (:text row))}
+    {:gutter (str (num-cell row nil) " " (num-cell row (:new row)) " + ") :body (str (:text row))}
 
     :del
-    {:gutter (str (num-cell (:old row)) " " (num-cell nil) " - ") :body (str (:text row))}
+    {:gutter (str (num-cell row (:old row)) " " (num-cell row nil) " - ") :body (str (:text row))}
 
     :ctx
-    {:gutter (str (num-cell (:old row)) " " (num-cell (:new row)) "   ") :body (str (:text row))}
+    {:gutter (str (num-cell row (:old row)) " " (num-cell row (:new row)) "   ")
+     :body (str (:text row))}
 
-    :thread-head
-    {:gutter thread-rail :body (str "Thread · " (:text row))}
+    :hunk
+    {:gutter "" :body (hunk-text row)}
 
-    :message-head
-    {:gutter thread-rail :body (str (:text row))}
+    :file-item
+    {:gutter "  " :body (str (:path row))}
 
-    (:message :draft)
-    {:gutter (str thread-rail "  ") :body (str (:text row))}
+    :split
+    {:gutter ""
+     :body (str (split-side-text (:left row) (:half row))
+                " │ "
+                (split-side-text (:right row) (:half row)))}
 
-    (:draft-head :thread-empty)
-    {:gutter thread-rail :body (str (:text row))}
-
-    {:gutter "" :body (str (:text row))}))
+    (thread-row-parts row)))
 
 (defn row-tone
   "The live tone a row paints with: `:ok` added, `:error` removed, `:running` a
@@ -434,3 +706,83 @@
                          (filter
                            (comp app/thread-types :type)
                            (tree-seq #(seq (:children %)) :children {:children (:nodes view)}))))))
+
+;;; ── Split and wrap ─────────────────────────────────────────────────────────
+
+(def ^:private code-kinds #{:add :del :ctx})
+
+(defn- split-row
+  [left right half]
+  (merge (dissoc (or right left) :mark :text :old :new)
+         {:kind :split :left left :right right :half half}))
+
+(defn split-rows
+  "Diff `rows` side by side: an unchanged line on both sides, the n-th removed line
+   of a change block next to its n-th added line. Other rows stay as they are.
+   `half` is the text width of one side."
+  [rows half]
+  (let [rows (vec rows)
+        n (count rows)]
+    (loop [i 0
+           out []]
+      (if (>= i n)
+        out
+        (let [row (nth rows i)]
+          (case (:kind row)
+            :ctx (recur (inc i) (conj out (split-row row row half)))
+            (:del :add)
+            (let [dels (vec (take-while #(= :del (:kind %)) (subvec rows i)))
+                  j (+ i (count dels))
+                  adds (vec (take-while #(= :add (:kind %)) (subvec rows j)))
+                  k (max (count dels) (count adds))]
+              (recur (+ j (count adds))
+                     (into out
+                           (map #(split-row (get dels %) (get adds %) half))
+                           (range k))))
+            (recur (inc i) (conj out row))))))))
+
+(defn- wrap-code
+  "Code `row` cut into rows of at most `w` columns with its gutter. The later rows
+   have no line numbers and no anchor, so the selection skips them."
+  [row w]
+  (let [{:keys [gutter body]}
+        (row-parts row)
+
+        room
+        (max 1 (- (long w) (long (p/display-width gutter))))
+
+        chunks
+        (p/fold-cols body room)
+
+        first-n
+        (count (first chunks))]
+
+    (into [(cond-> (assoc row :text (first chunks))
+             (:mark row)
+             (update :mark
+                     (fn [[from to]]
+                       (when (< (long from) first-n) [from (min (long to) first-n)]))))]
+          (map #(-> row
+                    (dissoc :anchor :is-selectable :mark :old :new)
+                    (assoc :text %
+                           :wrapped true)))
+          (rest chunks))))
+
+(defn wrap-rows
+  "Diff `rows` with long code lines wrapped to `width` columns instead of cut. A
+   split row wraps each side on its own, and the sides stay next to each other."
+  [rows width]
+  (into []
+        (mapcat (fn [row]
+                  (cond (code-kinds (:kind row)) (wrap-code row width)
+                        (= :split (:kind row))
+                        (let [half (:half row)
+                              ls (some-> (:left row) (wrap-code half))
+                              rs (some-> (:right row) (wrap-code half))]
+                          (cons (assoc row :left (first ls) :right (first rs))
+                                (map #(-> (split-row (get (vec ls) %) (get (vec rs) %) half)
+                                          (dissoc :anchor :is-selectable)
+                                          (assoc :wrapped true))
+                                     (range 1 (max (count ls) (count rs))))))
+                        :else [row])))
+        rows))

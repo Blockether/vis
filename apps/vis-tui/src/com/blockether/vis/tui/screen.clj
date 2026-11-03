@@ -18,6 +18,8 @@
     [com.blockether.vis.tui.frame :as frame]
     [com.blockether.vis.tui.header :as header]
     [com.blockether.vis.tui.agent-team :as agent-team]
+    [com.blockether.vis.tui.app-log :as app-log]
+    [com.blockether.vis.tui.picture :as picture]
     [com.blockether.vis.tui.app-model :as app-model]
     [com.blockether.vis.tui.app-surface :as app-surface]
     [com.blockether.vis.tui.app-surfaces :as app-surfaces]
@@ -2839,31 +2841,44 @@
   ;; The render thread paints it; the input thread gives it keys.
   (atom nil))
 
+(declare open-app-picture!)
+
+(defn- pane-log-view [fallback] (or (get-in @app-pane [:geom :view]) fallback))
+
+(defn- open-pane-log!
+  "Open the log of the app in the side pane. The dialog reads the newest copy on each frame."
+  [^TerminalScreen screen]
+  (when-let [view (get-in @app-pane [:geom :view])]
+    (with-dialog-lock #(app-log/show! screen (partial pane-log-view view)))))
+
+(defn- new-app-pane-host!
+  [screen session-id view-id k]
+  (let [c
+        (app-surface/component session-id
+                               view-id
+                               (get-in @state/app-db [:app-views view-id :view])
+                               screen
+                               "back to chat"
+                               {:on-change #(state/dispatch [:bump-render-version])
+                                :modal! with-dialog-lock
+                                :open-picture! (fn [node]
+                                                 (open-app-picture! screen node))})
+
+        init
+        (:init c)]
+
+    (reset! app-pane {:key k :component c :state (if (fn? init) (init) init)})))
+
 (defn- app-pane-host
-  "The pane host of `app` `{:session-id :view-id}`: the same host while the pane shows
-   the same app, else a new one."
-  [^TerminalScreen screen {:keys [session-id view-id]}]
+  "Reuse the host while the side pane shows the same app."
+  [screen {:keys [session-id view-id]}]
   (let [k
         [session-id view-id]
 
         host
         @app-pane]
 
-    (if (= k (:key host))
-      host
-      (let [c
-            (app-surface/component session-id
-                                   view-id
-                                   (get-in @state/app-db [:app-views view-id :view])
-                                   screen
-                                   "back to chat"
-                                   {:on-change #(state/dispatch [:bump-render-version])
-                                    :modal! with-dialog-lock})
-
-            init
-            (:init c)]
-
-        (reset! app-pane {:key k :component c :state (if (fn? init) (init) init)})))))
+    (if (= k (:key host)) host (new-app-pane-host! screen session-id view-id k))))
 
 (defn- paint-app-pane!
   "Paint the app of the side pane into its box, and place the cursor of its editor
@@ -2914,7 +2929,7 @@
            (app-surfaces/panel-content (:live-panel db)
                                        (:app-views db)
                                        (lv/panel-panes (:live-views db))))
-    (when-not (= :app-pane-close (:kind (.lookup interactions/hit-map (int mx) (int my))))
+    (when-not (#{:app-pane-close :app-log} (:kind (.lookup interactions/hit-map (int mx) (int my))))
       (let [{:keys [box geom state]} @app-pane]
         (app-surfaces/pane-click box geom (or (:scroll state) 0) (count (:rows geom)) mx my)))))
 
@@ -3326,7 +3341,12 @@
    their viewer."
   [screen session-id artifact]
   (if (app-model/app-row? artifact)
-    (with-dialog-lock #(app-surface/show! screen session-id artifact))
+    (with-dialog-lock (fn []
+                        (app-surface/show! screen
+                                           session-id
+                                           artifact
+                                           {:open-picture! (fn [node]
+                                                             (open-app-picture! screen node))})))
     (open-produced-artifact! session-id artifact)))
 
 (defn- prompt-activity-search!
@@ -3484,6 +3504,32 @@
                                        (finally (drop-terminal-images!))))]
       (open-image-externally! (:path image)))))
 
+(defn- write-app-picture!
+  [{:keys [picture ext] :as entry}]
+  (let [f (java.io.File/createTempFile "vis-picture-" ext)]
+    (.deleteOnExit f)
+    (java.nio.file.Files/write (.toPath f)
+                               (picture/data-bytes (:data picture))
+                               ^"[Ljava.nio.file.OpenOption;"
+                               (into-array java.nio.file.OpenOption []))
+    (-> entry
+        (dissoc :picture :ext)
+        (assoc :path (.getPath f)))))
+
+(defn- show-app-pictures!
+  [screen images]
+  (if (timg/graphical-terminal?)
+    (open-image-viewer! screen images (dec (count images)))
+    (open-image-externally! (:path (peek images)))))
+
+(defn- open-app-picture!
+  "Open an app picture, with its old version first when present."
+  [screen node]
+  (let [images (mapv write-app-picture! (picture/viewer-entries node))]
+    (if (empty? images)
+      (vis/notify! "The picture has no data here" :level :info)
+      (show-app-pictures! screen images))))
+
 (defn- open-image-hit!
   "A click on a transcript picture: the image viewer when the hit lists its gallery and the
    terminal can show pictures, else the system viewer."
@@ -3531,61 +3577,71 @@
   [messages]
   (session-images (filterv #(= :user (:role %)) messages)))
 
+(defn- paint-inspector-images!
+  [regions]
+  (swap! modal-images assoc :own (mapv #(update % :col frame/screen-column) regions))
+  (paint-modal-images!))
+
+(defn- inspector-picture-options
+  [session-id]
+  (when (timg/graphical-terminal?)
+    {:thumbnail (artifact-inspector/thumbnail-loader session-id)
+     :paint-images! paint-inspector-images!}))
+
+(defn- read-inspector-choice!
+  [screen session-id sent]
+  (let [{:keys [artifacts error]} (artifact-inspector/fetch-session-artifacts! session-id)]
+    (with-dialog-lock #(try (artifact-inspector/show! screen
+                                                      (:attachments @state/app-db)
+                                                      sent
+                                                      artifacts
+                                                      error
+                                                      (inspector-picture-options session-id))
+                            (finally (drop-terminal-images!))))))
+
+(defn- inspect-sent-picture!
+  [screen sent row]
+  (if (timg/graphical-terminal?)
+    (open-image-viewer! screen sent (:index row))
+    (open-image-externally! (get-in row [:image :path]))))
+
+(defn- inspect-app!
+  [screen session-id row]
+  (with-dialog-lock
+    #(app-surface/show! screen session-id row {:open-picture! (partial open-app-picture! screen)})))
+
+(defn- inspect-artifact-row!
+  [session-id row]
+  ((get {:staged #(inspect-attachment! (:attachment row))
+         :sent #(open-image-externally! (get-in row [:image :path]))
+         :produced #(open-produced-artifact! session-id row)}
+        (:source row)
+        (constantly nil))))
+
+(defn- inspector-action!
+  [screen session-id sent {:keys [action row]}]
+  ((get {:remove #(do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) true)
+         :view #(do (inspect-sent-picture! screen sent row) false)
+         :app #(do (inspect-app! screen session-id row) true)
+         :open #(do (inspect-artifact-row! session-id row) false)}
+        action
+        (constantly false))))
+
+(defn- inspector-step!
+  [screen session-id]
+  (let [sent
+        (sent-images (:messages @state/app-db))
+
+        choice
+        (read-inspector-choice! screen session-id sent)]
+
+    (inspector-action! screen session-id sent choice)))
+
 (defn- open-attachment-inspector!
-  "Open the unified staged-file and whole-session artifact surface. Removing a
-   staged row redraws the same modal; produced rows always resolve durable bytes."
-  [^TerminalScreen screen]
+  "Open staged files and session artifacts. Removal and app inspection return here."
+  [screen]
   (let [session-id (get-in @state/app-db [:session :id])]
-    (loop []
-
-      (let [{:keys [artifacts error]} (artifact-inspector/fetch-session-artifacts! session-id)
-            sent (sent-images (:messages @state/app-db))]
-
-        (when-let [{:keys [action row]}
-                   (with-dialog-lock
-                     #(try (artifact-inspector/show!
-                             screen
-                             (:attachments @state/app-db)
-                             sent
-                             artifacts
-                             error
-                             (when (timg/graphical-terminal?)
-                               {:thumbnail (artifact-inspector/thumbnail-loader session-id)
-                                :paint-images! (fn [regions]
-                                                 (swap! modal-images assoc
-                                                   :own
-                                                   (mapv (fn [region]
-                                                           (update region :col frame/screen-column))
-                                                         regions))
-                                                 (paint-modal-images!))}))
-                           ;; The thumbnails leave the graphics layer with the modal.
-                           (finally (drop-terminal-images!))))]
-          (case action
-            :remove
-            (do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) (recur))
-
-            :view
-            (if (timg/graphical-terminal?)
-              (open-image-viewer! screen sent (:index row))
-              (open-image-externally! (get-in row [:image :path])))
-
-            :app
-            (do (with-dialog-lock #(app-surface/show! screen session-id row)) (recur))
-
-            :open
-            (case (:source row)
-              :staged
-              (inspect-attachment! (:attachment row))
-
-              :sent
-              (open-image-externally! (get-in row [:image :path]))
-
-              :produced
-              (open-produced-artifact! session-id row)
-
-              nil)
-
-            nil))))))
+    (while (inspector-step! screen session-id))))
 
 (defn- open-automations!
   "Open the Automations view: run one now, pause or resume it, read its runs, create a
@@ -6286,11 +6342,44 @@
                                                          {:enter-label "open" :height :content}))]
     (some #(when (= (:view-id choice) (str (:id %))) %) views)))
 
+(defn- open-picked-pane!
+  [sid view]
+  (reset! app-pane nil)
+  (state/dispatch [:app-pane-open sid (str (:id view))]))
+
+(defn- open-picked-chat!
+  [^TerminalScreen screen sid view]
+  (let [size
+        (.getTerminalSize screen)
+
+        chat
+        (chat-pane @state/app-db (.getColumns size) (.getRows size))]
+
+    (with-dialog-lock #(app-surface/show-app! screen
+                                              sid
+                                              (str (:id view))
+                                              {:band (app-surfaces/chat-band chat)
+                                               :close-label "back to chat"
+                                               :open-picture! (partial open-app-picture!
+                                                                       screen)}))))
+
+(defn- open-picked-session-app!
+  [screen sid view]
+  (let [target (app-surfaces/picked-target (:live-panel @state/app-db) view)]
+    (if (= :chat target)
+      (open-picked-chat! screen sid view)
+      (do ((get {:close #(state/dispatch [:app-pane-close]) :pane #(open-picked-pane! sid view)}
+                target))
+          (state/dispatch [:bump-render-version :full-frame])))))
+
+(defn- pick-session-app!
+  [screen sid views]
+  (when-let [view (app-picker! screen "Session apps" views)]
+    (open-picked-session-app! screen sid view)))
+
 (defn- open-session-apps!
-  "C-x b o: pick an app of this session and open it where its `session` surface says:
-   in the side pane next to the chat, or over the whole chat area. A pick of the app
-   that the side pane shows closes the pane."
-  [^TerminalScreen screen]
+  "Pick a session app and open it in its declared surface."
+  [screen]
   (let [db
         @state/app-db
 
@@ -6300,40 +6389,33 @@
         views
         (app-surfaces/session-apps (:app-views db))]
 
-    (cond (:dialog-open? db) nil
-          (or (nil? sid) (empty? views))
-          (vis/notify! "This session has no app to open." :level :info)
-          :else (when-let [view (app-picker! screen "Session apps" views)]
-                  (if (= :sidebar (app-surfaces/session-target view))
-                    (do (if (= :close (app-surfaces/pane-pick (:live-panel @state/app-db) view))
-                          (state/dispatch [:app-pane-close])
-                          (do (reset! app-pane nil)
-                              (state/dispatch [:app-pane-open sid (str (:id view))])))
-                        (state/dispatch [:bump-render-version :full-frame]))
-                    (let [size (.getTerminalSize screen)
-                          chat (chat-pane @state/app-db (.getColumns size) (.getRows size))]
+    ((get {:blocked (constantly nil)
+           :empty #(vis/notify! "This session has no app to open." :level :info)
+           :ready #(pick-session-app! screen sid views)}
+          (app-surfaces/picker-state (:dialog-open? db) views true sid)))))
 
-                      (with-dialog-lock #(app-surface/show-app! screen
-                                                                sid
-                                                                (str (:id view))
-                                                                {:band (app-surfaces/chat-band chat)
-                                                                 :close-label
-                                                                 "back to chat"}))))))))
+(defn- pick-global-app!
+  [screen views]
+  (when-let [view (app-picker! screen "Global apps" views)]
+    (with-dialog-lock #(app-surface/show-app! screen
+                                              nil
+                                              (str (:id view))
+                                              {:open-picture! (partial open-app-picture!
+                                                                       screen)}))))
 
 (defn- open-global-apps!
-  "C-x b O: pick a global app and open it over the whole terminal."
-  [^TerminalScreen screen]
+  "Pick a global app and open it over the terminal."
+  [screen]
   (let [db
         @state/app-db
 
         views
         (app-surfaces/global-apps (:global-apps db))]
 
-    (cond (:dialog-open? db) nil
-          (empty? views) (do (read-global-apps!)
-                             (vis/notify! "No global app is open." :level :info))
-          :else (when-let [view (app-picker! screen "Global apps" views)]
-                  (with-dialog-lock #(app-surface/show-app! screen nil (str (:id view))))))))
+    ((get {:blocked (constantly nil)
+           :empty #(do (read-global-apps!) (vis/notify! "No global app is open." :level :info))
+           :ready #(pick-global-app! screen views)}
+          (app-surfaces/picker-state (:dialog-open? db) views false nil)))))
 
 (defn- toggle-agent-dock!
   "Show or hide the agent table under the dock summary line (C-x b a or a click on the line)."
@@ -9126,6 +9208,9 @@
             (do (state/dispatch [:app-pane-close])
                 (state/dispatch [:bump-render-version :full-frame]))
 
+            :app-log
+            (open-pane-log! screen)
+
             :live-edit
             (edit-live-input! screen db hit)
 
@@ -9316,6 +9401,9 @@
           :app-pane-close
           (do (state/dispatch [:app-pane-close])
               (state/dispatch [:bump-render-version :full-frame]))
+
+          :app-log
+          (open-pane-log! screen)
 
           :live-edit
           (edit-live-input! screen db hit)
