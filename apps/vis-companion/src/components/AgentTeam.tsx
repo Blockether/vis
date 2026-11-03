@@ -611,9 +611,10 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
 
 /**
  * The steps of one agent with their times, read from the timeline route, and the way into its
- * session. The sheet takes the whole session pane. The outcome comes first, then the task, then
- * the steps. Open and Stop stand at the right end of the status line on every width, so a long
- * timeline never hides them.
+ * session. The sheet takes the whole session pane, but its column stops at a reading width. The
+ * outcome comes first, then the task, then the steps, with a rule between the parts. Open and
+ * Stop stand at the right end of the status line on every width, so a long timeline never hides
+ * them.
  */
 export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
   agent: Subagent;
@@ -652,7 +653,7 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
         title={label}
         onClose={onClose}
       >
-        <div className="w-full space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
+        <div className="mx-auto w-full max-w-3xl divide-y divide-dialog-edge px-3 py-4 font-mono text-ui text-white *:py-5 *:first:pt-0 *:last:pb-0 sm:px-4 sm:text-body" data-agent-timeline>
           <div className="space-y-1">
             <div className="flex items-center gap-x-4">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3">
