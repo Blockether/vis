@@ -4,6 +4,8 @@ import {
   anchorKey,
   changedWords,
   diffModel,
+  filterDiffFiles,
+  findDiffMatches,
   fileChange,
   fileTree,
   fileStat,
@@ -164,4 +166,69 @@ describe('the diff model', () => {
       ['file', 0, 'README.md'],
     ]);
   });
+});
+
+// Report: the real T3 panel classifies header-only files and filters review noise.
+describe('review display filters', () => {
+  it('classifies new and deleted binary files without text headers', () => {
+    const files = parseUnifiedDiff(
+      'diff --git a/a.png b/a.png\nnew file mode 100644\nBinary files /dev/null and b/a.png differ\ndiff --git a/b.bin b/b.bin\ndeleted file mode 100644\nBinary files a/b.bin and /dev/null differ',
+    );
+    expect(files.map(fileChange)).toEqual(['added', 'deleted']);
+  });
+  it('hides only test paths and keeps non-test code', () => {
+    const files = parseUnifiedDiff(
+      ['src/a.test.ts', 'test/a.py', 'src/a.ts', 'src/contest.ts']
+        .map((p) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-old\n+new`)
+        .join('\n'),
+    );
+    expect(filterDiffFiles(files, true, false).map((f) => f.path)).toEqual(['src/a.ts', 'src/contest.ts']);
+  });
+  it('keeps anchors when whitespace-only changes become context', () => {
+    const files = parseUnifiedDiff('--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@\n-x = 1\n+x=1\n-old\n+new');
+    const filtered = filterDiffFiles(files, false, true);
+    expect(filtered[0].hunks[0].lines.map((l) => [l.kind, l.text, l.anchor.line])).toEqual([
+      ['context', 'x=1', 1],
+      ['remove', 'old', 2],
+      ['add', 'new', 2],
+    ]);
+    expect(fileStat(files[0])).toEqual({ additions: 2, deletions: 2 });
+  });
+  it('removes a file whose only changes are whitespace', () => {
+    expect(
+      filterDiffFiles(parseUnifiedDiff('--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x = 1\n+x=1'), false, true),
+    ).toEqual([]);
+  });
+});
+
+// Report: the T3 file tree can collapse a folder without hiding sibling folders.
+it('does not list descendants of a collapsed folder', () => {
+  const files = parseUnifiedDiff(
+    ['src/a.ts', 'test/a.ts']
+      .map((p) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-a\n+b`)
+      .join('\n'),
+  );
+  expect(fileTree(files, new Set(['src/'])).map((row) => row.key)).toEqual(['src/', 'test/', 'test/a.ts']);
+});
+
+// Report: T3 find-in-diff counts occurrences and supports case, word, and regex modes.
+it('finds occurrences and applies each search mode without throwing for invalid regex', () => {
+  const files = parseUnifiedDiff('--- a/a\n+++ b/a\n@@ -1 +1 @@\n-Name names NAME\n+name name');
+  expect(findDiffMatches(files, 'name').map((m) => [m.line.anchor.side, m.start, m.end])).toEqual([
+    ['old', 0, 4],
+    ['old', 5, 9],
+    ['old', 11, 15],
+    ['new', 0, 4],
+    ['new', 5, 9],
+  ]);
+  expect(findDiffMatches(files, 'name', { caseSensitive: true }).map((m) => m.start)).toEqual([5, 0, 5]);
+  expect(findDiffMatches(files, 'name', { wholeWord: true }).map((m) => m.start)).toEqual([0, 11, 0, 5]);
+  expect(findDiffMatches(files, 'n[a-z]+', { regex: true, caseSensitive: true }).map((m) => m.end)).toEqual([
+    10, 4, 9,
+  ]);
+  expect(findDiffMatches(files, '[', { regex: true })).toEqual([]);
+  expect(findDiffMatches(files, '^', { regex: true }).map((m) => [m.start, m.end])).toEqual([
+    [0, 0],
+    [0, 0],
+  ]);
 });

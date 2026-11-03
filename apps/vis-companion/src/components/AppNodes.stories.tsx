@@ -1,9 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { useState } from 'react';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { LiveViewPanel } from './LiveView';
-import type { AppNodeActions } from './AppNodes';
+import { T3_REVIEW_PATCH } from '../dev/t3-review-patch';
+import { sameAnchor } from '../lib/app-diff';
+import { DiffNodeView, type AppNodeActions } from './AppNodes';
+import type { LiveDiffNode } from '../lib/live-view';
 
 /**
  * An app attachment for code review (issue #421): a diff with a thread on a line,
@@ -131,13 +135,14 @@ export const Default: Story = {
     const line = canvas.getByRole('button', { name: /old line 11$/ });
     line.focus();
     await userEvent.keyboard('{Enter}');
+    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
     await userEvent.type(canvas.getByRole('textbox', { name: /^Comment on/ }), 'Why remove it?');
-    await userEvent.click(canvas.getByRole('button', { name: 'Save' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Comment' }));
     await expect(args.app?.draft).toHaveBeenCalledWith('review', {
       anchor: { path: 'src/app/view/core.clj', side: 'old', line: 11 },
       body: 'Why remove it?',
     });
-    await expect(await canvas.findByText('Saved')).toBeInTheDocument();
+    await expect(canvas.queryByRole('textbox')).not.toBeInTheDocument();
   },
 };
 
@@ -263,9 +268,75 @@ export const LineTargets: Story = {
       const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
       await expect(hit?.closest('button')).toBe(button);
       await userEvent.click(hit!);
+      await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
       const editor = canvas.getByRole('textbox', { name: name.replace(' old line ', ' line ') });
       await expect(editor).toBeVisible();
       await userEvent.click(canvas.getByRole('button', { name: 'Cancel' }));
     }
   },
+};
+
+/** The real T3 comparison input in its 540px panel width. */
+export const T3Fixture: Story = {
+  parameters: { __id: 'session-artifacts-code-review--t3-fixture' },
+  decorators: width('540px'),
+  render: () => <T3FixturePanel />,
+  args: {
+    view: { ...review(), nodes: [{ id: 'review', type: 'diff', patch: T3_REVIEW_PATCH, threads: [] }] },
+    app: { ...app, submissions: [] },
+  },
+};
+
+/** An interactive review fixture: save a draft, send it, and keep its anchored card. */
+function T3FixturePanel() {
+  const [node, setNode] = useState<LiveDiffNode>({
+    id: 'review',
+    type: 'diff',
+    patch: T3_REVIEW_PATCH,
+    threads: [],
+  });
+  const actions: AppNodeActions = {
+    isReadOnly: false,
+    submissions: [],
+    draft: async (_nodeId, target) => {
+      const id = crypto.randomUUID();
+      setNode((held) => {
+        const existing = held.threads.find((t) =>
+          target.threadId ? t.id === target.threadId : sameAnchor(t.anchor, target.anchor),
+        );
+        const threads = existing
+          ? held.threads.map((t) => (t.id === existing.id ? { ...t, draft: target.body } : t))
+          : [...held.threads, { id, anchor: target.anchor, messages: [], draft: target.body }];
+        return { ...held, threads };
+      });
+      return { status: 'saved', seq: 4 };
+    },
+    send: async () => {
+      const id = crypto.randomUUID();
+      setNode((held) => ({
+        ...held,
+        threads: held.threads.map((t) =>
+          t.draft
+            ? {
+                ...t,
+                draft: '',
+                messages: [
+                  ...t.messages,
+                  { id: `${id}-${t.id}`, body: t.draft, author: { kind: 'human' }, created_at: Date.now() },
+                ],
+              }
+            : t,
+        ),
+      }));
+      return { status: 'saved', seq: 5 };
+    },
+  };
+  return <DiffNodeView node={node} actions={actions} />;
+}
+
+/** The T3 empty selection has no file headers or line controls. */
+export const T3Empty: Story = {
+  parameters: { __id: 'session-artifacts-code-review--t3-empty' },
+  decorators: width('540px'),
+  render: () => <DiffNodeView node={{ id: 'review', type: 'diff', patch: '', threads: [] }} />,
 };

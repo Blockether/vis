@@ -211,14 +211,8 @@
   --color-diff-del: light-dark(var(--err), #ff2e3f);
   --color-diff-add-ink: light-dark(color-mix(in oklab, var(--ok) 68%, var(--fg)), #07c480);
   --color-diff-del-ink: light-dark(color-mix(in oklab, var(--err) 68%, var(--fg)), #ff2e3f);
-  --color-diff-add-row: light-dark(
-    color-mix(in srgb, var(--ok) 10%, var(--surface)),
-    #02110b
-  );
-  --color-diff-del-row: light-dark(
-    color-mix(in srgb, var(--err) 10%, var(--surface)),
-    #170705
-  );
+  --color-diff-add-row: light-dark(color-mix(in srgb, var(--ok) 10%, var(--surface)), #02110b);
+  --color-diff-del-row: light-dark(color-mix(in srgb, var(--err) 10%, var(--surface)), #170705);
   --color-diff-add-word: light-dark(
     color-mix(in srgb, var(--ok) 15%, transparent),
     color-mix(in srgb, #07c480 20%, transparent)
@@ -334,7 +328,10 @@
    these tokens remain CSS variables rather than inline Tailwind substitutions. */
 @theme {
   --color-project-header: var(--project-header, color-mix(in oklab, var(--fg) 14%, var(--surface)));
-  --color-project-header-active: var(--project-header-active, color-mix(in oklab, var(--warning) 25%, var(--surface)));
+  --color-project-header-active: var(
+    --project-header-active,
+    color-mix(in oklab, var(--warning) 25%, var(--surface))
+  );
   --color-project-header-border: var(--project-header-border, var(--fg));
 }
 
@@ -666,7 +663,7 @@ ol.markdown-list > li::before {
 
 /* Review geometry follows T3 Code. Each file owns its horizontal scroll. */
 .app-diff {
-  --diff-paper: var(--color-diff-paper);
+  --diff-paper: light-dark(oklch(0.992 0 0), #000);
 }
 .diff-file {
   container-type: inline-size;
@@ -694,9 +691,9 @@ ol.markdown-list > li::before {
   position: sticky;
   left: 0;
   z-index: 1;
-  min-width: 41px;
-  padding-left: 16px;
-  padding-right: 8px;
+  min-width: 0;
+  padding-left: 15.65px;
+  padding-right: 7.83px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   user-select: none;
@@ -716,29 +713,25 @@ ol.markdown-list > li::before {
   align-items: flex-start;
   justify-content: flex-end;
   width: 100%;
-  padding: 0 8px 0 16px;
+  padding: 0 7.83px 0 15.65px;
   line-height: 20px;
   text-align: right;
 }
-.diff-gutter[data-kind="add"],
-.diff-code[data-kind="add"] {
+.diff-gutter[data-kind='add'],
+.diff-code[data-kind='add'] {
   background: var(--color-diff-add-row);
 }
-.diff-gutter[data-kind="remove"],
-.diff-code[data-kind="remove"] {
+.diff-gutter[data-kind='remove'],
+.diff-code[data-kind='remove'] {
   background: var(--color-diff-del-row);
 }
-.diff-gutter[data-kind="add"] {
+.diff-gutter[data-kind='add'] {
   color: var(--color-diff-add-ink);
   box-shadow: inset 4px 0 var(--color-diff-add);
 }
-.diff-gutter[data-kind="remove"] {
+.diff-gutter[data-kind='remove'] {
   color: var(--color-diff-del-ink);
-  background-image: repeating-linear-gradient(
-    180deg,
-    var(--color-diff-del) 0 1px,
-    transparent 1px 2px
-  );
+  background-image: repeating-linear-gradient(180deg, var(--color-diff-del) 0 1px, transparent 1px 2px);
   background-size: 4px 100%;
   background-repeat: no-repeat;
 }
@@ -762,19 +755,23 @@ ol.markdown-list > li::before {
     margin-bottom: calc((var(--text-ui--line-height) - 1.75rem) / 2);
   }
 }
-[data-kind='add'] .diff-word { --diff-word-tint: var(--color-diff-add-word); }
-[data-kind='remove'] .diff-word { --diff-word-tint: var(--color-diff-del-word); }
+[data-kind='add'] .diff-word {
+  --diff-word-tint: var(--color-diff-add-word);
+}
+[data-kind='remove'] .diff-word {
+  --diff-word-tint: var(--color-diff-del-word);
+}
 .diff-empty {
   background: var(--color-diff-filler);
 }
-.app-diff[data-wrap="true"] .diff-table {
+.app-diff[data-wrap='true'] .diff-table {
   table-layout: fixed;
 }
-.app-diff[data-wrap="true"] .diff-code {
+.app-diff[data-wrap='true'] .diff-code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.app-diff[data-split="true"] .diff-gutter:nth-child(3) {
+.app-diff[data-split='true'] .diff-gutter:nth-child(3) {
   left: 50%;
   right: calc(50% - var(--diff-number-width, 41px));
   border-left: 1px solid var(--dialog-border);
@@ -798,9 +795,24 @@ ol.markdown-list > li::before {
   font-size: 12px;
   line-height: 16px;
 }
-.diff-toolbar-summary { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; color: var(--dialog-hint); }
-.diff-revisions { display: none; }
-.diff-layout { display: flex; flex-shrink: 0; gap: 2px; border-radius: 8px; background: var(--hover); }
+.diff-toolbar-summary {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  color: var(--dialog-hint);
+}
+.diff-revisions {
+  display: none;
+}
+.diff-layout {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  border-radius: 8px;
+  background: var(--hover);
+}
 .diff-toolbar button {
   display: grid;
   flex-shrink: 0;
@@ -810,38 +822,59 @@ ol.markdown-list > li::before {
   border-radius: 8px;
   color: var(--dialog-hint);
 }
-.diff-toolbar button[aria-pressed="true"] { background: var(--hover); color: var(--fg); }
+.diff-toolbar button[aria-pressed='true'] {
+  background: var(--hover);
+  color: var(--fg);
+}
 @media (width >= 40rem) and (pointer: fine) {
-  .diff-toolbar { height: 40px; min-height: 40px; }
-  .diff-toolbar button { width: 28px; height: 28px; }
-  .diff-layout { padding: 2px; }
-  .diff-layout button { width: 32px; height: 24px; border-radius: 6px; }
-  .diff-revisions { display: inline; }
+  .diff-toolbar {
+    height: 40px;
+    min-height: 40px;
+  }
+  .diff-toolbar button {
+    width: 28px;
+    height: 28px;
+  }
+  .diff-layout {
+    padding: 2px;
+  }
+  .diff-layout button {
+    width: 32px;
+    height: 24px;
+    border-radius: 6px;
+  }
+  .diff-revisions {
+    display: inline;
+  }
 }
 .diff-file-tree {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--dialog-border);
-  padding: 4px 0;
+  border-left: 1px solid var(--dialog-border);
+  padding: 0;
 }
 .diff-with-tree {
   display: grid;
-  gap: 12px;
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 40%);
 }
-@media (min-width: 768px) {
-  .diff-with-tree {
-    grid-template-columns: minmax(0, 1fr) 256px;
-    align-items: start;
-  }
-  .diff-with-tree > .diff-file-tree { grid-column: 2; grid-row: 1; }
-  .diff-with-tree > .diff-files { grid-column: 1; grid-row: 1; }
+.diff-with-tree {
+  align-items: start;
+}
+.diff-with-tree > .diff-file-tree {
+  grid-column: 2;
+  grid-row: 1;
+}
+.diff-with-tree > .diff-files {
+  grid-column: 1;
+  grid-row: 1;
 }
 @media (pointer: coarse), (max-width: 767px) {
   .diff-file > header {
     min-height: 44px;
   }
   .diff-fold::after {
-    content: "";
+    content: '';
     position: absolute;
     inset: 0;
     min-height: 44px;
@@ -856,7 +889,7 @@ ol.markdown-list > li::before {
 .diff-file-tree,
 .diff-threads,
 .diff-hunk {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .diff-file > header {
   background: var(--diff-paper);
@@ -866,11 +899,325 @@ ol.markdown-list > li::before {
 .app-focus-ring:focus-visible,
 .app-focus-peer:focus-visible ~ .app-focus-ring {
   outline: none;
-  box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px #000;
+  box-shadow:
+    inset 0 0 0 2px #fff,
+    inset 0 0 0 4px #000;
 }
 
-.diff-threads p, .diff-threads textarea {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+.diff-threads p,
+.diff-threads textarea {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 20px;
+}
+
+/* Real T3 review geometry; touch controls retain the app's 44px floor. */
+.diff-table td {
+  height: 20px;
+}
+.diff-table tr[data-selected-line] > td {
+  background-color: light-dark(lab(96.6 -1.9 -3.8), #102a3e);
+}
+.diff-table tr[data-selected-line] > .diff-gutter {
+  color: light-dark(lab(40.6 -5.4 -37.9), #68baff);
+  z-index: 4;
+}
+.diff-add-comment {
+  position: absolute;
+  right: -10px;
+  top: 0;
+  z-index: 5;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: rgb(0, 159, 255);
+  color: white;
+}
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 12px 0 8px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.diff-file-header .diff-fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+  height: 100%;
+}
+.diff-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+}
+.diff-old-path {
+  opacity: 0.7;
+}
+.diff-change-modified,
+.diff-change-renamed {
+  color: light-dark(color(srgb 0.26 0.36 0.69), #8d9ed8);
+}
+.diff-change-added {
+  color: light-dark(oklch(0.508 0.118 165.6), #07c480);
+}
+.diff-change-deleted {
+  color: light-dark(oklch(0.505 0.213 27.5), #ff2e3f);
+}
+.diff-copy {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--dialog-hint);
+}
+.diff-stat {
+  font-size: 11px;
+  line-height: 11px;
+}
+.diff-context {
+  display: flex;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--diff-paper);
+}
+.diff-context-marker {
+  width: 34px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 6px 0 0 6px;
+  background: var(--color-diff-hunk);
+  color: var(--dialog-hint);
+}
+.diff-hunk {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  height: 24px;
+  padding: 0 6.93px;
+  border-radius: 0 6px 6px 0;
+  font-size: 11px;
+  line-height: 20px;
+  color: light-dark(color(srgb 0.54 0.54 0.54), color(srgb 0.48 0.48 0.48));
+  background: var(--color-diff-hunk);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.diff-tree-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.diff-tree-header span {
+  color: var(--dialog-hint);
+  font-weight: 400;
+}
+.diff-tree-folder,
+.diff-tree-file {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 0 8px;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 24px;
+  text-align: left;
+}
+.diff-tree-folder {
+  color: var(--dialog-hint);
+}
+.diff-tree-status {
+  font-size: 12px;
+  font-weight: 600;
+}
+.diff-tree-modified {
+  color: rgb(28, 161, 199);
+}
+.diff-tree-added {
+  color: rgb(22, 169, 148);
+}
+.diff-tree-deleted {
+  color: var(--color-diff-del-ink);
+}
+.diff-tree-renamed {
+  color: var(--warn);
+}
+.diff-tree-file:hover {
+  background: var(--hover);
+}
+.diff-no-changes {
+  display: grid;
+  min-height: 160px;
+  place-items: center;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dialog-hint);
+  opacity: 0.7;
+}
+.diff-draft textarea {
+  font-size: 14px;
+  line-height: 20px;
+  border-radius: 8px;
+}
+.diff-submit-hint {
+  flex: 1;
+  color: var(--dialog-hint);
+  font-size: 11px;
+  line-height: 16px;
+}
+@media (pointer: fine) {
+  .diff-file-header {
+    height: 32px;
+  }
+  .diff-copy {
+    width: 20px;
+    height: 20px;
+    opacity: 0;
+  }
+  .diff-file-header:hover .diff-copy,
+  .diff-file-header:focus-within .diff-copy {
+    opacity: 1;
+  }
+  .diff-tree-folder,
+  .diff-tree-file {
+    height: 24px;
+  }
+  .diff-draft-actions button {
+    min-height: 24px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+}
+
+.app-diff {
+  --color-diff-add: light-dark(rgb(24, 164, 108), #07c480);
+  --color-diff-del: light-dark(rgb(220, 38, 38), #ff2e3f);
+  --color-diff-add-ink: light-dark(rgb(24, 164, 108), #07c480);
+  --color-diff-del-ink: light-dark(rgb(220, 38, 38), #ff2e3f);
+  --color-diff-add-row: light-dark(lab(96.8 -4.98 0.57), #02110b);
+  --color-diff-del-row: light-dark(lab(95.9 4.83 1.79), #170705);
+  --color-diff-hunk: light-dark(color(srgb 0.962 0.962 0.962), color(srgb 0.029 0.029 0.029));
+}
+.diff-code {
+  color: light-dark(rgb(10, 10, 10), rgb(250, 250, 250));
+}
+.diff-gutter {
+  color: light-dark(lab(36.5 0 0), lab(63.9 0 0));
+}
+.diff-threads {
+  padding: 8px 12px;
+}
+.diff-threads p {
+  font-size: 14px;
+  line-height: 20px;
+}
+.diff-toolbar {
+  overflow-x: auto;
+}
+
+@media (max-width: 639px) {
+  .diff-toolbar {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .diff-toolbar-summary {
+    flex: 1 0 100%;
+  }
+}
+
+.app-diff {
+  --color-diff-add-word: light-dark(rgba(24, 164, 108, 0.15), rgba(7, 196, 128, 0.2));
+  --color-diff-del-word: light-dark(rgba(213, 44, 54, 0.15), rgba(255, 46, 63, 0.2));
+}
+.diff-code {
+  padding-left: 7.83px;
+  padding-right: 7.83px;
+}
+
+.diff-search {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--dialog-border);
+  font-size: 12px;
+  line-height: 16px;
+}
+.diff-search input {
+  flex: 1;
+  min-width: 80px;
+  padding: 4px;
+  background: var(--input);
+  border: 1px solid var(--dialog-border);
+}
+.diff-search button {
+  min-height: 44px;
+  padding: 0 8px;
+}
+.diff-table tr[data-search-current] > td {
+  background-color: light-dark(#fff0aa, #483d16);
+}
+@media (pointer: fine) {
+  .diff-search button {
+    min-height: 28px;
+  }
+}
+
+.diff-file-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.diff-file-path > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-tree-folder::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.diff-code mark[data-search-hit] {
+  background: light-dark(#e3b52e, #e3b52e);
+  color: #17120a;
+  border-radius: 2px;
+}
+.diff-search button[aria-pressed='true'] {
+  background: var(--hover);
+  box-shadow: inset 0 -2px currentColor;
+}
+
+.diff-toolbar .diff-stat {
+  flex-direction: row-reverse;
+  line-height: 16px;
 }

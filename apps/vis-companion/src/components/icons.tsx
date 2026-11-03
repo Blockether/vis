@@ -6,6 +6,15 @@
  */
 import {
   AlignLeft,
+  FileDiff,
+  File,
+  FileCode2,
+  FileText,
+  FilePlus2,
+  FileMinus2,
+  FileSymlink,
+  Pilcrow,
+  TestTube2,
   ListTree,
   Rows2,
   WrapText,
@@ -386,21 +395,12 @@ export function ForkIcon({ className }: { className?: string }) {
 /** Work in flight inside a graphical control: one open circle that turns. */
 export function LoadingIcon({ className }: { className?: string }) {
   return (
-    <Mark
-      icon={LoaderCircle}
-      className={classes('animate-spin motion-reduce:animate-none', className)}
-    />
+    <Mark icon={LoaderCircle} className={classes('animate-spin motion-reduce:animate-none', className)} />
   );
 }
 
 /** Re-read a live collection. The same arrows turn while that read is in flight. */
-export function RefreshIcon({
-  isBusy = false,
-  className,
-}: {
-  isBusy?: boolean;
-  className?: string;
-}) {
+export function RefreshIcon({ isBusy = false, className }: { isBusy?: boolean; className?: string }) {
   return (
     <Mark
       icon={RefreshCw}
@@ -595,4 +595,40 @@ export function CircleSlashIcon({ className }: { className?: string }) {
 /** A warning that belongs in the status column, where the triangle would not fit the ring. */
 export function CircleAlertIcon({ className }: { className?: string }) {
   return <Mark icon={CircleAlert} className={className} />;
+}
+
+/** The change recorded for one review file. */
+export function DiffChangeIcon({
+  kind,
+  className,
+}: {
+  kind: 'added' | 'deleted' | 'modified' | 'renamed';
+  className?: string;
+}) {
+  const icons = { added: FilePlus2, deleted: FileMinus2, modified: FileDiff, renamed: FileSymlink };
+  return <Mark icon={icons[kind]} className={className} />;
+}
+/** Whitespace changes in a review. */
+export function WhitespaceIcon({ className }: { className?: string }) {
+  return <Mark icon={Pilcrow} className={className} />;
+}
+/** Test files in a review. */
+export function TestFilesIcon({ className }: { className?: string }) {
+  return <Mark icon={TestTube2} className={className} />;
+}
+
+/** A review tree shows the file type separately from its change status. */
+export function ReviewFileIcon({ path, className }: { path: string; className?: string }) {
+  const icon = /\.(png|jpe?g|gif|webp|svg)$/i.test(path)
+    ? Image
+    : /\.(md|txt)$/i.test(path)
+      ? FileText
+      : /\.(bin|dat)$/i.test(path)
+        ? File
+        : FileCode2;
+  return <Mark icon={icon} className={className} />;
+}
+/** The previous path points to the new path after a rename. */
+export function RenameArrowIcon({ className }: { className?: string }) {
+  return <Mark icon={ArrowRight} className={className} />;
 }

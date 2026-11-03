@@ -4,7 +4,7 @@
  * `draft` and `submit` actions. Without an app the threads are read only.
  */
 
-import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import {
   APP_ACTION_WORDS,
@@ -16,6 +16,8 @@ import {
 import {
   anchorKey,
   fileChange,
+  filterDiffFiles,
+  type DiffSearchMatch,
   fileStat,
   hiddenLinesBefore,
   diffModel,
@@ -38,6 +40,12 @@ import {
 import type { ViewAnchor } from '../lib/view';
 import {
   ChevronIcon,
+  DiffChangeIcon,
+  ReviewFileIcon,
+  RenameArrowIcon,
+  WhitespaceIcon,
+  TestFilesIcon,
+  PlusIcon,
   CollapseAllIcon,
   ExpandAllIcon,
   FileTreeIcon,
@@ -45,6 +53,7 @@ import {
   UnifiedDiffIcon,
   WrapIcon,
 } from './icons';
+import { DiffSearch, useDiffSearch } from './AppDiffSearch';
 import { Button, CopyChip } from './ui';
 
 /** What an app gives its review nodes. Absent, the nodes are read only. */
@@ -126,30 +135,41 @@ function Messages({ messages }: { messages: readonly LiveMessage[] }) {
 function DraftEditor({
   label,
   saved,
+  submitLabel = 'Save',
   onSave,
   onClose,
 }: {
   label: string;
   saved: string;
+  submitLabel?: string;
   onSave: (body: string) => Promise<AppActionResult>;
   onClose: () => void;
 }) {
   const [text, setText] = useState(saved);
   const [status, setStatus] = useState<AppActionStatus>('idle');
   const isBusy = status === 'saving';
+  const saving = useRef(false);
   const save = async () => {
+    if (saving.current) return;
     if (text.trim() === '' && saved === '') {
       onClose();
       return;
     }
+    saving.current = true;
     setStatus('saving');
-    const result = await onSave(text.trim() === '' ? '' : text);
-    setStatus(result.status);
-    if (result.status === 'saved' && text.trim() === '') onClose();
+    try {
+      const result = await onSave(text.trim() === '' ? '' : text);
+      setStatus(result.status);
+      if (result.status === 'saved' && (text.trim() === '' || submitLabel === 'Comment')) onClose();
+    } catch {
+      setStatus('failed');
+    } finally {
+      saving.current = false;
+    }
   };
   return (
     <form
-      className="space-y-2"
+      className="diff-draft space-y-2"
       onSubmit={(event) => {
         event.preventDefault();
         void save();
@@ -165,6 +185,7 @@ function DraftEditor({
       <textarea
         autoFocus
         rows={3}
+        placeholder="Add a comment…"
         className={TEXTAREA}
         value={text}
         maxLength={LIVE_MESSAGE_CHARS}
@@ -175,18 +196,28 @@ function DraftEditor({
           if (status !== 'saving') setStatus('idle');
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          if (
+            event.key === 'Enter' &&
+            (event.metaKey || event.ctrlKey) &&
+            text.trim() !== '' &&
+            !saving.current
+          ) {
             event.preventDefault();
             void save();
           }
         }}
       />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" variant="primary" disabled={isBusy}>
-          {isRetryable(status) ? 'Retry' : 'Save'}
-        </Button>
+      <div className="diff-draft-actions flex flex-wrap items-center gap-2">
+        <span className="diff-submit-hint">⌘/Ctrl Enter to send</span>
         <Button type="button" variant="secondary" onClick={onClose}>
           Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={isBusy || (submitLabel === 'Comment' && text.trim() === '')}
+        >
+          {isRetryable(status) ? 'Retry' : submitLabel}
         </Button>
         <ActionStatus status={status} />
       </div>
@@ -340,6 +371,11 @@ export function ThreadNodeView({ node, actions }: { node: LiveThreadNode; action
   );
 }
 
+/** T3 reserves three character slots, with a smaller gutter for single digits. */
+function numberWidth(digits: number): number {
+  return digits === 1 ? 33.28 : Math.max(41.11, (digits + 2.25) * 7.83);
+}
+
 /** The number stays visible while the file scrolls sideways. */
 function Gutter({
   line,
@@ -348,6 +384,8 @@ function Gutter({
   path,
   onActivate,
   side = 'new',
+  selected,
+  onComment,
 }: {
   line: AppDiffLine;
   digits: number;
@@ -355,9 +393,11 @@ function Gutter({
   path: string;
   onActivate: (line: AppDiffLine) => void;
   side?: 'old' | 'new';
+  selected: boolean;
+  onComment: (line: AppDiffLine) => void;
 }) {
   return (
-    <td data-kind={line.kind} className="diff-gutter" style={{ width: Math.max(41, digits * 8 + 25) }}>
+    <td data-kind={line.kind} className="diff-gutter" style={{ width: numberWidth(digits) }}>
       {canComment ? (
         <button
           type="button"
@@ -372,28 +412,61 @@ function Gutter({
       ) : (
         line.anchor.line
       )}
+      {selected && canComment && (
+        <button
+          type="button"
+          className="diff-add-comment app-focus-ring"
+          aria-label="Add comment"
+          onClick={() => onComment(line)}
+        >
+          <PlusIcon className="size-4" />
+        </button>
+      )}
     </td>
   );
 }
 
+/** The current search occurrence does not erase a changed word's tint. */
+function SearchText({ text, offset, match }: { text: string; offset: number; match?: DiffSearchMatch }) {
+  if (!match || match.end <= offset || match.start >= offset + text.length) return text;
+  const start = Math.max(0, match.start - offset);
+  const end = Math.min(text.length, match.end - offset);
+  return (
+    <>
+      {text.slice(0, start)}
+      <mark data-search-hit>{text.slice(start, end)}</mark>
+      {text.slice(end)}
+    </>
+  );
+}
+
 /** Changed words retain the same line box as the surrounding code. */
-function LineCode({ line, words }: { line: AppDiffLine; words?: readonly DiffSpan[] }) {
+function LineCode({
+  line,
+  words,
+  match,
+}: {
+  line: AppDiffLine;
+  words?: readonly DiffSpan[];
+  match?: DiffSearchMatch;
+}) {
+  const parts = words ?? [{ text: line.text, isChanged: false }];
   return (
     <td data-kind={line.kind} className="diff-code">
       {line.kind !== 'context' && (
         <span className="sr-only">{line.kind === 'add' ? 'Added: ' : 'Removed: '}</span>
       )}
-      {words
-        ? words.map((part, at) =>
-            part.isChanged ? (
-              <span key={at} className="diff-word">
-                {part.text}
-              </span>
-            ) : (
-              part.text
-            ),
-          )
-        : line.text}
+      {parts.map((part, at) => {
+        const start = parts.slice(0, at).reduce((offset, previous) => offset + previous.text.length, 0);
+        const text = <SearchText text={part.text} offset={start} match={match} />;
+        return part.isChanged ? (
+          <span key={at} className="diff-word">
+            {text}
+          </span>
+        ) : (
+          <Fragment key={at}>{text}</Fragment>
+        );
+      })}
     </td>
   );
 }
@@ -408,6 +481,10 @@ interface HunkProps {
   nodeId: string;
   byAnchor: ReadonlyMap<string, LiveThread[]>;
   opened: ViewAnchor | null;
+  selected: ViewAnchor | null;
+  searchAnchor: string | undefined;
+  searchMatch: DiffSearchMatch | undefined;
+  onComment: (line: AppDiffLine) => void;
   actions?: AppNodeActions;
   onActivate: (line: AppDiffLine) => void;
   onClose: () => void;
@@ -435,6 +512,7 @@ function LineThreads({ lines, model }: { lines: AppDiffLine[]; model: HunkProps 
             <DraftEditor
               label={`Comment on ${model.file.path} line ${selected.anchor.line}`}
               saved=""
+              submitLabel="Comment"
               onSave={(body) =>
                 model.actions!.draft(model.nodeId, {
                   anchor: selected.anchor,
@@ -465,12 +543,20 @@ function HunkView(model: HunkProps) {
           canComment={Boolean(model.actions) && !model.actions?.isReadOnly}
           onActivate={model.onActivate}
           side={side}
+          selected={Boolean(model.selected && anchorKey(line.anchor) === anchorKey(model.selected))}
+          onComment={model.onComment}
         />
-        <LineCode line={line} words={model.words.get(anchorKey(line.anchor))} />
+        <LineCode
+          line={line}
+          words={model.words.get(anchorKey(line.anchor))}
+          match={
+            model.searchMatch && anchorKey(line.anchor) === model.searchAnchor ? model.searchMatch : undefined
+          }
+        />
       </>
     ) : (
       <>
-        <td className="diff-gutter diff-empty" style={{ width: Math.max(41, model.digits * 8 + 25) }} />
+        <td className="diff-gutter diff-empty" style={{ width: numberWidth(model.digits) }} />
         <td className="diff-empty" />
       </>
     );
@@ -542,7 +628,13 @@ function DiffRow({
     <>
       <tr
         data-anchor={next ? anchorKey(next.anchor) : undefined}
+        data-search-current={lines.some((line) => anchorKey(line.anchor) === model.searchAnchor) || undefined}
         data-line-kind={!split ? next?.kind : undefined}
+        data-selected-line={
+          lines.some((line) => model.selected && anchorKey(line.anchor) === anchorKey(model.selected))
+            ? 'single'
+            : undefined
+        }
       >
         {split && cell(old, 'old')}
         {cell(next, 'new')}
@@ -562,9 +654,9 @@ const CHANGE_MARK: Record<ReturnType<typeof fileChange>, { letter: string; word:
 /** The +N and -N of a file or a diff: removals first, as T3 puts them. */
 function DiffStat({ additions, deletions }: { additions: number; deletions: number }) {
   return (
-    <span className="flex shrink-0 items-center gap-2 font-mono text-ui tabular-nums">
-      {deletions > 0 && <span className="text-err-ink">-{deletions}</span>}
-      {(additions > 0 || deletions === 0) && <span className="text-ok-ink">+{additions}</span>}
+    <span className="diff-stat flex shrink-0 items-center gap-1 font-mono tabular-nums">
+      <span className="text-err-ink">-{deletions}</span>
+      <span className="text-ok-ink">+{additions}</span>
     </span>
   );
 }
@@ -582,33 +674,39 @@ function FileHeader({
   isOpen: boolean;
   onToggle: () => void;
 }) {
-  const change = CHANGE_MARK[fileChange(file)];
-  const name =
-    file.old_path && file.new_path && file.old_path !== file.new_path
-      ? `${file.old_path} → ${file.new_path}`
-      : file.path;
+  const kind = fileChange(file);
+  const change = CHANGE_MARK[kind];
+  const renamed = file.old_path && file.new_path && file.old_path !== file.new_path;
   return (
-    <header
-      className={`sticky top-0 z-[1] flex h-11 items-center gap-2 bg-panel pl-2 pr-3 mouse:h-8 ${isOpen ? 'border-b border-dialog-edge' : ''}`}
-    >
+    <header className={`diff-file-header ${isOpen ? 'is-open' : ''}`}>
       <button
         type="button"
+        className="diff-fold app-focus-ring"
         aria-expanded={isOpen}
-        aria-label={`${isOpen ? 'Fold' : 'Unfold'} ${name}`}
+        aria-label={`${isOpen ? 'Fold' : 'Unfold'} ${file.path}`}
         onClick={onToggle}
-        className="diff-fold app-focus-ring flex min-w-0 flex-1 items-center gap-2 self-stretch text-left hover:text-accent-ink focus-visible:bg-current/10 focus-visible:outline-none"
       >
-        <ChevronIcon open={isOpen} className="size-4 shrink-0 text-dialog-hint" />
-        <span
-          title={change.word}
-          className={`w-4 shrink-0 text-center font-mono text-ui font-bold ${change.ink}`}
-        >
-          <span aria-hidden>{change.letter}</span>
-          <span className="sr-only">{change.word}</span>
+        <ChevronIcon open={isOpen} className="size-4 text-dialog-hint" />
+        <DiffChangeIcon kind={kind} className={`size-4 diff-change-${kind}`} />
+        <span className="sr-only">{change.word}</span>
+        <span className="diff-file-path">
+          {renamed && (
+            <>
+              <span className="diff-old-path">{file.old_path}</span>
+              <RenameArrowIcon className="size-4" />
+            </>
+          )}
+          <span>{file.path}</span>
         </span>
-        <span className="min-w-0 truncate font-sans text-[12px] leading-4 text-white">{name}</span>
       </button>
-      <CopyChip value={file.path} label={`Copy path ${file.path}`} density="compact" />
+      <CopyChip
+        value={file.path}
+        label={`Copy path ${file.path}`}
+        title="Copy file path"
+        density="compact"
+        className="diff-copy"
+      />
+      <span className="flex-1" />
       <DiffStat {...fileStat(file)} />
     </header>
   );
@@ -619,32 +717,59 @@ function HunkSeparator({ hunks, at }: { hunks: readonly AppDiffHunk[]; at: numbe
   const hidden = hiddenLinesBefore(hunks, at);
   if (hidden === 0) return null;
   const header = hunks[at].header;
-  const context = header.replace(/^@@[^@]*@@\s*/, '');
   return (
-    <p
-      title={header}
-      className="diff-hunk mx-2 my-1 flex h-6 min-w-0 items-center gap-2 rounded-[6px] bg-[var(--color-diff-hunk)] px-2 font-sans text-ui text-dialog-hint"
-    >
-      <span className="shrink-0">
-        {hidden === null ? header : `${hidden} unmodified ${hidden === 1 ? 'line' : 'lines'}`}
+    <ContextBand
+      title={`${header}; source context is not included in this patch`}
+      label={hidden === null ? header : `${hidden} unmodified ${hidden === 1 ? 'line' : 'lines'}`}
+    />
+  );
+}
+
+/** A patch cannot reveal lines that its producer did not include. */
+function ContextBand({ label, title }: { label: string; title: string }) {
+  return (
+    <div className="diff-context" title={title}>
+      <span className="diff-context-marker" aria-hidden>
+        <ExpandAllIcon className="size-3" />
       </span>
-      {hidden !== null && context && <span className="min-w-0 truncate text-footer-muted">{context}</span>}
-    </p>
+      <span className="diff-hunk">{label}</span>
+    </div>
   );
 }
 
 /** Unified and split diffs share anchored comments, file controls and one scroller per file. */
 export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: AppNodeActions }) {
-  const { files, words, digits, total, elsewhere } = useMemo(
-    () => diffModel(node.patch, node.threads),
-    [node.patch, node.threads],
-  );
+  const {
+    files: sourceFiles,
+    words,
+    digits,
+    total,
+    elsewhere,
+  } = useMemo(() => diffModel(node.patch, node.threads), [node.patch, node.threads]);
   const [opened, setOpened] = useState<ViewAnchor | null>(null);
+  const [selected, setSelected] = useState<ViewAnchor | null>(null);
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const [split, setSplit] = useState(false);
   const [wrap, setWrap] = useState(true);
   const [tree, setTree] = useState(false);
+  const [treeFolded, setTreeFolded] = useState<ReadonlySet<string>>(() => new Set());
+  const [hideTests, setHideTests] = useState(false);
+  const [hideWhitespace, setHideWhitespace] = useState(false);
+  const files = useMemo(
+    () => filterDiffFiles(sourceFiles, hideTests, hideWhitespace),
+    [sourceFiles, hideTests, hideWhitespace],
+  );
   const refs = useRef(new Map<string, HTMLElement>());
+  const container = useRef<HTMLDivElement>(null);
+  const search = useDiffSearch(files, container, (line) => {
+    if (line)
+      setFolded((held) => {
+        const next = new Set(held);
+        next.delete(line.anchor.path);
+        return next;
+      });
+  });
+  const { searchAnchor, currentResult } = search;
   const byAnchor = useMemo(() => {
     const map = new Map<string, LiveThread[]>();
     for (const thread of node.threads) {
@@ -664,7 +789,21 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
   const revisions = [node.old_revision, node.new_revision].filter(Boolean).join(' → ');
   const allFolded = files.length > 0 && files.every((file) => folded.has(file.path));
   return (
-    <div className="app-diff min-w-0 space-y-3" data-wrap={wrap} data-split={split}>
+    <div
+      ref={container}
+      tabIndex={0}
+      className="app-diff min-w-0 space-y-3 app-focus-ring"
+      data-wrap={wrap}
+      data-split={split}
+      onKeyDown={(event) => {
+        if (event.key.toLowerCase() === 'f' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          event.stopPropagation();
+          search.show();
+        }
+      }}
+    >
+      <DiffSearch search={search} />
       <DiffToolbar
         split={split}
         wrap={wrap}
@@ -673,6 +812,10 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
         count={files.length}
         total={total}
         revisions={revisions}
+        hideTests={hideTests}
+        hideWhitespace={hideWhitespace}
+        onTests={() => setHideTests(!hideTests)}
+        onWhitespace={() => setHideWhitespace(!hideWhitespace)}
         onSplit={setSplit}
         onWrap={() => setWrap(!wrap)}
         onTree={() => setTree(!tree)}
@@ -681,21 +824,36 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
       <div className={`min-w-0 ${tree ? 'diff-with-tree' : ''}`}>
         {tree && (
           <nav className="diff-file-tree" aria-label="Changed files">
-            {fileTree(files).map((row) =>
+            <div className="diff-tree-header">
+              Files <span>{files.length}</span>
+            </div>
+            {fileTree(files, treeFolded).map((row) =>
               row.kind === 'folder' ? (
-                <p
+                <button
+                  type="button"
+                  aria-label={`Folder ${row.key}`}
+                  aria-expanded={!treeFolded.has(row.key)}
+                  onClick={() =>
+                    setTreeFolded((held) => {
+                      const next = new Set(held);
+                      if (next.has(row.key)) next.delete(row.key);
+                      else next.add(row.key);
+                      return next;
+                    })
+                  }
                   key={row.key}
-                  className="px-2 py-1 text-ui text-dialog-hint"
+                  className="diff-tree-folder app-focus-ring"
                   style={{ paddingLeft: 8 + row.depth * 12 }}
                 >
+                  <ChevronIcon open={!treeFolded.has(row.key)} className="size-3" />
                   {row.name}
-                </p>
+                </button>
               ) : (
                 <button
                   key={row.key}
                   type="button"
                   aria-label={`Open ${row.file.path}`}
-                  className="flex min-h-11 w-full min-w-0 items-center gap-2 px-2 text-left text-[12px] hover:bg-hover app-focus-ring"
+                  className={`diff-tree-file diff-tree-${fileChange(row.file)} app-focus-ring`}
                   style={{ paddingLeft: 8 + row.depth * 12 }}
                   onClick={() => {
                     setFolded((held) => {
@@ -706,17 +864,18 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
                     refs.current.get(row.file.path)?.scrollIntoView({ block: 'nearest' });
                   }}
                 >
+                  <ReviewFileIcon path={row.file.path} className="size-3.5" />
                   <span className="min-w-0 flex-1 truncate" title={row.file.path}>
                     {row.name}
                   </span>
-                  <DiffStat {...fileStat(row.file)} />
+                  <span className="diff-tree-status">{CHANGE_MARK[fileChange(row.file)].letter}</span>
                 </button>
               ),
             )}
           </nav>
         )}
-        <div className="diff-files min-w-0 space-y-3">
-          {!files.length && <p className="font-mono text-body text-dialog-hint">No changes.</p>}
+        <div className="diff-files min-w-0">
+          {!files.length && <p className="diff-no-changes">No net changes in this selection.</p>}
           {files.map((file) => (
             <section
               key={file.path}
@@ -724,10 +883,10 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
                 if (el) refs.current.set(file.path, el);
                 else refs.current.delete(file.path);
               }}
-              className="diff-file min-w-0 border border-dialog-edge"
+              className="diff-file min-w-0"
               style={
                 {
-                  '--diff-number-width': `${Math.max(41, (digits.get(file.path) ?? 1) * 8 + 25)}px`,
+                  '--diff-number-width': `${numberWidth(digits.get(file.path) ?? 1)}px`,
                 } as CSSProperties
               }
               aria-label={file.path}
@@ -748,10 +907,23 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
                       byAnchor={byAnchor}
                       opened={opened}
                       actions={actions}
-                      onActivate={(line) => setOpened(line.anchor)}
+                      onActivate={(line) => {
+                        setSelected(line.anchor);
+                        setOpened(null);
+                      }}
+                      selected={selected}
+                      searchAnchor={searchAnchor}
+                      searchMatch={currentResult}
+                      onComment={(line) => setOpened(line.anchor)}
                       onClose={() => setOpened(null)}
                     />
                   ))}
+                  {file.hunks.length > 0 && fileChange(file) === 'modified' && (
+                    <ContextBand
+                      label="More unchanged context may be available"
+                      title="Source context is not included in this patch"
+                    />
+                  )}
                 </div>
               )}
             </section>
@@ -789,6 +961,10 @@ function DiffToolbar({
   onWrap,
   onTree,
   onFold,
+  hideTests,
+  hideWhitespace,
+  onTests,
+  onWhitespace,
 }: {
   split: boolean;
   wrap: boolean;
@@ -801,6 +977,10 @@ function DiffToolbar({
   onWrap: () => void;
   onTree: () => void;
   onFold: () => void;
+  hideTests: boolean;
+  hideWhitespace: boolean;
+  onTests: () => void;
+  onWhitespace: () => void;
 }) {
   return (
     <div className="diff-toolbar" role="toolbar" aria-label="Diff display">
@@ -811,6 +991,15 @@ function DiffToolbar({
         <DiffStat {...total} />
         {revisions && <span className="diff-revisions min-w-0 truncate">{revisions}</span>}
       </span>
+      <button
+        type="button"
+        className="app-focus-ring"
+        aria-label={allFolded ? 'Expand all' : 'Collapse all'}
+        title={allFolded ? 'Expand all' : 'Collapse all'}
+        onClick={onFold}
+      >
+        {allFolded ? <ExpandAllIcon className="size-4" /> : <CollapseAllIcon className="size-4" />}
+      </button>
       <div className="diff-layout" role="group" aria-label="Diff layout">
         <button
           type="button"
@@ -846,21 +1035,32 @@ function DiffToolbar({
       <button
         type="button"
         className="app-focus-ring"
+        aria-label="Show whitespace changes"
+        title={hideWhitespace ? 'Show whitespace changes' : 'Hide whitespace changes'}
+        aria-pressed={!hideWhitespace}
+        onClick={onWhitespace}
+      >
+        <WhitespaceIcon className="size-4" />
+      </button>
+      <button
+        type="button"
+        className="app-focus-ring"
+        aria-label="Hide test files"
+        title={hideTests ? 'Show test files' : 'Hide test files'}
+        aria-pressed={hideTests}
+        onClick={onTests}
+      >
+        <TestFilesIcon className="size-4" />
+      </button>
+      <button
+        type="button"
+        className="app-focus-ring"
         aria-label="Files"
         title="File tree"
         aria-pressed={tree}
         onClick={onTree}
       >
         <FileTreeIcon className="size-4" />
-      </button>
-      <button
-        type="button"
-        className="app-focus-ring"
-        aria-label={allFolded ? 'Expand all' : 'Collapse all'}
-        title={allFolded ? 'Expand all' : 'Collapse all'}
-        onClick={onFold}
-      >
-        {allFolded ? <ExpandAllIcon className="size-4" /> : <CollapseAllIcon className="size-4" />}
       </button>
     </div>
   );

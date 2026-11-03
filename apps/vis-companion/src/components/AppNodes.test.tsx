@@ -45,6 +45,11 @@ function actions(overrides: Partial<AppNodeActions> = {}): AppNodeActions {
   };
 }
 
+function openLine(button: HTMLElement) {
+  fireEvent.click(button);
+  fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+}
+
 describe('DiffNodeView', () => {
   it('opens an editor on the line that a keyboard activates, on that line side', async () => {
     const app = actions();
@@ -53,27 +58,28 @@ describe('DiffNodeView', () => {
       name: 'Comment on a.txt old line 2',
     });
     removed.focus();
-    fireEvent.click(removed);
+    openLine(removed);
     const editor = screen.getByRole('textbox', {
       name: 'Comment on a.txt line 2',
     });
     fireEvent.change(editor, { target: { value: 'Why remove it?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
     await waitFor(() =>
       expect(app.draft).toHaveBeenCalledWith('review', {
         anchor: { path: 'a.txt', side: 'old', line: 2 },
         body: 'Why remove it?',
       }),
     );
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('textbox')).toBeNull());
   });
 
   it('creates nothing for a blank comment on a new line', () => {
     const app = actions();
     render(<DiffNodeView node={DIFF} actions={app} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    openLine(screen.getByRole('button', { name: 'Comment on a.txt line 1' }));
+    expect(screen.getByRole('button', { name: 'Comment' })).toBeDisabled();
     expect(app.draft).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 
@@ -98,11 +104,11 @@ describe('DiffNodeView', () => {
     });
     expect(old.closest('tr')).toHaveTextContent('old');
     expect(old.closest('tr')).toHaveTextContent('new');
-    fireEvent.click(old);
+    openLine(old);
     fireEvent.change(screen.getByRole('textbox', { name: 'Comment on a.txt line 2' }), {
       target: { value: 'Keep this?' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
     await waitFor(() =>
       expect(app.draft).toHaveBeenCalledWith('review', {
         anchor: { path: 'a.txt', side: 'old', line: 2 },
@@ -223,4 +229,64 @@ describe('Send', () => {
     );
     expect(screen.getByRole('list', { name: 'Receipts' }).textContent).toContain('Answered · 1 comment');
   });
+});
+
+// Report: match T3 line selection and prevent repeated keyboard submissions.
+describe('selected line comments', () => {
+  it('selects a line before opening its editor', () => {
+    render(<DiffNodeView node={DIFF} actions={actions()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 1' }));
+    expect(screen.queryByRole('textbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(screen.getByRole('textbox', { name: 'Comment on a.txt line 1' })).toBeInTheDocument();
+  });
+  it('submits a nonblank comment once while a save is pending', async () => {
+    let finish!: (r: AppActionResult) => void;
+    const app = actions({
+      draft: vi.fn(
+        () =>
+          new Promise<AppActionResult>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    });
+    render(<DiffNodeView node={DIFF} actions={app} />);
+    openLine(screen.getByRole('button', { name: 'Comment on a.txt line 1' }));
+    const editor = screen.getByRole('textbox');
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true });
+    expect(app.draft).not.toHaveBeenCalled();
+    fireEvent.change(editor, { target: { value: 'Explain this' } });
+    fireEvent.keyDown(editor, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true });
+    expect(app.draft).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ status: 'saved', seq: 5 }));
+  });
+});
+
+// Report: searching a folded diff must reveal the result and return focus on Escape.
+it('opens search results in folded files and returns focus when search closes', () => {
+  const scroll = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
+  try {
+    const { container } = render(<DiffNodeView node={DIFF} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    const diff = container.querySelector('.app-diff')!;
+    fireEvent.keyDown(diff, { key: 'f', ctrlKey: true });
+    const input = screen.getByRole('textbox', { name: 'Find in diff' });
+    fireEvent.change(input, { target: { value: 'e' } });
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    expect(container.querySelector('[data-search-current]')).toHaveTextContent('keep');
+    fireEvent.click(screen.getByRole('button', { name: 'Next match' }));
+    expect(screen.getByText('2 of 3')).toBeInTheDocument();
+    expect(container.querySelector('[data-search-current]')).toHaveTextContent('keep');
+    fireEvent.click(screen.getByRole('button', { name: 'Next match' }));
+    expect(container.querySelector('[data-search-current]')).toHaveTextContent('new');
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(screen.getByText('2 of 3')).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('search')).toBeNull();
+    expect(document.activeElement).toBe(diff);
+  } finally {
+    Element.prototype.scrollIntoView = scroll;
+  }
 });

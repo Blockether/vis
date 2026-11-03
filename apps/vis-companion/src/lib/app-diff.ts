@@ -86,6 +86,13 @@ export function parseUnifiedDiff(patch: string): AppDiffFile[] {
       start(gitPaths(line));
       continue;
     }
+    if (state.file && line.startsWith('new file mode ')) delete state.file.old_path;
+    if (state.file && line.startsWith('deleted file mode ')) delete state.file.new_path;
+    if (state.file && line.startsWith('rename from ')) state.file.old_path = line.slice(12);
+    if (state.file && line.startsWith('rename to ')) {
+      state.file.new_path = line.slice(10);
+      state.file.path = line.slice(10);
+    }
     if (line.startsWith('--- ') && state.hunk === null) {
       const file = state.file && state.file.hunks.length === 0 ? state.file : start({});
       rename(file, 'old_path', headerPath(line.slice(4)));
@@ -317,7 +324,10 @@ interface TreeFolder {
  * The files of a diff as a tree, folders first and each level sorted by name. A
  * folder that holds only one folder joins it into one row (`src / lib`), as T3 does.
  */
-export function fileTree(files: readonly AppDiffFile[]): FileTreeRow[] {
+export function fileTree(
+  files: readonly AppDiffFile[],
+  collapsed: ReadonlySet<string> = new Set(),
+): FileTreeRow[] {
   const root: TreeFolder = { folders: new Map(), files: [] };
   for (const file of files) {
     const parts = file.path.split('/');
@@ -345,7 +355,7 @@ export function fileTree(files: readonly AppDiffFile[]): FileTreeRow[] {
         inner = next;
       }
       rows.push({ kind: 'folder', key: path, name: label, depth });
-      walk(inner, depth + 1, path);
+      if (!collapsed.has(path)) walk(inner, depth + 1, path);
     }
     for (const file of [...folder.files].sort((a, b) => a.path.localeCompare(b.path))) {
       rows.push({
@@ -403,4 +413,86 @@ export function diffModel<T extends { anchor?: ViewAnchor }>(
   }
   const elsewhere = threads.filter((thread) => !thread.anchor || !shown.has(anchorKey(thread.anchor)));
   return { files, words, digits, total, elsewhere };
+}
+
+/** Test paths follow common directory and filename conventions, not substrings. */
+function isTestPath(path: string): boolean {
+  return /(^|\/)(__tests__|tests?|specs?)(\/|$)|[._-](test|spec)([._-]|$)|(^|\/)test_[^/]+$|(^|\/)conftest\.py$/i.test(
+    path,
+  );
+}
+
+/** Ignore whitespace-only pairs without changing either side's line numbers. */
+function withoutWhitespace(lines: readonly AppDiffLine[]): AppDiffLine[] {
+  return splitRows(lines).flatMap((row) => {
+    if (
+      row.old &&
+      row.new &&
+      row.old.kind === 'remove' &&
+      row.new.kind === 'add' &&
+      row.old.text.replace(/\s/g, '') === row.new.text.replace(/\s/g, '')
+    ) {
+      return [{ ...row.new, kind: 'context' as const, old_line: row.old.old_line }];
+    }
+    if (row.new?.kind === 'context') return [row.new];
+    return [row.old, row.new].filter((line): line is AppDiffLine => Boolean(line));
+  });
+}
+
+/** Display filters keep the source patch and all comment anchors intact. */
+export function filterDiffFiles(
+  files: readonly AppDiffFile[],
+  hideTests: boolean,
+  hideWhitespace: boolean,
+): AppDiffFile[] {
+  return files
+    .filter((file) => !hideTests || !isTestPath(file.path))
+    .flatMap((file) => {
+      if (!hideWhitespace || !file.hunks.length) return [file];
+      const hunks = file.hunks.map((hunk) => ({ ...hunk, lines: withoutWhitespace(hunk.lines) }));
+      if (!hunks.some((hunk) => hunk.lines.some((line) => line.kind !== 'context'))) return [];
+      return [{ ...file, hunks }];
+    });
+}
+
+export interface DiffSearchOptions {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  regex?: boolean;
+}
+
+export interface DiffSearchMatch {
+  line: AppDiffLine;
+  start: number;
+  end: number;
+}
+
+/** Find every occurrence in render order, including files that are folded. */
+export function findDiffMatches(
+  files: readonly AppDiffFile[],
+  query: string,
+  options: DiffSearchOptions = {},
+): DiffSearchMatch[] {
+  if (!query) return [];
+  let pattern: RegExp;
+  try {
+    const source = options.regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    pattern = new RegExp(
+      options.wholeWord ? `\\b(?:${source})\\b` : source,
+      options.caseSensitive ? 'g' : 'gi',
+    );
+  } catch {
+    return [];
+  }
+  return files.flatMap((file) =>
+    file.hunks.flatMap((hunk) =>
+      hunk.lines.flatMap((line) =>
+        Array.from(line.text.matchAll(pattern), (match) => ({
+          line,
+          start: match.index!,
+          end: match.index! + match[0].length,
+        })),
+      ),
+    ),
+  );
 }
