@@ -284,8 +284,9 @@ const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_minmax(0,1fr)_auto
 
 // The columns of a team on a wide screen: ROLE, TITLE, then the NOTE, or the time bar while the
 // timeline shows, then TIME and the status mark. TIME fits `59m 59s`, so a ticking time never
-// moves a column. TITLE takes at most a third of the row; a longer title wraps.
-const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-2';
+// moves a column. TITLE takes at most a third of the row; a longer title wraps. A wide row carries
+// the frame's own inset, so its hover fills the frame and its text lines up with the team line.
+const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-3';
 
 const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
@@ -454,7 +455,7 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline,
           <div className="flex border-b border-dialog-edge bg-panel px-3 py-1 sm:py-1.5">
             <TeamLine agents={rows} action={toggle} />
           </div>
-          <div className="px-3">{table}</div>
+          <div className="px-3 sm:px-0">{table}</div>
         </section>
       ) : table}
       {chosen && (

@@ -59,7 +59,7 @@ export function AgentDock({ agents, sid, runningTurnId, ...team }: Omit<TeamProp
           <TeamLine agents={teams.flat()} action={toggle} labelId={line} />
         </span>
       </div>
-      <div id={body} hidden={!open} className="max-h-[40dvh] space-y-2 overflow-y-auto border-t border-dialog-edge px-3">
+      <div id={body} hidden={!open} className="max-h-[40dvh] space-y-2 overflow-y-auto border-t border-dialog-edge px-3 sm:px-0">
         {teams.map((members) => (
           <TurnAgents key={members[0].team_id} agents={members} placement="dock" isTimeline={isTimeline} {...team} />
         ))}
