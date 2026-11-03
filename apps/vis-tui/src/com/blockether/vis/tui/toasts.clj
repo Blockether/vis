@@ -178,20 +178,21 @@
       (p/set-colors! g t/dialog-fg paper)
       (p/fill-rect! g col row width height)
       (p/set-colors! g t/dialog-fg bg)
-      (p/fill-rect! g (inc col) first-row inner (- bottom first-row))
+      (p/fill-rect! g (inc col) first-row inner (- (inc bottom) first-row))
       ;; Border: one-eighth blocks on the cell edges around the body. A side line
       ;; is two blocks that meet on one cell edge, so it is as thick as the top line.
+      ;; The last body row is empty, and the bottom line lies on its lower edge.
       (p/set-colors! g edge paper)
       (p/put-str! g (inc col) row (rule inner "▁"))
-      (p/put-str! g (inc col) bottom (rule inner "▔"))
-      (doseq [r (range first-row bottom)]
-        (p/set-colors! g edge paper)
+      (doseq [r (range first-row (inc bottom))]
         (p/put-str! g col (long r) "▕")
-        (p/put-str! g right (long r) "▏")
-        (p/set-colors! g edge bg)
+        (p/put-str! g right (long r) "▏"))
+      (p/set-colors! g edge bg)
+      (doseq [r (range first-row bottom)]
         (p/put-str! g (inc col) (long r) "▏")
         (p/put-str! g (dec right) (long r) "▕"))
-      ;; Countdown under the border: the level color is the time left.
+      (p/put-str! g (inc col) bottom (rule inner "▁"))
+      ;; Countdown right under the border: the level color is the time left.
       (when fraction
         (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
           (p/set-colors! g edge paper)
