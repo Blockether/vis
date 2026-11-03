@@ -7,17 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.1] - 2026-11-03
+
 ### Added
 - CLI: `vis-agent sessions export <ID> --snapshot PATH` writes a `.vissnap` snapshot, and `vis-agent sessions import PATH` restores it as a new session. Use them to continue a session on another computer. The import uses the current folder as the project folder. `--root`, `--group` and `--key` change this.
+- Notifications: the TUI and the Companion show `vis.notify` as toasts. Many notices share one card with a `1/N` pager, a close mark and a countdown bar.
+- Notifications: `vis.notify(..., scope="session")` keeps a notice in the gateway until a client opens that session. `scope="global"` goes to every open session.
+- Review: the `vis-review` extension records each write with its checks and an undo. The TUI and the Companion show its diff in a T3 Code style panel, with changed pictures.
+- Apps: a live app can belong to a session or be global. It can show inline, and it has picture, log and timeline nodes.
+- Apps: a button can have a key. The Companion shows each key once, and the TUI lists app keys in a `?` menu.
+- Companion: `C-x` keys and a command palette open inside the session pane.
+- Agent team: the Companion shows a team timeline with a leader lane and the current step of each agent.
 
 ### Changed
 - Provider: conversations on the direct Anthropic API use Message Threads by default. Vis sends only the new messages while a thread is available. Set `extra_body.thread` to `null` to disable threads, for example for zero data retention. Svar is pinned at 0.7.221.
 - Provider: Vis no longer offers GLM-5.2, which Z.AI deprecated on the Coding Plan. The Alibaba preset, the CLI examples and the guide use `glm-5.3`. A `vis.yml` that names `glm-5.2` still works where the provider serves it. Limits from a live model list apply only to the same exact model id. Svar is pinned at 0.7.223.
+- Python: all extensions of a session run in one worker.
+- Agent team: the gateway pushes team rows to the clients that watch them. The clients no longer poll.
+- Releases: release assets have Sigstore attestations (#435).
+- TUI: the session title is at the left of the header.
 
 ### Fixed
 - Sessions: a snapshot from an older database restores on a fresh install. Before, the restore stopped with "table session_attachment has no column named commentable". An older database keeps columns that the schema no longer has. The restore now writes only the columns that the target database has.
 - Releases: each `beta-<commit>` release publishes `vis-agent` and `install-vis-agent`, and its `SHA256SUMS` lists them, like a stable release. `install-vis-agent --version beta-<commit>` takes the command from that beta, so `--sha256` pins it. A beta without `SHA256SUMS` stops the installer before it downloads the command. Betas published earlier still use the verified installer command (#434).
 - Provider: Claude Sonnet 5.5 on GitHub Copilot runs again. Before, each turn stopped with "Model limits unavailable" and sent nothing. The bundled model catalog now has its limits. When a live model list gives no valid limits, the gateway log shows the limit fields of the provider's entry. The configuration guide shows how to set verified limits in `vis.yml`. Svar is pinned at 0.7.222.
+- Gateway: Council children stay alive when the gateway restarts.
+- Loop: a turn that is cancelled during a model call keeps its streamed text.
+- Python: extension workers stop after a reload, and cached modules use the new extension context.
+- Python: the language hooks of every extension run in a session again. Before, the session worker could evaluate two extensions at the same time. Then `vis-lang-clojure` registered nothing, and a context could show the data of another extension.
+- Python: an extension with a project environment imports its own editable code before the shared packages (#226).
+- Sandbox: `npx` no longer waits at its install prompt.
+- Contract: the SDK and the engine bundle ship the keymap schema.
+- Dependencies: Jackson is at 2.22.4 and 3.2.4, for scanning alerts.
 
 ## [v0.5.0] - 2026-11-02
 
