@@ -121,6 +121,11 @@ jobs:
     name: publish only the complete native beta
     needs: [pick, native, desktop]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      id-token: write       # Sigstore signs with the OIDC identity of this workflow
+      attestations: write
     outputs:
       published: ${{ steps.publish.outputs.published }}
     steps:
@@ -142,8 +147,8 @@ jobs:
         id: draft
         with:
           tag: ${{ needs.pick.outputs.tag }}
-      - name: Verify all native assets and publish the immutable prerelease
-        id: publish
+      - name: Verify all native assets and write SHA256SUMS
+        id: verify
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -158,7 +163,7 @@ jobs:
           # The same run list can name an older green commit, which never supersedes this beta.
           if [ "$green_main" != "$SHA" ] &&
             [ "$(gh api "repos/$REPO/compare/$SHA...$green_main" -q .status)" != behind ]; then
-            echo 'published=false' >> "$GITHUB_OUTPUT"
+            echo 'current=false' >> "$GITHUB_OUTPUT"
             echo '::notice::A newer successful main CI superseded this beta; leaving its draft unpublished'
             exit 0
           fi
@@ -188,6 +193,22 @@ jobs:
           # Installers verify every download against this file (#332).
           python3 bin/release-checksums.py "$METADATA" "$RUNNER_TEMP/SHA256SUMS"
           gh release upload "$TAG" "$RUNNER_TEMP/SHA256SUMS" --repo "$REPO" --clobber
+          echo 'current=true' >> "$GITHUB_OUTPUT"
+      # `gh attestation verify <file> --repo Blockether/vis` checks this provenance (#435).
+      - name: Attest every asset with Sigstore
+        if: steps.verify.outputs.current == 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: ${{ runner.temp }}/SHA256SUMS
+      - name: Publish the immutable prerelease
+        id: publish
+        if: steps.verify.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.pick.outputs.tag }}
+        run: |
+          set -euo pipefail
           gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
           echo 'published=true' >> "$GITHUB_OUTPUT"
 

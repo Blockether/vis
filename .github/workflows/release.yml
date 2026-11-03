@@ -143,6 +143,10 @@ jobs:
         needs.desktop.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && needs.recover.result == 'success'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write       # Sigstore signs with the OIDC identity of this workflow
+      attestations: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -184,5 +188,10 @@ jobs:
           set -euo pipefail
           python3 bin/release-checksums.py "$RELEASE_METADATA" "$RUNNER_TEMP/SHA256SUMS"
           gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/SHA256SUMS" --clobber
+      # `gh attestation verify <file> --repo Blockether/vis` checks this provenance (#435).
+      - name: Attest every asset with Sigstore
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: ${{ runner.temp }}/SHA256SUMS
       - name: Publish complete stable release
         run: gh release edit "$RELEASE_TAG" --draft=false --latest

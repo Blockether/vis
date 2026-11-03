@@ -12,6 +12,8 @@ on:
 permissions:
   contents: write
   actions: read
+  id-token: write       # Sigstore signs with the OIDC identity of this workflow
+  attestations: write
 
 concurrency:
   group: installer-assets
@@ -56,6 +58,16 @@ jobs:
         with:
           ref: ${{ steps.pick.outputs.sha }}
           persist-credentials: false
+      # Installers verify the downloaded command against this file (#332).
+      - name: Write SHA256SUMS of both bootstrap assets
+        if: steps.pick.outputs.sha != ''
+        run: (cd bin && sha256sum install-vis-agent vis-agent) > "$RUNNER_TEMP/SHA256SUMS"
+      # `gh attestation verify <file> --repo Blockether/vis` checks this provenance (#435).
+      - name: Attest both bootstrap assets with Sigstore
+        if: steps.pick.outputs.sha != ''
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: ${{ runner.temp }}/SHA256SUMS
       - name: Refresh both bootstrap assets without moving a tag
         if: steps.pick.outputs.sha != ''
         env:
@@ -63,8 +75,6 @@ jobs:
         run: |
           set -euo pipefail
           notes="Bootstrap scripts from green main CI at $SHA. Installs the latest complete stable native release by default; --track beta selects native betas, --track dev selects JVM source."
-          # Installers verify the downloaded command against this file (#332).
-          (cd bin && sha256sum install-vis-agent vis-agent) > "$RUNNER_TEMP/SHA256SUMS"
           if gh release view installer >/dev/null 2>&1; then
             gh release upload installer bin/install-vis-agent bin/vis-agent "$RUNNER_TEMP/SHA256SUMS" --clobber
             gh release edit installer --prerelease --latest=false --title 'Installer' --notes "$notes"
