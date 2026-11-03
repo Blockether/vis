@@ -20,6 +20,7 @@ _SCHEMA_NAMES = (
     "diff",
     "evals",
     "gateway",
+    "keymap",
     "provider",
     "symbol",
     "toggle",
