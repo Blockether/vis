@@ -2,12 +2,13 @@
 
 import json
 import os
+import subprocess
 
 import pytest
 from vis_lang_interface.tree import walked
 
 from vis_review import store
-from vis_review.journal import Journal
+from vis_review.journal import Journal, base_ref
 
 
 def journal(tmp_path, key="s1"):
@@ -226,3 +227,87 @@ def test_two_keys_on_one_root_keep_two_journals_and_share_blobs(tmp_path):
     b.checkpoint()
     assert a.path != b.path
     assert a.state == b.state
+
+
+def git(cwd, *args):
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    done = subprocess.run(
+        ["git", *args], cwd=cwd, env=env, check=True, capture_output=True
+    )
+    return done.stdout.decode()
+
+
+def repo(tmp_path):
+    """A git repository with one commit on main, holding text and a picture."""
+    top = tmp_path / "repo"
+    (top / "sub").mkdir(parents=True)
+    git(top, "init", "-q", "-b", "main")
+    (top / ".gitignore").write_text("*.log\n")
+    (top / "sub" / "a.py").write_text("one\n")
+    (top / "sub" / "gone.py").write_text("gone\n")
+    (top / "sub" / "keep.py").write_text("keep\n")
+    (top / "sub" / "logo.bin").write_bytes(b"\x89PNG\0old")
+    (top / "top.py").write_text("outside the root\n")
+    git(top, "add", "-A")
+    git(top, "commit", "-q", "-m", "first")
+    return top
+
+
+def test_against_head_shows_each_uncommitted_file_with_its_committed_content(
+    tmp_path,
+):
+    # T3 Code "Uncommitted" scope (scenario S08): the old side is the commit.
+    top = repo(tmp_path)
+    sub = top / "sub"
+    (sub / "a.py").write_text("two\n")
+    (sub / "gone.py").unlink()
+    (sub / "new.py").write_text("new\n")
+    (sub / "logo.bin").write_bytes(b"\x89PNG\0new")
+    (sub / "noise.log").write_text("ignored\n")
+    (sub / "staged.py").write_text("staged\n")
+    git(top, "add", "sub/staged.py")
+    (top / "top.py").write_text("changed outside\n")
+    index = (top / ".git" / "index").read_bytes()
+    j = Journal(sub, "s1", tmp_path / "base", files=walked, clock=lambda: 1.0)
+    j.checkpoint()
+    diffs = {d.path: d for d in j.against("HEAD")}
+    assert {p: d.status for p, d in diffs.items()} == {
+        "a.py": "modified",
+        "gone.py": "deleted",
+        "logo.bin": "modified",
+        "new.py": "added",
+        "staged.py": "added",
+    }
+    assert "-one\n+two\n" in diffs["a.py"].patch
+    assert diffs["logo.bin"].is_binary
+    assert j.store.get(diffs["logo.bin"].before) == b"\x89PNG\0old"
+    assert (top / ".git" / "index").read_bytes() == index
+
+
+def test_against_is_none_without_a_git_commit(tmp_path):
+    j = journal(tmp_path)
+    write(j, "a.py", "a\n")
+    j.checkpoint()
+    assert j.against("HEAD") is None
+    top = repo(tmp_path)
+    inside = Journal(top, "s2", tmp_path / "base", files=walked)
+    assert inside.against("no-such-branch") is None
+
+
+def test_the_base_branch_is_where_head_left_main(tmp_path):
+    # T3 Code comparison "Automatic" (scenario S09).
+    top = repo(tmp_path)
+    first = git(top, "rev-parse", "HEAD").strip()
+    git(top, "switch", "-q", "-c", "feature")
+    (top / "sub" / "a.py").write_text("feature\n")
+    git(top, "commit", "-q", "-am", "feature work")
+    assert base_ref(str(top)) == first
+    git(top, "switch", "-q", "--orphan", "lonely")
+    assert base_ref(str(top)) is None

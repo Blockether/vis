@@ -1,6 +1,7 @@
 """Decisions of the review app: what it shows, and what each control changes."""
 
 import os
+import subprocess
 import time
 from types import SimpleNamespace
 
@@ -395,3 +396,33 @@ def test_latest_change_shows_only_the_newest_checkpoint(tmp_path, recorder):
     assert not buttons_of(recorder)["latest"]
     recorder.send("activate", "latest")
     assert wait_for(lambda: rows(recorder, "files") == ["b.py"])
+
+
+def test_uncommitted_compares_with_the_commit_and_falls_back_without_git(
+    tmp_path, recorder
+):
+    # T3 Code "Uncommitted" scope (scenario S08). Outside git, the app says so.
+    root, journal, app = setup(tmp_path, recorder)
+    recorder.send("activate", "uncommitted")
+    assert wait_for(lambda: recorder.node("notice")["tone"] == "warn")
+    assert buttons_of(recorder)["undo-file"] is True
+    assert app.against is None
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "c"]):
+        subprocess.run(["git", *args], cwd=root, env=env, check=True)
+    edit(root, "a.py", "a = 2\n")
+    recorder.send("activate", "uncommitted")
+    assert wait_for(lambda: recorder.node("diff")["old_revision"] == "HEAD")
+    assert "-a = 1\n+a = 2" in recorder.node("diff")["patch"]
+    recorder.send("select", "files", item_ids=["a.py"])
+    assert wait_for(lambda: app.path == "a.py")
+    assert buttons_of(recorder)["undo-file"] is True
+    recorder.send("activate", "all")
+    assert wait_for(lambda: recorder.node("diff")["old_revision"] == "#1")

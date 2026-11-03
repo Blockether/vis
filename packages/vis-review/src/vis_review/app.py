@@ -24,7 +24,7 @@ import blockether.vis.extension as vis
 from blockether.vis import _contracts
 
 from vis_review import ai, checks
-from vis_review.journal import FileDiff, Journal
+from vis_review.journal import FileDiff, Journal, base_ref
 
 LOG = logging.getLogger("vis_review")
 ui = vis.ui
@@ -42,6 +42,8 @@ EVENT_FIELDS = ("type", "node_id", "values", "submission_id", "comments", "item_
 BUTTONS = (
     "all",
     "latest",
+    "uncommitted",
+    "branch",
     "full",
     "refresh",
     "checks",
@@ -53,6 +55,8 @@ BUTTONS = (
 )
 # Buttons that call a tool or a model: they run outside the lock.
 SLOW = ("checks", "tests", "ai")
+# Git scopes, like the T3 "Uncommitted" scope and its "Automatic" base branch.
+_AGAINST = {"HEAD": "uncommitted changes", "base": "changes against the base branch"}
 # Changed pictures the app shows at most.
 MOST_IMAGES = 8
 # Decoded picture bytes that the app shows together, old and new: the view bound.
@@ -117,6 +121,8 @@ class ReviewApp:
         self.selected: int | None = None
         self.path: str | None = None
         self.is_full = False
+        # "HEAD" or "base" compares the files with a git commit, None with checkpoints.
+        self.against: str | None = None
         self.findings: list[checks.Finding] = []
         self.ai_summary = ""
         self.notice = ("Ready", "idle")
@@ -184,7 +190,7 @@ class ReviewApp:
 
     def diffs(self) -> list[FileDiff]:
         """The diffs of the chosen range and file."""
-        diffs = self.journal.diff(self.start, self.end, context=self._context())
+        diffs = self._scope_diffs()
         return [d for d in diffs if self.path is None or d.path == self.path]
 
     def all_findings(self, diffs: list[FileDiff]) -> list[checks.Finding]:
@@ -195,7 +201,7 @@ class ReviewApp:
 
     def render(self) -> list[dict]:
         """Every node of the app for the current state."""
-        diffs_all = self.journal.diff(self.start, self.end, context=self._context())
+        diffs_all = self._scope_diffs()
         if all(d.path != self.path for d in diffs_all):
             # An undo or a new range can take the chosen file out of the list.
             self.path = None
@@ -220,11 +226,24 @@ class ReviewApp:
     def _context(self) -> int:
         return FULL_CONTEXT if self.is_full else CONTEXT_LINES
 
+    def _scope_diffs(self) -> list[FileDiff]:
+        """Every diff of the scope: a checkpoint range, or a git commit to now."""
+        if self.against is not None:
+            ref = "HEAD" if self.against == "HEAD" else base_ref(self.journal.root)
+            found = None if ref is None else self.journal.against(ref, self._context())
+            if found is not None:
+                return found
+            self.notice = (f"Git cannot show {_AGAINST[self.against]} here", "warn")
+            self.against = None
+        return self.journal.diff(self.start, self.end, context=self._context())
+
     def _is_all(self) -> bool:
         """True when the app shows the whole journal: the first range."""
-        return self.start <= 1 and self.end is None
+        return self.start <= 1 and self.end is None and self.against is None
 
     def _range_text(self, end: int) -> str:
+        if self.against is not None:
+            return _AGAINST[self.against]
         return "all changes" if self._is_all() else f"#{self.start}..#{end}"
 
     def _notice(self) -> dict:
@@ -248,6 +267,10 @@ class ReviewApp:
                 is_disabled=self.journal.last <= 1
                 or self.selected == self.journal.last,
             ),
+            ui.button("uncommitted", "Uncommitted", is_disabled=self.against == "HEAD"),
+            ui.button(
+                "branch", "Against base branch", is_disabled=self.against == "base"
+            ),
             ui.button(
                 "full", "Show changes only" if self.is_full else "Show full files"
             ),
@@ -265,7 +288,7 @@ class ReviewApp:
                 "undo-file",
                 "Undo file",
                 variant="destructive",
-                is_disabled=self.path is None,
+                is_disabled=self.path is None or self.against is not None,
             ),
             ui.button(
                 "undo",
@@ -320,8 +343,10 @@ class ReviewApp:
         return ui.diff(
             "diff",
             patch or "No change in this range.\n",
-            old_revision=f"#{max(self.start, 0)}",
-            new_revision=f"#{end}" if self.end is not None else "now",
+            old_revision=self.against or f"#{max(self.start, 0)}",
+            new_revision=f"#{end}"
+            if self.end is not None and not self.against
+            else "now",
             label=("Diff, cut to fit: " + ", ".join(cut[:5])) if cut else "Diff",
             threads=_threads(
                 findings,
@@ -425,6 +450,7 @@ class ReviewApp:
         else:
             self.selected = seq
             self.start, self.end = seq - 1, seq
+        self.against = None
         self._clear()
         self.refresh(
             (
@@ -440,8 +466,23 @@ class ReviewApp:
 
     def _all(self) -> None:
         self.start, self.end, self.selected, self.path = 1, None, None, None
+        self.against = None
         self._clear()
         self.refresh(("Showing all changes", "idle"))
+
+    def _uncommitted(self) -> None:
+        self._compare("HEAD")
+
+    def _branch(self) -> None:
+        self._compare("base")
+
+    def _compare(self, against: str) -> None:
+        """Compare the files with a git commit; a checkpoint first takes in new edits."""
+        self.journal.checkpoint("manual", "Refresh")
+        self.against, self.selected = against, None
+        self._clear()
+        self.notice = (f"Showing {_AGAINST[against]}", "idle")
+        self.refresh(self.notice)
 
     def _latest(self) -> None:
         self._choose_checkpoint([str(self.journal.last)])

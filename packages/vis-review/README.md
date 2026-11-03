@@ -40,11 +40,16 @@ The buttons:
 
 | Button | Action |
 | --- | --- |
+| All changes | Show every change since the first checkpoint. |
+| Latest change | Show only what the newest checkpoint changed. |
+| Uncommitted | Compare the files with the git commit `HEAD`. |
+| Against base branch | Compare the files with the commit where `HEAD` left the default branch. |
+| Show full files | Show every unchanged line too. Click again to show only the changes. |
 | Refresh | Record a checkpoint now. |
 | Run checks | Run the diff checks and the language checks on the changed files. |
 | Run tests | Run the checks, and also the tests of the language tools. |
 | AI review | Ask a model to review the diff. Its findings become threads on their lines. |
-| Undo file | Undo the changes of the chosen file: in the chosen checkpoint, or in all changes. |
+| Undo file | Undo the changes of the chosen file: in the chosen checkpoint, or in all changes. It is off in a git comparison. |
 | Undo checkpoint | Undo only what the chosen checkpoint changed. A file that changed again later is a conflict and stays as it is. |
 | Restore to here | Bring every file back to how the chosen checkpoint left it. |
 

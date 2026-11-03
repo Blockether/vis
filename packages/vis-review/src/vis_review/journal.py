@@ -31,6 +31,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from vis_lang_interface import process
 from vis_lang_interface.changes import line_changes
 from vis_lang_interface.tree import Tree, listing, stamp_of
 
@@ -290,6 +291,23 @@ class Journal:
         entry = self.entry(seq)
         return self.diff(seq - 1, seq, entry.files)
 
+    def against(self, ref: str, context: int = 3) -> list[FileDiff] | None:
+        """How each file differs from git commit `ref`; None where git cannot tell.
+
+        The new side is the newest checkpoint, so take a checkpoint first.
+        """
+        old = git_files(self.root, ref)
+        if old is None:
+            return None
+        before = {
+            rel: self.store.put(data) for rel, data in old.items() if data is not None
+        }
+        changed = sorted(rel for rel in old if before.get(rel) != self.state.get(rel))
+        return [
+            self.file_diff(rel, before.get(rel), self.state.get(rel), context)
+            for rel in changed
+        ]
+
     def file_diff(
         self, rel: str, before: str | None, after: str | None, context: int = 3
     ) -> FileDiff:
@@ -441,6 +459,103 @@ def _write_file(path: str, data: bytes) -> None:
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise
+
+
+def _git(root: str, *args: str, timeout_s: int = 60) -> str | None:
+    """What `git args` printed in `root`, or None when it failed or is missing."""
+    env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_OPTIONAL_LOCKS": "0"}
+    try:
+        done = process.run(["git", *args], cwd=root, timeout_s=timeout_s, env=env)
+    except (process.ToolMissing, process.ToolTimeout, OSError):
+        return None
+    return done.out if done.is_ok else None
+
+
+def base_ref(root: str) -> str | None:
+    """The commit where HEAD left the default branch, like T3 "Automatic"; None if unknown."""
+    default = _git(root, "rev-parse", "--abbrev-ref", "origin/HEAD")
+    names = [default.strip()] if default and default.strip() != "origin/HEAD" else []
+    for name in [*names, "origin/main", "origin/master", "main", "master"]:
+        base = _git(root, "merge-base", "HEAD", name)
+        if base and base.strip():
+            return base.strip()
+    return None
+
+
+def git_files(root: str, ref: str) -> dict[str, bytes | None] | None:
+    """`{path: content at ref, or None}` of each file under `root` that differs from `ref`.
+
+    Paths are relative to `root`. Git writes the old files into a temporary
+    work tree and a temporary index, so the repository itself never changes.
+    Returns None where `root` is no git work tree or `ref` is no commit.
+    """
+    prefix = _git(root, "rev-parse", "--show-prefix")
+    top = _git(root, "rev-parse", "--show-toplevel")
+    commit = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    if prefix is None or top is None or not commit:
+        return None
+    prefix, top = prefix.strip(), top.strip()
+    status = _git(
+        root, "diff", "--name-status", "-z", "--no-renames", "--relative", ref
+    )
+    others = _git(root, "ls-files", "-z", "--others", "--exclude-standard")
+    if status is None or others is None:
+        return None
+    fields = status.split("\0")
+    files: dict[str, bytes | None] = dict.fromkeys(filter(None, others.split("\0")))
+    at_ref = [
+        rel for code, rel in zip(fields[::2], fields[1::2]) if rel and code != "A"
+    ]
+    files.update(
+        dict.fromkeys(rel for code, rel in zip(fields[::2], fields[1::2]) if rel)
+    )
+    if at_ref:
+        old = _restored(top, commit.strip(), [prefix + rel for rel in at_ref], prefix)
+        if old is None:
+            return None
+        files.update(old)
+    return files
+
+
+def _restored(
+    top: str, commit: str, names: list[str], prefix: str
+) -> dict[str, bytes] | None:
+    """`{path under prefix: content}` of `names` at `commit`; None when git failed."""
+    with tempfile.TemporaryDirectory(prefix="vis-review-") as work:
+        tree = os.path.join(work, "tree")
+        os.mkdir(tree)
+        listed = os.path.join(work, "paths")
+        Path(listed).write_bytes(b"\0".join(name.encode() for name in names))
+        env = {
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_INDEX_FILE": os.path.join(work, "index"),
+        }
+        try:
+            done = process.run(
+                [
+                    "git",
+                    "--literal-pathspecs",
+                    f"--work-tree={tree}",
+                    "restore",
+                    f"--source={commit}",
+                    "--worktree",
+                    "--pathspec-file-nul",
+                    f"--pathspec-from-file={listed}",
+                ],
+                cwd=top,
+                timeout_s=120,
+                env=env,
+                read_write=[work],
+            )
+        except (process.ToolMissing, process.ToolTimeout, OSError):
+            return None
+        if not done.is_ok:
+            return None
+        out: dict[str, bytes] = {}
+        for name in names:
+            with contextlib.suppress(OSError):
+                out[name[len(prefix) :]] = Path(tree, name).read_bytes()
+        return out
 
 
 def _umask() -> int:
