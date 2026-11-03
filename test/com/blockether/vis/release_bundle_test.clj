@@ -2125,6 +2125,12 @@
                 (expect (.isFile cleaned) (str mode ": owned process must be stopped"))))
             (finally (delete-tree! dir))))))))
 
+(defn- workflow-step-script
+  "Read the inline shell of the step with `id` in one workflow job."
+  [workflow job id]
+  (some #(when (= id (get % "id")) (get % "run"))
+        (get-in (yaml/load (slurp workflow)) ["jobs" job "steps"])))
+
 (defn- workflow-job-script
   "Read the first production inline shell of one workflow job for isolated execution."
   [workflow job]
@@ -2213,42 +2219,57 @@
       (spit calls "")
       (spit data (wire/json-str metadata))
       (let
-        [result
-         (run-bash
-           ["bash" "-c"
-            (str
-              "gh() {\ncase \"$*\" in\n" " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
-              " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*) printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
-              " *\"/compare/$SHA...$TEST_GREEN_MAIN\"*) printf '%s' \"$TEST_ORDER\" ;;\n"
-              " *'/actions/workflows/ci.yml/runs?head_sha='*) printf '%s' \"$TEST_GREEN\" ;;\n"
-              " *'/releases?per_page=100'*) printf '%s' \"$TEST_DRAFT\" ;;\n"
-              " *'/releases/tags/beta-'*) printf '%s' \"$TEST_PUBLISHED\" ;;\n"
-              " *'/git/ref/tags/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] ;;\n"
-              " 'api --method POST '*'/git/refs '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; : > \"$TEST_TAG_CREATED\" ;;\n"
-              " *'/commits/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] || return 1; printf '%s' \"$TEST_TAG_SHA\" ;;\n"
-              " 'release create '*|'release edit '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
-              " 'workflow run '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
-              " 'release upload installer '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/native-beta\" >> \"$TEST_CALLS\" ;;\n"
-              " 'release upload beta-'*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/SHA256SUMS\" >> \"$TEST_CALLS\" ;;\n"
-              " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
-           (merge {"REPO" "example/vis"
-                   "EVENT_SHA" sha
-                   "SHA" sha
-                   "TAG" (str "beta-" sha)
-                   "TEST_MAIN" sha
-                   "TEST_GREEN_MAIN" sha
-                   "TEST_ORDER" "ahead"
-                   "TEST_TAG_SHA" sha
-                   "TEST_TAG_EXISTS" "1"
-                   "TEST_TAG_CREATED" (.getAbsolutePath (io/file dir "created-tag"))
-                   "TEST_GREEN" "1"
-                   "TEST_DRAFT" ""
-                   "TEST_PUBLISHED" "true"
-                   "GITHUB_OUTPUT" (.getAbsolutePath outputs)
-                   "TEST_CALLS" (.getAbsolutePath calls)
-                   "METADATA" (.getAbsolutePath data)
-                   "RUNNER_TEMP" (.getAbsolutePath dir)}
-                  overrides))]
+        [run-script
+         (fn [script]
+           (run-bash
+             ["bash" "-c"
+              (str
+                "gh() {\ncase \"$*\" in\n" " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
+                " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*) printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
+                " *\"/compare/$SHA...$TEST_GREEN_MAIN\"*) printf '%s' \"$TEST_ORDER\" ;;\n"
+                " *'/actions/workflows/ci.yml/runs?head_sha='*) printf '%s' \"$TEST_GREEN\" ;;\n"
+                " *'/releases?per_page=100'*) printf '%s' \"$TEST_DRAFT\" ;;\n"
+                " *'/releases/tags/beta-'*) printf '%s' \"$TEST_PUBLISHED\" ;;\n"
+                " *'/git/ref/tags/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] ;;\n"
+                " 'api --method POST '*'/git/refs '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; : > \"$TEST_TAG_CREATED\" ;;\n"
+                " *'/commits/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] || return 1; printf '%s' \"$TEST_TAG_SHA\" ;;\n"
+                " 'release create '*|'release edit '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
+                " 'workflow run '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
+                " 'release upload installer '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/native-beta\" >> \"$TEST_CALLS\" ;;\n"
+                " 'release upload beta-'*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/SHA256SUMS\" >> \"$TEST_CALLS\" ;;\n"
+                " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
+             (merge {"REPO" "example/vis"
+                     "EVENT_SHA" sha
+                     "SHA" sha
+                     "TAG" (str "beta-" sha)
+                     "TEST_MAIN" sha
+                     "TEST_GREEN_MAIN" sha
+                     "TEST_ORDER" "ahead"
+                     "TEST_TAG_SHA" sha
+                     "TEST_TAG_EXISTS" "1"
+                     "TEST_TAG_CREATED" (.getAbsolutePath (io/file dir "created-tag"))
+                     "TEST_GREEN" "1"
+                     "TEST_DRAFT" ""
+                     "TEST_PUBLISHED" "true"
+                     "GITHUB_OUTPUT" (.getAbsolutePath outputs)
+                     "TEST_CALLS" (.getAbsolutePath calls)
+                     "METADATA" (.getAbsolutePath data)
+                     "RUNNER_TEMP" (.getAbsolutePath dir)}
+                    overrides)))
+
+         first-result
+         (run-script script)
+
+         ;; The publish step runs only after the attested `current=true` (#435).
+         result
+         (if (and (zero? (long (:exit first-result)))
+                  (str/includes? (slurp outputs) "current=true"))
+           (update (run-script
+                     (workflow-step-script ".github/workflows/beta-native.yml" job "publish"))
+                   :output
+                   #(str (:output first-result) %))
+           first-result)]
+
         (assoc result
           :outputs (slurp outputs)
           :calls (slurp calls)))
