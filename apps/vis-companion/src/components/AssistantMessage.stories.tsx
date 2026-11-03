@@ -105,10 +105,7 @@ export const Team: Story = {
     team: (
       <TurnAgents
         agents={STORY_DONE_TEAM}
-        pending={null}
         onOpen={fn()}
-        onCancel={fn()}
-        timeline={async (child: string) => ({ session_id: child, items: [] })}
       />
     ),
   },

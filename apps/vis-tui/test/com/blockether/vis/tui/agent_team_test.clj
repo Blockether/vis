@@ -182,7 +182,7 @@
 
         (expect (= "child"
                    (:agent-id (::dlg/done ((:on-key c) initial (KeyStroke. KeyType/Enter) geom))))
-                "Enter on the first agent row opens its timeline")
+                "Enter on the first agent row opens its session")
         (expect (= "parent"
                    (:session-id (::dlg/done ((:on-key c) next (KeyStroke. KeyType/Enter) geom))))))
       (reset! snapshot {:agents []})
@@ -194,51 +194,35 @@
         (expect (not-any? :action (:filtered disabled)))))))
 
 (defdescribe
-  inspect-and-confirmed-cancel-test
-  (it "opens the timeline of a row, stops it after a confirmation and opens its session"
-      (doseq [confirmed? [false true]]
-        (let [choices (atom [{:agent-id "child"} nil])
-              actions (atom [{:action :stop} {:action (if confirmed? :stop :keep)} nil])
-              requests (atom [])]
-
-          (with-redefs [team/choose-team! (fn [& _]
-                                            (let [r (first @choices)]
-                                              (swap! choices rest)
-                                              r))
-                        team/fetch! (constantly nil)
-                        team/summary (constantly {:agents [review-agent]})
-                        dlg/select-dialog! (fn [& _]
-                                             (let [r (first @actions)]
-                                               (swap! actions rest)
-                                               r))
-                        vis/request! (fn [& args]
-                                       (swap! requests conj args)
-                                       {:status 200
-                                        :body "{\"session_id\":\"child\",\"items\":[]}"})]
-
-            (expect (nil? (team/show! nil "leader" nil)))
-            (expect (= (if confirmed?
-                         [[:post "/v1/sessions/leader/agents/cancel" {:body {:session_id "child"}}]]
-                         [])
-                       (filterv #(= :post (first %)) @requests))))))
+  open-and-confirmed-stop-test
+  ;; User report 2026-11-03: a row opened a timeline sheet first, not the session of its agent.
+  (it "opens the session of a chosen row with no dialog between"
       (with-redefs [team/choose-team!
                     (fn [& _]
                       {:agent-id "child"})
 
-                    team/summary
-                    (constantly {:agents [review-agent]})
-
-                    vis/request!
-                    (constantly {:status 404})
-
                     dlg/select-dialog!
                     (fn [& _]
-                      {:action :inspect})]
+                      (throw (ex-info "No dialog may open" {})))]
 
         (expect (= "child" (team/show! nil "leader" nil))))
       (with-redefs [team/choose-team! (fn [& _]
                                         {:action :parent :session-id "parent"})]
-        (expect (= "parent" (team/show! nil "leader" "parent"))))))
+        (expect (= "parent" (team/show! nil "leader" "parent")))))
+  (it "stops an agent through its parent only after a confirmation"
+      (doseq [confirmed? [false true]]
+        (let [requests (atom [])]
+          (with-redefs [team/fetch! (constantly nil)
+                        dlg/select-dialog! (constantly {:action (if confirmed? :stop :keep)})
+                        vis/request! (fn [& args]
+                                       (swap! requests conj args)
+                                       {:status 200})]
+
+            (team/stop-agent! nil "leader" "child")
+            (expect (= (if confirmed?
+                         [[:post "/v1/sessions/leader/agents/cancel" {:body {:session_id "child"}}]]
+                         [])
+                       @requests)))))))
 
 (defdescribe
   rendered-team-states-and-terminal-parity-test
@@ -830,77 +814,7 @@
                      (expect (not (team/child-traffic? (council "c2") #{})))))))
 
 (defdescribe
-  timeline-test
-  (it "reads the timeline route and lists its steps with times"
-      (let [calls
-            (atom [])
-
-            body
-            (str "{\"session_id\":\"s 1\",\"items\":["
-                 "{\"at\":1700000000000,\"kind\":\"started\",\"text\":\"Fix the parser\"},"
-                 "{\"at\":1700000005000,\"kind\":\"note\",\"text\":\"Read tests\"},"
-                 "{\"at\":1700000064000,\"kind\":\"finished\",\"status\":\"completed\","
-                 "\"outcome\":\"passed\",\"text\":\"All pass\"}]}")]
-
-        (with-redefs [vis/request! (fn [method url _]
-                                     (swap! calls conj [method url])
-                                     {:status 200 :body body})]
-          (let [{:keys [items]} (team/timeline! "leader" "s 1")
-                utc (java.time.ZoneId/of "UTC")]
-
-            (expect (= [[:get "/v1/sessions/leader/agents/s+1/timeline"]] @calls))
-            (expect (= ["22:13:20  started  Fix the parser" "22:13:25  note  Read tests"
-                        "22:14:24  DONE  All pass"]
-                       (mapv #(team/timeline-line % utc) items)))
-            (expect (= "22:14:24  FAILED  out of budget"
-                       (team/timeline-line
-                         {"at" 1700000064000 "kind" "finished" "status" "budget_limited"}
-                         utc)))
-            (expect (= [:inspect :stop nil nil nil nil]
-                       (mapv :action (team/timeline-items {"status" "running"} {:items items}))))))
-        (with-redefs [vis/request! (constantly {:status 404})]
-          (expect (string? (:error (team/timeline! "leader" "s1"))))
-          (expect (some #(= "No steps yet" (:label %))
-                        (team/timeline-items {"status" "completed"} {:items []})))))))
-
-(defdescribe
-  timeline-markdown-test
-  ;; User report 2026-11-02: timeline notes and messages showed raw Markdown, such as `##` and `**`.
-  (it "lists a step without its Markdown markers"
-      (expect (= "22:13:20  message  Python SDK timeline: done Files changed: • _contracts.py: lane"
-                 (team/timeline-line {"at" 1700000000000
-                                      "kind" "message"
-                                      "text" (str "## Python SDK `timeline`: done\n"
-                                                  "**Files changed:**\n- `_contracts.py`: lane")}
-                                     (java.time.ZoneId/of "UTC")))))
-  (it "opens a chosen step as Markdown, with one block for each authored line"
-      (let [item
-            {"at" 1700000000000 "kind" "note" "text" "## Done\n**Files:**\n- `a.clj`"}
-
-            picked?
-            (atom false)
-
-            opened
-            (atom [])]
-
-        (with-redefs [team/timeline!
-                      (constantly {:items [item]})
-
-                      team/summary
-                      (constantly {:agents []})
-
-                      dlg/select-dialog!
-                      (fn [_ _ items]
-                        (when-not (first (reset-vals! picked? true))
-                          (first (filter :markdown items))))
-
-                      dlg/markdown-viewer-dialog!
-                      (fn [_ _ md]
-                        (swap! opened conj md)
-                        nil)]
-
-          (expect (nil? (team/show-timeline! nil "leader" "s1")))
-          (expect (= ["## Done\n\n**Files:**\n\n- `a.clj`"] @opened)))))
+  row-markdown-test
   (it "shows a Markdown note in its row without the markers"
       (let [row (first (team/team-rows "turn-1"
                                        [(agent-row 1 "running" "note" "**Fixing** the `parser`")]))]

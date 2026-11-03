@@ -4,11 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../lib/gateway';
 import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { AgentTimeline, SseEvent, Subagent } from '../lib/types';
+import type { SseEvent, Subagent } from '../lib/types';
 import {
+  StopAgent,
   TurnAgents,
   agentLabel,
-  agentOutcome,
   agentStatus,
   agentTime,
   agentBars,
@@ -17,13 +17,10 @@ import {
   leaderLane,
   leaderParts,
   axisMarks,
-  clockTime,
   dockTeams,
   formatAgentTime,
   teamCounts,
   teamTime,
-  timelineRows,
-  timelineStep,
   useAgentTeam,
 } from './AgentTeam';
 
@@ -31,8 +28,7 @@ const T0 = new Date(2026, 4, 3, 14, 3, 7).getTime();
 const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
   provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 }, created_at: T0 };
-const empty = async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [] });
-const props = { pending: null, onOpen: vi.fn(), onCancel: vi.fn(), timeline: vi.fn(empty) };
+const props = { onOpen: vi.fn() };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -159,11 +155,12 @@ describe('agent rows', () => {
   });
 
   // On a wide screen the note of an agent stands beside its title, and the timeline replaces the notes.
-  it('shows the notes on a wide screen, swaps them for the timeline, and opens the sheet from a row', async () => {
+  it('shows the notes on a wide screen, swaps them for the timeline, and opens the session from a row', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
-    render(<TurnAgents {...props} agents={[
+    const onOpen = vi.fn();
+    render(<TurnAgents {...props} onOpen={onOpen} agents={[
       { ...child, note: 'Reading the routes' },
       { ...child, session_id: 'done', status: 'completed', finished_at: T0 + 9_000 },
     ]} />);
@@ -173,8 +170,9 @@ describe('agent rows', () => {
     expect(within(screen.getByRole('list', { name: 'Legend' })).getByText('Reading the routes')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close timeline' })).toHaveAttribute('aria-pressed', 'true');
     const [, done] = screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row'));
-    await act(async () => { fireEvent.click(done); });
-    expect(screen.getByRole('dialog', { name: '#2' })).toBeInTheDocument();
+    fireEvent.click(done);
+    expect(onOpen).toHaveBeenCalledWith('done');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   // User request: the chart names each lane by a short key, L for the leader and A1, A2 for the agents,
@@ -220,7 +218,7 @@ describe('agent rows', () => {
   });
 
   // A form of a subagent opens in the form prompt of the leader session, like any
-  // other form. Its row only runs and opens the timeline, never the child session.
+  // other form. Its row has no control for it.
   it('shows an agent with an open form as running, with no control for its requests', () => {
     const onOpen = vi.fn();
     render(<TurnAgents {...props} onOpen={onOpen} agents={[
@@ -230,147 +228,38 @@ describe('agent rows', () => {
     expect(screen.queryByText('needs you')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^(Answer|Grant|Deny|Later)/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Keep the old API?')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^agent#1/ }));
-    expect(onOpen).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  // User report 2026-11-03: a row opened a sheet with an Open button before the agent session.
+  it('opens the session of an agent from its row, with no sheet between', () => {
+    const onOpen = vi.fn();
+    render(<TurnAgents {...props} onOpen={onOpen} agents={[child, { ...child, session_id: 'second' }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /^agent#2/ }));
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('second');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
 });
 
-describe('agent timeline', () => {
-  const steps: AgentTimeline = { session_id: 'child', items: [
-    { at: T0, kind: 'started', text: 'Verify the contract' },
-    { at: T0 + 12_000, kind: 'note', text: 'The schema has the new fields.' },
-    { at: T0 + 40_000, kind: 'message', text: 'Asked: keep the old API?' },
-    { at: T0 + 61_000, kind: 'finished', status: 'completed', outcome: 'passed', text: 'All 40 tests pass' },
-  ] };
-
-  it('reads the steps of the selected agent with their times, and opens its session', async () => {
-    const timeline = vi.fn(async () => steps);
-    const onOpen = vi.fn();
-    render(<TurnAgents {...props} timeline={timeline} onOpen={onOpen} agents={[
-      { ...child, role: 'verify', status: 'completed', outcome: 'passed', finished_at: T0 + 61_000 },
-    ]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /done/ })); });
-    expect(timeline).toHaveBeenCalledWith('child');
-    const sheet = screen.getByRole('dialog', { name: '#1' });
-    const items = within(sheet).getAllByRole('listitem').map((item) => item.textContent);
-    expect(items).toEqual([
-      `${clockTime(T0)}StartedVerify the contract`,
-      `${clockTime(T0 + 12_000)}The schema has the new fields.`,
-      `${clockTime(T0 + 40_000)}Asked: keep the old API?`,
-      `${clockTime(T0 + 61_000)}doneAll 40 tests pass`,
-    ]);
-    expect(clockTime(T0)).toBe('14:03:07');
-    expect(within(sheet).queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Open session' }));
-    expect(onOpen).toHaveBeenCalledWith('child');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it('gives the reason of a failed end without a text', async () => {
-    const timeline = vi.fn(async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [
-      { at: T0 + 9_000, kind: 'finished', status: 'budget_limited' },
-    ] }));
-    render(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, status: 'budget_limited', finished_at: T0 + 9_000 }]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /failed/ })); });
-    const sheet = screen.getByRole('dialog', { name: '#1' });
-    expect(sheet.querySelector('[data-agent-outcome]')).toHaveTextContent('out of budget');
-    expect(within(sheet).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      `${clockTime(T0 + 9_000)}failed`,
-    ]);
-  });
-
-  // User report: the sheet showed the Markdown of a task as raw text, with `##`, `-` and backticks.
-  it('shows the task as Markdown, not as its raw markers', async () => {
-    const task = 'Make the state known.\n\n## User report\n- The dock shows late.\n- Read `useAgentTeam` first.';
-    render(<TurnAgents {...props} agents={[{ ...child, task }]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
-    const part = within(screen.getByRole('dialog', { name: '#1' })).getByRole('region', { name: 'Task' });
-    expect(within(part).getByRole('heading', { name: 'User report' })).toBeInTheDocument();
-    expect(within(part).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      'The dock shows late.',
-      'Read useAgentTeam first.',
-    ]);
-    expect(part.textContent).not.toMatch(/##|`/);
-  });
-
-  // User report 2026-11-02: timeline notes and messages showed raw Markdown, such as `##` and `**`.
-  it('shows the notes and messages of the timeline as Markdown', async () => {
-    const timeline = vi.fn(async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [
-      { at: T0, kind: 'message', text: '## Python SDK `timeline`: done\n**Files changed:**\n- `_contracts.py`: lane' },
-      { at: T0 + 5_000, kind: 'note', text: 'Read **all** tests' },
-    ] }));
-    render(<TurnAgents {...props} timeline={timeline} agents={[child]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
-    const steps = within(screen.getByRole('dialog', { name: '#1' })).getByRole('list', { name: 'Timeline' });
-    expect(within(steps).getByRole('heading', { name: 'Python SDK timeline: done' })).toBeInTheDocument();
-    expect(within(steps).getByText('Files changed:').tagName).toBe('STRONG');
-    expect(within(steps).getByText('all').tagName).toBe('STRONG');
-    expect(steps.textContent).not.toMatch(/##|\*\*|`/);
-  });
-
+describe('agent row notes', () => {
   // User report 2026-11-02: a row showed the Markdown markers of a note.
   it('shows a Markdown note in its row without the markers', () => {
     expect(agentUpdate({ ...child, note: '## Done\n**Fixing** the `parser`' })).toBe('Done Fixing the parser');
   });
+});
 
-  // User report: the sheet showed the result at its end and the end step said it again.
-  it('shows the outcome above the steps, and the end step does not repeat it', () => {
-    const end = { at: T0 + 61_000, kind: 'finished' as const, status: 'completed' as const, outcome: 'passed' as const, text: 'All 40 tests pass' };
-    const done = { ...child, status: 'completed' as const, outcome: 'passed' as const, result: 'All 40 tests pass' };
-    expect(agentOutcome(done)).toBe('All 40 tests pass');
-    expect(timelineStep(end, done)).toEqual({ word: { text: 'done', ink: 'text-ok-ink', isStatus: true }, text: undefined });
-    expect(timelineStep(end, { ...done, result: 'Other words' }).text).toBe('All 40 tests pass');
-    // While the agent works, it has no outcome: its current step is in the timeline.
-    expect(agentOutcome({ ...child, note: 'Reading the schema', activity: ' Search files agents ' })).toBeUndefined();
-    expect(timelineStep({ at: T0, kind: 'note', text: 'Plain prose' }, child)).toEqual({ word: undefined, text: 'Plain prose' });
-  });
-
-  // User report 2026-11-02: the current Activity row said NOW. It shows the clock time, like the other rows.
-  it('gives the current Activity row the clock time, not NOW', async () => {
-    vi.useFakeTimers({ now: T0 + 30_000, shouldAdvanceTime: true });
-    const timeline = vi.fn(async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [{ at: T0, kind: 'started' }] }));
-    render(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, activity: 'Patched AgentDock.tsx' }]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
-    const steps = within(screen.getByRole('dialog', { name: '#1' })).getAllByRole('listitem');
-    expect(steps.at(-1)?.textContent).toBe(`${clockTime(T0 + 30_000)}Patched AgentDock.tsx`);
-  });
-
-  // User report: the current action of a working agent stood above its task, apart from its timeline.
-  it('marks the current step of a working agent as the last row of its timeline', () => {
-    const items = steps.items.slice(0, 2);
-    const current = (rows: ReturnType<typeof timelineRows>) => rows.filter((row) => row.isCurrent).map((row) => [row.at, row.text]);
-    expect(current(timelineRows(items, { ...child, activity: ' Patched AgentDock.tsx ' }))).toEqual([[undefined, 'Patched AgentDock.tsx']]);
-    expect(timelineRows(items, { ...child, activity: 'Patched AgentDock.tsx' })).toHaveLength(3);
-    expect(current(timelineRows(items, child))).toEqual([[T0 + 12_000, 'The schema has the new fields.']]);
-    // An Activity line that says the last step again marks that step, not a second row.
-    expect(timelineRows(items, { ...child, activity: 'The schema has the new fields.' }).map((row) => row.isCurrent)).toEqual([false, true]);
-    expect(current(timelineRows(steps.items, { ...child, status: 'completed', activity: 'Patched AgentDock.tsx' }))).toEqual([]);
-  });
-
-  it('says when there are no steps, and shows a read error', async () => {
-    const timeline = vi.fn().mockResolvedValueOnce({ session_id: 'child', items: [] }).mockRejectedValue(new Error('Not found'));
-    const { rerender } = render(<TurnAgents {...props} timeline={timeline} agents={[child]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
-    // A step of the agent reads the timeline again; a clock tick does not.
-    await act(async () => { rerender(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, iterations_used: 3 }]} />); });
-    expect(screen.getByRole('alert')).toHaveTextContent('Not found');
-    expect(timeline).toHaveBeenCalledTimes(2);
-  });
-
-  it('confirms a stop of a working agent', async () => {
-    const onCancel = vi.fn();
-    render(<TurnAgents {...props} onCancel={onCancel} agents={[child]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
+describe('agent stop', () => {
+  it('confirms a stop of a working agent', () => {
+    const onStop = vi.fn();
+    render(<StopAgent isPending={false} onStop={onStop} />);
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    expect(onCancel).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
     // A blur disarms the stop, so a later stray press does not stop the agent.
     fireEvent.blur(screen.getByRole('button', { name: 'Confirm stop' }));
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    expect(onCancel).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-    expect(onCancel).toHaveBeenCalledWith('child');
+    expect(onStop).toHaveBeenCalledOnce();
   });
 });
 
@@ -456,7 +345,12 @@ function fakeHub() {
 
 function TeamView({ client, sid, total, legacy = null }: { client: GatewayClient; sid: string; total?: number | null; legacy?: boolean | null }) {
   const team = useAgentTeam(client, sid, total, legacy);
-  return <TurnAgents agents={team.agents} pending={team.pending} error={team.error} onOpen={vi.fn()} onCancel={team.cancel} timeline={team.timeline} />;
+  return (
+    <>
+      <TurnAgents agents={team.agents} error={team.error} onOpen={vi.fn()} />
+      <StopAgent isPending={team.pending === 'child'} onStop={() => void team.cancel('child')} />
+    </>
+  );
 }
 
 function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; total?: number | null; legacy?: boolean | null; hub?: SessionSubscriptionHub | null }) {
@@ -590,9 +484,8 @@ describe('agent team reader', () => {
   it('keeps a stop failure visible across background reads until a stop succeeds', async () => {
     const agents = vi.fn().mockResolvedValue([child]);
     const cancelAgent = vi.fn().mockRejectedValue(new Error('Stop failed. Try again.'));
-    render(<Team client={{ agents, cancelAgent, agentTimeline: vi.fn(empty) } as unknown as GatewayClient} sid="leader" />);
+    render(<Team client={{ agents, cancelAgent } as unknown as GatewayClient} sid="leader" />);
     await act(async () => {});
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');
@@ -604,6 +497,17 @@ describe('agent team reader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // The gateway stops a child only for a session that controls it, so a stop from inside the child
+  // session goes through its parent.
+  it('stops an agent from its own session through its parent', async () => {
+    const cancelAgent = vi.fn().mockResolvedValue(undefined);
+    render(<Team client={{ agents: vi.fn().mockResolvedValue([child]), cancelAgent } as unknown as GatewayClient} sid="child" />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
+    expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');
   });
 
   // User report 2026-11-01: the running agent team showed only after 3-4 seconds, and a

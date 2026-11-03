@@ -1,19 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
-import { STORY_AGENT_LEADER, STORY_AGENT_LIVE_TURN, STORY_DONE_TEAM, STORY_LIVE_TEAM, storyTimeline } from '../dev/story-agents';
+import { STORY_AGENT_LEADER, STORY_AGENT_LIVE_TURN, STORY_DONE_TEAM, STORY_LIVE_TEAM } from '../dev/story-agents';
 import { AgentDock } from './AgentDock';
 import { TurnAgents } from './AgentTeam';
-
-const timeline = fn(async (child: string) => {
-  const agent = [...STORY_LIVE_TEAM, ...STORY_DONE_TEAM].find((row) => row.session_id === child);
-  return agent ? storyTimeline(agent) : { session_id: child, items: [] };
-});
 
 const meta = {
   title: 'Session/Subagents',
   component: TurnAgents,
   parameters: { layout: 'padded' },
-  args: { agents: STORY_DONE_TEAM, pending: null, onOpen: fn(), onCancel: fn(), timeline },
+  args: { agents: STORY_DONE_TEAM, onOpen: fn() },
 } satisfies Meta<typeof TurnAgents>;
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -40,18 +35,7 @@ export const Dock: Story = {
   },
 };
 
-/** A row opens the timeline of its agent, with the way into its session. */
-export const Timeline: Story = {
-  args: { agents: STORY_LIVE_TEAM },
-  play: async ({ canvasElement }) => {
-    await userEvent.click(within(canvasElement).getByRole('button', { name: /Map the agents routes/ }));
-    const sheet = await within(document.body).findByRole('dialog', { name: 'Map the agents routes' });
-    await expect(await within(sheet).findByRole('list', { name: 'Timeline' })).toBeVisible();
-    await expect(within(sheet).getByRole('button', { name: 'Open session' })).toBeVisible();
-  },
-};
-
-/** A finished team. The untitled failed verifier has a long task, which the sheet cuts to four lines. */
+/** A finished team. A row opens the session of its agent. */
 export const Finished: Story = {};
 
 // The leader worked, waited in council.run, worked again and waits in council.wait now.

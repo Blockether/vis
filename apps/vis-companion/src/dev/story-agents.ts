@@ -1,6 +1,6 @@
-import type { AgentTimeline, Subagent } from '../lib/types';
+import type { Subagent } from '../lib/types';
 
-/** Subagent fixtures in the shape of the agents contract: gateway rows and timelines. */
+/** Subagent fixtures in the shape of the agents contract: gateway rows. */
 export const STORY_AGENT_LEADER = 'subagents-story';
 const STORY_AGENT_DONE_TURN = 'subagents-turn-1';
 export const STORY_AGENT_LIVE_TURN = 'subagents-turn-3';
@@ -96,28 +96,3 @@ export const STORY_DONE_TEAM: Subagent[] = [
     result: 'Rebuilt the dock, the transcript block, the timeline sheet and the crumb, and removed every role icon and status mark from them',
   }), 62),
 ];
-
-/** The timeline of one agent, from its own rows: start, a note, a message and its end. */
-export function storyTimeline(agent: Subagent): AgentTimeline {
-  const start = agent.created_at ?? NOW;
-  const items: AgentTimeline['items'] = [
-    { at: start, kind: 'started' },
-    { at: start + 9_000, kind: 'note', text: 'Read the contract and the current views first.' },
-    {
-      at: start + 14_000,
-      kind: 'message',
-      text: '## Contract read\n**Routes to check:**\n- `GET /v1/sessions/:sid/agents`\n- `GET /v1/sessions/:sid/agents/:child/timeline`\nNext I compare the rows with the views.',
-    },
-  ];
-  items.push({ at: start + 20_000, kind: 'note', text: agent.note ?? agent.activity ?? 'Changed the rows and ran the checks.' });
-  if (agent.finished_at) {
-    items.push({
-      at: agent.finished_at,
-      kind: 'finished',
-      status: agent.status,
-      ...(agent.outcome ? { outcome: agent.outcome } : {}),
-      ...(agent.result ? { text: agent.result } : {}),
-    });
-  }
-  return { session_id: agent.session_id, items };
-}

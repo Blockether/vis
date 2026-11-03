@@ -6,22 +6,20 @@ import {
   useEffect,
   useEffectEvent,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
-import type { AgentTimeline, AgentTimelineItem, Subagent, TranscriptIteration, TranscriptTurn } from '../lib/types';
+import type { Subagent, TranscriptIteration, TranscriptTurn } from '../lib/types';
 import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
-import { useClampMotion } from '../lib/clamp-motion';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
 export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
 import { CheckIcon, CloseIcon, MARK_NUDGE } from './icons';
-import { Button, DialogFrame, HoverNote, Modal, TextButton } from './ui';
+import { Button, HoverNote } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
@@ -85,6 +83,9 @@ const END_REASON: Partial<Record<Subagent['status'], string>> = {
   cancelled: 'cancelled',
   budget_limited: 'out of budget',
 };
+
+/** Whether a stop can still end the work of an agent. */
+export const isStoppable = (agent: Subagent) => isLive(agent);
 
 // The start of the current task: the spawn, or the last resume.
 function startOf(agent: Subagent): number | undefined {
@@ -645,176 +646,58 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
   );
 }
 
-/** The props of a team block. `timeline` reads the steps of one child. */
+/** The props of a team block. */
 export interface TeamProps {
   agents: readonly Subagent[];
-  pending: string | null;
   error?: string | null;
   onOpen: (sid: string) => void;
-  onCancel: (sid: string) => void;
-  timeline: (child: string) => Promise<AgentTimeline>;
   /** The leader turn of the team, for the first lane of its chart. */
   leader?: LeaderLane;
 }
 
 /**
  * The subagents of one turn as a table in a frame: the team line with the counts by role and
- * by status, then one row for each agent in spawn order. A row opens the timeline of its
+ * by status, then one row for each agent in spawn order. A row opens the session of its
  * agent. The dock shows the table without the frame. A subagent never asks a person: its
  * leader answers it, so a row has no question and no control for one.
  */
-export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline, leader, placement = 'transcript', isTimeline }: TeamProps & {
+export function TurnAgents({ agents, error, onOpen, leader, placement = 'transcript', isTimeline }: TeamProps & {
   /** The dock above the composer while the team works, or the turn of the transcript after. */
   placement?: 'dock' | 'transcript';
   /** The dock owns the timeline switch of its teams; the transcript owns its own. */
   isTimeline?: boolean;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
   const [isOwnTimeline, setOwnTimeline] = useState(false);
   const isWide = useWide();
   const now = useNow(agents.some((agent) => agent.status === 'running') || (leader != null && leader.end == null));
   if (agents.length === 0) return null;
   const rows = spawnOrder(agents);
-  const chosen = rows.find((agent) => agent.session_id === selected);
-  const table = <AgentTable rows={rows} now={now} error={error} onSelect={setSelected} isTimeline={isTimeline ?? isOwnTimeline} leader={leader} />;
+  const table = <AgentTable rows={rows} now={now} error={error} onSelect={onOpen} isTimeline={isTimeline ?? isOwnTimeline} leader={leader} />;
   const toggle = isWide && hasTimeline(rows, leader)
     ? <TimelineToggle isOn={isOwnTimeline} onToggle={() => setOwnTimeline((value) => !value)} />
     : undefined;
-  return (
-    <>
-      {placement === 'transcript' ? (
-        <section
-          aria-label="Subagents"
-          className="my-3 border border-dialog-edge font-mono text-meta text-white sm:text-ui"
-          data-transcript-part
-        >
-          <div className="flex border-b border-dialog-edge bg-panel px-3 py-1 sm:py-1.5">
-            <TeamLine agents={rows} action={toggle} />
-          </div>
-          <div className="px-3 sm:px-0">{table}</div>
-        </section>
-      ) : table}
-      {chosen && (
-        <AgentTimelineSheet
-          agent={chosen}
-          label={agentLabel(chosen, rows)}
-          now={now}
-          pending={pending}
-          load={timeline}
-          onOpen={(child) => { setSelected(null); onOpen(child); }}
-          onCancel={onCancel}
-          onClose={() => setSelected(null)}
-        />
-      )}
-    </>
-  );
-}
-
-// The word of a step that starts a task. A note and a message are the agent's own prose, so
-// they carry no word, and the end carries its status word.
-const STEP_WORDS: Partial<Record<AgentTimelineItem['kind'], string>> = {
-  started: 'Started',
-  continued: 'Continued',
-};
-
-/**
- * What the sheet shows above the timeline: the result of an ended agent, or the reason of its end.
- * A working agent has none: its current step is the last row of the timeline.
- */
-export function agentOutcome(agent: Subagent): string | undefined {
-  const text = isLive(agent) ? undefined : agent.result ?? END_REASON[agent.status];
-  return text?.trim() || undefined;
-}
-
-/**
- * One step as the timeline shows it: its word with its ink, then its text. The end shows its
- * status word. The sheet shows the outcome above the timeline, so the end does not repeat it.
- */
-export function timelineStep(item: AgentTimelineItem, agent: Subagent): {
-  word?: { text: string; ink: string; isStatus: boolean };
-  text?: string;
-} {
-  if (item.kind !== 'finished') {
-    const word = STEP_WORDS[item.kind];
-    return { word: word ? { text: word, ink: 'text-dialog-hint', isStatus: false } : undefined, text: item.text };
-  }
-  const end = item.status ? agentStatus({ ...agent, status: item.status, outcome: item.outcome }) : undefined;
-  const text = item.text?.trim() || (item.status ? END_REASON[item.status] : undefined);
-  return {
-    word: end && { ...end, isStatus: true },
-    text: text === agentOutcome(agent) ? undefined : text,
-  };
-}
-
-/** One row of the sheet's timeline. A row without `at` is the current Activity line. */
-export type TimelineRow = ReturnType<typeof timelineStep> & { at?: number; isCurrent: boolean };
-
-/**
- * The rows of the sheet's timeline. While the agent works, its last row is current: its Activity
- * line when it has one and it does not say the last step again, else its last step.
- */
-export function timelineRows(items: readonly AgentTimelineItem[], agent: Subagent): TimelineRow[] {
-  const rows: TimelineRow[] = items.map((item) => ({ ...timelineStep(item, agent), at: item.at, isCurrent: false }));
-  if (!isLive(agent)) return rows;
-  const activity = agent.activity?.trim();
-  if (activity && activity !== rows.at(-1)?.text?.trim()) return [...rows, { text: activity, isCurrent: true }];
-  return rows.map((row, index) => (index === rows.length - 1 ? { ...row, isCurrent: true } : row));
-}
-
-const pad = (value: number) => String(value).padStart(2, '0');
-
-/** The local clock time of an epoch ms, `14:03:07`. */
-export function clockTime(at: number): string {
-  const date = new Date(at);
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-// The time of the current timeline row, in the accent ink. `text-accent` fails 4.5:1 on light paper.
-const CURRENT_TIME = 'text-accent-ink';
-
-// The name of a part of the sheet. It is one step smaller than the text that it names.
-const PART_NAME = 'mb-1 text-meta text-dialog-hint sm:text-ui';
-
-// The task of an agent as Markdown, like a Council request: its first four lines, and all of it
-// on request. The control under the task shows only when the four lines cut it.
-function AgentTask({ task }: { task: string }) {
-  const [isCut, setCut] = useState(false);
-  const text = useRef<HTMLDivElement>(null);
-  const { isOpen, clampClass, toggle } = useClampMotion(text);
-  useLayoutEffect(() => {
-    const element = text.current;
-    // Only a clamped body tells whether four lines cut the task.
-    if (element === null || !clampClass) return undefined;
-    const measure = () => setCut(element.scrollHeight > element.clientHeight + 1);
-    measure();
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [task, clampClass]);
-  return (
-    <section aria-label="Task">
-      <h3 className={PART_NAME}>Task</h3>
-      <div ref={text} className={`[overflow-wrap:anywhere] ${clampClass}`}>
-        <Markdown compact hardBreaks>{councilMarkdown(task)}</Markdown>
+  return placement === 'transcript' ? (
+    <section
+      aria-label="Subagents"
+      className="my-3 border border-dialog-edge font-mono text-meta text-white sm:text-ui"
+      data-transcript-part
+    >
+      <div className="flex border-b border-dialog-edge bg-panel px-3 py-1 sm:py-1.5">
+        <TeamLine agents={rows} action={toggle} />
       </div>
-      {(isCut || isOpen) && (
-        <p className="mt-1 text-dialog-hint">
-          <TextButton isTally aria-expanded={isOpen} onClick={toggle}>
-            {isOpen ? 'Show less' : 'Show the whole task'}
-          </TextButton>
-        </p>
-      )}
+      <div className="px-3 sm:px-0">{table}</div>
     </section>
-  );
+  ) : table;
 }
 
 // How long an armed stop waits for its second press.
 const STOP_ARMED_MS = 5000;
 
-// The stop of a working agent, before the way into its session. The first press arms it and turns
-// it red, and the second press stops the agent. It disarms on blur or after a wait.
-function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => void }) {
+/**
+ * The stop of a working agent in the header of its session. The first press arms it and turns
+ * it red, and the second press stops the agent. It disarms on blur or after a wait.
+ */
+export function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => void }) {
   const [isArmed, setArmed] = useState(false);
   const scope = useId();
   useEffect(() => {
@@ -841,107 +724,6 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
         Stop
       </Button>
     </>
-  );
-}
-
-/**
- * The steps of one agent with their times, read from the timeline route, and the way into its
- * session. The sheet takes the whole session pane with wide side margins. The title of the agent
- * opens the sheet, not the band, and the status line stands close under it. Open and Stop stand
- * at the right end of the title on every width, so a long timeline never hides them. The outcome
- * follows, then the task, then the steps, with a rule between the parts.
- */
-export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
-  agent: Subagent;
-  label: string;
-  now: number;
-  pending: string | null;
-  load: (child: string) => Promise<AgentTimeline>;
-  onOpen: (sid: string) => void;
-  onCancel: (sid: string) => void;
-  onClose: () => void;
-}) {
-  const [steps, setSteps] = useState<{ items: AgentTimelineItem[] } | { error: string } | null>(null);
-  const child = agent.session_id;
-  // Read again when the agent moves on, not on a clock.
-  const progress = `${agent.status}:${agent.iterations_used}:${agent.finished_at ?? ''}:${agent.resumed_at ?? ''}`;
-  useEffect(() => {
-    let current = true;
-    load(child).then(
-      (timeline) => { if (current) setSteps({ items: Array.isArray(timeline?.items) ? timeline.items : [] }); },
-      (cause: unknown) => {
-        if (current) setSteps({ error: cause instanceof Error && cause.message ? cause.message : 'Could not read the timeline. Try again.' });
-      },
-    );
-    return () => { current = false; };
-  }, [load, child, progress]);
-  const role = agentRole(agent);
-  const status = agentStatus(agent);
-  const time = agentTime(agent, now);
-  const live = isLive(agent);
-  const outcome = agentOutcome(agent);
-  const rows = steps && 'items' in steps ? timelineRows(steps.items, agent) : [];
-  const task = agent.task.trim();
-  return (
-    <Modal size="full" within="session" onDismiss={onClose}>
-      <DialogFrame
-        title={label}
-        isTitleHidden
-        onClose={onClose}
-      >
-        <div className="w-full divide-y divide-dialog-edge px-4 py-5 font-mono text-ui text-white *:py-5 *:first:pt-0 *:last:pb-0 sm:px-10 sm:py-6 sm:text-body" data-agent-timeline>
-          <div className="space-y-1">
-            <div className="flex items-start gap-x-4">
-              <div className="min-w-0 flex-1">
-                {/* The band keeps the title for a screen reader, so this copy is for the eye only. */}
-                <p aria-hidden="true" className="text-subhead font-bold [overflow-wrap:anywhere]">{label}</p>
-                <div className="flex flex-wrap items-center gap-x-3">
-                  <span className={`uppercase ${role.ink}`}>{role.text}</span>
-                  <Divider />
-                  <span className={`uppercase ${status.ink}`}>{status.text}</span>
-                  {time !== undefined && <Divider />}
-                  {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
-                <Button aria-label="Open session" onClick={() => onOpen(child)}>Open</Button>
-              </div>
-            </div>
-            {outcome && (
-              <div className="font-semibold [overflow-wrap:anywhere]" data-agent-outcome>
-                <Markdown compact hardBreaks>{councilMarkdown(outcome)}</Markdown>
-              </div>
-            )}
-          </div>
-          {task && <AgentTask task={task} />}
-          <section aria-label="Steps">
-            <h3 className={PART_NAME}>Timeline</h3>
-            {steps === null ? (
-              <p className="text-dialog-hint">Reading the timeline…</p>
-            ) : 'error' in steps ? (
-              <p role="alert" className="text-err-ink">{steps.error}</p>
-            ) : rows.length === 0 ? (
-              <p className="text-dialog-hint">No steps yet.</p>
-            ) : (
-              <ol aria-label="Timeline" className="space-y-2">
-                {rows.map(({ at, word, text, isCurrent }, index) => (
-                  <li key={index} aria-current={isCurrent ? 'step' : undefined} className="grid grid-cols-[8ch_minmax(0,1fr)] gap-x-3">
-                    {/* The current row shows its time in the accent ink. An Activity line has no time of its own, so it shows the clock. */}
-                    <time dateTime={new Date(at ?? now).toISOString()} className={`tabular-nums ${isCurrent ? CURRENT_TIME : 'text-dialog-hint'}`}>{clockTime(at ?? now)}</time>
-                    {/* The text of a step is Markdown, like a Council message. */}
-                    <div className={`flex min-w-0 gap-x-3 [overflow-wrap:anywhere] ${isCurrent ? 'font-semibold' : ''}`}>
-                      {word && <span className={`shrink-0 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
-                      {text && <div className="min-w-0 flex-1"><Markdown compact hardBreaks>{councilMarkdown(text)}</Markdown></div>}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-        </div>
-      </DialogFrame>
-    </Modal>
   );
 }
 
@@ -1063,15 +845,14 @@ export function useAgentTeam(
       setRevision((value) => value + 1);
     }
   }, []);
+  // The gateway stops a child only for a session that controls it: its parent. In a child session
+  // the child is in the rows of its siblings, so the stop of the child itself goes to its parent.
   const cancel = useCallback(async (child: string) => {
+    const owner = current.find((agent) => agent.session_id === child)?.parent_id ?? sid;
     setError(null);
-    setError(await control(child, () => client.cancelAgent(sid, child), 'Could not stop agent. Try again.'));
-  }, [client, sid, control]);
-  const timeline = useCallback(
-    (child: string) => client.agentTimeline(sid, child),
-    [client, sid],
-  );
-  return { agents: current, pending, error, cancel, timeline };
+    setError(await control(child, () => client.cancelAgent(owner, child), 'Could not stop agent. Try again.'));
+  }, [client, sid, current, control]);
+  return { agents: current, pending, error, cancel };
 }
 
 /** What `useAgentTeam` gives its views. */

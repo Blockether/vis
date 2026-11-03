@@ -326,9 +326,10 @@
      {:title "Subagents"
       :rows [[(keymap/label-for :toggle-agent-dock) "Show or hide the agent table of the dock"]
              [(str (keymap/group-chord :agents) " 1-9") "Open the subagent with that number"]
-             [(keymap/label-for :agent-team) "List the subagents, then open one or stop it"]
+             [(keymap/label-for :agent-team) "List the subagents, then open one"]
              [(keymap/label-for :agent-parent) "Go back from a subagent to its parent session"]
-             ["Click a subagent row" "Show its timeline, then open its session or stop it"]]}
+             [(keymap/label-for :agent-stop) "Stop this subagent and its descendants"]
+             ["Click a subagent row" "Open the session of that subagent"]]}
      {:title "Live views"
       :rows [[(keymap/label-for :live-panel)
               "Open the side panel, then move the focus between it and the transcript"]

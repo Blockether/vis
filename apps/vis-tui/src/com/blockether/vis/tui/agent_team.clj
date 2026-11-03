@@ -607,14 +607,14 @@
     t/dialog-hint))
 
 (defn- register-row!
-  "A click on a row opens the timeline of its agent. A row of the dock of `dock` also takes the
+  "A click on a row opens the session of its agent. A row of the dock of `dock` also takes the
    wheel of that dock."
   ([row screen-row left width] (register-row! row screen-row left width nil))
   ([row screen-row left width dock]
    (when-let [id (:session-id row)]
      (.register
        interactions/hit-map
-       (cond-> {:bounds {:row screen-row :col left :width width} :kind :agent-timeline :text id}
+       (cond-> {:bounds {:row screen-row :col left :width width} :kind :agent-open :text id}
          dock
          (assoc :dock dock))))))
 
@@ -1452,83 +1452,6 @@
       (.interrupt worker)
       (.join worker 2500))))
 
-(defn timeline!
-  "The timeline of child `child-id` of `sid` from the gateway: `{:items [...]}` oldest first,
-   or `{:error text}`."
-  [sid child-id]
-  (try
-    (let [response
-          (vis/request!
-            :get
-            (path sid
-                  (str "/" (URLEncoder/encode (str child-id) StandardCharsets/UTF_8) "/timeline"))
-            {:timeout-ms 3000})]
-      (if (= 200 (:status response))
-        (let [body (wire/parse-json (:body response))
-              items (get body "items")]
-
-          (if (and (map? body)
-                   (vector? items)
-                   (every? #(and (map? %) (number? (get % "at")) (string? (get % "kind"))) items))
-            {:items items}
-            {:error "Invalid timeline response. Try again."}))
-        {:error "Could not load the timeline. Try again."}))
-    (catch Exception _ {:error "Could not load the timeline. Try again."})))
-
-(def ^:private ^java.time.format.DateTimeFormatter clock
-  (java.time.format.DateTimeFormatter/ofPattern "HH:mm:ss"))
-
-(defn- timeline-end
-  [item]
-  (when (= "finished" (get item "kind"))
-    {"status" (get item "status" "completed") "outcome" (get item "outcome")}))
-
-(defn- timeline-head
-  "The time and the word of a timeline step, such as `14:02:11  note`."
-  [item ^java.time.ZoneId zone]
-  (str (.format ^java.time.format.DateTimeFormatter clock
-                (.atZone (java.time.Instant/ofEpochMilli (long (get item "at"))) zone))
-       "  "
-       (if-let [end (timeline-end item)]
-         (status-word end)
-         (get item "kind"))))
-
-(defn timeline-line
-  "One plain timeline row, such as `14:02:11  note  Read the parser tests`. The text of a step
-   is Markdown, so the row shows it without its markers."
-  ([item] (timeline-line item (java.time.ZoneId/systemDefault)))
-  ([item ^java.time.ZoneId zone]
-   (str (timeline-head item zone)
-        (when-let [text (or (not-empty (markdown-line (get item "text")))
-                            (some-> (timeline-end item)
-                                    end-reason))]
-          (str "  " text)))))
-
-(defn timeline-items
-  "The dialog items of the timeline of `agent`: its actions first, then one row per step."
-  [agent {:keys [items error]}]
-  (into (cond-> [{:label "Open agent session" :action :inspect}]
-          (contains? #{"queued" "running"} (get agent "status"))
-          (conj {:label "Stop agent" :action :stop}))
-        (cond error [{:section? true :label "Timeline"} {:label error}]
-              (empty? items) [{:section? true :label "Timeline"} {:label "No steps yet"}]
-              :else (into [{:section? true :label "Timeline"}]
-                          ;; A step with a text opens it as Markdown.
-                          (map (fn [item]
-                                 (let [text (get item "text")]
-                                   (cond-> {:label (timeline-line item)}
-                                     (not (str/blank? text))
-                                     (assoc :title
-                                       (timeline-head item (java.time.ZoneId/systemDefault))
-                                       :markdown
-                                       (presentation/council-markdown text))))))
-                          items))))
-
-(defn- agent-of
-  [sid child-id]
-  (some #(when (= (str child-id) (get (second %) "session_id")) %)
-        (numbered (:agents (summary sid)))))
-
 (defn- stop!
   [sid id]
   (try (when-not (= 200
@@ -1536,43 +1459,17 @@
          (vis/notify! "Could not stop agent; refresh its state" :level :error))
        (catch Exception _ (vis/notify! "Could not stop agent; refresh its state" :level :error))))
 
-(defn show-timeline!
-  "Show the timeline of child `child-id` of `sid`. Returns the session id to open, or nil."
-  [screen sid child-id]
-  (loop []
-
-    (let [[n agent]
-          (or (agent-of sid child-id) [nil {"session_id" child-id}])
-
-          title
-          (str (some-> (role-word agent)
-                       (str " "))
-               (if n (agent-label n agent) "Agent")
-               " · "
-               (status-word agent))
-
-          choice
-          (dlg/select-dialog! screen title (timeline-items agent (timeline! sid child-id)))]
-
-      (case (:action choice)
-        :inspect
-        (str child-id)
-
-        :stop
-        (do (when (= :stop
-                     (:action (dlg/select-dialog! screen
-                                                  "Stop this agent and its descendants?"
-                                                  [{:label "Keep working" :action :keep}
-                                                   {:label "Stop agent" :action :stop}])))
-              (stop! sid child-id)
-              (fetch! sid))
-            (recur))
-
-        nil
-        (when choice
-          (when-let [md (:markdown choice)]
-            (dlg/markdown-viewer-dialog! screen (:title choice) md))
-          (recur))))))
+(defn stop-agent!
+  "Ask to stop child `child-id` of `parent-id` and its descendants. A confirmed stop asks the
+   gateway through the parent, and then reads the team of the parent again."
+  [screen parent-id child-id]
+  (when (= :stop
+           (:action (dlg/select-dialog! screen
+                                        "Stop this agent and its descendants?"
+                                        [{:label "Keep working" :action :keep}
+                                         {:label "Stop agent" :action :stop}])))
+    (stop! parent-id child-id)
+    (fetch! parent-id)))
 
 (def ^:private ^:const modal-row-width "The most cells of one agent row in the team modal." 200)
 
@@ -1681,5 +1578,4 @@
     (let [choice (choose-team! screen sid parent-id)]
       (cond (= :refresh (:action choice)) (recur)
             (= :parent (:action choice)) (:session-id choice)
-            (:agent-id choice) (or (show-timeline! screen sid (:agent-id choice)) (recur))
-            :else nil))))
+            :else (:agent-id choice)))))

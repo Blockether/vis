@@ -1570,7 +1570,13 @@
     (conj {:id :agent-parent
            :group "Session"
            :label "Back to Parent Session"
-           :description "Open the session that started this subagent"})))
+           :description "Open the session that started this subagent"})
+
+    (get-in @state/app-db [:session :agent :parent-id])
+    (conj {:id :agent-stop
+           :group "Session"
+           :label "Stop Agent"
+           :description "Stop this subagent and its descendants"})))
 
 (defn- menu-commands
   "Command universe for typed slash suggestion/exact-match handling.
@@ -8833,8 +8839,7 @@
   "Handle a mouse event while the help or task overlay is open."
   [ctx locals]
   (let [{:keys [screen click-action-fired? mouse-selection-anchor mouse-selection-focus
-                mouse-selection-source show-agent-timeline! show-model-picker!
-                show-reasoning-picker!]}
+                mouse-selection-source open-agent! show-model-picker! show-reasoning-picker!]}
         ctx
 
         {:keys [db key wheel-delta ^MouseActionType atype selection-copy?]}
@@ -8957,8 +8962,8 @@
                 :agent-dock-toggle
                 (toggle-agent-dock!)
 
-                :agent-timeline
-                (show-agent-timeline! (:text hit))
+                :agent-open
+                (open-agent! (:text hit))
 
                 :header-tasks
                 (state/dispatch [:toggle-tasks])
@@ -8993,8 +8998,8 @@
   [ctx locals]
   (let [{:keys [screen scrollbar-drag-offset click-action-fired? mouse-control-press
                 mouse-selection-anchor mouse-selection-focus mouse-selection-source
-                mouse-selection-line? fork-session! switch-session! show-agent-timeline!
-                show-model-picker! show-reasoning-picker!]}
+                mouse-selection-line? fork-session! switch-session! open-agent! show-model-picker!
+                show-reasoning-picker!]}
         ctx
 
         {:keys [db cols selection-copy? transcript-selectable-ranges transcript-bubble-copy-regions
@@ -9170,8 +9175,8 @@
             :agent-dock-toggle
             (toggle-agent-dock!)
 
-            :agent-timeline
-            (show-agent-timeline! (:text hit))
+            :agent-open
+            (open-agent! (:text hit))
 
             :header-tasks
             (state/dispatch [:toggle-tasks])
@@ -9264,8 +9269,8 @@
   [ctx locals]
   (let [{:keys [screen click-action-fired? mouse-control-press mouse-selection-anchor
                 mouse-selection-focus mouse-selection-source mouse-selection-line?
-                last-selection-click fork-session! switch-session! show-agent-timeline!
-                show-model-picker! show-reasoning-picker!]}
+                last-selection-click fork-session! switch-session! open-agent! show-model-picker!
+                show-reasoning-picker!]}
         ctx
 
         {:keys [db cols selection-copy? transcript-selectable-ranges input-selectable-ranges
@@ -9339,8 +9344,8 @@
           :agent-dock-toggle
           (toggle-agent-dock!)
 
-          :agent-timeline
-          (show-agent-timeline! (:text hit))
+          :agent-open
+          (open-agent! (:text hit))
 
           :header-tasks
           (state/dispatch [:toggle-tasks])
@@ -9956,8 +9961,8 @@
   "Handle one keystroke that no earlier mode took."
   [ctx locals]
   (let [{:keys [screen switch-session! show-agent-team! open-agent-parent! open-agent-nth!
-                show-session-metrics! show-sessions! show-model-picker! show-reasoning-picker!
-                retry-startup! switch-project!]}
+                stop-current-agent! show-session-metrics! show-sessions! show-model-picker!
+                show-reasoning-picker! retry-startup! switch-project!]}
         ctx
 
         {:keys [db total-h inner-h key]}
@@ -10101,6 +10106,9 @@
 
                     :agent-parent
                     (open-agent-parent!)
+
+                    :agent-stop
+                    (stop-current-agent!)
 
                     :live-panel
                     (open-live-panel!)
@@ -10403,6 +10411,9 @@
 
         :agent-parent
         (do (open-agent-parent!) ::recur)
+
+        :agent-stop
+        (do (stop-current-agent!) ::recur)
 
         :agent-open-nth
         (do (open-agent-nth! agent-index) ::recur)
@@ -11455,14 +11466,21 @@
                                      (vis/notify! (str "No subagent " n " in the dock")
                                                   :level :warn
                                                   :ttl-ms copy-success-ttl-ms)))
-                 show-agent-timeline! (fn [child-id]
-                                        (when-not (:dialog-open? @state/app-db)
-                                          (when-let [id (with-dialog-lock
-                                                          #(agent-team/show-timeline!
-                                                             screen
-                                                             (current-session-id)
-                                                             child-id))]
-                                            (switch-session! {:action :switch :id id}))))
+                 ;; A click on a subagent row opens its session at once.
+                 open-agent! (fn [child-id]
+                               (when-not (:dialog-open? @state/app-db)
+                                 (switch-session! {:action :switch :id child-id})))
+                 ;; C-x t s: stop this subagent, through its parent, after a confirmation.
+                 stop-current-agent!
+                 (fn []
+                   (if-let [parent-id (not-empty (str (get-in @state/app-db
+                                                              [:session :agent :parent-id])))]
+                     (when-not (:dialog-open? @state/app-db)
+                       (with-dialog-lock
+                         #(agent-team/stop-agent! screen parent-id (current-session-id))))
+                     (vis/notify! "This session is not a subagent"
+                                  :level :warn
+                                  :ttl-ms copy-success-ttl-ms)))
                  show-session-metrics! (fn []
                                          (when-not (:dialog-open? @state/app-db)
                                            (with-dialog-lock #(dlg/session-metrics-dialog!
@@ -11652,7 +11670,8 @@
                            :show-agent-team! show-agent-team!
                            :open-agent-parent! open-agent-parent!
                            :open-agent-nth! open-agent-nth!
-                           :show-agent-timeline! show-agent-timeline!
+                           :open-agent! open-agent!
+                           :stop-current-agent! stop-current-agent!
                            :show-session-metrics! show-session-metrics!
                            :show-sessions! show-sessions!
                            :show-model-picker! show-model-picker!

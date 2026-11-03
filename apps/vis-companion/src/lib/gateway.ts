@@ -31,7 +31,6 @@ import { approxBytes, registerMemoryOwner, registerMemorySource, type MemoryCell
 import { flattenSettings, replaceSetting } from './setting-tree';
 import { randomUuid } from './uuid';
 import type {
-  AgentTimeline,
   ArchiveView,
   AuthFlow,
   AuthVerdict,
@@ -4349,16 +4348,6 @@ export class GatewayClient {
     if (!base && next.length !== sessionTeamFromWire(team)?.total) return null;
     writeSnapshot(this.snapshotKey('agents', sid), next);
     return next;
-  }
-
-  /** The steps of child `childId` of `sid`, oldest first, with their times. */
-  async agentTimeline(sid: string, childId: string, signal?: AbortSignal): Promise<AgentTimeline> {
-    return this.request(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(childId)}/timeline`,
-      undefined,
-      signal,
-    );
   }
 
   async cancelAgent(sid: string, childId: string): Promise<void> {

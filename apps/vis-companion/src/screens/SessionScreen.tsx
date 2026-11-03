@@ -19,7 +19,7 @@ import {
   UserMessage,
 } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -4764,16 +4764,13 @@ export function SessionScreen({
       return agents ? (
         <TurnAgents
           agents={agents}
-          pending={team.pending}
           error={team.error}
           onOpen={onOpenSession}
-          onCancel={team.cancel}
-          timeline={team.timeline}
           leader={leader}
         />
       ) : undefined;
     },
-    [teams, docked, team.pending, team.error, team.cancel, team.timeline, onOpenSession],
+    [teams, docked, team.error, onOpenSession],
   );
   // Traffic between this leader and its own subagents stays out of its transcript:
   // the team rows show their work, and each child session keeps its own record.
@@ -5591,6 +5588,9 @@ export function SessionScreen({
 
   // A subagent session takes no input. Its header names its path from the leader.
   const isSubagent = session?.agent?.role === 'subagent';
+  // A working subagent stops from its own header: the team row leads straight here.
+  const ownRow = isSubagent ? team.agents.find((agent) => agent.session_id === sid) : undefined;
+  const canStop = ownRow != null && isStoppable(ownRow);
   const headerModel: SessionHeaderModel = {
     title,
     sessionId: sid,
@@ -5598,10 +5598,12 @@ export function SessionScreen({
     artifacts: { count: artifacts.length + openAppCount, isOpen: artifactsOpen },
     goal: session?.goal,
     agentPath: isSubagent && session?.agent ? agentPath(sid, session.agent, team.agents, title) : undefined,
+    agentStop: canStop ? { isPending: team.pending === sid, error: team.error } : undefined,
   };
   const headerCommands: SessionHeaderCommands = {
     back: onBack,
     openParent: (parentId) => onOpenSession(parentId),
+    stopAgent: () => void team.cancel(sid),
     settings: () => setSettingsOpen(true),
     zen: () => setZenMode(true),
     toggleArtifacts: () => {
@@ -5630,6 +5632,7 @@ export function SessionScreen({
     'toggle-voice-conversation': voiceSupported && (() => void switchVoiceMode()),
     'session-settings': () => setSettingsOpen(true),
     'agent-parent': !!parentId && (() => onOpenSession(parentId)),
+    'agent-stop': canStop && (() => void team.cancel(sid)),
   });
 
   const screen = (
@@ -5891,11 +5894,8 @@ export function SessionScreen({
               agents={team.agents}
               sid={sid}
               runningTurnId={runningTurnId}
-              pending={team.pending}
               error={team.error}
               onOpen={onOpenSession}
-              onCancel={team.cancel}
-              timeline={team.timeline}
               leader={runningLeader}
             />
 

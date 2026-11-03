@@ -369,7 +369,7 @@
         {
           "const": "agent-team",
           "title": "agent team",
-          "description": "List the subagents, then open one or stop it",
+          "description": "List the subagents, then open one",
           "x-vis-key": "t",
           "x-vis-group": "agents",
           "x-vis-show-when": "has-agents",
@@ -380,6 +380,14 @@
           "title": "back to parent",
           "description": "Open the session that started this subagent",
           "x-vis-key": "b",
+          "x-vis-group": "agents",
+          "x-vis-show-when": "child-session"
+        },
+        {
+          "const": "agent-stop",
+          "title": "stop agent",
+          "description": "Stop this subagent and its descendants, after a confirmation",
+          "x-vis-key": "s",
           "x-vis-group": "agents",
           "x-vis-show-when": "child-session"
         }

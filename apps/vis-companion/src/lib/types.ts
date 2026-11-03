@@ -97,24 +97,6 @@ export interface Subagent {
   finished_at?: number;
 }
 
-/** One step of a subagent, as `GET /v1/sessions/:sid/agents/:child/timeline` gives it. */
-export interface AgentTimelineItem {
-  /** Epoch ms. */
-  at: number;
-  kind: 'started' | 'continued' | 'note' | 'message' | 'finished';
-  text?: string;
-  /** The end status, on a `finished` step only. */
-  status?: Subagent['status'];
-  /** The verdict, on a `finished` step of a verify task only. */
-  outcome?: 'passed' | 'failed';
-}
-
-/** The steps of one subagent, oldest first. */
-export interface AgentTimeline {
-  session_id: string;
-  items: AgentTimelineItem[];
-}
-
 /** A subagent file grant: paths or globs. Deny wins over read_only, read_only over write. */
 export interface AgentFiles {
   write?: string[];

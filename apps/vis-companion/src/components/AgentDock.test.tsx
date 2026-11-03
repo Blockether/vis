@@ -14,9 +14,8 @@ const asking: Subagent = { ...base, session_id: 'a2', task: 'Fix the bug', role:
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('AgentDock', () => {
-  const timeline = vi.fn(async () => ({ session_id: 'a1', items: [] }));
   const dock = (agents: Subagent[], runningTurnId?: string) =>
-    render(<AgentDock agents={agents} sid="lead" runningTurnId={runningTurnId} pending={null} onOpen={vi.fn()} onCancel={vi.fn()} timeline={timeline} />);
+    render(<AgentDock agents={agents} sid="lead" runningTurnId={runningTurnId} onOpen={vi.fn()} />);
   const region = () => screen.getByRole('region', { name: 'Subagents of this turn' });
   const rows = () => within(region()).queryAllByRole('button').filter((button) => button.hasAttribute('data-agent-row'));
 
