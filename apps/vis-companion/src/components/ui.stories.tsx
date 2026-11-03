@@ -21,6 +21,7 @@ import {
   DialogFrame,
   DialogHeader,
   Disclosure,
+  HoverNote,
   IconButton,
   Input,
   KeyCap,
@@ -964,6 +965,31 @@ export const LongChoices: Story = {
     await expect(trigger).toHaveTextContent('Project 30');
     await expect(trigger).toHaveFocus();
     await expect(page.getByRole('dialog', { name: 'Project defaults' })).toBeVisible();
+  },
+};
+
+/** A long task must stay one capped note at the label, not a box over the window. */
+export const HoverNotes: Story = {
+  render: () => (
+    <div className="flex flex-col gap-3 p-4 font-mono text-ui">
+      <HoverNote note="Short note.">
+        <span className="font-bold underline">Short</span>
+      </HoverNote>
+      <HoverNote
+        note={
+          <Markdown compact hardBreaks>
+            {Array.from({ length: 30 }, (_, index) => `- Step ${index + 1}: check the review pane at 40, 80 and 120 columns.`).join('\n')}
+          </Markdown>
+        }
+      >
+        <span className="font-bold underline">TUI review: keys, sessions, speed</span>
+      </HoverNote>
+    </div>
+  ),
+  play: async ({ canvas, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.hover(canvas.getByText('TUI review: keys, sessions, speed'));
+    await expect(await page.findByRole('tooltip')).toBeVisible();
   },
 };
 

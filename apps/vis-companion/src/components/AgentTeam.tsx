@@ -21,7 +21,7 @@ import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/
 export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
 import { CheckIcon, CloseIcon, MARK_NUDGE } from './icons';
-import { Button, DialogFrame, Modal, TextButton } from './ui';
+import { Button, DialogFrame, HoverNote, Modal, TextButton } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
@@ -311,6 +311,11 @@ function AxisMarks({ total }: { total: number }) {
   ));
 }
 
+// The task of an agent in the note of its row: Markdown, like the Task part of its sheet.
+function taskNote(task: string): ReactNode {
+  return task.trim() ? <Markdown compact hardBreaks>{councilMarkdown(task)}</Markdown> : null;
+}
+
 interface TableProps {
   rows: readonly Subagent[];
   now: number;
@@ -338,11 +343,13 @@ function PhoneAgentTable({ rows, now, error, onSelect }: TableProps) {
           <li key={agent.session_id}>
             <button type="button" data-agent-row={agent.session_id} onClick={() => onSelect(agent.session_id)} className={`group ${FOCUS} ${PHONE_ROW}`}>
               <span className={`order-1 uppercase ${role.ink}`}>{role.text}</span>
-              <span className="order-2 font-bold [overflow-wrap:anywhere] group-hover:underline" title={agent.task}>
-                {agentLabel(agent, rows)}
-              </span>
+              <HoverNote className="order-2 min-w-0" note={taskNote(agent.task)}>
+                <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
+              </HoverNote>
               {update && (
-                <span className="order-4 col-span-2 line-clamp-2 text-dialog-hint [overflow-wrap:anywhere]" title={update}>{update}</span>
+                <HoverNote className="order-4 col-span-2 min-w-0" note={update}>
+                  <span className="line-clamp-2 text-dialog-hint [overflow-wrap:anywhere]">{update}</span>
+                </HoverNote>
               )}
               <span className={`order-3 whitespace-nowrap text-right uppercase ${status.ink}`}>{status.text}</span>
               <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums">
@@ -384,7 +391,9 @@ function WideAgentTable({ rows, now, error, onSelect, isTimeline = false }: Tabl
                 className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${WIDE_ROW}`}
               >
                 <span className={`uppercase ${role.ink}`}>{role.text}</span>
-                <span className="font-bold [overflow-wrap:anywhere] group-hover:underline" title={agent.task}>{agentLabel(agent, rows)}</span>
+                <HoverNote className="min-w-0" note={taskNote(agent.task)}>
+                  <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
+                </HoverNote>
                 {showsBars ? (
                   <span aria-hidden className="relative h-2 self-center">
                     {bar && (
@@ -395,7 +404,9 @@ function WideAgentTable({ rows, now, error, onSelect, isTimeline = false }: Tabl
                     )}
                   </span>
                 ) : (
-                  <span className="truncate text-dialog-hint" title={update}>{update ?? ''}</span>
+                  <HoverNote className="min-w-0" note={update}>
+                    <span className="block truncate text-dialog-hint">{update ?? ''}</span>
+                  </HoverNote>
                 )}
                 <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
                 <span className={`text-center ${status.ink}`}>

@@ -2640,6 +2640,109 @@ export const Select = forwardRef<
   );
 });
 
+/** How long a mouse rests on a trigger before its note shows. A desktop tooltip waits this long too. */
+const HOVER_NOTE_DELAY = 500;
+
+/** A note that closed this recently makes the next one show at once, like desktop tooltips. */
+const HOVER_NOTE_WARM = 400;
+
+/** When the last note closed. One mouse shows one note at a time, so the page shares it. */
+let hoverNoteClosedAt = -Infinity;
+
+/**
+ * THE LONG TEXT BEHIND A SHORT LABEL, shown when a mouse rests on the label.
+ *
+ * Use it instead of `title`. The system paints a `title` as its own grey box in a system
+ * font, at any size: a long subagent task covered most of the window. This note uses the
+ * floating surface of the app, starts at the label and caps its height. A cut note fades
+ * at its foot. Only a mouse opens it: a finger has no hover, and its press opens the row.
+ * A press, a scroll, Escape or leaving the window closes it. It never takes the pointer
+ * or the focus, so the control under it works as before.
+ *
+ * `className` places the trigger, for example a grid cell. Its child carries the paint.
+ */
+export function HoverNote({ note, children, className = '' }: { note: ReactNode; children: ReactNode; className?: string }) {
+  const [isOpen, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef(0);
+  const id = useId();
+
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+
+  useLayoutEffect(() => {
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    const body = bodyRef.current;
+    if (!isOpen || !trigger || !panel || !body) return;
+    // Place the note before its first paint. `menuPosition` aligns right edges, so this
+    // right edge starts the note where its label starts.
+    const anchor = trigger.getBoundingClientRect();
+    const width = panel.offsetWidth;
+    const at = menuPosition({ top: anchor.top, bottom: anchor.bottom, right: anchor.left + width }, width, undefined, panel.offsetHeight);
+    if (at) {
+      panel.style.left = `${at.left}px`;
+      panel.style.top = at.top === undefined ? 'auto' : `${at.top}px`;
+      panel.style.bottom = at.bottom === undefined ? 'auto' : `${at.bottom}px`;
+      if (at.maxHeight !== undefined) panel.style.maxHeight = `${at.maxHeight}px`;
+    }
+    body.dataset.cut = String(body.scrollHeight > body.clientHeight);
+    const shut = () => setOpen(false);
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') shut();
+    };
+    document.addEventListener('pointerdown', shut, true);
+    document.addEventListener('scroll', shut, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('blur', shut);
+    return () => {
+      document.removeEventListener('pointerdown', shut, true);
+      document.removeEventListener('scroll', shut, true);
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('blur', shut);
+      hoverNoteClosedAt = performance.now();
+    };
+  }, [isOpen]);
+
+  return (
+    <span
+      ref={triggerRef}
+      className={className}
+      aria-describedby={isOpen ? id : undefined}
+      onPointerEnter={(event) => {
+        if (note === null || note === undefined || note === '' || event.pointerType !== 'mouse' || event.buttons !== 0) return;
+        window.clearTimeout(timerRef.current);
+        const isWarm = performance.now() - hoverNoteClosedAt < HOVER_NOTE_WARM;
+        timerRef.current = window.setTimeout(() => setOpen(true), isWarm ? 0 : HOVER_NOTE_DELAY);
+      }}
+      onPointerLeave={() => {
+        window.clearTimeout(timerRef.current);
+        setOpen(false);
+      }}
+    >
+      {children}
+      {isOpen &&
+        createPortal(
+          <div
+            ref={panelRef}
+            id={id}
+            role="tooltip"
+            className="pointer-events-none fixed left-0 top-0 z-[70] flex max-h-[min(20rem,70vh)] w-max max-w-[min(30rem,calc(100vw-1.5rem))] flex-col rounded-none border border-dialog-edge bg-panel px-3 py-2 text-left font-mono text-ui font-normal normal-case text-white no-underline shadow-float transition-opacity duration-150 starting:opacity-0 motion-reduce:transition-none"
+          >
+            <div
+              ref={bodyRef}
+              className="min-h-0 overflow-hidden [overflow-wrap:anywhere] data-[cut=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%_-_2rem),transparent)]"
+            >
+              {note}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </span>
+  );
+}
+
 /**
  * A SHORT STATE MESSAGE, with one optional title band and one way out.
  *

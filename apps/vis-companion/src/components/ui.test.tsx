@@ -8,11 +8,11 @@
 // component by Storybook (`ui.stories.tsx`) and looked at. Rules about the SOURCE
 // (the closed vocabulary, corner and shadow rungs, named ways out) are review
 // rules in the header of `ui.tsx`, not tests.
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ConfirmRow, Input, ViewHeading, ViewLayout, ViewParagraph } from './ui';
+import { ConfirmRow, HoverNote, Input, ViewHeading, ViewLayout, ViewParagraph } from './ui';
 import { ProjectStatusCounts } from './SessionNavigator';
 
 // Regression, user report (project status values ran together and only LIVE was
@@ -162,5 +162,69 @@ describe('Input', () => {
     // Placement classes belong to the wrapper, never to the native field.
     expect(field).not.toHaveClass('flex-1');
     expect(container.querySelector('.flex-1')).toBeInTheDocument();
+  });
+});
+
+// Regression, user report (the hover over a subagent row should look native): the system
+// `title` box of a long task covered most of the window. The note is the app's own layer.
+describe('HoverNote', () => {
+  const note = (label: string) => (
+    <HoverNote note={`${label} task`}>
+      <span>{label}</span>
+    </HoverNote>
+  );
+
+  it('shows its note to a resting mouse and closes it on a press', () => {
+    vi.useFakeTimers();
+    try {
+      render(note('First'));
+      fireEvent.pointerEnter(screen.getByText('First'), { pointerType: 'mouse' });
+      act(() => vi.advanceTimersByTime(400));
+      expect(screen.queryByRole('tooltip')).toBeNull();
+      act(() => vi.advanceTimersByTime(100));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('First task');
+      fireEvent.pointerDown(document.body);
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never opens for a finger, which has no hover', () => {
+    vi.useFakeTimers();
+    try {
+      render(note('First'));
+      fireEvent.pointerEnter(screen.getByText('First'), { pointerType: 'touch' });
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the next note at once only right after one closed, like desktop tooltips', () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <>
+          {note('First')}
+          {note('Second')}
+        </>,
+      );
+      fireEvent.pointerEnter(screen.getByText('First'), { pointerType: 'mouse' });
+      act(() => vi.advanceTimersByTime(500));
+      fireEvent.pointerLeave(screen.getByText('First'), { pointerType: 'mouse' });
+      fireEvent.pointerEnter(screen.getByText('Second'), { pointerType: 'mouse' });
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Second task');
+
+      fireEvent.pointerLeave(screen.getByText('Second'), { pointerType: 'mouse' });
+      act(() => vi.advanceTimersByTime(1000));
+      fireEvent.pointerEnter(screen.getByText('First'), { pointerType: 'mouse' });
+      act(() => vi.advanceTimersByTime(100));
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
