@@ -78,12 +78,19 @@ export const LIST_EDGE_END = 'pr-3 sm:pr-4';
  * A row's disclosure sits just inside its separate menu cell. A small end inset
  * pulls the disclosure right and gives the pressable slab (including its status and
  * timestamp) that width, without moving the menu or shrinking either hit target.
+ * Touch has no menu cell, so there the disclosure ends on the shared 16px edge.
  */
-const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-0.5 mouse:gap-2.5';
+const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-[7px] mouse:gap-2.5 mouse:pr-0.5';
 
-/** Header menus keep their established outside gutter and sit centered in the band. */
-export const HEADER_TRAIL =
-  'flex shrink-0 items-center gap-2 self-stretch pr-2 mouse:gap-2.5 mouse:pr-2.5';
+/**
+ * The end inset of a trailing 14px icon. Its 32px touch button or 28px pointer button
+ * has 9px or 7px of empty face beside the glyph. This inset puts the glyph itself 16px
+ * from the edge, where the leading ink of every row starts.
+ */
+export const ICON_END = 'pr-[7px] mouse:pr-[9px]';
+
+/** Header menus sit centered in the band, with the glyph on the shared 16px edge. */
+export const HEADER_TRAIL = `flex shrink-0 items-center gap-2 self-stretch mouse:gap-2.5 ${ICON_END}`;
 
 /** Machine and project headers align their identity and disclosure marks. */
 export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
@@ -354,9 +361,9 @@ export function ProjectCrumb({
           className="absolute inset-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
         />
       )}
-      <span className={`pointer-events-none relative ${LIST_MARK}`}>
+      <span className={`pointer-events-none relative mr-2 ${LIST_MARK}`}>
         {disclosure && (
-          <ChevronIcon open={disclosure.isOpen} className="size-3.5 -translate-x-1.5 text-dialog-hint" />
+          <ChevronIcon open={disclosure.isOpen} className="size-3.5 text-dialog-hint" />
         )}
       </span>
       <span className="pointer-events-none relative min-w-0 flex-1" title={name}>

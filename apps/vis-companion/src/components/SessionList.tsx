@@ -216,7 +216,8 @@ function SessionRowSurface({
   children: ReactNode;
 }) {
   const layout =
-    'flex min-h-12 min-w-0 flex-1 items-center py-1.5 pl-4 pr-2 text-left mouse:min-h-8 mouse:py-1';
+    // A grouped row stands beside its 4px rail (`--row-rail`); its text still starts 16px from the edge.
+    'flex min-h-12 min-w-0 flex-1 items-center py-1.5 pl-[calc(1rem-var(--row-rail,0px))] pr-2 text-left mouse:min-h-8 mouse:py-1';
   const [isPressed, setIsPressed] = useState(false);
   useEffect(() => {
     if (!isPressed) return;
@@ -435,6 +436,8 @@ export const SessionRow = memo(function SessionRow({
   const stopped = !live && sessionWasStopped(session) && unread > 0;
   const isPutAway = sessionIsArchived(session) || group?.archived_at != null;
   const status = statusLabel(session, stopped, hasUnsent, unread, isPutAway);
+  // A grouped row outside search carries its group's colour as a 4px leading rail.
+  const hasRail = !location && typeof session.group_id === 'string' && session.group_id !== '';
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
   // session's usage rollup in place. It stays a sibling of the open-session
   // button, never nested inside it, so "tell me more" cannot navigate away.
@@ -713,8 +716,8 @@ export const SessionRow = memo(function SessionRow({
           }
         >
           {/* Hover changes the title ink; status marks retain their own meaning. */}
-          <div className="group flex items-stretch">
-            {!location && typeof session.group_id === 'string' && session.group_id !== '' && (
+          <div className={`group flex items-stretch ${hasRail ? '[--row-rail:0.25rem]' : ''}`}>
+            {hasRail && (
               <span className="flex shrink-0 items-stretch">
                 <span aria-hidden className={`w-1 ${groupSwatch(group?.color ?? null)}`} />
                 <span className="sr-only">{`In group ${group?.name ? group.name : 'unnamed'}`}</span>

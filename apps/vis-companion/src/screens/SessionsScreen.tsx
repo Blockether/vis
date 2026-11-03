@@ -2235,7 +2235,7 @@ export function SessionsScreen({
           standalone layouts, the section already supplies the top inset. */}
       {showStrip && (
         <div
-          className={`relative z-10 flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:pl-0 sm:pr-4 sm:pt-0'}`}
+          className={`relative z-10 flex flex-wrap items-center gap-x-2 gap-y-2 py-3 pl-4 pr-2 mouse:pr-2.5 ${isDesk ? '' : 'sm:pl-3 sm:pr-1 sm:pt-0 sm:mouse:pr-1.5'}`}
         >
           {machineSwitch}
           <div className="flex shrink-0 items-center gap-2">
@@ -2345,7 +2345,7 @@ export function SessionsScreen({
             gateway's. The sidebar has room for a footer without spending a row of the
             list on it. */}
         {isDesk && (
-          <footer className="flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-3 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+          <footer className="flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-4 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
             <span className="flex items-center gap-1.5">
               <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">
                 C-x s s

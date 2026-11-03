@@ -1640,7 +1640,7 @@ export function Header({
           under it, so a search took over the list the reader was working from. Now
           the glass beside the cog opens the search in its own dialog
           (`SessionSearchDialog`), and the list behind it stays as the reader left it. */}
-      <div className="flex w-full items-center gap-3 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
+      <div className="flex w-full items-center gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
         {/* THE MARK IS AN ILLUSTRATION, NOT A GLYPH. An eye outline, an iris, a
             pupil, a highlight, a smile and seven rays share the box, so barely a
             third of it is ink and it reads smaller than it measures; under 24px a
@@ -1661,8 +1661,10 @@ export function Header({
             VIS
           </span>
         </div>
-        {/* Global destinations share the same labelled icon controls. */}
-        <div className="ml-auto flex h-12 items-center gap-2">
+        {/* Global destinations share the same labelled icon controls. The negative margin
+            takes back the empty face beside the last 16px glyph, so it ends on the bar's
+            inset exactly as the mark starts on it. */}
+        <div className="-mr-2 ml-auto flex h-12 items-center gap-2 mouse:-mr-1.5">
           {onSearch && (
             <IconButton
               type="button"

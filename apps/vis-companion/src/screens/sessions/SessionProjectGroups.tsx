@@ -27,6 +27,7 @@ import {
   HeaderActions,
   HeaderTally,
   HEADER_COUNTS,
+  ICON_END,
   LIST_MARK,
   Pager,
   ProjectCrumb,
@@ -358,7 +359,7 @@ function SetHeader({
           uses a 24px step beside the menu's 28px button; a 4px gap lines its chevron
           up with the session row disclosure without moving either icon off its target. */}
       {(action || navigation) && (
-        <span className="ml-auto flex shrink-0 items-center gap-2 self-stretch pr-2 mouse:gap-1 mouse:pr-2.5">
+        <span className={`ml-auto flex shrink-0 items-center gap-2 self-stretch mouse:gap-1 ${ICON_END}`}>
           {navigation}
           {action}
         </span>
@@ -556,8 +557,8 @@ function GroupBand({
         className={`flex min-w-0 items-center gap-0 py-1.5 pl-3 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white ${isRenaming ? '' : 'flex-1'}`}
       >
         {/* The child fold sits beside the leading rail; its name lines up with the project title. */}
-        <span className={LIST_MARK}>
-          <ChevronIcon open={isOpen} className="size-3 -translate-x-1.5 text-dialog-hint" />
+        <span className={`mr-2 ${LIST_MARK}`}>
+          <ChevronIcon open={isOpen} className="size-3 justify-self-start text-dialog-hint" />
         </span>
         {!isRenaming && (
           <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -2144,8 +2145,8 @@ export const ProjectGroup = memo(function ProjectGroup({
         >
           {isRenamingProject && projectActions ? (
             <span className="flex min-w-0 flex-1 items-center pl-4 pr-2 mouse:pr-2.5">
-              <span aria-hidden className={LIST_MARK}>
-                <ChevronIcon open={isShowing} className="size-3.5 -translate-x-1.5 text-dialog-hint" />
+              <span aria-hidden className={`mr-2 ${LIST_MARK}`}>
+                <ChevronIcon open={isShowing} className="size-3.5 text-dialog-hint" />
               </span>
               <NameField
                 name={project}

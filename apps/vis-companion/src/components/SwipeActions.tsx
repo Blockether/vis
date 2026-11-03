@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { LIST_EDGE_END } from './SessionNavigator';
+import { ICON_END, LIST_EDGE_END } from './SessionNavigator';
 import { DotsIcon } from './icons';
 import { IconButton } from './ui';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
@@ -489,7 +489,7 @@ export function SwipeActions({
         {trailing && <div className="flex shrink-0">{trailing}</div>}
       </div>
       <div
-        className={`hidden shrink-0 items-center mouse:flex ${trailing ? 'pr-2 mouse:pr-2.5' : alignMenuWithHeader ? 'pr-1 sm:pr-2' : LIST_EDGE_END}`}
+        className={`hidden shrink-0 items-center mouse:flex ${trailing ? ICON_END : alignMenuWithHeader ? 'pr-1 sm:pr-2' : LIST_EDGE_END}`}
       >
         <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>
