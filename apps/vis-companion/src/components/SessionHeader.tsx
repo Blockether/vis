@@ -290,9 +290,12 @@ export function SessionHeader({
             <AppsIcon className="size-3.5" />
           </IconButton>
         )}
+        {/* The kebab takes back its empty face as the app bar's last mark does, so
+            both trailing glyphs stand in one column on the same inset. */}
         <IconButton
           label={menuLabel}
           variant="quiet"
+          className="-mr-2 mouse:-mr-1.5"
           aria-haspopup="dialog"
           aria-expanded={menu !== null}
           onClick={(event) =>
