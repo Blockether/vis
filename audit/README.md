@@ -153,9 +153,9 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/svar` | `0.7.223` | Apache-2.0 | 1009 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:f6b15672fe20618b7170bf5b2e01695448282c84` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
-| `com.fasterxml.jackson.core/jackson-core` | `2.22.2` | Apache-2.0 | 580 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.2` | Apache-2.0 | 72 KB | 3rd-party |
-| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.2` | Apache-2.0 | 95 KB | 3rd-party |
+| `com.fasterxml.jackson.core/jackson-core` | `2.22.4` | Apache-2.0 | 585 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.4` | Apache-2.0 | 72 KB | 3rd-party |
+| `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.4` | Apache-2.0 | 98 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.8` | Apache-2.0 | 183 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
@@ -191,7 +191,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `org.yamlstar/yamlstar` | `0.1.21` | MIT | 28 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
-| `tools.jackson.core/jackson-databind` | `3.2.2` | Apache-2.0 | 1.9 MB | 3rd-party |
+| `tools.jackson.core/jackson-databind` | `3.2.4` | Apache-2.0 | 1.9 MB | 3rd-party |
 
 ### `vis-tui` module
 
@@ -306,7 +306,7 @@ Direct artifacts of at least 1 MB:
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |
 | `org.clojure/clojure` | `1.12.6` | 4.0 MB |
 | `org.jcodec/jcodec` | `0.2.5` | 2.0 MB |
-| `tools.jackson.core/jackson-databind` | `3.2.2` | 1.9 MB |
+| `tools.jackson.core/jackson-databind` | `3.2.4` | 1.9 MB |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | 1.3 MB |
 | `org.apache.commons/commons-compress` | `1.28.0` | 1.1 MB |
 

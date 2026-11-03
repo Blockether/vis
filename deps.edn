@@ -30,11 +30,11 @@
         com.cnuernber/charred {:mvn/version "1.042"}
         ;; Jackson 2.x arrives only through clj-kondo -> cheshire; core/smile/cbor must stay on
         ;; one version. databind stays excluded: cheshire never binds, and it is the CVE surface.
-        com.fasterxml.jackson.core/jackson-core {:mvn/version "2.22.2"}
+        com.fasterxml.jackson.core/jackson-core {:mvn/version "2.22.4"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
-        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.2"}
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.4"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-smile
-        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.2"}
+        {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.4"}
          com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm {:mvn/version "v1.13.8"}
          com.microsoft.onnxruntime/onnxruntime {:mvn/version "1.30.0"}
         com.github.seancorfield/honeysql {:mvn/version "2.7.1437"}
@@ -80,7 +80,7 @@
         org.yamlstar/yamlstar {:mvn/version "0.1.21"}
         ring/ring-core {:mvn/version "1.15.5"}
         ;; CVE pin over Flyway's tools.jackson jackson-databind 3.1.4 (CVE-2026-59889).
-        tools.jackson.core/jackson-databind {:mvn/version "3.2.2"}}
+        tools.jackson.core/jackson-databind {:mvn/version "3.2.4"}}
  :aliases
  {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
    ;; Regenerates audit/README.md (network required); `--check` only compares. Clojure CLI only.
