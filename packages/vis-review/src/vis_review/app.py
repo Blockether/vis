@@ -54,6 +54,23 @@ BUTTONS = (
     "undo",
     "restore",
 )
+# The key of each button, the same in every surface. A terminal shows them in its
+# key legend instead of a button row; the Companion keeps the button too.
+KEYS = {
+    "session": "1",
+    "all": "2",
+    "latest": "3",
+    "uncommitted": "4",
+    "branch": "5",
+    "full": "F",
+    "refresh": "R",
+    "checks": "C",
+    "tests": "T",
+    "ai": "A",
+    "undo-file": "U",
+    "undo": "Z",
+    "restore": "B",
+}
 # Buttons that call a tool or a model: they run outside the lock.
 SLOW = ("checks", "tests", "ai")
 # Git scopes, like the T3 "Uncommitted" scope and its "Automatic" base branch.
@@ -151,6 +168,7 @@ class ReviewApp:
                 *nodes,
                 description="What changed, the checks and undo.",
                 key=self.key,
+                shortcuts=self._shortcuts(),
                 surfaces={"inline": False, "session": "sidebar"},
             )
             self.view = self._opener(declaration, self.on_event)
@@ -272,6 +290,14 @@ class ReviewApp:
                 "notice", text=text, tone=tone, detail=self.ai_summary[:2000]
             )
         return ui.status("notice", text=text, tone=tone)
+
+    def _shortcuts(self) -> list[dict]:
+        """One key for each button. A shortcut has no label, so it shows the button's own text."""
+        return [
+            ui.shortcut(KEYS[button], node_id=button)
+            for button in BUTTONS
+            if button != "session" or self.is_session_scoped
+        ]
 
     def _buttons(self, has_diffs: bool) -> dict:
         """The action buttons; each one is off when it cannot do anything now."""

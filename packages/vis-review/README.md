@@ -36,23 +36,24 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 - The changed pictures (PNG, JPEG, GIF and WebP). A changed picture shows its old and new version side by side. A picture over 2 MiB shows a note instead.
 - The log of the app: how long each check and AI review took, each failure with its stack trace, and each refused action.
 
-The buttons:
+The buttons and their keys. Each key presses its button, and an upper-case key needs Shift.
+The terminal shows the keys in its key legend instead of a row of buttons.
 
-| Button | Action |
-| --- | --- |
-| This session | Show only the changes that this session made. This is the first view of `/review`. Edits of other sessions in the same folder stay out. |
-| All changes | Show every change since the first checkpoint, also the edits of other sessions. |
-| Latest change | Show only what the newest checkpoint changed. |
-| Uncommitted | Compare the files with the git commit `HEAD`. |
-| Against base branch | Compare the files with the commit where `HEAD` left the default branch. |
-| Show full files | Show every unchanged line too. Click again to show only the changes. |
-| Refresh | Record a checkpoint now. |
-| Run checks | Run the diff checks and the language checks on the changed files. |
-| Run tests | Run the checks, and also the tests of the language tools. |
-| AI review | Ask a model to review the diff. Its findings become threads on their lines. |
-| Undo file | Undo the changes of the chosen file: in the chosen checkpoint, in this session, or in all changes. It is off in a git comparison. |
-| Undo checkpoint | Undo only what the chosen checkpoint changed. A file that changed again later is a conflict and stays as it is. |
-| Restore to here | Bring every file back to how the chosen checkpoint left it. |
+| Button | Key | Action |
+| --- | --- | --- |
+| This session | `1` | Show only the changes that this session made. This is the first view of `/review`. Edits of other sessions in the same folder stay out. |
+| All changes | `2` | Show every change since the first checkpoint, also the edits of other sessions. |
+| Latest change | `3` | Show only what the newest checkpoint changed. |
+| Uncommitted | `4` | Compare the files with the git commit `HEAD`. |
+| Against base branch | `5` | Compare the files with the commit where `HEAD` left the default branch. |
+| Show full files | `F` | Show every unchanged line too. Click again to show only the changes. |
+| Refresh | `R` | Record a checkpoint now. |
+| Run checks | `C` | Run the diff checks and the language checks on the changed files. |
+| Run tests | `T` | Run the checks, and also the tests of the language tools. |
+| AI review | `A` | Ask a model to review the diff. Its findings become threads on their lines. |
+| Undo file | `U` | Undo the changes of the chosen file: in the chosen checkpoint, in this session, or in all changes. It is off in a git comparison. |
+| Undo checkpoint | `Z` | Undo only what the chosen checkpoint changed. A file that changed again later is a conflict and stays as it is. |
+| Restore to here | `B` | Bring every file back to how the chosen checkpoint left it. |
 
 An undo records a checkpoint first, so you can undo the undo. A repeated undo changes nothing.
 

@@ -454,3 +454,24 @@ def test_a_session_review_shows_only_its_own_changes_by_default(tmp_path, record
     recorder.send("activate", "undo-file")
     assert wait_for(lambda: (root / "a.py").read_text() == "a = 1 by them\n")
     assert (root / "theirs.py").read_text() == "x = 1\n"
+
+
+def _buttons_in(nodes):
+    for node in nodes:
+        if node.get("type") == "button":
+            yield node["id"]
+        yield from _buttons_in(node.get("children") or ())
+
+
+def test_each_key_presses_a_button_that_the_app_shows(tmp_path, recorder):
+    # A key that names no button would show in the terminal key legend and do nothing.
+    for name, scoped in (("global", False), ("session", True)):
+        root = tmp_path / name
+        root.mkdir()
+        journal = Journal(root, "s1", tmp_path / name / "base", files=walked)
+        ReviewApp(journal, extension_opener, is_session_scoped=scoped).open()
+        view = recorder._open_view()
+        shown = set(_buttons_in(view["nodes"]))
+        pressed = [shortcut["node_id"] for shortcut in view["shortcuts"]]
+        assert pressed and set(pressed) <= shown
+        assert ("session" in pressed) == scoped
