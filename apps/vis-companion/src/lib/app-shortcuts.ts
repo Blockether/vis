@@ -6,7 +6,7 @@
  * with a modifier, a held key and a key typed into a field never reach the app.
  */
 
-import { isLiveShortcutKey, type LiveShortcut } from './live-view';
+import { isLiveShortcutKey, type LiveNode, type LiveShortcut } from './live-view';
 
 /** The shortcut name of one key press, or null when no app can bind it. */
 export function shortcutKey(event: Pick<KeyboardEvent, 'key'>): string | null {
@@ -129,4 +129,23 @@ export function nodeShortcuts(shortcuts: readonly LiveShortcut[]): Map<string, L
     if (one.node_id && !byNode.has(one.node_id)) byNode.set(one.node_id, one);
   }
   return byNode;
+}
+
+/** The ids of the buttons and cards in `nodes`, which draw the key cap of their own shortcut. */
+function capNodeIds(nodes: readonly LiveNode[], into: Set<string> = new Set()): Set<string> {
+  for (const node of nodes) {
+    if (node.type === 'button' || node.type === 'card') into.add(node.id);
+    if (node.type === 'group') capNodeIds(node.children, into);
+  }
+  return into;
+}
+
+/**
+ * The shortcuts that the key legend lists. A key whose cap shows on its own
+ * button or card stays out, so the app shows each key once.
+ */
+export function legendShortcuts(shortcuts: readonly LiveShortcut[], nodes: readonly LiveNode[]): LiveShortcut[] {
+  const capped = capNodeIds(nodes);
+  const byNode = nodeShortcuts(shortcuts);
+  return shortcuts.filter((one) => !(one.node_id && capped.has(one.node_id) && byNode.get(one.node_id) === one));
 }

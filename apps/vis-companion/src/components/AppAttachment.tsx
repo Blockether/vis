@@ -22,7 +22,14 @@ import { appFrameStep, appSurfaces, isAppSurfaceSetting, shownAppFrame } from '.
 import { foldGlobalAppView, globalAppStateWord } from '../lib/global-apps';
 import type { HumanInputValue } from '../lib/human-input';
 import { liveViewFromWire, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
-import { ariaShortcut, isAppKeyTarget, matchShortcut, shortcutLabel, shortcutName } from '../lib/app-shortcuts';
+import {
+  ariaShortcut,
+  isAppKeyTarget,
+  legendShortcuts,
+  matchShortcut,
+  shortcutLabel,
+  shortcutName,
+} from '../lib/app-shortcuts';
 import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { IterationAttachment, SseEvent } from '../lib/types';
@@ -218,7 +225,7 @@ const KEY_FLASH_MS = 180;
 
 /**
  * The key legend of an app. Each entry is also a button, so a touch screen without
- * keys can press every shortcut.
+ * keys can press every shortcut. A key of a shown button or card is on that node instead.
  */
 function KeyLegend({
   shortcuts,
@@ -475,9 +482,10 @@ export function AppSurface({
       <ActionStatus status={isReadOnly ? 'idle' : formStatus} isOnBand />
     </span>
   ) : undefined;
+  const legend = useMemo(() => (view ? legendShortcuts(shortcuts, view.nodes) : []), [shortcuts, view]);
   const footer =
-    view && shortcuts.length > 0 ? (
-      <KeyLegend shortcuts={shortcuts} nodes={view.nodes} lit={lit} onPress={press} />
+    view && legend.length > 0 ? (
+      <KeyLegend shortcuts={legend} nodes={view.nodes} lit={lit} onPress={press} />
     ) : undefined;
   const body = (
     <div

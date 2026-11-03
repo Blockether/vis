@@ -538,8 +538,11 @@ describe('AppSurface focus, names and owner loss', () => {
       } as SseEvent),
     );
     expect(await screen.findByText('Live')).toBeInTheDocument();
-    expect(await screen.findByRole('toolbar', { name: 'App keys' })).toBeInTheDocument();
     expect(nodeButton('next')).toHaveProperty('disabled', false);
+    // Its one key is on the Next button, so no legend shows, but the key works again.
+    expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
+    fireEvent.keyDown(document.body, { key: 'n' });
+    await waitFor(() => expect(viewAction).toHaveBeenCalledTimes(2));
   });
 
   it('shows a stale open as disconnected and keeps one row for the app', async () => {

@@ -7,6 +7,7 @@ import {
   isAppKeyTarget,
   isEditableTarget,
   matchShortcut,
+  legendShortcuts,
   nodeShortcuts,
   shortcutKey,
 } from './app-shortcuts';
@@ -139,6 +140,40 @@ describe('key caps', () => {
     ]);
     expect([...byNode.keys()]).toEqual(['go']);
     expect(byNode.get('go')?.key).toBe('g');
+  });
+
+  // User report: the review app showed each key twice, on its button and in the legend.
+  it('leaves out of the legend a key whose cap shows on its own button or card', () => {
+    const view = liveViewFromWire({
+      id: 'review',
+      title: 'Review',
+      placement: 'attachment',
+      seq: 1,
+      nodes: [
+        { id: 'go', type: 'button', label: 'Go' },
+        {
+          id: 'box',
+          type: 'group',
+          children: [
+            { id: 'pick', type: 'card', title: 'Pick' },
+            { id: 'note', type: 'paragraph', text: 'Note' },
+          ],
+        },
+      ],
+    });
+    if (!view) throw new Error('fixture must parse');
+    const legend = legendShortcuts(
+      [
+        { key: 'g', node_id: 'go' },
+        { key: 'h', node_id: 'go' },
+        { key: 'p', node_id: 'pick' },
+        { key: 'n', node_id: 'note' },
+        { key: 'm', node_id: 'gone' },
+        { key: 'x', action: 'x' },
+      ],
+      view.nodes,
+    );
+    expect(legend.map((one) => one.key)).toEqual(['h', 'n', 'm', 'x']);
   });
 });
 
