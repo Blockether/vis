@@ -229,11 +229,13 @@
         (text-patch-rows (rest lines))
 
         header
-        {:kind :file
-         :text path
-         :path path
-         :old-path old-path
-         :status (git-file-status lines old-path path)}]
+        (cond-> {:kind :file
+                 :text path
+                 :path path
+                 :old-path old-path
+                 :status (git-file-status lines old-path path)}
+          (some #(or (str/starts-with? % "Binary files ") (= "GIT binary patch" %)) lines)
+          (assoc :is-binary true))]
 
     (into [header] (remove #(#{:file :meta} (:kind %))) rows)))
 
@@ -501,7 +503,7 @@
   (let [files (filterv #(= :file (:kind %)) rows)]
     (when (< 1 (count files))
       (mapv #(-> %
-                 (select-keys [:path :text :status :old-path :added :removed :node-id])
+                 (select-keys [:path :text :status :old-path :added :removed :is-binary :node-id])
                  (assoc :kind :file-item
                         :is-selectable true))
             files))))
@@ -690,9 +692,10 @@
     (str (apply str (repeat (max 0 (- (long (or (:num-w row) gutter-w)) (count s))) " ")) s)))
 
 (defn file-counts
-  "The change counts of a file row: `-12 +9`, or `+11` for a new text file."
-  [{:keys [added removed]}]
-  (when (or added removed)
+  "The change counts of a file row: `-12 +9`, or `+11` for a new text file. A binary
+   file has no lines to count, so it has no counts."
+  [{:keys [added removed is-binary]}]
+  (when (and (not is-binary) (or added removed))
     (let [a
           (long (or added 0))
 

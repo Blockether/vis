@@ -124,37 +124,44 @@
                  (expect (model/app-row? {:media-type model/media-type}))
                  (expect (not (model/app-row? {:media-type "text/plain"})))))
 
-(defdescribe diff-shape
-             ;; Council #9354: a file row counts its changes and a hunk names its gap.
-             (it "a file row counts its changes and a hunk names the lines it skips"
-                 (let [two
-                       (str patch "@@ -40,2 +40,2 @@\n" " a\n" "-b\n" "+c\n")
+(defdescribe
+  diff-shape
+  ;; Council #9354: a file row counts its changes and a hunk names its gap.
+  (it "a file row counts its changes and a hunk names the lines it skips"
+      (let [two
+            (str patch "@@ -40,2 +40,2 @@\n" " a\n" "-b\n" "+c\n")
 
-                       rows
-                       (model/diff-shape (model/parse-patch two))
+            rows
+            (model/diff-shape (model/parse-patch two))
 
-                       file
-                       (first (filter #(= :file (:kind %)) rows))
+            file
+            (first (filter #(= :file (:kind %)) rows))
 
-                       hunks
-                       (filter #(= :hunk (:kind %)) rows)]
+            hunks
+            (filter #(= :hunk (:kind %)) rows)]
 
-                   (expect (= "-2 +2" (model/file-counts file)))
-                   (expect (= [9 27] (mapv :gap hunks)))
-                   (expect (= ["⋯ 9 unmodified lines" "⋯ 27 unmodified lines"]
-                              (mapv model/hunk-text hunks)))))
-             (it "a new file shows only its added count"
-                 (expect (= "+3" (model/file-counts {:added 3 :removed 0}))))
-             (it "every code row takes the width of the widest line number"
-                 (let [rows
-                       (model/diff-shape (model/parse-patch
-                                           (str patch "@@ -1200,1 +1200,1 @@\n" "-x\n" "+y\n")))
+        (expect (= "-2 +2" (model/file-counts file)))
+        (expect (= [9 27] (mapv :gap hunks)))
+        (expect (= ["⋯ 9 unmodified lines" "⋯ 27 unmodified lines"] (mapv model/hunk-text hunks)))))
+  (it "a new file shows only its added count"
+      (expect (= "+3" (model/file-counts {:added 3 :removed 0}))))
+  ;; T24 user report: a picture or a binary file has no lines to count.
+  (it "a binary file shows no line counts"
+      (let [rows (model/diff-shape (model/parse-patch
+                                     (str "diff --git a/logo.png b/logo.png\n"
+                                          "index 8fc1a2b..4de6e13 100644\n"
+                                          "Binary files a/logo.png and b/logo.png differ\n")))]
+        (expect (nil? (model/file-counts (first (filter #(= :file (:kind %)) rows)))))))
+  (it "every code row takes the width of the widest line number"
+      (let [rows
+            (model/diff-shape (model/parse-patch
+                                (str patch "@@ -1200,1 +1200,1 @@\n" "-x\n" "+y\n")))
 
-                       code
-                       (filter #(#{:add :del :ctx} (:kind %)) rows)]
+            code
+            (filter #(#{:add :del :ctx} (:kind %)) rows)]
 
-                   (expect (= #{4} (set (map :num-w code))))
-                   (expect (apply = (map (comp count :gutter model/row-parts) code))))))
+        (expect (= #{4} (set (map :num-w code))))
+        (expect (apply = (map (comp count :gutter model/row-parts) code))))))
 
 ;; Review look (Council #9363): a changed word shows on the paired lines.
 (defdescribe diff-word-marks

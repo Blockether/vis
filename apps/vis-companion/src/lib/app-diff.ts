@@ -28,6 +28,8 @@ export interface AppDiffFile {
   path: string;
   old_path?: string;
   new_path?: string;
+  /** The patch says only that the bytes differ, so the file has no lines to count. */
+  binary?: true;
   hunks: AppDiffHunk[];
 }
 
@@ -88,6 +90,9 @@ export function parseUnifiedDiff(patch: string): AppDiffFile[] {
     }
     if (state.file && line.startsWith('new file mode ')) delete state.file.old_path;
     if (state.file && line.startsWith('deleted file mode ')) delete state.file.new_path;
+    if (state.file && state.hunk === null && (line.startsWith('Binary files ') || line === 'GIT binary patch')) {
+      state.file.binary = true;
+    }
     if (state.file && line.startsWith('rename from ')) state.file.old_path = line.slice(12);
     if (state.file && line.startsWith('rename to ')) {
       state.file.new_path = line.slice(10);

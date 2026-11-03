@@ -726,7 +726,7 @@ function FileHeader({
         className="diff-copy"
       />
       <span className="flex-1" />
-      <DiffStat {...fileStat(file)} />
+      {!file.binary && <DiffStat {...fileStat(file)} />}
     </header>
   );
 }

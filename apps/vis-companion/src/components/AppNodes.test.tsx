@@ -142,6 +142,25 @@ describe('DiffNodeView', () => {
     expect(screen.getAllByText('Keep this context.')).toHaveLength(1);
   });
 
+  // T24 user report: a picture or a binary file has no lines to count.
+  it('shows line counts for a text file but not for a binary file', () => {
+    const patch = [
+      'diff --git a/logo.png b/logo.png',
+      'index 8fc1a2b..4de6e13 100644',
+      'Binary files a/logo.png and b/logo.png differ',
+      'diff --git a/a.txt b/a.txt',
+      '--- a/a.txt',
+      '+++ b/a.txt',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n');
+    render(<DiffNodeView node={{ id: 'review', type: 'diff', patch, threads: [] }} />);
+    const header = (path: string) => screen.getByRole('button', { name: `Fold ${path}` }).closest('header');
+    expect(header('logo.png')?.querySelector('.diff-stat')).toBeNull();
+    expect(header('a.txt')?.querySelector('.diff-stat')).toHaveTextContent('-1+1');
+  });
+
   // The review parity report requires the file tree to open folded files.
   it('unfolds a file selected from the tree after Collapse all', () => {
     const { container } = render(<DiffNodeView node={DIFF} />);
