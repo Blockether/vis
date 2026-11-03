@@ -427,6 +427,9 @@
           failures
           @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'connect-failures)
 
+          reconciling?
+          @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconciling?)
+
           summary
           #(get
              (#'mcp/server-summary "stuck" {"transport" "stdio" "command" (:command @spec)} false)
@@ -448,6 +451,13 @@
                        #'client/close (constantly nil)
                        #'mcp/reconcile-async! (constantly nil)}
         (fn []
+          ;; Regression, CI run 41626644174: a reconcile that an earlier test started ran
+          ;; under these redefs and marked "stuck" unhealthy before the first check. Hold
+          ;; the single-flight guard, so no background reconcile runs during this case.
+          (let [deadline (+ (System/currentTimeMillis) 10000)]
+            (while (and (not (compare-and-set! reconciling? false true))
+                        (< (System/currentTimeMillis) deadline))
+              (Thread/sleep 5)))
           (try (reset! conns {})
                (reset! killed #{})
                (reset! failures {})
@@ -468,7 +478,8 @@
                (finally (reset! conns {})
                         (reset! killed #{})
                         (#'mcp/clear-auth-backoff! "stuck")
-                        (reset! failures {}))))))))
+                        (reset! failures {})
+                        (reset! reconciling? false))))))))
 
 (defdescribe
   mcp-session-failure-cleanup-test
