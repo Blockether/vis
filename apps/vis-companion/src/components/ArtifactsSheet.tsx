@@ -1162,6 +1162,7 @@ export function ArtifactsSheet({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       dismiss();
     };

@@ -1021,6 +1021,7 @@ function DiffCommands({
     if (!menu) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       setMenu(null);
     };

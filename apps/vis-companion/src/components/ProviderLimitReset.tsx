@@ -56,6 +56,7 @@ export function ProviderLimitReset({
     // Keep Escape in this dialog even when disabling the focused submit button blurs it.
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       dismiss();
     };

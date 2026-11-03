@@ -551,6 +551,7 @@ export function MachineRows({
     if (renaming === null && forgetting === null && binding === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       setRenaming(null);
       setForgetting(null);

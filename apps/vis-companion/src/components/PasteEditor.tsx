@@ -39,6 +39,7 @@ export function PasteEditor({
         aria-labelledby="paste-editor-title"
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
+            event.preventDefault();
             event.stopPropagation();
             onDismiss();
           } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {

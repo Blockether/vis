@@ -241,7 +241,10 @@ export function ImageViewer({
     // on a phone keyboard as much as on a desktop one, so the viewer answers
     // them instead of making the reader close it once per picture.
     const keyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
       if (event.key === 'ArrowLeft') stepTo(step - 1);
       if (event.key === 'ArrowRight') stepTo(step + 1);
     };

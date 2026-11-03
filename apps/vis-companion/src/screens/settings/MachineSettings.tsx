@@ -934,6 +934,7 @@ export function McpServersPanel({ client, target }: { client: GatewayClient; tar
     if (confirming === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       setConfirming(null);
     };

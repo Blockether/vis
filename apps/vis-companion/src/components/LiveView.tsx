@@ -2371,7 +2371,9 @@ export function RunDialog({
   // key before it reaches here, so Escape sends that stop rather than closing the run.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

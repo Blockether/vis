@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { SessionSearchDialog } from '../components/SessionSearchDialog';
 import { isLayerUp, useBackLayer } from '../lib/edge-back';
+import { readZenMode, setZenMode } from '../lib/transcript-display';
 import { renderSessionScreen } from './session-screen-harness';
 
 const runningTurn = () => ({
@@ -105,6 +106,46 @@ describe('Escape over a running turn', () => {
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Picker' }), { key: 'Escape' });
     await act(async () => {});
     expect(cancelTurn).not.toHaveBeenCalled();
+  });
+});
+
+// Reported: in Safari's full screen window, Escape in Zen mode left full screen and kept
+// Zen. Safari leaves full screen on every Escape the page does not claim.
+describe('Escape in Zen mode', () => {
+  const escape = () => {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(event);
+    });
+    return event;
+  };
+
+  it('leaves Zen mode and claims the key', () => {
+    setZenMode(true);
+    renderSessionScreen();
+
+    expect(escape().defaultPrevented).toBe(true);
+    expect(readZenMode()).toBe(false);
+  });
+
+  it('leaves Zen mode before it stops a running turn', async () => {
+    setZenMode(true);
+    const cancelTurn = renderRunning();
+
+    escape();
+    await act(async () => {});
+    expect(readZenMode()).toBe(false);
+    expect(cancelTurn).not.toHaveBeenCalled();
+  });
+
+  it('keeps Zen mode under a layer that owns the key', () => {
+    setZenMode(true);
+    renderSessionScreen();
+    render(<div role="dialog" aria-modal="true" aria-label="Picture" />);
+
+    escape();
+    expect(readZenMode()).toBe(true);
+    act(() => setZenMode(false));
   });
 });
 

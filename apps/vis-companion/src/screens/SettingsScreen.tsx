@@ -122,6 +122,7 @@ export function SettingsDialog({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       // One Escape, one surface: the pairing form closes first, or adding a machine
       // and reading its settings ended on the same keystroke.
       if (isAdding) {

@@ -347,7 +347,9 @@ export function SwipeActions({
     if (openDrawer !== close) openDrawer?.();
     openDrawer = close;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      close();
     };
     const onScroll = (event: Event) => {
       // The LIST moving under an open row closes it; a scroller that does not

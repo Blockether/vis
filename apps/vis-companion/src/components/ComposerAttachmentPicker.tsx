@@ -68,6 +68,7 @@ export function ComposerAttachmentPicker({
         className="relative shrink-0"
         onKeyDown={(event) => {
           if (event.key === 'Escape' && menuOpen) {
+            event.preventDefault();
             event.stopPropagation();
             setMenuOpen(false);
           }

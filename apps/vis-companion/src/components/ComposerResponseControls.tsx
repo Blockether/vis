@@ -69,6 +69,7 @@ function ReasoningChoice({ control }: { control: ChoiceControl }) {
     if (!menu) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       close();
     };

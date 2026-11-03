@@ -1413,6 +1413,7 @@ export function ProviderRows({ auth, focusId }: { auth: ProviderAuth; focusId?: 
     if (removing === null && tagging === null && thinkingAt === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       setRemoving(null);
       setTagging(null);

@@ -306,7 +306,9 @@ export function ProjectFolderSheet({
 
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel();
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onCancel();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

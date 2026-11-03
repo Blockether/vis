@@ -248,7 +248,10 @@ export function EditableName({
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.key === 'Enter') commit();
-        if (event.key === 'Escape') setDraft(null);
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setDraft(null);
+        }
       }}
       face={face}
     />

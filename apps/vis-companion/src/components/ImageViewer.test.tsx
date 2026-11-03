@@ -200,6 +200,21 @@ it('closes an untouched pending image without preparing a replacement', async ()
   expect(closed).toHaveBeenCalledOnce();
   expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
 });
+
+// Regression, user report: in Safari's full screen window, Escape closed the viewer and
+// also left full screen. Safari leaves full screen on every Escape the page does not claim.
+it('claims the Escape that closes it', () => {
+  const closed = vi.fn();
+  act(() => root.render(<ImageViewer src="blob:picture" name="chart.png" onClose={closed} />));
+
+  const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+  act(() => {
+    window.dispatchEvent(escape);
+  });
+
+  expect(closed).toHaveBeenCalledOnce();
+  expect(escape.defaultPrevented).toBe(true);
+});
 // Regression: the CSS transition meant for button/reset snaps also applied
 // while a finger was dragging the picture every frame, fighting the direct
 // pointer-driven transform and reading as pinch/pan stutter and lag.

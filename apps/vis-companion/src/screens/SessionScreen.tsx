@@ -4531,8 +4531,11 @@ export function SessionScreen({
   // does a control that already answered it, such as a picker or the composer's menus.
   // The layer is read in the capture phase, as the key arrives, because a dialog's own
   // listener can take the dialog down before this one runs.
+  // Zen mode is the next layer down: Escape leaves it before it stops a turn. Reported:
+  // Safari's full screen window left full screen on that Escape and kept Zen, because
+  // Safari leaves full screen on every Escape the page does not claim.
   useEffect(() => {
-    if (!running) return;
+    if (!running && !zen) return;
     let forLayer: KeyboardEvent | null = null;
     const onKeyArrives = (event: KeyboardEvent) => {
       forLayer = event.key === 'Escape' && isLayerUp() ? event : null;
@@ -4540,7 +4543,8 @@ export function SessionScreen({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event === forLayer) return;
       event.preventDefault();
-      cancelRef.current();
+      if (zen) setZenMode(false);
+      else cancelRef.current();
     };
     window.addEventListener('keydown', onKeyArrives, true);
     window.addEventListener('keydown', onKeyDown);
@@ -4548,7 +4552,7 @@ export function SessionScreen({
       window.removeEventListener('keydown', onKeyArrives, true);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [running]);
+  }, [running, zen]);
 
   const slashText = prompt.trimStart();
   const slashOpen =

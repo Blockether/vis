@@ -1476,6 +1476,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     if (selectedIds.length === 0) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        event.preventDefault();
         setSelection(null);
         anchor.current = null;
         return;

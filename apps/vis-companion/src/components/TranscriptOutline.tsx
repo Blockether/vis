@@ -490,6 +490,7 @@ export function TranscriptOutline({
     if (!isOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       if (cardRef.current?.contains(document.activeElement)) {
         railRef.current?.focus({ preventScroll: true });

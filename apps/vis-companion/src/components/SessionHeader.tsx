@@ -175,6 +175,7 @@ export function SessionHeader({
     if (!menu) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      event.preventDefault();
       event.stopPropagation();
       closeMenu();
     };
