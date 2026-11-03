@@ -1271,6 +1271,9 @@
     :project-session
     (if (:nested? entry) 8 6)
 
+    :project-state
+    (if (:project entry) 4 1)
+
     4))
 
 (defn- list-row?
