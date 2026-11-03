@@ -191,7 +191,7 @@ export function SessionHeader({
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
       {/* The way to the parent stands as one mark beside both lines. The path below is the
           same control for keys and screen readers, so this mark is for the pointer only. The mark
-          and the path are one link to the eye: a hover on either one lights both. */}
+          and the path are one link to the eye: a hover on either one underlines the path. */}
       {parentColumn && (
         <button
           type="button"
@@ -199,7 +199,7 @@ export function SessionHeader({
           aria-hidden
           title="Open the parent session"
           data-parent-link
-          className="flex shrink-0 items-center self-stretch pl-3 text-white group-has-[[data-parent-link]:hover]/parent:text-accent-ink"
+          className="flex shrink-0 items-center self-stretch pl-3 text-white"
           onClick={backToParent}
         >
           <ChevronIcon back className="size-6" />
