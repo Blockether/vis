@@ -361,6 +361,7 @@ export function leaderParts(leader: LeaderLane, now: number): { start: number; e
 export const agentKey = (index: number) => `A${index + 1}`;
 const LEADER_KEY = 'L';
 const LEADER_ROLE = 'leader';
+const LEADER_WAIT_WIDTH = 'waited 59m 59s of 59m 59s'.length;
 
 // The bar ink of each status word.
 const BAR_INK: Record<string, string> = {
@@ -549,8 +550,11 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
   const leaderTime = leader ? (leader.end ?? now) - leader.start : 0;
   const keys = rows.map((_, index) => agentKey(index));
   const roles = rows.map((agent) => agentRole(agent).text);
+  const titles = columnWidths(rows) as Record<string, string>;
   const widths = {
-    ...columnWidths(rows),
+    ...titles,
+    // The leader line `waited 59m 59s of 59m 59s` keeps one width while its clock ticks.
+    '--title': leader ? `max(${titles['--title']}, ${LEADER_WAIT_WIDTH}ch)` : titles['--title'],
     '--key': `${Math.max(2, ...keys.map((key) => key.length))}ch`,
     '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ...roles.map((role) => role.length))}ch`,
   } as CSSProperties;
@@ -612,7 +616,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
           <li className={LEGEND_ROW}>
             <span className="font-bold text-white">{LEADER_KEY}</span>
             <span className="font-bold uppercase text-white">{LEADER_ROLE}</span>
-            <span className="text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
+            <span className="whitespace-nowrap text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
             <HoverNote className="min-w-0" note={leader.note}>
               <span className="block truncate text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>

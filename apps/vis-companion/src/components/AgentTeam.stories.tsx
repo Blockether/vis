@@ -56,7 +56,11 @@ export const Finished: Story = {};
 
 // The leader worked, waited in council.run, worked again and waits in council.wait now.
 const LEAD_NOW = Date.now();
-const LEADER = { start: LEAD_NOW - 150_000, waits: [{ start: LEAD_NOW - 75_000, end: LEAD_NOW - 30_000 }, { start: LEAD_NOW - 15_000 }] };
+const LEADER = {
+  start: LEAD_NOW - 150_000,
+  waits: [{ start: LEAD_NOW - 75_000, end: LEAD_NOW - 30_000 }, { start: LEAD_NOW - 15_000 }],
+  note: 'Five agents work. I wait for the native tests, then I read the contract result.',
+};
 
 /** Open timeline keys each lane, L for the leader and A1, A2 for the agents. The legend explains each key. */
 export const LeaderChart: Story = {
