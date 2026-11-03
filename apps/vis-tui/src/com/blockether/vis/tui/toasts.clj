@@ -14,8 +14,8 @@
    the `✕`. A card without a heading keeps the `✕` on its first text line. The
    body holds up to `max-text-lines` lines of wrapped text. When more notices
    wait, the page counter `← 1/3 →` is in the bottom-right corner.
-   The countdown is the bottom border: the level color is the time left, and
-   the muted part the time used. A sticky notice has a plain bottom border.
+   The countdown is a thick bar under the body: the level color is the time
+   left over a faint track. A sticky notice has a plain bottom border.
 
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
@@ -190,12 +190,16 @@
       (doseq [r (range first-row bottom)]
         (p/put-str! g (inc col) (long r) "▏")
         (p/put-str! g (dec right) (long r) "▕"))
-      ;; The bottom line is the countdown: the level color is the time left.
-      (let [left-cols (if fraction (long (Math/ceil (* (double fraction) inner))) inner)]
-        (p/set-colors! g edge paper)
-        (p/put-str! g (inc col) bottom (rule left-cols "▔"))
-        (p/set-colors! g (t/legible-ink t/footer-fg-muted paper) paper)
-        (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "▔")))
+      ;; The countdown is a bar under the body, four times as thick as the border:
+      ;; the level color is the time left over a faint track. A sticky notice keeps
+      ;; a plain bottom line.
+      (if fraction
+        (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
+          (p/set-colors! g edge paper)
+          (p/put-str! g (inc col) bottom (rule left-cols "▀"))
+          (p/set-colors! g (t/mix-color paper edge 0.3) paper)
+          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "▀")))
+        (do (p/set-colors! g edge paper) (p/put-str! g (inc col) bottom (rule inner "▔"))))
       ;; Heading.
       (when heading
         (p/set-colors! g muted bg)

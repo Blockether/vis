@@ -208,12 +208,13 @@
     []))
 
 (def ^:private edge-blocks
-  "One-eighth block glyph → the cell edge that it fills. A terminal draws these
-   blocks itself, edge to edge; a font leaves seams, so they are painted as rects."
-  {"▁" :bottom "▔" :top "▏" :left "▕" :right})
+  "Edge block glyph → the part of the cell that it fills: a one-eighth edge or
+   the upper half. A terminal draws these blocks itself, edge to edge; a font
+   leaves seams, so they are painted as rects."
+  {"▁" :bottom "▔" :top "▏" :left "▕" :right "▀" :upper-half})
 
 (defn- edge-ops
-  "The rect for ONE one-eighth block cell, or `[]` for any other glyph."
+  "The rect for ONE edge block cell, or `[]` for any other glyph."
   [c px py cell-w cell-h]
   (if-let [edge (edge-blocks (:ch c))]
     (let [w (long cell-w)
@@ -230,6 +231,9 @@
 
          :top
          {:op :rect :x x0 :y y0 :w w :h th :fill fill}
+
+         :upper-half
+         {:op :rect :x x0 :y y0 :w w :h (quot h 2) :fill fill}
 
          :left
          {:op :rect :x x0 :y y0 :w tw :h h :fill fill}
