@@ -305,6 +305,11 @@ export function SwipeActions({
   const trayRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<RowMenuHandle | null>(null);
   const [open, setOpen] = useState(false);
+  // THE DRAWER IS LAID OUT FROM THE FIRST TOUCH OR FOCUS, NOT WITH THE ROW. Its verbs are
+  // 42 of the 77 nodes in each session row, and WebKit laid them all out on every relayout
+  // of a long list: hidden, phone layout went from 73 to 39 ms on 526 rows. A press commits
+  // before its first move, so a slide always measures a drawer that is shown.
+  const [hasVerbs, setHasVerbs] = useState(false);
   const slide = useRef<Slide | null>(null);
   /** When the last slide ended, so the click that follows it goes nowhere. */
   const slidAt = useRef(-Infinity);
@@ -401,6 +406,7 @@ export function SwipeActions({
       data-swipe-track=""
       onPointerDown={(event) => {
         if (event.pointerType === 'mouse' || !event.isPrimary) return;
+        if (!hasVerbs) setHasVerbs(true);
         const from = open ? trayWidth() : 0;
         slide.current = {
           pointerId: event.pointerId,
@@ -439,6 +445,10 @@ export function SwipeActions({
         current.offset = offset;
         current.at = now;
         place(offset, false);
+      }}
+      // A keyboard or a screen reader reaches the row first, so its verbs are shown next.
+      onFocusCapture={() => {
+        if (!hasVerbs) setHasVerbs(true);
       }}
       onPointerUp={(event) => release(event, true)}
       onPointerCancel={(event) => release(event, false)}
@@ -483,12 +493,12 @@ export function SwipeActions({
       >
         <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>
-      {/* Layout sizes every action before the first swipe. A slide does not change
+      {/* Layout sizes every action at the first touch, before the slide. A slide does not change
           these widths; only the row width or action count can change them. A focus
           that reaches a verb opens the drawer, so the clip never hides it. */}
       <div
         ref={trayRef}
-        className="flex min-w-0 max-w-full shrink-0 mouse:hidden"
+        className={`${hasVerbs ? 'flex' : 'hidden'} min-w-0 max-w-full shrink-0 mouse:hidden`}
         style={{ width: `${actions.length * 4.5}rem` }}
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}

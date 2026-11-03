@@ -1411,8 +1411,8 @@ export function SessionsScreen({
   // measuring placeholders. Chromium keeps about a screen of rows drawn past this
   // scroller's edges. WebKit draws only the rows inside it: on an iOS 18 simulator, fast
   // flings then showed more frames with rows not yet drawn at the leading edge, for 5-10 ms
-  // saved on the way back. So the flag is tried on a row half a screen below the fold and
-  // comes off again when that row is still skipped. A list too short to hold such a row
+  // saved on the way back. So one row half a screen below the fold asks the engine first,
+  // and the flag goes on only when the engine draws that row. A list too short to hold such a row
   // waits for more rows: another machine's sessions or an opened group. The flag is DOM
   // state, so it renders nothing.
   const isListShown = sessions !== null;
@@ -1426,6 +1426,8 @@ export function SessionsScreen({
         frame = requestAnimationFrame(then);
       });
     };
+    // The row that is asking the engine right now, so an unmount can clean it.
+    let asking: HTMLElement | null = null;
     const settle = () => {
       const edge = viewport.getBoundingClientRect().bottom + viewport.clientHeight / 2;
       const probe = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-row]')).find(
@@ -1433,11 +1435,18 @@ export function SessionsScreen({
       );
       if (!probe) return;
       rowsAdded.disconnect();
-      viewport.setAttribute('data-rows-settled', '');
+      // The row skips its contents, so the row's first child is the one that knows.
+      const cell = probe.firstElementChild;
+      if (!cell || typeof cell.checkVisibility !== 'function') return;
+      // ONE ROW ASKS, NOT THE LIST. The flag on the scroller restyles every row, and WebKit,
+      // which answers no, spent one long task of about 0.6 s on 526 rows to turn it on and off.
+      asking = probe;
+      probe.style.contentVisibility = 'auto';
       afterTwoFrames(() => {
-        if (!probe.firstElementChild?.checkVisibility?.({ contentVisibilityAuto: true })) {
-          viewport.removeAttribute('data-rows-settled');
-        }
+        const isDrawnAhead = cell.checkVisibility({ contentVisibilityAuto: true });
+        probe.style.removeProperty('content-visibility');
+        asking = null;
+        if (isDrawnAhead) viewport.setAttribute('data-rows-settled', '');
       });
     };
     const rowsAdded = new MutationObserver(() => afterTwoFrames(settle));
@@ -1446,6 +1455,7 @@ export function SessionsScreen({
     return () => {
       rowsAdded.disconnect();
       cancelAnimationFrame(frame);
+      asking?.style.removeProperty('content-visibility');
       viewport.removeAttribute('data-rows-settled');
     };
   }, [isListShown]);

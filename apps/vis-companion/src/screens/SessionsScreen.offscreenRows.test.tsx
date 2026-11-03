@@ -60,15 +60,19 @@ describe('rows out of sight on the sessions list', () => {
     }
   });
 
-  it('stay drawn where the engine skips rows below the fold', async () => {
-    engineDraws(false);
+  // User report: the list was slow on WebKit. Trying the flag on the whole list there, and
+  // taking it off again, cost one long task of about 0.6 s on 526 rows. One row asks now.
+  it('stay drawn where the engine skips rows below the fold, without trying the whole list', async () => {
+    const check = engineDraws(false);
     const view = renderSessionsScreen({ machines: [{ label: 'laptop', sessions: sessions(3) }] });
     try {
       await screen.findByText('Session 2');
       const list = listViewport();
-      await waitFor(() => expect(list).toHaveAttribute('data-rows-settled'));
-      await waitFor(() => expect(list).not.toHaveAttribute('data-rows-settled'));
+      const flagged = vi.fn();
+      new MutationObserver(flagged).observe(list, { attributeFilter: ['data-rows-settled'] });
+      await waitFor(() => expect(check).toHaveBeenCalledWith({ contentVisibilityAuto: true }));
       await frames(4);
+      expect(flagged).not.toHaveBeenCalled();
       expect(list).not.toHaveAttribute('data-rows-settled');
     } finally {
       view.restore();

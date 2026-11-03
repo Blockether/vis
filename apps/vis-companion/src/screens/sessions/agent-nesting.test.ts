@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Session } from '../../lib/types';
-import { nestAgentSessions } from './agent-nesting';
+import { SHELF_ROWS, nestAgentSessions, shelfRows } from './agent-nesting';
 
 const base = { live: false, current_turn_id: null, server_time_ms: 0, turn_count: 0 };
 const leader = (id: string): Session => ({ ...base, id, agent: { role: 'leader', leader_id: id } });
@@ -32,5 +32,18 @@ describe('nestAgentSessions', () => {
 
   it('shows every row once, also for a cycle', () => {
     expect(shape([child('x', 'y'), child('y', 'x')])).toHaveLength(2);
+  });
+});
+
+// User report: one group shelf put 524 rows in the session list, and WebKit spent
+// 73-94 ms on each relayout of it, which read as slow scrolling with late rows.
+describe('shelfRows', () => {
+  const many = (count: number) => nestAgentSessions(Array.from({ length: count }, (_, at) => leader(`s${at}`)));
+
+  it('paints at most the limit, in order, and counts the rest', () => {
+    const { shown, hidden } = shelfRows(many(SHELF_ROWS + 5), SHELF_ROWS);
+    expect(shown).toHaveLength(SHELF_ROWS);
+    expect(shown[0]?.session.id).toBe('s0');
+    expect(hidden).toBe(5);
   });
 });

@@ -35,3 +35,14 @@ export function nestAgentSessions(rows: readonly Session[]): NestedSession[] {
   for (const session of rows) place(session, 0);
   return out;
 }
+
+/**
+ * The most rows one group shelf paints before the reader asks for more. A shelf is read
+ * whole from the gateway, and one shelf of 524 rows made each relayout cost WebKit 73-94 ms.
+ */
+export const SHELF_ROWS = 60;
+
+/** The first `limit` rows of a shelf, and how many wait behind them. */
+export function shelfRows(rows: readonly NestedSession[], limit: number): { shown: NestedSession[]; hidden: number } {
+  return { shown: rows.slice(0, limit), hidden: Math.max(0, rows.length - limit) };
+}

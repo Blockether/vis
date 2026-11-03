@@ -48,7 +48,7 @@ import {
   SettingsIcon,
   TrashIcon,
 } from '../../components/icons';
-import { Button, IconButton, Input, TextButton } from '../../components/ui';
+import { Button, IconButton, Input, LoadMore, TextButton } from '../../components/ui';
 import { menuPosition, pointerAnchor, type AnchorBox, type MenuPosition } from '../../lib/anchored-menu';
 import {
   draftMessageKey,
@@ -87,7 +87,7 @@ import { SESSION_DRAG_MIME, useSessionDropTarget } from '../../lib/session-drag'
 import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
 import { unreadAfterVisit } from '../../lib/unread';
 import { isKeyboardInputElement } from '../../lib/viewport';
-import { nestAgentSessions, type NestedSession } from './agent-nesting';
+import { SHELF_ROWS, nestAgentSessions, shelfRows, type NestedSession } from './agent-nesting';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
@@ -479,9 +479,10 @@ function NameField({
  * One group's own band, inside its project's list.
  *
  * A level quieter than the project header above it, and deliberately so: the project owns
- * the boundary rule, while a group owns its name, its colour and its own fold. A band is
- * never paged from the INSIDE — it is a shelf a reader reads whole. Live bands are never
- * paged at all; only the ARCHIVED wall is, and its steps stand on the `Groups` header.
+ * the boundary rule, while a group owns its name, its colour and its own fold. The gateway
+ * reads a band whole, and the band paints at most `SHELF_ROWS` rows until the reader asks
+ * for more. Live bands are never paged; only the ARCHIVED wall is, and its steps stand on
+ * the `Groups` header.
  */
 function GroupBand({
   name,
@@ -1194,7 +1195,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   // with `none on this page` under it while its sessions sat four pages down, and a
   // session filed from the sheet left the very band that had just taken it. What IS paged
   // is the ARCHIVED wall of bands, and a shelf off that page is not painted here at all
-  // (`&group_limit=`). The live wall is never paged, so every live shelf is painted.
+  // (`&group_limit=`). The live wall is never paged, so every live shelf is painted. A
+  // shelf shows its first `SHELF_ROWS` rows and a `Show more` rule under them.
   //
   // AND A FILED ROW NEVER FALLS BETWEEN TWO READS. The page and its shelves are one answer,
   // but the shelves are painted only once the groups read that names them has landed too:
@@ -1426,6 +1428,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   // this reader shut stays shut on the next screen. A group nobody shut is open: a
   // name and a count with nothing under them say less than the rows do.
   const [groupFolds, setGroupFolds] = useState<Record<string, boolean>>({});
+  // How many rows each shelf paints; more only when the reader asks (`SHELF_ROWS`).
+  const [shelfLimits, setShelfLimits] = useState<Record<string, number>>({});
   const isGroupOpen = (gid: string) =>
     groupFolds[gid] ?? readProjectFold(groupFoldKey(machineKey(conn), root, gid)) ?? true;
   const foldGroup = (gid: string, open: boolean) => {
@@ -2219,6 +2223,9 @@ export const ProjectGroup = memo(function ProjectGroup({
                 {bands.map((band, index) => {
                   const held = filed.byGroup.get(band.id) ?? NO_ROWS;
                   const isBandOpen = isGroupOpen(band.id);
+                  const shelf = isBandOpen
+                    ? shelfRows(nestAgentSessions(held), shelfLimits[band.id] ?? SHELF_ROWS)
+                    : null;
                   return (
                     <SessionDropArea
                       key={band.id}
@@ -2244,7 +2251,20 @@ export const ProjectGroup = memo(function ProjectGroup({
                         }}
                         onCancelRename={() => setRenamingGroupId(null)}
                       />
-                      {isBandOpen && nestAgentSessions(held).map(nestedRow)}
+                      {shelf?.shown.map(nestedRow)}
+                      {shelf && shelf.hidden > 0 && (
+                        <LoadMore
+                          label={`Show ${Math.min(shelf.hidden, SHELF_ROWS)} more sessions in ${band.name}`}
+                          onClick={() =>
+                            setShelfLimits((limits) => ({
+                              ...limits,
+                              [band.id]: (limits[band.id] ?? SHELF_ROWS) + SHELF_ROWS,
+                            }))
+                          }
+                        >
+                          Show {Math.min(shelf.hidden, SHELF_ROWS)} more · {shelf.hidden} hidden
+                        </LoadMore>
+                      )}
                     </SessionDropArea>
                   );
                 })}
