@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Provider: Vis no longer offers GLM-5.2, which Z.AI deprecated on the Coding Plan. The Alibaba preset, the CLI examples and the guide use `glm-5.3`. A `vis.yml` that names `glm-5.2` still works where the provider serves it. Limits from a live model list apply only to the same exact model id. Svar is pinned at 0.7.223.
 
 ### Fixed
+- Sessions: a snapshot from an older database restores on a fresh install. Before, the restore stopped with "table session_attachment has no column named commentable". An older database keeps columns that the schema no longer has. The restore now writes only the columns that the target database has.
 - Releases: each `beta-<commit>` release publishes `vis-agent` and `install-vis-agent`, and its `SHA256SUMS` lists them, like a stable release. `install-vis-agent --version beta-<commit>` takes the command from that beta, so `--sha256` pins it. A beta without `SHA256SUMS` stops the installer before it downloads the command. Betas published earlier still use the verified installer command (#434).
 - Provider: Claude Sonnet 5.5 on GitHub Copilot runs again. Before, each turn stopped with "Model limits unavailable" and sent nothing. The bundled model catalog now has its limits. When a live model list gives no valid limits, the gateway log shows the limit fields of the provider's entry. The configuration guide shows how to set verified limits in `vis.yml`. Svar is pinned at 0.7.222.
 

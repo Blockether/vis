@@ -6278,6 +6278,61 @@
                                  :storage_uri nil))))
                   atts))))
 
+(defn- fit-snapshot-rows
+  "The snapshot `sessions` and `council` with each row cut to the `columns` of its table in
+   this store, `{table #{column}}`. An older store keeps the columns that a later V1 dropped,
+   so its rows carry columns that a fresh store does not have. Attachments keep
+   `:bytes_sha256`, which names their payload."
+  [{:keys [sessions council]} columns]
+  (let [fit
+        (fn [table row]
+          (some-> row
+                  (select-keys (get columns table))))
+
+        fit-all
+        (fn [table rows]
+          (mapv #(fit table %) rows))
+
+        fit-turn
+        (fn [turn]
+          (-> turn
+              (update :soul #(fit :session_turn_soul %))
+              (update :state #(fit :session_turn_state %))
+              (update :iterations #(fit-all :session_turn_iteration %))
+              (update :attachments
+                      (fn [atts]
+                        (mapv #(select-keys %
+                                            (conj (get columns :session_attachment) :bytes_sha256))
+                              atts)))))
+
+        fit-history
+        (fn [h]
+          (-> h
+              (update :history #(fit :activity_history %))
+              (update :invocations #(fit-all :activity_invocation %))))]
+
+    {:sessions (mapv (fn [s]
+                       (-> s
+                           (update :agent #(fit :session_agent %))
+                           (update :turns #(mapv fit-turn %))
+                           (update :histories #(update-vals (or % {}) fit-history))))
+                     sessions)
+     :council (-> council
+                  (update :entries #(fit-all :council_entry %))
+                  (update :pings #(fit-all :council_ping %)))}))
+
+(defn- store-columns
+  "The column names of each of `tables` in this store, `{table #{column}}`."
+  [tx-info tables]
+  (into {}
+        (map (fn [table]
+               [table
+                (into #{}
+                      (map (comp keyword :name))
+                      (query-sql! tx-info
+                                  ["SELECT name FROM pragma_table_info(?)" (name table)]))]))
+        tables))
+
 (defn db-import-session-tree!
   "Write a session tree that [[db-export-session-tree]] read, with new ids, in one
    transaction (#405). Answers `{:root new-root-id :sessions {old-id new-id}}`.
@@ -6292,13 +6347,21 @@
 
    A child that was queued or running becomes failed, and a running turn interrupted, so
    the restored parent can resume the child."
-  [db-info {:keys [sessions council blobs]}
+  [db-info {:keys [blobs] :as tree}
    {:keys [owner-id imported-from key workspace-for place! council-group]}]
   (when (ds db-info)
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
-        (let [owner
+        (let [{:keys [sessions council]}
+              (fit-snapshot-rows tree
+                                 (store-columns
+                                   tx-info
+                                   [:session_turn_soul :session_turn_state :session_turn_iteration
+                                    :session_attachment :session_agent :activity_history
+                                    :activity_invocation :council_entry :council_ping]))
+
+              owner
               (or owner-id "local")
 
               existing

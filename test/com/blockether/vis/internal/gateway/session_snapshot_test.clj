@@ -164,6 +164,49 @@
   (describe
     "another machine"
     (it
+      "restores a snapshot from a store that keeps columns a later schema dropped"
+      ;; Regression, cross-check of `vis-agent sessions import` on a fresh install: an
+      ;; older store keeps the columns that V1 dropped, so the restore failed with
+      ;; "table session_attachment has no column named commentable".
+      (let [source
+            (ps/db-open! :memory)
+
+            target
+            (ps/db-open! :memory)
+
+            image
+            (.getBytes "png-bytes" "UTF-8")]
+
+        (try
+          (let
+            [data
+             (on
+               source
+               (fn []
+                 (doseq
+                   [ddl
+                    ["ALTER TABLE session_attachment ADD COLUMN commentable INTEGER NOT NULL DEFAULT 0"
+                     "ALTER TABLE session_turn_soul ADD COLUMN legacy_note TEXT"]]
+                   (jdbc/execute! (:datasource source) [ddl]))
+                 (let [sid (session! source "Old store")]
+                   (attach! source (turn! source sid "ask" :success) image)
+                   (state/export-session sid))))
+
+             new-id
+             (on target #(get (state/import-session! data {}) "id"))]
+
+            (expect (= ["ask"] (mapv :user-request (ps/db-list-session-turns target new-id))))
+            (expect
+              (=
+                [(seq image)]
+                (mapv
+                  (comp seq :bytes)
+                  (rows
+                    target
+                    ["SELECT a.bytes FROM session_attachment a JOIN session_turn_soul t ON t.id = a.session_turn_soul_id JOIN session_state s ON s.id = t.session_state_id WHERE s.session_soul_id = ?"
+                     new-id])))))
+          (finally (ps/db-close! source) (ps/db-close! target)))))
+    (it
       "restores every turn state into a separate store and lists the session first"
       (let [source
             (ps/db-open! :memory)
