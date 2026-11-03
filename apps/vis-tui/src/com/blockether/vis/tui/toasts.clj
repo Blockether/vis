@@ -9,13 +9,14 @@
    of paper shows between the body and the border. The border has the level
    color.
 
-   The first row holds the bold title with its source, and the close mark `✕`
-   in the top-right corner. A gray rule runs under the heading and stops before
-   the `✕`. A card without a heading keeps the `✕` on its first text line. The
-   body holds up to `max-text-lines` lines of wrapped text. When more notices
-   wait, the page counter `← 1/3 →` is in the bottom-right corner.
-   The countdown is a thick bar right under the bottom border: the level color
-   is the time left over a faint track. A sticky notice has a plain bottom border.
+   One empty row stands under the top border, and one over the bottom border.
+   The close mark `✕` is in the top-right corner of the empty top row. Under it,
+   the heading holds the bold title with its source. A gray rule runs under the
+   heading and stops before the `✕` column. The body holds up to
+   `max-text-lines` lines of wrapped text. When more notices wait, the page
+   counter `← 1/3 →` is in the bottom-right corner.
+   The countdown is a thick bar on the bottom border, as long as the time left.
+   A sticky notice has a plain bottom border.
 
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
@@ -36,7 +37,7 @@
   4)
 
 (def ^:const ^:private close-cols
-  "Columns that the close mark takes on a text row: a space and `✕`."
+  "Columns that the close mark keeps free on the heading row: a space and `✕`."
   2)
 
 (defn- text-lines
@@ -86,15 +87,15 @@
           (when (and remaining-ms ttl (pos? (long ttl)))
             (min 1.0 (/ (double remaining-ms) (double ttl)))))
 
-        ;; Two border rows, the heading row with its rule, the page counter row and
-        ;; the empty row over the countdown.
+        ;; Two border rows, the empty top and bottom rows, the heading row with its
+        ;; rule and the page counter row.
         line-room
-        (- (long rows) 2 (if head 2 0) (if pages 1 0) (if fraction 1 0))]
+        (- (long rows) 4 (if head 2 0) (if pages 1 0))]
 
     (when (and entry (>= max-cols (long min-card-cols)) (pos? line-room))
-      (let [;; Without a heading, the close mark stands at the end of the text rows.
+      (let [;; The close mark stands in the empty top row, over the text.
             text-side
-            (+ (long side-cols) (if head 0 (long close-cols)))
+            (long side-cols)
 
             lines
             (text-lines (:text entry) (- max-cols text-side) (min (long max-text-lines) line-room))
@@ -118,7 +119,7 @@
          :col (long left)
          :row (long top)
          :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
-         :height (+ 2 (if head 2 0) (count lines) (if pages 1 0) (if fraction 1 0))}))))
+         :height (+ 4 (if head 2 0) (count lines) (if pages 1 0))}))))
 
 (defn- level-fg
   "The border color of a card."
@@ -164,11 +165,12 @@
           bottom (+ row (long height) -1)
           right (+ col width -1)
           first-row (inc row)
-          text-row (if heading (+ first-row 2) first-row)
+          ;; One empty row under the top border.
+          head-row (inc first-row)
+          text-row (if heading (+ head-row 2) head-row)
           pager-cols (long (if pager (p/display-width pager) 0))
-          ;; Over the countdown, the last body row is empty and carries the bottom line.
-          last-row (if fraction (dec bottom) bottom)
-          pager-row (dec last-row)
+          ;; The last body row is empty.
+          pager-row (- bottom 2)
           ;; The counter ends one space before the right border.
           pager-col (- right 1 pager-cols)
           ;; The border stands on the screen paper; the body is tinted up to it.
@@ -190,33 +192,29 @@
         (p/put-str! g col (long r) "▕")
         (p/put-str! g right (long r) "▏"))
       (p/set-colors! g edge bg)
-      (doseq [r (range first-row last-row)]
+      (doseq [r (range first-row bottom)]
         (p/put-str! g (inc col) (long r) "▏")
         (p/put-str! g (dec right) (long r) "▕"))
-      ;; The countdown is a bar right under the bottom line, four times as thick:
-      ;; the level color is the time left over a faint track. A sticky notice has
-      ;; only the bottom line.
-      (if fraction
-        (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
-          (p/put-str! g (inc col) last-row (rule inner "▁"))
-          (p/set-colors! g edge paper)
-          (p/put-str! g (inc col) bottom (rule left-cols "▀"))
-          (p/set-colors! g (t/mix-color paper edge 0.3) paper)
-          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "▀")))
-        (do (p/set-colors! g edge paper) (p/put-str! g (inc col) bottom (rule inner "▔"))))
+      ;; The bottom line lies on the paper row under the body, so the sides keep
+      ;; their full width down to it. The countdown is a bar four times as thick
+      ;; that covers the bottom line for the time left.
+      (p/set-colors! g edge paper)
+      (p/put-str! g (inc col) bottom (rule inner "▔"))
+      (when fraction
+        (p/put-str! g (inc col) bottom (rule (long (Math/ceil (* (double fraction) inner))) "▀")))
       ;; Heading.
       (when heading
         (p/set-colors! g muted bg)
-        (p/put-str! g (+ col 2) first-row heading)
+        (p/put-str! g (+ col 2) head-row heading)
         (when title
           (p/set-colors! g t/dialog-fg bg)
           (p/enable! g p/BOLD)
-          (p/put-str! g (+ col 2) first-row (subs heading 0 (min (count heading) (count title))))
+          (p/put-str! g (+ col 2) head-row (subs heading 0 (min (count heading) (count title))))
           (p/clear-styles! g))
         ;; A gray rule under the heading; it stops three cells before the close mark.
         (p/set-colors! g muted bg)
-        (p/put-str! g (+ col 2) (inc first-row) (rule (- width 8) "▔")))
-      ;; Close mark in the top-right corner, in the text color.
+        (p/put-str! g (+ col 2) (inc head-row) (rule (- width 8) "▔")))
+      ;; Close mark in the top-right corner, in the empty row over the heading.
       (p/set-colors! g t/dialog-fg bg)
       (p/enable! g p/BOLD)
       (p/put-str! g (- right 2) first-row "✕")

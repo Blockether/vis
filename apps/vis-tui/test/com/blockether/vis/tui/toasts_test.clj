@@ -23,7 +23,7 @@
                         [28 30 56 80 200]
 
                         rows
-                        [6 8 30]
+                        [8 10 30]
 
                         total
                         [1 12]
@@ -40,8 +40,8 @@
                     (expect (some? card))
                     (expect (<= (+ col width) (+ 2 cols)))
                     (expect (<= (+ row height) (+ 3 rows)))
-                    ;; Without a heading, "✕" ends the first text row: "│ " text " ✕ │".
-                    (expect (every? #(<= (p/display-width %) (- width (if heading 4 6))) lines))
+                    ;; "│ " text " │"; the "✕" stands in the empty row over the text.
+                    (expect (every? #(<= (p/display-width %) (- width 4)) lines))
                     ;; "│ " heading " ✕ │"
                     (expect (<= (+ 6 (p/display-width (or heading ""))) width))
                     ;; "│ " pager " │"

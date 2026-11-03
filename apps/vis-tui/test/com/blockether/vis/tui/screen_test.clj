@@ -4698,7 +4698,7 @@ therapy line 2"
             (let [{:keys [rows layout]} (frame 80 settings path)
                   row (row-of rows "Copied zen")]
               (expect (some? row))
-              (expect (<= (long (:messages-top layout)) (long row) 6))
+              (expect (<= (long (:messages-top layout)) (long row) 7))
               ;; Zen mode places the card at the left edge of the centred column.
               (expect (< (long (str/index-of (nth rows row) "Copied zen"))
                          (+ 8 (long (or (:chat-left layout) 0)))))))
