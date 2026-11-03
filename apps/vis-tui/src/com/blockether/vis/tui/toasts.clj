@@ -172,7 +172,6 @@
           paper t/dialog-bg
           bg (card-bg)
           edge (t/legible-ink (level-fg level) paper)
-          ink (t/legible-ink (level-fg level) bg)
           muted (t/legible-ink t/footer-fg-muted bg)]
 
       (p/clear-styles! g)
@@ -209,8 +208,8 @@
         ;; A gray rule under the heading; it stops one space before the close mark.
         (p/set-colors! g muted bg)
         (p/put-str! g (+ col 2) (inc first-row) (rule (- width 6) "▔")))
-      ;; Close mark in the top-right corner.
-      (p/set-colors! g ink bg)
+      ;; Close mark in the top-right corner, in the text color.
+      (p/set-colors! g t/dialog-fg bg)
       (p/enable! g p/BOLD)
       (p/put-str! g (- right 2) first-row "✕")
       (p/clear-styles! g)
