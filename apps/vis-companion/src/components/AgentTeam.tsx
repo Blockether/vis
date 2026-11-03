@@ -611,10 +611,10 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
 
 /**
  * The steps of one agent with their times, read from the timeline route, and the way into its
- * session. The sheet takes the whole session pane with wide side margins. The status line opens
- * the sheet, with Open and Stop at its right end on every width, so a long timeline never hides
- * them. The title of the agent stands under it, not in the band. The outcome follows, then the
- * task, then the steps, with a rule between the parts.
+ * session. The sheet takes the whole session pane with wide side margins. The title of the agent
+ * opens the sheet, not the band, and the status line stands close under it. Open and Stop stand
+ * at the right end of the title on every width, so a long timeline never hides them. The outcome
+ * follows, then the task, then the steps, with a rule between the parts.
  */
 export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
   agent: Subagent;
@@ -656,21 +656,23 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
       >
         <div className="w-full divide-y divide-dialog-edge px-4 py-5 font-mono text-ui text-white *:py-5 *:first:pt-0 *:last:pb-0 sm:px-10 sm:py-6 sm:text-body" data-agent-timeline>
           <div className="space-y-1">
-            <div className="flex items-center gap-x-4">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3">
-                <span className={`uppercase ${role.ink}`}>{role.text}</span>
-                <Divider />
-                <span className={`uppercase ${status.ink}`}>{status.text}</span>
-                {time !== undefined && <Divider />}
-                {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
+            <div className="flex items-start gap-x-4">
+              <div className="min-w-0 flex-1">
+                {/* The band keeps the title for a screen reader, so this copy is for the eye only. */}
+                <p aria-hidden="true" className="text-subhead font-bold [overflow-wrap:anywhere]">{label}</p>
+                <div className="flex flex-wrap items-center gap-x-3">
+                  <span className={`uppercase ${role.ink}`}>{role.text}</span>
+                  <Divider />
+                  <span className={`uppercase ${status.ink}`}>{status.text}</span>
+                  {time !== undefined && <Divider />}
+                  {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
+                </div>
               </div>
               <div className="flex shrink-0 gap-2">
                 {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
                 <Button aria-label="Open session" onClick={() => onOpen(child)}>Open</Button>
               </div>
             </div>
-            {/* The band keeps the title for a screen reader, so this copy is for the eye only. */}
-            <p aria-hidden="true" className="pt-2 text-subhead font-bold [overflow-wrap:anywhere]">{label}</p>
             {outcome && (
               <div className="font-semibold [overflow-wrap:anywhere]" data-agent-outcome>
                 <Markdown compact hardBreaks>{councilMarkdown(outcome)}</Markdown>
