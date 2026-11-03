@@ -196,3 +196,30 @@ export function framedPosition(
   const fits = below >= Math.min(panelHeight ?? Infinity, viewport.height * MAX_HEIGHT_FRACTION);
   return { left: place.left, top, width, ...(fits ? {} : { maxHeight: Math.round(below) }) };
 }
+
+/**
+ * A note that spans the column of `frame` and may use ALL the room of the screen.
+ *
+ * A hover note shows a whole text, such as the task of an agent, and nothing can scroll it.
+ * So it has no `70vh` cap: it opens below `anchor` when the whole note fits there, else above.
+ * When neither side holds it, it takes the roomier side and gets `maxHeight`.
+ */
+export function spanningPosition(
+  anchor: Pick<AnchorBox, 'top' | 'bottom'>,
+  frame: FrameBox,
+  viewport: Viewport = currentViewport(),
+  panelHeight = 0,
+): MenuPosition {
+  const width = Math.round(viewport.width <= 0 ? frame.width : Math.min(frame.width, viewport.width - 2 * EDGE_MARGIN));
+  const rightmost = viewport.width <= 0 ? Infinity : viewport.width - EDGE_MARGIN - width;
+  const left = Math.round(Math.max(EDGE_MARGIN, Math.min(frame.left, rightmost)));
+  const top = Math.round(anchor.bottom + ANCHOR_GAP);
+  if (viewport.height <= 0) return { left, top, width };
+  const below = viewport.height - EDGE_MARGIN - (anchor.bottom + ANCHOR_GAP);
+  const above = anchor.top - ANCHOR_GAP - EDGE_MARGIN;
+  const bottom = Math.round(viewport.height - anchor.top + ANCHOR_GAP);
+  if (panelHeight <= below) return { left, top, width };
+  if (panelHeight <= above) return { left, bottom, width };
+  if (above > below) return { left, bottom, width, maxHeight: Math.round(above) };
+  return { left, top, width, maxHeight: Math.round(below) };
+}

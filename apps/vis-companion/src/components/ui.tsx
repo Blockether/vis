@@ -53,7 +53,7 @@ import {
 import { createPortal } from 'react-dom';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
-import { EDGE_MARGIN, framedPosition, menuPosition } from '../lib/anchored-menu';
+import { EDGE_MARGIN, menuPosition, spanningPosition } from '../lib/anchored-menu';
 import type { ViewGroupDirection } from '../lib/view';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import {
@@ -2657,9 +2657,9 @@ const HOVER_NOTE_FRAME = 'button, a[href], [role="button"]';
  *
  * Use it instead of `title`. The system paints a `title` as its own grey box in a system
  * font, at any size: a long subagent task covered most of the window. This note uses the
- * floating surface of the app and caps its height. A cut note fades at its foot. Inside a
- * control, such as a table row, the note spans that control and opens under or over it.
- * Else it starts at the label. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
+ * floating surface of the app. Inside a control, such as a table row, the note spans that
+ * control and shows its whole text under or over it, as tall as the screen allows. Else it
+ * starts at the label. A note that the screen cannot hold fades at its foot. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
  * A press, a scroll, Escape or leaving the window closes it. It never takes the pointer
  * or the focus, so the control under it works as before.
  *
@@ -2687,8 +2687,9 @@ export function HoverNote({ note, children, className = '' }: { note: ReactNode;
     if (control) {
       const box = control.getBoundingClientRect();
       panel.style.maxWidth = 'none';
+      panel.style.maxHeight = 'none';
       panel.style.width = `${Math.min(box.width, window.innerWidth - 2 * EDGE_MARGIN)}px`;
-      at = framedPosition({ top: box.top, bottom: box.bottom, right: box.right }, { left: box.left, width: box.width }, undefined, panel.offsetHeight);
+      at = spanningPosition(box, box, undefined, panel.offsetHeight);
     } else {
       // `menuPosition` aligns right edges. This right edge starts the note where its label starts.
       const anchor = trigger.getBoundingClientRect();
@@ -2742,7 +2743,7 @@ export function HoverNote({ note, children, className = '' }: { note: ReactNode;
             ref={panelRef}
             id={id}
             role="tooltip"
-            className="pointer-events-none fixed left-0 top-0 z-[70] flex max-h-[min(20rem,70vh)] w-max max-w-[min(30rem,calc(100vw-1.5rem))] flex-col rounded-none border border-dialog-edge bg-panel px-3 py-2 text-left font-mono text-ui font-normal normal-case text-white no-underline shadow-float transition-opacity duration-150 starting:opacity-0 motion-reduce:transition-none"
+            className="pointer-events-none fixed left-0 top-0 z-[70] flex max-h-[70vh] w-max max-w-[min(30rem,calc(100vw-1.5rem))] flex-col rounded-none border border-dialog-edge bg-panel px-3 py-2 text-left font-mono text-ui font-normal normal-case text-white no-underline shadow-float transition-opacity duration-150 starting:opacity-0 motion-reduce:transition-none"
           >
             <div
               ref={bodyRef}

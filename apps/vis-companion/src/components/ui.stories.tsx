@@ -968,7 +968,7 @@ export const LongChoices: Story = {
   },
 };
 
-/** A long task must stay one capped note over its row, not a box over the window. */
+/** A long task shows whole over its row, as tall as the screen allows. */
 export const HoverNotes: Story = {
   render: () => (
     <div className="flex flex-col gap-3 p-4 font-mono text-ui">
@@ -979,10 +979,14 @@ export const HoverNotes: Story = {
         <span className="uppercase text-role-verify">verify</span>
         <HoverNote
           className="min-w-0"
-          note={[
-            '- Repo `~/vis`. Follow `~/vis/AGENTS.md`: tests only for user-visible decisions.',
-            ...Array.from({ length: 30 }, (_, index) => `- Step ${index + 1}: check the review pane at 40, 80 and 120 columns, in light and dark themes.`),
-          ].join('\n')}
+          note={
+            <Markdown compact hardBreaks>
+              {[
+                '- Repo `~/vis`. Follow `~/vis/AGENTS.md`: **tests only** for user-visible decisions.',
+                ...Array.from({ length: 30 }, (_, index) => `- Step ${index + 1}: check the review pane at 40, 80 and 120 columns.`),
+              ].join('\n')}
+            </Markdown>
+          }
         >
           <span className="font-bold underline">TUI review: keys, sessions, speed</span>
         </HoverNote>

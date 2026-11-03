@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { framedPosition, menuPosition, pointerAnchor } from './anchored-menu';
+import { framedPosition, menuPosition, pointerAnchor, spanningPosition } from './anchored-menu';
 
 /** A desktop window with room to drop a 70vh panel under a header. */
 const DESKTOP = { width: 1440, height: 900 };
@@ -225,5 +225,28 @@ describe('framedPosition', () => {
     const phone = { width: 390, height: 844 };
     const plus = { top: 760, bottom: 788, right: 380 };
     expect(framedPosition(plus, { left: 12, width: 366 }, phone)).toMatchObject({ bottom: 90, width: 366 });
+  });
+});
+
+// User report: the hover note of a subagent task must show the whole task, at full height.
+describe('spanningPosition', () => {
+  const window = { width: 1300, height: 1000 };
+  const frame = { left: 16, width: 1268 };
+
+  it('keeps a note taller than 70vh whole below its row', () => {
+    expect(spanningPosition({ top: 20, bottom: 44 }, frame, window, 900)).toEqual({ left: 16, top: 50, width: 1268 });
+  });
+
+  it('stands a note that fits only above on its row', () => {
+    expect(spanningPosition({ top: 900, bottom: 924 }, frame, window, 800)).toEqual({ left: 16, bottom: 106, width: 1268 });
+  });
+
+  it('cuts a note that fits on no side to the room of the roomier side', () => {
+    expect(spanningPosition({ top: 600, bottom: 624 }, frame, window, 2000)).toEqual({
+      left: 16,
+      bottom: 406,
+      width: 1268,
+      maxHeight: 582,
+    });
   });
 });
