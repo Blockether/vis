@@ -15,7 +15,7 @@ import argparse
 import importlib
 import logging
 import os
-import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -76,6 +76,48 @@ def local_call(
     return call
 
 
+def serve(client, root, *, session_id=None, every=2.0, seconds=None, ready=None):
+    """Open the review app through `client` and record the journal until stopped.
+
+    `client` is any execution layer: a `GatewayClient` or a `LocalEngine`.
+    Without `session_id`, the app is global. `ready(app)` runs once the app is open.
+    """
+    root = os.path.realpath(os.fspath(root))
+    key = "program-global" if session_id is None else f"program-{session_id}"
+    recorder = Recorder()
+    journal = recorder.journal(key, root)
+
+    def ask(request, model):
+        return client.create_session(root=root).run(request, response_model=model)
+
+    if session_id is None:
+        opener, send = global_opener(client), None
+    else:
+        session = client.session(session_id)
+        opener, send = session_opener(session), session.send
+    app = ReviewApp(
+        journal,
+        opener,
+        call=local_call(root),
+        ask=ask,
+        send=send,
+        key="review-" + os.path.basename(root),
+    ).open()
+    recorder.keep(key, app)
+    print(f"Review of {root} is open ({session_id or 'global'})", flush=True)
+    if ready is not None:
+        ready(app)
+    waited = 0.0
+    try:
+        while seconds is None or waited < seconds:
+            time.sleep(every)
+            waited += every
+            recorder.record(key, root, "outside", "Seen by the program")
+    except KeyboardInterrupt:
+        pass
+    return app
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     place = parser.add_mutually_exclusive_group(required=True)
@@ -98,44 +140,14 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     from blockether.vis.engine import GatewayClient
 
-    root = os.path.realpath(args.root)
     with GatewayClient(
         args.url, token=os.environ.get("VIS_GATEWAY_TOKEN") or None
     ) as client:
-        key = "program-global" if args.is_global else f"program-{args.session}"
-        recorder = Recorder()
-        journal = recorder.journal(key, root)
-
-        def ask(request, model):
-            return client.create_session(root=root).run(request, response_model=model)
-
-        if args.is_global:
-            opener, send = global_opener(client), None
-        else:
-            session = client.session(args.session)
-            opener, send = session_opener(session), session.send
-        app = ReviewApp(
-            journal,
-            opener,
-            call=local_call(root),
-            ask=ask,
-            send=send,
-            key="review-" + os.path.basename(root),
-        ).open()
-        recorder.keep(key, app)
-        print(
-            f"Review of {root} is open ({'global' if args.is_global else args.session})",
-            flush=True,
+        serve(
+            client,
+            args.root,
+            session_id=None if args.is_global else args.session,
+            every=args.every,
+            seconds=args.seconds,
         )
-        stop = threading.Event()
-        deadline = None if args.seconds is None else args.seconds
-        waited = 0.0
-        try:
-            while not stop.wait(args.every):
-                recorder.record(key, root, "outside", "Seen by the program")
-                waited += args.every
-                if deadline is not None and waited >= deadline:
-                    break
-        except KeyboardInterrupt:
-            pass
     return 0
