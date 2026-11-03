@@ -248,6 +248,7 @@ export function KeyCap({
   keyName,
   isLit = false,
   isPointerOnly = false,
+  size = 'chip',
   className = '',
 }: {
   /** The key, as a `KeyboardEvent.key` name such as `ArrowUp`, `Enter` or `q`. */
@@ -256,6 +257,11 @@ export function KeyCap({
   isLit?: boolean;
   /** A touch screen has no keys: the cap shows only under a pointer. */
   isPointerOnly?: boolean;
+  /**
+   * `chip` is the small cap beside a control. `text` takes the size of the text around it,
+   * for a list where the key is the thing to read, such as the C-x band.
+   */
+  size?: 'chip' | 'text';
   className?: string;
 }) {
   const ink = isLit ? 'border-accent text-accent-ink' : 'border-dialog-edge text-dialog-foreground';
@@ -265,7 +271,7 @@ export function KeyCap({
   return (
     <kbd
       aria-hidden="true"
-      className={`${display} h-[1.4em] min-w-[1.4em] shrink-0 items-center justify-center border bg-panel px-1 font-mono text-chip font-normal normal-case tracking-normal ${ink} ${className}`}
+      className={`${display} h-[1.4em] min-w-[1.4em] shrink-0 items-center justify-center border bg-panel px-1 font-mono ${size === 'chip' ? 'text-chip' : ''} font-normal normal-case tracking-normal ${ink} ${className}`}
     >
       {arrow ? <KeyArrowIcon direction={arrow} className="size-3" /> : shortcutGlyph(keyName)}
     </kbd>

@@ -5903,7 +5903,9 @@ export function SessionScreen({
                 onError={setError}
               />
 
+              {/* `data-chord-anchor`: the C-x band stands above this frame, as wide as it. */}
               <div
+                data-chord-anchor
                 onDragEnter={handleDragOver}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}

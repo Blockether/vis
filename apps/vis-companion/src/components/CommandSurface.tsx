@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from 'react';
 
 import { useCommandRegistry, useCommands, type CommandRegistry } from '../lib/commands';
 import {
@@ -125,35 +134,69 @@ export function CommandSurface() {
   );
 }
 
-/** One key and what it does, as a row of the band. */
+/** One key and what it does, as a row of the band. The title reads larger than its caption. */
 function BandRow({ keyName, title, description }: { keyName: string; title: string; description: string }) {
   return (
-    <li className="flex min-w-0 items-baseline gap-2">
-      <KeyCap keyName={keyName} />
-      <span className="shrink-0 text-dialog-foreground">{title}</span>
-      <span className="min-w-0 truncate text-dialog-hint">{description}</span>
+    <li className="flex min-w-0 items-baseline gap-2.5">
+      <KeyCap keyName={keyName} size="text" />
+      <span className="shrink-0 text-ui text-dialog-foreground mouse:text-title">{title}</span>
+      <span className="min-w-0 text-meta text-dialog-hint mouse:text-ui">{description}</span>
     </li>
   );
 }
 
+/**
+ * Where the band stands: just above the composer frame that holds the focus, else above
+ * the first one on screen, and as wide as it, as the TUI band takes the chat column.
+ * With no composer on screen, the band keeps to the bottom centre of the window.
+ */
+function bandPlace(): CSSProperties | undefined {
+  const frames = Array.from(document.querySelectorAll<HTMLElement>('[data-chord-anchor]'));
+  const at = document.activeElement;
+  const shown = (frame: HTMLElement) => frame.getBoundingClientRect().width > 0;
+  const frame =
+    frames.find((one) => !!at && one.contains(at) && shown(one)) ?? frames.find(shown);
+  if (!frame) return undefined;
+  const box = frame.getBoundingClientRect();
+  return { left: box.left, width: box.width, bottom: window.innerHeight - box.top + 8 };
+}
+
 /** The keys that can follow the pressed part of a chord, like the TUI's C-x band. */
-function ChordBand({ registry, group }: { registry: CommandRegistry; group: string | null }) {
+export function ChordBand({ registry, group }: { registry: CommandRegistry; group: string | null }) {
+  const [place, setPlace] = useState<CSSProperties | undefined>(undefined);
+  useLayoutEffect(() => {
+    const measure = () => setPlace(bandPlace());
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
   const live = KEYMAP_VERBS.filter((verb) => registry.isAvailable(verb.id));
   const heading = group ? KEYMAP_GROUPS.find((item) => item.id === group) : null;
-  const pressed = heading ? `${PREFIX_LABEL} ${heading.key}` : PREFIX_LABEL;
+  const pressed = heading ? [PREFIX_LABEL, heading.key] : [PREFIX_LABEL];
   return (
     <div
       role="status"
-      aria-label={`${pressed} keys`}
+      aria-label={`${pressed.join(' ')} keys`}
       data-chord-band
-      className="pointer-events-none fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex justify-center px-3"
+      style={place}
+      className={`pointer-events-none fixed z-50 flex justify-center ${place ? '' : 'inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] px-3'}`}
     >
-      <div className="w-full max-w-2xl border border-dialog-edge bg-panel px-3 py-2 font-mono text-meta shadow-float">
-        <div className="mb-1.5 flex items-baseline gap-2 text-dialog-hint">
-          <span className="font-bold text-dialog-title-foreground">{pressed}</span>
-          <span>{heading ? heading.title : 'Press a key · Esc cancels'}</span>
+      <div className={`@container w-full border border-dialog-edge bg-panel px-4 py-3 font-mono shadow-float ${place ? '' : 'max-w-4xl'}`}>
+        <div className="mb-3 flex min-w-0 items-center gap-2.5 text-ui mouse:text-title">
+          <span className="flex shrink-0 gap-1">
+            {pressed.map((key) => (
+              <KeyCap key={key} keyName={key} size="text" />
+            ))}
+          </span>
+          <span className="min-w-0 truncate font-bold text-dialog-foreground">
+            {heading ? heading.title : 'Press a key'}
+          </span>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-meta text-dialog-hint mouse:text-ui">
+            <KeyCap keyName="Escape" size="text" />
+            cancels
+          </span>
         </div>
-        <ul className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+        <ul className="grid gap-x-8 gap-y-2 @min-[34rem]:grid-cols-2">
           {heading
             ? live
                 .filter((verb) => verb.group === heading.id && verb.key)
