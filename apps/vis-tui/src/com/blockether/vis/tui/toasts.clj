@@ -10,8 +10,8 @@
    color.
 
    The first row holds the bold title with its source, and the close mark `✕`
-   in the top-right corner. A card without a title keeps the `✕` on its first
-   text line. The body holds up to `max-text-lines` lines of wrapped text. When
+   in the top-right corner, over a rule in the level color. A card without a
+   heading keeps the `✕` on its first text line. The body holds up to `max-text-lines` lines of wrapped text. When
    more notices wait, the page counter `← 1/3 →` is in the bottom-right corner.
    The countdown is the bottom border: the level color is the time left, and
    the muted part the time used. A sticky notice has a plain bottom border.
@@ -85,9 +85,9 @@
           (when (and remaining-ms ttl (pos? (long ttl)))
             (min 1.0 (/ (double remaining-ms) (double ttl)))))
 
-        ;; Two border rows, the heading row, the page counter row and the countdown row.
+        ;; Two border rows, the heading row with its rule and the page counter row.
         line-room
-        (- (long rows) 2 (if head 1 0) (if pages 1 0) (if fraction 1 0))]
+        (- (long rows) 2 (if head 2 0) (if pages 1 0))]
 
     (when (and entry (>= max-cols (long min-card-cols)) (pos? line-room))
       (let [;; Without a heading, the close mark stands at the end of the text rows.
@@ -116,7 +116,7 @@
          :col (long left)
          :row (long top)
          :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
-         :height (+ 2 (if head 1 0) (count lines) (if pages 1 0))}))))
+         :height (+ 2 (if head 2 0) (count lines) (if pages 1 0))}))))
 
 (defn- level-fg
   "The border color of a card."
@@ -162,7 +162,7 @@
           bottom (+ row (long height) -1)
           right (+ col width -1)
           first-row (inc row)
-          text-row (if heading (inc first-row) first-row)
+          text-row (if heading (+ first-row 2) first-row)
           pager-cols (long (if pager (p/display-width pager) 0))
           pager-row (dec bottom)
           ;; The counter ends one space before the right border.
@@ -204,7 +204,10 @@
           (p/set-colors! g t/dialog-fg bg)
           (p/enable! g p/BOLD)
           (p/put-str! g (+ col 2) first-row (subs heading 0 (min (count heading) (count title))))
-          (p/clear-styles! g)))
+          (p/clear-styles! g))
+        ;; A rule in the level color under the heading row.
+        (p/set-colors! g ink bg)
+        (p/put-str! g (+ col 2) (inc first-row) (rule (- width 4) "▔")))
       ;; Close mark in the top-right corner.
       (p/set-colors! g ink bg)
       (p/enable! g p/BOLD)
