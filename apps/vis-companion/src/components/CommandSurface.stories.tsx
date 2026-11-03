@@ -13,7 +13,7 @@ function Verbs() {
   return null;
 }
 
-/** The palette after C-x p, over an empty screen. */
+/** The palette after C-x p stands in the session pane, beside the session list. */
 function Palette() {
   const [registry] = useState(() => new CommandRegistry());
   const [isPressed, setPressed] = useState(false);
@@ -21,7 +21,10 @@ function Palette() {
   return (
     <CommandProvider registry={registry}>
       <Verbs />
-      <div className="h-dvh bg-ink" />
+      <div className="flex h-dvh">
+        <div className="h-full w-[33%] min-w-80 shrink-0 border-r border-dialog-edge bg-page" />
+        <div data-session-surface className="relative min-w-0 flex-1 bg-ink" />
+      </div>
       {isPressed && <CommandPalette registry={registry} mode="palette" onClose={() => {}} />}
     </CommandProvider>
   );

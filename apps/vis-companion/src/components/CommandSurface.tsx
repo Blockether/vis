@@ -261,7 +261,7 @@ export function CommandPalette({
   };
 
   return (
-    <Modal onDismiss={onClose} size="split">
+    <Modal onDismiss={onClose} size="split" within="session">
       <DialogFrame title={mode === 'help' ? 'Keyboard shortcuts' : 'Command palette'} onClose={onClose}>
         <div className="shrink-0 border-b border-dialog-edge px-3 py-3 sm:px-4">
           <Input
