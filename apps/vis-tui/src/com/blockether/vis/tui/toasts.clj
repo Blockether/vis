@@ -7,7 +7,7 @@
    color and stands on the screen paper, around the tinted card. The top border
    holds the bold title with its source, and the close mark `✕` in the top-right
    corner. The bottom border is the countdown: the bright part is the time left,
-   and the faded part the time used. When more notices wait, the page counter
+   and the muted part the time used. When more notices wait, the page counter
    `← 1/3 →` is in the bottom-right corner. The body holds up to
    `max-text-lines` lines of wrapped text.
 
@@ -177,7 +177,7 @@
       (p/put-str! g (inc col) bottom (rule inner "─"))
       (when fraction
         (let [left-cols (long (Math/ceil (* (double fraction) bar-cols)))]
-          (p/set-colors! g (t/mix-color paper ink 0.3) paper)
+          (p/set-colors! g muted paper)
           (p/put-str! g (+ col 1 left-cols) bottom (rule (- bar-cols left-cols) "─"))))
       ;; Page counter in the bottom-right corner.
       (when pager

@@ -2852,7 +2852,8 @@ export function Banner({
  * holds the bold title with the extension that sent it, and the close mark in the
  * top-right corner. Long text stops after four lines. When more notices wait, the page
  * counter is in the bottom-right corner. The bar on the bottom edge shrinks for the time
- * that is left; it stands still while the notice waits behind another page.
+ * that is left over a faint track; it stands still while the notice waits behind another
+ * page. A notice without a title or a source keeps the close mark on its first text line.
  */
 export function Toast({
   kind,
@@ -2874,28 +2875,39 @@ export function Toast({
   children: ReactNode;
 }) {
   const tone = {
-    neutral: { edge: 'border-link', fill: 'bg-link' },
-    ok: { edge: 'border-ok', fill: 'bg-ok' },
-    warn: { edge: 'border-warn-strong', fill: 'bg-warn-strong' },
-    err: { edge: 'border-err', fill: 'bg-err' },
+    neutral: { edge: 'border-link', fill: 'bg-link', track: 'bg-link/30' },
+    ok: { edge: 'border-ok', fill: 'bg-ok', track: 'bg-ok/30' },
+    warn: { edge: 'border-warn-strong', fill: 'bg-warn-strong', track: 'bg-warn-strong/30' },
+    err: { edge: 'border-err', fill: 'bg-err', track: 'bg-err/30' },
   }[kind];
   const isPaged = page !== undefined && page.total > 1;
+  const isHeaded = Boolean(title || source);
+  const close = <CloseButton label="Dismiss" onClick={onDismiss} />;
   const turn = 'grid size-6 shrink-0 place-items-center text-muted hover:text-dialog-foreground';
 
   return (
     <div
       role="status"
-      className={`pointer-events-auto relative overflow-hidden border ${tone.edge} bg-panel pt-1 pr-1 pb-2.5 pl-3 font-mono text-body text-dialog-foreground shadow-float [overflow-wrap:anywhere] transition-[opacity,translate] duration-200 starting:-translate-x-2 starting:opacity-0 motion-reduce:transition-none`}
+      className={`pointer-events-auto relative border ${countdown ? 'border-b-0' : ''} ${tone.edge} bg-panel pt-1 pr-1 pb-2.5 pl-3 font-mono text-body text-dialog-foreground shadow-float [overflow-wrap:anywhere] transition-[opacity,translate] duration-200 starting:-translate-x-2 starting:opacity-0 motion-reduce:transition-none`}
     >
-      <div className="flex items-center gap-1">
-        <div className="min-w-0 flex-1 truncate">
-          {title ? <span className="font-bold">{title}</span> : null}
-          {title && source ? <span className="text-muted"> · </span> : null}
-          {source ? <span className="text-muted">{source}</span> : null}
+      {isHeaded ? (
+        <>
+          <div className="flex items-center gap-1">
+            <div className="min-w-0 flex-1 truncate">
+              {title ? <span className="font-bold">{title}</span> : null}
+              {title && source ? <span className="text-muted"> · </span> : null}
+              {source ? <span className="text-muted">{source}</span> : null}
+            </div>
+            {close}
+          </div>
+          <div className="line-clamp-4 pr-2 whitespace-pre-wrap">{children}</div>
+        </>
+      ) : (
+        <div className="flex items-start gap-1">
+          <div className="line-clamp-4 min-w-0 flex-1 pt-1 whitespace-pre-wrap">{children}</div>
+          {close}
         </div>
-        <CloseButton label="Dismiss" onClick={onDismiss} />
-      </div>
-      <div className="line-clamp-4 pr-2 whitespace-pre-wrap">{children}</div>
+      )}
       {isPaged ? (
         <div className="flex items-center justify-end text-muted tabular-nums">
           <button type="button" aria-label="Previous notice" title="Previous notice" className={turn} onClick={page.onPrevious}>
@@ -2910,10 +2922,13 @@ export function Toast({
         </div>
       ) : null}
       {countdown ? (
+        <div aria-hidden="true" className={`absolute -inset-x-px bottom-0 h-1 ${tone.track}`} />
+      ) : null}
+      {countdown ? (
         <div
           key={countdown.remainingMs}
           aria-hidden="true"
-          className={`absolute inset-x-0 bottom-0 h-1 origin-left ${tone.fill} animate-toast-countdown`}
+          className={`absolute -inset-x-px bottom-0 h-1 origin-left ${tone.fill} animate-toast-countdown`}
           style={
             {
               '--toast-left': String(Math.min(1, countdown.remainingMs / countdown.durationMs)),
