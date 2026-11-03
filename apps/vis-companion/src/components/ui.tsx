@@ -178,13 +178,13 @@ export const Button = forwardRef<
   const tapPress = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   // Disabled colours belong to each text-button variant.
   const dimmed = 'disabled:border-edge disabled:bg-panel-2 disabled:text-muted';
-  // Desktop hover changes foreground only. Base/selected surfaces, press feedback
-  // and keyboard focus are independent states. Filled primary and inverse controls
-  // keep their contrast pair when no stronger foreground is available. Secondary keeps
-  // the page ink: after a click the pointer rests on it, and an accent read as a new state.
+  // Desktop hover never changes the page ink or the accent ink: after a click the pointer
+  // rests on the control, and a changed ink read as a new state. Secondary lays the 5% ink
+  // wash that a row hover lays. Quiet still brightens and remove still turns red: those
+  // inks are their message. Press feedback and keyboard focus are independent states.
   const styles = {
     primary: `border-accent bg-accent text-accent-foreground ${dimmed}`,
-    secondary: `border-edge-strong bg-transparent text-white ${dimmed}`,
+    secondary: `border-edge-strong bg-transparent text-white enabled:hover:bg-white/5 ${dimmed}`,
     // Quiet text actions stay frameless beside the primary.
     quiet:
       'border-transparent bg-transparent text-dialog-hint enabled:hover:text-white disabled:border-transparent disabled:bg-transparent disabled:text-muted',
@@ -329,9 +329,11 @@ export const IconButton = forwardRef<
   const box = `size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:after:content-none ${
     density === 'band' ? 'mouse:size-6' : 'mouse:size-7'
   }`;
+  // The ink of a page-ink or accent glyph stays under the pointer, as on `Button`: a toggle
+  // that turns primary on a click must not look off while the pointer rests on it.
   const ink = {
-    primary: 'bg-transparent text-accent-ink enabled:hover:text-white',
-    secondary: 'bg-transparent text-white enabled:hover:text-accent-ink',
+    primary: 'bg-transparent text-accent-ink enabled:hover:bg-white/5',
+    secondary: 'bg-transparent text-white enabled:hover:bg-white/5',
     quiet: 'bg-transparent text-dialog-hint enabled:hover:text-white',
     danger: 'bg-transparent text-err-ink',
     remove: 'bg-transparent text-white enabled:hover:text-err-ink',
