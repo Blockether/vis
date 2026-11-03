@@ -2681,6 +2681,9 @@ function hoverNoteArea(trigger: HTMLElement): DOMRect {
  * or the focus, so the control under it works as before.
  *
  * `className` places the trigger, for example a grid cell. Its child carries the paint.
+ *
+ * Cut a long label with `line-clamp-1`, not `truncate`. WebKit shows its own grey tooltip over
+ * text that `text-overflow: ellipsis` cuts, so a note opened over it showed two boxes.
  */
 export function HoverNote({ note, children, className = '' }: { note: ReactNode; children: ReactNode; className?: string }) {
   const [isOpen, setOpen] = useState(false);

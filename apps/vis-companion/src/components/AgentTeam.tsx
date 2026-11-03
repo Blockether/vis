@@ -530,7 +530,7 @@ function WideAgentTable(props: TableProps) {
                   <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
                 </HoverNote>
                 <HoverNote className="min-w-0" note={update}>
-                  <span className="block truncate text-dialog-hint">{update ?? ''}</span>
+                  <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{update ?? ''}</span>
                 </HoverNote>
                 <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
                 <span className={`text-center ${status.ink}`}>
@@ -629,7 +629,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
             <span className={`font-bold uppercase ${LEADER_INK}`}>{LEADER_ROLE}</span>
             <span className="whitespace-nowrap text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
             <HoverNote className="min-w-0" note={leader.note}>
-              <span className="block truncate text-dialog-hint">{leader.note ?? ''}</span>
+              <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>
           </li>
         )}
@@ -644,7 +644,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
                 <span className="font-bold [overflow-wrap:anywhere]">{agentLabel(agent, rows)}</span>
               </HoverNote>
               <HoverNote className="min-w-0" note={update}>
-                <span className="block truncate text-dialog-hint">{update ?? ''}</span>
+                <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{update ?? ''}</span>
               </HoverNote>
             </li>
           );
