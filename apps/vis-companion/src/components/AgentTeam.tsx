@@ -388,9 +388,9 @@ function columnWidths(rows: readonly Subagent[]): CSSProperties {
 }
 
 // The columns of the chart of a team: the KEY of each lane, its time BAR, its TIME and its status
-// mark. The legend under the chart gives each KEY its ROLE and TITLE.
+// mark. The legend under the chart gives each KEY its ROLE, TITLE and the NOTE of its row.
 const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-3';
-const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
+const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
 
 // The bar column of a chart row: the inset of the row, the KEY and one gap on the left; one gap,
 // TIME, one gap, the mark and the inset on the right. The grid lines stand there behind the bars.
@@ -426,9 +426,9 @@ function LanePart({ bar, ink }: { bar: AgentBar; ink: string }) {
   );
 }
 
-// The task of an agent in the note of its row: the text as its leader wrote it.
-function taskNote(task: string): string | null {
-  return task.trim() || null;
+// The task of an agent in the note of its row: Markdown, like the Task part of its sheet.
+function taskNote(task: string): ReactNode {
+  return task.trim() ? <Markdown compact hardBreaks>{councilMarkdown(task)}</Markdown> : null;
 }
 
 interface TableProps {
@@ -537,6 +537,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
   const keys = rows.map((_, index) => agentKey(index));
   const roles = rows.map((agent) => agentRole(agent).text);
   const widths = {
+    ...columnWidths(rows),
     '--key': `${Math.max(2, ...keys.map((key) => key.length))}ch`,
     '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ...roles.map((role) => role.length))}ch`,
   } as CSSProperties;
@@ -598,17 +599,21 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
           <li className={LEGEND_ROW}>
             <span className="font-bold text-white">{LEADER_KEY}</span>
             <span className="font-bold uppercase text-white">{LEADER_ROLE}</span>
-            <span className="text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
+            <span className="col-span-2 text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
           </li>
         )}
         {rows.map((agent, index) => {
           const role = agentRole(agent);
+          const update = agentUpdate(agent);
           return (
             <li key={agent.session_id} className={LEGEND_ROW}>
               <span className={role.ink}>{keys[index]}</span>
               <span className={`uppercase ${role.ink}`}>{role.text}</span>
               <HoverNote className="min-w-0" note={taskNote(agent.task)}>
                 <span className="font-bold [overflow-wrap:anywhere]">{agentLabel(agent, rows)}</span>
+              </HoverNote>
+              <HoverNote className="min-w-0" note={update}>
+                <span className="block truncate text-dialog-hint">{update ?? ''}</span>
               </HoverNote>
             </li>
           );

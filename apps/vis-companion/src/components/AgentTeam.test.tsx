@@ -155,7 +155,8 @@ describe('agent rows', () => {
     ]} />);
     expect(screen.getByText('Reading the routes')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
-    expect(screen.queryByText('Reading the routes')).toBeNull();
+    // User report: the timeline lost the newest notes. The legend keeps them.
+    expect(within(screen.getByRole('list', { name: 'Legend' })).getByText('Reading the routes')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close timeline' })).toHaveAttribute('aria-pressed', 'true');
     const [, done] = screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row'));
     await act(async () => { fireEvent.click(done); });
@@ -163,21 +164,21 @@ describe('agent rows', () => {
   });
 
   // User request: the chart names each lane by a short key, L for the leader and A1, A2 for the agents,
-  // and the legend under it gives each key its role and title.
-  it('keys the lanes of the chart, with the leader first, and explains each key in the legend', () => {
+  // and the legend under it gives each key its role, title and newest note.
+  it('keys the lanes of the chart, with the leader first, and explains each key with its note in the legend', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
     const leader = { start: T0 - 10_000, end: T0 + 20_000, waits: [{ start: T0, end: T0 + 12_000 }] };
     render(<TurnAgents {...props} leader={leader} agents={[
-      { ...child, title: 'Companion review', role: 'verify', status: 'completed', finished_at: T0 + 9_000 },
+      { ...child, title: 'Companion review', role: 'verify', status: 'completed', finished_at: T0 + 9_000, result: 'All **12** keys pass' },
       { ...child, session_id: 'tui', title: 'TUI review', role: 'audit', status: 'completed', finished_at: T0 + 15_000 },
     ]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
     const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent);
     expect(lanes).toEqual(['L leader30sdone', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
     const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
-    expect(legend).toEqual(['Lleaderwaited 12s of 30s', 'A1verifyCompanion review', 'A2auditTUI review']);
+    expect(legend).toEqual(['Lleaderwaited 12s of 30s', 'A1verifyCompanion reviewAll 12 keys pass', 'A2auditTUI review']);
   });
 
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {
