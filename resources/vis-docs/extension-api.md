@@ -1042,7 +1042,7 @@ Here Ctrl+X e D calls `deploy`. The terminal stays free while the function runs.
 - Return `None` for no message, or a text for a short success message.
 - Return `vis.ok(title, body)` or `vis.err(title, body)` for a message with a level.
 - An exception shows as an error message with the extension name.
-- Call `vis.notify` for progress while the function runs. Each open client of the session shows it.
+- Call `vis.notify` for progress while the function runs. Each client of the session shows it.
 
 ## Op hooks
 
@@ -1137,22 +1137,37 @@ vis.log("info", "loaded 3 rules")        # trace, debug, info, warn, error
 vis.notify("Rules reloaded", "success")  # info, success, warn, error
 vis.notify("Uploading 3 of 10", title="Deploy", notice_id="deploy", duration_ms=10000)
 vis.notify("Deploy finished", "success", title="Deploy", notice_id="deploy")
+vis.notify("Index rebuilt", scope="global")  # every open session
 ```
 
 `vis.log` writes to the gateway log in `~/.vis/logs/YYYY-MM-DD/`. See
 [Logs and diagnostics](logging.md) for filenames, retention and sharing.
 
 `vis.notify` shows a toast card in the top-left corner of the session. The terminal and the
-Companion app show the same card. The newest card is on top, and at most three cards show.
+Companion app show the same card. One card shows at a time:
+
+- The top border shows the title, the page counter `‹ 1/3 ›` and the close mark `✕`.
+- Click `‹` or `›` to see the other cards that wait.
+- The bar on the bottom edge shrinks for the time that is left.
+- Only the card on screen counts down. A card that waits keeps all its time.
+- Click `✕` or the card to close it before its time ends.
+
+Use these arguments to change the card:
 
 - Give `title` for a bold first line of at most 120 characters.
-- Give `duration_ms` to keep the card from 1000 to 60000 milliseconds.
+- Give `duration_ms` to keep the card on screen from 1000 to 60000 milliseconds.
 - Without `duration_ms`, an info or success card stays 4 seconds, and a warning or error card 8 seconds.
 - Give the same `notice_id` again to replace a card, for example to update progress.
-- Click the card to close it before its time ends.
 
-When the extension runs for a session, each client of that session shows the card. Outside a
-session, each open session shows it. The card is live only, and the transcript does not keep it.
+`scope` selects who sees the card:
+
+- `scope="session"` shows the card only in the session of the call. When no client shows that
+  session, the card waits until a client opens it. Then that client shows it once.
+- `scope="global"` shows the card now in every open session. Nothing keeps it for later.
+- Without `scope`, a call for a session is a session card, and other calls are global.
+- `scope="session"` outside a session raises an error.
+
+The transcript never keeps a card, and a reconnect never shows it again.
 
 To save a secret file, such as OAuth tokens, use `vis.write_private_file(path, text)`.
 [Provider extensions](provider-extensions.md#store-and-renew-tokens-safely) shows it with token renewal.

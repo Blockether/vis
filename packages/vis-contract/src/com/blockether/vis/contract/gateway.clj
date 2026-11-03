@@ -163,6 +163,10 @@
   "Levels of a `notification` toast, in schema order."
   (vec (get-in notification-properties ["level" "enum"])))
 
+(def notification-scopes
+  "Scopes of a `notification` toast: `session` shows in its session, `global` in every session."
+  (set (get-in notification-properties ["scope" "enum"])))
+
 (def notification-limits
   "Bounds of the optional `notification` toast fields: title and id length in
    characters, and the `[minimum maximum]` duration in milliseconds."

@@ -3414,6 +3414,7 @@ vis.register_extension(vis.Extension(
                               (expect (= {"status" "ok" "title" "Deployed"}
                                          (run! {:key "d" :group "Release" :channel :tui}))))
                             (expect (= [{:session-id "session-1"
+                                         :scope "session"
                                          :text "Deploy of Release d"
                                          :level :success
                                          :extension "deploy"}]
@@ -3436,7 +3437,11 @@ def _toast(ctx):
     try:
         vis.notify('Too short', duration_ms=10)
     except Exception as error:
-        return vis.ok(str(error))
+        short = str(error)
+    try:
+        vis.notify('Mine', scope='session')
+    except Exception as error:
+        return vis.ok(short + ' | ' + str(error))
     return vis.ok('accepted')
 
 vis.register_extension(vis.Extension(
@@ -3450,30 +3455,33 @@ vis.register_extension(vis.Extension(
   ;; The toast fields of vis.notify cross the host boundary. A notice without a session
   ;; still reaches the gateway, which sends it to every open session. A duration outside
   ;; the contract bounds fails in the extension instead of showing a wrong toast.
-  (it "announces title, duration and id, and refuses a duration below the contract minimum"
-      (with-loaded {"toast.py" toast-py}
-                   (fn [_ _]
-                     (let [notices
-                           (atom [])
+  (it
+    "announces a global notice, and refuses a short duration and a session scope without a session"
+    (with-loaded
+      {"toast.py" toast-py}
+      (fn [_ _]
+        (let [notices
+              (atom [])
 
-                           run!
-                           (:run-fn (first (:ext/keybindings (registered "toast"))))]
+              run!
+              (:run-fn (first (:ext/keybindings (registered "toast"))))]
 
-                       (pyx/add-notification-listener! ::toasts #(swap! notices conj %))
-                       (try (expect (str/includes? (get (run! {:key "t" :group "Release" :channel :tui})
-                                                        "title")
-                                                   "duration_ms must be an integer from 1000 to 60000"))
-                            (expect (= [{:session-id nil
-                                         :text "Deployed"
-                                         :level :success
-                                         :extension "toast"
-                                         :title "Release"
-                                         :duration-ms 5000
-                                         :notice-id "deploy"}]
-                                       @notices))
-                            (finally (pyx/add-notification-listener! ::toasts
-                                                                     (fn [_]
-                                                                       nil)))))))))
+          (pyx/add-notification-listener! ::toasts #(swap! notices conj %))
+          (try (let [title (get (run! {:key "t" :group "Release" :channel :tui}) "title")]
+                 (expect (str/includes? title "duration_ms must be an integer from 1000 to 60000"))
+                 (expect (str/includes? title "scope=\"session\" needs a session")))
+               (expect (= [{:session-id nil
+                            :scope "global"
+                            :text "Deployed"
+                            :level :success
+                            :extension "toast"
+                            :title "Release"
+                            :duration-ms 5000
+                            :notice-id "deploy"}]
+                          @notices))
+               (finally (pyx/add-notification-listener! ::toasts
+                                                        (fn [_]
+                                                          nil)))))))))
 
 (defdescribe prompt-and-slash-test
              (it "a string prompt normalizes into :ext/prompt-fn"

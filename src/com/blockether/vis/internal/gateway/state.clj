@@ -1177,7 +1177,7 @@
    (let [lock
          (event-store/lock-for sid)
 
-         [events first?]
+         [events first? held]
          (locking lock
            ;; Forget may have won while hydration ran outside the replay lock.
            (ensure-session-entry! sid)
@@ -1185,14 +1185,23 @@
                  (read-replay! sid cursor replay)
 
                  first?
-                 (and (client-subscriber? sub-id) (not (client-watched? sid)))]
+                 (and (client-subscriber? sub-id) (not (client-watched? sid)))
 
-             (update-session! sid #(assoc-in % [:subscribers sub-id] sink))
-             [events first?]))]
+                 ;; A client opens the session: it takes the session notices that waited.
+                 held
+                 (when (client-subscriber? sub-id) (:held-notices (session-entry sid)))]
+
+             (update-session! sid
+                              #(cond-> (assoc-in % [:subscribers sub-id] sink) held
+                                 (dissoc :held-notices)))
+             [events first? held]))]
 
      (when (client-subscriber? sub-id) (bus/sync-watching! sid #(client-watched? sid)))
      ;; A push without a watcher sent nothing, so the first client gets the live rows now.
      (when first? (team-attached! sid))
+     ;; After registration, so each held notice reaches the new sink after its replay.
+     (doseq [notice held]
+       (append-event! sid "notification" notice {:store? false}))
      events)))
 
 (defn unsubscribe! [sid sub-id] (drop-subscriber! sid sub-id) nil)
@@ -9429,14 +9438,48 @@
 (defonce extensions-reload-listener
   (python-extensions/add-reload-listener! ::extensions-reloaded #'broadcast-extensions-reload!))
 
+(def ^:private MAX_HELD_NOTICES
+  "The most session notices that one session holds while no client shows it."
+  20)
+
+(defn- hold-notice
+  "`held` with `notice` as its newest entry. A notice with the same id goes first, and
+   the oldest beyond `MAX_HELD_NOTICES` goes too."
+  [held notice]
+  (let [added (conj (filterv #(not= (:notice-id notice) (:notice-id %)) held) notice)]
+    (subvec added (max 0 (- (count added) (long MAX_HELD_NOTICES))))))
+
+(defn- send-session-notice!
+  "Send one session notice live when a client shows session `sid`. Else hold it until a
+   client opens the session: `subscribe!` takes it. The replay lock orders the two."
+  [sid notice]
+  (ensure-session-entry! sid)
+  (let [lock
+        (event-store/lock-for sid)
+
+        held?
+        (locking lock
+          (when-not (or (client-watched? sid) (bus/watched-elsewhere? sid))
+            (update-existing-session! sid #(update % :held-notices hold-notice notice))
+            true))]
+
+    (when-not held? (append-event! sid "notification" notice {:store? false}))))
+
 (defn- broadcast-notification!
-  "Send one `vis.notify` to every client of its session. A notice with no session goes to
-   every open session with one `notice_id`, so a client that shows several sessions keeps
-   one toast. The notice is live only: the replay ring and a reconnect never show it again."
-  [{:keys [session-id text level extension title duration-ms notice-id]}]
+  "Send one `vis.notify`. A global notice goes live to every open session with one
+   `notice_id`, so a client that shows several sessions keeps one toast. A session notice
+   goes to the clients of its session, or waits until a client opens it. The replay ring
+   and a reconnect never show a notice again."
+  [{:keys [session-id scope text level extension title duration-ms notice-id]}]
   (when-not (str/blank? text)
-    (let [event
-          (cond-> {:text text :level (name level) :notice-id (or notice-id (str (random-uuid)))}
+    (let [scope
+          (or scope (if session-id "session" "global"))
+
+          event
+          (cond-> {:text text
+                   :level (name level)
+                   :scope scope
+                   :notice-id (or notice-id (str (random-uuid)))}
             extension
             (assoc :extension (str extension))
 
@@ -9444,13 +9487,12 @@
             (assoc :title title)
 
             duration-ms
-            (assoc :duration-ms duration-ms))
+            (assoc :duration-ms duration-ms))]
 
-          targets
-          (if session-id (when (session-entry session-id) [session-id]) (keys @registry))]
-
-      (doseq [sid targets]
-        (append-event! sid "notification" event {:store? false})))))
+      (if (and session-id (= "session" scope))
+        (send-session-notice! session-id event)
+        (doseq [sid (keys @registry)]
+          (append-event! sid "notification" event {:store? false}))))))
 
 (defonce notification-listener
   (python-extensions/add-notification-listener! ::notification #'broadcast-notification!))

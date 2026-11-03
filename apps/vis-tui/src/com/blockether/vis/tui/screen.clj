@@ -3255,12 +3255,14 @@
   [g cols text-top db]
   (components/find-bar! g cols text-top (:search db)))
 
+(declare current-session-id)
+
 (defn- paint-toasts!
-  "Paint the notification toasts in the top-left corner of the transcript and
-   register their dismiss clicks. Every path that repaints the transcript calls it."
+  "Paint the notification page of the session in front in the top-left corner of the
+   transcript and register its clicks. Every path that repaints the transcript calls it."
   [g cols text-top messages-bottom]
   (toasts/paint! g
-                 (toasts/layout (vis/notifications)
+                 (toasts/layout (vis/show-notifications! (current-session-id))
                                 {:left 2
                                  :top text-top
                                  :cols (- (long cols) 4)
@@ -6782,7 +6784,11 @@
                         (conj :source (:extension chunk))
 
                         (pos-int? (:duration-ms chunk))
-                        (conj :ttl-ms (:duration-ms chunk)))))
+                        (conj :ttl-ms (:duration-ms chunk))
+
+                        ;; A session notice waits until its tab is in front.
+                        (= "session" (:scope chunk))
+                        (conj :session-id session-id))))
 
                   ;; Model preference changed for THIS session somewhere else —
                   ;; keep the tab's chip in sync with the shared store.
@@ -9208,6 +9214,12 @@
             :toast-dismiss
             (vis/dismiss-notification! (:text hit))
 
+            :toast-prev
+            (vis/page-notifications! -1)
+
+            :toast-next
+            (vis/page-notifications! 1)
+
             :search-case
             (state/dispatch [:search-toggle-case])
 
@@ -9385,6 +9397,12 @@
 
           :toast-dismiss
           (vis/dismiss-notification! (:text hit))
+
+          :toast-prev
+          (vis/page-notifications! -1)
+
+          :toast-next
+          (vis/page-notifications! 1)
 
           :toggle-tasks
           (state/dispatch [:toggle-tasks])

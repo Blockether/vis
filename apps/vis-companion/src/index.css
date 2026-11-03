@@ -526,6 +526,21 @@
   }
 }
 
+/* A toast's countdown bar: it shrinks from the part of the time that is left to nothing.
+   The element sets --toast-left and the duration. */
+@theme {
+  --animate-toast-countdown: toast-countdown linear forwards;
+
+  @keyframes toast-countdown {
+    from {
+      scale: var(--toast-left) 1;
+    }
+    to {
+      scale: 0 1;
+    }
+  }
+}
+
 @keyframes zen-picture-enter {
   from {
     opacity: 0;

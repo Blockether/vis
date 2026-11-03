@@ -1,123 +1,110 @@
-;; Toast cards: the one way the session view shows a notification.
+;; Toast card: the one way the session view shows a notification.
 (ns com.blockether.vis.tui.toasts
-  "Toast cards in the top-left corner of the session view.
+  "The toast card in the top-left corner of the session view.
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
-   toasts of extensions. The newest card is on top. A card has a bar in the
-   level color, an optional bold title with its source, and up to
-   `max-text-lines` lines of wrapped text. A click on a card dismisses it.
+   toasts of extensions. One card shows at a time. Its border has the level
+   color and stands on the screen paper, around the tinted card. The top border holds the bold title with its source, the page
+   counter `← 1/3 →` when more notices wait, and the close mark `✕` in the
+   top-right corner. The bottom border is the countdown: the bright part is
+   the time left, and the faded part the time used. The body holds up to `max-text-lines` lines of wrapped text.
 
-   `layout` is pure: it gives the geometry of the cards that fit, and the
-   painter only draws that geometry."
+   `layout` is pure: it gives the geometry of the card, and the painter only
+   draws that geometry."
   (:require [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
-(def ^:const max-card-cols "The widest card, in columns." 52)
+(def ^:const max-card-cols "The widest card, in columns." 56)
 
-(def ^:const min-card-cols "The narrowest card. A smaller area shows no cards." 24)
+(def ^:const min-card-cols "The narrowest card. A smaller area shows no card." 28)
 
 (def ^:const max-text-lines "The most text lines of one card; more text ends with `…`." 4)
 
-(def ^:const max-cards "The most cards that show at the same time." 3)
-
-(def ^:const ^:private chrome-cols
-  "Columns of a card that hold no text: the bar, one space, and the close mark with its padding."
-  5)
+(def ^:const ^:private side-cols
+  "Columns of a body row that hold no text: two borders and two spaces."
+  4)
 
 (defn- text-lines
-  "`text` wrapped to `width` columns, at most `max-text-lines`. A cut ends with `…`."
-  [text width]
-  (let [lines (into [] (remove empty?) (p/word-wrap text width))]
-    (if (> (count lines) max-text-lines)
-      (conj (subvec lines 0 (dec max-text-lines))
-            (p/ellipsize (str (nth lines (dec max-text-lines)) " …") width))
+  "`text` wrapped to `width` columns, at most `limit` lines. A cut ends with `…`."
+  [text width limit]
+  (let [limit
+        (long limit)
+
+        lines
+        (into [] (remove empty?) (p/word-wrap text width))]
+
+    (if (> (count lines) limit)
+      (conj (subvec lines 0 (dec limit)) (p/ellipsize (str (nth lines (dec limit)) " …") width))
       lines)))
 
 (defn- heading
-  "The bold first row of a card: its title and its source, or nil."
+  "The top-border text of a card: its title and its source, or nil."
   [{:keys [title source]}]
   (cond (and title source) (str title " · " source)
         :else (or title source)))
 
-(defn- card
-  "The size and text of one card at most `max-cols` wide."
-  [{:keys [id level text title] :as entry} ^long max-cols]
-  (let [text-cols
-        (- max-cols (long chrome-cols))
-
-        head
-        (some-> (heading entry)
-                (p/ellipsize text-cols))
-
-        lines
-        (text-lines text text-cols)
-
-        widest
-        (reduce max (p/display-width (or head "")) (map p/display-width lines))
-
-        width
-        (min max-cols (max (long min-card-cols) (+ (long widest) (long chrome-cols))))]
-
-    {:id id
-     :level level
-     :title title
-     :heading head
-     :lines lines
-     :width width
-     ;; One padding row above and below the text.
-     :height (+ 2 (if head 1 0) (count lines))}))
-
-(defn- same-width
-  "`cards` with the width of the widest card, so a stack has one straight right edge."
-  [cards]
-  (let [widest (reduce max 0 (map :width cards))]
-    (mapv #(assoc % :width widest) cards)))
+(defn- controls
+  "The top-right controls of a card: the page counter when more pages wait, and the close mark."
+  [index total]
+  (str (when (> (long total) 1) (str "← " (inc (long index)) "/" total " → ")) "✕"))
 
 (defn layout
-  "The cards of `entries` (oldest first) that fit an area at `left`,`top` of
-   `cols` x `rows`. The newest card is on top, one empty row between cards.
-   Each card is `{:id :level :heading :title :lines :col :row :width :height}`."
-  [entries {:keys [left top cols rows]}]
-  (let [left
-        (long left)
-
-        top
-        (long top)
-
-        max-cols
+  "The card of `page`, a `notifications/pager` value, at `left`,`top` of an area of
+   `cols` x `rows`, or nil when no card fits. The card is
+   `{:id :level :heading :title :lines :controls :fraction :col :row :width :height}`.
+   `:fraction` is the part of the time that is left, nil for a sticky notice."
+  [{:keys [entry index total remaining-ms]} {:keys [left top cols rows]}]
+  (let [max-cols
         (min (long max-card-cols) (long cols))
 
-        bottom
-        (+ top (long rows))]
+        line-room
+        (- (long rows) 2)]
 
-    (if (< max-cols (long min-card-cols))
-      []
-      (loop [pending
-             (take max-cards (rseq (vec entries)))
+    (when (and entry (>= max-cols (long min-card-cols)) (pos? line-room))
+      (let [ctrl
+            (controls index total)
 
-             row
-             top
+            ctrl-cols
+            (long (p/display-width ctrl))
 
-             cards
-             []]
+            ;; "╭─ " heading " " fill " " controls " ─╮"
+            head
+            (some-> (heading entry)
+                    (p/ellipsize (- max-cols ctrl-cols 9))
+                    not-empty)
 
-        (if-let [entry (first pending)]
-          (let [{:keys [height] :as one} (card entry max-cols)]
-            (if (> (+ row (long height)) bottom)
-              (same-width cards)
-              (recur (rest pending)
-                     (+ row (long height) 1)
-                     (conj cards
-                           (assoc one
-                             :col left
-                             :row row)))))
-          (same-width cards))))))
+            lines
+            (text-lines (:text entry)
+                        (- max-cols (long side-cols))
+                        (min (long max-text-lines) line-room))
+
+            top-cols
+            (+ ctrl-cols (if head (+ 9 (long (p/display-width head))) 7))
+
+            text-cols
+            (+ (long side-cols) (long (reduce max 0 (map p/display-width lines))))
+
+            ttl
+            (:ttl-ms entry)]
+
+        {:id (:id entry)
+         :level (:level entry)
+         :title (:title entry)
+         :heading head
+         :lines lines
+         :controls ctrl
+         :fraction (when (and remaining-ms ttl (pos? (long ttl)))
+                     (min 1.0 (/ (double remaining-ms) (double ttl))))
+         :col (long left)
+         :row (long top)
+         :width (min max-cols (max (long min-card-cols) top-cols text-cols))
+         :height (+ 2 (count lines))}))))
 
 (defn- level-fg
-  "The bar and close-mark color of a card."
+  "The border color of a card."
   [level]
   (case level
     :success
@@ -137,46 +124,88 @@
   []
   (t/mix-color t/dialog-bg t/text-fg 0.09))
 
+(defn- rule [^long n ^String ch] (apply str (repeat (max 0 n) ch)))
+
+(defn- region!
+  "Register one click region of the card on `row`."
+  [row col width kind id]
+  (when (pos? (long width))
+    (.register interactions/hit-map
+               {:bounds {:row row :col col :width width} :kind kind :text id :enabled? true})))
+
 (defn paint!
-  "Draw `cards` from `layout`. With `register?`, each card row becomes a
-   `:toast-dismiss` click region that carries the notification id as `:text`."
-  [g cards register?]
-  (doseq [{:keys [id level heading title lines col row width height]} cards]
+  "Draw `card` from `layout`; nil draws nothing. With `register?`, `←` is a
+   `:toast-prev` click, the counter and `→` are `:toast-next`, and the rest of
+   the card is `:toast-dismiss`. Each region carries the notification id as `:text`."
+  [g card register?]
+  (when-let [{:keys [id level heading title lines controls fraction col row width height]} card]
     (let [col (long col)
           row (long row)
           width (long width)
           height (long height)
-          text-col (+ col 2)
-          first-row (inc row)
+          inner (- width 2)
+          bottom (+ row height -1)
+          right (+ col width -1)
+          ctrl-cols (long (p/display-width controls))
+          ctrl-col (- (+ col width) 3 ctrl-cols)
+          close-col (+ ctrl-col ctrl-cols -1)
+          paged? (> ctrl-cols 1)
+          ;; The border stands on the screen paper, around the tinted card.
+          paper t/dialog-bg
           bg (card-bg)
-          bar (t/legible-ink (level-fg level) bg)]
+          ink (t/legible-ink (level-fg level) paper)
+          muted (t/legible-ink t/footer-fg-muted paper)]
 
       (p/clear-styles! g)
-      (p/set-colors! g t/dialog-fg bg)
+      (p/set-colors! g t/dialog-fg paper)
       (p/fill-rect! g col row width height)
-      (p/set-colors! g bar bg)
-      (doseq [r (range row (+ row height))]
-        (p/put-str! g col (long r) "┃"))
-      (p/put-str! g (- (+ col width) 2) first-row "✕")
-      ;; The heading is muted; its title part is bold. A heading cut inside the
-      ;; title keeps the cut, so the bold part never runs past the card.
+      (p/set-colors! g t/dialog-fg bg)
+      (p/fill-rect! g (inc col) (inc row) inner (- height 2))
+      ;; Border.
+      (p/set-colors! g ink paper)
+      (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
+      (doseq [r (range (inc row) bottom)]
+        (p/put-str! g col (long r) "│")
+        (p/put-str! g right (long r) "│"))
+      ;; Countdown: the bright part is the time left.
+      (p/put-str! g col bottom "╰")
+      (p/put-str! g right bottom "╯")
+      (if fraction
+        (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
+          (p/put-str! g (inc col) bottom (rule left-cols "─"))
+          (p/set-colors! g (t/mix-color paper ink 0.3) paper)
+          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "─")))
+        (p/put-str! g (inc col) bottom (rule inner "─")))
+      ;; Heading on the top border.
       (when heading
-        (p/set-colors! g (t/legible-ink t/footer-fg-muted bg) bg)
-        (p/put-str! g text-col first-row heading)
+        (p/set-colors! g muted paper)
+        (p/put-str! g (+ col 2) row (str " " heading " "))
         (when title
-          (p/set-colors! g t/dialog-fg bg)
+          (p/set-colors! g t/dialog-fg paper)
           (p/enable! g p/BOLD)
-          (p/put-str! g text-col first-row (subs heading 0 (min (count heading) (count title)))))
-        (p/clear-styles! g))
+          (p/put-str! g (+ col 3) row (subs heading 0 (min (count heading) (count title))))
+          (p/clear-styles! g)))
+      ;; Page counter and close mark in the top-right corner.
+      (p/set-colors! g muted paper)
+      (p/put-str! g (dec ctrl-col) row (str " " (subs controls 0 (dec (count controls)))))
+      (p/set-colors! g ink paper)
+      (p/enable! g p/BOLD)
+      (p/put-str! g close-col row "✕")
       (p/clear-styles! g)
+      (p/set-colors! g ink paper)
+      (p/put-str! g (inc close-col) row " ")
+      ;; Text.
       (p/set-colors! g t/dialog-fg bg)
       (doseq [[i line] (map-indexed vector lines)]
-        (p/put-str! g text-col (+ first-row (if heading 1 0) (long i)) line))
+        (p/put-str! g (+ col 2) (+ row 1 (long i)) line))
       (p/clear-styles! g)
       (when register?
-        (doseq [r (range row (+ row height))]
-          (.register interactions/hit-map
-                     {:bounds {:row r :col col :width width}
-                      :kind :toast-dismiss
-                      :text id
-                      :enabled? true}))))))
+        (if paged?
+          (let [next-col (+ ctrl-col 2)]
+            (region! row col (- ctrl-col col) :toast-dismiss id)
+            (region! row ctrl-col 2 :toast-prev id)
+            (region! row next-col (- close-col 1 next-col) :toast-next id)
+            (region! row (dec close-col) (- (inc right) (dec close-col)) :toast-dismiss id))
+          (region! row col width :toast-dismiss id))
+        (doseq [r (range (inc row) (inc bottom))]
+          (region! (long r) col width :toast-dismiss id))))))

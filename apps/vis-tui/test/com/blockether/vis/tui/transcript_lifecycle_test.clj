@@ -122,6 +122,7 @@
             (with-redefs [state/app-db (atom (lifecycle-db nil))
                           client/get-router (constantly nil)
                           client/notify! (fn [& _])
+                          client/show-notifications! (constantly nil)
                           client/worker-future (fn [_ _]
                                                  (future nil))
                           timg/images-protocol (constantly nil)]
@@ -191,6 +192,7 @@
           (binding [interactions/hit-map (interactions/create-hit-map)]
             (with-redefs [state/app-db (atom (lifecycle-db (active-live/review-pane)))
                           client/get-router (constantly nil)
+                          client/show-notifications! (constantly nil)
                           timg/images-protocol (constantly nil)]
 
               (let [before (if follow? (paint! ts) (park-at-checkpoint! ts))

@@ -510,18 +510,27 @@ export const Feedback: Story = {
   ),
 };
 
+const NO_TURN = { onPrevious: () => undefined, onNext: () => undefined };
+
 export const Toasts: Story = {
   render: () => (
     <Sheet>
-      <Group of="Toast stack, newest on top">
-        <div className="flex w-full max-w-sm flex-col gap-2">
-          <Toast kind="ok" title="Deployed" source="forge" onDismiss={() => undefined}>
+      <Group of="One toast at a time; the bar is the time left">
+        <div className="flex w-full max-w-sm flex-col gap-3">
+          <Toast
+            kind="ok"
+            title="Deployed"
+            source="forge"
+            onDismiss={() => undefined}
+            page={{ index: 0, total: 3, ...NO_TURN }}
+            countdown={{ durationMs: 60000, remainingMs: 45000 }}
+          >
             acme/widgets 2.4.1 is live on production.
           </Toast>
-          <Toast kind="neutral" onDismiss={() => undefined}>
+          <Toast kind="neutral" onDismiss={() => undefined} countdown={{ durationMs: 60000, remainingMs: 20000 }}>
             Copied session ID
           </Toast>
-          <Toast kind="warn" title="Quota" source="openai" onDismiss={() => undefined}>
+          <Toast kind="warn" title="Quota" source="openai" onDismiss={() => undefined} page={{ index: 1, total: 2, ...NO_TURN }}>
             90% of this month's budget is spent.
           </Toast>
           <Toast kind="err" title="Tests failed" source="ci" onDismiss={() => undefined}>

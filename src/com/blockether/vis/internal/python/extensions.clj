@@ -710,14 +710,31 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       notice-id
       (assoc :notice-id notice-id))))
 
+(defn- notice-scope
+  "The scope of one `vis.notify` call. Without a scope, a call with a session is a session
+   notice and a call without one is global. A session scope without a session throws."
+  [scope session-id]
+  (let [scope (some-> scope
+                      str
+                      not-empty)]
+    (cond (nil? scope) (if session-id "session" "global")
+          (not (contains? gateway-contract/notification-scopes scope))
+          (throw (ex-info (str "vis.notify: scope must be one of " (str/join ", " (sort gateway-contract/notification-scopes)))
+                          {:error :notify-scope :scope scope}))
+          (and (= "session" scope) (nil? session-id))
+          (throw (ex-info "vis.notify: scope=\"session\" needs a session; use scope=\"global\" outside a session"
+                          {:error :notify-scope :scope scope}))
+          :else scope)))
+
 ;; Notification listeners — fired for each `vis.notify`. The gateway sends the notice to every
 ;; client of its session, or of every open session when no session is bound.
 (defonce ^:private notification-listeners (atom {}))
 
 (defn add-notification-listener!
-  "Subscribe `f` to notifications. `f` receives `{:session-id :text :level :extension}` and
-   the optional `:title :duration-ms :notice-id`. `:session-id` is nil when no session is
-   bound. Re-registering the same `listener-id` replaces the old listener."
+  "Subscribe `f` to notifications. `f` receives `{:session-id :scope :text :level :extension}`
+   and the optional `:title :duration-ms :notice-id`. `:scope` is \"session\" or \"global\";
+   `:session-id` is nil for a global notice. Re-registering the same `listener-id` replaces
+   the old listener."
   [listener-id f]
   (swap! notification-listeners assoc listener-id f)
   listener-id)
@@ -1216,14 +1233,16 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             nil))
     (put! g
           "__vis_host_notify__"
-          (fn [text level title duration-ms notice-id]
-            (let [notice (sdk-notice text level title duration-ms notice-id)]
+          (fn [text level title duration-ms notice-id scope]
+            (let [notice (sdk-notice text level title duration-ms notice-id)
+                  session-id (some-> (or (:session-id extension/*current-environment*)
+                                         (:session-id bound-session))
+                                     str)
+                  scope (notice-scope scope session-id)]
               (notifications/notify! (:text notice) :level (:level notice))
               (announce-notification! (assoc notice
-                                             :session-id (some-> (or (:session-id
-                                                                       extension/*current-environment*)
-                                                                     (:session-id bound-session))
-                                                                 str)
+                                             :scope scope
+                                             :session-id (when (= "session" scope) session-id)
                                              :extension (or (:ext/name extension/*current-extension*)
                                                             label))))
             nil))

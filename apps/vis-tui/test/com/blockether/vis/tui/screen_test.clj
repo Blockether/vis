@@ -4643,7 +4643,9 @@ therapy line 2"
                 (with-redefs [state/app-db (atom db)
                               timg/images-protocol (constantly nil)
                               screen/paint-terminal-images! #(reset! images %)
-                              vis/notifications (fn [& _] @notices)]
+                              vis/show-notifications! (fn [_]
+                                                        (when-let [entry (first @notices)]
+                                                          {:entry entry :index 0 :total (count @notices)}))]
 
                   (let [full (#'screen/render-frame! terminal-screen cols 30 db 1000)
                         [layout _]

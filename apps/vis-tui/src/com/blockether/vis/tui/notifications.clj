@@ -22,12 +22,17 @@
       :level       :info | :success | :warn | :error
       :title       <string> | nil     ;; one bold toast line
       :source      <string> | nil     ;; the extension that sent it
-      :created-at  <inst>
-      :until       <epoch-ms> | nil   ;; nil = sticky / manual dismiss
+      :session-id  <string> | nil     ;; nil = global, else only that session shows it
+      :created-at  <epoch-ms>
+      :ttl-ms      <long> | nil       ;; nil = sticky / manual dismiss
+      :left-ms     <long> | nil       ;; time left when the clock last stopped
+      :since       <epoch-ms> | nil}  ;; the clock runs from here, while the toast shows
 
-   A push with the `:id` of an active entry replaces that entry. The store keeps
-   at most `MAX_ENTRIES`, and it wakes the watchers when an entry expires, so a
-   toast leaves the screen on time also while the user is idle.
+   The screen shows one entry at a time as a page (`pager`, `show!`, `page!`). Only the
+   shown entry counts down, so a toast that waits behind another page, or for its session
+   to come in front, keeps all its time. A push with the `:id` of an active entry replaces
+   that entry. While a clock runs, the store wakes the watchers every `TICK_MS`, so the
+   countdown bar moves and a toast leaves on time also while the user is idle.
 
    Levels are advisory metadata for channels: TUI uses them for
    colour, the CLI could prefix `[notice]` /
@@ -49,37 +54,125 @@
   {:info 4000 :success 4000 :warn 8000 :error 8000})
 
 (def ^:private MAX_ENTRIES
-  "The most entries the store keeps. The oldest goes first; a toast stack
-   never shows more than a few."
-  5)
+  "The most entries the store keeps. The oldest goes first. Session entries wait
+   here until their session comes in front, so the store keeps more than one page."
+  20)
+
+(def ^:private TICK_MS "How often a running clock wakes the watchers." 250)
 
 (def ^:private VALID_LEVELS #{:info :success :warn :error})
 
 ;; State
 
-(defonce ^:private notifications-atom
-  ;; Vec ordered by insertion (newest last). Vec instead of map so
-  ;; channels iterating to render the most-recent-first don't have
-  ;; to re-sort on every paint.
-  (atom []))
+(defonce ^:private store
+  ;; :entries is ordered by insertion (newest last). :page is the id of the
+  ;; shown entry, nil for the newest. :session is the session that the screen
+  ;; showed last, so a click handler pages the list that the user sees.
+  (atom {:entries [] :page nil :session nil}))
 
 (defonce ^:private watchers-atom
   ;; {key (fn [vec] ...)}. Watchers fire AFTER every successful state
-  ;; mutation (push / dismiss / clear-expired) with the new vec.
+  ;; mutation (push / dismiss / page / tick) with the new entries vec.
   ;; Errors inside watchers are swallowed + logged so a misbehaving
   ;; channel can never poison the pub-sub for everyone else.
   (atom {}))
 
-;; Internal helpers
+;; Pure model
 
-(defn- expired?
-  "True when `entry` has an `:until` deadline that has passed.
-   Nil `:until` means sticky - never expires automatically."
-  [entry]
-  (when-let [until (:until entry)]
-    (< (long until) (util/now-ms))))
+(defn remaining-ms
+  "The milliseconds that `entry` still shows at `now`, or nil for a sticky entry."
+  [{:keys [left-ms since]} now]
+  (when left-ms (max 0 (- (long left-ms) (if since (- (long now) (long since)) 0)))))
 
-(defn- prune "Drop every expired entry from `coll`." [coll] (filterv (complement expired?) coll))
+(defn- expired? [entry now] (= 0 (remaining-ms entry now)))
+
+(defn- prune
+  "`state` without the entries whose time ran out at `now`."
+  [state now]
+  (update state
+          :entries
+          (fn [entries]
+            (filterv #(not (expired? % now)) entries))))
+
+(defn- shown-to?
+  "True when session `sid` shows `entry`: a global entry, or an entry of `sid`."
+  [entry sid]
+  (let [owner (:session-id entry)]
+    (or (nil? owner) (= owner sid))))
+
+(defn- visible
+  "The entries that session `sid` shows, newest first."
+  [entries sid]
+  (filterv #(shown-to? % sid) (rseq (vec entries))))
+
+(defn- index-of [entries id] (first (keep-indexed #(when (= id (:id %2)) %1) entries)))
+
+(defn pager
+  "The page that session `sid` shows at `now`: `{:entry :index :total :remaining-ms}`, or
+   nil. Index 0 is the newest entry. The `:page` entry keeps its page while it is visible."
+  [{:keys [entries page]} sid now]
+  (let [shown
+        (visible entries sid)
+
+        index
+        (or (index-of shown page) 0)]
+
+    (when-let [entry (get shown index)]
+      {:entry entry :index index :total (count shown) :remaining-ms (remaining-ms entry now)})))
+
+(defn- run-only
+  "`state` with the clock of entry `id` running and every other clock stopped at `now`."
+  [state id now]
+  (update state
+          :entries
+          (fn [entries]
+            (mapv (fn [{:keys [since left-ms] :as entry}]
+                    (cond (= id (:id entry))
+                          (if (or since (nil? left-ms)) entry (assoc entry :since now))
+                          since (-> entry
+                                    (assoc :left-ms (remaining-ms entry now))
+                                    (dissoc :since))
+                          :else entry))
+                  entries))))
+
+(defn- push-entry
+  "`state` with `entry` as its newest entry. An entry with the same id goes away first.
+   Expired entries and the oldest beyond `MAX_ENTRIES` go away too. A new entry that the
+   shown session sees becomes the shown page."
+  [state entry now]
+  (let [state
+        (prune state now)
+
+        added
+        (conj (filterv #(not= (:id entry) (:id %)) (:entries state)) entry)]
+
+    (cond-> (assoc state :entries (subvec added (max 0 (- (count added) (long MAX_ENTRIES)))))
+      (shown-to? entry (:session state))
+      (assoc :page (:id entry)))))
+
+(defn- drop-entry
+  "`state` without entry `id`. When it was the shown page, the entry at the same page shows."
+  [{:keys [entries session] :as state} id now]
+  (let [current
+        (some-> (pager state session now)
+                :entry
+                :id)
+
+        index
+        (index-of (visible entries session) id)
+
+        state
+        (update state
+                :entries
+                (fn [entries]
+                  (filterv #(not= id (:id %)) entries)))]
+
+    (if (and index (= id current))
+      (let [rest (visible (:entries state) session)]
+        (assoc state :page (:id (get rest (min (long index) (dec (count rest)))))))
+      state)))
+
+;; Watchers and clock
 
 (defn- fire-watchers!
   "Call every registered watcher with the new vec. Errors are
@@ -91,76 +184,121 @@
            (tel/log! {:level :error :id ::watcher-error :data {:key k :error (ex-message t)}}
                      (str "Notifications watcher " k " threw: " (ex-message t)))))))
 
-;; Public API
-
-(defn clear-expired!
-  "Drop every entry whose `:until` has passed. Returns the new vec.
-   Called implicitly on every `notifications` read so callers never
-   see stale entries."
-  []
-  (let [pruned (swap! notifications-atom prune)]
-    pruned))
-
-(defonce ^:private expiry-executor
+(defonce ^:private clock-executor
   (delay (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
            (reify
              java.util.concurrent.ThreadFactory
                (newThread [_ runnable]
-                 (doto (Thread. ^Runnable runnable "vis-tui-notification-expiry")
+                 (doto (Thread. ^Runnable runnable "vis-tui-notification-clock")
                    (.setDaemon true)))))))
 
-(defn- expire!
-  "Drop expired entries and fire the watchers when one went away."
+;; The repeating tick while a clock runs, or nil. Start and stop lock this atom,
+;; so a clock that starts while the tick stops always gets a new tick.
+(defonce ^:private ticker (atom nil))
+
+(defn- running? [state] (boolean (some :since (:entries state))))
+
+(declare tick!)
+
+(defn- ensure-ticker!
+  "Start the repeating tick when a clock runs and no tick is scheduled."
   []
-  (let [[before after] (swap-vals! notifications-atom prune)]
-    (when (not= (count before) (count after)) (fire-watchers! after))))
+  (locking ticker
+    (when (and (nil? @ticker) (running? @store))
+      (reset! ticker (.scheduleAtFixedRate ^java.util.concurrent.ScheduledExecutorService
+                                           @clock-executor
+                                           ^Runnable tick!
+                                           (long TICK_MS)
+                                           (long TICK_MS)
+                                           java.util.concurrent.TimeUnit/MILLISECONDS)))))
 
-(defn- schedule-expiry!
-  "Run `expire!` just after `until`, so the screen drops the entry on time."
-  [until]
-  (let [delay-ms (max 0 (+ 20 (- (long until) (util/now-ms))))]
-    (.schedule ^java.util.concurrent.ScheduledExecutorService @expiry-executor
-               ^Runnable expire!
-               (long delay-ms)
-               java.util.concurrent.TimeUnit/MILLISECONDS)))
+(defn- tick!
+  "Drop expired entries and wake the watchers. Stop the tick when no clock runs."
+  []
+  (try (let [after (swap! store prune (util/now-ms))]
+         (locking ticker
+           (when-not (running? @store)
+             (some-> ^java.util.concurrent.ScheduledFuture @ticker
+                     (.cancel false))
+             (reset! ticker nil)))
+         (fire-watchers! (:entries after)))
+       (catch Throwable t
+         (tel/log! {:level :error :id ::tick-failed :data {:error (ex-message t)}}))))
 
-(defn- push-entry
-  "`coll` with `entry` as its newest entry. An entry with the same id goes away first.
-   Expired entries and the oldest beyond `MAX_ENTRIES` go away too."
-  [coll entry]
-  (let [kept
-        (filterv #(not= (:id entry) (:id %)) (prune coll))
+;; Public API
 
-        added
-        (conj kept entry)]
-
-    (subvec added (max 0 (- (count added) MAX_ENTRIES)))))
+(defn clear-expired!
+  "Drop every entry whose time ran out. Returns the new vec."
+  []
+  (:entries (swap! store prune (util/now-ms))))
 
 (defn notifications
   "Vec of currently-active notifications, oldest first. Implicitly
-   prunes expired entries before returning so a paint loop reading
-   this never has to re-check `:until` deadlines."
+   prunes expired entries before returning."
   []
   (clear-expired!))
+
+(defn show!
+  "The page that session `sid` shows now, as `pager` gives it. Only the clock of that
+   page runs, so a toast counts down only while it is on screen. Each paint calls it."
+  [sid]
+  (let [now
+        (util/now-ms)
+
+        state
+        (swap! store (fn [state]
+                       (let [state (assoc (prune state now) :session sid)]
+                         (run-only state
+                                   (some-> (pager state sid now)
+                                           :entry
+                                           :id)
+                                   now))))]
+
+    (ensure-ticker!)
+    (pager state sid now)))
+
+(defn page!
+  "Show the next page (`delta` 1) or the previous page (-1) of the session that the
+   screen shows. The pages wrap. Returns the new page index, or nil without pages."
+  [delta]
+  (let [now
+        (util/now-ms)
+
+        state
+        (swap! store (fn [{:keys [entries session] :as state}]
+                       (let [shown
+                             (visible entries session)
+
+                             n
+                             (count shown)]
+
+                         (if (< n 2)
+                           state
+                           (let [i (long (:index (pager state session now)))]
+                             (assoc state :page (:id (get shown (mod (+ i (long delta)) n)))))))))]
+
+    (fire-watchers! (:entries state))
+    (:index (pager state (:session state) now))))
 
 (defn notify!
   "Push a new notification. Returns the entry's id (uuid string) so
    the caller can later `dismiss!` it manually.
 
    Options:
-     :level   one of #{:info :success :warn :error} - default :info.
-              Channels use the level for visual treatment (color,
-              emoji prefix, etc.).
-     :ttl-ms  lifespan in ms. Default by level, see `DEFAULT_TTL_MS`.
-              nil = sticky / no auto expiry; the notification stays
-              until `dismiss!`d.
-     :title   one bold line above the text.
-     :id      the entry identity. A push with an active id replaces it.
-     :source  the extension that sent the notification.
+     :level       one of #{:info :success :warn :error} - default :info.
+                  Channels use the level for visual treatment (color,
+                  emoji prefix, etc.).
+     :ttl-ms      lifespan in ms on screen. Default by level, see `DEFAULT_TTL_MS`.
+                  nil = sticky / no auto expiry; the notification stays
+                  until `dismiss!`d.
+     :title       one bold line above the text.
+     :id          the entry identity. A push with an active id replaces it.
+     :source      the extension that sent the notification.
+     :session-id  the only session that shows it. Without it, every session shows it.
 
    The notification is appended to the in-memory vec and every
    registered watcher is fired with the new full vec."
-  [text & {:keys [level title source] :or {level :info} :as opts}]
+  [text & {:keys [level title source session-id] :or {level :info} :as opts}]
   (when-not (string? text)
     (throw (ex-info "notify! text must be a String" {:type :vis/notify-bad-text :text text})))
   (when-not (VALID_LEVELS level)
@@ -178,54 +316,49 @@
         ttl-ms
         (if (contains? opts :ttl-ms) (:ttl-ms opts) (DEFAULT_TTL_MS level))
 
-        until
-        (when ttl-ms (+ now (long ttl-ms)))
-
         entry
-        (cond-> {:id id :text text :level level :created-at now :until until}
+        (cond-> {:id id :text text :level level :created-at now :ttl-ms ttl-ms :left-ms ttl-ms}
           (not-empty title)
           (assoc :title title)
 
           (not-empty source)
-          (assoc :source source))
+          (assoc :source source)
 
-        snapshot
-        (swap! notifications-atom push-entry entry)]
+          (not-empty (some-> session-id
+                             str))
+          (assoc :session-id (str session-id)))
 
-    (when until (schedule-expiry! until))
-    (fire-watchers! snapshot)
+        state
+        (swap! store push-entry entry now)]
+
+    (fire-watchers! (:entries state))
     id))
 
 (defn dismiss!
-  "Drop the entry with the given id, regardless of its `:until`
-   deadline. Returns true when an entry was actually removed.
-   Watchers fire when the value changed."
+  "Drop the entry with the given id, regardless of its time. Returns true when
+   an entry was actually removed. Watchers fire when the value changed."
   [id]
-  (let [removed?
-        (volatile! false)
+  (let [[before after]
+        (swap-vals! store drop-entry id (util/now-ms))
 
-        next-vec
-        (swap! notifications-atom (fn [coll]
-                                    (let [filtered (filterv #(not= id (:id %)) coll)]
-                                      (vreset! removed? (not= (count coll) (count filtered)))
-                                      filtered)))]
+        removed?
+        (not= (count (:entries before)) (count (:entries after)))]
 
-    (when @removed? (fire-watchers! next-vec))
-    @removed?))
+    (when removed? (fire-watchers! (:entries after)))
+    removed?))
 
 (defn dismiss-all!
   "Drop every notification. Returns the new (empty) vec."
   []
-  (let [next-vec (swap! notifications-atom (fn [_]
-                                             []))]
-    (fire-watchers! next-vec)
-    next-vec))
+  (let [state (swap! store assoc :entries [] :page nil)]
+    (fire-watchers! (:entries state))
+    (:entries state)))
 
 ;; Watcher API
 
 (defn watch!
   "Register a watcher under `key`. The fn `f` is called with the
-   full active-notifications vec on every push / dismiss / clear.
+   full active-notifications vec on every push / dismiss / page / tick.
    Replacing an existing watcher under the same key is fine -
    typical pattern is `(watch! :tui-screen render-bump)`.
 

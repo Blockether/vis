@@ -561,49 +561,84 @@
                      (expect (= after (state/set-session-model! "audit-session" "openai" "gpt-5")))
                      (expect (= [:db "audit-session" before after :gateway] @recorded))))))
 
-(defdescribe
-  session-notification-broadcast-test
-  ;; vis.notify of an extension that runs for a session reaches every client of it.
-  ;; It is live only, so a reconnect never shows an old notice again.
-  (let [broadcasts (fn [notice entry]
-                     (let [appended (atom [])]
-                       (with-redefs-fn {#'state/append-event! (fn [& args]
-                                                                (swap! appended conj (vec args)))
-                                        #'state/session-entry (constantly entry)}
-                         #(#'state/broadcast-notification! notice))
-                       @appended))]
-    (it "sends the notice live only, with its extension and toast fields"
-        (expect (= [["sess-1"
-                     "notification"
-                     {:text "Deployed"
-                      :level "success"
-                      :extension "forge"
-                      :title "Release"
-                      :duration-ms 5000
-                      :notice-id "deploy"}
-                     {:store? false}]]
-                   (broadcasts {:session-id "sess-1"
-                                :text "Deployed"
-                                :level :success
-                                :extension "forge"
-                                :title "Release"
-                                :duration-ms 5000
-                                :notice-id "deploy"}
-                               {:next-seq 0}))))
-    ;; A notice from a background thread or a startup hook has no session. It was dropped
-    ;; before, so no client showed it.
-    (it "sends a notice without a session to every open session with one notice id"
-        (let [appended
-              (with-redefs [state/registry (atom {"a" {} "b" {}})]
-                (broadcasts {:session-id nil :text "Indexed" :level :info} nil))]
+(defdescribe session-notification-broadcast-test
+             ;; vis.notify of an extension reaches the people of its session, or of every open session.
+             ;; It is never replayed, so a reconnect never shows an old notice again.
+             (let [deployed
+                   {:session-id "sess-1"
+                    :scope "session"
+                    :text "Deployed"
+                    :level :success
+                    :extension "forge"
+                    :title "Release"
+                    :duration-ms 5000
+                    :notice-id "deploy"}
 
-          (expect (= #{"a" "b"} (set (map first appended))))
-          (expect (= 1 (count (set (map #(get-in % [2 :notice-id]) appended)))))
-          (expect (string? (get-in (first appended) [2 :notice-id])))))
-    (it "sends nothing for a session that this gateway does not hold"
-        (expect (= [] (broadcasts {:session-id "gone" :text "Deployed" :level :info} nil))))
-    (it "sends nothing for a blank text"
-        (expect (= [] (broadcasts {:session-id "sess-1" :text " " :level :info} {:next-seq 0}))))))
+                   sent
+                   {:text "Deployed"
+                    :level "success"
+                    :scope "session"
+                    :extension "forge"
+                    :title "Release"
+                    :duration-ms 5000
+                    :notice-id "deploy"}
+
+                   run
+                   (fn [watched? f]
+                     (let [appended (atom [])]
+                       (with-redefs-fn {#'state/registry (atom {"sess-1" {:next-seq 0}})
+                                        #'state/append-event! (fn [& args]
+                                                                (swap! appended conj (vec args)))
+                                        #'state/client-watched? (constantly watched?)
+                                        #'bus/watched-elsewhere? (constantly false)
+                                        #'bus/sync-watching! (fn [& _])
+                                        #'state/hydrate-foreign-turn! (fn [_])
+                                        #'state/read-replay! (fn [& _]
+                                                               [])
+                                        #'state/team-attached! (fn [_])}
+                         #(f appended))))]
+
+               (it "sends a session notice live while a client shows the session"
+                   (run true
+                        (fn [appended]
+                          (#'state/broadcast-notification! deployed)
+                          (expect (= [["sess-1" "notification" sent {:store? false}]] @appended)))))
+               ;; User report: a session notice must stay until someone opens the session. It was live
+               ;; only before, so a notice for a session that no client showed was lost.
+               (it "holds a session notice until a client opens the session, and gives it once"
+                   (run false
+                        (fn [appended]
+                          (#'state/broadcast-notification! deployed)
+                          (expect (= [] @appended))
+                          (state/subscribe! "sess-1"
+                                            "sse-a"
+                                            (fn [_])
+                                            0)
+                          (expect (= [["sess-1" "notification" sent {:store? false}]] @appended))
+                          (state/subscribe! "sess-1"
+                                            "sse-b"
+                                            (fn [_])
+                                            0)
+                          (expect (= 1 (count @appended))))))
+               ;; A notice from a background thread or a startup hook has no session. It was dropped
+               ;; before, so no client showed it.
+               (it "sends a global notice to every open session with one notice id"
+                   (let [appended (atom [])]
+                     (with-redefs [state/registry (atom {"a" {} "b" {}})
+                                   state/append-event! (fn [& args]
+                                                         (swap! appended conj (vec args)))]
+
+                       (#'state/broadcast-notification!
+                        {:session-id nil :scope "global" :text "Indexed" :level :info}))
+                     (expect (= #{"a" "b"} (set (map first @appended))))
+                     (expect (= #{"global"} (set (map #(get-in % [2 :scope]) @appended))))
+                     (expect (= 1 (count (set (map #(get-in % [2 :notice-id]) @appended)))))
+                     (expect (string? (get-in (first @appended) [2 :notice-id])))))
+               (it "sends nothing for a blank text"
+                   (run true
+                        (fn [appended]
+                          (#'state/broadcast-notification! (assoc deployed :text " "))
+                          (expect (= [] @appended)))))))
 
 (defdescribe
   session-model-broadcast-test
@@ -5279,7 +5314,8 @@
                 (reduce conj-ring {} (mapv #(hash-map "seq" %) [1 2 3 4 5]))]
 
             (expect (= [3 4 5] (mapv #(get % "seq") (:events entry))))
-            (expect (instance? com.blockether.vis.internal.gateway.replay_ring.Ring (:events entry)))
+            (expect (instance? com.blockether.vis.internal.gateway.replay_ring.Ring
+                               (:events entry)))
             ;; Seqs 1 and 2 left the ring: a resume at or below 2 cannot be
             ;; served from it, and only this high-water says so.
             (expect (= 2 (:evicted-through entry)))))))

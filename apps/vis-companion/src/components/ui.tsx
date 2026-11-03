@@ -2848,46 +2848,80 @@ export function Banner({
 /**
  * ONE TOAST: a short notice that leaves by itself, in the top-left corner of a session.
  *
- * The left bar carries the level, so the text keeps the plain reading colour. A title is
- * one bold line, with the extension that sent it muted beside it. Long text stops after
- * four lines. The close mark is the one way out before the toast leaves.
+ * The border carries the level, so the text keeps the plain reading colour. The top row
+ * holds the bold title with the extension that sent it, then the page counter when more
+ * notices wait, and the close mark in the top-right corner. Long text stops after four
+ * lines. The bar on the bottom edge shrinks for the time that is left; it stands still
+ * while the notice waits behind another page.
  */
 export function Toast({
   kind,
   title,
   source,
   onDismiss,
+  page,
+  countdown,
   children,
 }: {
   kind: 'neutral' | 'ok' | 'warn' | 'err';
   title?: string;
   source?: string;
   onDismiss: () => void;
+  /** The place of this notice among the notices that wait, with the two page turns. */
+  page?: { index: number; total: number; onPrevious: () => void; onNext: () => void };
+  /** The time on screen: the whole duration and the part that is left. */
+  countdown?: { durationMs: number; remainingMs: number };
   children: ReactNode;
 }) {
-  const bar = {
-    neutral: 'border-l-link',
-    ok: 'border-l-ok',
-    warn: 'border-l-warn-strong',
-    err: 'border-l-err',
+  const tone = {
+    neutral: { edge: 'border-link', fill: 'bg-link' },
+    ok: { edge: 'border-ok', fill: 'bg-ok' },
+    warn: { edge: 'border-warn-strong', fill: 'bg-warn-strong' },
+    err: { edge: 'border-err', fill: 'bg-err' },
   }[kind];
+  const isPaged = page !== undefined && page.total > 1;
+  const turn = 'grid size-6 shrink-0 place-items-center text-muted hover:text-dialog-foreground';
 
   return (
     <div
       role="status"
-      className={`pointer-events-auto flex items-start gap-2 border border-l-4 border-dialog-edge ${bar} bg-panel py-2 pr-1 pl-3 font-mono text-body text-dialog-foreground shadow-float [overflow-wrap:anywhere] transition-[opacity,translate] duration-200 starting:-translate-x-2 starting:opacity-0 motion-reduce:transition-none`}
+      className={`pointer-events-auto relative overflow-hidden border ${tone.edge} bg-panel pt-1 pr-1 pb-2.5 pl-3 font-mono text-body text-dialog-foreground shadow-float [overflow-wrap:anywhere] transition-[opacity,translate] duration-200 starting:-translate-x-2 starting:opacity-0 motion-reduce:transition-none`}
     >
-      <div className="min-w-0 flex-1 py-0.5">
-        {title || source ? (
-          <div className="truncate">
-            {title ? <span className="font-bold">{title}</span> : null}
-            {title && source ? <span className="text-muted"> · </span> : null}
-            {source ? <span className="text-muted">{source}</span> : null}
+      <div className="flex items-center gap-1">
+        <div className="min-w-0 flex-1 truncate">
+          {title ? <span className="font-bold">{title}</span> : null}
+          {title && source ? <span className="text-muted"> · </span> : null}
+          {source ? <span className="text-muted">{source}</span> : null}
+        </div>
+        {isPaged ? (
+          <div className="flex shrink-0 items-center text-muted tabular-nums">
+            <button type="button" aria-label="Previous notice" title="Previous notice" className={turn} onClick={page.onPrevious}>
+              ‹
+            </button>
+            <span aria-label={`Notice ${page.index + 1} of ${page.total}`}>
+              {page.index + 1}/{page.total}
+            </span>
+            <button type="button" aria-label="Next notice" title="Next notice" className={turn} onClick={page.onNext}>
+              ›
+            </button>
           </div>
         ) : null}
-        <div className="line-clamp-4 whitespace-pre-wrap">{children}</div>
+        <CloseButton label="Dismiss" onClick={onDismiss} />
       </div>
-      <CloseButton label="Dismiss" onClick={onDismiss} />
+      <div className="line-clamp-4 pr-2 whitespace-pre-wrap">{children}</div>
+      {countdown ? (
+        <div
+          key={countdown.remainingMs}
+          aria-hidden="true"
+          className={`absolute inset-x-0 bottom-0 h-1 origin-left ${tone.fill} animate-toast-countdown`}
+          style={
+            {
+              '--toast-left': String(Math.min(1, countdown.remainingMs / countdown.durationMs)),
+              animationDuration: `${countdown.remainingMs}ms`,
+            } as CSSProperties
+          }
+        />
+      ) : null}
     </div>
   );
 }

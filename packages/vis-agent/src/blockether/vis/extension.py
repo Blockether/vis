@@ -113,8 +113,9 @@ class Host(Protocol):
         title: str | None,
         duration_ms: int | None,
         notice_id: str | None,
+        scope: str | None,
     ) -> Any:
-        """Show one toast to the people of the session, or of every open session."""
+        """Show one toast in the session, or in every open session for a global scope."""
         ...
 
     def request(self, frame: str) -> str:
@@ -3896,16 +3897,19 @@ def notify(
     title: str | None = None,
     duration_ms: int | None = None,
     notice_id: str | None = None,
+    scope: str | None = None,
 ) -> None:
     """Show one toast in the terminal and the Companion app.
 
     `level` is `info`, `success`, `warn` or `error`. `title` adds one bold line
     of at most 120 characters. `duration_ms`, from 1000 to 60000, sets how long
-    the toast stays; without it, the client chooses by level. A later call with
-    the same `notice_id` replaces the shown toast, for example "Deploying" with
-    "Deployed". When the call runs for a session, each client of that session
-    shows the toast. Without a session, every open session shows it. A value
-    outside these bounds raises an error.
+    the toast shows on screen; without it, the client chooses by level. A later
+    call with the same `notice_id` replaces the toast, for example "Deploying"
+    with "Deployed". `scope="session"` shows the toast only in the session of
+    the call. When no client shows that session, the toast waits until a client
+    opens it. `scope="global"` shows it now in every open session. Without a
+    scope, a call for a session is a session toast, else a global toast. A
+    value outside these bounds raises an error.
     """
     _host.notify(
         str(text),
@@ -3913,6 +3917,7 @@ def notify(
         None if title is None else str(title),
         None if duration_ms is None else int(duration_ms),
         None if notice_id is None else str(notice_id),
+        None if scope is None else str(scope),
     )
 
 

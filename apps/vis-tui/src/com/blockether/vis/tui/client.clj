@@ -3271,6 +3271,10 @@
 
 (def dismiss-notification! notifications/dismiss!)
 
+(def show-notifications! notifications/show!)
+
+(def page-notifications! notifications/page!)
+
 (def watch-notifications! notifications/watch!)
 
 (def unwatch-notifications! notifications/unwatch!)

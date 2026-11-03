@@ -118,7 +118,16 @@ import {
   queuedTurnFromWire,
   type QueueDelta,
 } from '../lib/gateway';
-import { noticeDuration, noticeOf, pushNotice, type SessionNotice } from '../lib/notification';
+import {
+  NO_NOTICES,
+  dismissNotice as dropNotice,
+  noticeOf,
+  pushNotice,
+  settleNotices,
+  shownPage,
+  turnNoticePage,
+  type NoticePages,
+} from '../lib/notification';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
@@ -893,33 +902,34 @@ export function SessionScreen({
   // being written under the new session's key.
   const draftMessageReadyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  // The `vis.notify` toasts of this session, newest first. Each one leaves after its
-  // own duration; a notice with the same id replaces its toast and restarts the clock.
-  const [notices, setNotices] = useState<SessionNotice[]>([]);
-  const dismissNotice = useCallback((id: string) => {
-    setNotices((shown) => shown.filter((notice) => notice.id !== id));
+  // The `vis.notify` toasts of this session as pages, newest first. One page shows, and
+  // only its clock runs; `at` is the time of the last change, so a render reads one clock.
+  const [notices, setNotices] = useState<{ pages: NoticePages; at: number }>({ pages: NO_NOTICES, at: 0 });
+  const changeNotices = useCallback((change: (pages: NoticePages, now: number) => NoticePages) => {
+    setNotices(({ pages }) => {
+      const now = Date.now();
+      return { pages: change(pages, now), at: now };
+    });
   }, []);
+  const dismissNotice = useCallback((id: string) => changeNotices((pages, now) => dropNotice(pages, id, now)), [changeNotices]);
+  const turnNotice = useCallback((delta: number) => changeNotices((pages, now) => turnNoticePage(pages, delta, now)), [changeNotices]);
   useEffect(() => {
-    const timers = new Map<string, number>();
     const stop = subscriptions.subscribeSession(sid, (event) => {
       const next = noticeOf(event);
-      if (!next) return;
-      setNotices((shown) => pushNotice(shown, next));
-      window.clearTimeout(timers.get(next.id));
-      timers.set(
-        next.id,
-        window.setTimeout(() => {
-          timers.delete(next.id);
-          dismissNotice(next.id);
-        }, noticeDuration(next)),
-      );
+      if (next) changeNotices((pages, now) => pushNotice(pages, next, now));
     });
     return () => {
       stop();
-      timers.forEach((timer) => window.clearTimeout(timer));
-      setNotices([]);
+      setNotices({ pages: NO_NOTICES, at: 0 });
     };
-  }, [subscriptions, sid, dismissNotice]);
+  }, [subscriptions, sid, changeNotices]);
+  const noticePage = shownPage(notices.pages, notices.at);
+  const noticeLeftMs = noticePage?.remainingMs;
+  useEffect(() => {
+    if (noticeLeftMs === undefined) return;
+    const timer = window.setTimeout(() => changeNotices(settleNotices), noticeLeftMs + 20);
+    return () => window.clearTimeout(timer);
+  }, [noticeLeftMs, notices.at, changeNotices]);
   // The session's provider/model pick. Seeded from the client's snapshot so the
   // header chip names the model on the FIRST frame instead of reading "model"
   // until the gateway answers, then written through by authoritative events and picks.
@@ -5752,19 +5762,24 @@ export function SessionScreen({
             {/* Toasts float over the top-left corner of the transcript rectangle, outside
             the scroller, so they stay put while the transcript scrolls and never cover the
             sidebar. */}
-            {notices.length > 0 && (
-              <div className="pointer-events-none absolute top-3 left-3 z-20 flex w-[calc(100%-1.5rem)] max-w-sm flex-col gap-2">
-                {notices.map((notice) => (
-                  <Toast
-                    key={notice.id}
-                    kind={notice.kind}
-                    title={notice.title}
-                    source={notice.source}
-                    onDismiss={() => dismissNotice(notice.id)}
-                  >
-                    {notice.text}
-                  </Toast>
-                ))}
+            {noticePage && (
+              <div className="pointer-events-none absolute top-3 left-3 z-20 flex w-[calc(100%-1.5rem)] max-w-sm flex-col">
+                <Toast
+                  key={noticePage.notice.id}
+                  kind={noticePage.notice.kind}
+                  title={noticePage.notice.title}
+                  source={noticePage.notice.source}
+                  onDismiss={() => dismissNotice(noticePage.notice.id)}
+                  page={{
+                    index: noticePage.index,
+                    total: noticePage.total,
+                    onPrevious: () => turnNotice(-1),
+                    onNext: () => turnNotice(1),
+                  }}
+                  countdown={{ durationMs: noticePage.durationMs, remainingMs: noticePage.remainingMs }}
+                >
+                  {noticePage.notice.text}
+                </Toast>
               </div>
             )}
             {/* The gallery belongs to this session but not to this transcript rectangle:

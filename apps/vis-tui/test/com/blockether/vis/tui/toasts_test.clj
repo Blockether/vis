@@ -6,46 +6,61 @@
 (def ^:private long-text
   (apply str (repeat 40 "The deploy of acme widgets finished with warnings. ")))
 
-(defn- entry [id text & {:as more}] (merge {:id id :text text :level :info} more))
+(defn- page
+  [text & {:keys [index total remaining-ms] :or {index 0 total 1} :as more}]
+  {:entry (merge {:id "a" :text text :level :info} (dissoc more :index :total :remaining-ms))
+   :index index
+   :total total
+   :remaining-ms remaining-ms})
 
 (defdescribe
   toast-layout-test
-  (describe
-    "fit"
-    ;; A card wider than the transcript, or below its last row, paints over the
-    ;; scrollbar, the composer or the next terminal line.
-    (it "keeps every card inside the area, at any width"
-        (doseq [cols
-                [24 30 52 80 200]
+  (describe "fit"
+            ;; A card wider than the transcript, or below its last row, paints over the
+            ;; scrollbar, the composer or the next terminal line.
+            (it "keeps the card, its heading and its controls inside the area, at any width"
+                (doseq [cols
+                        [28 30 56 80 200]
 
-                rows
-                [3 8 30]]
+                        rows
+                        [3 8 30]
 
-          (let [area
-                {:left 2 :top 3 :cols cols :rows rows}
+                        total
+                        [1 12]]
 
-                cards
-                (toasts/layout [(entry "a" long-text :title "Release" :source "forge")
-                                (entry "b" "Copied") (entry "c" long-text)]
-                               area)]
-
-            (doseq [{:keys [col row width height lines heading]} cards]
-              (expect (<= (+ col width) (+ 2 cols)))
-              (expect (<= (+ row height) (+ 3 rows)))
-              (expect (every? #(<= (p/display-width %) (- width 5))
-                              (cons (or heading "") lines)))))))
-    (it "shows no card in an area narrower than the smallest card"
-        (expect (= [] (toasts/layout [(entry "a" "Copied")] {:left 0 :top 0 :cols 23 :rows 20})))))
-  (describe "order"
-            (it "puts the newest card on top, one row apart, and shows at most three"
-                (let [cards (toasts/layout (mapv #(entry (str %) "Saved") (range 5))
-                                           {:left 0 :top 1 :cols 80 :rows 40})]
-                  (expect (= ["4" "3" "2"] (mapv :id cards)))
-                  (expect (= [1 5 9] (mapv :row cards))))))
+                  (let [{:keys [col row width height lines heading controls]}
+                        (toasts/layout
+                          (page long-text :title "Release" :source "forge" :index 10 :total total)
+                          {:left 2 :top 3 :cols cols :rows rows})]
+                    (expect (<= (+ col width) (+ 2 cols)))
+                    (expect (<= (+ row height) (+ 3 rows)))
+                    (expect (every? #(<= (p/display-width %) (- width 4)) lines))
+                    ;; "╭─ " heading " " fill " " controls " ─╮"
+                    (expect (<= (+ 9 (p/display-width (or heading "")) (p/display-width controls))
+                                width)))))
+            (it "shows no card in an area narrower than the smallest card"
+                (expect (nil? (toasts/layout (page "Copied") {:left 0 :top 0 :cols 27 :rows 20})))))
+  (describe "pager"
+            ;; User request: with several notices, show "1/N" and let the user move between them.
+            (it "shows the page counter only when more notices wait"
+                (expect (= "✕"
+                           (:controls (toasts/layout (page "Saved")
+                                                     {:left 0 :top 0 :cols 80 :rows 9}))))
+                (expect (= "← 2/3 → ✕"
+                           (:controls (toasts/layout (page "Saved" :index 1 :total 3)
+                                                     {:left 0 :top 0 :cols 80 :rows 9}))))))
+  (describe "countdown"
+            ;; User request: a bar shows how long the notice stays.
+            (it "gives the part of the time that is left, and none for a sticky notice"
+                (expect (= 0.25
+                           (:fraction (toasts/layout (page "Saved" :ttl-ms 4000 :remaining-ms 1000)
+                                                     {:left 0 :top 0 :cols 80 :rows 9}))))
+                (expect (nil? (:fraction (toasts/layout (page "Saved" :ttl-ms nil)
+                                                        {:left 0 :top 0 :cols 80 :rows 9}))))))
   (describe "text"
             ;; A long error message must not fill the transcript. The cut must show.
             (it "wraps long text to at most four lines and marks the cut"
-                (let [[{:keys [lines]}] (toasts/layout [(entry "a" long-text)]
-                                                       {:left 0 :top 0 :cols 52 :rows 40})]
+                (let [{:keys [lines]} (toasts/layout (page long-text)
+                                                     {:left 0 :top 0 :cols 56 :rows 40})]
                   (expect (= 4 (count lines)))
                   (expect (= \… (last (last lines))))))))

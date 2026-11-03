@@ -1396,7 +1396,8 @@
        :title (event-get event :title)
        :extension (event-get event :extension)
        :notice-id (event-get event :notice-id)
-       :duration-ms (event-get event :duration-ms)}
+       :duration-ms (event-get event :duration-ms)
+       :scope (event-get event :scope)}
 
       ;; The session's model preference was changed in ANOTHER channel (the
       ;; companion app, a sibling TUI, an embedded caller). Project it so the
