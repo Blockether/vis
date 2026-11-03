@@ -1,5 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, within } from 'storybook/test';
+import { expect, fn, within } from 'storybook/test';
+import { STORY_TURN_ITERATIONS_SETTLED } from '../dev/story-data';
+import { STORY_DONE_TEAM } from '../dev/story-agents';
+import { TurnAgents } from './AgentTeam';
 import { AssistantMessage } from './ChatContent';
 
 const response = `## Walidacja strategii
@@ -84,5 +87,29 @@ export const Lists: Story = {
       status: 'completed',
       iterations: [{ answer: listAnswer }],
     },
+  },
+};
+
+// User report (screenshot): the team card stood further from the steps above it than from the
+// answer under it. Its gaps to both neighbours are the same now.
+export const Team: Story = {
+  args: {
+    turn: {
+      turn_id: 'answer-team',
+      status: 'completed',
+      iterations: [
+        ...STORY_TURN_ITERATIONS_SETTLED.slice(0, -1),
+        { ...STORY_TURN_ITERATIONS_SETTLED.at(-1), answer: 'I removed 279 low-value tests from Svar. The change is pushed and CI passed on it.' },
+      ],
+    },
+    team: (
+      <TurnAgents
+        agents={STORY_DONE_TEAM}
+        pending={null}
+        onOpen={fn()}
+        onCancel={fn()}
+        timeline={async (child: string) => ({ session_id: child, items: [] })}
+      />
+    ),
   },
 };

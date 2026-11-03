@@ -751,6 +751,17 @@ ol.markdown-list > li::before {
   background-size: 100% 15px;
   background-repeat: no-repeat;
 }
+/* A closed step row is a 44px touch target (28px with a mouse) around one 16px line. Above a
+   team card, its blank lower half widens the gap. The row gives it back, so the card stands as
+   far from the step text as from the answer. */
+[data-before-card] > section:last-child > [data-digest-row]:last-child {
+  margin-bottom: calc((var(--text-ui--line-height) - 2.75rem) / 2);
+}
+@media (width >= 40rem) and (pointer: fine) {
+  [data-before-card] > section:last-child > [data-digest-row]:last-child {
+    margin-bottom: calc((var(--text-ui--line-height) - 1.75rem) / 2);
+  }
+}
 [data-kind='add'] .diff-word { --diff-word-tint: var(--color-diff-add-word); }
 [data-kind='remove'] .diff-word { --diff-word-tint: var(--color-diff-del-word); }
 .diff-empty {

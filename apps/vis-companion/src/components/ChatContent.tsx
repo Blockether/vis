@@ -3024,7 +3024,7 @@ function StepDigest({
   const duration = measured > 0 ? formatDuration(measured) : null;
   const failed = counts.failed > 0 || counts.cancelled > 0;
   return (
-    <div className="flex min-w-0 items-center">
+    <div className="flex min-w-0 items-center" data-digest-row>
       <Disclosure
         tone="chronology"
         density="comfortable"
@@ -3535,6 +3535,7 @@ export const IterationTrace = memo(function IterationTrace({
   sid,
   showCode: codeOverride,
   liveViews: sessionViews = NO_LIVE_VIEWS,
+  beforeCard = false,
 }: {
   iterations: TranscriptIteration[];
   /** Prose the ANSWER band already paints — see `answeredProse`. */
@@ -3546,6 +3547,8 @@ export const IterationTrace = memo(function IterationTrace({
   sid?: string;
   showCode?: boolean;
   liveViews?: LiveViewModel[];
+  /** A card follows the trace, so its last step row keeps no blank space under the text. */
+  beforeCard?: boolean;
 }) {
   // Each display switch changes every mounted trace. Deferred, the switch shows its new state
   // first, and the traces render in an interruptible background pass.
@@ -3688,7 +3691,7 @@ export const IterationTrace = memo(function IterationTrace({
   if (!segments.length) return null;
   return (
     <ActivityAttachmentContext.Provider value={iterationAttachment(iterations, client, sid)}>
-      <div ref={rootRef} className="mb-2.5 grid gap-2.5">
+      <div ref={rootRef} className="mb-2.5 grid gap-2.5" data-before-card={beforeCard || undefined}>
         {shown.map((segment, index) => (
           <TraceSegment
             key={segment.key}
@@ -4813,6 +4816,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           client={client}
           sid={sid}
           liveViews={liveViews}
+          beforeCard={team != null}
         />
         {team}
         {/* Desktop messages share the reading scale with the composer and session title.
