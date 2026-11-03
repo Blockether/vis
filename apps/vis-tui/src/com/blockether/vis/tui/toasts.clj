@@ -4,15 +4,17 @@
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
    toasts of extensions. One card shows at a time, like the Companion card. The
-   whole card is tinted, its rounded border cells too, so no strip of paper
-   shows between the body and the border. The border has the level color.
+   border stands on the screen paper, and the tinted body fills the card up to
+   it. The border is drawn with one-eighth blocks on the cell edges, so no strip
+   of paper shows between the body and the border. The border has the level
+   color.
 
    The first row holds the bold title with its source, and the close mark `✕`
    in the top-right corner. A card without a title keeps the `✕` on its first
    text line. The body holds up to `max-text-lines` lines of wrapped text. When
    more notices wait, the page counter `← 1/3 →` is in the bottom-right corner.
-   The bottom border is the countdown: the level color is the time left, and the
-   muted part the time used.
+   A countdown line runs under the bottom border: the level color is the time
+   left, and the muted part the time used.
 
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
@@ -78,9 +80,14 @@
                   (p/ellipsize (- max-cols (long side-cols) (long close-cols)))
                   not-empty))
 
-        ;; Two border rows, the heading row and the page counter row.
+        fraction
+        (let [ttl (:ttl-ms entry)]
+          (when (and remaining-ms ttl (pos? (long ttl)))
+            (min 1.0 (/ (double remaining-ms) (double ttl)))))
+
+        ;; Two border rows, the heading row, the page counter row and the countdown row.
         line-room
-        (- (long rows) 2 (if head 1 0) (if pages 1 0))]
+        (- (long rows) 2 (if head 1 0) (if pages 1 0) (if fraction 1 0))]
 
     (when (and entry (>= max-cols (long min-card-cols)) (pos? line-room))
       (let [;; Without a heading, the close mark stands at the end of the text rows.
@@ -97,10 +104,7 @@
             (if pages (+ (long side-cols) (long (p/display-width pages))) 0)
 
             text-cols
-            (+ text-side (long (reduce max 0 (map p/display-width lines))))
-
-            ttl
-            (:ttl-ms entry)]
+            (+ text-side (long (reduce max 0 (map p/display-width lines))))]
 
         {:id (:id entry)
          :level (:level entry)
@@ -108,12 +112,11 @@
          :heading head
          :lines lines
          :pager pages
-         :fraction (when (and remaining-ms ttl (pos? (long ttl)))
-                     (min 1.0 (/ (double remaining-ms) (double ttl))))
+         :fraction fraction
          :col (long left)
          :row (long top)
          :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
-         :height (+ 2 (if head 1 0) (count lines) (if pages 1 0))}))))
+         :height (+ 2 (if head 1 0) (count lines) (if pages 1 0) (if fraction 1 0))}))))
 
 (defn- level-fg
   "The border color of a card."
@@ -154,9 +157,9 @@
     (let [col (long col)
           row (long row)
           width (long width)
-          height (long height)
           inner (- width 2)
-          bottom (+ row height -1)
+          ;; The countdown has its own row under the card.
+          bottom (+ row (long height) -1 (if fraction -1 0))
           right (+ col width -1)
           first-row (inc row)
           text-row (if heading (inc first-row) first-row)
@@ -164,26 +167,37 @@
           pager-row (dec bottom)
           ;; The counter ends one space before the right border.
           pager-col (- right 1 pager-cols)
-          ;; The whole card is tinted, its border cells too, so the body reaches the border.
+          ;; The border stands on the screen paper; the body is tinted up to it.
+          paper t/dialog-bg
           bg (card-bg)
+          edge (t/legible-ink (level-fg level) paper)
           ink (t/legible-ink (level-fg level) bg)
           muted (t/legible-ink t/footer-fg-muted bg)]
 
       (p/clear-styles! g)
-      (p/set-colors! g t/dialog-fg bg)
+      (p/set-colors! g t/dialog-fg paper)
       (p/fill-rect! g col row width height)
-      ;; Border.
-      (p/set-colors! g ink bg)
-      (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
+      (p/set-colors! g t/dialog-fg bg)
+      (p/fill-rect! g (inc col) first-row inner (- bottom first-row))
+      ;; Border: one-eighth blocks on the cell edges around the body. A side line
+      ;; is two blocks that meet on one cell edge, so it is as thick as the top line.
+      (p/set-colors! g edge paper)
+      (p/put-str! g (inc col) row (rule inner "▁"))
+      (p/put-str! g (inc col) bottom (rule inner "▔"))
       (doseq [r (range first-row bottom)]
-        (p/put-str! g col (long r) "│")
-        (p/put-str! g right (long r) "│"))
-      ;; Countdown: the level color is the time left.
-      (p/put-str! g col bottom (str "╰" (rule inner "─") "╯"))
+        (p/set-colors! g edge paper)
+        (p/put-str! g col (long r) "▕")
+        (p/put-str! g right (long r) "▏")
+        (p/set-colors! g edge bg)
+        (p/put-str! g (inc col) (long r) "▏")
+        (p/put-str! g (dec right) (long r) "▕"))
+      ;; Countdown under the border: the level color is the time left.
       (when fraction
         (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
-          (p/set-colors! g muted bg)
-          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "─"))))
+          (p/set-colors! g edge paper)
+          (p/put-str! g (inc col) (inc bottom) (rule left-cols "▔"))
+          (p/set-colors! g (t/legible-ink t/footer-fg-muted paper) paper)
+          (p/put-str! g (+ col 1 left-cols) (inc bottom) (rule (- inner left-cols) "▔"))))
       ;; Heading.
       (when heading
         (p/set-colors! g muted bg)
@@ -206,7 +220,7 @@
       (when pager (p/set-colors! g muted bg) (p/put-str! g pager-col pager-row pager))
       (p/clear-styles! g)
       (when register?
-        (doseq [r (range row (inc bottom))]
+        (doseq [r (range row (+ row (long height)))]
           (if (and pager (= pager-row (long r)))
             (let [next-col (+ pager-col 2)
                   end (+ pager-col pager-cols)]
