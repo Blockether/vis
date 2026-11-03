@@ -55,6 +55,7 @@ import {
 } from './icons';
 import { DiffSearch, useDiffSearch } from './AppDiffSearch';
 import { Button, CopyChip } from './ui';
+import { useReviewState } from '../lib/review-memory';
 
 /** What an app gives its review nodes. Absent, the nodes are read only. */
 export interface AppNodeActions {
@@ -135,17 +136,23 @@ function Messages({ messages }: { messages: readonly LiveMessage[] }) {
 function DraftEditor({
   label,
   saved,
+  memoryId,
   submitLabel = 'Save',
   onSave,
   onClose,
 }: {
   label: string;
   saved: string;
+  memoryId: string;
   submitLabel?: string;
   onSave: (body: string) => Promise<AppActionResult>;
   onClose: () => void;
 }) {
-  const [text, setText] = useState(saved);
+  const [text, setText] = useReviewState(`${memoryId}:text`, saved);
+  const close = () => {
+    setText(saved);
+    onClose();
+  };
   const [status, setStatus] = useState<AppActionStatus>('idle');
   const isBusy = status === 'saving';
   const saving = useRef(false);
@@ -160,7 +167,10 @@ function DraftEditor({
     try {
       const result = await onSave(text.trim() === '' ? '' : text);
       setStatus(result.status);
-      if (result.status === 'saved' && (text.trim() === '' || submitLabel === 'Comment')) onClose();
+      if (result.status === 'saved' && (text.trim() === '' || submitLabel === 'Comment')) {
+        setText('');
+        onClose();
+      }
     } catch {
       setStatus('failed');
     } finally {
@@ -178,7 +188,7 @@ function DraftEditor({
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
-          onClose();
+          close();
         }
       }}
     >
@@ -190,6 +200,7 @@ function DraftEditor({
         value={text}
         maxLength={LIVE_MESSAGE_CHARS}
         aria-label={label}
+        aria-keyshortcuts="Meta+Enter Control+Enter Escape"
         disabled={isBusy}
         onChange={(event) => {
           setText(event.target.value);
@@ -197,6 +208,7 @@ function DraftEditor({
         }}
         onKeyDown={(event) => {
           if (
+            !event.nativeEvent.isComposing && event.keyCode !== 229 &&
             event.key === 'Enter' &&
             (event.metaKey || event.ctrlKey) &&
             text.trim() !== '' &&
@@ -209,7 +221,7 @@ function DraftEditor({
       />
       <div className="diff-draft-actions flex flex-wrap items-center gap-2">
         <span className="diff-submit-hint">⌘/Ctrl Enter to send</span>
-        <Button type="button" variant="secondary" onClick={onClose}>
+        <Button type="button" variant="secondary" onClick={close}>
           Cancel
         </Button>
         <Button
@@ -237,7 +249,7 @@ function ThreadBlock({
   actions?: AppNodeActions;
   title?: string;
 }) {
-  const [isEditing, setEditing] = useState(false);
+  const [isEditing, setEditing] = useReviewState(`${nodeId}:${thread.id}:editing`, false);
   const draft = thread.draft ?? '';
   const canEdit = Boolean(actions) && !actions?.isReadOnly;
   return (
@@ -257,6 +269,7 @@ function ThreadBlock({
       )}
       {isEditing && actions ? (
         <DraftEditor
+          memoryId={`${nodeId}:${thread.id}`}
           label={draft === '' ? 'Reply' : 'Edit draft'}
           saved={draft}
           onSave={(body) => actions.draft(nodeId, { threadId: thread.id, body })}
@@ -510,6 +523,7 @@ function LineThreads({ lines, model }: { lines: AppDiffLine[]; model: HunkProps 
           ))}
           {selected && model.actions && (
             <DraftEditor
+              memoryId={`${model.nodeId}:${anchorKey(selected.anchor)}`}
               label={`Comment on ${model.file.path} line ${selected.anchor.line}`}
               saved=""
               submitLabel="Comment"
@@ -746,15 +760,16 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
     total,
     elsewhere,
   } = useMemo(() => diffModel(node.patch, node.threads), [node.patch, node.threads]);
-  const [opened, setOpened] = useState<ViewAnchor | null>(null);
-  const [selected, setSelected] = useState<ViewAnchor | null>(null);
-  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
-  const [split, setSplit] = useState(false);
-  const [wrap, setWrap] = useState(true);
-  const [tree, setTree] = useState(false);
-  const [treeFolded, setTreeFolded] = useState<ReadonlySet<string>>(() => new Set());
-  const [hideTests, setHideTests] = useState(false);
-  const [hideWhitespace, setHideWhitespace] = useState(false);
+  const [opened, setOpened] = useReviewState<ViewAnchor | null>(`${node.id}:opened`, null);
+  const [selected, setSelected] = useReviewState<ViewAnchor | null>(`${node.id}:selected`, null);
+  const [folded, setFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:folded`, () => new Set());
+  const [split, setSplit] = useReviewState(`${node.id}:split`, false);
+  const [wrap, setWrap] = useReviewState(`${node.id}:wrap`, true);
+  const [tree, setTree] = useReviewState(`${node.id}:tree`, false);
+  const [pickedFile, setPickedFile] = useReviewState<string | null>(`${node.id}:pickedFile`, null);
+  const [treeFolded, setTreeFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:treeFolded`, () => new Set());
+  const [hideTests, setHideTests] = useReviewState(`${node.id}:hideTests`, false);
+  const [hideWhitespace, setHideWhitespace] = useReviewState(`${node.id}:hideWhitespace`, false);
   const files = useMemo(
     () => filterDiffFiles(sourceFiles, hideTests, hideWhitespace),
     [sourceFiles, hideTests, hideWhitespace],
@@ -796,15 +811,25 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
       data-wrap={wrap}
       data-split={split}
       onKeyDown={(event) => {
-        if (event.key.toLowerCase() === 'f' && (event.metaKey || event.ctrlKey)) {
+        if (event.nativeEvent.isComposing || event.keyCode === 229 || event.altKey) return;
+        if (event.key.toLowerCase() === 'f' && !event.shiftKey && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
           event.stopPropagation();
           search.show();
+        } else if (search.findOpen && event.key.toLowerCase() === 'g' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          event.stopPropagation();
+          search.moveMatch(event.shiftKey ? -1 : 1);
+        } else if (search.findOpen && event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          search.closeFind();
         }
       }}
     >
       <DiffSearch search={search} />
       <DiffToolbar
+        onFind={search.show}
         split={split}
         wrap={wrap}
         tree={tree}
@@ -853,9 +878,11 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
                   key={row.key}
                   type="button"
                   aria-label={`Open ${row.file.path}`}
+                  aria-current={pickedFile === row.file.path ? true : undefined}
                   className={`diff-tree-file diff-tree-${fileChange(row.file)} app-focus-ring`}
                   style={{ paddingLeft: 8 + row.depth * 12 }}
                   onClick={() => {
+                    setPickedFile(row.file.path);
                     setFolded((held) => {
                       const next = new Set(held);
                       next.delete(row.file.path);
@@ -950,6 +977,7 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
 }
 
 function DiffToolbar({
+  onFind,
   split,
   wrap,
   tree,
@@ -966,6 +994,7 @@ function DiffToolbar({
   onTests,
   onWhitespace,
 }: {
+  onFind: () => void;
   split: boolean;
   wrap: boolean;
   tree: boolean;
@@ -991,77 +1020,90 @@ function DiffToolbar({
         <DiffStat {...total} />
         {revisions && <span className="diff-revisions min-w-0 truncate">{revisions}</span>}
       </span>
-      <button
-        type="button"
-        className="app-focus-ring"
-        aria-label={allFolded ? 'Expand all' : 'Collapse all'}
-        title={allFolded ? 'Expand all' : 'Collapse all'}
-        onClick={onFold}
-      >
-        {allFolded ? <ExpandAllIcon className="size-4" /> : <CollapseAllIcon className="size-4" />}
-      </button>
-      <div className="diff-layout" role="group" aria-label="Diff layout">
+      <div className="diff-toolbar-controls">
         <button
           type="button"
           className="app-focus-ring"
-          aria-label="Unified"
-          title="Unified"
-          aria-pressed={!split}
-          onClick={() => onSplit(false)}
+          data-diff-find
+          title="Find in diff (⌘/Ctrl+F)"
+          aria-label="Find in diff"
+          aria-keyshortcuts="Meta+f Control+f"
+          onClick={onFind}
         >
-          <UnifiedDiffIcon className="size-4" />
+          Find
         </button>
         <button
           type="button"
           className="app-focus-ring"
-          aria-label="Split"
-          title="Split"
-          aria-pressed={split}
-          onClick={() => onSplit(true)}
+          aria-label={allFolded ? 'Expand all' : 'Collapse all'}
+          title={allFolded ? 'Expand all' : 'Collapse all'}
+          onClick={onFold}
         >
-          <SideBySideIcon className="size-4" />
+          {allFolded ? <ExpandAllIcon className="size-4" /> : <CollapseAllIcon className="size-4" />}
+        </button>
+        <div className="diff-layout" role="group" aria-label="Diff layout">
+          <button
+            type="button"
+            className="app-focus-ring"
+            aria-label="Unified"
+            title="Unified"
+            aria-pressed={!split}
+            onClick={() => onSplit(false)}
+          >
+            <UnifiedDiffIcon className="size-4" />
+          </button>
+          <button
+            type="button"
+            className="app-focus-ring"
+            aria-label="Split"
+            title="Split"
+            aria-pressed={split}
+            onClick={() => onSplit(true)}
+          >
+            <SideBySideIcon className="size-4" />
+          </button>
+        </div>
+        <button
+          type="button"
+          className="app-focus-ring"
+          aria-label="Wrap"
+          title="Wrap lines"
+          aria-pressed={wrap}
+          onClick={onWrap}
+        >
+          <WrapIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          className="app-focus-ring"
+          aria-label="Show whitespace changes"
+          title={hideWhitespace ? 'Show whitespace changes' : 'Hide whitespace changes'}
+          aria-pressed={!hideWhitespace}
+          onClick={onWhitespace}
+        >
+          <WhitespaceIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          className="app-focus-ring"
+          aria-label="Hide test files"
+          title={hideTests ? 'Show test files' : 'Hide test files'}
+          aria-pressed={hideTests}
+          onClick={onTests}
+        >
+          <TestFilesIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          className="app-focus-ring"
+          aria-label="Files"
+          title="File tree"
+          aria-pressed={tree}
+          onClick={onTree}
+        >
+          <FileTreeIcon className="size-4" />
         </button>
       </div>
-      <button
-        type="button"
-        className="app-focus-ring"
-        aria-label="Wrap"
-        title="Wrap lines"
-        aria-pressed={wrap}
-        onClick={onWrap}
-      >
-        <WrapIcon className="size-4" />
-      </button>
-      <button
-        type="button"
-        className="app-focus-ring"
-        aria-label="Show whitespace changes"
-        title={hideWhitespace ? 'Show whitespace changes' : 'Hide whitespace changes'}
-        aria-pressed={!hideWhitespace}
-        onClick={onWhitespace}
-      >
-        <WhitespaceIcon className="size-4" />
-      </button>
-      <button
-        type="button"
-        className="app-focus-ring"
-        aria-label="Hide test files"
-        title={hideTests ? 'Show test files' : 'Hide test files'}
-        aria-pressed={hideTests}
-        onClick={onTests}
-      >
-        <TestFilesIcon className="size-4" />
-      </button>
-      <button
-        type="button"
-        className="app-focus-ring"
-        aria-label="Files"
-        title="File tree"
-        aria-pressed={tree}
-        onClick={onTree}
-      >
-        <FileTreeIcon className="size-4" />
-      </button>
     </div>
   );
 }

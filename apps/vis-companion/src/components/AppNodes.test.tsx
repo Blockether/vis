@@ -283,6 +283,10 @@ it('opens search results in folded files and returns focus when search closes', 
     expect(container.querySelector('[data-search-current]')).toHaveTextContent('new');
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
     expect(screen.getByText('2 of 3')).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: 'g', ctrlKey: true });
+    expect(screen.getByText('3 of 3')).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: 'g', metaKey: true, shiftKey: true });
+    expect(screen.getByText('2 of 3')).toBeInTheDocument();
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(screen.queryByRole('search')).toBeNull();
     expect(document.activeElement).toBe(diff);

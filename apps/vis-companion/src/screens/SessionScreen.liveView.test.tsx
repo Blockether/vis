@@ -96,3 +96,21 @@ describe('live views on session open', () => {
     expectNoPicture();
   });
 });
+
+// User report: review keys must work without opening the app list first.
+it('toggles the session review with the T3 primary-modifier key', async () => {
+  const review = {
+    id: 'shortcut-review', title: 'Review shortcuts', placement: 'attachment' as const, seq: 1,
+    nodes: [{ id: 'review', type: 'diff' as const, patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new', threads: [] }],
+    surfaces: { inline: false, session: 'sidebar' as const },
+  };
+  renderSessionScreen({
+    client: { appViews: async () => [review], liveView: async () => review },
+    subscriptions: { subscribeConnection: connected },
+  });
+  await screen.findByRole('button', { name: 'Session apps (1)' });
+  fireEvent.keyDown(document.body, { key: 'd', ctrlKey: true });
+  expect(await screen.findByRole('button', { name: 'Split' })).toBeInTheDocument();
+  fireEvent.keyDown(document.body, { key: 'd', metaKey: true });
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Split' })).toBeNull());
+});

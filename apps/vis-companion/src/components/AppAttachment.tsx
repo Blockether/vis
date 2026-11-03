@@ -24,11 +24,11 @@ import type { HumanInputValue } from '../lib/human-input';
 import { liveViewFromWire, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
 import { ariaShortcut, isAppKeyTarget, matchShortcut, shortcutLabel, shortcutName } from '../lib/app-shortcuts';
 import { SessionEventsContext } from '../lib/session-events';
-import { useStickyOverlay } from '../lib/sticky-overlay';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import { ActionStatus, type AppNodeActions } from './AppNodes';
+import { ReviewMemoryContext, useReviewScroll, useVisitState } from '../lib/review-memory';
 import { LiveViewPanel, RunDialog } from './LiveView';
 import { AppLogButton, AppLogPanel } from './AppLog';
 import { ChevronIcon, FullScreenIcon } from './icons';
@@ -68,9 +68,12 @@ export function useAppView(
   viewId: string,
   hub: SessionSubscriptionHub | null,
 ): AppViewState {
-  const [view, setView] = useState<LiveViewModel | null>(null);
+  const [view, setView] = useVisitState<LiveViewModel | null>(
+    client.base ? JSON.stringify([client.base, sid, viewId, 'acknowledged-view']) : null,
+    null,
+  );
   const [isMissing, setMissing] = useState(false);
-  const viewRef = useRef<LiveViewModel | null>(null);
+  const viewRef = useRef<LiveViewModel | null>(view);
   const reading = useRef<AbortController | null>(null);
   // Actions go to the owner one at a time, in the order the human made them: the
   // `change` of a field that loses focus reaches the owner before the click that
@@ -81,7 +84,7 @@ export function useAppView(
   const commit = useCallback((next: LiveViewModel | null) => {
     viewRef.current = next;
     setView(next);
-  }, []);
+  }, [setView]);
 
   const reread = useCallback(() => {
     reading.current?.abort();
@@ -309,6 +312,8 @@ export function AppSurface({
   const [fieldErrors, setFieldErrors] = useState<Readonly<Record<string, string>>>({});
   const [lit, setLit] = useState<string | null>(null);
   const surface = useRef<HTMLDivElement | null>(null);
+  const memoryKey = JSON.stringify([client.base, sid, viewId]);
+  const rememberScroll = useReviewScroll(memoryKey, surface, view !== null);
   const keyQueue = useRef<{ tail: Promise<unknown>; waiting: number }>({ tail: Promise.resolve(), waiting: 0 });
   const isReadOnly = !view || view.is_closed === true || view.is_disconnected === true;
   const shortcuts = useMemo(() => (isReadOnly ? [] : (view?.shortcuts ?? [])), [isReadOnly, view?.shortcuts]);
@@ -480,29 +485,43 @@ export function AppSurface({
       tabIndex={-1}
       className={`min-w-0 focus:outline-none ${isInline ? '' : 'min-h-0 flex-1 overflow-y-auto overscroll-contain'}`}
       data-app-surface={viewId}
-    >
-      {view ? (
-        <LiveViewPanel
-          view={view}
-          inDialog
-          isSettled={view.is_closed === true}
-          app={actions}
-          errors={fieldErrors}
-          onActivate={isReadOnly ? undefined : onActivate}
-          onSelect={isReadOnly ? undefined : onSelect}
-          onChange={isReadOnly ? undefined : onChange}
-          onSubmit={isReadOnly ? undefined : onSubmit}
-          load={
-            sid === null
-              ? undefined
-              : (nodeId, from, limit, query) => client.liveViewLog(sid, viewId, nodeId, from, limit, query)
+      onScroll={rememberScroll}
+      onKeyDown={(event) => {
+        if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey) return;
+        if (event.key.toLowerCase() === 'f' && (event.metaKey || event.ctrlKey)) {
+          const find = surface.current?.querySelector<HTMLButtonElement>('[data-diff-find]');
+          if (find) {
+            event.preventDefault();
+            event.stopPropagation();
+            find.click();
           }
-        />
-      ) : (
-        <p role="status" className="p-4 font-mono text-meta text-dialog-hint">
-          {isMissing ? 'This app could not be read.' : 'Loading…'}
-        </p>
-      )}
+        }
+      }}
+    >
+      <ReviewMemoryContext value={memoryKey}>
+        {view ? (
+          <LiveViewPanel
+            view={view}
+            inDialog
+            isSettled={view.is_closed === true}
+            app={actions}
+            errors={fieldErrors}
+            onActivate={isReadOnly ? undefined : onActivate}
+            onSelect={isReadOnly ? undefined : onSelect}
+            onChange={isReadOnly ? undefined : onChange}
+            onSubmit={isReadOnly ? undefined : onSubmit}
+            load={
+              sid === null
+                ? undefined
+                : (nodeId, from, limit, query) => client.liveViewLog(sid, viewId, nodeId, from, limit, query)
+            }
+          />
+        ) : (
+          <p role="status" className="p-4 font-mono text-meta text-dialog-hint">
+            {isMissing ? 'This app could not be read.' : 'Loading…'}
+          </p>
+        )}
+      </ReviewMemoryContext>
     </div>
   );
   const leave = closeLabel ?? `Close app ${title}`;
@@ -594,8 +613,8 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
 }) {
   const viewId = attachment.view_id ?? '';
   const name = appFallbackTitle(attachment.filename);
-  const [opened, setOpened] = useStickyOverlay(`app:${viewId}`);
-  const [isFull, setFull] = useState(false);
+  const [opened, setOpened] = useVisitState(JSON.stringify([client.base, sid, viewId, 'opened']), false);
+  const [isFull, setFull] = useVisitState(JSON.stringify([client.base, sid, viewId, 'full']), false);
   // The session list knows where the app shows. A row outside it learns it from its read.
   const known = useContext(SessionAppViewsContext).find((one) => one.id === viewId);
   const [readInline, setReadInline] = useState<boolean | null>(null);
@@ -611,7 +630,7 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
       if (next === 'row')
         requestAnimationFrame(() => place.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true }));
     },
-    [frame, inline, setOpened],
+    [frame, inline, setOpened, setFull],
   );
   const open = useCallback(() => go('open'), [go]);
   const onView = useCallback((view: LiveViewModel) => setReadInline(appSurfaces(view).inline), [setReadInline]);
@@ -751,20 +770,24 @@ export function AppsListDialog({
 }
 
 /**
- * The apps of a session, newest last. Empty until the gateway answers.
+ * The apps of a session, newest last. Keep the last read while the list refreshes.
  *
  * The list follows the session stream: a new app joins it, a patch or a close
  * changes its row, and a missed patch or a reconnect reads the list again.
  */
 export function useSessionApps(client: GatewayClient, sid: string): LiveViewModel[] {
   const hub = useContext(SessionEventsContext);
-  const [apps, setAppsState] = useState<LiveViewModel[]>([]);
-  const held = useRef<LiveViewModel[]>([]);
+  const [apps, setAppsState] = useVisitState<LiveViewModel[]>(
+    client.base ? JSON.stringify([client.base, sid, 'acknowledged-apps']) : null,
+    [],
+  );
+  const held = useRef<LiveViewModel[]>(apps);
   const [generation, setGeneration] = useState(0);
   const setApps = useCallback((next: LiveViewModel[]) => {
+    if (next.length === held.current.length && next.every((view, at) => view === held.current[at])) return;
     held.current = next;
     setAppsState(next);
-  }, []);
+  }, [setAppsState]);
   useEffect(() => {
     const controller = new AbortController();
     client

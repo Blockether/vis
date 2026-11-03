@@ -16,6 +16,7 @@ import {
   CopyIcon,
   DotsIcon,
   LivePanelIcon,
+  MARK_NUDGE,
   SettingsIcon,
   ZenIcon,
 } from './icons';
@@ -107,7 +108,7 @@ export function SessionHeader({
   /** The live view panel of this session, when the session has panel views. */
   panel?: { isOpen: boolean; onToggle: () => void };
   /** The session apps list, when the session has an app that shows there. */
-  apps?: { count: number; isOpen: boolean; onOpen: () => void };
+  apps?: { count: number; isOpen: boolean; onOpen: () => void; hasReview?: boolean };
   /**
    * The desk's list toggle, when the shell has a list beside this transcript to
    * put away: it stands on the band's leading edge, where the phone's arrow does.
@@ -193,6 +194,7 @@ export function SessionHeader({
               className="block max-w-full truncate rounded-none text-left hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               onClick={() => openParent(path.parentId)}
             >
+              <ChevronIcon back className={`mr-1 inline-block size-3.5 align-baseline ${MARK_NUDGE}`} />
               <PathStep step={path.parent} />
               {' → '}
               <PathStep step={path.self} />
@@ -239,6 +241,8 @@ export function SessionHeader({
         {apps && (
           <IconButton
             label={`Session apps (${apps.count})`}
+            title={apps.hasReview ? 'Session apps · toggle review with ⌘/Ctrl+D' : undefined}
+            aria-keyshortcuts={apps.hasReview ? 'Meta+d Control+d' : undefined}
             variant={apps.isOpen ? 'primary' : 'quiet'}
             aria-haspopup="dialog"
             aria-expanded={apps.isOpen}

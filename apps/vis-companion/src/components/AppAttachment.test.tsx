@@ -11,7 +11,7 @@ import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
-import { AppAttachmentRow, AppSurface, SessionAppViewsContext, useSessionApps } from './AppAttachment';
+import { AppAttachmentRow, AppSurface, SessionAppsDialog, SessionAppViewsContext, useSessionApps } from './AppAttachment';
 import { StoryAppHost, TODO, type StoryApp } from '../dev/story-apps';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT } from '../lib/view';
 
@@ -747,4 +747,70 @@ describe('AppSurface log', () => {
     expect(screen.queryByRole('region', { name: 'Log of Code review' })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Log of Code review, 1 error' }));
   });
+});
+
+// User report: return to a session and continue its review without sharing drafts.
+it('restores one review after another session uses the same node ids', async () => {
+  const host = fakeClient([], async () => ({ seq: 2 }));
+  host.liveView.mockImplementation(async () => view(1));
+  const surface = (sid: string) => <AppSurface key={sid} client={host.client} sid={sid} viewId="resume-review" fallbackTitle="Review" onClose={() => undefined} />;
+  const mounted = render(surface('resume-a'));
+  await screen.findByRole('button', { name: 'Split' });
+  fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Wrap' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open src/a.ts' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Comment on src/a.ts line 1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Only session A' } });
+  mounted.rerender(surface('resume-b'));
+  await screen.findByRole('button', { name: 'Split' });
+  expect(screen.getByRole('button', { name: 'Unified' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByRole('textbox')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Fold src/a.ts' }));
+  mounted.rerender(surface('resume-a'));
+  await screen.findByRole('button', { name: 'Split' });
+  expect(screen.getByRole('button', { name: 'Split' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Wrap' })).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.getByRole('textbox')).toHaveValue('Only session A');
+  expect(screen.getByRole('button', { name: 'Open src/a.ts' })).toHaveAttribute('aria-current', 'true');
+  expect(screen.getByRole('button', { name: 'Fold src/a.ts' })).toBeInTheDocument();
+});
+
+// User report: switching sessions must not blank a review while its fresh read waits.
+describe('review return paint', () => {
+  it('keeps the acknowledged app visible while it reads the same session again', async () => {
+    let finish: ((value: LiveView | null) => void) | undefined;
+    const client = {
+      base: 'http://review-return-paint',
+      liveView: vi.fn().mockResolvedValueOnce(view(3)).mockImplementationOnce(() => new Promise<LiveView | null>((resolve) => { finish = resolve; })),
+      liveViewLog: vi.fn(),
+    } as unknown as GatewayClient;
+    const first = open(client, null);
+    expect(await screen.findByText('Bumped it.')).toBeInTheDocument();
+    first.unmount();
+    open(client, null);
+    expect(screen.getByText('Bumped it.')).toBeInTheDocument();
+    const fresh = wire(4);
+    fresh.nodes[0].threads[0].messages[0].body = 'Fresh gateway message';
+    await act(async () => finish?.(liveViewFromWire(fresh)));
+    expect(await screen.findByText('Fresh gateway message')).toBeInTheDocument();
+  });
+});
+
+// User report: a returning review must not wait for the app list to load twice.
+it('keeps the session app available while its returning list read waits', async () => {
+  const client = {
+    base: 'http://review-list-return',
+    appViews: vi.fn().mockResolvedValueOnce([view(3)]).mockImplementationOnce(() => new Promise(() => {})),
+  } as unknown as GatewayClient;
+  function Apps() {
+    const apps = useSessionApps(client, 'review-list-session');
+    return <SessionAppsDialog apps={apps} onPick={() => undefined} onClose={() => undefined} />;
+  }
+  const first = render(<Apps />);
+  expect(await screen.findByRole('button', { name: 'Open app Code review' })).toBeInTheDocument();
+  first.unmount();
+  render(<Apps />);
+  expect(screen.getByRole('button', { name: 'Open app Code review' })).toBeInTheDocument();
 });

@@ -96,6 +96,7 @@ export function DiffSearch({ search }: { search: ReturnType<typeof useDiffSearch
         moveMatch(1);
       }}
       onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
@@ -111,6 +112,7 @@ export function DiffSearch({ search }: { search: ReturnType<typeof useDiffSearch
         autoFocus
         ref={input}
         aria-label="Find in diff"
+        aria-keyshortcuts="Enter Shift+Enter Escape"
         placeholder="Find in diff"
         value={query}
         onChange={(event) => onQuery(event.target.value)}
@@ -152,15 +154,17 @@ export function DiffSearch({ search }: { search: ReturnType<typeof useDiffSearch
         type="button"
         className="app-focus-ring"
         aria-label="Previous match"
+        title="Previous match (Shift+Enter or ⌘/Ctrl+Shift+G)"
+        aria-keyshortcuts="Shift+Enter Meta+Shift+g Control+Shift+g"
         disabled={!matches.length}
         onClick={() => moveMatch(-1)}
       >
         Previous
       </button>
-      <button type="submit" className="app-focus-ring" aria-label="Next match" disabled={!matches.length}>
+      <button type="submit" className="app-focus-ring" aria-label="Next match" title="Next match (Enter or ⌘/Ctrl+G)" aria-keyshortcuts="Enter Meta+g Control+g" disabled={!matches.length}>
         Next
       </button>
-      <button type="button" className="app-focus-ring" onClick={closeFind}>
+      <button type="button" className="app-focus-ring" title="Close find (Escape)" aria-keyshortcuts="Escape" onClick={closeFind}>
         Close
       </button>
     </form>

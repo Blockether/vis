@@ -62,6 +62,7 @@ import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { useCommands } from '../lib/commands';
 import { SessionAppsDialog, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
 import { SessionAppSlot } from '../components/SessionAppSlot';
+import { useVisitState } from '../lib/review-memory';
 import { pickedSessionApp, sessionApps } from '../lib/app-surfaces';
 import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
@@ -4817,8 +4818,20 @@ export function SessionScreen({
   const sessionAppViews = useSessionApps(client, sid);
   const listedApps = useMemo(() => sessionApps(sessionAppViews), [sessionAppViews]);
   const [appsListOpen, setAppsListOpen] = useState(false);
-  const [pickedAppId, setPickedAppId] = useState<string | null>(null);
+  const [pickedAppId, setPickedAppId] = useVisitState<string | null>(JSON.stringify([client.base, sid, 'picked-app']), null);
   const pickedApp = pickedSessionApp(sessionAppViews, pickedAppId, docksPanel);
+  const reviewAppId = listedApps.find((view) => view.nodes.some((node) => node.type === 'diff'))?.id;
+  useEffect(() => {
+    if (!reviewAppId) return;
+    const toggleReview = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey) return;
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'd') return;
+      event.preventDefault();
+      setPickedAppId((held) => held === reviewAppId ? null : reviewAppId);
+    };
+    window.addEventListener('keydown', toggleReview);
+    return () => window.removeEventListener('keydown', toggleReview);
+  }, [reviewAppId, setPickedAppId]);
   // The side panel holds one thing: an app picked into it replaces the live views.
   const isPanelOpen = panelViews.length > 0 && (panelChoice ?? docksPanel) && pickedApp?.slot !== 'sidebar';
   const watching = liveViews.at(-1)?.title ?? null;
@@ -5652,7 +5665,7 @@ export function SessionScreen({
               }
               apps={
                 listedApps.length > 0
-                  ? { count: listedApps.length, isOpen: appsListOpen || pickedApp !== null, onOpen: () => setAppsListOpen(true) }
+                  ? { count: listedApps.length, isOpen: appsListOpen || pickedApp !== null, onOpen: () => setAppsListOpen(true), hasReview: Boolean(reviewAppId) }
                   : undefined
               }
             />
