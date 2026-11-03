@@ -40,7 +40,8 @@ The buttons:
 
 | Button | Action |
 | --- | --- |
-| All changes | Show every change since the first checkpoint. |
+| This session | Show only the changes that this session made. This is the first view of `/review`. Edits of other sessions in the same folder stay out. |
+| All changes | Show every change since the first checkpoint, also the edits of other sessions. |
 | Latest change | Show only what the newest checkpoint changed. |
 | Uncommitted | Compare the files with the git commit `HEAD`. |
 | Against base branch | Compare the files with the commit where `HEAD` left the default branch. |
@@ -49,7 +50,7 @@ The buttons:
 | Run checks | Run the diff checks and the language checks on the changed files. |
 | Run tests | Run the checks, and also the tests of the language tools. |
 | AI review | Ask a model to review the diff. Its findings become threads on their lines. |
-| Undo file | Undo the changes of the chosen file: in the chosen checkpoint, or in all changes. It is off in a git comparison. |
+| Undo file | Undo the changes of the chosen file: in the chosen checkpoint, in this session, or in all changes. It is off in a git comparison. |
 | Undo checkpoint | Undo only what the chosen checkpoint changed. A file that changed again later is a conflict and stays as it is. |
 | Restore to here | Bring every file back to how the chosen checkpoint left it. |
 

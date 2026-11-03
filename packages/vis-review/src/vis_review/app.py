@@ -40,6 +40,7 @@ _TONES = {"error": "error", "warning": "warn", "info": "idle"}
 _AUTHOR = {"kind": "extension", "name": "vis-review"}
 EVENT_FIELDS = ("type", "node_id", "values", "submission_id", "comments", "item_ids")
 BUTTONS = (
+    "session",
     "all",
     "latest",
     "uncommitted",
@@ -107,6 +108,7 @@ class ReviewApp:
         key: str = "review",
         title: str = "Review",
         clock: Callable[[], float] = time.time,
+        is_session_scoped: bool = False,
     ):
         self.journal = journal
         self._opener = opener
@@ -123,6 +125,10 @@ class ReviewApp:
         self.is_full = False
         # "HEAD" or "base" compares the files with a git commit, None with checkpoints.
         self.against: str | None = None
+        # A session door knows which checkpoints the session wrote itself; its first
+        # range then shows only those changes, never the edits of other sessions.
+        self.is_session_scoped = is_session_scoped
+        self.is_own = is_session_scoped
         self.findings: list[checks.Finding] = []
         self.ai_summary = ""
         self.notice = ("Ready", "idle")
@@ -235,15 +241,28 @@ class ReviewApp:
                 return found
             self.notice = (f"Git cannot show {_AGAINST[self.against]} here", "warn")
             self.against = None
+        if self._is_own_range():
+            return self.journal.own_diff(self._context())
         return self.journal.diff(self.start, self.end, context=self._context())
+
+    def _is_own_range(self) -> bool:
+        """True when the app shows only the changes of its own session."""
+        return self.is_own and self.start <= 1 and self.end is None
 
     def _is_all(self) -> bool:
         """True when the app shows the whole journal: the first range."""
-        return self.start <= 1 and self.end is None and self.against is None
+        return (
+            self.start <= 1
+            and self.end is None
+            and self.against is None
+            and not self.is_own
+        )
 
     def _range_text(self, end: int) -> str:
         if self.against is not None:
             return _AGAINST[self.against]
+        if self._is_own_range():
+            return "this session"
         return "all changes" if self._is_all() else f"#{self.start}..#{end}"
 
     def _notice(self) -> dict:
@@ -257,7 +276,12 @@ class ReviewApp:
     def _buttons(self, has_diffs: bool) -> dict:
         """The action buttons; each one is off when it cannot do anything now."""
         has_change = self.selected is not None and self.selected > 1
+        own = self._is_own_range() and self.against is None
+        session = [
+            ui.button("session", "This session", is_disabled=own and self.path is None)
+        ]
         return ui.group(
+            *(session if self.is_session_scoped else []),
             ui.button(
                 "all", "All changes", is_disabled=self._is_all() and self.path is None
             ),
@@ -455,7 +479,7 @@ class ReviewApp:
         self.refresh(
             (
                 "Showing "
-                + ("all changes" if self.end is None else f"checkpoint #{seq}"),
+                + (self._range_text(0) if self.end is None else f"checkpoint #{seq}"),
                 "idle",
             )
         )
@@ -465,10 +489,17 @@ class ReviewApp:
         self.ai_summary = ""
 
     def _all(self) -> None:
-        self.start, self.end, self.selected, self.path = 1, None, None, None
-        self.against = None
-        self._clear()
+        self._first_range(is_own=False)
         self.refresh(("Showing all changes", "idle"))
+
+    def _session(self) -> None:
+        self._first_range(is_own=self.is_session_scoped)
+        self.refresh(("Showing the changes of this session", "idle"))
+
+    def _first_range(self, *, is_own: bool) -> None:
+        self.start, self.end, self.selected, self.path = 1, None, None, None
+        self.against, self.is_own = None, is_own
+        self._clear()
 
     def _uncommitted(self) -> None:
         self._compare("HEAD")
@@ -596,6 +627,11 @@ class ReviewApp:
             return
         if self.end is not None and self.selected and self.selected > 1:
             done = self.journal.revert(self.selected, [self.path])
+        elif self._is_own_range() and self.against is None:
+            start = self.journal.own_start(self.path)
+            if start is None:
+                return
+            done = self.journal.restore(max(start, 1), [self.path])
         else:
             done = self.journal.restore(max(self.start, 1), [self.path])
         self._after_undo(done)

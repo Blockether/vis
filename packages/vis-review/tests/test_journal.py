@@ -7,6 +7,7 @@ import subprocess
 import pytest
 from vis_lang_interface.tree import walked
 
+from vis_review import journal as journal_module
 from vis_review import store
 from vis_review.journal import Journal, base_ref
 
@@ -311,3 +312,65 @@ def test_the_base_branch_is_where_head_left_main(tmp_path):
     assert base_ref(str(top)) == first
     git(top, "switch", "-q", "--orphan", "lonely")
     assert base_ref(str(top)) is None
+
+
+def test_own_diff_leaves_out_the_edits_of_other_sessions(tmp_path):
+    # Goal dcc7197a: the review of one session showed the edits that another
+    # session made in the same root, recorded as "outside" checkpoints.
+    j = journal(tmp_path)
+    write(j, "mine.py", "m1\n")
+    write(j, "shared.py", "s1\n")
+    j.checkpoint()
+    write(j, "theirs.py", "other session\n")
+    write(j, "shared.py", "s2 by them\n")
+    j.checkpoint("outside", "Changes between blocks")
+    write(j, "mine.py", "m2\n")
+    write(j, "shared.py", "s3 by me\n")
+    j.checkpoint("block", "edit")
+    write(j, "theirs.py", "other session again\n")
+    write(j, "mine.py", "m3 by them\n")
+    j.checkpoint("outside", "Changes between blocks")
+    diffs = {d.path: d for d in j.own_diff()}
+    assert set(diffs) == {"mine.py", "shared.py"}
+    assert "-m1\n+m2\n" in diffs["mine.py"].patch
+    assert "-s2 by them\n+s3 by me\n" in diffs["shared.py"].patch
+    assert j.own_start("shared.py") == 2
+
+
+def test_an_undo_in_the_session_takes_its_change_out_of_the_own_diff(tmp_path):
+    j = journal(tmp_path)
+    write(j, "a.py", "v1\n")
+    j.checkpoint()
+    write(j, "a.py", "v2\n")
+    j.checkpoint("block")
+    j.restore(1, ["a.py"])
+    assert j.own_diff() == []
+
+
+@pytest.mark.parametrize(
+    ("status", "old", "new"),
+    [
+        ("modified", "a\nb\nc\nd\n", "a\nB\nc\nd\ntail"),
+        ("added", "", "x\ny\n"),
+        ("deleted", "x\ny\n", ""),
+    ],
+)
+def test_git_and_difflib_give_the_same_patch(monkeypatch, status, old, new):
+    # Goal dcc7197a: difflib took 2.5 s for 5,000 changed lines, so git diffs
+    # large files. Both paths must give the same patch text.
+    monkeypatch.setattr(journal_module, "GIT_DIFF_LINES", 10**9)
+    slow = journal_module.unified("f.py", status, old, new, 3)
+    monkeypatch.setattr(journal_module, "GIT_DIFF_LINES", 0)
+    assert journal_module.unified("f.py", status, old, new, 3) == slow
+
+
+def test_a_repaint_reuses_the_diff_of_the_same_contents(tmp_path, monkeypatch):
+    # Goal dcc7197a: each paint diffed every file again, so each click waited.
+    j = journal(tmp_path)
+    write(j, "a.py", "a\n")
+    j.checkpoint()
+    write(j, "a.py", "b\n")
+    j.checkpoint("block")
+    first = j.diff(1)
+    monkeypatch.setattr(journal_module, "unified", None)
+    assert j.diff(1) == first

@@ -426,3 +426,31 @@ def test_uncommitted_compares_with_the_commit_and_falls_back_without_git(
     assert buttons_of(recorder)["undo-file"] is True
     recorder.send("activate", "all")
     assert wait_for(lambda: recorder.node("diff")["old_revision"] == "#1")
+
+
+def test_a_session_review_shows_only_its_own_changes_by_default(tmp_path, recorder):
+    # Goal dcc7197a: two sessions in one root saw each other's edits.
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.py").write_text("a = 1\n")
+    journal = Journal(root, "s1", tmp_path / "base", files=walked)
+    app = ReviewApp(journal, extension_opener, is_session_scoped=True).open()
+    edit(root, "theirs.py", "x = 1\n")
+    edit(root, "a.py", "a = 1 by them\n")
+    journal.checkpoint("outside", "Changes between blocks")
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block", "edit a")
+    app.refresh()
+    assert rows(recorder, "files") == ["a.py"]
+    assert buttons_of(recorder)["session"] is True
+    recorder.send("activate", "all")
+    assert wait_for(lambda: rows(recorder, "files") == ["a.py", "theirs.py"])
+    recorder.send("activate", "session")
+    assert wait_for(lambda: rows(recorder, "files") == ["a.py"])
+    edit(root, "a.py", "a = 3 by them\n")
+    journal.checkpoint("outside", "Changes between blocks")
+    recorder.send("select", "files", item_ids=["a.py"])
+    assert wait_for(lambda: app.path == "a.py")
+    recorder.send("activate", "undo-file")
+    assert wait_for(lambda: (root / "a.py").read_text() == "a = 1 by them\n")
+    assert (root / "theirs.py").read_text() == "x = 1\n"

@@ -27,6 +27,7 @@ import re
 import tempfile
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,11 +39,17 @@ from vis_lang_interface.tree import Tree, listing, stamp_of
 from vis_review.store import Store
 
 KINDS = ("baseline", "outside", "block", "patch", "undo", "manual")
+# Kinds that the session itself wrote; "outside" holds the edits of others.
+OWN_KINDS = ("block", "patch", "undo")
 # Seconds after which the file list is read again, to see files that git now lists.
 REFRESH_S = 300
 # A text side larger than this shows no line diff; its counts still come from line_changes.
 MOST_DIFF_BYTES = 1024 * 1024
 _BINARY_PROBE = 8000
+# Diffs that a journal keeps, by path, digests and context: a repaint diffs nothing again.
+MOST_CACHED_DIFFS = 256
+# Lines of both sides above which git computes the diff; difflib is quadratic there.
+GIT_DIFF_LINES = 2000
 
 
 @dataclass(frozen=True)
@@ -121,6 +128,8 @@ class Journal:
         self._clock = clock
         self._lock = threading.RLock()
         self._tree: Tree | None = None
+        self._diffs: OrderedDict[tuple, FileDiff] = OrderedDict()
+        self._diffs_lock = threading.Lock()
         self.entries: list[Entry] = []
         self.state: dict[str, str] = {}
         self._load()
@@ -291,6 +300,50 @@ class Journal:
         entry = self.entry(seq)
         return self.diff(seq - 1, seq, entry.files)
 
+    def own_start(self, rel: str) -> int | None:
+        """The checkpoint just before the session first changed `rel`, or None."""
+        for entry in self.entries:
+            if entry.kind in OWN_KINDS and rel in entry.files:
+                return entry.seq - 1
+        return None
+
+    def own_diff(self, context: int = 3) -> list[FileDiff]:
+        """The changes that the session itself made, without the edits of others.
+
+        Each file goes from its content before the first own change to its
+        content after the last own change. An edit of another session between
+        these two changes stays in, because it is in the same file content.
+        """
+        spans: dict[str, tuple[int, int]] = {}
+        for entry in self.entries:
+            if entry.kind in OWN_KINDS:
+                for rel in entry.files:
+                    spans[rel] = (spans.get(rel, (entry.seq - 1, 0))[0], entry.seq)
+        states = self._states_at({seq for span in spans.values() for seq in span})
+        diffs = []
+        for rel in sorted(spans):
+            first, last = spans[rel]
+            before, after = states[first].get(rel), states[last].get(rel)
+            if before != after:
+                diffs.append(self.file_diff(rel, before, after, context))
+        return diffs
+
+    def _states_at(self, seqs: set[int]) -> dict[int, dict[str, str]]:
+        """`state_at` of each of `seqs`, in one pass over the journal."""
+        states: dict[int, dict[str, str]] = {}
+        state: dict[str, str] = {}
+        if 0 in seqs:
+            states[0] = {}
+        for entry in self.entries:
+            for rel, sha in entry.files.items():
+                if sha is None:
+                    state.pop(rel, None)
+                else:
+                    state[rel] = sha
+            if entry.seq in seqs:
+                states[entry.seq] = dict(state)
+        return states
+
     def against(self, ref: str, context: int = 3) -> list[FileDiff] | None:
         """How each file differs from git commit `ref`; None where git cannot tell.
 
@@ -312,6 +365,22 @@ class Journal:
         self, rel: str, before: str | None, after: str | None, context: int = 3
     ) -> FileDiff:
         """One file from content `before` to content `after` (digests; None is absent)."""
+        key = (rel, before, after, context)
+        with self._diffs_lock:
+            found = self._diffs.get(key)
+            if found is not None:
+                self._diffs.move_to_end(key)
+                return found
+        found = self._file_diff(rel, before, after, context)
+        with self._diffs_lock:
+            self._diffs[key] = found
+            while len(self._diffs) > MOST_CACHED_DIFFS:
+                self._diffs.popitem(last=False)
+        return found
+
+    def _file_diff(
+        self, rel: str, before: str | None, after: str | None, context: int
+    ) -> FileDiff:
         status = (
             "added" if before is None else "deleted" if after is None else "modified"
         )
@@ -586,6 +655,15 @@ def unified(rel: str, status: str, old: str, new: str, context: int = 3) -> str:
     """A git style patch of one file from `old` to `new`."""
     old_lines = _lines(old)
     new_lines = _lines(new)
+    if len(old_lines) + len(new_lines) > GIT_DIFF_LINES:
+        hunks = _git_hunks(old, new, context)
+        if hunks is not None:
+            names = (
+                "/dev/null" if status == "added" else f"a/{rel}",
+                "/dev/null" if status == "deleted" else f"b/{rel}",
+            )
+            lines = f"--- {names[0]}\n+++ {names[1]}\n" if hunks else ""
+            return _header(rel, status) + lines + hunks
     body = list(
         difflib.unified_diff(
             old_lines,
@@ -596,6 +674,26 @@ def unified(rel: str, status: str, old: str, new: str, context: int = 3) -> str:
         )
     )
     return _header(rel, status) + "".join(body)
+
+
+def _git_hunks(old: str, new: str, context: int) -> str | None:
+    """The hunks of `git diff --no-index` from `old` to `new`; None without git."""
+    with tempfile.TemporaryDirectory(prefix="vis-review-diff-") as work:
+        paths = [os.path.join(work, "old"), os.path.join(work, "new")]
+        for path, text in zip(paths, (old, new)):
+            Path(path).write_text(text, encoding="utf-8", newline="")
+        command = ["git", "diff", "--no-index", "--no-color", "--no-ext-diff"]
+        command += ["--text", f"-U{context}", "--", *paths]
+        env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        try:
+            done = process.run(command, timeout_s=60, env=env, read_write=[work])
+        except (process.ToolMissing, process.ToolTimeout, OSError):
+            return None
+    # Exit 1 means the files differ; 0 means they are the same.
+    if done.exit_code not in (0, 1):
+        return None
+    start = done.out.find("\n@@ ")
+    return "" if start < 0 else done.out[start + 1 :]
 
 
 def _lines(text: str) -> list[str]:

@@ -79,6 +79,7 @@ def run_review(ctx):
             call=_call,
             ask=_ask,
             send=session.send,
+            is_session_scoped=True,
             key="review-" + hashlib.sha256(journal.root.encode()).hexdigest()[:8],
         )
         RECORDER.keep(session_id, app)
