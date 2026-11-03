@@ -4,7 +4,7 @@ import { LEADER_INK, LEADER_ROLE, agentLabel, agentRole } from './AgentTeam';
 /** One step of an agent path: the role word with its ink, then the name. The leader has only its role word. */
 export type AgentStep = Readonly<{ role?: Readonly<{ text: string; ink: string }>; label?: string }>;
 
-/** The header path of a subagent session, `LEADER → IMPLEMENT Fix parser`, and the session it opens. */
+/** The header path of a subagent session, `LEADER → IMPLEMENT | Fix parser`, and the session it opens. */
 export type AgentPath = Readonly<{ parentId: string; parent: AgentStep; self: AgentStep }>;
 
 const LEADER: AgentStep = { role: { text: LEADER_ROLE, ink: LEADER_INK } };

@@ -1308,7 +1308,7 @@
 ;; ── Breadcrumb ──────────────────────────────────────────────────────────────
 
 (defn breadcrumb
-  "Header path of child session `sid` from its cached team, such as `LEADER → IMPLEMENT Fix
+  "Header path of child session `sid` from its cached team, such as `LEADER → IMPLEMENT | Fix
    parser`: `{:text :parent-id}`, or nil when the TUI does not know the parent."
   [sid]
   (let [pairs
@@ -1317,7 +1317,7 @@
         name-of
         (fn [[n agent]]
           (str (some-> (role-word agent)
-                       (str " "))
+                       (str " | "))
                (agent-label n agent)))]
 
     (when-let [pair (some #(when (= (str sid) (get (second %) "session_id")) %) pairs)]

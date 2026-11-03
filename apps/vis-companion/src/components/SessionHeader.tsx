@@ -102,11 +102,17 @@ export type SessionHeaderCommands = Readonly<{
   openParent?: (sid: string) => void;
 }>;
 
+/** One step of the path: the role word, then `|` and the name, like `IMPLEMENT | Fix parser`. */
 function PathStep({ step }: { step: AgentStep }) {
   return (
     <>
       {step.role && <span className={`uppercase ${step.role.ink}`}>{step.role.text}</span>}
-      {step.role && step.label && ' '}
+      {step.role && step.label && (
+        <>
+          {' '}
+          <span className="text-dialog-hint">|</span>{' '}
+        </>
+      )}
       {step.label}
     </>
   );
