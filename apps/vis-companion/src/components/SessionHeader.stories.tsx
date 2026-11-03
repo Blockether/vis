@@ -80,7 +80,7 @@ export const Subagent: Story = {
       ...meta.args.model,
       agentPath: {
         parentId: 'leader',
-        parent: { label: 'Leader' },
+        parent: { role: { text: 'leader', ink: 'text-role-leader' } },
         self: { role: { text: 'implement', ink: 'text-role-implement' }, label: 'Instant agent team state' },
       },
     },

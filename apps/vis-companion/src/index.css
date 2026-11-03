@@ -286,6 +286,8 @@
   --color-cancelled: var(--cancelled-bg);
   --color-cancelled-foreground: var(--cancelled-fg);
   /* The roles of agents.json. Each role reads in its own ink in the team table. */
+  /* The leader is the Vis agent of the main session, so it wears the ink of Vis in the transcript. */
+  --color-role-leader: var(--ai-role-fg);
   --color-role-research: var(--code-syntax-number);
   --color-role-implement: var(--code-syntax-string);
   --color-role-verify: var(--code-syntax-keyword);

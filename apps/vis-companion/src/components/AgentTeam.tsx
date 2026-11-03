@@ -360,7 +360,9 @@ export function leaderParts(leader: LeaderLane, now: number): { start: number; e
 /** The key of an agent on the chart: `A1`, `A2`, by spawn order. The leader is `L`. */
 export const agentKey = (index: number) => `A${index + 1}`;
 const LEADER_KEY = 'L';
-const LEADER_ROLE = 'leader';
+/** The role word of the leader and its ink, in the team chart and the header path. */
+export const LEADER_ROLE = 'leader';
+export const LEADER_INK = 'text-role-leader';
 const LEADER_WAIT_WIDTH = 'waited 59m 59s of 59m 59s'.length;
 
 // The bar ink of each status word.
@@ -568,7 +570,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
         <ul aria-label="Timeline">
           {leader && (
             <li className={`py-1 ${CHART_ROW}`} data-leader-lane>
-              <span className="font-bold text-white">{LEADER_KEY}<span className="sr-only"> {LEADER_ROLE}</span></span>
+              <span className={`font-bold ${LEADER_INK}`}>{LEADER_KEY}<span className="sr-only"> {LEADER_ROLE}</span></span>
               <span aria-hidden className="relative h-2 self-center">
                 {parts.map((part) => (
                   <LanePart key={part.start} bar={{ start: share(part.start), end: share(part.end), isWaiting: part.isWaiting }} ink="bg-white" />
@@ -614,8 +616,8 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
       <ul aria-label="Legend" className="mt-1 border-t border-dialog-edge/50 pt-1.5">
         {leader && (
           <li className={LEGEND_ROW}>
-            <span className="font-bold text-white">{LEADER_KEY}</span>
-            <span className="font-bold uppercase text-white">{LEADER_ROLE}</span>
+            <span className={`font-bold ${LEADER_INK}`}>{LEADER_KEY}</span>
+            <span className={`font-bold uppercase ${LEADER_INK}`}>{LEADER_ROLE}</span>
             <span className="whitespace-nowrap text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
             <HoverNote className="min-w-0" note={leader.note}>
               <span className="block truncate text-dialog-hint">{leader.note ?? ''}</span>

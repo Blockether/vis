@@ -911,8 +911,8 @@
   child-breadcrumb-test
   (it "names the path from the leader to the child session"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
-        (expect (= {:parent-id "leader" :text "Leader → RESEARCH #1"} (team/breadcrumb "c1")))
+        (expect (= {:parent-id "leader" :text "LEADER → RESEARCH #1"} (team/breadcrumb "c1")))
         (with-redefs [team/summary (constantly {:agents
                                                 (assoc-in waiting-team [1 "title"] "Fix parser")})]
-          (expect (= "Leader → IMPLEMENT Fix parser" (:text (team/breadcrumb "c2")))))
+          (expect (= "LEADER → IMPLEMENT Fix parser" (:text (team/breadcrumb "c2")))))
         (expect (nil? (team/breadcrumb "unknown"))))))

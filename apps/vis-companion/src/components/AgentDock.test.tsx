@@ -51,11 +51,11 @@ describe('agentPath', () => {
 
   it('keeps the way back before the team rows arrive', () => {
     expect(agentPath('a2', lead, [], 'Fix the bug')).toEqual({
-      parentId: 'lead', parent: { label: 'Leader' }, self: { label: 'Fix the bug' } });
+      parentId: 'lead', parent: { role: { text: 'leader', ink: 'text-role-leader' } }, self: { label: 'Fix the bug' } });
   });
 
   it('names a child of the leader with its role and its #N', () => {
-    expect(agentPath('a2', lead, [base, asking], 'title')).toEqual({ parentId: 'lead', parent: { label: 'Leader' },
+    expect(agentPath('a2', lead, [base, asking], 'title')).toEqual({ parentId: 'lead', parent: { role: { text: 'leader', ink: 'text-role-leader' } },
       self: { role: { text: 'implement', ink: 'text-role-implement' }, label: '#2' } });
   });
 

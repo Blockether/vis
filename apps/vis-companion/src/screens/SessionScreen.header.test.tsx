@@ -137,21 +137,25 @@ describe('a subagent session', () => {
       session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
       client: { agents: () => Promise.resolve([]) },
     });
-    expect(await screen.findByRole('heading', { name: 'Leader → Fix the parser' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'leader → Fix the parser' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Message Vis' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^(Send|Queue) message$/ })).toBeNull();
   });
 
   // User request: the back chevron of a subagent session leads to its parent, one mark beside
-  // both header lines, not a second chevron next to the way back to the list.
-  it('goes back to its parent from the phone back button', async () => {
+  // both header lines, not a second chevron next to the way back to the list. The mark is the
+  // pointer twin of the path, so the test taps it as a thumb does.
+  it('goes back to its parent from the phone back chevron', async () => {
     const opened: string[] = [];
     renderSessionScreen({
       session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
       client: { agents: () => Promise.resolve([]) },
       onOpenSession: (sid) => void opened.push(sid),
     });
-    fireEvent.click(await screen.findByRole('button', { name: 'Back to the parent session' }));
+    await screen.findByRole('heading', { name: 'leader → Fix the parser' });
+    const marks = document.querySelectorAll('header > button[data-parent-link]');
+    expect(marks).toHaveLength(1);
+    fireEvent.click(marks[0]);
     expect(opened).toEqual(['lead']);
     expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
   });

@@ -50,12 +50,34 @@ function GoalTime({ goal }: { goal: SessionGoal }) {
  *
  * On a phone a session stands ON its list, so it leaves by the leading half of its own
  * title band: the band's edge column carrying one chevron. A subagent session goes back to
- * its parent, and its larger chevron stands beside both lines of the title.
+ * its parent instead, by `ParentMark`, the same on a phone and a desk.
  */
-function BackButton({ label, onClick, isLarge = false }: { label: string; onClick: () => void; isLarge?: boolean }) {
+function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button type="button" aria-label={label} className={BAND_EDGE_CLASS} onClick={onClick}>
-      <ChevronIcon back className={isLarge ? 'size-6' : 'size-4'} aria-hidden />
+      <ChevronIcon back className="size-4" aria-hidden />
+    </button>
+  );
+}
+
+/**
+ * The way to the parent of a subagent session: one large chevron beside both lines of the title.
+ * The path in the title is the same control for keys and screen readers, so this mark is for the
+ * pointer only. The mark and the path are one link to the eye: a hover on either one underlines
+ * the path. Its right padding is the gap to the title, so a thumb gets the gap too.
+ */
+function ParentMark({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      aria-hidden
+      title="Open the parent session"
+      data-parent-link
+      className="flex shrink-0 items-center self-stretch pl-[calc(0.75rem+env(safe-area-inset-left))] pr-2 text-white"
+      onClick={onClick}
+    >
+      <ChevronIcon back className="size-6" />
     </button>
   );
 }
@@ -84,7 +106,7 @@ function PathStep({ step }: { step: AgentStep }) {
   return (
     <>
       {step.role && <span className={`uppercase ${step.role.ink}`}>{step.role.text}</span>}
-      {step.role && ' '}
+      {step.role && step.label && ' '}
       {step.label}
     </>
   );
@@ -173,8 +195,6 @@ export function SessionHeader({
   const path = model.agentPath;
   const openParent = commands.openParent;
   const backToParent = path && openParent ? () => openParent(path.parentId) : undefined;
-  /** On a desk the edge column holds the list toggle, so the way to the parent takes its own column. */
-  const parentColumn = isDesk && backToParent;
   return (
     /* On iPhone the entire session row sits below the island, with the header
        background extending behind it. iPad has no island; browsers keep their
@@ -182,30 +202,12 @@ export function SessionHeader({
     <header
       className={`group/parent z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : 'mouse:pt-0'}`}
     >
-      {!isDesk &&
-        (backToParent ? (
-          <BackButton label="Back to the parent session" onClick={backToParent} isLarge />
-        ) : (
-          <BackButton label="Back to sessions" onClick={commands.back} />
-        ))}
+      {/* A subagent session has one way back, to its parent, so a phone shows no way to the list.
+          On a desk the edge column holds the list toggle, and the parent mark follows it. */}
+      {!isDesk && !backToParent && <BackButton label="Back to sessions" onClick={commands.back} />}
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
-      {/* The way to the parent stands as one mark beside both lines. The path below is the
-          same control for keys and screen readers, so this mark is for the pointer only. The mark
-          and the path are one link to the eye: a hover on either one underlines the path. */}
-      {parentColumn && (
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-hidden
-          title="Open the parent session"
-          data-parent-link
-          className="flex shrink-0 items-center self-stretch pl-3 text-white"
-          onClick={backToParent}
-        >
-          <ChevronIcon back className="size-6" />
-        </button>
-      )}
-      <div className={`min-w-0 flex-1 self-center ${parentColumn ? 'pl-2' : 'pl-4'} pr-4 py-1.5 mouse:py-1`}>
+      {backToParent && <ParentMark onClick={backToParent} />}
+      <div className={`min-w-0 flex-1 self-center ${backToParent ? '' : 'pl-4'} pr-4 py-1.5 mouse:py-1`}>
         {/* The title is the sentence the screen is about. It stays one step above
             the connection line by size and weight — all in the app's one mono face. */}
         <h1 className="truncate text-title font-semibold text-white mouse:text-body">
