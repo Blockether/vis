@@ -663,6 +663,10 @@ ol.markdown-list > li::before {
   container-type: inline-size;
   background: var(--diff-paper);
 }
+/* A small gap of panel paper separates two files. */
+.diff-file + .diff-file {
+  margin-top: 6px;
+}
 .diff-file-scroll {
   contain: paint;
   max-width: 100%;
@@ -759,6 +763,11 @@ ol.markdown-list > li::before {
 }
 .diff-empty {
   background: var(--color-diff-filler);
+}
+/* Unwrapped code can be wider than the file. Its hunk grows with it, so a sticky band has room. */
+.app-diff[data-wrap='false'] .diff-hunk-block {
+  width: max-content;
+  min-width: 100%;
 }
 .app-diff[data-wrap='true'] .diff-table {
   table-layout: fixed;
@@ -1070,10 +1079,13 @@ ol.markdown-list > li::before {
   font-size: 11px;
   line-height: 11px;
 }
+/* A context band spans the full width of its file, like a code row. */
 .diff-context {
+  position: sticky;
+  left: 0;
   display: flex;
+  width: 100cqw;
   height: 24px;
-  padding: 0 8px;
   background: var(--diff-paper);
 }
 .diff-context-marker {
@@ -1081,7 +1093,6 @@ ol.markdown-list > li::before {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 6px 0 0 6px;
   background: var(--color-diff-hunk);
   color: var(--dialog-hint);
 }
@@ -1092,7 +1103,6 @@ ol.markdown-list > li::before {
   align-items: center;
   height: 24px;
   padding: 0 6.93px;
-  border-radius: 0 6px 6px 0;
   font-size: 11px;
   line-height: 20px;
   color: var(--color-diff-gutter);

@@ -580,7 +580,7 @@ function HunkView(model: HunkProps) {
       </>
     );
   return (
-    <div className="min-w-0">
+    <div className="diff-hunk-block min-w-0">
       <HunkSeparator hunks={model.file.hunks} at={model.at} />
       <table className="diff-table" data-diff-lines>
         <tbody>
