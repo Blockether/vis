@@ -673,8 +673,8 @@ ol.markdown-list > li::before {
   border-collapse: collapse;
   width: 100%;
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
 }
 .diff-table td {
   padding-top: 0;
@@ -708,7 +708,7 @@ ol.markdown-list > li::before {
   justify-content: flex-end;
   width: 100%;
   padding: 0 7.83px 0 15.65px;
-  line-height: 20px;
+  line-height: var(--text-body--line-height);
   text-align: right;
 }
 .diff-gutter[data-kind='add'],
@@ -737,7 +737,7 @@ ol.markdown-list > li::before {
   color: var(--fg);
   background-image: linear-gradient(var(--diff-word-tint), var(--diff-word-tint));
   background-position: center;
-  background-size: 100% 15px;
+  background-size: 100% 14px;
   background-repeat: no-repeat;
 }
 /* A closed step row is a 44px touch target (28px with a mouse) around one 16px line. Above a
@@ -779,8 +779,8 @@ ol.markdown-list > li::before {
   box-sizing: border-box;
   background: var(--diff-paper);
   font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
 }
 .diff-toolbar {
   display: flex;
@@ -869,8 +869,8 @@ ol.markdown-list > li::before {
   background: var(--surface);
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
 }
 .diff-menu-item {
   display: flex;
@@ -988,14 +988,14 @@ ol.markdown-list > li::before {
 .diff-threads p,
 .diff-threads textarea {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
 }
 
-/* A code row is 20px high; touch controls keep the app's 44px floor. A selected line takes
-   the amber pair of the theme. */
+/* A code row is one body line high; touch controls keep the app's 44px floor. A selected
+   line takes the amber pair of the theme. */
 .diff-table td {
-  height: 20px;
+  height: var(--text-body--line-height);
 }
 .diff-table tr[data-selected-line] > td {
   background-color: var(--color-accent-surface);
@@ -1009,8 +1009,8 @@ ol.markdown-list > li::before {
   right: -10px;
   top: 0;
   z-index: 5;
-  width: 20px;
-  height: 20px;
+  width: var(--text-body--line-height);
+  height: var(--text-body--line-height);
   display: grid;
   place-items: center;
   border-radius: 4px;
@@ -1162,8 +1162,8 @@ ol.markdown-list > li::before {
   opacity: 0.7;
 }
 .diff-draft textarea {
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
   border-radius: 8px;
 }
 .diff-submit-hint {
@@ -1208,8 +1208,8 @@ ol.markdown-list > li::before {
   padding: 8px 12px;
 }
 .diff-threads p {
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
 }
 .diff-toolbar {
   overflow-x: auto;
