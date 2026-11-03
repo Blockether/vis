@@ -321,13 +321,14 @@
         center-w
         (max 0 (min center-w (- center-limit center-x)))
 
-        ;; A subagent session shows its path from the leader instead of its title.
+        ;; A subagent session shows its path from the leader instead of its title. The `<`
+        ;; marks the path as the way back to the parent session.
         crumb
         (when (get-in db [:session :agent :parent-id])
           (agent-team/breadcrumb (get-in db [:session :id])))
 
         title-text
-        (ellipsize (or (:text crumb) (title-or-placeholder db)) center-w)
+        (ellipsize (if crumb (str "< " (:text crumb)) (title-or-placeholder db)) center-w)
 
         title-width
         (p/display-width title-text)
