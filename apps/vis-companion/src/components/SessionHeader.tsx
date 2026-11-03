@@ -180,7 +180,7 @@ export function SessionHeader({
        background extending behind it. iPad has no island; browsers keep their
        visible status-bar inset. */
     <header
-      className={`z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : 'mouse:pt-0'}`}
+      className={`group/parent z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : 'mouse:pt-0'}`}
     >
       {!isDesk &&
         (backToParent ? (
@@ -190,14 +190,16 @@ export function SessionHeader({
         ))}
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
       {/* The way to the parent stands as one mark beside both lines. The path below is the
-          same control for keys and screen readers, so this mark is for the pointer only. */}
+          same control for keys and screen readers, so this mark is for the pointer only. The mark
+          and the path are one link to the eye: a hover on either one lights both. */}
       {parentColumn && (
         <button
           type="button"
           tabIndex={-1}
           aria-hidden
           title="Open the parent session"
-          className="flex shrink-0 items-center self-stretch pl-3 text-white hover:text-accent"
+          data-parent-link
+          className="flex shrink-0 items-center self-stretch pl-3 text-white group-has-[[data-parent-link]:hover]/parent:text-accent-ink"
           onClick={backToParent}
         >
           <ChevronIcon back className="size-6" />
@@ -213,8 +215,9 @@ export function SessionHeader({
             <button
               type="button"
               title="Open the parent session"
-              className="block max-w-full truncate rounded-none text-left hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              onClick={() => openParent(path.parentId)}
+              data-parent-link
+              className="block max-w-full truncate rounded-none text-left group-has-[[data-parent-link]:hover]/parent:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onClick={backToParent}
             >
               <PathStep step={path.parent} />
               {' → '}
