@@ -3,14 +3,17 @@
   "The toast card in the top-left corner of the session view.
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
-   toasts of extensions. One card shows at a time. The whole card, border and
-   text, stands on the screen paper, so no strip of other color shows between
-   the text and the border. The border has the level color. The top border
-   holds the bold title with its source, and the close mark `✕` in the top-right
-   corner. The bottom border is the countdown: the bright part is the time left,
-   and the muted part the time used. When more notices wait, the page counter
-   `← 1/3 →` is in the bottom-right corner. The body holds up to
-   `max-text-lines` lines of wrapped text.
+   toasts of extensions. One card shows at a time, like the Companion card. The
+   tinted body fills the card up to its border. The border is drawn with
+   one-eighth blocks on the cell edges, so no strip of paper shows between the
+   body and the border.
+
+   The first row holds the bold title with its source, and the close mark `✕`
+   in the top-right corner. A card without a title keeps the `✕` on its first
+   text line. The body holds up to `max-text-lines` lines of wrapped text. When
+   more notices wait, the page counter `← 1/3 →` is in the bottom-right corner.
+   The bottom border is the countdown: the level color is the time left, and the
+   muted part the time used.
 
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
@@ -30,6 +33,10 @@
   "Columns of a body row that hold no text: two borders and two spaces."
   4)
 
+(def ^:const ^:private close-cols
+  "Columns that the close mark takes on a text row: a space and `✕`."
+  2)
+
 (defn- text-lines
   "`text` wrapped to `width` columns, at most `limit` lines. A cut ends with `…`."
   [text width limit]
@@ -44,7 +51,7 @@
       lines)))
 
 (defn- heading
-  "The top-border text of a card: its title and its source, or nil."
+  "The first-row text of a card: its title and its source, or nil."
   [{:keys [title source]}]
   (cond (and title source) (str title " · " source)
         :else (or title source)))
@@ -63,33 +70,35 @@
   (let [max-cols
         (min (long max-card-cols) (long cols))
 
+        pages
+        (when entry (pager index total))
+
+        head
+        (when entry
+          (some-> (heading entry)
+                  (p/ellipsize (- max-cols (long side-cols) (long close-cols)))
+                  not-empty))
+
+        ;; Two border rows, the heading row and the page counter row.
         line-room
-        (- (long rows) 2)]
+        (- (long rows) 2 (if head 1 0) (if pages 1 0))]
 
     (when (and entry (>= max-cols (long min-card-cols)) (pos? line-room))
-      (let [pages
-            (pager index total)
-
-            ;; "╰" countdown " " pager " ─╯", with at least one countdown column.
-            bottom-cols
-            (if pages (+ 6 (long (p/display-width pages))) 0)
-
-            ;; "╭─ " heading " " fill " ✕ ─╮"
-            head
-            (some-> (heading entry)
-                    (p/ellipsize (- max-cols 10))
-                    not-empty)
+      (let [;; Without a heading, the close mark stands at the end of the text rows.
+            text-side
+            (+ (long side-cols) (if head 0 (long close-cols)))
 
             lines
-            (text-lines (:text entry)
-                        (- max-cols (long side-cols))
-                        (min (long max-text-lines) line-room))
+            (text-lines (:text entry) (- max-cols text-side) (min (long max-text-lines) line-room))
 
-            top-cols
-            (if head (+ 10 (long (p/display-width head))) 8)
+            head-cols
+            (if head (+ (long side-cols) (long close-cols) (long (p/display-width head))) 0)
+
+            pager-cols
+            (if pages (+ (long side-cols) (long (p/display-width pages))) 0)
 
             text-cols
-            (+ (long side-cols) (long (reduce max 0 (map p/display-width lines))))
+            (+ text-side (long (reduce max 0 (map p/display-width lines))))
 
             ttl
             (:ttl-ms entry)]
@@ -104,8 +113,8 @@
                      (min 1.0 (/ (double remaining-ms) (double ttl))))
          :col (long left)
          :row (long top)
-         :width (min max-cols (max (long min-card-cols) top-cols bottom-cols text-cols))
-         :height (+ 2 (count lines))}))))
+         :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
+         :height (+ 2 (if head 1 0) (count lines) (if pages 1 0))}))))
 
 (defn- level-fg
   "The border color of a card."
@@ -121,6 +130,12 @@
     t/status-bad
 
     t/link-chrome-fg))
+
+(defn- card-bg
+  "The paper of a card: the screen paper moved toward the ink, so a card stands
+   out from the transcript under it on a light and on a dark theme."
+  []
+  (t/mix-color t/dialog-bg t/text-fg 0.09))
 
 (defn- rule [^long n ^String ch] (apply str (repeat (max 0 n) ch)))
 
@@ -144,69 +159,65 @@
           inner (- width 2)
           bottom (+ row height -1)
           right (+ col width -1)
-          close-col (- right 3)
+          first-row (inc row)
+          text-row (if heading (inc first-row) first-row)
           pager-cols (long (if pager (p/display-width pager) 0))
-          ;; "╰" countdown " " pager " ─╯"
-          pager-col (- right 2 pager-cols)
-          bar-cols (if pager (- pager-col col 2) inner)
+          pager-row (dec bottom)
+          ;; The counter ends one space before the right border.
+          pager-col (- right 1 pager-cols)
+          ;; The border stands on the screen paper; the body is tinted up to it.
           paper t/dialog-bg
-          ink (t/legible-ink (level-fg level) paper)
-          muted (t/legible-ink t/footer-fg-muted paper)]
+          bg (card-bg)
+          edge (t/legible-ink (level-fg level) paper)
+          ink (t/legible-ink (level-fg level) bg)
+          muted (t/legible-ink t/footer-fg-muted bg)]
 
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-fg paper)
       (p/fill-rect! g col row width height)
-      ;; Border.
-      (p/set-colors! g ink paper)
-      (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
-      (doseq [r (range (inc row) bottom)]
-        (p/put-str! g col (long r) "│")
-        (p/put-str! g right (long r) "│"))
-      ;; Countdown: the bright part is the time left.
-      (p/put-str! g col bottom "╰")
-      (p/put-str! g right bottom "╯")
-      (p/put-str! g (inc col) bottom (rule inner "─"))
+      (p/set-colors! g t/dialog-fg bg)
+      (p/fill-rect! g (inc col) first-row inner (- height 2))
+      ;; Border: each one-eighth block lies on the cell edge next to the body.
+      (p/set-colors! g edge paper)
+      (p/put-str! g (inc col) row (rule inner "▁"))
+      (doseq [r (range first-row bottom)]
+        (p/put-str! g col (long r) "▕")
+        (p/put-str! g right (long r) "▏"))
+      ;; Countdown: the level color is the time left.
+      (p/put-str! g (inc col) bottom (rule inner "▔"))
       (when fraction
-        (let [left-cols (long (Math/ceil (* (double fraction) bar-cols)))]
-          (p/set-colors! g muted paper)
-          (p/put-str! g (+ col 1 left-cols) bottom (rule (- bar-cols left-cols) "─"))))
-      ;; Page counter in the bottom-right corner.
-      (when pager
-        (p/set-colors! g muted paper)
-        (p/put-str! g (dec pager-col) bottom (str " " pager " ")))
-      ;; Heading on the top border.
+        (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
+          (p/set-colors! g (t/legible-ink t/footer-fg-muted paper) paper)
+          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "▔"))))
+      ;; Heading.
       (when heading
-        (p/set-colors! g muted paper)
-        (p/put-str! g (+ col 2) row (str " " heading " "))
+        (p/set-colors! g muted bg)
+        (p/put-str! g (+ col 2) first-row heading)
         (when title
-          (p/set-colors! g t/dialog-fg paper)
+          (p/set-colors! g t/dialog-fg bg)
           (p/enable! g p/BOLD)
-          (p/put-str! g (+ col 3) row (subs heading 0 (min (count heading) (count title))))
+          (p/put-str! g (+ col 2) first-row (subs heading 0 (min (count heading) (count title))))
           (p/clear-styles! g)))
       ;; Close mark in the top-right corner.
-      (p/set-colors! g ink paper)
-      (p/put-str! g (dec close-col) row " ")
+      (p/set-colors! g ink bg)
       (p/enable! g p/BOLD)
-      (p/put-str! g close-col row "✕")
+      (p/put-str! g (- right 2) first-row "✕")
       (p/clear-styles! g)
-      (p/set-colors! g ink paper)
-      (p/put-str! g (inc close-col) row " ")
       ;; Text.
-      (p/set-colors! g t/dialog-fg paper)
+      (p/set-colors! g t/dialog-fg bg)
       (doseq [[i line] (map-indexed vector lines)]
-        (p/put-str! g (+ col 2) (+ row 1 (long i)) line))
+        (p/put-str! g (+ col 2) (+ text-row (long i)) line))
+      ;; Page counter in the bottom-right corner.
+      (when pager (p/set-colors! g muted bg) (p/put-str! g pager-col pager-row pager))
       (p/clear-styles! g)
       (when register?
-        (doseq [r (range row bottom)]
-          (region! (long r) col width :toast-dismiss id))
-        (if pager
-          (let [next-col (+ pager-col 2)]
-            (region! bottom col (- pager-col col) :toast-dismiss id)
-            (region! bottom pager-col 2 :toast-prev id)
-            (region! bottom next-col (- (+ pager-col pager-cols) next-col) :toast-next id)
-            (region! bottom
-                     (+ pager-col pager-cols)
-                     (- (inc right) pager-col pager-cols)
-                     :toast-dismiss
-                     id))
-          (region! bottom col width :toast-dismiss id))))))
+        (doseq [r (range row (inc bottom))]
+          (if (and pager (= pager-row (long r)))
+            (let [next-col (+ pager-col 2)
+                  end (+ pager-col pager-cols)]
+
+              (region! pager-row col (- pager-col col) :toast-dismiss id)
+              (region! pager-row pager-col 2 :toast-prev id)
+              (region! pager-row next-col (- end next-col) :toast-next id)
+              (region! pager-row end (- (inc right) end) :toast-dismiss id))
+            (region! (long r) col width :toast-dismiss id)))))))

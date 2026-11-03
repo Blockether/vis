@@ -18,27 +18,34 @@
   (describe "fit"
             ;; A card wider than the transcript, or below its last row, paints over the
             ;; scrollbar, the composer or the next terminal line.
-            (it "keeps the card, its heading and its page counter inside the area, at any width"
+            (it "keeps the card, its heading, its close mark and its page counter inside the area"
                 (doseq [cols
                         [28 30 56 80 200]
 
                         rows
-                        [3 8 30]
+                        [5 8 30]
 
                         total
-                        [1 12]]
+                        [1 12]
 
-                  (let [{:keys [col row width height lines heading pager]}
+                        titled?
+                        [true false]]
+
+                  (let [{:keys [col row width height lines heading pager] :as card}
                         (toasts/layout
-                          (page long-text :title "Release" :source "forge" :index 10 :total total)
+                          (if titled?
+                            (page long-text :title "Release" :source "forge" :index 10 :total total)
+                            (page long-text :index 10 :total total))
                           {:left 2 :top 3 :cols cols :rows rows})]
+                    (expect (some? card))
                     (expect (<= (+ col width) (+ 2 cols)))
                     (expect (<= (+ row height) (+ 3 rows)))
-                    (expect (every? #(<= (p/display-width %) (- width 4)) lines))
-                    ;; "╭─ " heading " " fill " ✕ ─╮"
-                    (expect (<= (+ 10 (p/display-width (or heading ""))) width))
-                    ;; "╰" countdown " " pager " ─╯"
-                    (expect (<= (+ 6 (p/display-width (or pager ""))) width)))))
+                    ;; Without a heading, "✕" ends the first text row: "▕ " text " ✕ ▏".
+                    (expect (every? #(<= (p/display-width %) (- width (if heading 4 6))) lines))
+                    ;; "▕ " heading " ✕ ▏"
+                    (expect (<= (+ 6 (p/display-width (or heading ""))) width))
+                    ;; "▕ " pager " ▏"
+                    (expect (<= (+ 4 (p/display-width (or pager ""))) width)))))
             (it "shows no card in an area narrower than the smallest card"
                 (expect (nil? (toasts/layout (page "Copied") {:left 0 :top 0 :cols 27 :rows 20})))))
   (describe "pager"
