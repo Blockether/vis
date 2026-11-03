@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- CLI: `vis-agent sessions export <ID> --snapshot PATH` writes a `.vissnap` snapshot, and `vis-agent sessions import PATH` restores it as a new session. Use them to continue a session on another computer. The import uses the current folder as the project folder. `--root`, `--group` and `--key` change this.
+
 ### Changed
 - Provider: conversations on the direct Anthropic API use Message Threads by default. Vis sends only the new messages while a thread is available. Set `extra_body.thread` to `null` to disable threads, for example for zero data retention. Svar is pinned at 0.7.221.
 - Provider: Vis no longer offers GLM-5.2, which Z.AI deprecated on the Coding Plan. The Alibaba preset, the CLI examples and the guide use `glm-5.3`. A `vis.yml` that names `glm-5.2` still works where the provider serves it. Limits from a live model list apply only to the same exact model id. Svar is pinned at 0.7.223.

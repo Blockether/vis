@@ -2,7 +2,7 @@
 
 Vis saves each conversation as a session, so you can close it and continue later.
 This page shows how to control a session while Vis works, and how to find, fork,
-organize and export saved sessions. It covers the terminal, the desktop and phone
+organize, export and move saved sessions. It covers the terminal, the desktop and phone
 apps and the command line.
 
 ## When to use
@@ -30,6 +30,8 @@ apps and the command line.
   [archive](#rename-star-archive-or-delete-a-session) the ones you have finished.
 - **You want to share a conversation or keep a readable transcript.** [Export the
   session](#export-a-session) as an HTML page, or as Markdown with every tool call.
+- **You want to continue a conversation on another computer.** [Move the
+  session](#move-a-session-to-another-computer) with a snapshot file.
 - **A bug report needs the conversation that shows the problem.** Export it, then
   remove private details as described in [Reporting a
   bug](reporting-bugs.md#sharing-a-transcript).
@@ -333,7 +335,7 @@ Export a saved session to share a conversation, review its tool calls or keep a
 readable transcript. Use a session id from `vis-agent sessions list`:
 
 ```bash
-vis-agent sessions export <SESSION-ID> [--md | --html PATH]
+vis-agent sessions export <SESSION-ID> [--md | --html PATH | --snapshot PATH]
 ```
 
 Vis does not remove private data from an export. Read an export before you share
@@ -356,6 +358,49 @@ missing directories and adds `.html` if the output path has no extension:
 ```bash
 vis-agent sessions export 3a7b2c1d --html report.html
 ```
+
+## Move a session to another computer
+
+A snapshot is one `.vissnap` file with a session, its subagent sessions and their Council
+messages. When you import it, you get a new session that you can continue. Use it to move
+work to another computer or to keep a full backup.
+
+1. On the first computer, write the snapshot. Vis adds `.vissnap` if the path has no
+   extension:
+
+   ```bash
+   vis-agent sessions export 3a7b2c1d --snapshot work.vissnap
+   ```
+
+2. Copy `work.vissnap` to the other computer.
+3. On the other computer, go to the project folder and import the file:
+
+   ```bash
+   cd ~/code/shop
+   vis-agent sessions import work.vissnap
+   ```
+
+4. Continue the session with the id that the import prints:
+
+   ```bash
+   vis-agent tui --session-id <NEW-SESSION-ID>
+   ```
+
+The restored session uses the folder where you run the import. Use these options to change
+that:
+
+| Option | Effect |
+|---|---|
+| `--root DIR` | Use `DIR` as the project folder. |
+| `--group ID` | Put the session in this session group. Without `--root`, use the project folder of the group. |
+| `--key KEY` | Import only once. A second import with the same key prints the first session and creates nothing. |
+
+The permissions on the new computer come from its own policy, not from the snapshot. The
+**Session snapshot limit** setting sets the largest snapshot. The default is 1 GiB. A program
+can do the same steps with the [Sessions API](sessions-api.md#save-and-restore-a-session-snapshot).
+
+A snapshot holds the full conversation, also tool output and attached files. Vis does not
+remove private data from it. Share it only with people who may read the whole session.
 
 ## See also
 

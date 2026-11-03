@@ -1,14 +1,17 @@
 (ns com.blockether.vis.internal.gateway.session-snapshot-test
   "Session snapshots (#405): export a session tree to `.vissnap` bytes and restore it."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.test-temp :as test-temp]
+            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.session.snapshot :as snapshot]
             [lazytest.core :refer [defdescribe describe expect it]]
             [next.jdbc :as jdbc]
-            [next.jdbc.result-set :as rs]))
+            [next.jdbc.result-set :as rs]
+            [reitit.ring :as reitit]))
 
 (defn- temp-dir [prefix] (.getCanonicalPath (test-temp/temp-dir prefix)))
 
@@ -549,3 +552,89 @@
                            (rows store
                                  ["SELECT title FROM session_state WHERE session_soul_id = ?"
                                   new-id]))))))))))
+
+;; `vis-agent sessions export --snapshot` and `sessions import` call the gateway over HTTP.
+;; These run the command-line half against the real router, so a wrong route, query name
+;; or body encoding fails here.
+
+(defn- cli-fn
+  [sym]
+  @(requiring-resolve (symbol "com.blockether.vis.internal.session.cli" (name sym))))
+
+(defn- through-router
+  "Call `f` with `gateway-client/request!` answered by the real gateway router."
+  [f]
+  (let [server
+        (fn [sym]
+          (requiring-resolve (symbol "com.blockether.vis.internal.gateway.server" (name sym))))
+
+        app
+        ((server 'wrap-scoped-params) (reitit/ring-handler ((server 'router) nil [])) [])]
+
+    (with-redefs [gateway-client/request!
+                  (fn [method path {:keys [body]}]
+                    (let [[uri query] (str/split path #"\?" 2)]
+                      (app {:request-method method
+                            :uri uri
+                            :query-string query
+                            :body (when (bytes? body) (java.io.ByteArrayInputStream. body))})))]
+      (f))))
+
+(defdescribe
+  session-snapshot-command-line-test
+  (it
+    "moves a session to another store through export --snapshot and import"
+    (let [here
+          (ps/db-open! :memory)
+
+          there
+          (ps/db-open! :memory)
+
+          file
+          (io/file (temp-dir "vis-snapshot-cli") "nested" "work.vissnap")
+
+          project
+          (temp-dir "vis-snapshot project & co")]
+
+      (try (through-router
+             (fn []
+               (let [sid (session! here "Trunk talk")]
+                 (turn! here sid "first ask" :success)
+                 (on here
+                     #(expect (= 1
+                                 (get-in ((cli-fn 'export-snapshot!) sid (.getPath file))
+                                         ["counts" "turns"]))))
+                 (on there
+                     (fn []
+                       (let [opts {:root project :key "move-1"}
+                             restored ((cli-fn 'import-snapshot!) (.getPath file) opts "/elsewhere")
+                             new-id (get restored "id")]
+
+                         (expect (= ["first ask"]
+                                    (mapv :user-request (ps/db-list-session-turns there new-id))))
+                         (expect (= project (get-in restored ["workspace" "root"])))
+                         (expect (= new-id
+                                    (get
+                                      ((cli-fn 'import-snapshot!) (.getPath file) opts "/elsewhere")
+                                      "id")))))))))
+           (finally (ps/db-close! here) (ps/db-close! there)))))
+  (it "stops with the gateway message for a file that is not a snapshot"
+      (with-store (fn [_store]
+                    (let [file (io/file (temp-dir "vis-snapshot-cli") "bad.vissnap")]
+                      (spit file "not a snapshot")
+                      (through-router
+                        #(let [e
+                               (try ((cli-fn 'import-snapshot!) (.getPath file) {} "/elsewhere")
+                                    nil
+                                    (catch clojure.lang.ExceptionInfo e e))] (expect
+                                                                               (:vis/user-error
+                                                                                 (ex-data e)))
+                           (expect (re-find #"(?i)snapshot" (ex-message e)))))))))
+  (it "restores into the folder of the command unless a group or a root names one"
+      ;; Without this default, `sessions import` on another computer restored into the
+      ;; gateway folder, not the project that the person was in.
+      (let [query (cli-fn 'import-query)]
+        (expect (= "?root=%2Fhome%2Fana%2Fshop" (query {} "/home/ana/shop")))
+        (expect (= "?group_id=g1" (query {:group "g1"} "/home/ana/shop")))
+        (expect (= "?root=%2Ftmp%2Fmy+shop+%26+co&key=k%3D1"
+                   (query {:root "/tmp/my shop & co" :key "k=1"} "/home/ana/shop"))))))
