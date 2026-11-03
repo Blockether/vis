@@ -332,6 +332,26 @@
                                          :env-values {"NODE_OPTIONS" "--max-old-space-size=2048"}})]
         (expect (= "--max-old-space-size=2048" (get env "NODE_OPTIONS"))))))
 
+(defdescribe npx-never-waits-at-the-install-prompt
+             ;; Regression for a user report (2026-11-03): `npx eslint` in a project without
+             ;; ESLint asked "Ok to proceed?" in the PTY. No one answered, so a turn waited
+             ;; 40 minutes and npm processes stayed for hours.
+             (it "tells npm to refuse an install prompt, in confined and unconfined children"
+                 (doseq [policy [{:disabled? true} {:roots-fn (constantly []) :net-enabled? false}]]
+                   (expect (= "false" (get (pj/process-environment policy) "npm_config_yes"))
+                           (pr-str policy))))
+             (it "keeps the value that the project declares"
+                 (let [env (pj/process-environment {:disabled? true
+                                                    :env-values {"npm_config_yes" "true"}})]
+                   (expect (= "true" (get env "npm_config_yes")))))
+             (it "keeps the operator's own setting in any case of the name"
+                 (let [drop-ambient @#'pj/ambient-env]
+                   (with-redefs [pj/ambient-env (fn ([] (drop-ambient {"NPM_CONFIG_YES" "true"}))
+                                                  ([env] (drop-ambient env)))]
+                     (let [env (pj/process-environment {:disabled? true})]
+                       (expect (= "true" (get env "NPM_CONFIG_YES")))
+                       (expect (not (contains? env "npm_config_yes"))))))))
+
 ;; #423: a child of Vis in an outer sandbox without /tmp needs the task's own TMPDIR.
 (defdescribe runtime-dir-tmpdir-reaches-children
              (it "names the task temporary directory in confined and unconfined children"

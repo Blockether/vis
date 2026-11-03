@@ -538,6 +538,24 @@
    or in `.env`, and [[declared-env]] still applies it."
   #{"NODE_OPTIONS"})
 
+(def ^:private child-env-defaults
+  "Values that every child gets when nothing else sets the same name.
+   A child runs in a PTY that no person answers. Without `npm_config_yes=false`,
+   `npx` with a missing package waits at its install prompt forever. With it,
+   `npx` stops at once with an error that names the package."
+  {"npm_config_yes" "false"})
+
+(defn- with-child-env-defaults
+  "`env` plus each [[child-env-defaults]] name that `env` does not set. The match
+   ignores case, because npm reads `NPM_CONFIG_YES` and `npm_config_yes` alike."
+  [env]
+  (let [present (into #{} (map str/lower-case) (keys env))]
+    (merge (into {}
+                 (remove (fn [[k _]]
+                           (contains? present (str/lower-case k))))
+                 child-env-defaults)
+           env)))
+
 (defn- ambient-env
   "The operator's ambient environment without [[ambient-env-drops]]. With a task
    runtime directory, `TMPDIR` names its private temporary directory (#423)."
@@ -593,7 +611,7 @@
       (into {}
             (remove (fn [[k _]]
                       (or (pre-exec-hijack? k) (contains? removals k))))
-            (merge inherited (declared-env policy) (proxy-env policy))))))
+            (with-child-env-defaults (merge inherited (declared-env policy) (proxy-env policy)))))))
 
 (defn child-env-additions
   "What an UNCONFINED child gets ON TOP of the inherited host environment: the
@@ -608,13 +626,14 @@
   "Build the COMPLETE child environment for `policy`, then overlay trusted
    host-owned `extra`. Confined children start from the scrubbed allowlist;
    disabled policies preserve the ambient environment without
-   [[ambient-env-drops]] and apply removals."
+   [[ambient-env-drops]] and apply removals. Both get [[child-env-defaults]]."
   ([policy] (process-environment policy nil))
   ([policy extra]
    (let [^HashMap environment (if-let [full (jailed-child-env policy)]
                                 (HashMap. ^java.util.Map full)
-                                (doto (HashMap. ^java.util.Map (ambient-env))
-                                  (.putAll ^java.util.Map (child-env-additions policy))))]
+                                (HashMap. ^java.util.Map
+                                          (with-child-env-defaults
+                                            (merge (ambient-env) (child-env-additions policy)))))]
      (doseq [k (:env-removals policy)]
        (.remove environment ^String k))
      (when (seq extra) (.putAll environment ^java.util.Map extra))
