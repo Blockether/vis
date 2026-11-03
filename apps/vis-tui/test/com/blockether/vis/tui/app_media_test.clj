@@ -349,9 +349,7 @@
         (expect (contains? verbs ["l" "log"]))
         (expect (contains? verbs ["v" "Before/After"]))
         (expect (= ["Esc" "close"] (peek (#'surface/footer state {} []))))
-        (expect (not (contains? (set (#'surface/footer state {} [])) ["l" "log"])))
-        (expect (= [["Ctrl+Enter" "save"] ["Esc" "cancel"]]
-                   (#'surface/footer (assoc state :editor {}) {} []))))))
+        (expect (not (contains? (set (#'surface/footer state {} [])) ["l" "log"]))))))
 
 (defdescribe
   code-paint-decisions
@@ -519,3 +517,17 @@
                    (expect (nil? (:error result)))
                    (expect (some? x))
                    (expect (not= (:bg (nth row x)) (:bg (nth row (dec (long x)))))))))
+
+;; User report: review labels must remain readable in both themes.
+(defdescribe review-label-contrast-test
+             (it "keeps plain review labels at a contrast of at least 4.5"
+                 (doseq [bg
+                         [(TextColor$RGB. 250 243 235) (TextColor$RGB. 15 17 23)]
+
+                         row
+                         [{:kind :add} {:kind :del} {:kind :diff-head} {:kind :draft} {:kind :meta}
+                          {:kind :receipts-head} {:kind :receipt :status "failed"}
+                          {:kind :receipt :status "done"} {:kind :text}]]
+
+                   (binding [theme/dialog-bg bg]
+                     (expect (>= (theme/contrast-ratio (#'surface/row-ink row) bg) 4.5))))))

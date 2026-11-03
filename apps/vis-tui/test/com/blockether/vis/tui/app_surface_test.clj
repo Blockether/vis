@@ -744,3 +744,36 @@
       (expect (= :right (:diff-side right)))
       (expect (= "new" (get-in (press right (k KeyType/Enter)) [:editor :target :anchor :side])))
       (expect (= #{"x.clj"} (:folded (press start (click MouseActionType/CLICK_RELEASE 4 5))))))))
+
+;; User report: review search must support the terminal-safe T3 shortcuts.
+(defdescribe review-search-shortcuts-test
+             (it "opens find with Ctrl F and returns to the review on Escape"
+                 (let [geom
+                       {:view {} :rows [] :list-h 10}
+
+                       opened
+                       (surface/handle-key (surface/initial-state) (k \f true) geom {})]
+
+                   (expect (= "" (get-in opened [:search :text])))
+                   (expect (nil? (:search
+                                   (surface/handle-key opened (k KeyType/Escape) geom {}))))))
+             (it "moves backward with Shift Enter and wraps to the last matching row"
+                 (let [geom
+                       {:view {}
+                        :rows [{:kind :add :text "match"} {:kind :add :text "match"}
+                               {:kind :add :text "other"} {:kind :add :text "match"}]
+                        :list-h 10}
+
+                       st
+                       (assoc (surface/initial-state)
+                         :selected 1
+                         :search {:text "match"})
+
+                       previous
+                       #(surface/handle-key % (KeyStroke. KeyType/Enter false false true) geom {})
+
+                       first-hit
+                       (previous st)]
+
+                   (expect (= 0 (:selected first-hit)))
+                   (expect (= 3 (:selected (previous first-hit)))))))

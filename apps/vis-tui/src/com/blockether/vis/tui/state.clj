@@ -150,7 +150,7 @@
    :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress
    :turn-start-ms :liveness-probed-at-ms :gateway-resynced-at-ms :detail-expansions :mouse-selection
    :session-model-pref :human-input :human-input-queue :live-views :live-viewer-id
-   :live-viewer-search :app-views
+   :live-viewer-search :app-views :live-panel
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -214,6 +214,7 @@
    ;; App attachments by view id: `{:view v :is-gap bool}`. They never join the
    ;; live band; the app surface reads them from here.
    :app-views {}
+   :live-panel nil
    ;; Stated HERE on purpose: `restore-tab` only MERGES, so a tab that never armed
    ;; would otherwise inherit the armed tab's flag from the root db.
    :voice-conversation? false})

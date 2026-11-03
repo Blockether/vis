@@ -2837,18 +2837,24 @@
          (finally (.unlock ^ReentrantLock draw-lock)))))
 
 (defonce ^:private app-pane
-  ;; The app in the side pane: `{:key [session-id view-id] :component c :state st :geom g}`.
-  ;; The render thread paints it; the input thread gives it keys.
-  (atom nil))
+  ;; Hosts are keyed by session and view so a tab switch keeps unfinished reviews.
+  ;; The render thread paints them; the input thread gives them keys.
+  (atom {}))
+
+(defn- app-pane-id [{:keys [session-id view-id]}] [session-id view-id])
+
+(defn- current-app-pane [] (get @app-pane (app-pane-id (get-in @state/app-db [:live-panel :app]))))
+
+(defn- update-app-pane! [app f] (swap! app-pane update (app-pane-id app) #(when % (f %))))
 
 (declare open-app-picture!)
 
-(defn- pane-log-view [fallback] (or (get-in @app-pane [:geom :view]) fallback))
+(defn- pane-log-view [fallback] (or (get-in (current-app-pane) [:geom :view]) fallback))
 
 (defn- open-pane-log!
   "Open the log of the app in the side pane. The dialog reads the newest copy on each frame."
   [^TerminalScreen screen]
-  (when-let [view (get-in @app-pane [:geom :view])]
+  (when-let [view (get-in (current-app-pane) [:geom :view])]
     (with-dialog-lock #(app-log/show! screen (partial pane-log-view view)))))
 
 (defn- new-app-pane-host!
@@ -2867,16 +2873,16 @@
         init
         (:init c)]
 
-    (reset! app-pane {:key k :component c :state (if (fn? init) (init) init)})))
+    (get (swap! app-pane assoc k {:key k :component c :state (if (fn? init) (init) init)}) k)))
 
 (defn- app-pane-host
-  "Reuse the host while the side pane shows the same app."
+  "Keep each session app host while another tab uses the side pane."
   [screen {:keys [session-id view-id]}]
   (let [k
         [session-id view-id]
 
         host
-        @app-pane]
+        (get @app-pane k)]
 
     (if (= k (:key host)) host (new-app-pane-host! screen session-id view-id k))))
 
@@ -2900,24 +2906,33 @@
         ((:paint component) g st geom)]
 
     ;; A key that arrived during this paint keeps its newer state.
-    (swap! app-pane #(when %
-                       (cond-> (assoc %
-                                 :geom geom
-                                 :box {:left left :top top :width width :height height})
-                         (identical? held (:state %))
-                         (assoc :state st))))
+    (update-app-pane! app
+                      #(when %
+                         (cond-> (assoc %
+                                   :geom geom
+                                   :box {:left left :top top :width width :height height})
+                           (identical? held (:state %))
+                           (assoc :state st))))
     (when (= :panel (focused-area db)) (frame/set-cursor! screen cursor))))
+
+(defn- app-pane-owns-key?
+  [db ^KeyStroke key]
+  (and key
+       (= :panel (focused-area db))
+       (not (instance? MouseAction key))
+       (not (and (.isCtrlDown key) (:prefix (:state (input/handle-key key (input/empty-input))))))))
 
 (defn- app-pane-key!
   "Give `key` to the app in the side pane. An Esc that the app does not use itself
    gives the keyboard back to the chat. Returns true while the pane shows an app."
   [db key]
-  (when-let [{:keys [component state geom]} (when (get-in db [:live-panel :app]) @app-pane)]
+  (when-let [{:keys [component state geom]} (when (get-in db [:live-panel :app])
+                                              (current-app-pane))]
     (when geom
       (let [result ((:on-key component) state key geom)]
         (if (= :chat (app-surfaces/pane-focus-after result))
           (state/dispatch [:focus-area :chat])
-          (swap! app-pane #(when % (assoc % :state result))))))
+          (update-app-pane! (get-in db [:live-panel :app]) #(assoc % :state result)))))
     (state/dispatch [:bump-render-version])
     true))
 
@@ -2930,7 +2945,7 @@
                                        (:app-views db)
                                        (lv/panel-panes (:live-views db))))
     (when-not (#{:app-pane-close :app-log} (:kind (.lookup interactions/hit-map (int mx) (int my))))
-      (let [{:keys [box geom state]} @app-pane]
+      (let [{:keys [box geom state]} (current-app-pane)]
         (app-surfaces/pane-click box geom (or (:scroll state) 0) (count (:rows geom)) mx my)))))
 
 (defn- app-pane-click!
@@ -2939,7 +2954,8 @@
   [db mx my]
   (when-let [{:keys [row]} (app-pane-point db mx my)]
     (state/dispatch [:focus-area :panel])
-    (when row (swap! app-pane #(when % (assoc-in % [:state :selected] row))))
+    (when row
+      (update-app-pane! (get-in db [:live-panel :app]) #(assoc-in % [:state :selected] row)))
     (state/dispatch [:bump-render-version])
     true))
 
@@ -6342,10 +6358,7 @@
                                                          {:enter-label "open" :height :content}))]
     (some #(when (= (:view-id choice) (str (:id %))) %) views)))
 
-(defn- open-picked-pane!
-  [sid view]
-  (reset! app-pane nil)
-  (state/dispatch [:app-pane-open sid (str (:id view))]))
+(defn- open-picked-pane! [sid view] (state/dispatch [:app-pane-open sid (str (:id view))]))
 
 (defn- open-picked-chat!
   [^TerminalScreen screen sid view]
@@ -10624,8 +10637,7 @@
         ;; Forms retain ordinary typing; C-x still reaches global navigation.
         (human-input-owns-key? db key) (do (human-input-key! db key) ::recur)
         ;; An app in the side pane takes every key while it holds the keyboard.
-        (and (= :panel (focused-area db)) (not (instance? MouseAction key)) (app-pane-key! db key))
-        ::recur
+        (and (app-pane-owns-key? db key) (app-pane-key! db key)) ::recur
         ;; The side panel takes its navigation keys only after C-x V gave it focus.
         (and (get-in db [:live-panel :open?])
              (get-in db [:live-panel :focused?])

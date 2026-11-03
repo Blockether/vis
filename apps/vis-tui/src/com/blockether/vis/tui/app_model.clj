@@ -799,22 +799,29 @@
     nil))
 
 (defn find-code
-  "The next code row that contains query, with case ignored. Search wraps at the end."
-  [rows query after]
-  (when-not (str/blank? query)
-    (let [q
-          (str/lower-case query)
+  "The next matching code row, with case ignored. Search wraps in either direction."
+  ([rows query after] (find-code rows query after :next))
+  ([rows query after direction]
+   (when-not (str/blank? query)
+     (let [q
+           (str/lower-case query)
 
-          start
-          (max 0 (inc (long after)))
+           n
+           (count rows)
 
-          n
-          (count rows)]
+           start
+           (min n (max 0 (inc (long after))))
 
-      (first (filter #(some-> (searchable-code (nth rows %))
-                              str/lower-case
-                              (str/includes? q))
-                     (concat (range (min n start) n) (range 0 (min n start))))))))
+           order
+           (if (= :previous direction)
+             (let [before (min n (max 0 (long after)))]
+               (concat (range (dec before) -1 -1) (range (dec n) (dec before) -1)))
+             (concat (range start n) (range 0 start)))]
+
+       (first (filter #(some-> (searchable-code (nth rows %))
+                               str/lower-case
+                               (str/includes? q))
+                      order))))))
 
 (defn row-tone
   "The live tone a row paints with: `:ok` added, `:error` removed, `:running` a

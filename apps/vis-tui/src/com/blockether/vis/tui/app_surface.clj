@@ -124,7 +124,7 @@
          (str (key-label "t") " tests:" (if (:hide-tests? opts) "off" "on"))
          (str (key-label "i") " spaces:" (if (:hide-whitespace? opts) "off" "on"))
          (str (key-label "a") " fold all") (str (key-label "c") " copy path")
-         (str (key-label "/") " find")]
+         (str (key-label "/") "/C-f find")]
 
         lines
         (reduce (fn [lines group]
@@ -579,8 +579,8 @@
     state))
 
 (defn- find-code
-  [state rows text after]
-  (if-let [i (model/find-code rows text after)]
+  [state rows text after & [direction]]
+  (if-let [i (model/find-code rows text after direction)]
     (assoc state
       :selected i
       :notice (str "Find: " text))
@@ -595,7 +595,8 @@
         (get-in state [:search :text] "")]
 
     (cond (= KeyType/Escape kt) (dissoc state :search :notice)
-          (= KeyType/Enter kt) (find-code state rows text (:selected state))
+          (= KeyType/Enter kt)
+          (find-code state rows text (:selected state) (if (.isShiftDown key) :previous :next))
           :else (let [text (cond (and (= KeyType/Character kt)
                                       (not (.isCtrlDown key))
                                       (not (.isAltDown key)))
@@ -705,6 +706,9 @@
                             (dissoc state :prefix)
                             (surface-key (dissoc state :prefix) key geom effects))
           (= \x ctrl-ch) (assoc state :prefix true)
+          (= \f ctrl-ch) (assoc state
+                           :search {:text ""}
+                           :notice "Find: ")
           :else (if-let [s (shortcut-for view (shortcut-key key))]
                   (press-shortcut state view s effects)
                   (surface-key state key geom effects)))))
@@ -1033,30 +1037,31 @@
 
 (defn- row-ink
   [row]
-  (case (model/row-tone row)
-    :ok
-    t/status-ok
+  (t/legible-ink (case (model/row-tone row)
+                   :ok
+                   t/status-ok
 
-    :error
-    t/footer-error-fg
+                   :error
+                   t/footer-error-fg
 
-    :running
-    t/header-active-tab-accent
+                   :running
+                   t/header-active-tab-accent
 
-    :warn
-    t/footer-warning-fg
+                   :warn
+                   t/footer-warning-fg
 
-    :idle
-    t/dialog-hint
+                   :idle
+                   t/dialog-hint
 
-    (case (:kind row)
-      (:receipts-head :thread-node)
-      t/dialog-hint-key
+                   (case (:kind row)
+                     (:receipts-head :thread-node)
+                     t/dialog-hint-key
 
-      :receipt
-      (if (= "failed" (:status row)) t/footer-error-fg t/dialog-fg)
+                     :receipt
+                     (if (= "failed" (:status row)) t/footer-error-fg t/dialog-fg)
 
-      t/dialog-fg)))
+                     t/dialog-fg))
+                 t/dialog-bg))
 
 (defn- paint-focus!
   "Mark the control `entry` that the cursor is on: its text takes the accent
@@ -1305,8 +1310,9 @@
           (not (model/read-only? view))
           (conj [(hidden-key view "s" "s") "send"]))]
 
-    (cond (:editor state) [["Ctrl+Enter" "save"] ["Esc" "cancel"]]
-          (:search state) [["Enter" "next match"] ["Esc" "leave search"]]
+    (cond (:editor state) [["Ctrl+Enter/C-s" "save"] ["Esc" "cancel"]]
+          (:search state) [["Enter" "next match"] ["S-Enter" "previous match"]
+                           ["Esc" "leave search"]]
           (:prefix state) [["C-x" "next key is a surface key"] ["s" "send"] ["r" "reload"]
                            ["Esc" "cancel"]]
           :else (into (into verbs (review-footer state view rows row))

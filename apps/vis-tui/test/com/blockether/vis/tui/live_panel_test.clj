@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
+            [com.blockether.vis.tui.app-surface :as app-surface]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -17,7 +18,7 @@
             [com.blockether.vis.tui.theme :as theme]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
-           [com.googlecode.lanterna.input KeyStroke]
+           [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
@@ -364,3 +365,129 @@
 
         (try (expect (not= (faded-ink :vis-light) (faded-ink :vis-dark)))
              (finally (theme/apply-theme! before))))))
+
+;; User report: returning to a session must keep its unfinished review.
+(defdescribe
+  review-pane-draft-return-test
+  (it
+    "keeps each app host's file, mode, position and comment editor"
+    (let [pane-var
+          #'screen/app-pane
+
+          held
+          @pane-var
+
+          saved
+          @held]
+
+      (try (reset! held {})
+           (with-redefs [state/app-db
+                         (atom {:app-views {}})
+
+                         app-surface/component
+                         (fn [& _]
+                           {:init {:selected 0 :scroll 0}})]
+
+             (let [a
+                   {:session-id "A" :view-id "review-A"}
+
+                   b
+                   {:session-id "B" :view-id "review-B"}
+
+                   draft
+                   {:selected 42
+                    :scroll 30
+                    :unified? false
+                    :wrap? false
+                    :editor {:text "Unsent A"}
+                    :folded #{"a.clj"}}]
+
+               (#'screen/app-pane-host nil a)
+               (swap! held assoc-in [["A" "review-A"] :state] draft)
+               (#'screen/app-pane-host nil b)
+               (expect (= {:selected 0 :scroll 0} (:state (#'screen/app-pane-host nil b))))
+               (expect (= draft (:state (#'screen/app-pane-host nil a))))))
+           (finally (reset! held saved))))))
+
+;; User report: switching sessions must work while a review draft is open.
+(defdescribe review-pane-global-navigation-test
+             (it "keeps C-x navigation outside the app while ordinary typing stays inside"
+                 (let [db {:app-views {"v" {:view {:id "v" :nodes []}}}
+                           :live-panel
+                           {:open? true :focused? true :app {:session-id "A" :view-id "v"}}}]
+                   (expect (false? (#'screen/app-pane-owns-key? db (KeyStroke. \x true false))))
+                   (expect (true? (#'screen/app-pane-owns-key? db (KeyStroke. \a false false))))
+                   (expect (false? (#'screen/app-pane-owns-key?
+                                    (assoc-in db [:live-panel :focused?] false)
+                                    (KeyStroke. \a false false)))))))
+
+;; User report: unfinished reviews must survive typing and painting in other sessions.
+(defdescribe
+  review-pane-input-isolation-test
+  (it
+    "changes only the current session when a pane key moves the file selection"
+    (let [held
+          @#'screen/app-pane
+
+          saved
+          @held
+
+          a
+          {:session-id "A" :view-id "review-A"}
+
+          panel
+          {:open? true :focused? true :app a}
+
+          view
+          {:id "review-A" :nodes []}
+
+          geom
+          {:view view
+           :list-h 10
+           :rows [{:kind :file :path "a.py" :is-selectable true}
+                  {:kind :file :path "next.py" :is-selectable true}]}
+
+          component
+          {:on-key #(app-surface/handle-key %1 %2 %3 {})}]
+
+      (try (reset! held {["A" "review-A"]
+                         {:state (app-surface/initial-state) :geom geom :component component}
+                         ["B" "review-B"] {:state {:selected 7 :editor {:text "B draft"}}}})
+           (with-redefs [state/app-db (atom {:live-panel panel
+                                             :app-views {"review-A" {:view view}}})]
+             (#'screen/app-pane-key! @state/app-db (KeyStroke. KeyType/ArrowDown))
+             (expect (= 1 (get-in @held [["A" "review-A"] :state :selected])))
+             (expect (= {:selected 7 :editor {:text "B draft"}}
+                        (get-in @held [["B" "review-B"] :state])))
+             (#'screen/app-pane-key! @state/app-db (KeyStroke. KeyType/Escape))
+             (expect (false? (get-in @state/app-db [:live-panel :focused?])))
+             (expect (= 1 (get-in @held [["A" "review-A"] :state :selected]))))
+           (finally (reset! held saved)))))
+  (it "keeps a newer comment draft when an older frame finishes painting"
+      (let [held
+            @#'screen/app-pane
+
+            saved
+            @held
+
+            app
+            {:session-id "A" :view-id "review-A"}
+
+            newer
+            {:selected 12 :editor {:text "Newer A draft"}}
+
+            component
+            {:measure-pane (fn [& _]
+                             {:rows []})
+             :reconcile (fn [st _]
+                          st)
+             :paint (fn [& _]
+                      (swap! held assoc-in [["A" "review-A"] :state] newer))}]
+
+        (try (reset! held {["A" "review-A"]
+                           {:key ["A" "review-A"] :state {:selected 0} :component component}})
+             (#'screen/paint-app-pane! nil nil {} app 0 0 80 40)
+             (expect (= newer (get-in @held [["A" "review-A"] :state])))
+             (expect (= {:left 0 :top 0 :width 80 :height 40}
+                        (get-in @held [["A" "review-A"] :box])))
+             (finally (reset! held saved))))))

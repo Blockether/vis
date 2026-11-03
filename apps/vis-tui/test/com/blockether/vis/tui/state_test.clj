@@ -6751,3 +6751,23 @@
               (set-fn db [:set-queued-deliver :a "t-4" "turn_end"])]
 
           (expect (= [nil nil nil "turn_end"] (mapv :deliver (pending db'))))))))
+
+;; User report: review panes must stay with their session after a tab switch.
+(defdescribe review-pane-session-isolation-test
+             (it "restores each session's pane without leaking the previous selection"
+                 (with-redefs [state/app-db (atom {:session {:id "A"}
+                                                   :tabs [{:id :main :active? true}]
+                                                   :active-tab-id :main
+                                                   :tab-locals {}
+                                                   :render-version 0})]
+                   (state/dispatch [:app-pane-open "A" "review-A"])
+                   (state/dispatch [:create-tab])
+                   (expect (nil? (get-in @state/app-db [:live-panel :app])))
+                   (state/dispatch [:init-session {:id "B"} []])
+                   (state/dispatch [:app-pane-open "B" "review-B"])
+                   (state/dispatch [:select-tab-index 0])
+                   (expect (= {:session-id "A" :view-id "review-A"}
+                              (get-in @state/app-db [:live-panel :app])))
+                   (state/dispatch [:select-tab-index 1])
+                   (expect (= {:session-id "B" :view-id "review-B"}
+                              (get-in @state/app-db [:live-panel :app]))))))
