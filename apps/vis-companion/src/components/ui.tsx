@@ -2888,7 +2888,7 @@ export function Toast({
   return (
     <div
       role="status"
-      className={`pointer-events-auto relative border ${countdown ? 'border-b-0' : ''} ${tone.edge} bg-panel pt-1 pr-1 pb-2.5 pl-3 font-mono text-body text-dialog-foreground [overflow-wrap:anywhere] transition-[opacity,translate] duration-200 starting:-translate-x-2 starting:opacity-0 motion-reduce:transition-none`}
+      className={`pointer-events-auto relative border ${countdown ? 'border-b-0' : ''} ${tone.edge} bg-panel pt-1 pr-1 pb-2.5 pl-3 font-mono text-body text-dialog-foreground shadow-float [overflow-wrap:anywhere] transition-[opacity,translate] duration-200 starting:-translate-x-2 starting:opacity-0 motion-reduce:transition-none`}
     >
       {isHeaded ? (
         <>

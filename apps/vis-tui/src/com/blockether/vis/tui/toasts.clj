@@ -3,8 +3,9 @@
   "The toast card in the top-left corner of the session view.
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
-   toasts of extensions. One card shows at a time. Its border has the level
-   color and stands on the screen paper, around the tinted card. The top border
+   toasts of extensions. One card shows at a time. The whole card, border and
+   text, stands on the screen paper, so no strip of other color shows between
+   the text and the border. The border has the level color. The top border
    holds the bold title with its source, and the close mark `✕` in the top-right
    corner. The bottom border is the countdown: the bright part is the time left,
    and the muted part the time used. When more notices wait, the page counter
@@ -121,12 +122,6 @@
 
     t/link-chrome-fg))
 
-(defn- card-bg
-  "The paper of a card: the screen paper moved toward the ink, so a card stands
-   out from the transcript under it on a light and on a dark theme."
-  []
-  (t/mix-color t/dialog-bg t/text-fg 0.09))
-
 (defn- rule [^long n ^String ch] (apply str (repeat (max 0 n) ch)))
 
 (defn- region!
@@ -154,17 +149,13 @@
           ;; "╰" countdown " " pager " ─╯"
           pager-col (- right 2 pager-cols)
           bar-cols (if pager (- pager-col col 2) inner)
-          ;; The border stands on the screen paper, around the tinted card.
           paper t/dialog-bg
-          bg (card-bg)
           ink (t/legible-ink (level-fg level) paper)
           muted (t/legible-ink t/footer-fg-muted paper)]
 
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-fg paper)
       (p/fill-rect! g col row width height)
-      (p/set-colors! g t/dialog-fg bg)
-      (p/fill-rect! g (inc col) (inc row) inner (- height 2))
       ;; Border.
       (p/set-colors! g ink paper)
       (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
@@ -201,7 +192,7 @@
       (p/set-colors! g ink paper)
       (p/put-str! g (inc close-col) row " ")
       ;; Text.
-      (p/set-colors! g t/dialog-fg bg)
+      (p/set-colors! g t/dialog-fg paper)
       (doseq [[i line] (map-indexed vector lines)]
         (p/put-str! g (+ col 2) (+ row 1 (long i)) line))
       (p/clear-styles! g)
