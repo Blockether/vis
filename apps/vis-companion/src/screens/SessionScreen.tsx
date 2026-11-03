@@ -5712,7 +5712,8 @@ export function SessionScreen({
             />
           )}
 
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* A hover note, such as the task of an agent, stays below the header of this session. */}
+          <div data-hover-note-bounds className="relative flex min-h-0 flex-1 flex-col">
             {/* The gallery belongs to this session but not to this transcript rectangle:
             it portals into the viewport-pinned shell, so its full-screen contract includes
             the session header and every detail opened from it inherits the whole glass. */}

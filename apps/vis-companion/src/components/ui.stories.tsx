@@ -968,10 +968,10 @@ export const LongChoices: Story = {
   },
 };
 
-/** A long task shows whole over its row, as tall as the screen allows. */
+/** A long task shows over its row, as tall as its area allows, and never leaves that area. */
 export const HoverNotes: Story = {
   render: () => (
-    <div className="flex flex-col gap-3 p-4 font-mono text-ui">
+    <div data-hover-note-bounds className="m-4 flex h-[28rem] flex-col gap-3 border border-dashed border-dialog-edge p-4 font-mono text-ui">
       <HoverNote note="Short note.">
         <span className="font-bold underline">Short</span>
       </HoverNote>

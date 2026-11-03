@@ -2652,14 +2652,18 @@ let hoverNoteClosedAt = -Infinity;
 /** The controls that a note spans when its label sits inside one. */
 const HOVER_NOTE_FRAME = 'button, a[href], [role="button"]';
 
+/** The area that holds a note, such as the body of a session. Without one, the note uses the window. */
+const HOVER_NOTE_BOUNDS = '[data-hover-note-bounds]';
+
 /**
  * THE LONG TEXT BEHIND A SHORT LABEL, shown when a mouse rests on the label.
  *
  * Use it instead of `title`. The system paints a `title` as its own grey box in a system
  * font, at any size: a long subagent task covered most of the window. This note uses the
  * floating surface of the app. Inside a control, such as a table row, the note spans that
- * control and shows its whole text under or over it, as tall as the screen allows. Else it
- * starts at the label. A note that the screen cannot hold fades at its foot. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
+ * control and shows its whole text under or over it, as tall as its area allows: the
+ * nearest `data-hover-note-bounds`, such as the body of a session, else the window. Else it
+ * starts at the label. A note that its area cannot hold fades at its foot. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
  * A press, a scroll, Escape or leaving the window closes it. It never takes the pointer
  * or the focus, so the control under it works as before.
  *
@@ -2686,10 +2690,23 @@ export function HoverNote({ note, children, className = '' }: { note: ReactNode;
     let at;
     if (control) {
       const box = control.getBoundingClientRect();
+      const area = trigger.closest(HOVER_NOTE_BOUNDS)?.getBoundingClientRect() ?? new DOMRect(0, 0, window.innerWidth, window.innerHeight);
       panel.style.maxWidth = 'none';
       panel.style.maxHeight = 'none';
-      panel.style.width = `${Math.min(box.width, window.innerWidth - 2 * EDGE_MARGIN)}px`;
-      at = spanningPosition(box, box, undefined, panel.offsetHeight);
+      panel.style.width = `${Math.min(box.width, area.width - 2 * EDGE_MARGIN)}px`;
+      // Place the note in the coordinates of its area, then move it back to the window.
+      const local = spanningPosition(
+        { top: box.top - area.top, bottom: box.bottom - area.top },
+        { left: box.left - area.left, width: box.width },
+        { width: area.width, height: area.height },
+        panel.offsetHeight,
+      );
+      at = {
+        ...local,
+        left: local.left + area.left,
+        top: local.top === undefined ? undefined : local.top + area.top,
+        bottom: local.bottom === undefined ? undefined : local.bottom + window.innerHeight - area.bottom,
+      };
     } else {
       // `menuPosition` aligns right edges. This right edge starts the note where its label starts.
       const anchor = trigger.getBoundingClientRect();
