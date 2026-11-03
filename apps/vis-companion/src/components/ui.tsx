@@ -53,7 +53,7 @@ import {
 import { createPortal } from 'react-dom';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
-import { EDGE_MARGIN, menuPosition } from '../lib/anchored-menu';
+import { EDGE_MARGIN, framedPosition, menuPosition } from '../lib/anchored-menu';
 import type { ViewGroupDirection } from '../lib/view';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import {
@@ -2649,13 +2649,17 @@ const HOVER_NOTE_WARM = 400;
 /** When the last note closed. One mouse shows one note at a time, so the page shares it. */
 let hoverNoteClosedAt = -Infinity;
 
+/** The controls that a note spans when its label sits inside one. */
+const HOVER_NOTE_FRAME = 'button, a[href], [role="button"]';
+
 /**
  * THE LONG TEXT BEHIND A SHORT LABEL, shown when a mouse rests on the label.
  *
  * Use it instead of `title`. The system paints a `title` as its own grey box in a system
  * font, at any size: a long subagent task covered most of the window. This note uses the
- * floating surface of the app, starts at the label and caps its height. A cut note fades
- * at its foot. Only a mouse opens it: a finger has no hover, and its press opens the row.
+ * floating surface of the app and caps its height. A cut note fades at its foot. Inside a
+ * control, such as a table row, the note spans that control and opens under or over it.
+ * Else it starts at the label. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
  * A press, a scroll, Escape or leaving the window closes it. It never takes the pointer
  * or the focus, so the control under it works as before.
  *
@@ -2676,11 +2680,21 @@ export function HoverNote({ note, children, className = '' }: { note: ReactNode;
     const panel = panelRef.current;
     const body = bodyRef.current;
     if (!isOpen || !trigger || !panel || !body) return;
-    // Place the note before its first paint. `menuPosition` aligns right edges, so this
-    // right edge starts the note where its label starts.
-    const anchor = trigger.getBoundingClientRect();
-    const width = panel.offsetWidth;
-    const at = menuPosition({ top: anchor.top, bottom: anchor.bottom, right: anchor.left + width }, width, undefined, panel.offsetHeight);
+    // Place the note before its first paint. A note in a control takes the full width of
+    // that control first, so its measured height decides the side.
+    const control = trigger.closest<HTMLElement>(HOVER_NOTE_FRAME);
+    let at;
+    if (control) {
+      const box = control.getBoundingClientRect();
+      panel.style.maxWidth = 'none';
+      panel.style.width = `${Math.min(box.width, window.innerWidth - 2 * EDGE_MARGIN)}px`;
+      at = framedPosition({ top: box.top, bottom: box.bottom, right: box.right }, { left: box.left, width: box.width }, undefined, panel.offsetHeight);
+    } else {
+      // `menuPosition` aligns right edges. This right edge starts the note where its label starts.
+      const anchor = trigger.getBoundingClientRect();
+      const width = panel.offsetWidth;
+      at = menuPosition({ top: anchor.top, bottom: anchor.bottom, right: anchor.left + width }, width, undefined, panel.offsetHeight);
+    }
     if (at) {
       panel.style.left = `${at.left}px`;
       panel.style.top = at.top === undefined ? 'auto' : `${at.top}px`;
@@ -2732,7 +2746,7 @@ export function HoverNote({ note, children, className = '' }: { note: ReactNode;
           >
             <div
               ref={bodyRef}
-              className="min-h-0 overflow-hidden [overflow-wrap:anywhere] data-[cut=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%_-_2rem),transparent)]"
+              className={`min-h-0 overflow-hidden [overflow-wrap:anywhere] data-[cut=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%_-_2rem),transparent)] ${typeof note === 'string' ? 'whitespace-pre-wrap' : ''}`}
             >
               {note}
             </div>

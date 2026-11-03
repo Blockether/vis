@@ -968,22 +968,25 @@ export const LongChoices: Story = {
   },
 };
 
-/** A long task must stay one capped note at the label, not a box over the window. */
+/** A long task must stay one capped note over its row, not a box over the window. */
 export const HoverNotes: Story = {
   render: () => (
     <div className="flex flex-col gap-3 p-4 font-mono text-ui">
       <HoverNote note="Short note.">
         <span className="font-bold underline">Short</span>
       </HoverNote>
-      <HoverNote
-        note={
-          <Markdown compact hardBreaks>
-            {Array.from({ length: 30 }, (_, index) => `- Step ${index + 1}: check the review pane at 40, 80 and 120 columns.`).join('\n')}
-          </Markdown>
-        }
-      >
-        <span className="font-bold underline">TUI review: keys, sessions, speed</span>
-      </HoverNote>
+      <button type="button" className="grid w-full grid-cols-[6rem_minmax(0,1fr)] gap-x-3 border border-dialog-edge px-3 py-1 text-left">
+        <span className="uppercase text-role-verify">verify</span>
+        <HoverNote
+          className="min-w-0"
+          note={[
+            '- Repo `~/vis`. Follow `~/vis/AGENTS.md`: tests only for user-visible decisions.',
+            ...Array.from({ length: 30 }, (_, index) => `- Step ${index + 1}: check the review pane at 40, 80 and 120 columns, in light and dark themes.`),
+          ].join('\n')}
+        >
+          <span className="font-bold underline">TUI review: keys, sessions, speed</span>
+        </HoverNote>
+      </button>
     </div>
   ),
   play: async ({ canvas, canvasElement }) => {
