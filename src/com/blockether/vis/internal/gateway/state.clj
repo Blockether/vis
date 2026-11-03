@@ -3733,9 +3733,24 @@
            :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
            :idempotency_key (str "agent-result:" tid)})))))
 
+(declare settle-dependents!)
+
+(defn- settle-after-end!
+  "Start, block or re-arm the tasks with after among the siblings of child `sid`, which changed
+   its status. A failure only logs: the next wait settles them again."
+  [db sid]
+  (try (when-let [parent (:parent_id (agents/info db sid))]
+         (settle-dependents! db parent))
+       (catch Exception e
+         (tel/log! {:level :warn
+                    :id ::agent-settle-failed
+                    :data {:session-id sid :error-class (.getName (class e))}}))))
+
 (defn- finish-turn!
   [sid tid patch]
   (agents/finish! (lp/db-info) sid (:status patch))
+  ;; Before the result: the leader that it wakes sees the tasks that start now.
+  (settle-after-end! (lp/db-info) sid)
   (try (report-agent-outcome! (lp/db-info) sid tid patch)
        (catch Exception e
          (tel/log! {:level :warn
@@ -6661,7 +6676,9 @@
                        (some-> (:cancel-token turn)
                                (cancellation/cancel! source))
                        (doseq [child children
-                               :when (contains? #{"queued" "running"} (:status child))]
+                               ;; A stop also ends the tasks that wait for others.
+                               :when (contains? #{"waiting" "queued" "running" "blocked"}
+                                                (:status child))]
 
                          (let [child-id (:session_id child)]
                            (persistance/db-agent-update! db child-id {:status "cancelled"})
@@ -6676,7 +6693,9 @@
                                nil))))
                        ;; A child without a turn sends no turn event.
                        (broadcast-team! sid
-                                        (keep #(when (contains? #{"queued" "running"} (:status %))
+                                        (keep #(when (contains? #{"waiting" "queued" "running"
+                                                                  "blocked"}
+                                                                (:status %))
                                                  (:session_id %))
                                               children)))
                      {:status "cancelling"})))))
@@ -7452,6 +7471,8 @@
             (cancel-session-turns! id :agent-cancel))
           ;; A child without a turn sends no turn event.
           (broadcast-team! (:leader_id child) ids)
+          ;; The tasks after a cancelled task are blocked.
+          (settle-after-end! db sid)
           {:session_id sid :status "cancelled" :cancelled ids}))))
 
 (defn- agent-files
@@ -7595,6 +7616,91 @@
         (seq unchanged)
         (assoc :unchanged unchanged)))))
 
+(defn- task-message
+  "The delegated task of child `child` from its parent `sid`. A task with after also names the
+   results of those tasks."
+  [db sid child]
+  (let [deps (filter #(some #{(:id %)} (:after child)) (persistance/db-agent-list db sid))]
+    (str (:task child)
+         (when (seq deps)
+           (str "\n\nThis task started when these tasks completed. Read the work of each with "
+                "read_session(session_id):"
+                (apply str
+                  (map #(str "\n- " (:id %) " (" (:session_id %) "): " (or (:result %) "no result"))
+                       deps))))
+         ;; A child reads the parent's tool output only when it must.
+         "\n\nYou see the requests, notes and answers of your parent session "
+         sid
+         ", not its tool calls or their output. When the task is ambiguous or "
+         "needs a fact from that tool output, read it: s = await read_session(\"" sid
+         "\"). Each block in " "s[\"transcript\"][\"turns\"][i][\"iterations\"][j][\"blocks\"] "
+         "has its code and stdout. The running turn is in " "s[\"current_turn\"][\"attempts\"].")))
+
+(defn- deliver-task!
+  "Ping child `child-id` with its delegated task from its parent `sid`. `actor` holds the
+   activation of the publication. A child that no turn can take fails. The idempotency key names
+   the child, so a repeated delivery publishes once."
+  [db sid child-id actor]
+  (try (let [entry (council/publish! db
+                                     #(council/runtime db)
+                                     (assoc actor
+                                       :session-id sid
+                                       :source "host")
+                                     {:title "Delegated task"
+                                      :content (task-message db sid (agents/info db child-id))
+                                      :ping [child-id]
+                                      :reply_required true
+                                      :idempotency_key (str "agent:" child-id)})]
+         (when (= "unavailable" (get-in entry [:replies 0 :state]))
+           (persistance/db-agent-update! db child-id {:status "failed"})))
+       (catch Exception e (persistance/db-agent-update! db child-id {:status "failed"}) (throw e))))
+
+(defn- settle-dependents!
+  "Start each waiting child of parent `parent-id` whose after tasks all completed, and block or
+   re-arm the others. Only this function changes the waiting and blocked statuses after a spawn.
+   It runs after each end of a child and in each wait. A repeated call changes nothing."
+  [db parent-id]
+  (let [parent-id (str parent-id)]
+    (locking agent-lock
+      (loop [round 0]
+        (let [children (filterv #(= parent-id (str (:parent_id %)))
+                         (persistance/db-agent-list db (agents/leader-id db parent-id)))
+              changes (agents/dependency-changes children)]
+
+          ;; A failed delivery changes the statuses again, so the next round blocks its dependents.
+          (when (and (seq changes) (<= round (count children)))
+            (doseq [[child status] changes
+                    :let [child-id (str (:session_id child))]]
+
+              (if (= "queued" status)
+                ;; The task starts now: its start time gives a new turn its startup grace.
+                (do (persistance/db-agent-update! db
+                                                  child-id
+                                                  {:status "queued" :resumed_at (util/now-ms)})
+                    (try (deliver-task! db
+                                        parent-id
+                                        child-id
+                                        {:activation-id (str "agent-release:" child-id)
+                                         :self-wake? true})
+                         (catch Exception e
+                           (tel/log! {:level :warn
+                                      :id ::agent-release-failed
+                                      :data {:session-id child-id
+                                             :error-class (.getName (class e))}}))))
+                (persistance/db-agent-update! db child-id {:status status})))
+            (broadcast-team! parent-id (mapv #(str (:session_id (first %))) changes))
+            (recur (inc round))))))))
+
+(defn settle-waiting-children!
+  "Settle the waiting and blocked children of every parent. A stopped gateway can leave a task
+   waiting for a task that ended since. Run it after startup, when Council can deliver tasks."
+  []
+  (let [db (lp/db-info)]
+    (doseq [parent (distinct (keep #(when (contains? #{"waiting" "blocked"} (:status %))
+                                      (:parent_id %))
+                                   (persistance/db-agent-list db nil)))]
+      (settle-dependents! db parent))))
+
 (defn- agent-spawn
   [env opts]
   (locking agent-lock
@@ -7626,7 +7732,25 @@
             (str through ":" fingerprint))
 
           previous
-          (some #(when (and (= sid (:parent_id %)) (= key (:spawn_key %))) %) children)]
+          (some #(when (and (= sid (:parent_id %)) (= key (:spawn_key %))) %) children)
+
+          ;; after names existing children only, so a task never waits for itself or a later task.
+          deps
+          (mapv (fn [ref]
+                  (let [id (agents/resolve-child db sid ref)]
+                    (or (some #(when (and (= sid (str (:parent_id %)))
+                                          (= id (str (:session_id %)))
+                                          (:id %))
+                                 %)
+                              children)
+                        (agents/fail! :invalid-request
+                                      (str ref
+                                           " in after names no earlier task of this session.")))))
+                (:after opts))
+
+          ;; A task with after starts only when they complete; the active cap counts it then.
+          status
+          (if (seq deps) (agents/dependency-status deps) "queued")]
 
       (if previous
         (if (= fingerprint (:spawn_fingerprint previous))
@@ -7657,19 +7781,7 @@
 
               ;; A child gets the parent's conversation without its tool work.
               checkpoint
-              (agents/handoff checkpoint)
-
-              ;; A child reads the parent's tool output only when it must.
-              message
-              (str (:task opts)
-                   "\n\nYou see the requests, notes and answers of your parent session "
-                   sid
-                   ", not its tool calls or their output. When the task is ambiguous or "
-                   "needs a fact from that tool output, read it: s = await read_session(\"" sid
-                   "\"). Each block in "
-                   "s[\"transcript\"][\"turns\"][i][\"iterations\"][j][\"blocks\"] "
-                   "has its code and stdout. The running turn is in "
-                   "s[\"current_turn\"][\"attempts\"].")]
+              (agents/handoff checkpoint)]
 
           (when-not (and (council/enabled?)
                          (= (get-in (ctx-loop/read-turn-state env) [:council :activation-id])
@@ -7682,8 +7794,9 @@
           (when (>= (count (filter #(= through (:team_id %)) children))
                     (long agents/max-team-children))
             (agents/fail! :budget-exceeded "The task already has the maximum number of subagents"))
-          (when (>= (count (filter #(contains? #{"queued" "running"} (:status %)) children))
-                    (long agents/max-active-children))
+          (when (and (= "queued" status)
+                     (>= (count (filter #(contains? #{"queued" "running"} (:status %)) children))
+                         (long agents/max-active-children)))
             ;; The only refusal that a wait can clear: an earlier child ends.
             (agents/fail! :agent-limit "The leader already has the maximum active subagents"))
           (doseq [candidate allowed]
@@ -7712,6 +7825,8 @@
                      :agent {:parent_id sid
                              :leader_id sid
                              :team_id through
+                             :status status
+                             :after (mapv #(agents/task-ordinal (:id %)) deps)
                              :task (:task opts)
                              :role (:role opts)
                              :title (:title opts)
@@ -7728,23 +7843,13 @@
               (persistance/db-set-session-group! db child-id group-id))
             (put-session! child-id {:next-seq 0 :last-active (util/now-ms)})
             (smodel/set-model! db child-id (:provider pair) (:model pair) :agent-spawn)
-            (try (let [entry (council/publish! db
-                                               #(council/runtime db)
-                                               {:session-id sid
-                                                :source "host"
-                                                :activation-id (get-in (ctx-loop/read-turn-state
-                                                                         env)
-                                                                       [:council :activation-id])}
-                                               {:title "Delegated task"
-                                                :content message
-                                                :ping [child-id]
-                                                :reply_required true
-                                                :idempotency_key (str "agent:" child-id)})]
-                   (when (= "unavailable" (get-in entry [:replies 0 :state]))
-                     (persistance/db-agent-update! db child-id {:status "failed"})))
-                 (catch Exception e
-                   (persistance/db-agent-update! db child-id {:status "failed"})
-                   (throw e)))
+            ;; A waiting or blocked task gets its ping from [[settle-dependents!]].
+            (when (= "queued" status)
+              (deliver-task! db
+                             sid
+                             child-id
+                             {:activation-id (get-in (ctx-loop/read-turn-state env)
+                                                     [:council :activation-id])}))
             (broadcast-team! sid [child-id])
             (agent-view db (agents/info db child-id))))))))
 
@@ -7795,6 +7900,7 @@
 (def agent-runtime
   "The session-agent operations `agents/install-runtime!` receives at startup."
   {:spawn #'agent-spawn
+   :settle-dependents #'settle-dependents!
    :list #'agent-list
    :cancel #'agent-cancel
    :route #'agent-route

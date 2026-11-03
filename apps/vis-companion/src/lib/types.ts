@@ -61,7 +61,12 @@ export interface Subagent {
   task: string;
   /** A label from the agents contract, such as `research`. It sets no limit. */
   role?: string;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_limited';
+  /** The task id under its parent, such as `a2`. Absent for a child from before task ids. */
+  id?: string;
+  /** waiting and blocked tasks did not start: a task in `after` did not complete yet, or never will. */
+  status: 'waiting' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_limited' | 'blocked';
+  /** The task ids that must complete before this task starts. */
+  after?: string[];
   iteration_budget: number;
   iterations_used: number;
   provider?: string | null;

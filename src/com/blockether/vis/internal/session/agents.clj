@@ -80,9 +80,11 @@
 (defn- resumable?
   "True when managed child `agent` can take a follow-up turn: it has iterations left. A stop
    cancels it, and then only a running turn of its leader continues it. So a late ping cannot
-   restart a child that the user stopped."
+   restart a child that the user stopped. A waiting or blocked child starts only when the tasks
+   in its after complete."
   [agent]
   (and agent
+       (not (contains? #{"waiting" "blocked"} (:status agent)))
        (< (long (:iterations_used agent)) (long (:iteration_budget agent)))
        (or (not= "cancelled" (:status agent)) (leader-active? (:leader_id agent)))))
 
@@ -650,11 +652,97 @@
                          (str/join ", " (map #(str (:provider %) "/" (:model %)) routes))))
                   ".")))))
 
+(defn task-ordinal
+  "The ordinal of task id `id`, such as 2 for a2, or nil for another value."
+  [id]
+  (some->> (re-matches #"a([1-9][0-9]*)" (str id))
+           second
+           parse-long))
+
+(defn dependency-status
+  "The status of a task that did not start yet, from the rows of the tasks in its after: queued
+   when all of them completed, blocked when one ended without completion or is missing, else
+   waiting."
+  [deps]
+  (cond (every? #(= "completed" (:status %)) deps) "queued"
+        (some #(or (nil? %)
+                   (contains? #{"failed" "cancelled" "budget_limited" "blocked"} (:status %)))
+              deps)
+        "blocked"
+        :else "waiting"))
+
+(defn dependency-changes
+  "The status changes of the waiting and blocked tasks among `children`, the rows of one parent,
+   as `[child status]` pairs in task order. A change counts for later tasks: a blocked task blocks
+   the tasks after it, and a task that starts makes them wait."
+  [children]
+  (loop [[child & more]
+         (sort-by #(task-ordinal (:id %)) (filter :id children))
+
+         by-id
+         (into {} (map (juxt :id identity)) children)
+
+         changes
+         []]
+
+    (if-not child
+      changes
+      (let [status (when (contains? #{"waiting" "blocked"} (:status child))
+                     (dependency-status (map by-id (:after child))))]
+        (if (and status (not= status (:status child)))
+          (recur more (assoc-in by-id [(:id child) :status] status) (conj changes [child status]))
+          (recur more by-id changes))))))
+
+(defn- siblings
+  "The rows of the children of parent `parent-id`."
+  [db parent-id]
+  (filterv #(= (str parent-id) (str (:parent_id %)))
+    (ps/db-agent-list db (leader-id db parent-id))))
+
+(defn resolve-child
+  "The session id that child reference `ref` names for session `actor-id`. A task id such as a2
+   names a child of the actor, or a sibling for a subagent. A marked session id loses its mark.
+   Another value, or a task id that no child has, answers unchanged."
+  [db actor-id ref]
+  (let [ref (str (header/unmark-session-id ref))]
+    (if (task-ordinal ref)
+      (let [parent (or (:parent_id (info db (str actor-id))) actor-id)]
+        (or (some #(when (= ref (:id %)) (str (:session_id %))) (siblings db parent)) ref))
+      ref)))
+
+(defn- resolve-child!
+  "Like [[resolve-child]], but a task id that no child has fails."
+  [db actor-id ref]
+  (let [id (resolve-child db actor-id ref)]
+    (when (and (task-ordinal id) (= id ref))
+      (fail! :invalid-request
+             (str "No subagent has task id " ref ". council.wait() shows the ids.")))
+    id))
+
+(defn- dependency-failure
+  "The error of blocked child `row`: the tasks in its after that ended without completion."
+  [db row]
+  (let [deps
+        (filter #(some #{(:id %)} (:after row)) (siblings db (:parent_id row)))
+
+        ended
+        (remove #(contains? #{"completed" "waiting" "queued" "running"} (:status %)) deps)]
+
+    {:code "dependency_failed"
+     :message (str "This task never started: "
+                   (if (seq ended)
+                     (str/join ", " (map #(str (:id %) " is " (:status %)) ended))
+                     "a task in its after is missing")
+                   ". It starts when every task in after completes. Ping that task with a fix, or "
+                   "cancel this task.")}))
+
 (defn- checked
-  "Validate `opts` for `operation` and the ownership of its target session. Answers the
-   keywordized opts."
+  "Validate `opts` for `operation` and the ownership of its target session. A task id such as a2
+   names the target too. Answers the keywordized opts, with the session id of the target."
   [env operation opts]
-  (let [opts (walk/keywordize-keys opts)]
+  (let [opts (cond-> (walk/keywordize-keys opts)
+               (string? (get opts :session_id (get opts "session_id")))
+               (update :session_id #(resolve-child! (:db-info env) (:session-id env) %)))]
     ;; Reads and cancellation remain available for previously created teams.
     (when (or (= :spawn operation)
               (and (= :route operation)
@@ -691,7 +779,9 @@
 
 (defn- result [op value] (extension/success {:op op :result (wire/->wire value)}))
 
-(def ^:private terminal-statuses #{"completed" "failed" "cancelled" "budget_limited"})
+(def ^:private terminal-statuses
+  ;; A blocked child never started. It ends a wait like a finished child.
+  #{"completed" "failed" "cancelled" "budget_limited" "blocked"})
 
 ;; Open child questions by child session id: {:question text :entry_id id}, plus
 ;; `:budget {:iterations n :reason text}` for a budget request or `:files {:files grant :reason
@@ -810,6 +900,9 @@
         failure
         (when (= "failed" status) (or (rate-limit-failure db row) (stop-failure db row)))
 
+        blocked
+        (when (= "blocked" status) (dependency-failure db row))
+
         answer
         (when (terminal-statuses status) (final-answer db row))
 
@@ -823,6 +916,12 @@
              :answer answer
              :question (:question question)
              :question_entry_id (:entry_id question)}
+      (:id row)
+      (assoc :id (:id row))
+
+      (seq (:after row))
+      (assoc :after (:after row))
+
       (:budget question)
       (assoc :budget_request (:budget question))
 
@@ -844,7 +943,10 @@
       failure
       (assoc :error
         failure :alternatives
-        (route-alternatives router)))))
+        (route-alternatives router))
+
+      blocked
+      (assoc :error blocked))))
 
 (defn- shown-record
   "The wait record `rec` with its file grant in the form that the model reads."
@@ -1025,7 +1127,11 @@
         [:team (str (or (:leader_id self) me))]
 
         ids
-        (when (seq ids) (set (map str ids)))
+        (when (seq ids) (set (map #(resolve-child db me (str %)) ids)))
+
+        ;; The gateway starts and blocks the tasks with after. A wait catches a missed change.
+        settle-dependents!
+        (or (get @runtime :settle-dependents) (constantly nil))
 
         pick
         (fn []
@@ -1106,6 +1212,9 @@
         (fn []
           (let [now
                 (util/now-ms)
+
+                _
+                (settle-dependents! db (or (:parent_id self) me))
 
                 rows
                 (vec (pick))
@@ -1255,6 +1364,44 @@
         (map? t) (walk/keywordize-keys t)
         :else (fail! :invalid-request "Each task must be a string or a dict with task")))
 
+(defn- check-after!
+  "Refuse a task whose after names neither an earlier task of the same call nor an existing child.
+   The tasks of one call get the next task ids in order: after a3, the first task is a4."
+  [env specs]
+  (let [db
+        (:db-info env)
+
+        children
+        (siblings db (str (:session-id env)))
+
+        known
+        (into #{} (mapcat (juxt :id #(str (:session_id %)))) children)
+
+        base
+        (reduce max 0 (keep #(task-ordinal (:id %)) children))]
+
+    (doseq [[i spec]
+            (map-indexed vector specs)
+
+            :let [earlier
+                  (mapv #(str "a" (+ base 1 (long %))) (range i))]
+            ref
+            (:after spec)
+
+            :when (not (or (known (str (header/unmark-session-id ref))) (some #{ref} earlier)))]
+
+      (fail! :invalid-request
+             (str "Task "
+                  (inc (long i))
+                  " (a"
+                  (+ base 1 (long i))
+                  ") names "
+                  ref
+                  " in after. Name "
+                  "an earlier task of this call"
+                  (when (seq earlier) (str " (" (str/join ", " earlier) ")"))
+                  " or an existing child.")))))
+
 (defn- run-records
   "Spawn a subagent for each task, wait for all of them and answer their records."
   [env tasks opts]
@@ -1273,6 +1420,9 @@
 
         _
         (run! #(check-route! env %) specs)
+
+        _
+        (check-after! env specs)
 
         deadline
         (util/deadline-ms (wait-timeout opts 240))
@@ -1305,8 +1455,20 @@
 
 (defn run
   "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
-   task and optional title, role, model, provider, iteration_budget and files. iteration_budget
-   defaults to 120 (max 600). Give a large task more at the start.
+   task and optional title, role, model, provider, iteration_budget, files and after.
+   iteration_budget defaults to 120 (max 600). Give a large task more at the start.
+
+   Each task gets an id: a1, a2 and onward, in the order that you start tasks. The ids continue
+   across calls: after a3, the first task of the next call is a4. Every child id argument takes
+   the id or the session_id: council.wait, council.cancel, council.extend and a council.publish
+   ping.
+
+   after is a list of earlier tasks of the same call, or existing children, by id or session_id.
+   The task waits, and starts by itself when all of them complete. If one of them fails, is
+   cancelled or ends budget_limited, the task is blocked and never starts. Ping that task with a
+   fix: when it completes, the blocked task starts. For example:
+   council.run([{\"task\": \"Fix the bug\", \"role\": \"implement\"},
+                {\"task\": \"Verify the fix\", \"role\": \"verify\", \"after\": [\"a1\"]}])
 
    title is a short label for people: one line of 1 to 40 characters, such as \"Fix login test\".
    Without it, people see the child number, such as #2.
@@ -1326,8 +1488,9 @@
    A child gets the system prompt, your requests, notes and answers, and its task. It does not get
    your tool calls or their output. Children share the checkout. Only a leader starts subagents.
 
-   Records have session_id, status, answer and question. More than 16 tasks start as earlier ones
-   finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
+   Records have session_id, id, status, answer and question, and after for a task with after.
+   waiting means that a task in after did not end yet. blocked has error with code
+   dependency_failed. More than 16 tasks start as earlier ones finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
    council.wait. A failed record can have error with its code and message.
 
    The call also returns when the first child ends, asks or publishes a message. A running
@@ -1351,7 +1514,7 @@
     (wait-records env ids (wait-timeout opts 240))))
 
 (defn wait-agents
-  "Wait again for subagents by session_ids (default: all your children). Same records and timeout as council.run."
+  "Wait again for subagents by ids such as a1 or session_ids (default: all your children). Same records and timeout as council.run."
   ([env] (wait-agents env nil {}))
   ([env ids-or-opts]
    (if (map? ids-or-opts) (wait-agents env nil ids-or-opts) (wait-agents env ids-or-opts {})))
@@ -1784,6 +1947,20 @@
                (some #{(str author-id)} [(str (:parent_id child)) (str (:leader_id child))])
                (not (contains? #{"queued" "running"} (:status child))))
       (cond
+        (= "waiting" (:status child)) [:invalid-recipient
+                                       (str "Subagent "
+                                            (:id child)
+                                            " waits for "
+                                            (str/join ", " (:after child))
+                                            ". It starts by itself when they complete.")]
+        (= "blocked" (:status child))
+        [:invalid-recipient
+         (str "Subagent "
+              (:id child)
+              " never started: a task in its after did not complete. Ping "
+              "that task with a fix, and "
+              (:id child)
+              " starts when it completes. Or cancel it.")]
         (and (= "cancelled" (:status child)) (not (leader-active? (:leader_id child))))
         [:invalid-recipient
          "A cancelled subagent takes a follow-up task only during a running turn of its leader"]
@@ -1795,46 +1972,54 @@
   "Publish Council entry `opts` with `publish!`, a function of the opts. With `:files`, the one
    ping recipient must be an idle subagent of the caller. Its grant then changes before the wake,
    so its follow-up task starts in that scope (#414). A failed publication or an unavailable reply
-   restores the old grant."
+   restores the old grant. A task id such as a2 in ping names that child."
   [env opts publish!]
-  (if-not (contains? opts :files)
-    (publish! opts)
-    (let [db
-          (:db-info env)
+  (let [ping
+        (:ping opts)
 
-          ping
-          (:ping opts)
+        opts
+        (cond-> opts
+          (sequential? ping)
+          (assoc :ping (mapv #(resolve-child (:db-info env) (:session-id env) %) ping)))]
 
-          id
-          (when (and (sequential? ping) (= 1 (count ping)))
-            (str (header/unmark-session-id (first ping))))
+    (if-not (contains? opts :files)
+      (publish! opts)
+      (let [db
+            (:db-info env)
 
-          child
-          (info db id)
+            ping
+            (:ping opts)
 
-          _
-          (when-not (and child (= (str (:session-id env)) (str (:parent_id child))))
-            (fail! :invalid-request
-                   "files needs exactly one ping recipient: an idle subagent of this session"))
+            id
+            (when (and (sequential? ping) (= 1 (count ping)))
+              (str (header/unmark-session-id (first ping))))
 
-          _
-          (when (or ((runtime-fn :live?) id) (contains? #{"queued" "running"} (:status child)))
-            (fail! :invalid-request
-                   "The subagent still runs. Give it more files with council.grant."))
+            child
+            (info db id)
 
-          scope!
-          (fn [rules]
-            ((runtime-fn :grant) env {:session_id id :files rules :replace true}))
+            _
+            (when-not (and child (= (str (:session-id env)) (str (:parent_id child))))
+              (fail! :invalid-request
+                     "files needs exactly one ping recipient: an idle subagent of this session"))
 
-          before
-          (:files child)
+            _
+            (when (or ((runtime-fn :live?) id) (contains? #{"queued" "running"} (:status child)))
+              (fail! :invalid-request
+                     "The subagent still runs. Give it more files with council.grant."))
 
-          entry
-          (do (scope! (walk/keywordize-keys (:files opts)))
-              (try (publish! opts) (catch Throwable t (scope! before) (throw t))))]
+            scope!
+            (fn [rules]
+              ((runtime-fn :grant) env {:session_id id :files rules :replace true}))
 
-      (when (some #(= "unavailable" (:state %)) (:replies entry)) (scope! before))
-      entry)))
+            before
+            (:files child)
+
+            entry
+            (do (scope! (walk/keywordize-keys (:files opts)))
+                (try (publish! opts) (catch Throwable t (scope! before) (throw t))))]
+
+        (when (some #(= "unavailable" (:state %)) (:replies entry)) (scope! before))
+        entry))))
 
 (defn operation!
   "Run one managed-subagent operation for the calling session and answer its plain result.
@@ -1955,6 +2140,9 @@
 (def ^:private lead-guide
   "The leader rules for subagents: an independent verifier and its checks."
   "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then ping it to check the final files.
+- Each task gets an id: a1, a2 and onward. Use the id or the session_id wherever a child id goes.
+- To order tasks, give a later task after=[ids]. It starts by itself when they complete. If one does not complete, it is blocked: ping that task with a fix.
+- When a verifier fails, ping the task in its after with the failures. When that task completes, ping the verifier to check again.
 - Before your final answer, run every failing case that a child reported.
 ")
 

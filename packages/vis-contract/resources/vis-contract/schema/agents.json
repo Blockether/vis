@@ -51,6 +51,17 @@
         "files": {
           "$ref": "#/$defs/files"
         },
+        "after": {
+          "description": "The tasks that must complete before this task starts: task ids such as a1, or session ids. Name only earlier tasks of the same call or existing children.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true
+        },
         "key": {
           "type": "string",
           "minLength": 1,
@@ -104,6 +115,9 @@
                   },
                   "files": {
                     "$ref": "#/$defs/spawn/properties/files"
+                  },
+                  "after": {
+                    "$ref": "#/$defs/spawn/properties/after"
                   }
                 },
                 "required": [
@@ -140,7 +154,8 @@
             "type": "string",
             "minLength": 1
           },
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "Child ids: task ids such as a1, or session ids."
         },
         "timeout_secs": {
           "type": "integer",
@@ -384,6 +399,11 @@
     "agent": {
       "type": "object",
       "properties": {
+        "id": {
+          "$comment": "The task id of the child under its parent: a1 for the first task, a2 for the next. Every child id argument also takes it.",
+          "type": "string",
+          "pattern": "^a[1-9][0-9]*$"
+        },
         "session_id": {
           "type": "string",
           "minLength": 1
@@ -412,13 +432,22 @@
         },
         "status": {
           "enum": [
+            "waiting",
             "queued",
             "running",
             "completed",
             "failed",
             "cancelled",
-            "budget_limited"
+            "budget_limited",
+            "blocked"
           ]
+        },
+        "after": {
+          "$comment": "The task ids that must complete before this task starts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agent/properties/id"
+          }
         },
         "iteration_budget": {
           "$ref": "#/$defs/spawn/properties/iteration_budget"
@@ -545,8 +574,12 @@
           "type": "string",
           "minLength": 1
         },
+        "id": {
+          "$ref": "#/$defs/agent/properties/id"
+        },
         "status": {
           "enum": [
+            "waiting",
             "queued",
             "running",
             "asking",
@@ -555,8 +588,12 @@
             "failed",
             "cancelled",
             "budget_limited",
+            "blocked",
             "unknown"
           ]
+        },
+        "after": {
+          "$ref": "#/$defs/agent/properties/after"
         },
         "answer": {
           "type": [
@@ -674,14 +711,15 @@
           "type": "string"
         },
         "error": {
-          "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider. Code not_started means that its turn never started. Code interrupted means that its turn stopped before its end.",
+          "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider. Code not_started means that its turn never started. Code interrupted means that its turn stopped before its end. Code dependency_failed means that a task in after did not complete, so a blocked child never started.",
           "type": "object",
           "properties": {
             "code": {
               "enum": [
                 "rate_limited",
                 "not_started",
-                "interrupted"
+                "interrupted",
+                "dependency_failed"
               ]
             },
             "message": {

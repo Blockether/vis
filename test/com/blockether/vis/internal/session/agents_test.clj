@@ -2059,36 +2059,42 @@
 ;; the next spawn with budget-exceeded, which a run does not retry, so the whole run failed.
 (defdescribe
   gateway-active-limit-is-retryable-test
-  (it "refuses a spawn over the active limit with agent-limit"
-      (let [db
-            (h/store)
+  (it
+    "refuses a spawn over the active limit with agent-limit"
+    (let [db
+          (h/store)
 
-            leader
-            (str (h/store-session! db {:channel :api}))
+          leader
+          (str (h/store-session! db {:channel :api}))
 
-            router
-            {:providers [{:id :p :root "small" :models [{:name "small"}]}]}
+          router
+          {:providers [{:id :p :root "small" :models [{:name "small"}]}]}
 
-            env
-            {:db-info db
-             :session-id leader
-             :router router
-             :turn-state-atom (atom {:council {:activation-id "active"}
-                                     :agent-checkpoint [{:role :user
-                                                         :content "Current context"}]})}]
+          env
+          {:db-info db
+           :session-id leader
+           :router router
+           :turn-state-atom (atom {:council {:activation-id "active"}
+                                   :agent-checkpoint [{:role :user :content "Current context"}]})}]
 
-        (dotimes [_ agents/max-active-children]
-          (child! db leader {:status "running"}))
-        (with-redefs-fn {#'lp/db-info (constantly db)
-                         #'loop-router/get-router (constantly router)
-                         #'council/enabled? (constantly true)
-                         #'council/runtime (constantly {leader {:activation-id "active"}})
-                         (ns-resolve 'com.blockether.vis.internal.gateway.state 'live-env)
-                         (constantly env)}
-          (fn []
-            (expect (= :agent-limit
-                       (try (gateway/agents-operation! leader :spawn {:task "Check evidence"})
-                            (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))))))))
+      (dotimes [_ agents/max-active-children]
+        (child! db leader {:status "running"}))
+      (with-redefs-fn {#'lp/db-info (constantly db)
+                       #'loop-router/get-router (constantly router)
+                       #'council/enabled? (constantly true)
+                       #'council/runtime (constantly {leader {:activation-id "active"}})
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'live-env) (constantly
+                                                                                           env)}
+        (fn []
+          (expect (= :agent-limit
+                     (try (gateway/agents-operation! leader :spawn {:task "Check evidence"})
+                          (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+          ;; Council run dependencies: a task that waits is not active, and gets no task ping yet.
+          (with-redefs-fn {#'council/publish! (fn [& _]
+                                                (expect false "A waiting task gets no ping"))}
+            (fn []
+              (let [row (gateway/agents-operation! leader :spawn {:task "Verify" :after ["a1"]})]
+                (expect (= ["waiting" ["a1"]] [(:status row) (:after row)]) (pr-str row))))))))))
 
 ;; Council orchestration study: the leader gets event waits and independent checks, and each
 ;; subagent reports with evidence.
@@ -2107,7 +2113,10 @@
             @@#'agents/runtime]
 
         (try (swap! @#'agents/runtime dissoc :leader-active?)
-             (doseq [[status refusal] [["running" nil] ["cancelled" :invalid-recipient]]]
+             (doseq [[status refusal] [["running" nil] ["cancelled" :invalid-recipient]
+                                       ;; A task with after starts only when they complete.
+                                       ["waiting" :invalid-recipient]
+                                       ["blocked" :invalid-recipient]]]
                (let [child (child! db leader {:status status})]
                  (expect (= refusal (first (agents/follow-up-refusal db leader child))) status)
                  (expect (= {:status status :resumed_turns 0}
@@ -2408,3 +2417,41 @@
               (expect
                 (nil? (deref asked 8000 ::timeout))
                 "A cancelled child ends the wait also while the parent asks the person"))))))))
+
+;; Council run dependencies: a task waits only for an earlier task, so no cycle can form.
+(defdescribe
+  run-after-names-earlier-tasks-test
+  (it
+    "refuses a later, own or unknown task in after before the first spawn"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          old
+          (child! db leader {:status "completed"})
+
+          spawns
+          (atom [])
+
+          env
+          {:db-info db :session-id leader}]
+
+      (with-fake-runtime
+        db
+        leader
+        (atom #{})
+        (fn [_]
+          (with-redefs [agents/runtime-op!
+                        (fn [_ op opts]
+                          (when (= :spawn op) (swap! spawns conj (:after opts)) {:session_id old}))]
+            (doseq [tasks [[{:task "A" :after ["a2"]}] [{:task "A"} {:task "B" :after ["a4"]}]
+                           [{:task "A" :after ["a9"]}]]]
+              (expect (= :invalid-request (outcome #(agents/run env tasks {:timeout_secs 1})))
+                      (pr-str tasks)))
+            (expect (empty? @spawns) "A refused call starts no child")
+            (outcome #(agents/run env
+                                  [{:task "A" :after ["a1"]} {:task "B" :after ["a2" old]}]
+                                  {:timeout_secs 1}))
+            (expect (= [["a1"] ["a2" old]] @spawns))))))))

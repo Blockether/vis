@@ -334,11 +334,18 @@
   (or (not-empty (one-line (get agent "title"))) (str "#" n)))
 
 (defn status-word
-  "The status of `agent` in one of four words, in capitals: `QUEUED`, `RUNNING`, `DONE` or
-   `FAILED`. An agent that waits for the reply of its parent still runs. A failed verdict, a
-   cancel and a spent budget are all `FAILED`: the row text tells which."
+  "The status of `agent` in one word, in capitals: `WAITING`, `QUEUED`, `RUNNING`, `DONE`,
+   `FAILED` or `BLOCKED`. An agent that waits for the reply of its parent still runs. A failed
+   verdict, a cancel and a spent budget are all `FAILED`: the row text tells which. `WAITING` and
+   `BLOCKED` tasks did not start: a task in their after did not complete yet, or never will."
   [agent]
   (case (get agent "status")
+    "waiting"
+    "WAITING"
+
+    "blocked"
+    "BLOCKED"
+
     "queued"
     "QUEUED"
 
@@ -354,9 +361,13 @@
     (str/upper-case (str/replace (str (get agent "status")) "_" " "))))
 
 (defn- end-reason
-  "The end that `FAILED` hides, for an agent without a result: `cancelled` or `out of budget`."
+  "The end that `FAILED` hides, for an agent without a result: `cancelled` or `out of budget`. A
+   task that did not start names the tasks in its after."
   [agent]
   (case (get agent "status")
+    ("waiting" "blocked")
+    (str "after " (str/join ", " (get agent "after")))
+
     "cancelled"
     "cancelled"
 
@@ -371,7 +382,7 @@
     "DONE"
     :ok
 
-    "FAILED"
+    ("FAILED" "BLOCKED")
     :bad
 
     "RUNNING"
@@ -972,7 +983,7 @@
 
 (def ^:private summary-words
   "The status words of the dock summary line, in their order."
-  ["RUNNING" "QUEUED" "DONE" "FAILED"])
+  ["RUNNING" "WAITING" "QUEUED" "DONE" "FAILED" "BLOCKED"])
 
 (defn count-parts
   "The status counts of `rows` in summary order: `{:text :tone}` maps, such as

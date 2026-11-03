@@ -177,8 +177,10 @@ CREATE TABLE session_agent (
   role             TEXT,
   -- A short one-line label for people from council.run. NULL = people see the child number.
   title            TEXT CHECK (title IS NULL OR length(title) BETWEEN 1 AND 40),
+  -- waiting = a task in after did not end yet; blocked = a task in after did not complete.
   status           TEXT NOT NULL DEFAULT 'queued'
-                   CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'budget_limited')),
+                   CHECK (status IN ('waiting', 'queued', 'running', 'completed', 'failed', 'cancelled',
+                                     'budget_limited', 'blocked')),
   depth            INTEGER NOT NULL CHECK (depth BETWEEN 1 AND 2),
   iteration_budget INTEGER NOT NULL DEFAULT 64 CHECK (iteration_budget BETWEEN 1 AND 600),
   iterations_used  INTEGER NOT NULL DEFAULT 0 CHECK (iterations_used >= 0),
@@ -199,12 +201,18 @@ CREATE TABLE session_agent (
   outcome          TEXT CHECK (outcome IS NULL OR outcome IN ('passed', 'failed')),
   -- When the current task ended. NULL = the task runs or never ended.
   finished_at      INTEGER,
+  -- The task number under the parent: 1 shows as task id a1. NULL = a child from before task ids.
+  ordinal          INTEGER CHECK (ordinal IS NULL OR ordinal >= 1),
+  -- The ordinals of the sibling tasks that must complete before this task starts, as a JSON array.
+  after            TEXT CHECK (after IS NULL OR json_valid(after)),
   UNIQUE (parent_id, spawn_key),
   CHECK (session_id <> parent_id AND session_id <> leader_id)
 );
 
 CREATE INDEX idx_session_agent_team ON session_agent(team_id, created_at);
 CREATE INDEX idx_session_agent_parent ON session_agent(parent_id, created_at);
+CREATE UNIQUE INDEX idx_session_agent_ordinal ON session_agent(parent_id, ordinal)
+  WHERE ordinal IS NOT NULL;
 
 CREATE INDEX idx_session_soul_parent ON session_soul(parent_state_id)
   WHERE parent_state_id IS NOT NULL;

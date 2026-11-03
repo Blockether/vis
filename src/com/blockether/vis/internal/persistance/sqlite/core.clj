@@ -5486,17 +5486,27 @@
 (def ^:private agent-columns
   [:session_id :parent_id :leader_id :team_id :task :role :status :iteration_budget :iterations_used
    :inherited_turns :allowed_models :files :spawn_key :spawn_fingerprint :created_at :resumed_turns
-   :resumed_at :title :result :outcome :finished_at])
+   :resumed_at :title :result :outcome :finished_at :ordinal :after])
 
 (defn- agent-row
   [row]
   (when row
-    (let [files (some-> (:files row)
-                        <-json
-                        (update-keys keyword))]
+    (let [files
+          (some-> (:files row)
+                  <-json
+                  (update-keys keyword))
+
+          ordinal
+          (:ordinal row)
+
+          after
+          (some-> (:after row)
+                  <-json)]
+
       ;; A child without a file grant or role has no such key: the agent contract allows no null.
+      ;; The contract names a task by its id, such as a2, never by its stored ordinal.
       (cond-> (-> row
-                  (dissoc :files)
+                  (dissoc :files :ordinal :after)
                   (update :allowed_models
                           (fn [value]
                             (some->> (<-json value)
@@ -5509,7 +5519,13 @@
         (as-> r (apply dissoc r (filter #(nil? (get r %)) [:title :result :outcome :finished_at])))
 
         files
-        (assoc :files files)))))
+        (assoc :files files)
+
+        ordinal
+        (assoc :id (str "a" ordinal))
+
+        (seq after)
+        (assoc :after (mapv #(str "a" %) after))))))
 
 (defn db-agent-info
   "Managed-child metadata, without its potentially large context snapshot."
@@ -5976,7 +5992,9 @@
                 ;; The team total never goes down, so a retry cannot clear it.
                 (throw (ex-info (str "A task may create at most " max-team-children " subagents.")
                                 {:error :budget-exceeded})))
+              ;; A task that waits for others is not active yet.
               (when (and agent
+                         (not (contains? #{"waiting" "blocked"} (:status agent)))
                          (>= (long (:n (query-one! tx-info
                                                    {:select [[[:count :*] :n]]
                                                     :from :session_agent
@@ -6035,6 +6053,18 @@
                           {:insert-into :session_agent
                            :values [(assoc agent
                                       :session_id new-soul-id
+                                      ;; The next task number under this parent, inside the insert
+                                      ;; transaction: two spawns never get the same number.
+                                      :ordinal (inc (long (or (:n (query-one!
+                                                                    tx-info
+                                                                    {:select [[[:max :ordinal] :n]]
+                                                                     :from :session_agent
+                                                                     :where [:= :parent_id
+                                                                             (:parent_id agent)]}))
+                                                              0)))
+                                      :after (some-> (seq (:after agent))
+                                                     vec
+                                                     ->json)
                                       :inherited_turns 0
                                       ;; Stores keep this NOT NULL column; every child is a leader's child.
                                       :depth 1

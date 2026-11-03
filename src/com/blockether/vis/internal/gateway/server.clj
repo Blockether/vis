@@ -2243,6 +2243,10 @@
                          {:resumed resumed :queued queued :sessions sessions}])))
           (catch Throwable t
             (tel/log! :warn ["gateway: queued-turn restore failed" (ex-message t)])))
+     ;; A task with after can wait for a task that ended while no gateway ran.
+     (try (state/settle-waiting-children!)
+          (catch Throwable t
+            (tel/log! :warn ["gateway: waiting-child settlement failed" (ex-message t)])))
      (when managed? (ensure-idle-reaper!))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)

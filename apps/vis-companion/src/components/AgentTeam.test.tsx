@@ -42,17 +42,18 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstub
 
 describe('agent rows', () => {
   // A subagent asks only its leader. Its question or request is no status for a person.
-  // Four words only: a passed verdict is done; a failed verdict, a cancel and a spent budget are failed.
-  it('reads every status as one of four words, and a question to the leader as running', () => {
+  // A passed verdict is done; a failed verdict, a cancel and a spent budget are failed.
+  // Council run dependencies: a task that waits for earlier tasks is waiting, not failed.
+  it('reads every status as one word, and a question to the leader as running', () => {
     const words = [
       { status: 'queued' }, { status: 'running' }, { question: 'Which branch?' }, { budget_request: { iterations: 8 } },
       { files_request: { reason: 'Docs' } }, { pending_input: true }, { status: 'completed' },
       { status: 'completed', outcome: 'passed' }, { status: 'completed', outcome: 'failed' }, { status: 'failed' },
-      { status: 'cancelled' }, { status: 'budget_limited' },
+      { status: 'cancelled' }, { status: 'budget_limited' }, { status: 'waiting' }, { status: 'blocked' },
     ].map((change) => agentStatus({ ...child, ...change } as Subagent).text);
     expect(words).toEqual([
       'queued', 'running', 'running', 'running', 'running', 'running', 'done',
-      'done', 'failed', 'failed', 'failed', 'failed',
+      'done', 'failed', 'failed', 'failed', 'failed', 'waiting', 'blocked',
     ]);
   });
 

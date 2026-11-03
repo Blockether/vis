@@ -895,3 +895,136 @@
                            @events))
                   "Only the child that ended recently is pushed")
           (expect (= "completed" (get (last-row events fresh) "status"))))))))
+
+;; Council run dependencies: a task with after starts only when its after tasks complete, once.
+(defdescribe
+  task-dependencies-test
+  (it
+    "starts a waiting task once when its after tasks complete, and blocks and re-arms it"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          turn
+          (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Parent"})
+
+          spawn!
+          (fn [status after]
+            (str (h/fork-session-at-turn! db
+                                          leader
+                                          {:through-turn-id turn
+                                           :agent {:parent_id leader
+                                                   :leader_id leader
+                                                   :team_id (str turn)
+                                                   :task "Check evidence"
+                                                   :status status
+                                                   :after after
+                                                   :iteration_budget 4
+                                                   :spawn_key (str (random-uuid))
+                                                   :spawn_fingerprint "f"
+                                                   :checkpoint [{:role :user
+                                                                 :content "Context"}]}})))
+
+          a1
+          (spawn! "running" nil)
+
+          a2
+          (spawn! "waiting" [1])
+
+          a3
+          (spawn! "waiting" [2])
+
+          delivered
+          (atom [])
+
+          status
+          #(:status (agents/info db %))
+
+          settle!
+          #(#'state/settle-dependents! db leader)
+
+          post
+          (fn [operation body]
+            (json/read-json (:body (request :post
+                                            (str "/v1/sessions/" leader "/agents/" operation)
+                                            (json/write-json-str body)))))]
+
+      (with-redefs-fn {#'lp/db-info (constantly db)
+                       #'state/broadcast-team! (fn [& _])
+                       #'state/deliver-task! (fn [_ _ child-id _]
+                                               (swap! delivered conj child-id))}
+        (fn []
+          (expect (= ["a1" "a2" "a3"] (mapv #(:id (agents/info db %)) [a1 a2 a3])))
+          (expect (= ["a2"] (:after (agents/info db a3))))
+          (settle!)
+          (expect (= ["running" "waiting" "waiting"] (mapv status [a1 a2 a3])))
+          (expect (empty? @delivered) "A task does not start before its after task completes")
+          (ps/db-agent-update! db a1 {:status "completed"})
+          (settle!)
+          (settle!)
+          (expect (= [a2] @delivered) "The task starts once, also after a repeated settle")
+          (expect (= ["queued" "waiting"] (mapv status [a2 a3])))
+          (ps/db-agent-update! db a2 {:status "failed"})
+          (settle!)
+          (expect (= "blocked" (status a3)))
+          (let [[record] (post "wait" {:session_ids ["a3"] :timeout_secs 1})]
+            (expect (= [a3 "a3" "blocked" ["a2"] "dependency_failed"]
+                       (mapv #(get-in record %)
+                             [["session_id"] ["id"] ["status"] ["after"] ["error" "code"]]))))
+          (expect (= [{"session_id" "a9" "status" "unknown"}]
+                     (mapv #(select-keys % ["session_id" "status"])
+                           (post "wait" {:session_ids ["a9"] :timeout_secs 1}))))
+          ;; A follow-up of the failed task re-arms the blocked task.
+          (ps/db-agent-update! db a2 {:status "queued"})
+          (settle!)
+          (expect (= "waiting" (status a3)))
+          (ps/db-agent-update! db a2 {:status "completed"})
+          (settle!)
+          (expect (= [a2 a3] @delivered))
+          (expect (= "queued" (status a3))))))))
+
+(defdescribe
+  task-id-control-test
+  (it
+    "takes a task id wherever a child id goes, and blocks the tasks after a cancelled task"
+    (with-team
+      {:statuses ["running"]}
+      (fn [{:keys [db leader children]}]
+        (let [[a1]
+              children
+
+              turn
+              (:team_id (agents/info db a1))
+
+              a2
+              (str (h/fork-session-at-turn! db
+                                            leader
+                                            {:through-turn-id (parse-uuid turn)
+                                             :agent {:parent_id leader
+                                                     :leader_id leader
+                                                     :team_id turn
+                                                     :task "Verify"
+                                                     :status "waiting"
+                                                     :after [1]
+                                                     :iteration_budget 4
+                                                     :spawn_key (str (random-uuid))
+                                                     :spawn_fingerprint "f"
+                                                     :checkpoint [{:role :user
+                                                                   :content "Context"}]}}))
+
+              cancel
+              (request :post
+                       (str "/v1/sessions/" leader "/agents/cancel")
+                       (json/write-json-str {:session_id "a1"}))]
+
+          (expect (= 200 (:status cancel)) (pr-str cancel))
+          (expect (= [[a1 "a1"]]
+                     (mapv #(mapv % ["session_id" "id"]) (json/read-json (:body cancel)))))
+          (expect (= ["cancelled" "blocked"] (mapv #(:status (agents/info db %)) [a1 a2])))
+          (expect (= 400
+                     (:status (request :post
+                                       (str "/v1/sessions/" leader "/agents/cancel")
+                                       (json/write-json-str {:session_id "a7"}))))
+                  "An unknown task id names no child"))))))

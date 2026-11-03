@@ -59,13 +59,19 @@ export function agentLabel(agent: Subagent, agents: readonly Subagent[]): string
 }
 
 /**
- * The status word of an agent, with the theme ink that agrees with it: `queued`, `running`,
- * `done` or `failed`. The views write the word in capitals. A failed verdict, a cancel and a
+ * The status word of an agent, with the theme ink that agrees with it: `waiting`, `queued`,
+ * `running`, `done`, `failed` or `blocked`. The views write the word in capitals.
+ * `waiting` and `blocked` tasks did not start: a task in their `after` did not complete yet, or
+ * never will. A failed verdict, a cancel and a
  * spent budget are all `failed`; the update of the row tells which. A question to its leader
  * is no status: the leader answers it, not a person.
  */
 export function agentStatus(agent: Subagent): { text: string; ink: string } {
   switch (agent.status) {
+    case 'waiting':
+      return { text: 'waiting', ink: 'text-dialog-hint' };
+    case 'blocked':
+      return { text: 'blocked', ink: 'text-err-ink' };
     case 'queued':
       return { text: 'queued', ink: 'text-dialog-hint' };
     case 'running':
@@ -82,10 +88,12 @@ export function agentStatus(agent: Subagent): { text: string; ink: string } {
 const END_REASON: Partial<Record<Subagent['status'], string>> = {
   cancelled: 'cancelled',
   budget_limited: 'out of budget',
+  waiting: 'waits for earlier tasks',
+  blocked: 'an earlier task did not complete',
 };
 
-/** Whether a stop can still end the work of an agent. */
-export const isStoppable = (agent: Subagent) => isLive(agent);
+// A task that did not start can still be stopped.
+export const isStoppable = (agent: Subagent) => isLive(agent) || ['waiting', 'blocked'].includes(agent.status);
 
 // The start of the current task: the spawn, or the last resume.
 function startOf(agent: Subagent): number | undefined {
