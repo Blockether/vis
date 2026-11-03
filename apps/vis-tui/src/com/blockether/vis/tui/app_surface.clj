@@ -380,9 +380,10 @@
   "Disconnected: the app waits for its owner")
 
 (defn- owner-control
-  [state view node item-id {:keys [activate! select! edit!]}]
+  [state view node item-id {:keys [activate! select! edit! reveal!]}]
   (let [node-id (:id node)]
     (cond (#{:button :card} (:type node)) (do (activate! {:action :activate :node-id node-id})
+                                              (when reveal! (reveal! view node))
                                               state)
           (and item-id (= :table (:type node)))
           (do (select! {:action :select :node-id node-id :item-ids [item-id]}) state)
@@ -1974,6 +1975,11 @@
    :log! (partial log-effect! screen modal! current)
    :copy! input/clipboard-copy!
    :hide! #(state/dispatch [:live-panel-toggle-open])
+   :reveal!
+   (fn [view node]
+     (when-let [reveal
+                (app-surfaces/reveal-request session-id view node (System/currentTimeMillis))]
+       (state/dispatch [:app-reveal reveal])))
    :paste identity})
 
 (defn- paste-start?
@@ -1993,10 +1999,23 @@
 
 (defn- idle-paint! [] (Thread/sleep (if (lv/scene-moving?) 12 40)) nil)
 
+(defn- reveal-ready?
+  "True when a press asked for another app of `session-id` and that app is open."
+  [session-id]
+  (let [db @state/app-db]
+    (map? (app-surfaces/reveal-step (:app-reveal db)
+                                    session-id
+                                    (:app-views db)
+                                    (System/currentTimeMillis)))))
+
 (defn- read-component-key!
+  "The next key of the app dialog. A ready reveal answers `::reveal`: the dialog
+   closes, so the chat shows the revealed app."
   [box session-id view-id ^TerminalScreen screen]
   (refresh-gap! box session-id view-id)
-  (if (dlg/modal-input-pending? screen) (modal-key! screen) (idle-paint!)))
+  (cond (dlg/modal-input-pending? screen) (modal-key! screen)
+        (reveal-ready? session-id) ::reveal
+        :else (idle-paint!)))
 
 (defn- reconcile-outcomes!
   [box st geom]
@@ -2052,7 +2071,7 @@
      :reconcile (partial reconcile-outcomes! box)
      :paint paint!
      :on-key (fn [st key geom]
-               (handle-key st key geom effects))
+               (if (= ::reveal key) {::dlg/done nil} (handle-key st key geom effects)))
      :read-key (partial read-component-key! box session-id view-id)}))
 
 (defn show-app!

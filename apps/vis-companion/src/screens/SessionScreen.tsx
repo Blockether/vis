@@ -55,15 +55,15 @@ import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
-import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
+import { Banner, ComposerButton, IconButton, LoadMore, Spinner, Toast } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { useCommands } from '../lib/commands';
-import { SessionAppsDialog, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
+import { AppRevealContext, SessionAppsDialog, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
 import { SessionAppSlot } from '../components/SessionAppSlot';
 import { useVisitState } from '../lib/review-memory';
-import { pickedSessionApp, sessionApps } from '../lib/app-surfaces';
+import { APP_REVEAL_WAIT_MS, pickedSessionApp, revealedApp, sessionApps, type AppReveal } from '../lib/app-surfaces';
 import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
@@ -118,7 +118,7 @@ import {
   queuedTurnFromWire,
   type QueueDelta,
 } from '../lib/gateway';
-import { NOTICE_MS, noticeOf, type SessionNotice } from '../lib/notification';
+import { noticeDuration, noticeOf, pushNotice, type SessionNotice } from '../lib/notification';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
@@ -893,23 +893,33 @@ export function SessionScreen({
   // being written under the new session's key.
   const draftMessageReadyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  // The last `vis.notify` of an extension of this session. It hides after NOTICE_MS.
-  const [notice, setNotice] = useState<SessionNotice | null>(null);
+  // The `vis.notify` toasts of this session, newest first. Each one leaves after its
+  // own duration; a notice with the same id replaces its toast and restarts the clock.
+  const [notices, setNotices] = useState<SessionNotice[]>([]);
+  const dismissNotice = useCallback((id: string) => {
+    setNotices((shown) => shown.filter((notice) => notice.id !== id));
+  }, []);
   useEffect(() => {
-    let timer: number | null = null;
+    const timers = new Map<string, number>();
     const stop = subscriptions.subscribeSession(sid, (event) => {
       const next = noticeOf(event);
       if (!next) return;
-      setNotice(next);
-      if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(() => setNotice(null), NOTICE_MS);
+      setNotices((shown) => pushNotice(shown, next));
+      window.clearTimeout(timers.get(next.id));
+      timers.set(
+        next.id,
+        window.setTimeout(() => {
+          timers.delete(next.id);
+          dismissNotice(next.id);
+        }, noticeDuration(next)),
+      );
     });
     return () => {
       stop();
-      if (timer !== null) window.clearTimeout(timer);
-      setNotice(null);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      setNotices([]);
     };
-  }, [subscriptions, sid]);
+  }, [subscriptions, sid, dismissNotice]);
   // The session's provider/model pick. Seeded from the client's snapshot so the
   // header chip names the model on the FIRST frame instead of reading "model"
   // until the gateway answers, then written through by authoritative events and picks.
@@ -4823,6 +4833,26 @@ export function SessionScreen({
   const [appsListOpen, setAppsListOpen] = useState(false);
   const [pickedAppId, setPickedAppId] = useVisitState<string | null>(JSON.stringify([client.base, sid, 'picked-app']), null);
   const pickedApp = pickedSessionApp(sessionAppViews, pickedAppId, docksPanel);
+  // A press that reveals another app shows it once its owner opens it, or gives up.
+  // The deadline is set at the press: app patches change the list often, and they
+  // must not extend the wait.
+  const [reveal, setReveal] = useState<(AppReveal & { until: number }) | null>(null);
+  const revealApp = useCallback(
+    (asked: AppReveal) => setReveal({ ...asked, until: Date.now() + APP_REVEAL_WAIT_MS }),
+    [],
+  );
+  useEffect(() => {
+    if (!reveal) return;
+    const shown = revealedApp(listedApps, reveal);
+    if (shown) {
+      setAppsListOpen(false);
+      setPickedAppId(shown);
+      setReveal(null);
+      return;
+    }
+    const timer = setTimeout(() => setReveal(null), Math.max(0, reveal.until - Date.now()));
+    return () => clearTimeout(timer);
+  }, [reveal, listedApps, setPickedAppId]);
   const reviewAppId = listedApps.find((view) => view.nodes.some((node) => node.type === 'diff'))?.id;
   useEffect(() => {
     if (!reviewAppId) return;
@@ -5638,6 +5668,7 @@ export function SessionScreen({
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <SessionAppViewsContext.Provider value={sessionAppViews}>
+      <AppRevealContext.Provider value={revealApp}>
       <WorkspaceRootsContext.Provider value={workspaceRoots}>
         <div className="flex h-full min-h-0 w-full">
         <section
@@ -5761,13 +5792,19 @@ export function SessionScreen({
                 }`}
               >
                 {error && <Banner kind="err">{error}</Banner>}
-                {notice && (
-                  <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+4rem)] z-50 flex justify-center px-4">
-                    <div className="pointer-events-auto w-full max-w-md">
-                      <Banner kind={notice.kind} dismiss={{ label: 'Dismiss', onClick: () => setNotice(null) }}>
+                {notices.length > 0 && (
+                  <div className="pointer-events-none fixed top-[calc(env(safe-area-inset-top)+4rem)] left-0 z-50 flex w-full max-w-sm flex-col gap-2 px-4">
+                    {notices.map((notice) => (
+                      <Toast
+                        key={notice.id}
+                        kind={notice.kind}
+                        title={notice.title}
+                        source={notice.source}
+                        onDismiss={() => dismissNotice(notice.id)}
+                      >
                         {notice.text}
-                      </Banner>
-                    </div>
+                      </Toast>
+                    ))}
                   </div>
                 )}
 
@@ -6282,6 +6319,7 @@ export function SessionScreen({
           )}
         </div>
       </WorkspaceRootsContext.Provider>
+      </AppRevealContext.Provider>
       </SessionAppViewsContext.Provider>
     </AttachImageContext.Provider>
   );

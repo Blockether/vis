@@ -4374,6 +4374,18 @@
                   (:project-sidebar db)
                   (assoc-in [:project-sidebar :focused?] false))))
 
+(reg-event-db :app-reveal
+              ;; A press of a node with `reveals`: a later press replaces an earlier one.
+              (fn [db [_ reveal]]
+                (assoc db :app-reveal reveal)))
+
+(reg-event-db :app-reveal-clear
+              ;; Clear only the reveal that settled, so a newer press stays.
+              (fn [db [_ reveal]]
+                (cond-> db
+                  (= reveal (:app-reveal db))
+                  (dissoc :app-reveal))))
+
 (reg-event-db :app-pane-close
               (fn [db _]
                 (update db

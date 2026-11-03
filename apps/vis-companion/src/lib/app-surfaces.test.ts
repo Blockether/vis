@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
+import { liveViewFromWire } from './live-view';
+
 import {
   appFrameStep,
   appSurfacesFromWire,
   isAppSurfaceSetting,
   pickedSessionApp,
+  pressReveal,
+  revealedApp,
   sessionAppSlot,
   sessionApps,
   shownAppFrame,
@@ -23,6 +27,49 @@ describe('session apps list', () => {
   it('lists each app whose session surface is not off, and no panel view', () => {
     const apps: App[] = [app('a'), app('b', 'off'), app('c', 'chat'), { id: 'p', placement: 'panel' }];
     expect(sessionApps(apps).map((one) => one.id)).toEqual(['a', 'c']);
+  });
+});
+
+// User report 2026-11-08: a Live apps gallery card opened its app, but the screen
+// stayed on the gallery, so the person never saw the app.
+describe('app reveal', () => {
+  const gallery = liveViewFromWire({
+    id: 'gallery',
+    title: 'Live apps',
+    nodes: [
+      {
+        id: 'apps',
+        type: 'group',
+        direction: 'grid',
+        children: [
+          { id: 'open-todo', type: 'card', title: 'Todo', is_selectable: true, reveals: 'todo' },
+          { id: 'plain', type: 'card', title: 'Plain', is_selectable: true },
+        ],
+      },
+    ],
+  })!;
+
+  it('reveals the key of a pressed node, also inside a group, and nothing for a plain node', () => {
+    expect(pressReveal(gallery, 'open-todo')).toBe('todo');
+    expect(pressReveal(gallery, 'plain')).toBeNull();
+    expect(pressReveal(gallery, 'missing')).toBeNull();
+  });
+
+  type Open = { id: string; extension?: string; key?: string; is_closed?: boolean };
+  const reveal = { extension: 'live-apps', key: 'todo' };
+
+  it('shows the open app of the same owner with that key', () => {
+    const apps: Open[] = [
+      { id: 'other-owner', extension: 'someone', key: 'todo' },
+      { id: 'closed', extension: 'live-apps', key: 'todo', is_closed: true },
+      { id: 'todo', extension: 'live-apps', key: 'todo' },
+      { id: 'kanban', extension: 'live-apps', key: 'kanban' },
+    ];
+    expect(revealedApp(apps, reveal)).toBe('todo');
+  });
+
+  it('waits while the app is not open yet', () => {
+    expect(revealedApp([{ id: 'kanban', extension: 'live-apps', key: 'kanban' }], reveal)).toBeNull();
   });
 });
 

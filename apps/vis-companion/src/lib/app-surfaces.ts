@@ -5,7 +5,7 @@
  */
 
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
-import type { LiveView } from './live-view';
+import { nestedLiveNodes, type LiveNode, type LiveView } from './live-view';
 
 const SURFACES_SCHEMA = viewSchema.$defs.app_surfaces.properties;
 
@@ -76,6 +76,40 @@ export function pickedSessionApp<T extends Pick<LiveView, 'id' | 'placement' | '
   const view = apps.find((one) => one.id === pickedId);
   const slot = view ? sessionAppSlot(view, docksPanel) : null;
   return view && slot ? { view, slot } : null;
+}
+
+/** How long a press waits for the app that it reveals to open. */
+export const APP_REVEAL_WAIT_MS = 10_000;
+
+/** A press that asks to show the app with `key` of the owner `extension`. */
+export type AppReveal = Readonly<{ extension: string | undefined; key: string }>;
+
+/** The app key that a press of node `nodeId` reveals (view.json `reveals`), or null. */
+export function pressReveal(view: { nodes: readonly LiveNode[] }, nodeId: string): string | null {
+  const walk = (nodes: readonly LiveNode[]): string | null => {
+    for (const node of nodes) {
+      if (node.id === nodeId) return (node.type === 'card' || node.type === 'button') && node.reveals ? node.reveals : null;
+      const found = walk(nestedLiveNodes(node));
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  return walk(view.nodes);
+}
+
+/**
+ * The id of the open app that `reveal` names: the same owner and key. Null while
+ * that app is not open, so the press waits for its open.
+ */
+export function revealedApp<T extends Pick<LiveView, 'id' | 'extension' | 'key' | 'is_closed'>>(
+  apps: readonly T[],
+  reveal: AppReveal,
+): string | null {
+  for (let at = apps.length - 1; at >= 0; at--) {
+    const view = apps[at];
+    if (view.key === reveal.key && view.extension === reveal.extension && view.is_closed !== true) return view.id;
+  }
+  return null;
 }
 
 /** How an app of a chat turn shows: its row, its frame in the turn, or full screen. */

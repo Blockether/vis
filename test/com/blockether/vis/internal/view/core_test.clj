@@ -3165,6 +3165,33 @@
                              (get-in (app-seam! sid {"op" "state" "view_id" view-id})
                                      ["view" "nodes"]))))
             (finally (hi/close-live! view-id)))))))
+  ;; User report 2026-11-08: a gallery card opened its app, but no surface showed it.
+  ;; The surfaces read `reveals` from the view to show the app after a press.
+  (it "keeps the reveals key of a card and a button for the surfaces, and refuses a blank one"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                nodes
+                [{"id" "card" "type" "card" "title" "Todo" "is_selectable" true "reveals" "todo"}
+                 {"id" "go" "type" "button" "label" "Kanban" "reveals" "kanban"}]
+
+                view-id
+                (get (app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] nodes))
+                     "view_id")]
+
+            (try (expect (= {"card" "todo" "go" "kanban"}
+                            (into {}
+                                  (map (juxt #(get % "id") #(get % "reveals")))
+                                  (get-in (app-seam! sid {"op" "state" "view_id" view-id})
+                                          ["view" "nodes"]))))
+                 (finally (hi/close-live! view-id)))
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(app-seam! sid
+                                         (assoc-in (shortcut-app sid [])
+                                           ["view" "nodes"]
+                                           [(assoc (first nodes) "reveals" " ")]))))))))
   ;; Live apps D3: the owner hears an accepted selection.
   (it "pushes one select event with the selected row ids"
       (recorded

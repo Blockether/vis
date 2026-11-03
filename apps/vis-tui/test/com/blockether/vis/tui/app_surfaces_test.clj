@@ -228,3 +228,61 @@
                    (expect (nil? (app-surfaces/apps-marker
                                    (assoc db :live-panel {:open? true :app {:view-id "s"}}))))
                    (expect (nil? (app-surfaces/apps-marker {}))))))
+
+(defdescribe
+  reveal-test
+  ;; User report: a Live apps gallery card opened its app, but the screen stayed on the gallery.
+  (describe
+    "a press of a node with reveals"
+    (let [gallery (app "g" "Live apps" nil :extension "live-apps")]
+      (it "waits for the app of the same owner with that key for 10 seconds"
+          (expect (=
+                    {:session-id "s1" :extension "live-apps" :key "todo" :until 11000}
+                    (app-surfaces/reveal-request "s1" gallery {:type :card :reveals "todo"} 1000))))
+      (it "reveals nothing for a node without reveals or an app without a session"
+          (expect (nil? (app-surfaces/reveal-request "s1" gallery {:type :card} 1000)))
+          (expect
+            (nil? (app-surfaces/reveal-request nil gallery {:type :card :reveals "todo"} 1000))))))
+  (describe
+    "a pending reveal"
+    (let [reveal
+          {:session-id "s1" :extension "live-apps" :key "todo" :until 11000}
+
+          todo
+          (fn [& {:as extra}]
+            {"t" {:view (merge (app "t" "Todo" nil :extension "live-apps" :key "todo") extra)}})]
+
+      (it "shows nothing without a press"
+          (expect (nil? (app-surfaces/reveal-step nil "s1" (todo) 2000))))
+      (it "shows the app where the session apps picker opens it"
+          (expect (= {:show :pane :view-id "t"} (app-surfaces/reveal-step reveal "s1" (todo) 2000)))
+          (expect
+            (= {:show :chat :view-id "t"}
+               (app-surfaces/reveal-step reveal "s1" (todo :surfaces {:session "chat"}) 2000))))
+      (it "waits while the app is not open, and for the app of another owner"
+          (expect (= :wait (app-surfaces/reveal-step reveal "s1" {} 2000)))
+          (expect (= :wait (app-surfaces/reveal-step reveal "s1" (todo :extension "other") 2000)))
+          (expect (= :wait (app-surfaces/reveal-step reveal "s1" (todo :is-closed true) 2000))))
+      (it "waits while another session is in front"
+          (expect (= :wait (app-surfaces/reveal-step reveal "s2" (todo) 2000))))
+      (it "drops the reveal 10 seconds after the press, also when the app opens later"
+          (expect (= :drop (app-surfaces/reveal-step reveal "s1" (todo) 11001))))
+      (it "drops the reveal of an app that the session apps picker leaves out"
+          (expect
+            (= :drop
+               (app-surfaces/reveal-step reveal "s1" (todo :surfaces {:session "off"}) 2000))))))
+  (describe "two presses"
+            (it "keep the newer press when the older one settles"
+                (reset! state/app-db {:session {:id "s1"} :tabs [] :render-version 0})
+                (let [older
+                      {:session-id "s1" :extension "x" :key "a" :until 1}
+
+                      newer
+                      {:session-id "s1" :extension "x" :key "b" :until 2}]
+
+                  (state/dispatch [:app-reveal older])
+                  (state/dispatch [:app-reveal newer])
+                  (state/dispatch [:app-reveal-clear older])
+                  (expect (= newer (:app-reveal @state/app-db)))
+                  (state/dispatch [:app-reveal-clear newer])
+                  (expect (nil? (:app-reveal @state/app-db)))))))

@@ -38,6 +38,7 @@
     [com.blockether.vis.tui.terminal-image :as timg]
     [com.blockether.vis.tui.transient :as tr]
     [com.blockether.vis.tui.theme :as t]
+    [com.blockether.vis.tui.toasts :as toasts]
     [com.blockether.vis.tui.virtual :as virtual]
     [com.blockether.vis.tui.voice-input :as voice-input]
     [com.blockether.vis.tui.dialogs :as dlg]
@@ -3254,6 +3255,18 @@
   [g cols text-top db]
   (components/find-bar! g cols text-top (:search db)))
 
+(defn- paint-toasts!
+  "Paint the notification toasts in the top-left corner of the transcript and
+   register their dismiss clicks. Every path that repaints the transcript calls it."
+  [g cols text-top messages-bottom]
+  (toasts/paint! g
+                 (toasts/layout (vis/notifications)
+                                {:left 2
+                                 :top text-top
+                                 :cols (- (long cols) 4)
+                                 :rows (- (long messages-bottom) (long text-top) 1)})
+                 true))
+
 (defn- remaining-message-count
   "Count bubbles with any rows still below the viewport's lower edge. The
    virtual layout's offsets include estimated heights for off-screen bubbles."
@@ -4525,6 +4538,7 @@
       ;; to exactly where it sat in the input box.
       (when-let [[sx sy] (paint-search-bar! g cols text-top db)]
         (when-not (overlay-locked? db) (frame/set-cursor! screen (TerminalPosition. sx sy))))
+      (paint-toasts! g cols text-top messages-bottom)
       ;; The jump chip follows parked intent, not transient FOLLOW easing.
       (paint-jump-bottom! g
                           cols
@@ -5305,6 +5319,7 @@
                   (.register interactions/hit-map r))))
             (header/draw-header! g db header-top cols)
             (paint-search-bar! g cols text-top db)
+            (paint-toasts! g cols text-top messages-bottom)
             (footer/draw-echo-area! g db echo-row cols now-ms)
             (footer/draw-footer! g db footer-row cols now-ms)
             (.commitFrame interactions/hit-map))
@@ -5366,6 +5381,7 @@
           ;; Find bar overlay + its prev/next/close click regions, staged into
           ;; THIS frame so they stay clickable while a turn streams.
           (paint-search-bar! g cols text-top db)
+          (paint-toasts! g cols text-top messages-bottom)
           ;; Footer painted INSIDE the staged frame so its button click-regions
           ;; (dirs / resources) are published by `commit-frame!` below. Painting it
           ;; AFTER the commit (as before) left those regions in an uncommitted
@@ -5573,6 +5589,7 @@
       (let [row (long (:row (:bounds r)))]
         (when (or (< row messages-top) (>= row messages-bottom))
           (.register interactions/hit-map r))))
+    (paint-toasts! g cols text-top messages-bottom)
     ;; Recompute both the count and click region on every scroll-only frame.
     (paint-jump-bottom! g
                         cols
@@ -6428,6 +6445,26 @@
                                      (boolean (some (complement :picker-global?) views))
                                      sid)))))
 
+(defn- reveal-app!
+  "Show the app that a press revealed, once it is open, where the session apps picker
+   opens it. A dialog in front keeps the reveal waiting."
+  [screen]
+  (let [db @state/app-db]
+    (when-let [reveal (when-not (:dialog-open? db) (:app-reveal db))]
+      (let [sid (current-session-id)
+            step (app-surfaces/reveal-step reveal sid (:app-views db) (System/currentTimeMillis))]
+
+        (when (or (= :drop step) (map? step)) (state/dispatch [:app-reveal-clear reveal]))
+        (case (:show step)
+          :pane
+          (do (state/dispatch [:app-pane-open sid (:view-id step)])
+              (state/dispatch [:bump-render-version :full-frame]))
+
+          :chat
+          (open-picked-chat! screen sid {:id (:view-id step)})
+
+          nil)))))
+
 (defn- pick-global-app!
   [screen views]
   (when-let [view (app-picker! screen "Global apps" views)]
@@ -6729,11 +6766,23 @@
                   ;; An extension of this session called vis.notify.
                   :notification
                   (when-not (str/blank? (str (:text chunk)))
-                    (vis/notify! (str (:text chunk))
-                                 :level
-                                 (get {"success" :success "warn" :warn "error" :error}
-                                      (str (:level chunk))
-                                      :info)))
+                    (apply vis/notify!
+                           (str (:text chunk))
+                           (cond-> [:level
+                                    (get {"success" :success "warn" :warn "error" :error}
+                                         (str (:level chunk))
+                                         :info)]
+                             (not-empty (:notice-id chunk))
+                             (conj :id (:notice-id chunk))
+
+                             (not-empty (:title chunk))
+                             (conj :title (:title chunk))
+
+                             (not-empty (:extension chunk))
+                             (conj :source (:extension chunk))
+
+                             (pos-int? (:duration-ms chunk))
+                             (conj :ttl-ms (:duration-ms chunk)))))
 
                   ;; Model preference changed for THIS session somewhere else —
                   ;; keep the tab's chip in sync with the shared store.
@@ -9156,6 +9205,9 @@
             :copy-id
             (copy-session-id! (:text hit))
 
+            :toast-dismiss
+            (vis/dismiss-notification! (:text hit))
+
             :search-case
             (state/dispatch [:search-toggle-case])
 
@@ -9330,6 +9382,9 @@
 
           :copy-id
           (copy-session-id! (:text hit))
+
+          :toast-dismiss
+          (vis/dismiss-notification! (:text hit))
 
           :toggle-tasks
           (state/dispatch [:toggle-tasks])
@@ -10622,6 +10677,8 @@
     (settle-startup!)
     ;; Hydrate a pending pre-allocated tab after startup has settled.
     (hydrate-pending-tab!)
+    ;; A press of a node with `reveals` shows its app once that app is open.
+    (reveal-app! screen)
     ;; Layout fields are populated by the render thread after the first paint. Until
     ;; then, scroll handlers fall back to safe defaults and act as a no-op. Pure
     ;; poll - no rendering on this thread anymore. The
@@ -10696,6 +10753,7 @@
             ;; no wheel gesture is coasting, return to the zero-CPU blocking
             ;; read used by the steady-state editor.
             (if (and (not (startup-pending?))
+                     (not (:app-reveal @state/app-db))
                      (zero? (long @scroll-momentum))
                      (zero? (long @live-scroll-momentum)))
               (.inputPending input-coalescer
@@ -10776,14 +10834,14 @@
 
      (mark-startup! :run-chat)
      (state/init!)
-     ;; Subscribe to host notifications so any (vis/notify! ...) push
-     ;; - from anywhere: this channel's click handler, an extension,
-     ;; the iteration loop - wakes the render thread immediately. The
-     ;; header band reads `(vis/notifications)` on every paint, so we
-     ;; only need a render bump here; no app-db copy.
+     ;; Subscribe to host notifications so any (vis/notify! ...) push, dismiss
+     ;; or expiry - from anywhere: this channel's click handler, an extension,
+     ;; the iteration loop - wakes the render thread immediately. The toasts
+     ;; read `(vis/notifications)` on every paint, so a full frame is enough;
+     ;; no app-db copy.
      (vis/watch-notifications! :tui-screen
                                (fn [_snapshot]
-                                 (state/dispatch [:bump-render-version])))
+                                 (state/dispatch [:bump-render-version :full-frame])))
      ;; A completed async footer refresh must repaint even while the user is idle.
      (vis/watch-router! :tui-screen #(state/dispatch [:bump-render-version]))
      (vis/add-channel-event-listener! :tui :tui-screen handle-channel-event!)

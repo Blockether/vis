@@ -224,3 +224,49 @@
   (if (= :sidebar (session-target view))
     (if (= :close (pane-pick live-panel view)) :close :pane)
     :chat))
+
+(def reveal-wait-ms "How long a press waits for the app that it reveals to open." 10000)
+
+(defn reveal-request
+  "What a press of `node` in app `view` of `session-id` reveals at `now-ms`, or nil:
+   the app of the same owner with the key `:reveals`, until `reveal-wait-ms` later."
+  [session-id view node now-ms]
+  (let [k
+        (some-> (:reveals node)
+                str
+                str/trim
+                not-empty)
+
+        sid
+        (some-> session-id
+                str
+                str/trim
+                not-empty)
+
+        owner
+        (some-> (:extension view)
+                str
+                not-empty)]
+
+    (when (and k sid owner)
+      {:session-id sid :extension owner :key k :until (+ (long now-ms) (long reveal-wait-ms))})))
+
+(defn reveal-step
+  "What pending `reveal` does at `now-ms` while session `session-id` is in front with
+   `app-views`: nil without a reveal, `:wait` until its app opens, `:drop` after the wait
+   or for an app that the picker leaves out, else `{:show :pane|:chat :view-id id}`."
+  [reveal session-id app-views now-ms]
+  (when reveal
+    (let [view (when (= (:session-id reveal)
+                        (some-> session-id
+                                str))
+                 (some #(when (and (open-view? %)
+                                   (= (:extension reveal) (:extension %))
+                                   (= (:key reveal) (:key %)))
+                          %)
+                       (keep :view (vals app-views))))]
+      (cond (> (long now-ms) (long (:until reveal))) :drop
+            (nil? view) :wait
+            :else (if-let [target (session-target view)]
+                    {:show (if (= :sidebar target) :pane :chat) :view-id (str (:id view))}
+                    :drop)))))

@@ -158,6 +158,10 @@ Use a selectable table only when the person picks items, not values for items.
 lines. With `is_selectable=True`, a person can activate the card like a button. Read
 `view[id].clicks` or handle the `activate` event.
 
+Give `reveals="key"` to a selectable card or a button to show another app of the same owner. When a
+person activates the node, the surface shows the app with that key. If the app is not open yet, the
+surface waits for it. Open the app in your `activate` handler.
+
 ```python
 vis.ui.card("task-7", "T7 Fix the login timeout", text="In review", tone="warn",
          is_selectable=True)

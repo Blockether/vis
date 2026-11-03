@@ -1015,6 +1015,10 @@
         }
       ]
     },
+    "reveals": {
+      "description": "The key of another app of the same owner and session. When a person activates the node, the surface shows that app. It waits for the app to open.",
+      "$ref": "common.json#/$defs/non_blank_string"
+    },
     "component": {
       "oneOf": [
         {
@@ -1368,6 +1372,9 @@
             "is_selectable": {
               "type": "boolean"
             },
+            "reveals": {
+              "$ref": "#/$defs/reveals"
+            },
             "clicks": {
               "type": "integer",
               "minimum": 0,
@@ -1564,6 +1571,9 @@
             },
             "is_disabled": {
               "type": "boolean"
+            },
+            "reveals": {
+              "$ref": "#/$defs/reveals"
             },
             "clicks": {
               "type": "integer",

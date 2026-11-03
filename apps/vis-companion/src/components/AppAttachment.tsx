@@ -18,7 +18,7 @@ import {
   withSubmission,
 } from '../lib/app-view';
 import { onSettingChange, type GatewayClient } from '../lib/gateway';
-import { appFrameStep, appSurfaces, isAppSurfaceSetting, shownAppFrame } from '../lib/app-surfaces';
+import { appFrameStep, appSurfaces, isAppSurfaceSetting, pressReveal, shownAppFrame, type AppReveal } from '../lib/app-surfaces';
 import { foldGlobalAppView, globalAppStateWord } from '../lib/global-apps';
 import type { HumanInputValue } from '../lib/human-input';
 import { liveViewFromWire, nestedLiveNodes, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
@@ -43,6 +43,9 @@ import { BandButton, BandLabel, DialogFrame, DialogHeader, ExecutionAction, KeyC
 
 /** The open apps of the session, with their surfaces, for the rows of the transcript. */
 export const SessionAppViewsContext = createContext<readonly LiveViewModel[]>([]);
+
+/** Show the app that a press asked for (view.json `reveals`). Absent: nothing shows it. */
+export const AppRevealContext = createContext<((reveal: AppReveal) => void) | null>(null);
 
 /**
  * The focus mark of an app row: a 2px bar in the row's own ink at its start edge.
@@ -307,6 +310,7 @@ export function AppSurface({
   onClose: () => void;
 }) {
   const hub = useContext(SessionEventsContext);
+  const revealApp = useContext(AppRevealContext);
   const { view, isMissing, act } = useAppView(client, sid, viewId, hub);
   useEffect(() => {
     if (view) onView?.(view);
@@ -372,8 +376,11 @@ export function AppSurface({
       if (result.status === 'invalid') setFieldErrors(result.errors ?? {});
       else if (result.status === 'saved') setFieldErrors((held) => (Object.keys(held).length === 0 ? held : {}));
       setFormStatus(result.status === 'saved' ? 'idle' : result.status);
+      // A gallery card shows the app that its owner opens for the press.
+      const key = result.status === 'saved' && view ? pressReveal(view, nodeId) : null;
+      if (key && revealApp) revealApp({ extension: view?.extension, key });
     },
-    [act],
+    [act, view, revealApp],
   );
 
   const onSelect = useCallback(

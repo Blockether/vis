@@ -11,7 +11,14 @@ import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
-import { AppAttachmentRow, AppSurface, SessionAppsDialog, SessionAppViewsContext, useSessionApps } from './AppAttachment';
+import {
+  AppAttachmentRow,
+  AppRevealContext,
+  AppSurface,
+  SessionAppsDialog,
+  SessionAppViewsContext,
+  useSessionApps,
+} from './AppAttachment';
 import { StoryAppHost, TODO, type StoryApp } from '../dev/story-apps';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT } from '../lib/view';
 
@@ -233,6 +240,42 @@ describe('AppSurface controls and keys', () => {
     fireEvent.click(nodeButton('pick'));
     await waitFor(() => expect(viewAction).toHaveBeenCalledTimes(2));
     expect(viewAction.mock.calls[1][2]).toEqual({ action: 'activate', node_id: 'pick' });
+  });
+
+  // User report 2026-11-08: a Live apps gallery card opened its app, but the screen
+  // stayed on the gallery. Only a press that the owner took shows the app.
+  it('asks to show the app that an accepted card press reveals, by click or by key', async () => {
+    const gallery = liveViewFromWire({
+      id: 'app-1',
+      title: 'Live apps',
+      placement: 'attachment',
+      extension: 'live-apps',
+      seq: 1,
+      nodes: [{ id: 'open-todo', type: 'card', title: 'Todo', is_selectable: true, reveals: 'todo' }],
+      shortcuts: [{ key: '2', node_id: 'open-todo' }],
+    })!;
+    let refuse = false;
+    const { client, viewAction } = fakeClient([gallery], async (action) => {
+      if (refuse) throw new GatewayError(409, 'disconnected', { is_accepted: false, reason: 'disconnected' });
+      return accepted(action);
+    });
+    const reveal = vi.fn();
+    render(
+      <AppRevealContext.Provider value={reveal}>
+        <div data-session-surface>
+          <AppSurface client={client} sid="s1" viewId="app-1" fallbackTitle="Live apps" onClose={() => undefined} />
+        </div>
+      </AppRevealContext.Provider>,
+    );
+    await screen.findByText('Todo');
+    fireEvent.click(nodeButton('open-todo'));
+    await waitFor(() => expect(reveal).toHaveBeenCalledWith({ extension: 'live-apps', key: 'todo' }));
+    fireEvent.keyDown(document.body, { key: '2' });
+    await waitFor(() => expect(reveal).toHaveBeenCalledTimes(2));
+    refuse = true;
+    fireEvent.click(nodeButton('open-todo'));
+    await waitFor(() => expect(viewAction).toHaveBeenCalledTimes(3));
+    expect(reveal).toHaveBeenCalledTimes(2);
   });
 
   it('sends an owner key as a shortcut action, in the order pressed', async () => {

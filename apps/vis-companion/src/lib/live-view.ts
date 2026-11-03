@@ -331,6 +331,8 @@ export interface LiveButtonNode extends LiveNodeBase {
   /** The rank of the action. Only one primary action stands in a group. */
   variant: ViewButtonVariant;
   is_disabled: boolean;
+  /** The key of an app of the same owner that a press shows. */
+  reveals?: string;
   clicks: number;
 }
 
@@ -342,6 +344,8 @@ export interface LiveCardNode extends LiveNodeBase {
   meta?: string;
   tone?: LiveTone;
   is_selectable: boolean;
+  /** The key of an app of the same owner that an activation shows. */
+  reveals?: string;
   clicks: number;
 }
 
@@ -1125,6 +1129,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         action: node.action === 'submit' ? 'submit' : 'activate',
         variant: viewButtonVariant(node.variant),
         is_disabled: node.is_disabled === true,
+        ...reveals(node.reveals),
         clicks: count(node.clicks, 0),
       };
     case 'status':
@@ -1191,6 +1196,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         meta: optionalText(node.meta),
         ...(node.tone === undefined ? {} : { tone: tone(node.tone) }),
         is_selectable: node.is_selectable === true,
+        ...reveals(node.reveals),
         clicks: count(node.clicks, 0),
       };
     case 'diff': {
@@ -1259,6 +1265,12 @@ function diffToolbarFromWire(raw: unknown): { children?: LiveNode[] } {
       (node.type === 'group' && node.children.every((child) => child.type === 'button')),
   );
   return children.length > 0 ? { children } : {};
+}
+
+/** The `reveals` key of a card or a button, absent when blank. */
+function reveals(raw: unknown): { reveals?: string } {
+  const key = text(raw).trim();
+  return key ? { reveals: key } : {};
 }
 
 /** The nodes that `node` holds: the children of a group, or the toolbar of a diff. */

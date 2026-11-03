@@ -1310,7 +1310,10 @@
                    (live-term node-fail!
                               "button :variant"
                               view-spec/button-variants
-                              (:variant node))))
+                              (:variant node)))
+
+                 (some? (:reveals node))
+                 (assoc :reveals (live-text node-fail! "button :reveals" (:reveals node))))
 
                :card
                (cond-> (assoc base :title (live-text node-fail! "a card's :title" (:title node)))
@@ -1325,7 +1328,10 @@
 
                  (some? (:is-selectable node))
                  (assoc :is-selectable
-                   (bool-value node-fail! ":is-selectable" (:is-selectable node) false)))
+                   (bool-value node-fail! ":is-selectable" (:is-selectable node) false))
+
+                 (some? (:reveals node))
+                 (assoc :reveals (live-text node-fail! "card :reveals" (:reveals node))))
 
                :progress
                (cond-> base

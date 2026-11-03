@@ -1,4 +1,4 @@
-"""Gallery: one card for each proof app. Press a card (or its number) to open it."""
+"""Gallery: one card for each proof app. Press a card (or its number) to open and show it."""
 
 from live_apps import asteroids, counter, game2048, incident, kanban, todo, ui, wizard
 
@@ -46,6 +46,7 @@ def render(state):
             text=app.DESCRIPTION,
             meta=LEVEL[app.KEY],
             is_selectable=True,
+            reveals=app.KEY,
             tone="ok" if app.KEY in state["opened"] else None,
         )
         for index, app in enumerate(APPS, start=1)
