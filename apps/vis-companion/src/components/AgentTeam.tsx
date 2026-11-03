@@ -244,9 +244,20 @@ export interface Span {
   end?: number;
 }
 
-/** The leader turn of a team: its own time, and the steps in which it waited for its agents. */
+/** The leader turn of a team: its own time, the steps in which it waited for its agents, and its newest line. */
 export interface LeaderLane extends Span {
   waits: readonly Span[];
+  note?: string;
+}
+
+// The newest line of a leader: the answer once its turn ended, else the prose of its newest step.
+// Prose is Markdown, so the note shows it without its markers.
+function leaderNote(iterations: readonly TranscriptIteration[], isEnded: boolean): string | undefined {
+  for (let index = iterations.length - 1; index >= 0; index -= 1) {
+    const text = (isEnded && iterations[index].answer?.trim()) || iterations[index].assistant_prose?.trim();
+    if (text) return councilLine(text) || undefined;
+  }
+  return undefined;
 }
 
 // A leader step that waits for its agents. `council.run` and `council.wait` return only when an
@@ -256,14 +267,16 @@ const WAITS_FOR_AGENTS = /\bcouncil\s*\.\s*(?:run|wait)\s*\(/;
 /**
  * The leader lane of a turn from its steps. A step that runs or waits for agents is a wait from
  * its start for its duration; a running step of a live turn waits to now. A step that the client
- * did not load counts as work. Undefined without a start.
+ * did not load counts as work. The note is the newest line of the leader. Undefined without a start.
  */
 export function leaderLane(
   start: number | null | undefined,
   end: number | null | undefined,
-  iterations: readonly TranscriptIteration[] = [],
+  given: readonly TranscriptIteration[] | null = [],
 ): LeaderLane | undefined {
   if (start == null) return undefined;
+  // A turn row or a story may carry no step list at all.
+  const iterations = given ?? [];
   const waits: Span[] = [];
   for (const form of iterations.flatMap((iteration) => iteration.forms ?? [])) {
     const at = form.started_at_ms;
@@ -271,7 +284,7 @@ export function leaderLane(
     if (typeof form.duration_ms === 'number') waits.push({ start: at, end: at + form.duration_ms });
     else if (end == null) waits.push({ start: at });
   }
-  return { start, end: end ?? undefined, waits: waits.sort((a, b) => a.start - b.start) };
+  return { start, end: end ?? undefined, waits: waits.sort((a, b) => a.start - b.start), note: leaderNote(iterations, end != null) };
 }
 
 /** The leader lane of a stored turn. Undefined when the turn gives no start or no end. */
@@ -599,7 +612,10 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
           <li className={LEGEND_ROW}>
             <span className="font-bold text-white">{LEADER_KEY}</span>
             <span className="font-bold uppercase text-white">{LEADER_ROLE}</span>
-            <span className="col-span-2 text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
+            <span className="text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
+            <HoverNote className="min-w-0" note={leader.note}>
+              <span className="block truncate text-dialog-hint">{leader.note ?? ''}</span>
+            </HoverNote>
           </li>
         )}
         {rows.map((agent, index) => {

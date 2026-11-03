@@ -122,11 +122,25 @@ describe('agent rows', () => {
       form('await council.wait()'),
     ] }];
     expect(leaderLane(T0, undefined, steps)).toEqual({
-      start: T0, end: undefined, waits: [{ start: T0 + 2_000, end: T0 + 5_000 }, { start: T0 + 9_000 }],
+      start: T0, end: undefined, waits: [{ start: T0 + 2_000, end: T0 + 5_000 }, { start: T0 + 9_000 }], note: undefined,
     });
     // A finished turn drops a wait that never ended; a turn without a start has no lane.
     expect(leaderLane(T0, T0 + 20_000, steps)?.waits).toEqual([{ start: T0 + 2_000, end: T0 + 5_000 }]);
     expect(leaderLane(undefined, undefined, steps)).toBeUndefined();
+    // A turn without a step list still has its lane.
+    expect(leaderLane(T0, undefined, null)).toEqual({ start: T0, end: undefined, waits: [], note: undefined });
+  });
+
+  // User request: the leader row says what the leader does now, like the note of an agent.
+  it('notes the newest prose of a working leader, and its answer once its turn ended', () => {
+    const steps = [
+      { assistant_prose: 'I start **two** reviewers.' },
+      { assistant_prose: 'Both run; I read the dock code meanwhile.', answer: 'Both reviews pass.' },
+      { assistant_prose: '  ' },
+    ];
+    expect(leaderLane(T0, undefined, steps)?.note).toBe('Both run; I read the dock code meanwhile.');
+    expect(leaderLane(T0, T0 + 9_000, steps)?.note).toBe('Both reviews pass.');
+    expect(leaderLane(T0, undefined, [steps[0]])?.note).toBe('I start two reviewers.');
   });
 
   it('splits the leader lane into work and waits, cut to the lane, an overlap counted once', () => {
@@ -169,7 +183,7 @@ describe('agent rows', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
-    const leader = { start: T0 - 10_000, end: T0 + 20_000, waits: [{ start: T0, end: T0 + 12_000 }] };
+    const leader = { start: T0 - 10_000, end: T0 + 20_000, waits: [{ start: T0, end: T0 + 12_000 }], note: 'Both reviews pass.' };
     render(<TurnAgents {...props} leader={leader} agents={[
       { ...child, title: 'Companion review', role: 'verify', status: 'completed', finished_at: T0 + 9_000, result: 'All **12** keys pass' },
       { ...child, session_id: 'tui', title: 'TUI review', role: 'audit', status: 'completed', finished_at: T0 + 15_000 },
@@ -178,7 +192,7 @@ describe('agent rows', () => {
     const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent);
     expect(lanes).toEqual(['L leader30sdone', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
     const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
-    expect(legend).toEqual(['Lleaderwaited 12s of 30s', 'A1verifyCompanion reviewAll 12 keys pass', 'A2auditTUI review']);
+    expect(legend).toEqual(['Lleaderwaited 12s of 30sBoth reviews pass.', 'A1verifyCompanion reviewAll 12 keys pass', 'A2auditTUI review']);
   });
 
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {
