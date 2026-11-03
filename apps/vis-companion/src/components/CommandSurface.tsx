@@ -226,7 +226,7 @@ export function ChordBand({ registry, group }: { registry: CommandRegistry; grou
  * The searchable list of commands. `palette` lists the commands that can run here; `help`
  * lists every key of the map, and the ones that cannot run here are dimmed.
  */
-function CommandPalette({
+export function CommandPalette({
   registry,
   mode,
   onClose,
@@ -258,7 +258,7 @@ function CommandPalette({
   };
 
   return (
-    <Modal onDismiss={onClose} size="fit">
+    <Modal onDismiss={onClose} size="split">
       <DialogFrame title={mode === 'help' ? 'Keyboard shortcuts' : 'Command palette'} onClose={onClose}>
         <div className="shrink-0 border-b border-dialog-edge px-3 py-3 sm:px-4">
           <Input
@@ -301,7 +301,7 @@ function CommandPalette({
           id={listId}
           role="listbox"
           aria-label={mode === 'help' ? 'Keys' : 'Commands'}
-          className="max-h-[60dvh] min-h-0 flex-1 overflow-y-auto overscroll-contain bg-page py-1 font-mono text-ui"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-page pb-2 font-mono text-ui mouse:text-title"
         >
           {rows.length === 0 && <li className="px-4 py-3 text-dialog-hint">No command matches.</li>}
           {rows.map((verb, index) => {
@@ -311,7 +311,10 @@ function CommandPalette({
             return (
               <li key={verb.id} role="presentation">
                 {heading && (
-                  <div role="presentation" className="px-4 pb-1 pt-2 text-meta font-bold uppercase text-dialog-hint">
+                  <div
+                    role="presentation"
+                    className={`px-4 pb-2 pt-4 text-body font-bold text-dialog-foreground mouse:text-subhead ${index === 0 ? '' : 'mt-2 border-t border-dialog-edge'}`}
+                  >
                     {heading}
                   </div>
                 )}
@@ -325,10 +328,12 @@ function CommandPalette({
                   onClick={() => run(verb)}
                 >
                   <span className="shrink-0">{verb.title}</span>
-                  <span className="min-w-0 flex-1 truncate text-meta opacity-75">{verb.description}</span>
-                  <span className="flex shrink-0 gap-1">
+                  <span className={`min-w-0 flex-1 truncate text-meta mouse:text-ui ${index === at ? '' : 'text-dialog-hint'}`}>
+                    {verb.description}
+                  </span>
+                  <span className="flex shrink-0 gap-1 self-center text-meta mouse:text-ui">
                     {chordKeys(verb).map((key, place) => (
-                      <KeyCap key={place} keyName={key} />
+                      <KeyCap key={place} keyName={key} size="text" />
                     ))}
                   </span>
                 </div>

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { CommandProvider, CommandRegistry, useCommands } from '../lib/commands';
 import { KEYMAP_VERBS } from '../lib/keymap';
-import { ChordBand } from './CommandSurface';
+import { ChordBand, CommandPalette } from './CommandSurface';
 
 /** Every verb of the key map can run, so the band lists all of its keys. */
 const EVERY_VERB = Object.fromEntries(KEYMAP_VERBS.map((verb) => [verb.id, () => {}]));
@@ -11,6 +11,20 @@ const EVERY_VERB = Object.fromEntries(KEYMAP_VERBS.map((verb) => [verb.id, () =>
 function Verbs() {
   useCommands(EVERY_VERB);
   return null;
+}
+
+/** The palette after C-x p, over an empty screen. */
+function Palette() {
+  const [registry] = useState(() => new CommandRegistry());
+  const [isPressed, setPressed] = useState(false);
+  useEffect(() => setPressed(true), []);
+  return (
+    <CommandProvider registry={registry}>
+      <Verbs />
+      <div className="h-dvh bg-ink" />
+      {isPressed && <CommandPalette registry={registry} mode="palette" onClose={() => {}} />}
+    </CommandProvider>
+  );
 }
 
 /** The band after C-x (`group` null) or after C-x and a group key. */
@@ -54,3 +68,6 @@ export const SessionGroup: Story = { args: { group: 'session' } };
 
 /** On a desk the band stands above the composer, beside the session list, never over it. */
 export const AboveComposer: Story = { args: { group: null, isBesideComposer: true } };
+
+/** After C-x p: the palette lists every command under its group's heading. */
+export const PaletteList: Story = { args: { group: null }, render: () => <Palette /> };
