@@ -136,7 +136,7 @@
                                                       "cache_read_share_percent" 61
                                                       "duration_ms" 5400000}
                                              "turns" []})]
-        (expect (str/index-of out "## Metrics"))
+        (expect (str/includes? out "<details>\n<summary>Metrics</summary>\n\n| Metric | Value |"))
         (expect (= ["2.1M" "85k" "$4.20" "3" "8.4k" "41" "2" "61%" "—" "pinned" "1.5h"]
                    (mapv #(metric out %)
                          ["Total input" "Total output" "Cost" "Turns" "Calls" "Tools"
@@ -153,5 +153,7 @@
                    (mapv #(metric out %)
                          ["Session cost" "Subagents" "Subagent cost" "Total cost" "Model"])))))
   (it "says that no call is measured when the session has no usage"
-      (expect (str/includes? (transcript-export/markdown {"session" {"id" "s1"} "turns" []})
-                             "## Metrics\n\n_No measured calls yet._"))))
+      (expect
+        (str/includes?
+          (transcript-export/markdown {"session" {"id" "s1"} "turns" []})
+          "<details>\n<summary>Metrics</summary>\n\n_No measured calls yet._\n\n</details>"))))

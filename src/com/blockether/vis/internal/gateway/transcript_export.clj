@@ -185,11 +185,11 @@
               :else (str (fixed (/ hours 24.0) 1) "d"))))))
 
 (defn metrics-markdown
-  "The `## Metrics` section of a Markdown export: the numbers and labels of the metrics panel
-   above the first turn of the HTML export. `usage` is the session's usage rollup, or nil."
+  "The closed Metrics section of a Markdown export: the numbers and labels of the metrics panel
+   under the METRICS row of the HTML export. `usage` is the session's usage rollup, or nil."
   [session usage]
   (if-not usage
-    "## Metrics\n\n_No measured calls yet._\n\n"
+    "<details>\n<summary>Metrics</summary>\n\n_No measured calls yet._\n\n</details>\n\n"
     (let [subagents
           (get usage "subagents")
 
@@ -228,12 +228,12 @@
                   (not-empty (str (get session "model")))
                   "—")] ["Active" (active-duration (get usage "duration_ms"))]])]
 
-      (str "## Metrics\n\n| Metric | Value |\n| --- | --- |\n"
+      (str "<details>\n<summary>Metrics</summary>\n\n| Metric | Value |\n| --- | --- |\n"
            (apply str
              (map (fn [[k v]]
                     (str "| " k " | " (str/replace v "|" "\\|") " |\n"))
                   rows))
-           "\n"))))
+           "\n</details>\n\n"))))
 
 (defn- noun [n word] (str n " " word (when (not= 1 n) "s")))
 

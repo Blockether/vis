@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { agentsByTurn, storedLeaderLane, TurnAgents } from '../components/AgentTeam';
 import { SessionStatsPanel } from '../components/SessionList';
 import {
@@ -9,6 +9,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { TranscriptOutline } from '../components/TranscriptOutline';
+import { Disclosure } from '../components/ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { TranscriptExport as TranscriptExportData } from '../lib/transcript-export';
 import { JUMP_MARGIN, outlineEntry } from '../lib/transcript-outline';
@@ -21,7 +22,7 @@ import { WorkspaceRootsContext } from '../lib/workspace-roots';
  * but a row of them opens nothing, because the export holds only this session. A wake from a subagent of this session stays
  * hidden, as on the screen. The rows are complete, so every trace mounts whole and the outline
  * holds every turn. The session's metrics panel, as the session list shows it, stands above the
- * first turn.
+ * first turn, closed under a METRICS row and as wide as the column when it opens.
  */
 export function TranscriptExport({ data, client }: { data: TranscriptExportData; client: GatewayClient }) {
   const { session, turns } = data;
@@ -35,6 +36,7 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
   const outline = useMemo(() => turns.map((turn) => outlineEntry(turn)), [turns]);
   const teams = useMemo(() => agentsByTurn(data.agents), [data.agents]);
   const showsOutline = turns.length >= OUTLINE_MIN_TURNS;
+  const [showsMetrics, setShowsMetrics] = useState(false);
   // The jump of the session screen: the turn's top lands `JUMP_MARGIN` below the scroller's top.
   const jumpToTurn = (id: string) => {
     const viewport = scrollRef.current;
@@ -53,7 +55,10 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
             className={transcriptColumnClass({ zen: false, outline: showsOutline, empty: turns.length === 0 })}
           >
             <section aria-label="Session metrics" className="mb-8">
-              <SessionStatsPanel session={session} usage={data.usage} phase="ready" />
+              <Disclosure tone="step" isOpen={showsMetrics} onClick={() => setShowsMetrics((open) => !open)}>
+                Metrics
+              </Disclosure>
+              {showsMetrics && <SessionStatsPanel session={session} usage={data.usage} phase="ready" wide />}
             </section>
             {turns.length === 0 && <p className="text-body text-dialog-hint">This session has no turns.</p>}
             {turns.map((turn, index) => (

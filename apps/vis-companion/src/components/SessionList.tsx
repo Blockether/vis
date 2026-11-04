@@ -968,10 +968,13 @@ export function SessionStatsPanel({
   session,
   usage,
   phase,
+  wide = false,
 }: {
   session: Pick<Session, 'model' | 'model_pref'>;
   usage: SessionUsage | null;
   phase: 'loading' | 'ready' | 'error';
+  /** Fill the column it stands in, as the transcript export does, not the list's 2xl width. */
+  wide?: boolean;
 }) {
   const cacheReadShare = usage?.cache_read_share_percent;
   const reuseCoverage = usage?.reusable_prefix_coverage_percent;
@@ -983,7 +986,7 @@ export function SessionStatsPanel({
 
   return (
     <div
-      className={`max-w-2xl border-t border-dialog-edge bg-panel-2 py-4 font-mono ${LIST_EDGE} ${LIST_EDGE_END}`}
+      className={`${wide ? 'w-full' : 'max-w-2xl'} border-t border-dialog-edge bg-panel-2 py-4 font-mono ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
       {phase === 'loading' && (
         <p role="status" className="text-ui text-dialog-hint">
