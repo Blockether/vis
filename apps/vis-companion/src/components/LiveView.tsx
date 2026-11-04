@@ -1142,7 +1142,7 @@ const LiveTableRow = memo(function LiveTableRow({
             </span>
           </ListRow>
         ) : (
-          <span className="flex min-w-0 items-start gap-2 py-1.5 sm:pr-(--live-view-inset)">
+          <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-1.5">
             <span className={`flex min-w-0 flex-1 items-start gap-2 ${mark}`}>
               <LineMark tone={row.tone} boxClassName={lead} />
               <RowFace columns={columns} row={row} />
@@ -1153,18 +1153,18 @@ const LiveTableRow = memo(function LiveTableRow({
       {detailAt.map((index) => (
         <td
           key={columns[index]?.id ?? index}
-          className="hidden px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
+          className="hidden border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
         >
           <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
         </td>
       ))}
       {valueAt >= 0 && (
-        <td className="hidden py-2 pr-(--live-view-inset) pl-2 text-right align-baseline tabular-nums text-ui text-white sm:table-cell">
+        <td className="hidden border-l border-dialog-edge/40 px-(--live-view-inset) py-2 text-right align-baseline tabular-nums text-ui text-white sm:table-cell">
           <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
         </td>
       )}
       {hasState && (
-        <td className="hidden py-2 pr-(--live-view-inset) align-baseline whitespace-nowrap sm:table-cell">
+        <td className="hidden border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline whitespace-nowrap sm:table-cell">
           <ToneWord tone={row.tone} />
         </td>
       )}
@@ -1404,17 +1404,11 @@ function TableRows({
     startTransition(() => setShownChunks((was) => was + TABLE_STEP_CHUNKS));
   }, [shownChunks, chunks.length]);
   return (
-    // Only a SELECTABLE table bleeds to the view's edges, because its rows are press
-    // bands. A table that is only read keeps its rules on the column of the words, so
-    // its lines end where the links and the log under it end.
-    <div className={`${isSelectable ? '-mx-(--live-view-inset) ' : ''}overflow-x-auto`}>
-      <table
-        className={`w-full min-w-0 border-collapse font-mono text-body ${
-          isSelectable
-            ? ''
-            : '[&_td:first-child]:pl-0 [&_td:last-child]:pr-0 [&_th:first-child]:pl-0 [&_th:last-child]:pr-0'
-        }`}
-      >
+    // A table reads as a TABLE: a frame with a top and a bottom, a header band and a
+    // rule between columns (user report: the bare rows did not read as a table). The
+    // scroll viewport owns the frame, so a wide table scrolls inside it.
+    <div className="overflow-x-auto overscroll-x-contain border border-dialog-edge">
+      <table className="w-full min-w-0 border-collapse font-mono text-body">
         {/* The name takes the width that the measured columns leave. A width holds only
             from `sm`: below it, the cells after the name are hidden. */}
         <colgroup>
@@ -1424,14 +1418,14 @@ function TableRows({
           ))}
         </colgroup>
         <thead className="hidden sm:table-header-group">
-          <tr className="border-b border-dialog-edge/40">
-            {node.columns.map((column) => (
+          <tr className="border-b border-dialog-edge bg-panel-2">
+            {node.columns.map((column, index) => (
               <th
                 key={column.id}
                 scope="col"
                 className={`px-(--live-view-inset) py-2 font-normal text-meta text-dialog-hint ${
-                  column.align === 'right' ? 'text-right' : 'text-left'
-                }`}
+                  index > 0 ? 'border-l border-dialog-edge/40' : ''
+                } ${column.align === 'right' ? 'text-right' : 'text-left'}`}
               >
                 <InlineMarkdown>{column.label}</InlineMarkdown>
               </th>
@@ -1439,7 +1433,7 @@ function TableRows({
             {hasState && (
               <th
                 scope="col"
-                className="py-2 pr-(--live-view-inset) text-left font-normal text-meta text-dialog-hint"
+                className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 text-left font-normal text-meta text-dialog-hint"
               >
                 State
               </th>
