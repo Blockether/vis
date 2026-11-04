@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.4] - 2026-11-04
+
+### Added
+- Apps: a diff toolbar button or menu can show an icon instead of its label (`icon="refresh"` or `icon="more"`). A button can mark the current choice with `is_selected=True`. A group in a menu opens a submenu.
+
+### Changed
+- Review: the review app has one compact toolbar like the T3 Code diff panel: a scope menu with a Checkpoint submenu, a refresh icon and one More actions menu. An idle app shows no status row. The Companion shows the file rows with syntax colors, and the side panel opens at 42% of the window (360 to 560 px). The TUI menu legend marks the current choice.
+
+### Fixed
+- Gateway: a turn that runs when the gateway stops continues when the gateway starts again. Before, each continued turn failed at once with `A PRIMARY KEY constraint failed (UNIQUE constraint failed: session_turn_soul.id)`.
+
 ## [v0.5.3] - 2026-11-04
 
 ### Changed
