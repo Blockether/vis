@@ -68,6 +68,14 @@
            {:exit exit :output (str output details)})
          (finally (when (.isAlive client) (#'native/kill-tree! client))))))
 
+(defn- registered?
+  "True when the gateway in `home` wrote its registry entry. The gateway listens before
+   it registers. A client that starts in that gap finds no gateway for its DB and starts
+   a detached one, which keeps writing into `home` after the test kills its own tree."
+  [^File home]
+  (boolean (some #(str/ends-with? (.getName ^File %) ".edn")
+                 (.listFiles (io/file home ".vis" "gateway" "registry")))))
+
 (defn- with-native-gateway
   "Own the gateway and its private home; only downloaded model assets may be shared."
   [prefix cached-models? f]
@@ -95,7 +103,7 @@
         (try (let [started?
                    (loop [remaining 300]
                      (cond (not (.isAlive gateway)) false
-                           (listening? port) true
+                           (and (listening? port) (registered? home)) true
                            (zero? remaining) false
                            :else (do (Thread/sleep 50) (recur (dec remaining)))))
 
@@ -110,7 +118,7 @@
                         (str/join "\n"))]
 
                (expect started?
-                       (str "isolated native gateway did not start listening; exit="
+                       (str "isolated native gateway did not listen and register; exit="
                             (when-not (.isAlive gateway) (.exitValue gateway))
                             "\n" errors)))
              ;; The CLI uses gateway.client/request!: no copied registry credentials or
