@@ -1119,20 +1119,10 @@ const LiveTableRow = memo(function LiveTableRow({
             aria-label={`Select ${row.cells[0] || row.id}`}
           >
             <span className={`flex min-w-0 flex-1 items-start gap-2 font-mono text-body ${mark}`}>
-              {/* The selection state as a glyph, as in the terminal, so it reads without
-                  the row's tint (#430). It keeps one gap before the tone mark. */}
-              <span
-                data-selection-mark
-                aria-hidden="true"
-                className={`flex h-[1lh] w-[1ch] shrink-0 items-center justify-center ${
-                  isSelected ? 'text-accent-ink' : 'text-dialog-hint'
-                }`}
-              >
-                {isSelected ? '●' : '○'}
-              </span>
-              {/* An idle row says nothing more, so the selection glyph stays its only
-                  mark, as an idle stat shows none. Its slot stays, so the name keeps the
-                  column of the other rows (user report: a skipped job stood 20px left). */}
+              {/* The row's tint and `aria-pressed` carry the selection; a ●/○ glyph beside
+                  the tone mark read as a second status (user report). An idle row shows no
+                  mark, but its slot stays, so the name keeps the column of the other rows
+                  (user report: a skipped job stood 20px left). */}
               {row.tone === 'idle' ? (
                 <span aria-hidden="true" className={`w-3 shrink-0 ${lead}`} />
               ) : (
