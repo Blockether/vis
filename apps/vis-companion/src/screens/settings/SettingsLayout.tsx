@@ -143,17 +143,20 @@ export const SettingsNested = createContext(false);
 export function SettingsSection({
   title,
   headingLevel,
+  action,
   defaultOpen,
   children,
 }: {
   title: string;
   headingLevel?: 3 | 4;
+  /** One icon action on the band; a press also opens the band. */
+  action?: ReactNode;
   /** Opens the band at first, for a route that leads to it. */
   defaultOpen?: boolean;
   children: ReactNode;
 }) {
   return (
-    <SettingsPanel title={title} headingLevel={headingLevel} defaultOpen={defaultOpen}>
+    <SettingsPanel title={title} headingLevel={headingLevel} action={action} defaultOpen={defaultOpen}>
       <SettingsNested.Provider value>{children}</SettingsNested.Provider>
     </SettingsPanel>
   );

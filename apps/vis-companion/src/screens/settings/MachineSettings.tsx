@@ -793,16 +793,17 @@ export function MachineSettings({
             )}
           </SettingsSection>
           {/* Only a route from the model picker opens the band; else the bands context decides. */}
-          <SettingsSection title={providers?.title ?? 'Providers'} defaultOpen={isProvidersOpen || undefined}>
-            <ProvidersPanel
-              client={client}
-              contextSessionId={contextSessionId}
-              focusProviderId={focusProviderId}
-            />
+          <ProvidersPanel
+            title={providers?.title ?? 'Providers'}
+            defaultOpen={isProvidersOpen || undefined}
+            client={client}
+            contextSessionId={contextSessionId}
+            focusProviderId={focusProviderId}
+          >
             {providers && providers.toggles.length > 0 && (
               <SettingsPanel title="Options">{settingRows(providers)}</SettingsPanel>
             )}
-          </SettingsSection>
+          </ProvidersPanel>
           <SettingsSection title={voice?.title ?? 'Voice'}>
             {voice && settingRows(voice)}
             <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
@@ -1668,14 +1669,21 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
  * The exchange itself is `useProviderAuth`, shared with the router dialog.
  */
 function ProvidersPanel({
+  title,
+  defaultOpen,
   client,
   contextSessionId,
   focusProviderId,
+  children,
 }: {
+  title: string;
+  defaultOpen?: boolean;
   client: GatewayClient;
   /** The open session: its project decides the providers that only projects register (#410). */
   contextSessionId?: string;
   focusProviderId?: string;
+  /** The subsections under the accounts, such as Options. */
+  children?: ReactNode;
 }) {
   const auth = useProviderAuth(client, contextSessionId);
   const { providers, err, note } = auth;
@@ -1686,8 +1694,9 @@ function ProvidersPanel({
   const fleetNote = unscopedMessage(note, providers);
 
   return (
-    <SettingsPanel
-      title="Accounts"
+    <SettingsSection
+      title={title}
+      defaultOpen={defaultOpen}
       /* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS, and it renders nothing
          until the gateway has said something is addable — so the band asks for it
          unconditionally and `AddProviderButton` answers with its own silence. */
@@ -1724,6 +1733,7 @@ function ProvidersPanel({
       )}
 
       <ProviderRows auth={auth} focusId={focusProviderId} />
-    </SettingsPanel>
+      {children}
+    </SettingsSection>
   );
 }

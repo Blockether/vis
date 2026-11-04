@@ -1538,7 +1538,27 @@ export function ProviderRows({ auth, focusId }: { auth: ProviderAuth; focusId?: 
 
         return (
           <div key={provider.id}>
-            <SwipeActions label={provider.label} actions={actions} alignMenuWithHeader>
+            <SwipeActions
+              label={provider.label}
+              actions={actions}
+              alignMenuWithHeader
+              // A signed-out account has one verb and nothing to fold, so the verb is a
+              // real button and the row carries no chevron.
+              trailing={
+                !authed && (
+                  <span className="flex items-center pe-3 sm:pe-4">
+                    <Button
+                      variant="secondary"
+                      density="compact"
+                      aria-label={`${rejected ? 'Connect' : 'Sign in to'} ${provider.label}`}
+                      onClick={() => void auth.signIn(provider)}
+                    >
+                      {rejected ? 'Connect' : 'Sign in'}
+                    </Button>
+                  </span>
+                )
+              }
+            >
               <div className="min-w-0">
                 <ListRow
                   ref={provider.id === focusId ? focusRef : undefined}
@@ -1594,18 +1614,22 @@ export function ProviderRows({ auth, focusId }: { auth: ProviderAuth; focusId?: 
                       {providerRowLine(provider)}
                     </Text>
                   </span>
-                  <Text
-                    variant="meta"
-                    className="shrink-0"
-                    title={providerLimitsLine(provider) ?? status.label}
-                  >
-                    {!authed ? (rejected ? 'Connect' : 'Sign in') : (mark ?? '')}
-                  </Text>
-                  <ChevronIcon
-                    open={isOpen}
-                    className="size-3 shrink-0 text-dialog-hint"
-                    aria-hidden
-                  />
+                  {authed && (
+                    <>
+                      <Text
+                        variant="meta"
+                        className="shrink-0"
+                        title={providerLimitsLine(provider) ?? status.label}
+                      >
+                        {mark ?? ''}
+                      </Text>
+                      <ChevronIcon
+                        open={isOpen}
+                        className="size-3 shrink-0 text-dialog-hint"
+                        aria-hidden
+                      />
+                    </>
+                  )}
                 </ListRow>
               </div>
             </SwipeActions>
