@@ -14,6 +14,7 @@ Vis v0.5.1 was not published, because its native release checks failed. v0.5.2 c
 ### Fixed
 - TUI: the native binary opens the `C-x` command palette again. A reflective key comparison crashed it. The artifact inspector and the agent team wait have no reflective calls either.
 - TUI: a notification card takes clicks only on its close mark and its page arrows. A click or a drag on the rest of the card goes to the transcript under it.
+- Python: an extension imports its own editable project before a shared copy, also when the project installs an import hook, for example setuptools with a remapped package (#226).
 
 ## [v0.5.1] - 2026-11-03
 
