@@ -5591,6 +5591,32 @@
                  (expect (= [:parked true] [(:status result) (:park-clean? result)]))
                  (expect (empty? @requests))))
              (finally (loop-env/dispose-environment! environment)))))
+  (it "resumes a parked turn through turn! without a second turn row"
+      ;; #419 follow-up: a gateway restart resumed every parked turn with a
+      ;; session_turn_soul primary key failure, because turn! dropped :resume.
+      (let [environment
+            (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+            tid
+            (persistance/db-store-session-turn! (:db-info environment)
+                                                {:parent-session-id (:session-id environment)
+                                                 :user-request "start"})]
+
+        (try (with-redefs [svar/session-capability
+                           (constantly nil)
+
+                           svar/ask-code!
+                           (fn [_ _]
+                             {:stop-reason :end :content "Done."})]
+
+               (turn/turn! environment
+                           [(svar/user "start")]
+                           {:session-turn-id tid :resume {:turn-id tid :clean? true}})
+               (expect (= [(str tid)]
+                          (mapv (comp str :id)
+                                (persistance/db-list-session-turns (:db-info environment)
+                                                                   (:session-id environment))))))
+             (finally (loop-env/dispose-environment! environment)))))
   (doseq [clean? [true false]]
     (it (if clean? "resumes a clean park without a note" "tells the model about a forced park")
         (let [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})

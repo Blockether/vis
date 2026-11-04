@@ -969,7 +969,7 @@
   [env messages opts]
   (let [{:keys [spec provider model max-context-tokens system-prompt debug? hooks cancel-token
                 eval-timeout-ms reasoning-default reasoning-effort preferred-reasoning-effort
-                routing extra-body session-turn-id request-kind council-entry-id]
+                routing extra-body session-turn-id request-kind council-entry-id resume]
          :or {debug? false}}
         opts]
     (when-not (:db-info env)
@@ -1198,6 +1198,8 @@
        ;; the stored Council entry owns the visible request, not the wake instruction.
        :request-kind request-kind
        :council-entry-id council-entry-id
+       ;; A gateway restart continues a parked turn: its row already exists.
+       :resume resume
        :spec spec
        :max-context-tokens max-context-tokens
        :system-prompt system-prompt
@@ -1220,7 +1222,7 @@
   [{:keys [environment user-request spec max-context-tokens system-prompt hooks cancel-atom
            cancel-token reasoning-default reasoning-effort preferred-reasoning-effort routing
            extra-body turn-features workspace-overrides session-turn-id request-kind
-           council-entry-id]}]
+           council-entry-id resume]}]
   (let [iteration-result
         (run-turn! environment
                    user-request
@@ -1237,6 +1239,9 @@
                             :council-entry-id council-entry-id}
                      session-turn-id
                      (assoc :session-turn-id session-turn-id)
+
+                     resume
+                     (assoc :resume resume)
 
                      routing
                      (assoc :routing routing)
