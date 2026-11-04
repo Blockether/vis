@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { render, act, fireEvent, screen } from '@testing-library/react';
+import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayConn } from '../lib/types';
@@ -217,5 +218,42 @@ describe('a machine that stopped answering while nobody was looking', () => {
       screen.getByRole('button', { name: 'Retry connection to pending retry' }),
     ).not.toHaveAttribute('aria-busy');
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+// User report: on iOS the sign-in window closed when the app moved the same
+// machine from its LAN address to its tailnet address on resume. The machine's
+// settings remounted, and their unmount cancelled the running sign-in.
+describe('an address switch of the same machine', () => {
+  it('keeps the open settings of that machine mounted', async () => {
+    const mounts = { count: 0, unmounts: 0 };
+    function Panel() {
+      useEffect(() => {
+        mounts.count += 1;
+        return () => {
+          mounts.unmounts += 1;
+        };
+      }, []);
+      return <p>settings</p>;
+    }
+    function Open({ conns }: { conns: GatewayConn[] }) {
+      const { health } = useFleetHealth(conns);
+      return (
+        <MachineRows conns={conns} health={health} onPick={() => {}} renderPanel={() => <Panel />} />
+      );
+    }
+    const lan = { id: 'machine-1', url: 'http://192.168.0.10:7890' };
+    const tailnet = { id: 'machine-1', url: 'http://100.64.0.10:7890' };
+    const view = render(<Open conns={[lan]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(screen.getByText('settings')).toBeVisible();
+    view.rerender(<Open conns={[tailnet]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(screen.getByText('settings')).toBeVisible();
+    expect(mounts).toEqual({ count: 1, unmounts: 0 });
   });
 });

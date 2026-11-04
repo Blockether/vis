@@ -498,7 +498,11 @@ export function useProviderFleet(
  * polling. A reachable loopback receiver can deliver the browser result; other
  * clients retain manual URL entry. No token or PKCE verifier lands here.
  */
-export function useProviderAuth(client: GatewayClient, contextSessionId?: string): ProviderAuth {
+export function useProviderAuth(
+  client: GatewayClient,
+  contextSessionId?: string,
+  machine?: string,
+): ProviderAuth {
   // The accounts panel answers "is this signed in", so it asks live on open.
   const fleet = useProviderFleet(client, contextSessionId, true);
   const { setProviders, setErr, setNote, setPending, reload } = fleet;
@@ -513,6 +517,14 @@ export function useProviderAuth(client: GatewayClient, contextSessionId?: string
     watchRef.current = null;
   }, []);
 
+  // A flow belongs to a machine, not to one address. On resume the app can move a
+  // machine to a better address; that closed the iOS sign-in. A new client of the
+  // same `machine` keeps the flow. Another machine, or no `machine`, resets it.
+  const scope = machine ?? client;
+  const clientRef = useRef(client);
+  useEffect(() => {
+    clientRef.current = client;
+  }, [client]);
   useEffect(() => {
     setFlow(null);
     setRedirectUrl('');
@@ -521,7 +533,7 @@ export function useProviderAuth(client: GatewayClient, contextSessionId?: string
       startGeneration.current += 1;
       stopPolling();
     };
-  }, [client, setFlow, stopPolling]);
+  }, [scope, setFlow, stopPolling]);
 
   const watchFlow = useCallback(
     (started: AuthFlow) => {
@@ -530,10 +542,13 @@ export function useProviderAuth(client: GatewayClient, contextSessionId?: string
         {
           complete: (input) =>
             started.kind === 'api-key'
-              ? client.submitProviderKey(started.provider_id, started.flow_id, input)
-              : client.completeProviderAuth(started.provider_id, started.flow_id, input),
+              ? clientRef.current.submitProviderKey(started.provider_id, started.flow_id, input)
+              : clientRef.current.completeProviderAuth(started.provider_id, started.flow_id, input),
           poll: async () => {
-            const verdict = await client.pollProviderAuth(started.provider_id, started.flow_id);
+            const verdict = await clientRef.current.pollProviderAuth(
+              started.provider_id,
+              started.flow_id,
+            );
             const lines = verdict.instructions;
             // A provider's own sign-in prints its lines while it runs; show the latest.
             if (verdict.status === 'pending' && lines?.length)
@@ -542,7 +557,7 @@ export function useProviderAuth(client: GatewayClient, contextSessionId?: string
               );
             return verdict;
           },
-          cancel: () => client.cancelProviderAuth(started.provider_id, started.flow_id),
+          cancel: () => clientRef.current.cancelProviderAuth(started.provider_id, started.flow_id),
         },
         (verdict) => {
           setFlow(null);
@@ -557,7 +572,7 @@ export function useProviderAuth(client: GatewayClient, contextSessionId?: string
         (message) => setErr(message, started.provider_id),
       );
     },
-    [client, reload, setErr, setFlow, setNote],
+    [reload, setErr, setFlow, setNote],
   );
 
   const signIn = useCallback(

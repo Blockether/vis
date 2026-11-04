@@ -110,6 +110,8 @@ export interface GwHealth {
  * not the verdict from the last time the machine was alive.
  */
 const lastHealth: Record<string, GwHealth> = {};
+/** The last address seen for each machine id, so a verdict can follow an address switch. */
+const lastUrlById: Record<string, string> = {};
 
 /** Is this verdict recent enough to be shown as the machine's state? */
 function isFresh(h?: GwHealth): h is GwHealth {
@@ -184,6 +186,13 @@ export function useFleetHealth(
     };
     await Promise.all(
       list.map(async (conn) => {
+        // The app moves a machine to a better address after it proved that address
+        // reachable. A fresh verdict of that machine follows it, so its open
+        // settings do not hide for a "checking" sweep and lose a running sign-in.
+        const before = conn.id ? lastUrlById[conn.id] : undefined;
+        if (conn.id) lastUrlById[conn.id] = conn.url;
+        const moved = before && before !== conn.url ? lastHealth[before] : undefined;
+        if (!lastHealth[conn.url] && isFresh(moved)) remember(conn.url, moved);
         const known = lastHealth[conn.url];
         if (forceChecking || !isFresh(known)) {
           remember(conn.url, { state: 'checking', at: Date.now() });
@@ -237,7 +246,16 @@ export function useFleetHealth(
   }, [connsKey, probe]);
 
   const retry = useCallback((conn: GatewayConn) => probe([conn], true), [probe]);
-  return { health, retry };
+  // The first render at a new address comes before its probe: lend it the fresh
+  // verdict of the machine's previous address, as the probe above will.
+  const lent = conns.filter((conn) => conn.id && !health[conn.url]);
+  if (!lent.length) return { health, retry };
+  const shown = { ...health };
+  for (const conn of lent) {
+    const before = lastUrlById[conn.id!];
+    if (before && isFresh(health[before])) shown[conn.url] = health[before];
+  }
+  return { health: shown, retry };
 }
 
 interface GwHealthView {
@@ -681,7 +699,7 @@ export function MachineRows({
           });
 
         return (
-          <div key={conn.url} className="min-w-0">
+          <div key={conn.id ?? conn.url} className="min-w-0">
             <SwipeActions label={name} actions={actions} alignMenuWithHeader={alignMenuWithHeader}>
               {/* The paper belongs to the whole row: a machine standing open is one
                   slab, and its own settings hang under that slab. */}

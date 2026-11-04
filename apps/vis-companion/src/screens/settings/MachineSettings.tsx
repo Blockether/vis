@@ -797,6 +797,7 @@ export function MachineSettings({
             title={providers?.title ?? 'Providers'}
             defaultOpen={isProvidersOpen || undefined}
             client={client}
+            machine={gateway.id ?? gateway.url}
             contextSessionId={contextSessionId}
             focusProviderId={focusProviderId}
           >
@@ -870,7 +871,7 @@ export function MachineSettings({
         <>
           <SettingsSection title={tools?.title ?? 'Tools'}>
             {tools && settingRows(tools)}
-            <McpServersPanel client={client} />
+            <McpServersPanel client={client} machine={gateway.id ?? gateway.url} />
             <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} projectExtensions={projectExtensions}
               onRefresh={load} renderSetting={settingRow} />
           </SettingsSection>
@@ -891,7 +892,16 @@ export function MachineSettings({
 const MCP_SETTLE_POLL_MS = 1500;
 const MCP_SETTLE_WINDOW_MS = 30_000;
 
-export function McpServersPanel({ client, target }: { client: GatewayClient; target?: import('../../lib/types').SettingsTarget }) {
+export function McpServersPanel({
+  client,
+  target,
+  machine,
+}: {
+  client: GatewayClient;
+  target?: import('../../lib/types').SettingsTarget;
+  /** The paired machine's id. A new client of the same machine keeps a sign-in. */
+  machine?: string;
+}) {
   const isScoped = Boolean(target && target.scope !== 'global');
   // The rows this machine gave last time are the first frame; `load` below
   // revalidates them underneath. Opening on `null` flashed an empty band and
@@ -911,10 +921,12 @@ export function McpServersPanel({ client, target }: { client: GatewayClient; tar
   const [test, setTest] = useState<McpTestResult | null>(null);
   const [auth, setAuth] = useState<{
     flow: McpAuthFlow;
-    client: GatewayClient;
+    scope: GatewayClient | string;
     tab?: AuthTab;
   } | null>(null);
-  const authFlow = auth?.client === client ? auth.flow : null;
+  // A sign-in belongs to a machine, not to one address (see useProviderAuth).
+  const scope = machine ?? client;
+  const authFlow = auth?.scope === scope ? auth.flow : null;
   const authEpoch = useRef(0);
   const stopAuth = useRef<AuthWatch | null>(null);
   // The server being edited, or null while adding. Editing keys the save by the
@@ -997,30 +1009,37 @@ export function McpServersPanel({ client, target }: { client: GatewayClient; tar
     };
   }, [servers, timedOut, load]);
 
+  const clientRef = useRef(client);
+  const loadRef = useRef(load);
+  useEffect(() => {
+    clientRef.current = client;
+    loadRef.current = load;
+  }, [client, load]);
+
   useEffect(
     () => () => {
       authEpoch.current += 1;
     },
-    [client],
+    [scope],
   );
 
   useEffect(() => {
-    if (!auth || auth.client !== client) return;
-    const { client: paired, flow, tab } = auth;
+    if (!auth || auth.scope !== scope) return;
+    const { flow, tab } = auth;
     const verdictOf = (value: McpAuthFlow) => ({ status: value.status, message: value.error });
     const watcher = watchAuth(
       { ...flow, expires_at: flow.expires_at_ms },
       {
         complete: (input) =>
-          paired.mcpAuthComplete(flow.server, flow.flow_id, input).then(verdictOf),
-        poll: () => paired.mcpAuthPoll(flow.server, flow.flow_id).then(verdictOf),
-        cancel: () => paired.mcpAuthCancel(flow.server, flow.flow_id),
+          clientRef.current.mcpAuthComplete(flow.server, flow.flow_id, input).then(verdictOf),
+        poll: () => clientRef.current.mcpAuthPoll(flow.server, flow.flow_id).then(verdictOf),
+        cancel: () => clientRef.current.mcpAuthCancel(flow.server, flow.flow_id),
       },
       (verdict) => {
         authEpoch.current += 1;
         setAuth(null);
         setBusy(null);
-        if (verdict.status === 'ok') void load();
+        if (verdict.status === 'ok') void loadRef.current();
         else setError(verdict.message ?? 'Authorization failed. Start sign-in again.');
       },
       undefined,
@@ -1031,7 +1050,7 @@ export function McpServersPanel({ client, target }: { client: GatewayClient; tar
       watcher.stop();
       if (stopAuth.current === watcher) stopAuth.current = null;
     };
-  }, [auth, client, load]);
+  }, [auth, scope]);
 
   // Editing loads the sanitized row back into the form. `env` and `headers` come
   // back BLANK on purpose: the gateway never sends secret values, and a save that
@@ -1175,7 +1194,7 @@ export function McpServersPanel({ client, target }: { client: GatewayClient; tar
         await client.mcpAuthCancel(flow.server, flow.flow_id).catch(() => {});
         return;
       }
-      setAuth({ flow, client, tab });
+      setAuth({ flow, scope, tab });
     } catch (error) {
       tab?.close();
       if (authEpoch.current === epoch)
@@ -1672,6 +1691,7 @@ function ProvidersPanel({
   title,
   defaultOpen,
   client,
+  machine,
   contextSessionId,
   focusProviderId,
   children,
@@ -1679,13 +1699,15 @@ function ProvidersPanel({
   title: string;
   defaultOpen?: boolean;
   client: GatewayClient;
+  /** The paired machine's id. A new client of the same machine keeps a sign-in. */
+  machine?: string;
   /** The open session: its project decides the providers that only projects register (#410). */
   contextSessionId?: string;
   focusProviderId?: string;
   /** The subsections under the accounts, such as Options. */
   children?: ReactNode;
 }) {
-  const auth = useProviderAuth(client, contextSessionId);
+  const auth = useProviderAuth(client, contextSessionId, machine);
   const { providers, err, note } = auth;
   const [isAdding, setIsAdding] = useState(false);
   // A message that names a provider is painted inside THAT provider's row by

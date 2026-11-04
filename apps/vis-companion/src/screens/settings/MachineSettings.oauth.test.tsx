@@ -182,6 +182,24 @@ it('does not send an old callback to a different paired gateway', async () => {
   expect(first.mcpAuthComplete).not.toHaveBeenCalled();
   expect(first.mcpAuthCancel).toHaveBeenCalledWith('work', 'test-flow');
 });
+// User report: on iOS the sign-in window closed when the app moved the same
+// machine from its LAN address to its tailnet address on resume.
+it('sends the callback to the new address of the same machine', async () => {
+  const { returns } = browser();
+  const lan = client();
+  const tailnet = client();
+  const view = renderOpenBands(
+    <McpServersPanel client={lan as unknown as GatewayClient} machine="machine-1" />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
+  await waitFor(() => expect(host.authorize).toHaveBeenCalledOnce());
+  view.rerender(<McpServersPanel client={tailnet as unknown as GatewayClient} machine="machine-1" />);
+  await returns();
+  await waitFor(() =>
+    expect(tailnet.mcpAuthComplete).toHaveBeenCalledWith('work', 'test-flow', callback),
+  );
+  expect(lan.mcpAuthCancel).not.toHaveBeenCalled();
+});
 
 // Regression: an HTTP gateway reached through an encrypted VPN was refused before fetch,
 // and the UI replaced that reason with a generic connection error.

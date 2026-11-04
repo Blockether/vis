@@ -121,6 +121,30 @@ describe('browser-flow lifecycle in the shared Companion UI', () => {
     expect(client.pollProviderAuth).not.toHaveBeenCalled();
   });
 
+  // User report: on iOS the sign-in window closed when the app moved the same
+  // machine from its LAN address to its tailnet address on resume.
+  it('keeps an active flow when the same machine moves to another address', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const lan = clientFor();
+    lan.pollProviderAuth.mockResolvedValue({ status: 'pending' });
+    const tailnet = { ...clientFor(), base: 'http://100.64.0.1:7890' };
+    tailnet.pollProviderAuth.mockResolvedValue({ status: 'pending' });
+    const { result, rerender } = renderHook(
+      ({ client }) => useProviderAuth(client as unknown as GatewayClient, undefined, 'machine-1'),
+      { initialProps: { client: lan } },
+    );
+    await act(async () => result.current.signIn(provider));
+    rerender({ client: tailnet });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(lan.cancelProviderAuth).not.toHaveBeenCalled();
+    expect(tailnet.cancelProviderAuth).not.toHaveBeenCalled();
+    expect(tailnet.pollProviderAuth).toHaveBeenCalledWith(provider.id, flow.flow_id);
+    expect(result.current.flow?.flow_id).toBe(flow.flow_id);
+  });
+
   it('ignores a poll that returns after cancellation', async () => {
     vi.useFakeTimers();
     vi.spyOn(window, 'open').mockReturnValue(null);
