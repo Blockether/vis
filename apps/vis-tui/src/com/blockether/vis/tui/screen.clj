@@ -9214,9 +9214,6 @@
             :toast-dismiss
             (vis/dismiss-notification! (:text hit))
 
-            :toast-prev
-            (vis/page-notifications! -1)
-
             :toast-next
             (vis/page-notifications! 1)
 
@@ -9397,9 +9394,6 @@
 
           :toast-dismiss
           (vis/dismiss-notification! (:text hit))
-
-          :toast-prev
-          (vis/page-notifications! -1)
 
           :toast-next
           (vis/page-notifications! 1)

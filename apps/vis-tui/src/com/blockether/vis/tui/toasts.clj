@@ -13,7 +13,8 @@
    the heading holds the bold title with its source. A gray rule runs under the
    heading and stops before the `✕` column. The body holds up to
    `max-text-lines` lines of wrapped text. When more notices wait, the page
-   counter `← 1/3 →` is in the bottom-right corner.
+   counter `1/3` is in the bottom-right corner, on the row over the bottom border.
+   A click on the counter shows the next notice.
    The countdown is a thick bar on the bottom border, as long as the time left.
    A sticky notice has a plain bottom border.
 
@@ -61,7 +62,7 @@
 (defn- pager
   "The bottom-right page counter of a card, or nil when no other page waits."
   [index total]
-  (when (> (long total) 1) (str "← " (inc (long index)) "/" total " →")))
+  (when (> (long total) 1) (str (inc (long index)) "/" total)))
 
 (defn layout
   "The card of `page`, a `notifications/pager` value, at `left`,`top` of an area of
@@ -152,9 +153,8 @@
 
 (defn click-regions
   "The click regions of `card` from `layout`, each `{:row :col :width :kind}`.
-   The close mark is `:toast-dismiss`, `←` is `:toast-prev`, and the counter and
-   `→` are `:toast-next`. A click on the rest of the card goes to the transcript
-   under it, so a card never takes a click or a drag from the text that it covers."
+   The close mark is `:toast-dismiss`, and the page counter is `:toast-next`. A
+   click on the rest of the card goes to the transcript under it, so a card never takes a click or a drag from the text that it covers."
   [{:keys [pager col row width height]}]
   (let [right
         (+ (long col) (long width) -1)
@@ -163,18 +163,14 @@
         (long (if pager (p/display-width pager) 0))
 
         pager-row
-        (+ (long row) (long height) -3)
+        (+ (long row) (long height) -2)
 
         pager-col
-        (- right 1 pager-cols)
-
-        next-col
-        (+ pager-col 2)]
+        (- right 1 pager-cols)]
 
     (cond-> [{:row (inc (long row)) :col (- right 3) :width 3 :kind :toast-dismiss}]
       pager
-      (conj {:row pager-row :col pager-col :width 2 :kind :toast-prev}
-            {:row pager-row :col next-col :width (- pager-cols 2) :kind :toast-next}))))
+      (conj {:row pager-row :col pager-col :width pager-cols :kind :toast-next}))))
 
 (defn paint!
   "Draw `card` from `layout`; nil draws nothing. With `register?`, register the
@@ -193,8 +189,8 @@
           head-row (inc first-row)
           text-row (if heading (+ head-row 2) head-row)
           pager-cols (long (if pager (p/display-width pager) 0))
-          ;; The last body row is empty.
-          pager-row (- bottom 2)
+          ;; The counter stands on the row over the bottom border.
+          pager-row (dec bottom)
           ;; The counter ends one space before the right border.
           pager-col (- right 1 pager-cols)
           bg (card-bg)
