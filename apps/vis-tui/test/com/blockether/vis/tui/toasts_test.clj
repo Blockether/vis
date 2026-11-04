@@ -109,6 +109,29 @@
                   (expect (nil? (kind-at (+ 2 (:col card)) (+ 2 (:row card)))))
                   (expect (nil? (kind-at (:col card) pager-row))))))
   (describe
+    "placement"
+    ;; User request: a global notice stands in the top-left corner of the whole
+    ;; window, and a session notice in the top-left corner of the transcript.
+    (it "puts the global card in the window corner and the session card under it"
+        (let [area
+              {:screen-cols 120 :rows 40 :chat-left 0 :cols 120 :text-top 5 :messages-bottom 35}
+
+              both
+              (toasts/cards {:global (page "Rate limit") :session (page "Indexed")} area)
+
+              {:keys [global session]}
+              both]
+
+          (expect (= [0 0] [(:col global) (:row global)]))
+          (expect (= 2 (:col session)))
+          (expect (= (+ (:row global) (:height global)) (:row session)))
+          (expect (= 5 (:row (:session (toasts/cards {:session (page "Indexed")} area)))))
+          ;; A pane right of the rail is not under the global card.
+          (expect (= 5
+                     (:row (:session (toasts/cards {:global (page "Rate limit")
+                                                    :session (page "Indexed")}
+                                                   (assoc area :chat-left 60)))))))))
+  (describe
     "paint"
     ;; User report: the text touched the side of the card, and the side lines
     ;; of one-eighth blocks showed gaps between rows, so the border looked broken.

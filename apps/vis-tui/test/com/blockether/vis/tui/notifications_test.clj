@@ -40,57 +40,78 @@
             ;; User request: notices show one at a time as pages. A page that waits must not
             ;; lose its time, or a burst of notices expires before the user reads it.
             (it "counts down only the shown page"
-                (with-clock
-                  (fn [clock]
-                    (notifications/notify! "a" :id "a" :ttl-ms 1000)
-                    (notifications/notify! "b" :id "b" :ttl-ms 1000)
-                    (expect (= ["b" 0 2]
-                               ((juxt (comp :id :entry) :index :total) (notifications/show! nil))))
-                    (reset! clock 600)
-                    (notifications/page! 1)
-                    (expect (= ["a" 1000]
-                               ((juxt (comp :id :entry) :remaining-ms) (notifications/show! nil))))
-                    (reset! clock 1500)
-                    (expect (= {"a" 100 "b" 400}
-                               (into {}
-                                     (map (juxt :id #(notifications/remaining-ms % 1500)))
-                                     (notifications/notifications))))))))
+                (with-clock (fn [clock]
+                              (notifications/notify! "a" :id "a" :ttl-ms 1000)
+                              (notifications/notify! "b" :id "b" :ttl-ms 1000)
+                              (expect (= ["b" 0 2]
+                                         ((juxt (comp :id :entry) :index :total)
+                                           (:global (notifications/show! nil)))))
+                              (reset! clock 600)
+                              (notifications/page! "b" 1)
+                              (expect (= ["a" 1000]
+                                         ((juxt (comp :id :entry) :remaining-ms)
+                                           (:global (notifications/show! nil)))))
+                              (reset! clock 1500)
+                              (expect (= {"a" 100 "b" 400}
+                                         (into {}
+                                               (map (juxt :id #(notifications/remaining-ms % 1500)))
+                                               (notifications/notifications))))))))
   (describe "session"
             ;; User request: a session notice stays until someone opens its session.
             (it "keeps a session notice, with all its time, until its session is in front"
                 (with-clock
                   (fn [clock]
                     (notifications/notify! "Indexed" :id "x" :session-id "s2" :ttl-ms 4000)
-                    (expect (nil? (notifications/show! "s1")))
+                    (expect (= {:global nil :session nil} (notifications/show! "s1")))
                     (reset! clock 60000)
-                    (expect (nil? (notifications/show! "s1")))
+                    (expect (= {:global nil :session nil} (notifications/show! "s1")))
                     (expect (= ["x" 4000]
                                ((juxt (comp :id :entry) :remaining-ms)
-                                 (notifications/show! "s2")))))))
+                                 (:session (notifications/show! "s2"))))))))
             (it "shows a global notice in every session"
                 (with-clock (fn [_]
                               (notifications/notify! "Saved" :id "g")
                               (expect (= "g"
                                          (-> (notifications/show! "s1")
+                                             :global
                                              :entry
                                              :id)))
                               (expect (= "g"
                                          (-> (notifications/show! "s2")
+                                             :global
                                              :entry
-                                             :id)))))))
+                                             :id))))))
+            ;; User request: a global notice has its own card in the top-left corner of the
+            ;; window, so a session notice must not hide it behind a page, or page it.
+            (it "shows a global and a session notice at the same time, each with its own pages"
+                (with-clock (fn [_]
+                              (notifications/notify! "g1" :id "g1")
+                              (notifications/notify! "s1" :id "s1" :session-id "s")
+                              (notifications/notify! "g2" :id "g2")
+                              (let [ids (fn []
+                                          (let [{:keys [global session]} (notifications/show! "s")]
+                                            [(:id (:entry global)) (:total global)
+                                             (:id (:entry session)) (:total session)]))]
+                                (expect (= ["g2" 2 "s1" 1] (ids)))
+                                (expect (= 1 (notifications/page! "g2" 1)))
+                                (expect (= ["g1" 2 "s1" 1] (ids)))
+                                (expect (= 0 (notifications/page! "s1" 1)))
+                                (expect (= ["g1" 2 "s1" 1] (ids)))
+                                (expect (nil? (notifications/page! "gone" 1))))))))
   (describe "paging"
             (it "wraps around, and a dismissed page gives its place to the next notice"
                 (with-clock (fn [_]
                               (doseq [id ["a" "b" "c"]]
                                 (notifications/notify! id :id id))
                               (notifications/show! nil)
-                              (expect (= 2 (notifications/page! -1)))
+                              (expect (= 2 (notifications/page! "c" -1)))
                               (expect (= "a"
                                          (-> (notifications/show! nil)
+                                             :global
                                              :entry
                                              :id)))
-                              (notifications/page! -1)
+                              (notifications/page! "a" -1)
                               (notifications/dismiss! "b")
                               (expect (= ["a" 1 2]
                                          ((juxt (comp :id :entry) :index :total)
-                                           (notifications/show! nil)))))))))
+                                           (:global (notifications/show! nil))))))))))

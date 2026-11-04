@@ -3,7 +3,9 @@
   "The toast card in the top-left corner of the session view.
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
-   toasts of extensions. One card shows at a time, like the Companion card. The
+   toasts of extensions. Each lane shows one card at a time, like the Companion card.
+   The card of the global lane stands in the top-left corner of the window. The card of
+   the session lane stands in the top-left corner of the transcript (`cards`). The
    tinted body fills the whole card. The border is a rounded box line in the
    level color. A terminal joins box lines across rows, so the sides stay whole.
    One empty column stands between each side line and the text.
@@ -121,6 +123,30 @@
          :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
          :height (+ 4 (if head 2 0) (count lines) (if pages 1 0))}))))
 
+(defn cards
+  "The cards of `pages`, a `notifications/show!` value, as `{:global :session}`. The global
+   card has window columns and stands in the top-left corner of the window. The session
+   card has pane columns and stands in the top-left corner of the transcript. When the
+   global card covers that place, the session card moves under it. `chat-left` is the
+   window column of the pane."
+  [{:keys [global session]} {:keys [screen-cols rows chat-left cols text-top messages-bottom]}]
+  (let [global-card
+        (layout global {:left 0 :top 0 :cols screen-cols :rows rows})
+
+        covered?
+        (and global-card
+             (< (+ (long chat-left) 2) (+ (long (:col global-card)) (long (:width global-card)))))
+
+        top
+        (if covered?
+          (max (long text-top) (+ (long (:row global-card)) (long (:height global-card))))
+          (long text-top))]
+
+    {:global global-card
+     :session
+     (layout session
+             {:left 2 :top top :cols (- (long cols) 4) :rows (- (long messages-bottom) top 1)})}))
+
 (defn- level-fg
   "The border color of a card."
   [level]
@@ -174,67 +200,69 @@
 
 (defn paint!
   "Draw `card` from `layout`; nil draws nothing. With `register?`, register the
-   `click-regions` of the card. Each region carries the notification id as `:text`."
-  [g card register?]
-  (when-let [{:keys [id level heading title lines pager fraction col row width height]} card]
-    (let [col (long col)
-          row (long row)
-          width (long width)
-          inner (- width 2)
-          ;; The bottom border row also carries the countdown bar.
-          bottom (+ row (long height) -1)
-          right (+ col width -1)
-          first-row (inc row)
-          ;; One empty row under the top border.
-          head-row (inc first-row)
-          text-row (if heading (+ head-row 2) head-row)
-          pager-cols (long (if pager (p/display-width pager) 0))
-          ;; The counter stands on the row over the bottom border.
-          pager-row (dec bottom)
-          ;; The counter ends one space before the right border.
-          pager-col (- right 1 pager-cols)
-          bg (card-bg)
-          edge (t/legible-ink (level-fg level) bg)
-          muted (t/legible-ink t/footer-fg-muted bg)]
+   `click-regions` of the card, moved `shift` columns. Each region carries the
+   notification id as `:text`."
+  ([g card register?] (paint! g card register? 0))
+  ([g card register? shift]
+   (when-let [{:keys [id level heading title lines pager fraction col row width height]} card]
+     (let [col (long col)
+           row (long row)
+           width (long width)
+           inner (- width 2)
+           ;; The bottom border row also carries the countdown bar.
+           bottom (+ row (long height) -1)
+           right (+ col width -1)
+           first-row (inc row)
+           ;; One empty row under the top border.
+           head-row (inc first-row)
+           text-row (if heading (+ head-row 2) head-row)
+           pager-cols (long (if pager (p/display-width pager) 0))
+           ;; The counter stands on the row over the bottom border.
+           pager-row (dec bottom)
+           ;; The counter ends one space before the right border.
+           pager-col (- right 1 pager-cols)
+           bg (card-bg)
+           edge (t/legible-ink (level-fg level) bg)
+           muted (t/legible-ink t/footer-fg-muted bg)]
 
-      (p/clear-styles! g)
-      (p/set-colors! g t/dialog-fg bg)
-      (p/fill-rect! g col row width height)
-      ;; Border: box lines in the middle of the edge cells. One-eighth blocks on the
-      ;; cell edges left gaps between rows in macOS Terminal, so the sides looked broken.
-      (p/set-colors! g edge bg)
-      (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
-      (doseq [r (range first-row bottom)]
-        (p/put-str! g col (long r) "│")
-        (p/put-str! g right (long r) "│"))
-      (p/put-str! g col bottom (str "╰" (rule inner "─") "╯"))
-      ;; The countdown is a thick bar on the bottom line, as long as the time left.
-      (when fraction
-        (p/put-str! g (inc col) bottom (rule (long (Math/ceil (* (double fraction) inner))) "▀")))
-      ;; Heading.
-      (when heading
-        (p/set-colors! g muted bg)
-        (p/put-str! g (+ col 2) head-row heading)
-        (when title
-          (p/set-colors! g t/dialog-fg bg)
-          (p/enable! g p/BOLD)
-          (p/put-str! g (+ col 2) head-row (subs heading 0 (min (count heading) (count title))))
-          (p/clear-styles! g))
-        ;; A gray rule under the heading; it stops three cells before the close mark.
-        (p/set-colors! g muted bg)
-        (p/put-str! g (+ col 2) (inc head-row) (rule (- width 8) "▔")))
-      ;; Close mark in the top-right corner, in the empty row over the heading.
-      (p/set-colors! g t/dialog-fg bg)
-      (p/enable! g p/BOLD)
-      (p/put-str! g (- right 2) first-row "✕")
-      (p/clear-styles! g)
-      ;; Text.
-      (p/set-colors! g t/dialog-fg bg)
-      (doseq [[i line] (map-indexed vector lines)]
-        (p/put-str! g (+ col 2) (+ text-row (long i)) line))
-      ;; Page counter in the bottom-right corner.
-      (when pager (p/set-colors! g muted bg) (p/put-str! g pager-col pager-row pager))
-      (p/clear-styles! g)
-      (when register?
-        (doseq [{:keys [row col width kind]} (click-regions card)]
-          (region! row col width kind id))))))
+       (p/clear-styles! g)
+       (p/set-colors! g t/dialog-fg bg)
+       (p/fill-rect! g col row width height)
+       ;; Border: box lines in the middle of the edge cells. One-eighth blocks on the
+       ;; cell edges left gaps between rows in macOS Terminal, so the sides looked broken.
+       (p/set-colors! g edge bg)
+       (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
+       (doseq [r (range first-row bottom)]
+         (p/put-str! g col (long r) "│")
+         (p/put-str! g right (long r) "│"))
+       (p/put-str! g col bottom (str "╰" (rule inner "─") "╯"))
+       ;; The countdown is a thick bar on the bottom line, as long as the time left.
+       (when fraction
+         (p/put-str! g (inc col) bottom (rule (long (Math/ceil (* (double fraction) inner))) "▀")))
+       ;; Heading.
+       (when heading
+         (p/set-colors! g muted bg)
+         (p/put-str! g (+ col 2) head-row heading)
+         (when title
+           (p/set-colors! g t/dialog-fg bg)
+           (p/enable! g p/BOLD)
+           (p/put-str! g (+ col 2) head-row (subs heading 0 (min (count heading) (count title))))
+           (p/clear-styles! g))
+         ;; A gray rule under the heading; it stops three cells before the close mark.
+         (p/set-colors! g muted bg)
+         (p/put-str! g (+ col 2) (inc head-row) (rule (- width 8) "▔")))
+       ;; Close mark in the top-right corner, in the empty row over the heading.
+       (p/set-colors! g t/dialog-fg bg)
+       (p/enable! g p/BOLD)
+       (p/put-str! g (- right 2) first-row "✕")
+       (p/clear-styles! g)
+       ;; Text.
+       (p/set-colors! g t/dialog-fg bg)
+       (doseq [[i line] (map-indexed vector lines)]
+         (p/put-str! g (+ col 2) (+ text-row (long i)) line))
+       ;; Page counter in the bottom-right corner.
+       (when pager (p/set-colors! g muted bg) (p/put-str! g pager-col pager-row pager))
+       (p/clear-styles! g)
+       (when register?
+         (doseq [{:keys [row col width kind]} (click-regions card)]
+           (region! row (+ (long col) (long shift)) width kind id)))))))

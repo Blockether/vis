@@ -28,9 +28,11 @@
       :left-ms     <long> | nil       ;; time left when the clock last stopped
       :since       <epoch-ms> | nil}  ;; the clock runs from here, while the toast shows
 
-   The screen shows one entry at a time as a page (`pager`, `show!`, `page!`). Only the
-   shown entry counts down, so a toast that waits behind another page, or for its session
-   to come in front, keeps all its time. A push with the `:id` of an active entry replaces
+   The entries are in two lanes. The `:global` lane has the entries of no session. The
+   `:session` lane has the entries of the session in front. The screen shows each lane as
+   its own card, one entry at a time as a page (`pager`, `show!`, `page!`). Only the shown
+   entry of each lane counts down, so a toast that waits behind another page, or for its
+   session to come in front, keeps all its time. A push with the `:id` of an active entry replaces
    that entry. While a clock runs, the store wakes the watchers every `TICK_MS`, so the
    countdown bar moves and a toast leaves on time also while the user is idle.
 
@@ -65,10 +67,10 @@
 ;; State
 
 (defonce ^:private store
-  ;; :entries is ordered by insertion (newest last). :page is the id of the
-  ;; shown entry, nil for the newest. :session is the session that the screen
-  ;; showed last, so a click handler pages the list that the user sees.
-  (atom {:entries [] :page nil :session nil}))
+  ;; :entries is ordered by insertion (newest last). :pages maps each lane to the id
+  ;; of its shown entry; a lane without an id shows its newest entry. :session is the
+  ;; session that the screen showed last, so a click handler pages the list that the user sees.
+  (atom {:entries [] :pages {} :session nil}))
 
 (defonce ^:private watchers-atom
   ;; {key (fn [vec] ...)}. Watchers fire AFTER every successful state
@@ -100,34 +102,41 @@
   (let [owner (:session-id entry)]
     (or (nil? owner) (= owner sid))))
 
+(defn lane
+  "The card of `entry`: `:global` for an entry of no session, else `:session`."
+  [entry]
+  (if (:session-id entry) :session :global))
+
 (defn- visible
-  "The entries that session `sid` shows, newest first."
-  [entries sid]
-  (filterv #(shown-to? % sid) (rseq (vec entries))))
+  "The entries of `lane` that session `sid` shows, newest first."
+  [entries sid lane-key]
+  (filterv #(and (= lane-key (lane %)) (shown-to? % sid)) (rseq (vec entries))))
 
 (defn- index-of [entries id] (first (keep-indexed #(when (= id (:id %2)) %1) entries)))
 
 (defn pager
-  "The page that session `sid` shows at `now`: `{:entry :index :total :remaining-ms}`, or
-   nil. Index 0 is the newest entry. The `:page` entry keeps its page while it is visible."
-  [{:keys [entries page]} sid now]
+  "The page of `lane` that session `sid` shows at `now`: `{:entry :index :total
+   :remaining-ms}`, or nil. Index 0 is the newest entry. The shown entry of the lane keeps
+   its page while it is visible."
+  [{:keys [entries pages]} sid lane-key now]
   (let [shown
-        (visible entries sid)
+        (visible entries sid lane-key)
 
         index
-        (or (index-of shown page) 0)]
+        (or (index-of shown (get pages lane-key)) 0)]
 
     (when-let [entry (get shown index)]
       {:entry entry :index index :total (count shown) :remaining-ms (remaining-ms entry now)})))
 
 (defn- run-only
-  "`state` with the clock of entry `id` running and every other clock stopped at `now`."
-  [state id now]
+  "`state` with the clocks of the entries in set `ids` running and every other clock
+   stopped at `now`."
+  [state ids now]
   (update state
           :entries
           (fn [entries]
             (mapv (fn [{:keys [since left-ms] :as entry}]
-                    (cond (= id (:id entry))
+                    (cond (contains? ids (:id entry))
                           (if (or since (nil? left-ms)) entry (assoc entry :since now))
                           since (-> entry
                                     (assoc :left-ms (remaining-ms entry now))
@@ -138,7 +147,7 @@
 (defn- push-entry
   "`state` with `entry` as its newest entry. An entry with the same id goes away first.
    Expired entries and the oldest beyond `MAX_ENTRIES` go away too. A new entry that the
-   shown session sees becomes the shown page."
+   shown session sees becomes the shown page of its lane."
   [state entry now]
   (let [state
         (prune state now)
@@ -148,18 +157,23 @@
 
     (cond-> (assoc state :entries (subvec added (max 0 (- (count added) (long MAX_ENTRIES)))))
       (shown-to? entry (:session state))
-      (assoc :page (:id entry)))))
+      (assoc-in [:pages (lane entry)] (:id entry)))))
 
 (defn- drop-entry
   "`state` without entry `id`. When it was the shown page, the entry at the same page shows."
   [{:keys [entries session] :as state} id now]
-  (let [current
-        (some-> (pager state session now)
+  (let [lane-key
+        (some->> entries
+                 (some #(when (= id (:id %)) %))
+                 lane)
+
+        current
+        (some-> (pager state session lane-key now)
                 :entry
                 :id)
 
         index
-        (index-of (visible entries session) id)
+        (index-of (visible entries session lane-key) id)
 
         state
         (update state
@@ -168,8 +182,8 @@
                   (filterv #(not= id (:id %)) entries)))]
 
     (if (and index (= id current))
-      (let [rest (visible (:entries state) session)]
-        (assoc state :page (:id (get rest (min (long index) (dec (count rest)))))))
+      (let [rest (visible (:entries state) session lane-key)]
+        (assoc-in state [:pages lane-key] (:id (get rest (min (long index) (dec (count rest)))))))
       state)))
 
 ;; Watchers and clock
@@ -238,9 +252,15 @@
   []
   (clear-expired!))
 
+(defn- pages
+  "The page of each lane that session `sid` shows at `now`: `{:global :session}`."
+  [state sid now]
+  {:global (pager state sid :global now) :session (pager state sid :session now)})
+
 (defn show!
-  "The page that session `sid` shows now, as `pager` gives it. Only the clock of that
-   page runs, so a toast counts down only while it is on screen. Each paint calls it."
+  "The pages that session `sid` shows now, `{:global :session}`, each as `pager` gives
+   it. Only the clocks of these pages run, so a toast counts down only while it is on
+   screen. Each paint calls it."
   [sid]
   (let [now
         (util/now-ms)
@@ -249,36 +269,45 @@
         (swap! store (fn [state]
                        (let [state (assoc (prune state now) :session sid)]
                          (run-only state
-                                   (some-> (pager state sid now)
-                                           :entry
-                                           :id)
+                                   (into #{} (keep (comp :id :entry)) (vals (pages state sid now)))
                                    now))))]
 
     (ensure-ticker!)
-    (pager state sid now)))
+    (pages state sid now)))
 
 (defn page!
-  "Show the next page (`delta` 1) or the previous page (-1) of the session that the
-   screen shows. The pages wrap. Returns the new page index, or nil without pages."
-  [delta]
+  "Show the next page (`delta` 1) or the previous page (-1) of the lane of entry `id`, in
+   the session that the screen shows. The pages wrap. Returns the new page index of that
+   lane, or nil when the entry is gone."
+  [id delta]
   (let [now
         (util/now-ms)
 
+        lane-of
+        (fn [entries]
+          (some #(when (= id (:id %)) (lane %)) entries))
+
         state
         (swap! store (fn [{:keys [entries session] :as state}]
-                       (let [shown
-                             (visible entries session)
+                       (let [lane-key
+                             (lane-of entries)
+
+                             shown
+                             (visible entries session lane-key)
 
                              n
                              (count shown)]
 
-                         (if (< n 2)
+                         (if (or (nil? lane-key) (< n 2))
                            state
-                           (let [i (long (:index (pager state session now)))]
-                             (assoc state :page (:id (get shown (mod (+ i (long delta)) n)))))))))]
+                           (let [i (long (:index (pager state session lane-key now)))]
+                             (assoc-in state
+                               [:pages lane-key]
+                               (:id (get shown (mod (+ i (long delta)) n)))))))))]
 
     (fire-watchers! (:entries state))
-    (:index (pager state (:session state) now))))
+    (when-let [lane-key (lane-of (:entries state))]
+      (:index (pager state (:session state) lane-key now)))))
 
 (defn notify!
   "Push a new notification. Returns the entry's id (uuid string) so
@@ -350,7 +379,7 @@
 (defn dismiss-all!
   "Drop every notification. Returns the new (empty) vec."
   []
-  (let [state (swap! store assoc :entries [] :page nil)]
+  (let [state (swap! store assoc :entries [] :pages {})]
     (fire-watchers! (:entries state))
     (:entries state)))
 

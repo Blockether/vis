@@ -3257,17 +3257,44 @@
 
 (declare current-session-id)
 
+(defn- toast-cards
+  "The `toasts/cards` of this frame for the session in front, in the chat pane at
+   `frame/*column-offset*`."
+  [^TerminalScreen screen cols text-top messages-bottom]
+  (let [size (.getTerminalSize screen)]
+    (toasts/cards (vis/show-notifications! (current-session-id))
+                  {:screen-cols (.getColumns size)
+                   :rows (.getRows size)
+                   :chat-left frame/*column-offset*
+                   :cols cols
+                   :text-top text-top
+                   :messages-bottom messages-bottom})))
+
+(defn- paint-global-toast!
+  "Paint the global `card` in window columns. With `register?`, register its clicks in
+   the pane columns that the mouse handler gets."
+  [^TerminalScreen screen card register?]
+  (when card
+    (let [shift
+          (- (long frame/*column-offset*))
+
+          size
+          (.getTerminalSize screen)]
+
+      (binding [frame/*column-offset* 0]
+        (toasts/paint! (frame/surface-graphics screen (.getColumns size) (.getRows size))
+                       card
+                       register?
+                       shift)))))
+
 (defn- paint-toasts!
-  "Paint the notification page of the session in front in the top-left corner of the
-   transcript and register its clicks. Every path that repaints the transcript calls it."
-  [g cols text-top messages-bottom]
-  (toasts/paint! g
-                 (toasts/layout (vis/show-notifications! (current-session-id))
-                                {:left 2
-                                 :top text-top
-                                 :cols (- (long cols) 4)
-                                 :rows (- (long messages-bottom) (long text-top) 1)})
-                 true))
+  "Paint the session card in the top-left corner of the transcript and the global card
+   in the top-left corner of the window, and register their clicks. Every path that
+   repaints the transcript calls it."
+  [screen g cols text-top messages-bottom]
+  (let [{:keys [global session]} (toast-cards screen cols text-top messages-bottom)]
+    (toasts/paint! g session true)
+    (paint-global-toast! screen global true)))
 
 (defn- remaining-message-count
   "Count bubbles with any rows still below the viewport's lower edge. The
@@ -4540,7 +4567,7 @@
       ;; to exactly where it sat in the input box.
       (when-let [[sx sy] (paint-search-bar! g cols text-top db)]
         (when-not (overlay-locked? db) (frame/set-cursor! screen (TerminalPosition. sx sy))))
-      (paint-toasts! g cols text-top messages-bottom)
+      (paint-toasts! screen g cols text-top messages-bottom)
       ;; The jump chip follows parked intent, not transient FOLLOW easing.
       (paint-jump-bottom! g
                           cols
@@ -4600,6 +4627,11 @@
                          messages-bottom
                          now-ms
                          post-marks)
+      ;; The rail and the side panel paint over the window corner, so the global card
+      ;; paints again on top of them.
+      (paint-global-toast! screen
+                           (:global (toast-cards screen cols text-top messages-bottom))
+                           false)
       (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
@@ -5069,6 +5101,8 @@
 
     (binding [header/*register-click-regions?* false]
       (header/draw-header! g db 0 cols))
+    ;; The header paints over the window corner. The clicks of the last full frame stay.
+    (paint-global-toast! screen (:global (toast-cards screen cols 0 0)) false)
     (let [refresh-ns (System/nanoTime)]
       (frame/refresh! screen)
       (let [ended-ns (System/nanoTime)]
@@ -5317,11 +5351,13 @@
             ;; in-band ones were just re-registered fresh above.
             (doseq [r (.current interactions/hit-map)]
               (let [row (long (:row (:bounds r)))]
-                (when (or (< row messages-top) (>= row messages-bottom))
+                ;; The toasts register their clicks again below; an old card region would stay.
+                (when (and (or (< row messages-top) (>= row messages-bottom))
+                           (not (#{:toast-dismiss :toast-next} (:kind r))))
                   (.register interactions/hit-map r))))
             (header/draw-header! g db header-top cols)
             (paint-search-bar! g cols text-top db)
-            (paint-toasts! g cols text-top messages-bottom)
+            (paint-toasts! screen g cols text-top messages-bottom)
             (footer/draw-echo-area! g db echo-row cols now-ms)
             (footer/draw-footer! g db footer-row cols now-ms)
             (.commitFrame interactions/hit-map))
@@ -5383,7 +5419,7 @@
           ;; Find bar overlay + its prev/next/close click regions, staged into
           ;; THIS frame so they stay clickable while a turn streams.
           (paint-search-bar! g cols text-top db)
-          (paint-toasts! g cols text-top messages-bottom)
+          (paint-toasts! screen g cols text-top messages-bottom)
           ;; Footer painted INSIDE the staged frame so its button click-regions
           ;; (dirs / resources) are published by `commit-frame!` below. Painting it
           ;; AFTER the commit (as before) left those regions in an uncommitted
@@ -5589,9 +5625,11 @@
     ;; at their new scrolled rows, so they are deliberately NOT carried.
     (doseq [r (.current interactions/hit-map)]
       (let [row (long (:row (:bounds r)))]
-        (when (or (< row messages-top) (>= row messages-bottom))
+        ;; The toasts register their clicks again below; an old card region would stay.
+        (when (and (or (< row messages-top) (>= row messages-bottom))
+                   (not (#{:toast-dismiss :toast-next} (:kind r))))
           (.register interactions/hit-map r))))
-    (paint-toasts! g cols text-top messages-bottom)
+    (paint-toasts! screen g cols text-top messages-bottom)
     ;; Recompute both the count and click region on every scroll-only frame.
     (paint-jump-bottom! g
                         cols
@@ -9215,7 +9253,7 @@
             (vis/dismiss-notification! (:text hit))
 
             :toast-next
-            (vis/page-notifications! 1)
+            (vis/page-notifications! (:text hit) 1)
 
             :search-case
             (state/dispatch [:search-toggle-case])
@@ -9396,7 +9434,7 @@
           (vis/dismiss-notification! (:text hit))
 
           :toast-next
-          (vis/page-notifications! 1)
+          (vis/page-notifications! (:text hit) 1)
 
           :toggle-tasks
           (state/dispatch [:toggle-tasks])

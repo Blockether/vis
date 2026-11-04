@@ -4648,8 +4648,12 @@ therapy line 2"
                               screen/paint-terminal-images! #(reset! images %)
                               vis/show-notifications!
                               (fn [_]
-                                (when-let [entry (first @notices)]
-                                  {:entry entry :index 0 :total (count @notices)}))]
+                                (let [page (fn [lane]
+                                             (let [shown (filterv #(= lane (some? (:session-id %)))
+                                                           @notices)]
+                                               (when-let [entry (first shown)]
+                                                 {:entry entry :index 0 :total (count shown)})))]
+                                  {:global (page false) :session (page true)}))]
 
                   (let [full (#'screen/render-frame! terminal-screen cols 30 db 1000)
                         [layout _]
@@ -4695,7 +4699,7 @@ therapy line 2"
     ;; User request: a notification shows as a toast at the top left of the session, also in
     ;; Zen mode, where the header is hidden.
     (it "paints a notification as a top-left toast on every repaint path"
-        (reset! notices [{:id "n1" :text "Copied zen" :level :success}])
+        (reset! notices [{:id "n1" :text "Copied zen" :level :success :session-id "s"}])
         (try (doseq [settings
                      [{} {:zen-mode true}]
 
@@ -4713,6 +4717,26 @@ therapy line 2"
                  ;; Zen mode places the card at the left edge of the centred column.
                  (expect (< (long (str/index-of (nth rows row) "Copied zen"))
                             (+ 8 (long (or (:chat-left layout) 0)))))))
+             (finally (reset! notices []))))
+    ;; User request: a global notice stands in the top-left corner of the whole window,
+    ;; over the header, on every repaint path, also in Zen mode.
+    (it "paints a global notification in the top-left corner of the window on every repaint path"
+        (reset! notices [{:id "g1" :text "Rate limit hit" :level :warn}])
+        (try (doseq [settings
+                     [{} {:zen-mode true}]
+
+                     path
+                     [:full :scroll :input :partial-live :header-hover :header-spinner]]
+
+               (let [{:keys [rows]}
+                     (frame 80 settings path)
+
+                     row
+                     (row-of rows "Rate limit hit")]
+
+                 (expect (= "╭" (subs (first rows) 0 1)))
+                 (expect (some? row))
+                 (expect (= 2 (str/index-of (nth rows row) "Rate limit hit")))))
              (finally (reset! notices []))))
     ;; 120 / 1.618 = 74.2: a 74-cell column with 23 blank cells at each side. A narrow
     ;; terminal keeps a 60-cell column.

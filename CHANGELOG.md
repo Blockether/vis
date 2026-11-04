@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Build: native binaries use GraalVM CE 25.5.5.0.3 (JDK 25.0.5.0.3). They used GraalVM CE 25.3.4.1 before.
+- TUI: a global notification shows in its own card in the top-left corner of the window, over the header. A session notification stays in the top-left corner of the transcript, under the global card when both show. Each card has its own page counter.
 
 ### Fixed
 - TUI: the session list shows times in the local time zone, like the transcript. It showed UTC times before.
