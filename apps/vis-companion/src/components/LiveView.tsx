@@ -968,16 +968,11 @@ function LogErrors({ node, label }: { node: LiveLogNode; label: string }) {
 /**
  * A ROW IS A SENTENCE, and its columns are the words after the first.
  *
- * A live table is read DOWN its first column and glanced at across the rest, so
- * a phone stops scrolling sideways to see the rest: the row's own line carries
- * the name and, at the right edge, the VALUE — the last column, when that column
- * is right-aligned, because a number is what a row is measured by. Every column
- * between them stacks under the name as one detail line. From `sm` there is
- * width for the columns the run declared and they take their own cells back.
- *
- * No cell is fenced. A rule between rows is what the eye needs to keep a row
- * together, and forty boxed cells at 8px were a grid to decode before a run
- * could be read.
+ * A live table is read DOWN its first column and glanced at across the rest. The
+ * VALUE is the last column, when that column is right-aligned, because a number is
+ * what a row is measured by. Every column keeps its own cell on every width; a
+ * phone scrolls the table sideways inside its frame (user report: the stacked
+ * phone rows did not read as a table).
  */
 function tableShape(columns: LiveTableNode['columns']) {
   const last = columns.length - 1;
@@ -989,18 +984,18 @@ function tableShape(columns: LiveTableNode['columns']) {
 }
 
 /**
- * The widths a column after the name can take, from `sm`, in steps of four characters
+ * The widths a column after the name can take, in steps of four characters
  * and its cell inset. A step, not the exact count, so a duration that ticks from `9m 59s`
  * to `10m 00s` moves nothing. The last step caps a long cell, which then wraps.
  */
 const COLUMN_WIDTH = [
-  'sm:w-[calc(4ch+2*var(--live-view-inset))]',
-  'sm:w-[calc(8ch+2*var(--live-view-inset))]',
-  'sm:w-[calc(12ch+2*var(--live-view-inset))]',
-  'sm:w-[calc(16ch+2*var(--live-view-inset))]',
-  'sm:w-[calc(20ch+2*var(--live-view-inset))]',
-  'sm:w-[calc(24ch+2*var(--live-view-inset))]',
-  'sm:w-[calc(28ch+2*var(--live-view-inset))]',
+  'w-[calc(4ch+2*var(--live-view-inset))]',
+  'w-[calc(8ch+2*var(--live-view-inset))]',
+  'w-[calc(12ch+2*var(--live-view-inset))]',
+  'w-[calc(16ch+2*var(--live-view-inset))]',
+  'w-[calc(20ch+2*var(--live-view-inset))]',
+  'w-[calc(24ch+2*var(--live-view-inset))]',
+  'w-[calc(28ch+2*var(--live-view-inset))]',
 ] as const;
 /** The longest state word, and two characters for the mark and the gap before it. */
 const STATE_CHARS = Math.max(...Object.values(TONE_WORD).map((word) => word.length)) + 2;
@@ -1031,33 +1026,11 @@ function widerSteps(was: number[], now: number[]): number[] {
     : was;
 }
 
-/** The row as a phone reads it: the name, the value beside it, the rest beneath. */
-function RowFace({ columns, row }: { columns: LiveTableNode['columns']; row: LiveRow }) {
-  const { valueAt, detailAt } = tableShape(columns);
-  const value = valueAt >= 0 ? (row.cells[valueAt] ?? '') : '';
-  const detail = detailAt
-    .map((index) => row.cells[index] ?? '')
-    .filter((cell) => cell !== '')
-    .join(', ');
-  const name = row.cells[0] ?? '';
+/** The row's name, the first cell. The other cells stand in their own columns. */
+function RowName({ row }: { row: LiveRow }) {
   return (
-    <span className="block min-w-0 flex-1">
-      <span className="flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-          <InlineMarkdown>{name}</InlineMarkdown>
-          <span className="sr-only sm:hidden">, {TONE_WORD[row.tone]}</span>
-        </span>
-        {value !== '' && (
-          <span className="shrink-0 tabular-nums text-meta text-dialog-hint sm:hidden">
-            {value}
-          </span>
-        )}
-      </span>
-      {detail !== '' && (
-        <span className="mt-0.5 block text-meta text-dialog-hint [overflow-wrap:anywhere] sm:hidden">
-          <InlineMarkdown>{detail}</InlineMarkdown>
-        </span>
-      )}
+    <span className="block min-w-0 flex-1 [overflow-wrap:anywhere]">
+      <InlineMarkdown>{row.cells[0] ?? ''}</InlineMarkdown>
     </span>
   );
 }
@@ -1088,9 +1061,9 @@ const LiveTableRow = memo(function LiveTableRow({
   // under its head's name. Indenting only the words left the mark on the outer
   // column, with a wider gap after it than any other row has.
   const mark = row.parent ? 'ml-5' : '';
-  // The State column shows the tone on a wide screen, so the lead mark shows only
-  // where that column hides (user report: two marks for one state in a row).
-  const lead = hasState ? 'sm:hidden' : '';
+  // The State column shows the tone, so the row then draws no lead mark (user report:
+  // two marks for one state in a row).
+  const hasLead = !hasState;
   return (
     <SelectableTableRow
       isSelected={isSelected}
@@ -1110,24 +1083,25 @@ const LiveTableRow = memo(function LiveTableRow({
             aria-pressed={isSelected}
             aria-label={`Select ${row.cells[0] || row.id}`}
           >
-            <span className={`flex min-w-0 flex-1 items-start gap-2 font-mono text-body ${mark}`}>
+            <span className={`flex min-w-[18ch] flex-1 items-start gap-2 font-mono text-body ${mark}`}>
               {/* The row's tint and `aria-pressed` carry the selection; a ●/○ glyph beside
                   the tone mark read as a second status (user report). An idle row shows no
                   mark, but its slot stays, so the name keeps the column of the other rows
                   (user report: a skipped job stood 20px left). */}
-              {row.tone === 'idle' ? (
-                <span aria-hidden="true" className={`w-3 shrink-0 ${lead}`} />
-              ) : (
-                <LineMark tone={row.tone} boxClassName={lead} />
-              )}
-              <RowFace columns={columns} row={row} />
+              {hasLead &&
+                (row.tone === 'idle' ? (
+                  <span aria-hidden="true" className="w-3 shrink-0" />
+                ) : (
+                  <LineMark tone={row.tone} />
+                ))}
+              <RowName row={row} />
             </span>
           </ListRow>
         ) : (
-          <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-1.5">
+          <span className="flex min-w-[18ch] items-start gap-2 px-(--live-view-inset) py-1.5">
             <span className={`flex min-w-0 flex-1 items-start gap-2 ${mark}`}>
-              <LineMark tone={row.tone} boxClassName={lead} />
-              <RowFace columns={columns} row={row} />
+              {hasLead && <LineMark tone={row.tone} />}
+              <RowName row={row} />
             </span>
           </span>
         )}
@@ -1135,18 +1109,18 @@ const LiveTableRow = memo(function LiveTableRow({
       {detailAt.map((index) => (
         <td
           key={columns[index]?.id ?? index}
-          className="hidden border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
+          className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere]"
         >
           <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
         </td>
       ))}
       {valueAt >= 0 && (
-        <td className="hidden border-l border-dialog-edge/40 px-(--live-view-inset) py-2 text-right align-baseline tabular-nums text-ui text-white sm:table-cell">
+        <td className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 text-right align-baseline tabular-nums text-ui text-white">
           <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
         </td>
       )}
       {hasState && (
-        <td className="hidden border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline whitespace-nowrap sm:table-cell">
+        <td className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline whitespace-nowrap">
           <ToneWord tone={row.tone} />
         </td>
       )}
@@ -1391,15 +1365,15 @@ function TableRows({
     // scroll viewport owns the frame, so a wide table scrolls inside it.
     <div className="overflow-x-auto overscroll-x-contain border border-dialog-edge">
       <table className="w-full min-w-0 border-collapse font-mono text-body">
-        {/* The name takes the width that the measured columns leave. A width holds only
-            from `sm`: below it, the cells after the name are hidden. */}
+        {/* The name takes the width that the measured columns leave, and at least 18ch:
+            a narrower screen scrolls the table instead of squeezing the name. */}
         <colgroup>
           <col />
           {steps.map((step, at) => (
             <col key={at} className={COLUMN_WIDTH[step]} />
           ))}
         </colgroup>
-        <thead className="hidden sm:table-header-group">
+        <thead>
           <tr className="border-b border-dialog-edge bg-panel-2">
             {node.columns.map((column, index) => (
               <th

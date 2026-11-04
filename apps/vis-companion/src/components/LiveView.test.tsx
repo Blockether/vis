@@ -121,9 +121,7 @@ describe('selecting a table row', () => {
     expect(onSelect).toHaveBeenCalledWith('hosts', ['db-2']);
 
     onSelect.mockClear();
-    // A middle column appears twice in the DOM on purpose — stacked under the name
-    // for a phone, and as its own cell from `sm` — and never both on one screen. The
-    // press has to reach the row from the cell that is NOT the button.
+    // The press has to reach the row from a cell that is NOT the button.
     const spelled = screen.getAllByText('critical');
     fireEvent.click(spelled[spelled.length - 1]);
     expect(onSelect).toHaveBeenCalledWith('hosts', ['db-2']);
@@ -190,8 +188,8 @@ describe('selecting a table row', () => {
     expect(folded[0]).toBe('');
     expect(folded).toHaveLength(hostsTable(view(slow)).columns.length);
     // A folded leg still counts, and one long cell stops at the cap.
-    expect(folded[1]).toBe(`sm:w-[calc(${slow.length}ch+2*var(--live-view-inset))]`);
-    expect(folded[2]).toBe('sm:w-[calc(28ch+2*var(--live-view-inset))]');
+    expect(folded[1]).toBe(`w-[calc(${slow.length}ch+2*var(--live-view-inset))]`);
+    expect(folded[2]).toBe('w-[calc(28ch+2*var(--live-view-inset))]');
     fireEvent.click(screen.getByRole('button', { name: 'Lint' }));
     expect(widths()).toEqual(folded);
 
