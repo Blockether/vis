@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.2] - 2026-11-04
+
+Vis v0.5.1 was not published, because its native release checks failed. v0.5.2 contains all v0.5.1 changes.
+
+### Fixed
+- TUI: the native binary opens the `C-x` command palette again. A reflective key comparison crashed it. The artifact inspector and the agent team wait have no reflective calls either.
+- TUI: a notification card takes clicks only on its close mark and its page arrows. A click or a drag on the rest of the card goes to the transcript under it.
+
 ## [v0.5.1] - 2026-11-03
 
 ### Added
