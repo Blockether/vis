@@ -291,7 +291,8 @@
 
                (let [fork-id (get (state/fork-session! sid nil) "id")]
                  ;; The frame names the project and the group, so a list reads only them.
+                 ;; An earlier test can still broadcast another session's status here.
                  (expect (= [["session.created" fork-id (str (:id group)) (str (:id project))
                               (str (:id group))]]
-                            @frames)))))
+                            (filterv #(= fork-id (second %)) @frames))))))
            (finally (ps/db-close! store))))))
