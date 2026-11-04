@@ -9,7 +9,7 @@ Run each project's tools from its own directory.
 - One namespace: `clojure -M:test --namespace my.ns-test` or `--var my.ns-test/my-test`.
 - Full suite: `clojure -M:test:test-parallel`. Lint: `clojure -M:lint`, reflection warnings included.
 - Native: `clojure -T:build native`, then `clojure -M:test-native`. JVM tests do not prove the binary.
-- Companion: run npm with `env -u NODE_OPTIONS`. Android Gradle uses stock JDK 21.
+- Companion Android Gradle uses stock JDK 21.
 - `clojure -M:audit` generates `audit/README.md` (network required). Never edit that file by hand.
 - `harbor run --path e2e` makes paid model calls. Use it only for editing tools and workflows.
 
