@@ -13,7 +13,7 @@
    One empty row stands under the top border, and one over the bottom border.
    The close mark `✕` is in the top-right corner of the empty top row. Under it,
    the heading holds the bold title with its source. A gray rule runs under the
-   heading and stops before the `✕` column. The body holds up to
+   heading, exactly as wide as the heading text. The body holds up to
    `max-text-lines` lines of wrapped text. When more notices wait, the page
    counter `1/3` is in the bottom-right corner, on the row over the bottom border.
    A click on the counter shows the next notice.
@@ -261,9 +261,10 @@
            (p/enable! g p/BOLD)
            (p/put-str! g (+ col 2) head-row (subs heading 0 (min (count heading) (count title))))
            (p/clear-styles! g))
-         ;; A gray rule under the heading; it stops three cells before the close mark.
+         ;; A gray rule under the heading, exactly as wide as the heading. `layout` cuts
+         ;; the heading before the close mark, so the rule never reaches it.
          (p/set-colors! g muted bg)
-         (p/put-str! g (+ col 2) (inc head-row) (rule (- width 8) "▔")))
+         (p/put-str! g (+ col 2) (inc head-row) (rule (p/display-width heading) "▔")))
        ;; Close mark in the top-right corner, in the empty row over the heading.
        (p/set-colors! g t/dialog-fg bg)
        (p/enable! g p/BOLD)

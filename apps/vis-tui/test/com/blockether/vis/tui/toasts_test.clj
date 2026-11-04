@@ -184,4 +184,23 @@
                                                                (toasts/click-regions card)))]
                    (expect (= (+ row height -2) r))
                    (expect (= pager (apply str (map #(cell % r) (range c (+ c w))))))))
-               (finally (.stopScreen screen))))))))
+               (finally (.stopScreen screen))))))
+    ;; User report: the rule under the heading ran wider than the heading text, so it
+    ;; looked broken next to the close mark.
+    (it "draws the heading rule exactly as wide as the heading, before the close mark"
+        (doseq [title ["Rate limit" (apply str (repeat 30 "Deploy "))]]
+          (let [card (toasts/layout (page "Saved" :title title :source "router")
+                                    {:left 1 :top 1 :cols 80 :rows 20})
+                terminal (DefaultVirtualTerminal. (TerminalSize. 70 20))
+                screen (doto (TerminalScreen. terminal) .startScreen)
+                _ (do (toasts/paint! (.newTextGraphics screen) card false) (.refresh screen))
+                {:keys [col row width heading]} card
+                rule-row (+ row 3)
+                rule (apply str
+                       (for [c (range (+ col 2) (+ col width -1))]
+                         (.getCharacterString
+                           (.getCharacter terminal (TerminalPosition. (int c) (int rule-row))))))]
+
+            (try (expect (= (apply str (repeat (p/display-width heading) "▔")) (str/trimr rule)))
+                 (expect (< (+ col 2 (p/display-width heading)) (+ col width -3)))
+                 (finally (.stopScreen screen))))))))

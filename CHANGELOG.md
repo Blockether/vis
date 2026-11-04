@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - TUI: the session list shows times in the local time zone, like the transcript. It showed UTC times before.
+- TUI: the rule under the heading of a notification card is exactly as wide as the heading, so it never reaches the close mark.
 - TUI: a notification card has whole rounded side lines and one empty column between each side and the text. Its page counter shows `1/3` without arrows, on the row over the bottom border; a click on it shows the next notice.
 - Companion: the Android release retries a Google Play token request after a closed connection.
 
