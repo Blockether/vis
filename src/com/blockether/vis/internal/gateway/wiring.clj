@@ -11,10 +11,12 @@
    wiring live."
   (:require [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
             [com.blockether.vis.internal.automation.runner :as automation-runner]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.transcript-export :as transcript-export]
             [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -57,6 +59,9 @@
                                           :close-session-contexts!
                                           #'python-extensions/close-session-contexts!})
     (python-extensions/install-test-slash! #'test-runner/test-slash)
+    ;; `/export` draws a session with the gateway's web transcript page.
+    (session-slashes/install-transcript-renderers! {:md #'transcript-export/md
+                                                    :html #'transcript-export/html})
     ;; Events tailed from sibling processes reach this registry, and the tailer
     ;; drains only the journals of sessions this process tracks.
     (bus/set-deliver-fn! #'state/ingest-mirrored-event!)

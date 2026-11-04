@@ -1127,6 +1127,11 @@
              (let [file (io/file build path)]
                (io/make-parents file)
                (spit file path)))
+           ;; An HTML export copies this page, so a bundle without it cannot export.
+           (let [{:keys [exit output]} (stage!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "missing HTML transcript export page") output))
+           (spit (io/file build "transcript-export.html") "transcript-export.html")
            (let [{:keys [exit output]} (stage!)]
              (expect (= 0 exit) output)
              (expect (.isFile asset) output)
@@ -1138,7 +1143,8 @@
            (let [{:keys [exit output]} (run-bash ["tar" "-tzf" (.getAbsolutePath asset)] {})]
              (expect (= 0 exit) output)
              (expect (str/includes? output "vis-web/index.html") output)
-             (expect (str/includes? output "vis-web/assets/index.js") output))
+             (expect (str/includes? output "vis-web/assets/index.js") output)
+             (expect (str/includes? output "vis-web/transcript-export.html") output))
            (finally (delete-tree! root))))))
 
 (defn- fake-tools!

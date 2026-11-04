@@ -11,17 +11,28 @@
    title mutation point."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.transcript-export :as transcript-export]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.session.goals :as goals]))
 
+(defonce ^:private transcript-renderers (atom nil))
+
+(defn install-transcript-renderers!
+  "Install the transcript renderers, a map of `:md` and `:html` to a function of a session
+   id. They live in `gateway.transcript-export`, a higher layer, so the process wiring
+   installs them."
+  [renderers]
+  (reset! transcript-renderers renderers)
+  nil)
+
 (defn- render-transcript
-  "Render a session's transcript as the Markdown of the web app's Compact mode (`:md`, see
-   [[transcript-export/md]]) or as its standalone HTML page (`:html`, see
-   [[transcript-export/html]]). The HTML export throws when the web app is not built."
+  "Render a session's transcript as the Markdown of the web app's Compact mode (`:md`) or as
+   its standalone HTML page (`:html`), through the installed renderers. The HTML export
+   throws when the web app is not built."
   [sid fmt]
-  (or (if (= fmt :html) (transcript-export/html sid) (transcript-export/md sid))
-      (str "Session not found: " sid)))
+  (let [render (or (get @transcript-renderers fmt)
+                   (throw (ex-info "Transcript export is not available in this process"
+                                   {:format fmt})))]
+    (or (render sid) (str "Session not found: " sid))))
 
 (defn- path->fmt
   "Infer the export format from a target path's extension: `.html`/`.htm`
