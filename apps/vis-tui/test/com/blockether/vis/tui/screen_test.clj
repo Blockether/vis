@@ -4719,7 +4719,8 @@ therapy line 2"
                             (+ 8 (long (or (:chat-left layout) 0)))))))
              (finally (reset! notices []))))
     ;; User request: a global notice stands in the top-left corner of the whole window,
-    ;; over the header, on every repaint path, also in Zen mode.
+    ;; over the header, with the left margin of a session card, on every repaint path,
+    ;; also in Zen mode.
     (it "paints a global notification in the top-left corner of the window on every repaint path"
         (reset! notices [{:id "g1" :text "Rate limit hit" :level :warn}])
         (try (doseq [settings
@@ -4734,9 +4735,9 @@ therapy line 2"
                      row
                      (row-of rows "Rate limit hit")]
 
-                 (expect (= "╭" (subs (first rows) 0 1)))
+                 (expect (= 2 (str/index-of (first rows) "╭")))
                  (expect (some? row))
-                 (expect (= 2 (str/index-of (nth rows row) "Rate limit hit")))))
+                 (expect (= 4 (str/index-of (nth rows row) "Rate limit hit")))))
              (finally (reset! notices []))))
     ;; 120 / 1.618 = 74.2: a 74-cell column with 23 blank cells at each side. A narrow
     ;; terminal keeps a 60-cell column.

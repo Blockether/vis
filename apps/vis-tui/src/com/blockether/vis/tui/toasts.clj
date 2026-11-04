@@ -123,29 +123,42 @@
          :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
          :height (+ 4 (if head 2 0) (count lines) (if pages 1 0))}))))
 
+(def ^:const ^:private card-margin "Empty columns between the left edge and a card." 2)
+
+(def ^:const ^:private card-gap "Empty rows between the global card and the session card." 1)
+
 (defn cards
   "The cards of `pages`, a `notifications/show!` value, as `{:global :session}`. The global
    card has window columns and stands in the top-left corner of the window. The session
-   card has pane columns and stands in the top-left corner of the transcript. When the
-   global card covers that place, the session card moves under it. `chat-left` is the
-   window column of the pane."
+   card has pane columns and stands in the top-left corner of the transcript. Both keep
+   `card-margin` columns from the left edge. When the global card covers the place of the
+   session card, the session card moves under it, with `card-gap` empty rows between
+   them. `chat-left` is the window column of the pane."
   [{:keys [global session]} {:keys [screen-cols rows chat-left cols text-top messages-bottom]}]
   (let [global-card
-        (layout global {:left 0 :top 0 :cols screen-cols :rows rows})
+        (layout global
+                {:left card-margin
+                 :top 0
+                 :cols (- (long screen-cols) (* 2 (long card-margin)))
+                 :rows rows})
 
         covered?
         (and global-card
-             (< (+ (long chat-left) 2) (+ (long (:col global-card)) (long (:width global-card)))))
+             (< (+ (long chat-left) (long card-margin))
+                (+ (long (:col global-card)) (long (:width global-card)))))
 
         top
         (if covered?
-          (max (long text-top) (+ (long (:row global-card)) (long (:height global-card))))
+          (max (long text-top)
+               (+ (long (:row global-card)) (long (:height global-card)) (long card-gap)))
           (long text-top))]
 
     {:global global-card
-     :session
-     (layout session
-             {:left 2 :top top :cols (- (long cols) 4) :rows (- (long messages-bottom) top 1)})}))
+     :session (layout session
+                      {:left card-margin
+                       :top top
+                       :cols (- (long cols) (* 2 (long card-margin)))
+                       :rows (- (long messages-bottom) top 1)})}))
 
 (defn- level-fg
   "The border color of a card."
