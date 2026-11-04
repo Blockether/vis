@@ -135,4 +135,16 @@ public class OAuthLoopbackTest {
             }
         }
     }
+
+    // User report 2026-11-04: Android sign-in failed at once. JSON gives a millisecond
+    // deadline as Long, and Capacitor's getDouble returns null for a Long.
+    @Test
+    public void deadlineAcceptsEveryJsonNumber() {
+        long now = System.currentTimeMillis();
+        assertEquals(Long.valueOf(now), OAuthLoopback.deadline(Long.valueOf(now)));
+        assertEquals(Long.valueOf(now), OAuthLoopback.deadline(Double.valueOf(now + 0.4)));
+        assertEquals(Long.valueOf(7), OAuthLoopback.deadline(Integer.valueOf(7)));
+        for (Object bad : new Object[] {null, "1793809314000", Double.NaN, Double.POSITIVE_INFINITY})
+            assertNull(OAuthLoopback.deadline(bad));
+    }
 }

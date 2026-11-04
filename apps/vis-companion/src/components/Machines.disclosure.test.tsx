@@ -118,7 +118,8 @@ describe('a machine hides its own settings under its own row', () => {
     expect(screen.getByText('settings of tower')).toBeVisible();
     for (const state of ['offline', 'checking'] as const) {
       view.rerender(<MachineRows {...props} health={{ [tower.url]: { state, at: Date.now() } }} />);
-      expect(screen.queryByText('settings of tower')).toBeNull();
+      // Hidden, not unmounted: an unmount cancelled the running sign-in of that machine.
+      expect(screen.getByText('settings of tower')).not.toBeVisible();
       expect(rowOf('tower')).not.toHaveAttribute('aria-controls');
     }
     view.rerender(

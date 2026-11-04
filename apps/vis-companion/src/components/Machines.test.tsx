@@ -257,3 +257,37 @@ describe('an address switch of the same machine', () => {
     expect(mounts).toEqual({ count: 1, unmounts: 0 });
   });
 });
+
+// Regression, user report 2026-11-04 (Android sign-in): a magic link opens in Chrome,
+// the backgrounded app loses its network and the probe reports the machine offline.
+// The machine's settings unmounted, and their unmount cancelled the running sign-in.
+describe('an open machine that a probe reports offline', () => {
+  it('keeps its settings mounted but hidden, then shows them again', async () => {
+    const mounts = { count: 0, unmounts: 0 };
+    function Panel() {
+      useEffect(() => {
+        mounts.count += 1;
+        return () => {
+          mounts.unmounts += 1;
+        };
+      }, []);
+      return <p>settings</p>;
+    }
+    function Open({ conns }: { conns: GatewayConn[] }) {
+      const { health } = useFleetHealth(conns);
+      return (
+        <MachineRows conns={conns} health={health} onPick={() => {}} renderPanel={() => <Panel />} />
+      );
+    }
+    render(<Open conns={[{ id: 'machine-2', url: 'http://192.168.0.20:7890' }]} />);
+    await settle();
+    expect(screen.getByText('settings')).toBeVisible();
+    isAwake = false;
+    await settle(30_000);
+    expect(screen.getByText('settings')).not.toBeVisible();
+    isAwake = true;
+    await settle(20_000);
+    expect(screen.getByText('settings')).toBeVisible();
+    expect(mounts).toEqual({ count: 1, unmounts: 0 });
+  });
+});

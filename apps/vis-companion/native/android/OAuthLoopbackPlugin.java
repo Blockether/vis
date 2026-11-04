@@ -28,18 +28,16 @@ public class OAuthLoopbackPlugin extends Plugin {
                             }
                             try {
                                 String id = call.getString("flowId");
-                                Double deadline = call.getDouble("expiresAt");
-                                if (id == null
-                                        || id.isEmpty()
-                                        || deadline == null
-                                        || !Double.isFinite(deadline))
+                                Long deadline =
+                                        OAuthLoopback.deadline(call.getData().opt("expiresAt"));
+                                if (id == null || id.isEmpty() || deadline == null)
                                     throw new IllegalArgumentException();
                                 OAuthLoopback started =
                                         new OAuthLoopback(
                                                 call.getString("authorizationUrl"),
                                                 call.getString("redirectUri"),
                                                 call.getString("state"),
-                                                deadline.longValue());
+                                                deadline);
                                 receiver = started;
                                 pending = call;
                                 flowId = id;

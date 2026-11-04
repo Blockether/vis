@@ -605,6 +605,24 @@ export function MachineRows({
   const bound = binding ? (conns.find((c) => c.url === binding.url) ?? null) : null;
   // Rank marks only exist where there is a fleet to rank: see the header.
   const isFleet = conns.length > 1;
+  // A panel that has opened stays mounted while its machine is not online, only hidden.
+  // A backgrounded Android app loses the network, so a probe reports the machine offline.
+  // Unmounting the panel then cancelled its running sign-in in the browser.
+  const wantsPanel = (conn: GatewayConn) =>
+    Boolean(renderPanel) && (!isFleet || Boolean(openUrls?.has(conn.url)));
+  const panelKey = (conn: GatewayConn) => conn.id ?? conn.url;
+  const [keptPanels, setKeptPanels] = useState<ReadonlySet<string>>(() => new Set());
+  const kept = new Set(
+    conns
+      .filter(
+        (conn) =>
+          wantsPanel(conn) &&
+          (healthView(health[conn.url]).state === 'online' || keptPanels.has(panelKey(conn))),
+      )
+      .map(panelKey),
+  );
+  if (kept.size !== keptPanels.size || [...kept].some((key) => !keptPanels.has(key)))
+    setKeptPanels(kept);
   return (
     <div className="divide-y divide-dialog-edge">
       {conns.map((conn, index) => {
@@ -651,8 +669,8 @@ export function MachineRows({
         const isOnline = hv.state === 'online';
         const isChecking = hv.state === 'checking';
         const isStatic = isOnline && Boolean(renderPanel) && !isFleet;
-        const isOpen =
-          isOnline && Boolean(renderPanel) && (!isFleet || Boolean(openUrls?.has(conn.url)));
+        const isOpen = isOnline && wantsPanel(conn);
+        const keepsPanel = kept.has(panelKey(conn));
         const Row = isStatic ? 'div' : ListRow;
         // The open row and the "you are here" row wear one paper: a list does one of
         // the two, and a machine standing out of it looks the same either way.
@@ -778,9 +796,10 @@ export function MachineRows({
                 </Row>
               </div>
             </SwipeActions>
-            {isOpen && renderPanel && (
+            {keepsPanel && renderPanel && (
               <div
                 id={panelId}
+                hidden={!isOpen}
                 className={`min-w-0 ${isFleet ? 'border-l-2 border-dialog-edge' : ''}`}
               >
                 {renderPanel(conn)}

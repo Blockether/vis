@@ -77,6 +77,13 @@ public final class OAuthLoopback {
         }
     }
 
+    /** A JSON millisecond deadline. org.json gives a whole number as Integer or Long. */
+    public static Long deadline(Object value) {
+        if (!(value instanceof Number)) return null;
+        double millis = ((Number) value).doubleValue();
+        return Double.isFinite(millis) ? (long) millis : null;
+    }
+
     private static String form(String value, boolean encode) {
         try {
             return encode ? URLEncoder.encode(value, "UTF-8") : URLDecoder.decode(value, "UTF-8");
