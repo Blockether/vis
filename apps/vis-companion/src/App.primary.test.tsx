@@ -68,6 +68,8 @@ describe('the primary machine owns the first sessions scope', () => {
     const orderSyncs = () => view.requests.filter((url) => url.endsWith('/v1/machines/order')).length;
     await screen.findByLabelText('Machines');
     await waitFor(() => expect(orderSyncs()).toBeGreaterThan(0));
+    // Startup can sync once for each connections change; count after it settles.
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
     const started = orderSyncs();
     await act(() => vi.advanceTimersByTimeAsync(120_000));
     expect(orderSyncs()).toBe(started);
