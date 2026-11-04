@@ -304,6 +304,8 @@ export interface SessionUsage {
   turn_count?: number;
   iteration_count?: number;
   tool_call_count?: number;
+  /** Tool calls that ended with an error, a timeout or an unsuccessful result. */
+  tool_failure_count?: number;
   fold_count?: number;
   input_tokens?: number;
   input_regular_tokens?: number;

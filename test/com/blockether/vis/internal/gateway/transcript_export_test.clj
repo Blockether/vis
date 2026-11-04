@@ -113,3 +113,45 @@
                                      "request_kind" "council"
                                      "council" {"author_session_id" "child"}}]}]
                   (expect (not (str/includes? (transcript-export/markdown doc) "agent done")))))))
+
+(defn- metric
+  "The value of the row `label` in the Metrics table of `markdown`."
+  [markdown label]
+  (second (re-find (re-pattern (str "(?m)^\\| " label " \\| (.*?) \\|$")) markdown)))
+
+;; User report: the export must show the session metrics of the web panel on top: tokens, cost,
+;; turns and tool failures, in the words and number formats of that panel.
+(defdescribe
+  metrics-markdown-test
+  (it "writes the totals with the formats of the metrics panel"
+      (let [out (transcript-export/markdown {"session" {"id" "s1" "model_pref" {"model" "pinned"}}
+                                             "usage" {"input_tokens" 2089615
+                                                      "output_tokens" 85000
+                                                      "cost_usd" 4.2
+                                                      "turn_count" 3
+                                                      ;; JavaScript `toFixed(1)` of 8.45 is "8.4".
+                                                      "iteration_count" 8450
+                                                      "tool_call_count" 41
+                                                      "tool_failure_count" 2
+                                                      "cache_read_share_percent" 61
+                                                      "duration_ms" 5400000}
+                                             "turns" []})]
+        (expect (str/index-of out "## Metrics"))
+        (expect (= ["2.1M" "85k" "$4.20" "3" "8.4k" "41" "2" "61%" "—" "pinned" "1.5h"]
+                   (mapv #(metric out %)
+                         ["Total input" "Total output" "Cost" "Turns" "Calls" "Tools"
+                          "Tool failures" "Cached input" "Reuse coverage" "Model" "Active"])))))
+  (it "adds the subagent rows and the total cost when the session has subagents"
+      (let [out (transcript-export/markdown
+                  {"session" {"id" "s1"}
+                   "usage" {"cost_usd" 0.004
+                            "total_cost_usd" 1250.4
+                            "model" "ran"
+                            "subagents" {"agent_count" 2 "active_count" 1 "cost_usd" 1250.396}}
+                   "turns" []})]
+        (expect (= ["<$0.01" "2 · 1 active" "$1,250" "$1,250" "ran"]
+                   (mapv #(metric out %)
+                         ["Session cost" "Subagents" "Subagent cost" "Total cost" "Model"])))))
+  (it "says that no call is measured when the session has no usage"
+      (expect (str/includes? (transcript-export/markdown {"session" {"id" "s1"} "turns" []})
+                             "## Metrics\n\n_No measured calls yet._"))))

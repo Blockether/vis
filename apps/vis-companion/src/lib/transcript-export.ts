@@ -1,4 +1,4 @@
-import type { Session, Subagent, TranscriptTurn } from './types';
+import type { Session, SessionUsage, Subagent, TranscriptTurn } from './types';
 
 /**
  * WHAT AN HTML EXPORT CARRIES.
@@ -8,10 +8,13 @@ import type { Session, Subagent, TranscriptTurn } from './types';
  * components as the session screen. `child_session_ids` names this session's subagents, whose
  * wakes the screen hides too. `agents` holds their team rows, which each turn that started them
  * shows. `attachments` holds the bytes of each artifact that the steps
- * name, keyed by `<iteration id>/<index>`, so the page shows them without a gateway.
+ * name, keyed by `<iteration id>/<index>`, so the page shows them without a gateway. `usage` is
+ * the session's usage rollup, as `GET /v1/sessions/:sid/usage` returns it, or `null` before the
+ * first measured call.
  */
 export interface TranscriptExport {
-  session: Pick<Session, 'id' | 'title' | 'agent_name' | 'workspace'>;
+  session: Pick<Session, 'id' | 'title' | 'agent_name' | 'workspace' | 'model' | 'model_pref'>;
+  usage: SessionUsage | null;
   turns: TranscriptTurn[];
   child_session_ids: string[];
   agents: Subagent[];
@@ -39,6 +42,7 @@ export function parseTranscriptExport(text: string | null | undefined): Transcri
   if (!Array.isArray(doc.turns)) throw new Error('The transcript has no turns.');
   return {
     session: doc.session,
+    usage: doc.usage && typeof doc.usage === 'object' ? doc.usage : null,
     turns: doc.turns,
     child_session_ids: Array.isArray(doc.child_session_ids) ? doc.child_session_ids : [],
     agents: Array.isArray(doc.agents) ? doc.agents : [],

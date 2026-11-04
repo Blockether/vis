@@ -714,6 +714,7 @@ export const STORY_SESSION_USAGE: SessionUsage = {
   turn_count: 2,
   iteration_count: 5,
   tool_call_count: 59,
+  tool_failure_count: 3,
   fold_count: 0,
   input_tokens: 85_000,
   output_tokens: 2_300,

@@ -1,5 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { agentsByTurn, storedLeaderLane, TurnAgents } from '../components/AgentTeam';
+import { SessionStatsPanel } from '../components/SessionList';
 import {
   OUTLINE_MIN_TURNS,
   OUTLINE_RAIL_CLASS,
@@ -19,7 +20,8 @@ import { WorkspaceRootsContext } from '../lib/workspace-roots';
  * stores, so the rows show them as the screen does. A turn shows the subagents that it started,
  * but a row of them opens nothing, because the export holds only this session. A wake from a subagent of this session stays
  * hidden, as on the screen. The rows are complete, so every trace mounts whole and the outline
- * holds every turn.
+ * holds every turn. The session's metrics panel, as the session list shows it, stands above the
+ * first turn.
  */
 export function TranscriptExport({ data, client }: { data: TranscriptExportData; client: GatewayClient }) {
   const { session, turns } = data;
@@ -50,6 +52,9 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
             ref={columnRef}
             className={transcriptColumnClass({ zen: false, outline: showsOutline, empty: turns.length === 0 })}
           >
+            <section aria-label="Session metrics" className="mb-8">
+              <SessionStatsPanel session={session} usage={data.usage} phase="ready" />
+            </section>
             {turns.length === 0 && <p className="text-body text-dialog-hint">This session has no turns.</p>}
             {turns.map((turn, index) => (
               <StoredTurnRow

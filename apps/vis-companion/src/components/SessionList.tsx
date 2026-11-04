@@ -969,7 +969,7 @@ export function SessionStatsPanel({
   usage,
   phase,
 }: {
-  session: Session;
+  session: Pick<Session, 'model' | 'model_pref'>;
   usage: SessionUsage | null;
   phase: 'loading' | 'ready' | 'error';
 }) {
@@ -1020,6 +1020,7 @@ export function SessionStatsPanel({
             <Stat label="Turns" value={compactCount(usage.turn_count)} />
             <Stat label="Calls" value={compactCount(usage.iteration_count)} />
             <Stat label="Tools" value={compactCount(usage.tool_call_count)} />
+            <Stat label="Tool failures" value={compactCount(usage.tool_failure_count)} />
           </dl>
           {usage.subagents && (
             <section aria-label="Subagents" className="mt-4 border-t border-dialog-edge pt-4">

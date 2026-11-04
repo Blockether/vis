@@ -89,7 +89,8 @@
   [sid]
   (when-let [soul (state/soul sid)]
     (let [turns (:turns (state/transcript-page sid {}))]
-      {"session" (select-keys soul ["id" "title" "agent_name" "workspace"])
+      {"session" (select-keys soul ["id" "title" "agent_name" "workspace" "model" "model_pref"])
+       "usage" (state/session-usage-info sid)
        "turns" turns
        "child_session_ids" (into []
                                  (keep #(some-> (or (:session-id %) (:id %))
@@ -137,6 +138,102 @@
             ;; `toFixed(1)` rounds the exact binary value of the double, as `BigDecimal` does.
             (< ms 60000) (str (.setScale (BigDecimal. (/ ms 1000.0)) 1 RoundingMode/HALF_UP) "s")
             :else (str (quot ms 60000) "m " (quot (rem ms 60000) 1000) "s")))))
+
+(defn- fixed
+  "`x` with `digits` decimals, as JavaScript `toFixed` writes it."
+  [x digits]
+  (str (.setScale (BigDecimal. (double x)) (int digits) RoundingMode/HALF_UP)))
+
+(defn- metric-number
+  "`x` as a double, as JavaScript `Number(x ?? 0)` reads a metric."
+  ^double [x]
+  (double (or x 0)))
+
+(defn- compact-count
+  "A count as the metrics panel writes it: `840`, `8.4k`, `85k`, `2.1M`, `1.2B`."
+  [x]
+  (let [n (metric-number x)]
+    (cond (not (Double/isFinite n)) "—"
+          (< n 1e3) (if (== n (Math/floor n)) (str (long n)) (str n))
+          (< n 1e6) (str (fixed (/ n 1e3) (if (< n 1e4) 1 0)) "k")
+          (< n 1e9) (str (fixed (/ n 1e6) (if (< n 1e7) 1 0)) "M")
+          :else (str (fixed (/ n 1e9) 1) "B"))))
+
+(defn- usd
+  "A cost as the metrics panel writes it: `$0`, `<$0.01`, `$4.20`, `$1,250`."
+  [x]
+  (let [n (metric-number x)]
+    (cond (or (not (Double/isFinite n)) (<= n 0.0)) "$0"
+          (< n 0.01) "<$0.01"
+          (< n 1000.0) (str "$" (fixed n 2))
+          :else (str "$"
+                     (String/format java.util.Locale/US "%,d" (object-array [(Math/round n)]))))))
+
+(defn- active-duration
+  "A session's active time as the metrics panel writes it: `45s`, `12m`, `1.5h`, `2.0d`."
+  [x]
+  (let [ms (metric-number x)]
+    (if (or (not (Double/isFinite ms)) (<= ms 0.0))
+      "0s"
+      (let [seconds (Math/round (/ ms 1000.0))
+            minutes (/ (double seconds) 60.0)
+            hours (/ minutes 60.0)]
+
+        (cond (< seconds 60) (str seconds "s")
+              (< minutes 60.0) (str (Math/round minutes) "m")
+              (< hours 24.0) (str (fixed hours 1) "h")
+              :else (str (fixed (/ hours 24.0) 1) "d"))))))
+
+(defn metrics-markdown
+  "The `## Metrics` section of a Markdown export: the numbers and labels of the metrics panel
+   above the first turn of the HTML export. `usage` is the session's usage rollup, or nil."
+  [session usage]
+  (if-not usage
+    "## Metrics\n\n_No measured calls yet._\n\n"
+    (let [subagents
+          (get usage "subagents")
+
+          pct
+          (fn [k]
+            (if (number? (get usage k)) (str (get usage k) "%") "—"))
+
+          rows
+          (concat
+            [["Total input" (compact-count (get usage "input_tokens"))]
+             ["Total output" (compact-count (get usage "output_tokens"))]
+             [(if subagents "Session cost" "Cost") (usd (get usage "cost_usd"))]
+             ["Folds" (compact-count (get usage "fold_count"))]
+             ["Turns" (compact-count (get usage "turn_count"))]
+             ["Calls" (compact-count (get usage "iteration_count"))]
+             ["Tools" (compact-count (get usage "tool_call_count"))]
+             ["Tool failures" (compact-count (get usage "tool_failure_count"))]]
+            (when subagents
+              [["Subagents"
+                (str (compact-count (get subagents "agent_count"))
+                     " · "
+                     (compact-count (get subagents "active_count"))
+                     " active")]
+               ["Subagent calls" (compact-count (get subagents "iteration_count"))]
+               ["Subagent input" (compact-count (get subagents "input_tokens"))]
+               ["Subagent output" (compact-count (get subagents "output_tokens"))]
+               ["Subagent cost" (usd (get subagents "cost_usd"))]
+               ["Total cost" (usd (get usage "total_cost_usd"))]])
+            [["Cached input" (pct "cache_read_share_percent")]
+             ["Reuse coverage"
+              (let [v (pct "reusable_prefix_coverage_percent")]
+                (if (and (get usage "reusable_prefix_estimated") (not= "—" v)) (str "≈" v) v))]
+             ["Model"
+              (or (not-empty (str (get usage "model")))
+                  (not-empty (str (get-in session ["model_pref" "model"])))
+                  (not-empty (str (get session "model")))
+                  "—")] ["Active" (active-duration (get usage "duration_ms"))]])]
+
+      (str "## Metrics\n\n| Metric | Value |\n| --- | --- |\n"
+           (apply str
+             (map (fn [[k v]]
+                    (str "| " k " | " (str/replace v "|" "\\|") " |\n"))
+                  rows))
+           "\n"))))
 
 (defn- noun [n word] (str n " " word (when (not= 1 n) "s")))
 
@@ -384,11 +481,15 @@
     (str "# "
          title
          "\n\n"
-         "_Session `" (get session "id")
-         "` · " (noun (count turns) "turn")
-         "_\n\n" (if (seq turns)
-                   (str/join "---\n\n" (map #(turn-markdown context %) turns))
-                   "_This session has no turns._\n"))))
+         "_Session `"
+         (get session "id")
+         "` · "
+         (noun (count turns) "turn")
+         "_\n\n"
+         (metrics-markdown session (get data "usage"))
+         (if (seq turns)
+           (str/join "---\n\n" (map #(turn-markdown context %) turns))
+           "_This session has no turns._\n"))))
 
 (defn md
   "The Markdown export of session `sid`, or nil when no session has that id."

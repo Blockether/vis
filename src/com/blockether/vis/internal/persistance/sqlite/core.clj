@@ -2347,12 +2347,13 @@
   "Session ceiling; dropped wholesale on overflow like the row cache."
   512)
 
-(def ^:private empty-tally {:tools {} :folds 0})
+(def ^:private empty-tally {:tools {} :folds 0 :failures 0})
 
 (defn- forms-tally
-  "ONE iteration's `{:tools {tool n} :folds n}` tally over decoded tool-call
-   `forms`. Tools are keyed by `:vis/tool-name`; folds are engine-recorded
-   `:vis/fold-count` values, independent of source text and printed receipts."
+  "ONE iteration's `{:tools {tool n} :folds n :failures n}` tally over decoded
+   tool-call `forms`. Tools are keyed by `:vis/tool-name`; folds are engine-recorded
+   `:vis/fold-count` values, independent of source text and printed receipts.
+   A tool call fails on an error, a timeout or `:success? false`."
   [forms]
   (reduce (fn [tally form]
             (let [tool
@@ -2365,6 +2366,10 @@
                 (not (str/blank? tool))
                 (update-in [:tools tool] (fnil inc 0))
 
+                (and (not (str/blank? tool))
+                     (or (:error form) (:timeout? form) (false? (:success? form))))
+                (update :failures inc)
+
                 (pos? (long folds))
                 (update :folds + folds))))
           empty-tally
@@ -2374,7 +2379,8 @@
   "Sum two usage tallies."
   [a b]
   {:tools (merge-with + (:tools a) (:tools b))
-   :folds (+ (long (or (:folds a) 0)) (long (or (:folds b) 0)))})
+   :folds (+ (long (or (:folds a) 0)) (long (or (:folds b) 0)))
+   :failures (+ (long (or (:failures a) 0)) (long (or (:failures b) 0)))})
 
 (defn- usage-tally
   "Merged `{:tools {tool n} :folds n}` tally over the iteration rows `row-ids`
@@ -2482,7 +2488,7 @@
      :prompt-cache-sample-count :prompt-cache-estimated-sample-count
      :prompt-cache-rebuild-count :prompt-cache-expired-count :output-tokens
      :output-reasoning-tokens :cost-usd :first-turn-at :last-turn-at :provider
-      :model :tool-call-count :fold-count :health}`
+      :model :tool-call-count :tool-failure-count :fold-count :health}`
 
    `:health` describes the latest measured request in the same current chain.
    Provider input is authoritative; budget and prompt provenance exist only for
@@ -2613,6 +2619,7 @@
                    :output-reasoning-tokens (long (or (:output_reasoning_tokens calls) 0))
                    :cost-usd (double (or (:cost_usd calls) 0))
                    :tool-call-count (long (reduce + 0 (vals (:tools counts))))
+                   :tool-failure-count (long (or (:failures counts) 0))
                    :fold-count folds}
             health
             (assoc :health health)

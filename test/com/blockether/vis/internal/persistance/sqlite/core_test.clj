@@ -5687,6 +5687,9 @@
                                    {:vis/tool-name "ls" :stdout "listed\n"}]})
       (let [u (stats)]
         (expect (= 4 (:tool-call-count u)))
+        ;; User report: a session export showed no tool failures. An error and an
+        ;; unsuccessful result are failures; a call that printed output is not.
+        (expect (= 2 (:tool-failure-count u)))
         (expect (= 2 @decodes))
         ;; Same session, nothing written in between: the answer is identical
         ;; and not one blob is thawed again.
@@ -5702,6 +5705,7 @@
                            :forms [{:vis/tool-name "shell" :stdout "ok\n"}]})
       (let [u (stats)]
         (expect (= 5 (:tool-call-count u)))
+        (expect (= 2 (:tool-failure-count u)))
         (expect (= 3 @decodes))))))
 
 ;; Regression, issue #38: the usage card reported only the surviving summary

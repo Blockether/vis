@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: a global notification shows in its own card in the top-left corner of the window, over the header. A session notification stays in the top-left corner of the transcript. Both cards keep the same left margin. When both show, the session card is under the global card, with one empty row between them. Each card has its own page counter.
 - Export: an HTML export (`vis-agent sessions export ID --html`, `/export`, `transcript.html`) is the web app's own transcript page with the session in it. It looks the same as the session screen in Compact mode, with images and subagent teams, and opens without a gateway or network.
 - Export: a Markdown export (`--md`, `/export`, `transcript.md`) shows each turn as Compact mode does. Each note has one folded digest with the same counts and times as the web row, for example `3 mutations · 1 observation · 4.0s`. It is about half the size of the old step dump.
+- Export: an HTML or Markdown export starts with the session metrics of the session list: tokens, cost, turns, calls, tools, tool failures, subagents, prompt cache, model and active time.
+- Companion: the session metrics panel shows `Tool failures`, the tool calls that ended with an error, a timeout or an unsuccessful result. `GET /v1/sessions/:sid/usage` returns it as `tool_failure_count`.
 
 ### Fixed
 - TUI: the session list shows times in the local time zone, like the transcript. It showed UTC times before.
