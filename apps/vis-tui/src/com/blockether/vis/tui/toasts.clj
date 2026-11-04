@@ -4,10 +4,9 @@
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
    toasts of extensions. One card shows at a time, like the Companion card. The
-   border stands on the screen paper, and the tinted body fills the card up to
-   it. The border is drawn with one-eighth blocks on the cell edges, so no strip
-   of paper shows between the body and the border. The border has the level
-   color.
+   tinted body fills the whole card. The border is a rounded box line in the
+   level color. A terminal joins box lines across rows, so the sides stay whole.
+   One empty column stands between each side line and the text.
 
    One empty row stands under the top border, and one over the bottom border.
    The close mark `✕` is in the top-right corner of the empty top row. Under it,
@@ -33,7 +32,7 @@
 (def ^:const max-text-lines "The most text lines of one card; more text ends with `…`." 4)
 
 (def ^:const ^:private side-cols
-  "Columns of a body row that hold no text: two borders and two spaces."
+  "Columns of a body row that hold no text: two border cells and two empty columns."
   4)
 
 (def ^:const ^:private close-cols
@@ -186,7 +185,7 @@
           row (long row)
           width (long width)
           inner (- width 2)
-          ;; The bottom row stands on the paper: the countdown bar or the bottom line.
+          ;; The bottom border row also carries the countdown bar.
           bottom (+ row (long height) -1)
           right (+ col width -1)
           first-row (inc row)
@@ -198,33 +197,22 @@
           pager-row (- bottom 2)
           ;; The counter ends one space before the right border.
           pager-col (- right 1 pager-cols)
-          ;; The border stands on the screen paper; the body is tinted up to it.
-          paper t/dialog-bg
           bg (card-bg)
-          edge (t/legible-ink (level-fg level) paper)
+          edge (t/legible-ink (level-fg level) bg)
           muted (t/legible-ink t/footer-fg-muted bg)]
 
       (p/clear-styles! g)
-      (p/set-colors! g t/dialog-fg paper)
-      (p/fill-rect! g col row width height)
       (p/set-colors! g t/dialog-fg bg)
-      (p/fill-rect! g (inc col) first-row inner (- bottom first-row))
-      ;; Border: one-eighth blocks on the cell edges around the body. A side line
-      ;; is two blocks that meet on one cell edge, so it is as thick as the top line.
-      (p/set-colors! g edge paper)
-      (p/put-str! g (inc col) row (rule inner "▁"))
-      (doseq [r (range first-row bottom)]
-        (p/put-str! g col (long r) "▕")
-        (p/put-str! g right (long r) "▏"))
+      (p/fill-rect! g col row width height)
+      ;; Border: box lines in the middle of the edge cells. One-eighth blocks on the
+      ;; cell edges left gaps between rows in macOS Terminal, so the sides looked broken.
       (p/set-colors! g edge bg)
+      (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
       (doseq [r (range first-row bottom)]
-        (p/put-str! g (inc col) (long r) "▏")
-        (p/put-str! g (dec right) (long r) "▕"))
-      ;; The bottom line lies on the paper row under the body, so the sides keep
-      ;; their full width down to it. The countdown is a bar four times as thick
-      ;; that covers the bottom line for the time left.
-      (p/set-colors! g edge paper)
-      (p/put-str! g (inc col) bottom (rule inner "▔"))
+        (p/put-str! g col (long r) "│")
+        (p/put-str! g right (long r) "│"))
+      (p/put-str! g col bottom (str "╰" (rule inner "─") "╯"))
+      ;; The countdown is a thick bar on the bottom line, as long as the time left.
       (when fraction
         (p/put-str! g (inc col) bottom (rule (long (Math/ceil (* (double fraction) inner))) "▀")))
       ;; Heading.

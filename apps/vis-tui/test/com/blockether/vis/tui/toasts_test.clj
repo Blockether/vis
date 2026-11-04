@@ -1,7 +1,11 @@
 (ns com.blockether.vis.tui.toasts-test
-  (:require [com.blockether.vis.tui.primitives :as p]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.toasts :as toasts]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]])
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+           [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (def ^:private long-text
   (apply str (repeat 40 "The deploy of acme widgets finished with warnings. ")))
@@ -102,4 +106,50 @@
                   (expect (= :toast-prev (kind-at pager-col pager-row)))
                   (expect (= :toast-next (kind-at (+ pager-col 6) pager-row)))
                   (expect (nil? (kind-at (+ 2 (:col card)) (+ 2 (:row card)))))
-                  (expect (nil? (kind-at (:col card) pager-row)))))))
+                  (expect (nil? (kind-at (:col card) pager-row))))))
+  (describe "paint"
+            ;; User report: the text touched the side of the card, and the side lines
+            ;; of one-eighth blocks showed gaps between rows, so the border looked broken.
+            (it
+              "draws whole side lines with one empty column between them and the text"
+              (doseq [titled?
+                      [true false]
+
+                      total
+                      [1 3]]
+
+                (let [card
+                      (toasts/layout
+                        (if titled?
+                          (page long-text :title "Release" :source "forge" :total total)
+                          (page long-text :total total :ttl-ms 4000 :remaining-ms 2000))
+                        {:left 1 :top 1 :cols 80 :rows 20})
+
+                      terminal
+                      (DefaultVirtualTerminal. (TerminalSize. 70 20))
+
+                      screen
+                      (doto (TerminalScreen. terminal) .startScreen)
+
+                      _
+                      (do (toasts/paint! (.newTextGraphics screen) card false) (.refresh screen))
+
+                      cell
+                      (fn [col row]
+                        (.getCharacterString
+                          (.getCharacter terminal (TerminalPosition. (int col) (int row)))))
+
+                      {:keys [col row width height]}
+                      card
+
+                      right
+                      (+ col width -1)
+
+                      body-rows
+                      (range (inc row) (+ row height -1))]
+
+                  (try (expect (every? #(= "│" (cell col %)) body-rows))
+                       (expect (every? #(= "│" (cell right %)) body-rows))
+                       (expect (every? #(str/blank? (cell (inc col) %)) body-rows))
+                       (expect (every? #(str/blank? (cell (dec right) %)) body-rows))
+                       (finally (.stopScreen screen))))))))
