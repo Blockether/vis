@@ -1568,36 +1568,6 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   [source]
   (cached-exec-python source "<string>" "__import__('__future__').annotations.compiler_flag"))
 
-(def ^:private site-first-python
-  "Move a site and the path lines of its `.pth` files right after the extension directory.
-   site appends those lines behind the shared packages, so an extension imported a shared
-   copy of its own editable project (#226). Runs after the snapshot preamble, which binds
-   `__vis_pathsys__`, `__vis_pathos__` and `__vis_packages__`."
-  "__vis_site__ = [__vis_packages__]
-if __vis_pathos__.path.isdir(__vis_packages__):
-    for __vis_pth__ in sorted(__vis_pathos__.listdir(__vis_packages__)):
-        if not __vis_pth__.endswith('.pth'):
-            continue
-        try:
-            with open(__vis_pathos__.path.join(__vis_packages__, __vis_pth__),
-                      encoding='utf-8') as __vis_lines__:
-                for __vis_line__ in __vis_lines__:
-                    __vis_line__ = __vis_line__.rstrip()
-                    if (not __vis_line__ or __vis_line__.startswith('#')
-                            or __vis_line__.startswith(('import ', 'import\t'))):
-                        continue
-                    __vis_dir__ = __vis_pathos__.path.abspath(
-                        __vis_pathos__.path.join(__vis_packages__, __vis_line__))
-                    if __vis_pathos__.path.isdir(__vis_dir__) and __vis_dir__ not in __vis_site__:
-                        __vis_site__.append(__vis_dir__)
-        except (OSError, UnicodeDecodeError):
-            continue
-__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path
-                          if __vis_p__ not in __vis_site__]
-__vis_pathsys__.path[1:1] = __vis_site__
-__import__('importlib').invalidate_caches()
-")
-
 (defn- evaluate-extension!
   "Evaluate admitted extension `source` in the open namespace `ctx`.
    `entry-path` is the canonical source entry file exposed through Python's
@@ -1637,14 +1607,11 @@ __import__('importlib').invalidate_caches()
                  "\n"
                  "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                  "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
-                 "__vis_packages__ = " (python-string-literal (or packages (runtime/packages-dir)))
+                 "__vis_packages__ = "
+                 (python-string-literal (or packages (runtime/packages-dir)))
                  "\nimport package_paths as __vis_package_paths__\n"
-                 "__vis_package_paths__.refresh(__vis_packages__, reload=True)\n"
-                 "if __vis_packages__ in __vis_pathsys__.path:\n"
-                 "    __vis_pathsys__.path.remove(__vis_packages__)\n"
-                 "__vis_pathsys__.path.insert(1, __vis_packages__)\n"
-                 "import importlib as __vis_importlib__\n"
-                 "__vis_importlib__.invalidate_caches()\n"
+                 ;; The site and its .pth path lines follow the extension directory (#226).
+                 "__vis_package_paths__.refresh(__vis_packages__, reload=True, at=1)\n"
                  "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
                  "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
                  "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
@@ -1656,7 +1623,6 @@ __import__('importlib').invalidate_caches()
                  "            and (__vis_pathos__.path.exists(__vis_top__)\n"
                  "                 or __vis_pathos__.path.exists(__vis_top__ + '.py'))):\n"
                  "        del __vis_pathsys__.modules[__vis_name__]\n"))
-          (exec-in! ctx site-first-python)
           (exec-in! ctx stale-sdk-modules-python)
           (exec-in! ctx bootstrap-python)
           (exec-in! ctx (postponed-annotations-python source)))))
