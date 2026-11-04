@@ -54,17 +54,36 @@ it.each(['127.0.0.1', 'localhost', '[::1]'])(
   },
 );
 
-it.each([undefined, '', '   '])('refuses unpaired remote HTTP and HTTPS (%s)', async (token) => {
-  const fetch = vi.fn();
+// Issue #441: a reverse proxy can add the gateway token on the server side, so a browser without
+// a token must still reach the OAuth routes. The gateway enforces `--require-token` itself.
+it.each([undefined, '', '   '])('sends unpaired remote OAuth requests to the gateway (%s)', async (token) => {
+  const fetch = vi.fn().mockImplementation(async () => new Response('{}'));
   vi.stubGlobal('fetch', fetch);
   for (const url of ['http://10.0.0.5:7890', 'https://gateway.example.com']) {
     const client = new GatewayClient({ url, token });
-    await expect(client.mcpAuthStart('work')).rejects.toMatchObject({ reason: 'pairing-required' });
-    await expect(
-      client.completeProviderAuth('openai-codex', 'test-flow', 'test-code'),
-    ).rejects.toMatchObject({ reason: 'pairing-required' });
+    await client.mcpAuthStart('work');
+    await client.startProviderAuth('github-copilot');
   }
-  expect(fetch).not.toHaveBeenCalled();
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    'http://10.0.0.5:7890/v1/mcp/servers/work/auth/start',
+    'http://10.0.0.5:7890/v1/providers/github-copilot/auth/start',
+    'https://gateway.example.com/v1/mcp/servers/work/auth/start',
+    'https://gateway.example.com/v1/providers/github-copilot/auth/start',
+  ]);
+  for (const [, options] of fetch.mock.calls) expect(options.headers.has('Authorization')).toBe(false);
+});
+
+it('asks to pair when the gateway refuses an OAuth request without a token', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation(async () => new Response('{"error":"unauthorized"}', { status: 401 })),
+  );
+  const client = new GatewayClient({ url: 'https://gateway.example.com' });
+  await expect(client.startProviderAuth('github-copilot')).rejects.toMatchObject({
+    reason: 'pairing-required',
+    status: 401,
+    message: 'Pair this gateway before starting sign-in.',
+  });
 });
 
 it('refuses a non-HTTP scheme before sending credentials', async () => {

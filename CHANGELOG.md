@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion: the session metrics panel shows `Tool failures`, the tool calls that ended with an error, a timeout or an unsuccessful result. `GET /v1/sessions/:sid/usage` returns it as `tool_failure_count`.
 
 ### Fixed
+- Companion: a provider or MCP sign-in starts behind a reverse proxy that adds the gateway token. The web app refused it with `Pair this gateway before starting sign-in.` and sent no request. It shows that message now only when the gateway answers 401 (#441).
 - TUI: the session list shows times in the local time zone, like the transcript. It showed UTC times before.
 - TUI: the rule under the heading of a notification card is exactly as wide as the heading, so it never reaches the close mark.
 - TUI: a notification card has whole rounded side lines and one empty column between each side and the text. Its page counter shows `1/3` without arrows, on the row over the bottom border; a click on it shows the next notice.

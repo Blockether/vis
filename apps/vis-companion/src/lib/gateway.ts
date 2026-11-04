@@ -137,12 +137,15 @@ export class GatewayError extends Error {
   }
 }
 
-/** Local, non-secret refusals that are safe to display in the sign-in UI. */
+/**
+ * Non-secret sign-in refusals that are safe to display in the sign-in UI. `invalid-address` is
+ * local (status 0). `pairing-required` is the gateway's own 401, so its status stays 401.
+ */
 export class GatewayOAuthError extends GatewayError {
   readonly reason: 'pairing-required' | 'invalid-address';
-  constructor(reason: GatewayOAuthError['reason']) {
+  constructor(reason: GatewayOAuthError['reason'], status = 0) {
     super(
-      0,
+      status,
       {
         'pairing-required': 'Pair this gateway before starting sign-in.',
         'invalid-address': 'Use an HTTP or HTTPS gateway address for sign-in.',
@@ -1595,7 +1598,8 @@ export class GatewayClient {
 
   private headers(extra?: HeadersInit): Headers {
     const h = new Headers(extra);
-    if (this.token) h.set('Authorization', `Bearer ${this.token}`);
+    // A blank token is no token: a proxy may add the header itself (#441).
+    if (this.token?.trim()) h.set('Authorization', `Bearer ${this.token}`);
     // Announce which wire protocol this build speaks on EVERY request, so a
     // gateway that no longer serves us answers 426 with a real explanation
     // instead of a shape we would misread.
@@ -1626,14 +1630,10 @@ export class GatewayClient {
       /^\/v1\/(?:providers\/[^/]+|mcp\/servers\/[^/]+)\/auth\/(?:start|complete|poll|cancel)$/.test(
         path,
       );
-    // OAuth uses the paired gateway's HTTP(S) transport, like other app requests.
-    if (oauth) {
-      const destination = new URL(this.base);
-      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(destination.hostname);
-      if (!['http:', 'https:'].includes(destination.protocol)) {
-        throw new GatewayOAuthError('invalid-address');
-      }
-      if (!loopback && !this.token?.trim()) throw new GatewayOAuthError('pairing-required');
+    // OAuth uses the paired gateway's HTTP(S) transport, like other app requests. The gateway
+    // decides about the token: a reverse proxy can add it on the server side (#441).
+    if (oauth && !['http:', 'https:'].includes(new URL(this.base).protocol)) {
+      throw new GatewayOAuthError('invalid-address');
     }
     // Queue for one of this gateway's few sockets BEFORE the clock starts: the
     // wait is this app's own backpressure, not a slow gateway, and reporting it
@@ -1701,6 +1701,9 @@ export class GatewayClient {
         }
       }
       if (!res.ok) {
+        if (oauth && res.status === 401 && !this.token?.trim()) {
+          throw new GatewayOAuthError('pairing-required', 401);
+        }
         const error = new GatewayError(res.status, errorText(parsed, res.status), parsed);
         // A refused protocol is not this call's problem, it is the whole
         // connection's: announce it so the app can re-read the verdict and show
