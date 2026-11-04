@@ -1151,7 +1151,7 @@ Companion app show the same card. One card shows at a time:
 - Click an arrow to see the other cards that wait.
 - The bar on the bottom edge shrinks for the time that is left.
 - Only the card on screen counts down. A card that waits keeps all its time.
-- Click `✕` or the card to close it before its time ends.
+- Click `✕` to close the card before its time ends. A click on the rest of the card goes to the text under it.
 
 Use these arguments to change the card:
 

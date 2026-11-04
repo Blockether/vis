@@ -71,4 +71,35 @@
                 (let [{:keys [lines]} (toasts/layout (page long-text)
                                                      {:left 0 :top 0 :cols 56 :rows 40})]
                   (expect (= 4 (count lines)))
-                  (expect (= \… (last (last lines))))))))
+                  (expect (= \… (last (last lines)))))))
+  (describe "clicks"
+            ;; v0.5.1 native clipboard test: the "Copied bubble" card covered the bubble
+            ;; and took the next drag, so the user could not select its text.
+            (it "takes clicks only on the close mark and the page arrows"
+                (let [card
+                      (toasts/layout (page "Copied bubble" :index 1 :total 3)
+                                     {:left 2 :top 3 :cols 80 :rows 20})
+
+                      regions
+                      (toasts/click-regions card)
+
+                      kind-at
+                      (fn [col row]
+                        (some (fn [{r :row c :col w :width k :kind}]
+                                (when (and (= row r) (<= c col) (< col (+ c w))) k))
+                              regions))
+
+                      right
+                      (+ (:col card) (:width card) -1)
+
+                      pager-row
+                      (+ (:row card) (:height card) -3)
+
+                      pager-col
+                      (- right 1 (count (:pager card)))]
+
+                  (expect (= :toast-dismiss (kind-at (- right 2) (inc (:row card)))))
+                  (expect (= :toast-prev (kind-at pager-col pager-row)))
+                  (expect (= :toast-next (kind-at (+ pager-col 6) pager-row)))
+                  (expect (nil? (kind-at (+ 2 (:col card)) (+ 2 (:row card)))))
+                  (expect (nil? (kind-at (:col card) pager-row)))))))

@@ -151,10 +151,35 @@
     (.register interactions/hit-map
                {:bounds {:row row :col col :width width} :kind kind :text id :enabled? true})))
 
+(defn click-regions
+  "The click regions of `card` from `layout`, each `{:row :col :width :kind}`.
+   The close mark is `:toast-dismiss`, `←` is `:toast-prev`, and the counter and
+   `→` are `:toast-next`. A click on the rest of the card goes to the transcript
+   under it, so a card never takes a click or a drag from the text that it covers."
+  [{:keys [pager col row width height]}]
+  (let [right
+        (+ (long col) (long width) -1)
+
+        pager-cols
+        (long (if pager (p/display-width pager) 0))
+
+        pager-row
+        (+ (long row) (long height) -3)
+
+        pager-col
+        (- right 1 pager-cols)
+
+        next-col
+        (+ pager-col 2)]
+
+    (cond-> [{:row (inc (long row)) :col (- right 3) :width 3 :kind :toast-dismiss}]
+      pager
+      (conj {:row pager-row :col pager-col :width 2 :kind :toast-prev}
+            {:row pager-row :col next-col :width (- pager-cols 2) :kind :toast-next}))))
+
 (defn paint!
-  "Draw `card` from `layout`; nil draws nothing. With `register?`, `←` is a
-   `:toast-prev` click, the counter and `→` are `:toast-next`, and the rest of
-   the card is `:toast-dismiss`. Each region carries the notification id as `:text`."
+  "Draw `card` from `layout`; nil draws nothing. With `register?`, register the
+   `click-regions` of the card. Each region carries the notification id as `:text`."
   [g card register?]
   (when-let [{:keys [id level heading title lines pager fraction col row width height]} card]
     (let [col (long col)
@@ -227,13 +252,5 @@
       (when pager (p/set-colors! g muted bg) (p/put-str! g pager-col pager-row pager))
       (p/clear-styles! g)
       (when register?
-        (doseq [r (range row (+ row (long height)))]
-          (if (and pager (= pager-row (long r)))
-            (let [next-col (+ pager-col 2)
-                  end (+ pager-col pager-cols)]
-
-              (region! pager-row col (- pager-col col) :toast-dismiss id)
-              (region! pager-row pager-col 2 :toast-prev id)
-              (region! pager-row next-col (- end next-col) :toast-next id)
-              (region! pager-row end (- (inc right) end) :toast-dismiss id))
-            (region! (long r) col width :toast-dismiss id)))))))
+        (doseq [{:keys [row col width kind]} (click-regions card)]
+          (region! row col width kind id))))))
