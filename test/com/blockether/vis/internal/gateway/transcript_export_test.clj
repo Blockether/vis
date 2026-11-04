@@ -167,14 +167,17 @@
                   {"session" {"id" "s1"}
                    "turns" [{"iterations" [{"forms" [{"tool_name" "python_execution"
                                                       "scope" "t1/i2"
+                                                      "src" "raw()"
+                                                      "display_code" "patch(path, edits)\n"
                                                       "error" {"message"
                                                                "\npatch | refused\nedit 3/3"}}
                                                      {"tool_name" "python_execution" "stdout" "ok"}
                                                      {"scope" "t1/i3" "error" "no tool"}]}]}
                             {"iterations" [{"forms" [{"tool_name" "python_execution"
+                                                      "src" "sleep(9)"
                                                       "error" "timed out"}]}]}]})]
-        (expect (str/includes? out
-                               (str "<details>\n<summary>Failed tools (2)</summary>\n\n"
-                                    "| Step | Tool | Error |\n| --- | --- | --- |\n"
-                                    "| t1/i2 | python_execution | patch \\| refused |\n"
-                                    "| t2 | python_execution | timed out |\n\n</details>"))))))
+        (expect (str/includes?
+                  out
+                  (str "<details>\n<summary>Failed tools (2)</summary>\n\n"
+                       "**t1/i2** · patch | refused\n\n```python\npatch(path, edits)\n```\n\n"
+                       "**t2** · timed out\n\n```python\nsleep(9)\n```\n\n</details>"))))))

@@ -9,6 +9,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { TranscriptOutline } from '../components/TranscriptOutline';
+import { SyntaxCodeBlock } from '../components/ChatContent';
 import { Disclosure } from '../components/ui';
 import type { GatewayClient } from '../lib/gateway';
 import { failedToolCalls, type TranscriptExport as TranscriptExportData } from '../lib/transcript-export';
@@ -23,7 +24,8 @@ import { WorkspaceRootsContext } from '../lib/workspace-roots';
  * hidden, as on the screen. The rows are complete, so every trace mounts whole and the outline
  * holds every turn. The session's metrics panel, as the session list shows it, stands above the
  * first turn, closed under a METRICS row and as wide as the column when it opens. A closed FAILED
- * TOOLS row under it lists each failed tool call; a row of that list jumps to its turn.
+ * TOOLS row under it lists each failed tool call with its error and its code; the step of a call
+ * jumps to its turn.
  */
 export function TranscriptExport({ data, client }: { data: TranscriptExportData; client: GatewayClient }) {
   const { session, turns } = data;
@@ -75,19 +77,30 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
                     Failed tools
                   </Disclosure>
                   {showsFailures && (
-                    <ol className="border-t border-dialog-edge py-2 font-mono text-ui">
+                    <ol className="divide-y divide-dialog-edge/40 border-t border-dialog-edge font-mono text-ui">
                       {failures.map((failure, index) => (
-                        <li key={`${failure.scope}-${index}`}>
+                        <li key={`${failure.scope}-${index}`} className="py-3">
                           <button
                             type="button"
                             title={failure.message}
                             onClick={() => jumpToTurn(failure.turnId)}
-                            className="grid min-h-8 w-full grid-cols-[6rem_minmax(0,10rem)_minmax(0,1fr)] items-baseline gap-3 py-1 text-left mouse:min-h-6 mouse:hover:text-accent-ink"
+                            className="grid min-h-8 w-full grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-3 text-left mouse:min-h-6 mouse:hover:text-accent-ink"
                           >
                             <span className="tabular-nums text-dialog-hint">{failure.scope}</span>
-                            <span className="truncate text-white">{failure.tool}</span>
                             <span className="truncate text-err">{failure.message}</span>
                           </button>
+                          {failure.code && (
+                            <div className="mt-1 max-h-72 overflow-auto bg-code px-3 py-2">
+                              <SyntaxCodeBlock
+                                value={failure.code}
+                                language={failure.language}
+                                compact
+                                bare
+                                frameless
+                                padded={false}
+                              />
+                            </div>
+                          )}
                         </li>
                       ))}
                     </ol>

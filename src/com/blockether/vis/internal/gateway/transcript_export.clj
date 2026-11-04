@@ -243,32 +243,41 @@
                    :else (wire/json-str error))]
     (or (some #(not-empty (str/trim %)) (str/split-lines text)) "")))
 
+(defn- form-code
+  "The code of `form` as the session screen shows it under CODE."
+  [form]
+  (str/trim (str (some #(when (string? %) %)
+                       (map #(get form %) ["display_code" "code" "source" "src"])))))
+
 (defn failed-tools-markdown
   "The closed Failed tools section of a Markdown export, or an empty string when no call failed.
-   A call fails when it names a tool and returns an error, which is the rule of
-   `tool_failure_count`, so the list and the count agree."
+   Each failed call shows its step, the first line of its error and its code. A call fails when it
+   names a tool and returns an error, which is the rule of `tool_failure_count`, so the list and
+   the count agree."
   [turns]
-  (let [rows (for [[index turn] (map-indexed vector turns)
-                   iteration (get turn "iterations")
-                   form (get iteration "forms")
-                   :let [tool (str/trim (str (get form "tool_name")))]
-                   :when (and (not (str/blank? tool)) (some? (get form "error")))]
+  (let [rows
+        (for [[index turn] (map-indexed vector turns)
+              iteration (get turn "iterations")
+              form (get iteration "forms")
+              :when (and (not (str/blank? (str (get form "tool_name")))) (some? (get form "error")))]
 
-               [(or (not-empty (str (get form "scope"))) (str "t" (inc (long index)))) tool
-                (failure-line (get form "error"))])]
+          {:scope (or (not-empty (str (get form "scope"))) (str "t" (inc (long index))))
+           :message (failure-line (get form "error"))
+           :code (form-code form)
+           :language (or (not-empty (str/trim (str (get form "display_language")))) "python")})]
     (if (empty? rows)
       ""
       (str "<details>\n<summary>Failed tools ("
            (count rows)
            ")</summary>\n\n"
-           "| Step | Tool | Error |\n| --- | --- | --- |\n"
            (apply str
-             (map (fn [cells]
-                    (str "| "
-                         (str/join " | " (map #(str/replace (md-escape %) "|" "\\|") cells))
-                         " |\n"))
+             (map (fn [{:keys [scope message code language]}]
+                    (str "**" scope
+                         "** · " (md-escape message)
+                         "\n\n" (when-not (str/blank? code)
+                                  (str (util/fenced code language) "\n\n"))))
                   rows))
-           "\n</details>\n\n"))))
+           "</details>\n\n"))))
 
 (defn- noun [n word] (str n " " word (when (not= 1 n) "s")))
 

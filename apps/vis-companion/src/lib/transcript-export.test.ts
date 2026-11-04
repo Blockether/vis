@@ -85,26 +85,35 @@ describe('an export answers the artifact requests of its page', () => {
 // User report: the export counts tool failures, so it must also list them. The list must name
 // the same calls that `tool_failure_count` counts: a tool call with an error.
 describe('the failed tool calls of an export', () => {
-  it('lists each tool call with an error, in order, with the first line of its message', () => {
+  it('lists each tool call with an error, in order, with its code and the first line of its message', () => {
     const calls = failedToolCalls([
       {
         turn_id: 'a',
         iterations: [
           {
             forms: [
-              { tool_name: 'python_execution', scope: 't1/i2', error: { message: '\npatch refused\nedit 3/3' } },
+              {
+                tool_name: 'python_execution',
+                scope: 't1/i2',
+                src: 'raw()',
+                display_code: '\npatch(path, edits)\n',
+                error: { message: '\npatch refused\nedit 3/3' },
+              },
               { tool_name: 'python_execution', scope: 't1/i2', stdout: 'ok' },
               { scope: 't1/i3', error: 'no tool' },
             ],
           },
         ],
       },
-      { turn_id: 'b', iterations: [{ forms: [{ tool_name: 'python_execution', error: 'timed out' }] }] },
+      {
+        turn_id: 'b',
+        iterations: [{ forms: [{ tool_name: 'python_execution', src: 'sleep(9)', display_language: 'clojure', error: 'timed out' }] }],
+      },
     ]);
 
     expect(calls).toEqual([
-      { turnId: 'a', scope: 't1/i2', tool: 'python_execution', message: 'patch refused' },
-      { turnId: 'b', scope: 't2', tool: 'python_execution', message: 'timed out' },
+      { turnId: 'a', scope: 't1/i2', code: 'patch(path, edits)', language: 'python', message: 'patch refused' },
+      { turnId: 'b', scope: 't2', code: 'sleep(9)', language: 'clojure', message: 'timed out' },
     ]);
   });
 });

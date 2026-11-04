@@ -55,13 +55,16 @@ export interface FailedToolCall {
   turnId: string;
   /** The step that ran the call, for example `t1/i65`, else the turn, for example `t2`. */
   scope: string;
-  tool: string;
+  /** The code of the call, as the session screen shows it under CODE. */
+  code: string;
+  /** The highlighting language of `code`. */
+  language: string;
   /** The first line of the error that the call returned. */
   message: string;
 }
 
 /**
- * The failed tool calls of `turns`, in order. A call fails when it names a tool and returns an
+ * The failed tool calls of `turns`, in order, each with its code. A call fails when it names a tool and returns an
  * error, which is the rule of `tool_failure_count`, so the list and the count agree.
  */
 export function failedToolCalls(turns: TranscriptTurn[]): FailedToolCall[] {
@@ -77,11 +80,13 @@ export function failedToolCalls(turns: TranscriptTurn[]): FailedToolCall[] {
             : typeof error === 'object' && !Array.isArray(error) && typeof error.message === 'string'
               ? error.message
               : JSON.stringify(error);
+        const source = form.display_code ?? form.code ?? form.source ?? form.src;
         return [
           {
             turnId: turn.turn_id,
             scope: form.scope || `t${index + 1}`,
-            tool,
+            code: typeof source === 'string' ? source.trim() : '',
+            language: form.display_language?.trim() || 'python',
             message: text.split('\n').find((line) => line.trim() !== '')?.trim() ?? '',
           },
         ];

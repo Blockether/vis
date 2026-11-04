@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Export: an HTML export (`vis-agent sessions export ID --html`, `/export`, `transcript.html`) is the web app's own transcript page with the session in it. It looks the same as the session screen in Compact mode, with images and subagent teams, and opens without a gateway or network.
 - Export: a Markdown export (`--md`, `/export`, `transcript.md`) shows each turn as Compact mode does. Each note has one folded digest with the same counts and times as the web row, for example `3 mutations · 1 observation · 4.0s`. It is about half the size of the old step dump.
 - Export: an HTML or Markdown export starts with a closed Metrics section. Open, it fills the column width and shows the session metrics of the session list: tokens, cost, turns, calls, tools, tool failures, subagents, prompt cache, model and active time.
-- Export: under Metrics, a closed `Failed tools` section lists each failed tool call with its step, tool and first error line. In HTML, a row opens its turn.
+- Export: under Metrics, a closed `Failed tools` section lists each failed tool call with its step, first error line and code. In HTML, a row opens its turn.
 - Companion: the session metrics panel shows `Tool failures`, the tool calls that ended with an error, a timeout or an unsuccessful result. `GET /v1/sessions/:sid/usage` returns it as `tool_failure_count`.
 
 ### Fixed
