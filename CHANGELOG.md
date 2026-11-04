@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.3] - 2026-11-04
+
 ### Changed
 - Build: native binaries use GraalVM CE 25.5.5.0.3 (JDK 25.0.5.0.3). They used GraalVM CE 25.3.4.1 before.
 - TUI: a global notification shows in its own card in the top-left corner of the window, over the header. A session notification stays in the top-left corner of the transcript. Both cards keep the same left margin. When both show, the session card is under the global card, with one empty row between them. Each card has its own page counter.
@@ -16,7 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Export: under Metrics, a closed `Failed tools` section lists each failed tool call with its step, first error line and code. In HTML, a row opens its turn.
 - Companion: the session metrics panel shows `Tool failures`, the tool calls that ended with an error, a timeout or an unsuccessful result. `GET /v1/sessions/:sid/usage` returns it as `tool_failure_count`.
 
+- Companion: a live view table keeps one cell for each column on every width, with a header band and column rules. On a phone, a narrow table scrolls inside its frame.
+- Companion: the Providers band has the add mark, and the provider offers stay on one line in their own band.
+
 ### Fixed
+- Companion: a provider sign-in on Android finishes after a magic link. The app refused every Android sign-in at once, and a machine that went offline while Chrome was open cancelled the sign-in.
+- Companion: a provider sign-in on iOS uses the Safari sign-in of the phone, so a magic link or a saved login completes it.
+- Companion: a provider or MCP sign-in continues when a machine moves from its LAN address to its tailnet address.
+- Companion: Council shows `Show more` only when the text is cut.
+- Companion: the live view `Interrupt` button has more space above it.
+- Shell: a command in the PTY no longer waits at a prompt. For example, `git commit` without `-m` opened vi, and git, gh and pip waited for credentials.
+- Python: `inspect.getsource` returns the source of a class that a sandbox block defines, also in a later block, after a snapshot restore and for a class that a decorator rebuilds (#437).
 - Companion: a provider or MCP sign-in starts behind a reverse proxy that adds the gateway token. The web app refused it with `Pair this gateway before starting sign-in.` and sent no request. It shows that message now only when the gateway answers 401 (#441).
 - TUI: the session list shows times in the local time zone, like the transcript. It showed UTC times before.
 - TUI: the rule under the heading of a notification card is exactly as wide as the heading, so it never reaches the close mark.
