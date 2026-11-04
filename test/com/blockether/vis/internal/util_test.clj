@@ -562,7 +562,7 @@
         (expect (eventually #(= #{:k :other :twin} (set @started))))
         (deliver gate true)
         (expect (eventually #(= [:new :k] (read cache :k :again))))
-        (expect (= [:new :other] (read cache :other :again)))
+        (expect (eventually #(= [:new :other] (read cache :other :again))))
         (expect (= 3 (count @started)))))
   (it "keeps the old value after a failure, and computes again after each expiry"
       (let [calls
