@@ -54,7 +54,7 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
             ref={columnRef}
             className={transcriptColumnClass({ zen: false, outline: showsOutline, empty: turns.length === 0 })}
           >
-            <section aria-label="Session metrics" className="mb-8">
+            <section aria-label="Session metrics" className="mb-8 border-b border-dialog-edge">
               <Disclosure tone="step" isOpen={showsMetrics} onClick={() => setShowsMetrics((open) => !open)}>
                 Metrics
               </Disclosure>
