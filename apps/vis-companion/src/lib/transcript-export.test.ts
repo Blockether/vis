@@ -5,7 +5,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearAttachmentCache } from './attachment-cache';
 import { installFakeCacheStorage, installFakeObjectUrls, uninstallFakeCacheStorage } from './attachment-cache.fixture';
-import { parseTranscriptExport, SNAPSHOT_GATEWAY, snapshotFetch, type TranscriptExport } from './transcript-export';
+import {
+  failedToolCalls,
+  parseTranscriptExport,
+  SNAPSHOT_GATEWAY,
+  snapshotFetch,
+  type TranscriptExport,
+} from './transcript-export';
 
 // Same reason as `attachment-download.test.ts`: `gateway.ts` reads storage at import time.
 const memory = new Map<string, string>();
@@ -73,5 +79,32 @@ describe('an export answers the artifact requests of its page', () => {
     await fetch('https://example.com/font.woff2');
 
     expect(passed).toEqual(['https://example.com/font.woff2']);
+  });
+});
+
+// User report: the export counts tool failures, so it must also list them. The list must name
+// the same calls that `tool_failure_count` counts: a tool call with an error.
+describe('the failed tool calls of an export', () => {
+  it('lists each tool call with an error, in order, with the first line of its message', () => {
+    const calls = failedToolCalls([
+      {
+        turn_id: 'a',
+        iterations: [
+          {
+            forms: [
+              { tool_name: 'python_execution', scope: 't1/i2', error: { message: '\npatch refused\nedit 3/3' } },
+              { tool_name: 'python_execution', scope: 't1/i2', stdout: 'ok' },
+              { scope: 't1/i3', error: 'no tool' },
+            ],
+          },
+        ],
+      },
+      { turn_id: 'b', iterations: [{ forms: [{ tool_name: 'python_execution', error: 'timed out' }] }] },
+    ]);
+
+    expect(calls).toEqual([
+      { turnId: 'a', scope: 't1/i2', tool: 'python_execution', message: 'patch refused' },
+      { turnId: 'b', scope: 't2', tool: 'python_execution', message: 'timed out' },
+    ]);
   });
 });

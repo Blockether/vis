@@ -11,7 +11,7 @@ import {
 import { TranscriptOutline } from '../components/TranscriptOutline';
 import { Disclosure } from '../components/ui';
 import type { GatewayClient } from '../lib/gateway';
-import type { TranscriptExport as TranscriptExportData } from '../lib/transcript-export';
+import { failedToolCalls, type TranscriptExport as TranscriptExportData } from '../lib/transcript-export';
 import { JUMP_MARGIN, outlineEntry } from '../lib/transcript-outline';
 import { WorkspaceRootsContext } from '../lib/workspace-roots';
 
@@ -22,7 +22,8 @@ import { WorkspaceRootsContext } from '../lib/workspace-roots';
  * but a row of them opens nothing, because the export holds only this session. A wake from a subagent of this session stays
  * hidden, as on the screen. The rows are complete, so every trace mounts whole and the outline
  * holds every turn. The session's metrics panel, as the session list shows it, stands above the
- * first turn, closed under a METRICS row and as wide as the column when it opens.
+ * first turn, closed under a METRICS row and as wide as the column when it opens. A closed FAILED
+ * TOOLS row under it lists each failed tool call; a row of that list jumps to its turn.
  */
 export function TranscriptExport({ data, client }: { data: TranscriptExportData; client: GatewayClient }) {
   const { session, turns } = data;
@@ -37,6 +38,8 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
   const teams = useMemo(() => agentsByTurn(data.agents), [data.agents]);
   const showsOutline = turns.length >= OUTLINE_MIN_TURNS;
   const [showsMetrics, setShowsMetrics] = useState(false);
+  const [showsFailures, setShowsFailures] = useState(false);
+  const failures = useMemo(() => failedToolCalls(turns), [turns]);
   // The jump of the session screen: the turn's top lands `JUMP_MARGIN` below the scroller's top.
   const jumpToTurn = (id: string) => {
     const viewport = scrollRef.current;
@@ -54,12 +57,44 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
             ref={columnRef}
             className={transcriptColumnClass({ zen: false, outline: showsOutline, empty: turns.length === 0 })}
           >
-            <section aria-label="Session metrics" className="mb-8 border-b border-dialog-edge">
-              <Disclosure tone="step" isOpen={showsMetrics} onClick={() => setShowsMetrics((open) => !open)}>
-                Metrics
-              </Disclosure>
-              {showsMetrics && <SessionStatsPanel session={session} usage={data.usage} phase="ready" wide />}
-            </section>
+            <div className="mb-8">
+              <section aria-label="Session metrics" className="border-b border-dialog-edge">
+                <Disclosure tone="step" isOpen={showsMetrics} onClick={() => setShowsMetrics((open) => !open)}>
+                  Metrics
+                </Disclosure>
+                {showsMetrics && <SessionStatsPanel session={session} usage={data.usage} phase="ready" wide />}
+              </section>
+              {failures.length > 0 && (
+                <section aria-label="Failed tools" className="border-b border-dialog-edge">
+                  <Disclosure
+                    tone="step"
+                    isOpen={showsFailures}
+                    onClick={() => setShowsFailures((open) => !open)}
+                    tally={<span className="font-normal text-dialog-hint">{failures.length}</span>}
+                  >
+                    Failed tools
+                  </Disclosure>
+                  {showsFailures && (
+                    <ol className="border-t border-dialog-edge py-2 font-mono text-ui">
+                      {failures.map((failure, index) => (
+                        <li key={`${failure.scope}-${index}`}>
+                          <button
+                            type="button"
+                            title={failure.message}
+                            onClick={() => jumpToTurn(failure.turnId)}
+                            className="grid min-h-8 w-full grid-cols-[6rem_minmax(0,10rem)_minmax(0,1fr)] items-baseline gap-3 py-1 text-left mouse:min-h-6 mouse:hover:text-accent-ink"
+                          >
+                            <span className="tabular-nums text-dialog-hint">{failure.scope}</span>
+                            <span className="truncate text-white">{failure.tool}</span>
+                            <span className="truncate text-err">{failure.message}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </section>
+              )}
+            </div>
             {turns.length === 0 && <p className="text-body text-dialog-hint">This session has no turns.</p>}
             {turns.map((turn, index) => (
               <StoredTurnRow

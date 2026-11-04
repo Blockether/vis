@@ -235,6 +235,41 @@
                   rows))
            "\n</details>\n\n"))))
 
+(defn- failure-line
+  "The first line of the error of a failed tool call, as the Failed tools list shows it."
+  [error]
+  (let [text (cond (string? error) error
+                   (string? (get error "message")) (get error "message")
+                   :else (wire/json-str error))]
+    (or (some #(not-empty (str/trim %)) (str/split-lines text)) "")))
+
+(defn failed-tools-markdown
+  "The closed Failed tools section of a Markdown export, or an empty string when no call failed.
+   A call fails when it names a tool and returns an error, which is the rule of
+   `tool_failure_count`, so the list and the count agree."
+  [turns]
+  (let [rows (for [[index turn] (map-indexed vector turns)
+                   iteration (get turn "iterations")
+                   form (get iteration "forms")
+                   :let [tool (str/trim (str (get form "tool_name")))]
+                   :when (and (not (str/blank? tool)) (some? (get form "error")))]
+
+               [(or (not-empty (str (get form "scope"))) (str "t" (inc (long index)))) tool
+                (failure-line (get form "error"))])]
+    (if (empty? rows)
+      ""
+      (str "<details>\n<summary>Failed tools ("
+           (count rows)
+           ")</summary>\n\n"
+           "| Step | Tool | Error |\n| --- | --- | --- |\n"
+           (apply str
+             (map (fn [cells]
+                    (str "| "
+                         (str/join " | " (map #(str/replace (md-escape %) "|" "\\|") cells))
+                         " |\n"))
+                  rows))
+           "\n</details>\n\n"))))
+
 (defn- noun [n word] (str n " " word (when (not= 1 n) "s")))
 
 (defn- interrupted?
@@ -487,6 +522,7 @@
          (noun (count turns) "turn")
          "_\n\n"
          (metrics-markdown session (get data "usage"))
+         (failed-tools-markdown turns)
          (if (seq turns)
            (str/join "---\n\n" (map #(turn-markdown context %) turns))
            "_This session has no turns._\n"))))

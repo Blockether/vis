@@ -50,6 +50,46 @@ export function parseTranscriptExport(text: string | null | undefined): Transcri
   };
 }
 
+/** One tool call of the export that failed, as the Failed tools list shows it. */
+export interface FailedToolCall {
+  turnId: string;
+  /** The step that ran the call, for example `t1/i65`, else the turn, for example `t2`. */
+  scope: string;
+  tool: string;
+  /** The first line of the error that the call returned. */
+  message: string;
+}
+
+/**
+ * The failed tool calls of `turns`, in order. A call fails when it names a tool and returns an
+ * error, which is the rule of `tool_failure_count`, so the list and the count agree.
+ */
+export function failedToolCalls(turns: TranscriptTurn[]): FailedToolCall[] {
+  return turns.flatMap((turn, index) =>
+    (turn.iterations ?? []).flatMap((iteration) =>
+      (iteration.forms ?? []).flatMap((form) => {
+        const tool = typeof form.tool_name === 'string' ? form.tool_name.trim() : '';
+        if (!tool || form.error == null) return [];
+        const error = form.error;
+        const text =
+          typeof error === 'string'
+            ? error
+            : typeof error === 'object' && !Array.isArray(error) && typeof error.message === 'string'
+              ? error.message
+              : JSON.stringify(error);
+        return [
+          {
+            turnId: turn.turn_id,
+            scope: form.scope || `t${index + 1}`,
+            tool,
+            message: text.split('\n').find((line) => line.trim() !== '')?.trim() ?? '',
+          },
+        ];
+      }),
+    ),
+  );
+}
+
 /**
  * The gateway address of an export page. No gateway answers it: `snapshotFetch` answers each
  * request to it from the export, so the web app's own client reads the stored artifacts.

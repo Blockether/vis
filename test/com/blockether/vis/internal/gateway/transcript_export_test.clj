@@ -157,3 +157,24 @@
         (str/includes?
           (transcript-export/markdown {"session" {"id" "s1"} "turns" []})
           "<details>\n<summary>Metrics</summary>\n\n_No measured calls yet._\n\n</details>"))))
+
+;; User report: the export counts tool failures, so it must also list them, closed like Metrics.
+;; The list names the same calls that `tool_failure_count` counts: a tool call with an error.
+(defdescribe
+  failed-tools-markdown-test
+  (it "lists each failed tool call under a closed Failed tools section"
+      (let [out (transcript-export/markdown
+                  {"session" {"id" "s1"}
+                   "turns" [{"iterations" [{"forms" [{"tool_name" "python_execution"
+                                                      "scope" "t1/i2"
+                                                      "error" {"message"
+                                                               "\npatch | refused\nedit 3/3"}}
+                                                     {"tool_name" "python_execution" "stdout" "ok"}
+                                                     {"scope" "t1/i3" "error" "no tool"}]}]}
+                            {"iterations" [{"forms" [{"tool_name" "python_execution"
+                                                      "error" "timed out"}]}]}]})]
+        (expect (str/includes? out
+                               (str "<details>\n<summary>Failed tools (2)</summary>\n\n"
+                                    "| Step | Tool | Error |\n| --- | --- | --- |\n"
+                                    "| t1/i2 | python_execution | patch \\| refused |\n"
+                                    "| t2 | python_execution | timed out |\n\n</details>"))))))
