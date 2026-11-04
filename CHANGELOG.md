@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: the session list shows times in the local time zone, like the transcript. It showed UTC times before.
+- Companion: the Android release retries a Google Play token request after a closed connection.
+
 ## [v0.5.2] - 2026-11-04
 
 Vis v0.5.1 was not published, because its native release checks failed. v0.5.2 contains all v0.5.1 changes.

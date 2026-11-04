@@ -1,6 +1,6 @@
 (ns com.blockether.vis.tui.dialogs-test
   (:require [clojure.string :as str]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :as lt :refer [defdescribe expect it]]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.frame :as frame]
@@ -22,6 +22,15 @@
 ;; is verified indirectly: pasting into the API key field no longer
 ;; leaks PUA marker chars (\uE200, \uE201) into the stored value.
 (defn has-provider? [& _] false)
+
+;; Dialogs show times in the default zone. Pin it, so that the expected stamps
+;; do not change with the zone of the machine.
+(lt/set-ns-context! [(lt/around-each [f]
+                                     (let [zone (java.util.TimeZone/getDefault)]
+                                       (try (java.util.TimeZone/setDefault
+                                              (java.util.TimeZone/getTimeZone "UTC"))
+                                            (f)
+                                            (finally (java.util.TimeZone/setDefault zone)))))])
 
 (defdescribe
   modal-key-policy-test
@@ -614,6 +623,16 @@
                    (expect (str/includes? header "Modified at"))
                    (expect (str/includes? (:label (first items)) "2024-01-02"))
                    (expect (str/includes? (:label (first items)) "11:05")))))
+
+(defdescribe navigator-stamp-test
+             ;; Regression, CUA check of v0.5.2: the session list showed 04:52 (UTC) for a
+             ;; session whose transcript showed 05:52 in the local time zone.
+             (it "shows the session time in the local time zone, like the transcript"
+                 (let [zone (java.util.TimeZone/getDefault)]
+                   (try (java.util.TimeZone/setDefault (java.util.TimeZone/getTimeZone
+                                                         "Europe/Warsaw"))
+                        (expect (= "11-04 05:52" (#'dlg/navigator-stamp 1793767920000)))
+                        (finally (java.util.TimeZone/setDefault zone))))))
 
 ;; 1:1 session<->workspace: one unified row per session, NOT a
 ;; duplicated session row + workspace row with a contradictory :kind.

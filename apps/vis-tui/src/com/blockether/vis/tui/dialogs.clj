@@ -6799,7 +6799,7 @@
   [v]
   (if-let [date (date-value v)]
     (let [^SimpleDateFormat fmt (SimpleDateFormat. "yyyy-MM-dd" Locale/ROOT)]
-      (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
+      (.setTimeZone fmt (TimeZone/getDefault))
       (.format fmt date))
     "-"))
 
@@ -6807,7 +6807,7 @@
   [v]
   (if-let [date (date-value v)]
     (let [^SimpleDateFormat fmt (SimpleDateFormat. "HH:mm" Locale/ROOT)]
-      (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
+      (.setTimeZone fmt (TimeZone/getDefault))
       (.format fmt date))
     "-"))
 
