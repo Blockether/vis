@@ -540,10 +540,14 @@
 
 (def ^:private child-env-defaults
   "Values that every child gets when nothing else sets the same name.
-   A child runs in a PTY that no person answers. Without `npm_config_yes=false`,
-   `npx` with a missing package waits at its install prompt forever. With it,
-   `npx` stops at once with an error that names the package."
-  {"npm_config_yes" "false"})
+   A child runs in a PTY that no person answers. A tool that asks a question
+   there waits forever. Each value makes one tool stop with an error instead:
+
+   - `npm_config_yes=false`: `npx` with a missing package names the package.
+   - `GIT_TERMINAL_PROMPT=0`: git does not ask for a username or password.
+   - `GH_PROMPT_DISABLED=1`: `gh` names the flags that it needs.
+   - `PIP_NO_INPUT=1`: `pip` names the question that it cannot ask."
+  {"npm_config_yes" "false" "GIT_TERMINAL_PROMPT" "0" "GH_PROMPT_DISABLED" "1" "PIP_NO_INPUT" "1"})
 
 (defn- with-child-env-defaults
   "`env` plus each [[child-env-defaults]] name that `env` does not set. The match

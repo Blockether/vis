@@ -641,8 +641,13 @@
    repo has against the footer poll, the environment snapshot and the rewind
    baseline, and one that was killed mid-refresh left the lock behind for
    every later git to trip over. `0` drops only the OPTIONAL locks: `add`,
-   `commit`, `stash` and every other writer still take the lock they need."
-  {"GIT_OPTIONAL_LOCKS" "0"})
+   `commit`, `stash` and every other writer still take the lock they need.
+
+   The editor names are `true`, because no person can use an editor here. git
+   then keeps its default message for a merge, a revert or `rebase --continue`.
+   A `commit` without `-m` stops with an empty-message error. `GIT_EDITOR` also
+   outranks a `core.editor` that the operator configured."
+  {"GIT_OPTIONAL_LOCKS" "0" "GIT_EDITOR" "true" "VISUAL" "true" "EDITOR" "true"})
 
 (defn- spawn!
   ^Process [cmd ^File dir policy]

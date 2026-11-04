@@ -342,6 +342,42 @@
               (expect (= "coloured\nlast" (str/trim (get r "out"))))
               (expect (not (str/includes? (get r "out") "\u001b")))))))))
 
+;; Regression for a user report (2026-11-03), after the npx install prompt fix: other
+;; CLIs also waited in the PTY for an answer that no one gives. `git commit` without
+;; `-m` opened vi, and git over HTTPS waited at "Username for ...". Both waited forever.
+(defdescribe
+  shell-pty-prompts-test
+  (it "ends git commit without -m at once, instead of waiting in an editor"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid "shell-ext-editor"
+              env {:session-id sid}]
+
+          (try (shell-bg* env
+                          "editor"
+                          (str "d=$(mktemp -d) && cd \"$d\" && git init -q"
+                               " && git -c user.email=t@t -c user.name=t commit --allow-empty;"
+                               " echo \"commit-exit=$?\"; rm -rf \"$d\""))
+               (let [{:keys [out status]} (wait-exited* env "editor" 2)]
+                 (expect (= {:commit-exit "commit-exit=1" :status "exited"}
+                            {:commit-exit (re-find #"commit-exit=\d+" out) :status status})))
+               (finally (resources/stop! sid "editor"))))))
+  (it "makes git refuse a credential prompt instead of waiting for a username"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid "shell-ext-credential"
+              env {:session-id sid}]
+
+          (try (shell-bg* env
+                          "credential"
+                          (str "printf 'protocol=https\\nhost=vis-test.invalid\\n\\n'"
+                               " | git -c credential.helper= credential fill;"
+                               " echo \"fill-exit=$?\""))
+               (let [{:keys [out status]} (wait-exited* env "credential" 2)]
+                 (expect (= {:refused? true :fill-exit "fill-exit=128" :status "exited"}
+                            {:refused? (str/includes? out "terminal prompts disabled")
+                             :fill-exit (re-find #"fill-exit=\d+" out)
+                             :status status})))
+               (finally (resources/stop! sid "credential")))))))
+
 ;; Regression: macOS release CI split an ANSI colour sequence between wait reads.
 (defdescribe
   shell-wait-split-controls-test
