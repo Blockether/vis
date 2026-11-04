@@ -301,34 +301,26 @@ function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolea
 /**
  * The HEADLINE: the run's one sentence at reading size. Its state stands over it as
  * a word, and its detail sits under it one size down, so the sentence owns the
- * whole column on a phone. An `aside` stands at the right end of the sentence's line.
+ * whole column on a phone. An `action` stands under the sentence and its detail, so it
+ * never takes width from the sentence (user report: Interrupt beside a wrapped headline).
  */
-function StatusRow({ node, aside }: { node: LiveStatusNode; aside?: ReactNode }) {
-  const sentence = (
-    <p
-      className={`min-w-0 text-left text-subhead font-bold text-pretty [overflow-wrap:anywhere] ${
-        node.tone === 'error' ? 'text-err' : 'text-white'
-      } ${aside ? 'flex-1' : ''}`}
-    >
-      <InlineMarkdown>{node.text}</InlineMarkdown>
-    </p>
-  );
+function StatusRow({ node, action }: { node: LiveStatusNode; action?: ReactNode }) {
   return (
     <div className="min-w-0 space-y-1 font-mono">
       <ToneWord tone={node.tone} />
-      {aside ? (
-        <div className="flex min-w-0 items-center gap-2">
-          {sentence}
-          {aside}
-        </div>
-      ) : (
-        sentence
-      )}
+      <p
+        className={`min-w-0 text-left text-subhead font-bold text-pretty [overflow-wrap:anywhere] ${
+          node.tone === 'error' ? 'text-err' : 'text-white'
+        }`}
+      >
+        <InlineMarkdown>{node.text}</InlineMarkdown>
+      </p>
       {node.detail && (
         <p className="min-w-0 text-body text-dialog-hint [overflow-wrap:anywhere]">
           <InlineMarkdown>{node.detail}</InlineMarkdown>
         </p>
       )}
+      {action && <div className="flex pt-2">{action}</div>}
     </div>
   );
 }
@@ -1702,15 +1694,15 @@ function NodeCell({
   load,
   onSelect,
   presentation,
-  statusAside,
+  statusAction,
   inWrap = false,
 }: {
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
   onSelect?: (nodeId: string, itemIds: string[]) => void;
   presentation: NodePresentation;
-  /** A control that stands on the headline's line, at its right end. */
-  statusAside?: ReactNode;
+  /** A control that stands under the headline and its detail. */
+  statusAction?: ReactNode;
   /** The node is a direct child of a `wrap` group: it stands on a line with its siblings. */
   inWrap?: boolean;
 }) {
@@ -1839,7 +1831,7 @@ function NodeCell({
               shortcut={presentation.keys?.get(node.id)}
             />
           )}
-          {node.type === 'status' && <StatusRow node={node} aside={statusAside} />}
+          {node.type === 'status' && <StatusRow node={node} action={statusAction} />}
           {node.type === 'progress' && <ProgressRow node={node} />}
           {node.type === 'stat' && <StatRow node={node} />}
           {node.type === 'steps' && <StepsRows node={node} />}
@@ -2084,12 +2076,12 @@ export function LiveViewPanel({
   };
   const canInterrupt = !isSettled && Boolean(onInterrupt) && !isArmed;
   const isCard = !embedded && !inDialog;
-  // In the dialog the band names the run, so the stop stands on the headline's line
+  // In the dialog the band names the run, so the stop stands under the headline
   // instead of on an empty header row above it.
   const headlineHoldsStop = inDialog && canInterrupt && view.nodes[0]?.type === 'status';
   // An app's own chrome names its lifecycle once (#430), so its panel adds no verdict.
   const showsVerdict = isSettled && !app;
-  const stopInHeadline = headlineHoldsStop ? (
+  const stopButton = (
     <Button
       variant="secondary"
       className="shrink-0"
@@ -2098,7 +2090,8 @@ export function LiveViewPanel({
     >
       {isInterrupting ? 'Stopping...' : 'Interrupt'}
     </Button>
-  ) : undefined;
+  );
+  const stopInHeadline = headlineHoldsStop ? stopButton : undefined;
   return (
     <>
       {/* Embedded, a run is a band like the TUI draws it: no frame of its own, the
@@ -2147,10 +2140,13 @@ export function LiveViewPanel({
                     <InlineMarkdown>{view.description}</InlineMarkdown>
                   </span>
                 )}
+                {/* The stop follows the title and the description, never beside them. */}
+                {canInterrupt && <span className="flex pt-2">{stopButton}</span>}
               </span>
             )
           )}
           {canInterrupt &&
+            !isCard &&
             (embedded ? (
               <TextButton
                 isBand
@@ -2161,14 +2157,7 @@ export function LiveViewPanel({
                 {isInterrupting ? 'Stopping...' : 'Interrupt'}
               </TextButton>
             ) : (
-              <Button
-                variant="secondary"
-                className="shrink-0 self-center"
-                onClick={() => setNote('')}
-                disabled={isInterrupting}
-              >
-                {isInterrupting ? 'Stopping...' : 'Interrupt'}
-              </Button>
+              stopButton
             ))}
           {/* The band ends INTERRUPT | LIVE: the verb, the rule a terminal prints between two
               words, and the run's state last. Both words PRESS — LIVE opens the run the row is
@@ -2266,7 +2255,7 @@ export function LiveViewPanel({
                   load={load}
                   onSelect={onSelect}
                   presentation={presentation}
-                  statusAside={index === 0 ? stopInHeadline : undefined}
+                  statusAction={index === 0 ? stopInHeadline : undefined}
                 />
               </li>
             ))}
