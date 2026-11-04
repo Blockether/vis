@@ -4,15 +4,16 @@
 # Historical warning: the 25.2.x builder exhausted memory on this image.
 # CE 25.3.4.1: full Linux x64 build verified with a 12 GiB builder heap.
 # A 6 GiB heap stalled in full GC; the successful build peaked at 11.49 GiB RSS.
+# CE 25.5.5.0.3: full macOS aarch64 build and test-native verified, peak 9.31 GiB RSS.
 
 GRAAL_EDITION="GraalVM CE"
-GRAAL_VERSION="25.3.4.1"
+GRAAL_VERSION="25.5.5.0.3"
 GRAAL_PIN_LOCKED="true"
-GRAAL_MAX_VERSION="25.3.4.1"
-GRAAL_TAG="graal-25.3.4.1"
-GRAAL_ASSET_VERSION="25i3-25.0.4.1"
-GRAAL_VENDOR_VERSION="GraalVM CE 25.3.4.1+1.1"
-GRAAL_SHA256_linux_x64="b2bc38d0c4141426eb44d0eefa3cc172c96faf92727d703b61541699128b6fc7"
-GRAAL_SHA256_linux_aarch64="7e8a3fbc2e4c28566107039a298cef690d86a37599a8e50536fc5a65b7f1bd56"
-GRAAL_SHA256_macos_aarch64="ebfab1d74420f355a459076162012d6835fa6068bd9d2f230f1fcaf7ee0dd923"
-GRAAL_SDKMAN_CANDIDATE="25.3.4.1-graalce"
+GRAAL_MAX_VERSION="25.5.5.0.3"
+GRAAL_TAG="graal-25.5.5.0.3"
+GRAAL_ASSET_VERSION="25i5-25.0.5.0.3"
+GRAAL_VENDOR_VERSION="GraalVM CE 25.5.5.0.3+1.1"
+GRAAL_SHA256_linux_x64="c6438dee6c3ade2220d40b7ccdcad24b512d30e233e61bb4fc70519522de34ef"
+GRAAL_SHA256_linux_aarch64="41741c0650ae7564a78335f9e4fc353a902e6ff1d4140f2e4fabd1c55d5cce66"
+GRAAL_SHA256_macos_aarch64="54369d4a5931a5a2101c7c52444a4e7e6647a3a4e041335053cda6fd22295e0c"
+GRAAL_SDKMAN_CANDIDATE="25.5.5.0.3-graalce"
