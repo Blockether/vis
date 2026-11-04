@@ -4,7 +4,7 @@
  * `draft` and `submit` actions. Without an app the threads are read only.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -44,6 +44,8 @@ import type { ViewAnchor } from '../lib/view';
 import {
   ChevronIcon,
   DiffChangeIcon,
+  MoreIcon,
+  RefreshIcon,
   ReviewFileIcon,
   RenameArrowIcon,
   WhitespaceIcon,
@@ -61,6 +63,7 @@ import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { ariaShortcut } from '../lib/app-shortcuts';
 import { Button, CopyChip } from './ui';
 import { useReviewState } from '../lib/review-memory';
+import { CODE_DEFAULT_CLASS, highlightSegments, languageOfPath, type SyntaxSegment } from '../lib/syntax';
 
 /** What an app gives its review nodes. Absent, the nodes are read only. */
 export interface AppNodeActions {
@@ -458,31 +461,81 @@ function SearchText({ text, offset, match }: { text: string; offset: number; mat
   );
 }
 
-/** Changed words retain the same line box as the surrounding code. */
+/**
+ * The pieces of one changed word in their code colours. Word and colour edges both
+ * cut the text, so a coloured token that a change splits keeps its colour on both
+ * sides of the change.
+ */
+function paintedRuns(
+  words: readonly DiffSpan[],
+  colours: readonly SyntaxSegment[],
+): { text: string; start: number; isChanged: boolean; className: string }[][] {
+  const edges: { end: number; className: string }[] = [];
+  let at = 0;
+  for (const colour of colours) {
+    at += colour.text.length;
+    edges.push({ end: at, className: colour.className });
+  }
+  let start = 0;
+  let edge = 0;
+  return words.map((word) => {
+    const end = start + word.text.length;
+    const runs: { text: string; start: number; isChanged: boolean; className: string }[] = [];
+    let from = start;
+    while (from < end) {
+      while (edge < edges.length && edges[edge]!.end <= from) edge += 1;
+      const colour = edges[edge];
+      const to = Math.min(end, colour?.end ?? end);
+      runs.push({
+        text: word.text.slice(from - start, to - start),
+        start: from,
+        isChanged: word.isChanged,
+        className: colour?.className ?? CODE_DEFAULT_CLASS,
+      });
+      from = to;
+    }
+    start = end;
+    return runs;
+  });
+}
+
+/** Changed words and code colours retain the same line box as the surrounding code. */
 function LineCode({
   line,
   words,
   match,
+  language,
 }: {
   line: AppDiffLine;
   words?: readonly DiffSpan[];
   match?: DiffSearchMatch;
+  /** The Prism language of the file; '' draws the code in one colour. */
+  language: string;
 }) {
   const parts = words ?? [{ text: line.text, isChanged: false }];
+  const colours = language ? highlightSegments(line.text, language) : [];
   return (
     <td data-kind={line.kind} className="diff-code">
       {line.kind !== 'context' && (
         <span className="sr-only">{line.kind === 'add' ? 'Added: ' : 'Removed: '}</span>
       )}
-      {parts.map((part, at) => {
-        const start = parts.slice(0, at).reduce((offset, previous) => offset + previous.text.length, 0);
-        const text = <SearchText text={part.text} offset={start} match={match} />;
-        return part.isChanged ? (
+      {paintedRuns(parts, colours).map((runs, at) => {
+        const pieces = runs.map((run) => {
+          const text = <SearchText text={run.text} offset={run.start} match={match} />;
+          return run.className === CODE_DEFAULT_CLASS ? (
+            <Fragment key={run.start}>{text}</Fragment>
+          ) : (
+            <span key={run.start} className={run.className}>
+              {text}
+            </span>
+          );
+        });
+        return parts[at]!.isChanged ? (
           <span key={at} className="diff-word">
-            {text}
+            {pieces}
           </span>
         ) : (
-          <Fragment key={at}>{text}</Fragment>
+          <Fragment key={at}>{pieces}</Fragment>
         );
       })}
     </td>
@@ -568,6 +621,7 @@ function HunkView(model: HunkProps) {
         <LineCode
           line={line}
           words={model.words.get(anchorKey(line.anchor))}
+          language={languageOfPath(model.file.path)}
           match={
             model.searchMatch && anchorKey(line.anchor) === model.searchAnchor ? model.searchMatch : undefined
           }
@@ -670,12 +724,16 @@ const CHANGE_MARK: Record<ReturnType<typeof fileChange>, { letter: string; word:
   modified: { letter: 'M', word: 'Modified', ink: 'text-link-fg' },
 };
 
-/** The +N and -N of a file or a diff: removals first. */
-function DiffStat({ additions, deletions }: { additions: number; deletions: number }) {
+/**
+ * The +N and -N of a file or a diff: removals first. A file hides a zero side, like
+ * T3 Code. A binary file has no lines to count, so it shows no counts.
+ */
+function DiffStat({ additions, deletions, isFile = false }: { additions: number; deletions: number; isFile?: boolean }) {
+  const both = !isFile || additions === deletions || (additions > 0 && deletions > 0);
   return (
     <span className="diff-stat flex shrink-0 items-center gap-1 font-mono tabular-nums">
-      <span className="text-err-ink">-{deletions}</span>
-      <span className="text-ok-ink">+{additions}</span>
+      {(both || deletions > 0) && <span className="text-err-ink">-{deletions}</span>}
+      {(both || additions > 0) && <span className="text-ok-ink">+{additions}</span>}
     </span>
   );
 }
@@ -726,7 +784,7 @@ function FileHeader({
         className="diff-copy"
       />
       <span className="flex-1" />
-      {!file.binary && <DiffStat {...fileStat(file)} />}
+      {!file.binary && <DiffStat {...fileStat(file)} isFile />}
     </header>
   );
 }
@@ -738,18 +796,27 @@ function HunkSeparator({ hunks, at }: { hunks: readonly AppDiffHunk[]; at: numbe
   const header = hunks[at].header;
   return (
     <ContextBand
+      reach={at === 0 ? 'up' : 'both'}
       title={`${header}; source context is not included in this patch`}
       label={hidden === null ? header : `${hidden} unmodified ${hidden === 1 ? 'line' : 'lines'}`}
     />
   );
 }
 
-/** A patch cannot reveal lines that its producer did not include. */
-function ContextBand({ label, title }: { label: string; title: string }) {
+/**
+ * A patch cannot reveal lines that its producer did not include. The mark points to
+ * where the left-out lines are, as in T3 Code: up above the first hunk, both ways
+ * between two hunks, down after the last.
+ */
+function ContextBand({ label, title, reach }: { label: string; title: string; reach: 'up' | 'down' | 'both' }) {
   return (
     <div className="diff-context" title={title}>
       <span className="diff-context-marker" aria-hidden>
-        <ExpandAllIcon className="size-3" />
+        {reach === 'both' ? (
+          <ExpandAllIcon className="size-3.5" />
+        ) : (
+          <ChevronIcon open={reach === 'down'} className={reach === 'up' ? 'size-3.5 [&>path]:-rotate-90' : 'size-3.5'} />
+        )}
       </span>
       <span className="diff-hunk">{label}</span>
     </div>
@@ -778,7 +845,7 @@ export function DiffNodeView({
   const [selected, setSelected] = useReviewState<ViewAnchor | null>(`${node.id}:selected`, null);
   const [folded, setFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:folded`, () => new Set());
   const [split, setSplit] = useReviewState(`${node.id}:split`, false);
-  const [wrap, setWrap] = useReviewState(`${node.id}:wrap`, true);
+  const [wrap, setWrap] = useReviewState(`${node.id}:wrap`, false);
   const [tree, setTree] = useReviewState(`${node.id}:tree`, false);
   const [pickedFile, setPickedFile] = useReviewState<string | null>(`${node.id}:pickedFile`, null);
   const [treeFolded, setTreeFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:treeFolded`, () => new Set());
@@ -815,7 +882,6 @@ export function DiffNodeView({
       else next.add(path);
       return next;
     });
-  const revisions = [node.old_revision, node.new_revision].filter(Boolean).join(' → ');
   const allFolded = files.length > 0 && files.every((file) => folded.has(file.path));
   return (
     <div
@@ -850,12 +916,9 @@ export function DiffNodeView({
         allFolded={allFolded}
         count={files.length}
         total={total}
-        revisions={revisions}
-        commands={
-          node.children?.length ? (
-            <DiffCommands nodes={node.children} isSettled={commands?.isSettled ?? true} {...commands} />
-          ) : undefined
-        }
+        base={node.old_revision}
+        nodes={node.children ?? []}
+        commands={commands}
         hideTests={hideTests}
         hideWhitespace={hideWhitespace}
         onTests={() => setHideTests(!hideTests)}
@@ -966,6 +1029,7 @@ export function DiffNodeView({
                   ))}
                   {fileChange(file) === 'modified' && (
                     <ContextBand
+                      reach="down"
                       label="More unchanged context may be available"
                       title="Source context is not included in this patch"
                     />
@@ -1006,14 +1070,10 @@ export interface DiffCommandActions {
 /**
  * The commands an app puts in the toolbar of its diff (`view.json` `diff` `children`).
  * A button is one action. A group of buttons is one menu, and its label names the
- * current choice, like the `Changes ▾` picker of a code review.
+ * current choice, like the `Changes ▾` picker of a code review. A group inside a menu
+ * is a submenu.
  */
-function DiffCommands({
-  nodes,
-  onActivate,
-  keys,
-  isSettled,
-}: { nodes: readonly LiveNode[] } & DiffCommandActions) {
+function useDiffCommands({ onActivate, isSettled }: DiffCommandActions) {
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ id: string; at: MenuPosition } | null>(null);
   // Escape belongs to the open menu, not to the screen under it.
@@ -1038,64 +1098,92 @@ function DiffCommands({
       setPending(null);
     }
   };
-  const inert = isSettled || !onActivate || pending !== null;
-  const open = menu ? nodes.find((node) => node.id === menu.id) : undefined;
-  return (
-    <span className="diff-commands" role="group" aria-label="Review commands">
-      {nodes.map((node) => {
-        if (node.type === 'group') {
-          const label = node.label ?? 'More';
-          return (
-            <button
-              key={node.id}
-              type="button"
-              className="diff-command app-focus-ring"
-              data-node-id={node.id}
-              aria-haspopup="dialog"
-              aria-expanded={menu?.id === node.id}
-              title={label}
-              disabled={inert}
-              onClick={(event) => {
-                const at = diffMenuAt(event.currentTarget);
-                if (at) setMenu({ id: node.id, at });
-              }}
-            >
-              <span className="min-w-0 truncate">{label}</span>
-              <ChevronIcon open className="size-3 shrink-0" />
-            </button>
-          );
-        }
-        if (node.type !== 'button') return null;
-        const shortcut = keys?.get(node.id);
-        return (
-          <button
-            key={node.id}
-            type="button"
-            className="diff-command app-focus-ring"
-            data-node-id={node.id}
-            data-variant={node.variant}
-            title={shortcut ? `${node.label} (${shortcut.key})` : node.label}
-            aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
-            aria-busy={pending === node.id}
-            disabled={inert || node.is_disabled}
-            onClick={() => void press(node.id)}
-          >
-            <span className="min-w-0 truncate">{node.label}</span>
-          </button>
-        );
-      })}
-      {open?.type === 'group' && menu && (
-        <DiffMenu
-          label={open.label ?? 'More'}
-          at={menu.at}
-          items={open.children}
-          keys={keys}
-          onPress={(id) => void press(id)}
-          onDismiss={() => setMenu(null)}
-        />
-      )}
+  return { pending, menu, setMenu, press, inert: isSettled || !onActivate || pending !== null };
+}
 
-    </span>
+type DiffCommandState = ReturnType<typeof useDiffCommands>;
+
+const COMMAND_ICONS = { refresh: RefreshIcon, more: MoreIcon } as const;
+
+/** One toolbar command: a text menu, an icon menu, a text action or an icon action. */
+function DiffCommand({
+  node,
+  state,
+  keys,
+}: {
+  node: LiveNode;
+  state: DiffCommandState;
+  keys?: ReadonlyMap<string, LiveShortcut>;
+}) {
+  if (node.type !== 'group' && node.type !== 'button') return null;
+  const Icon = node.icon ? COMMAND_ICONS[node.icon] : undefined;
+  if (node.type === 'group') {
+    const label = node.label ?? 'More';
+    return (
+      <button
+        type="button"
+        className={Icon ? 'app-focus-ring' : 'diff-command app-focus-ring'}
+        data-node-id={node.id}
+        aria-haspopup="menu"
+        aria-expanded={state.menu?.id === node.id}
+        aria-label={Icon ? label : undefined}
+        title={label}
+        disabled={state.inert}
+        onClick={(event) => {
+          const at = diffMenuAt(event.currentTarget);
+          if (at) state.setMenu({ id: node.id, at });
+        }}
+      >
+        {Icon ? (
+          <Icon className="size-3.5" />
+        ) : (
+          <>
+            <span className="min-w-0 truncate">{label}</span>
+            <ChevronIcon open className="size-3 shrink-0 opacity-70" />
+          </>
+        )}
+      </button>
+    );
+  }
+  const shortcut = keys?.get(node.id);
+  const busy = state.pending === node.id;
+  return (
+    <button
+      type="button"
+      className={Icon ? 'app-focus-ring' : 'diff-command app-focus-ring'}
+      data-node-id={node.id}
+      data-variant={node.variant}
+      aria-label={Icon ? node.label : undefined}
+      title={shortcut ? `${node.label} (${shortcut.key})` : node.label}
+      aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
+      aria-busy={busy}
+      disabled={state.inert || node.is_disabled}
+      onClick={() => void state.press(node.id)}
+    >
+      {Icon === RefreshIcon ? (
+        <RefreshIcon isBusy={busy} className="size-3.5" />
+      ) : Icon ? (
+        <Icon className="size-3.5" />
+      ) : (
+        <span className="min-w-0 truncate">{node.label}</span>
+      )}
+    </button>
+  );
+}
+
+/** The menu that a toolbar group opened, if any. */
+function OpenDiffMenu({ nodes, state, keys }: { nodes: readonly LiveNode[]; state: DiffCommandState; keys?: ReadonlyMap<string, LiveShortcut> }) {
+  const open = state.menu ? nodes.find((node) => node.id === state.menu?.id) : undefined;
+  if (open?.type !== 'group' || !state.menu) return null;
+  return (
+    <DiffMenu
+      label={open.label ?? 'More'}
+      at={state.menu.at}
+      items={open.children}
+      keys={keys}
+      onPress={(id) => void state.press(id)}
+      onDismiss={() => state.setMenu(null)}
+    />
   );
 }
 
@@ -1106,6 +1194,96 @@ const DIFF_MENU_WIDTH = 224;
 function diffMenuAt(trigger: HTMLElement): MenuPosition | null {
   const box = trigger.getBoundingClientRect();
   return menuPosition({ top: box.top, bottom: box.bottom, right: box.left + DIFF_MENU_WIDTH }, DIFF_MENU_WIDTH);
+}
+
+/**
+ * Where a submenu opens: to the right of its row, or to the left when the screen
+ * ends first. Its first row lines up with the row that opened it.
+ */
+export function diffSubmenuAt(
+  row: { top: number; left: number; right: number },
+  screen: { width: number; height: number },
+  height: number,
+): { left: number; top: number } {
+  const gap = 4;
+  const margin = 8;
+  const right = row.right + gap;
+  const left = right + DIFF_MENU_WIDTH <= screen.width - margin ? right : Math.max(margin, row.left - gap - DIFF_MENU_WIDTH);
+  const top = Math.max(margin, Math.min(row.top - gap, screen.height - margin - height));
+  return { left: Math.round(left), top: Math.round(top) };
+}
+
+/** The rows of one menu panel; a group row opens its submenu. */
+function DiffMenuRows({
+  items,
+  keys,
+  openSub,
+  onPress,
+  onOpenSub,
+}: {
+  items: readonly LiveNode[];
+  keys?: ReadonlyMap<string, LiveShortcut>;
+  openSub?: string;
+  onPress: (id: string) => void;
+  onOpenSub?: (id: string, row: HTMLElement, focus: boolean) => void;
+}) {
+  return items.map((item) => {
+    if (item.type === 'group' && onOpenSub) {
+      return (
+        <button
+          key={item.id}
+          type="button"
+          role="menuitem"
+          className="diff-menu-item"
+          data-node-id={item.id}
+          aria-haspopup="menu"
+          aria-expanded={openSub === item.id}
+          disabled={!item.children.some((child) => child.type === 'button' && !child.is_disabled)}
+          onPointerEnter={(event) => onOpenSub(item.id, event.currentTarget, false)}
+          onClick={(event) => onOpenSub(item.id, event.currentTarget, true)}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            onOpenSub(item.id, event.currentTarget, true);
+          }}
+        >
+          <span className="min-w-0 flex-1 truncate">{item.label ?? 'More'}</span>
+          <ChevronIcon className="size-3.5 shrink-0 opacity-70" />
+        </button>
+      );
+    }
+    if (item.type !== 'button') return null;
+    const shortcut = keys?.get(item.id);
+    return (
+      <button
+        key={item.id}
+        type="button"
+        role={item.is_selected === undefined ? 'menuitem' : 'menuitemradio'}
+        aria-checked={item.is_selected}
+        className="diff-menu-item"
+        data-node-id={item.id}
+        data-variant={item.variant}
+        title={shortcut ? `${item.label} (${shortcut.key})` : undefined}
+        aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
+        disabled={item.is_disabled}
+        onPointerEnter={onOpenSub ? (event) => onOpenSub('', event.currentTarget, false) : undefined}
+        onClick={() => onPress(item.id)}
+      >
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      </button>
+    );
+  });
+}
+
+/** Up and Down move between the enabled rows of a menu panel. */
+function moveMenuFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+  if (rows.length === 0) return;
+  event.preventDefault();
+  const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+  const step = event.key === 'ArrowDown' ? 1 : -1;
+  rows[(at + step + rows.length) % rows.length].focus();
 }
 
 /**
@@ -1128,46 +1306,71 @@ function DiffMenu({
   onDismiss: () => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const subPanel = useRef<HTMLDivElement>(null);
+  const [sub, setSub] = useState<{ id: string; left: number; top: number; focus: boolean } | null>(null);
   // A keyboard opened this menu as often as a pointer did: focus its first choice.
   useEffect(() => {
     panel.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
   }, []);
+  useEffect(() => {
+    if (sub?.focus) subPanel.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, [sub]);
+  const group = sub ? items.find((item) => item.id === sub.id) : undefined;
+  const openSub = (id: string, row: HTMLElement, focus: boolean) => {
+    if (!id) return setSub(null);
+    const item = items.find((candidate) => candidate.id === id);
+    const rows = item?.type === 'group' ? item.children.length : 0;
+    const box = row.getBoundingClientRect();
+    const place = diffSubmenuAt(box, { width: window.innerWidth, height: window.innerHeight }, rows * 28 + 8);
+    setSub((held) => (held?.id === id && !focus ? held : { id, ...place, focus }));
+  };
   return createPortal(
     <div className="fixed inset-0 z-50" role="presentation" onClick={onDismiss}>
       <div
         ref={panel}
-        role="dialog"
+        role="menu"
         aria-label={label}
         className="diff-menu"
         style={{ left: at.left, top: at.top, bottom: at.bottom, maxHeight: at.maxHeight }}
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={moveMenuFocus}
       >
-        {items.map((item) => {
-          if (item.type !== 'button') return null;
-          const shortcut = keys?.get(item.id);
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className="diff-menu-item"
-              data-node-id={item.id}
-              data-variant={item.variant}
-              aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
-              disabled={item.is_disabled}
-              onClick={() => onPress(item.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{item.label}</span>
-              {shortcut && <kbd>{shortcut.key}</kbd>}
-            </button>
-          );
-        })}
+        <DiffMenuRows items={items} keys={keys} openSub={sub?.id} onPress={onPress} onOpenSub={openSub} />
       </div>
+      {group?.type === 'group' && sub && (
+        <div
+          ref={subPanel}
+          role="menu"
+          aria-label={group.label ?? 'More'}
+          className="diff-menu"
+          style={{ left: sub.left, top: sub.top }}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') {
+              event.preventDefault();
+              const id = sub.id;
+              setSub(null);
+              panel.current?.querySelector<HTMLButtonElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
+              return;
+            }
+            moveMenuFocus(event);
+          }}
+        >
+          <DiffMenuRows items={group.children} keys={keys} onPress={onPress} />
+        </div>
+      )}
     </div>,
     document.body,
   );
 }
 
+/**
+ * The header row of a diff, laid out like the T3 Code review panel: the app's
+ * menus, the base it compares against and the line counts on the left; the app's
+ * icon commands and the display toggles on the right; the app's icon menus last.
+ */
 function DiffToolbar({
+  nodes,
   commands,
   onFind,
   split,
@@ -1176,7 +1379,7 @@ function DiffToolbar({
   allFolded,
   count,
   total,
-  revisions,
+  base,
   onSplit,
   onWrap,
   onTree,
@@ -1186,8 +1389,9 @@ function DiffToolbar({
   onTests,
   onWhitespace,
 }: {
-  /** The app's own commands, first in the row. */
-  commands?: ReactNode;
+  /** The app's own commands (`view.json` `diff` `children`). */
+  nodes: readonly LiveNode[];
+  commands?: DiffCommandActions;
   onFind: () => void;
   split: boolean;
   wrap: boolean;
@@ -1195,7 +1399,8 @@ function DiffToolbar({
   allFolded: boolean;
   count: number;
   total: { additions: number; deletions: number };
-  revisions: string;
+  /** The revision that the diff compares against, if the producer names it. */
+  base?: string;
   onSplit: (split: boolean) => void;
   onWrap: () => void;
   onTree: () => void;
@@ -1205,30 +1410,46 @@ function DiffToolbar({
   onTests: () => void;
   onWhitespace: () => void;
 }) {
+  const state = useDiffCommands({ isSettled: commands?.isSettled ?? true, onActivate: commands?.onActivate });
+  const keys = commands?.keys;
+  const icon = (node: LiveNode) => (node.type === 'group' || node.type === 'button' ? node.icon : undefined);
+  const menus = nodes.filter((node) => !icon(node));
+  const iconActions = nodes.filter((node) => icon(node) && node.type === 'button');
+  const iconMenus = nodes.filter((node) => icon(node) && node.type === 'group');
   return (
     <div className="diff-toolbar" role="toolbar" aria-label="Diff display">
-      <span className="diff-toolbar-summary" title={revisions || undefined}>
-        {commands}
-        {!commands && (
+      <span className="diff-toolbar-summary">
+        {menus.length > 0 ? (
+          <span className="diff-commands" role="group" aria-label="Review commands">
+            {menus.map((node) => (
+              <DiffCommand key={node.id} node={node} state={state} keys={keys} />
+            ))}
+          </span>
+        ) : (
           <span className="shrink-0">
             {count} {count === 1 ? 'file' : 'files'}
           </span>
         )}
+        {menus.length > 0 && base && (
+          <span className="diff-base min-w-0 truncate" title={`Compared with ${base}`}>
+            vs {base}
+          </span>
+        )}
         <DiffStat {...total} />
-        {revisions && <span className="diff-revisions min-w-0 truncate">{revisions}</span>}
       </span>
       <div className="diff-toolbar-controls">
         <button
           type="button"
-          className="app-focus-ring"
+          className="sr-only"
           data-diff-find
-          title="Find in diff (⌘/Ctrl+F)"
+          tabIndex={-1}
           aria-label="Find in diff"
           aria-keyshortcuts="Meta+f Control+f"
           onClick={onFind}
-        >
-          Find
-        </button>
+        />
+        {iconActions.map((node) => (
+          <DiffCommand key={node.id} node={node} state={state} keys={keys} />
+        ))}
         <button
           type="button"
           className="app-focus-ring"
@@ -1236,18 +1457,18 @@ function DiffToolbar({
           title={allFolded ? 'Expand all' : 'Collapse all'}
           onClick={onFold}
         >
-          {allFolded ? <ExpandAllIcon className="size-4" /> : <CollapseAllIcon className="size-4" />}
+          {allFolded ? <ExpandAllIcon className="size-3.5" /> : <CollapseAllIcon className="size-3.5" />}
         </button>
         <div className="diff-layout" role="group" aria-label="Diff layout">
           <button
             type="button"
             className="app-focus-ring"
             aria-label="Unified"
-            title="Unified"
+            title="Stacked"
             aria-pressed={!split}
             onClick={() => onSplit(false)}
           >
-            <UnifiedDiffIcon className="size-4" />
+            <UnifiedDiffIcon className="size-3.5" />
           </button>
           <button
             type="button"
@@ -1257,7 +1478,7 @@ function DiffToolbar({
             aria-pressed={split}
             onClick={() => onSplit(true)}
           >
-            <SideBySideIcon className="size-4" />
+            <SideBySideIcon className="size-3.5" />
           </button>
         </div>
         <button
@@ -1268,17 +1489,17 @@ function DiffToolbar({
           aria-pressed={wrap}
           onClick={onWrap}
         >
-          <WrapIcon className="size-4" />
+          <WrapIcon className="size-3.5" />
         </button>
         <button
           type="button"
           className="app-focus-ring"
-          aria-label="Show whitespace changes"
+          aria-label="Hide whitespace changes"
           title={hideWhitespace ? 'Show whitespace changes' : 'Hide whitespace changes'}
-          aria-pressed={!hideWhitespace}
+          aria-pressed={hideWhitespace}
           onClick={onWhitespace}
         >
-          <WhitespaceIcon className="size-4" />
+          <WhitespaceIcon className="size-3.5" />
         </button>
         <button
           type="button"
@@ -1288,7 +1509,7 @@ function DiffToolbar({
           aria-pressed={hideTests}
           onClick={onTests}
         >
-          <TestFilesIcon className="size-4" />
+          <TestFilesIcon className="size-3.5" />
         </button>
         <button
           type="button"
@@ -1298,9 +1519,13 @@ function DiffToolbar({
           aria-pressed={tree}
           onClick={onTree}
         >
-          <FileTreeIcon className="size-4" />
+          <FileTreeIcon className="size-3.5" />
         </button>
+        {iconMenus.map((node) => (
+          <DiffCommand key={node.id} node={node} state={state} keys={keys} />
+        ))}
       </div>
+      <OpenDiffMenu nodes={nodes} state={state} keys={keys} />
     </div>
   );
 }

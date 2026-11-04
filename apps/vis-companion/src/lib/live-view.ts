@@ -15,11 +15,12 @@ import {
   VIEW_SHORTCUT_NAMED_KEYS,
   VIEW_SHORTCUTS_MAX,
   viewButtonVariant,
+  viewCommandIcon,
   viewGroupDirection,
   viewKind,
   viewMaxColumns,
 } from './view';
-import type { ViewAnchor, ViewButtonVariant } from './view';
+import type { ViewAnchor, ViewButtonVariant, ViewCommandIcon } from './view';
 import { axisLabel, axisMarks } from './time-axis';
 import { appSurfacesFromWire, type AppSurfaces } from './app-surfaces';
 import {
@@ -333,6 +334,10 @@ export interface LiveButtonNode extends LiveNodeBase {
   is_disabled: boolean;
   /** The key of an app of the same owner that a press shows. */
   reveals?: string;
+  /** A picture for the label, in a diff toolbar. The label stays the accessible name. */
+  icon?: ViewCommandIcon;
+  /** The choice that holds now, in a toolbar menu; absent when the button is no choice. */
+  is_selected?: boolean;
   clicks: number;
 }
 
@@ -373,6 +378,8 @@ export interface LiveGroupNode extends LiveNodeBase {
   children: LiveNode[];
   is_collapsible?: boolean;
   default_expanded?: boolean;
+  /** A picture for the menu trigger, in a diff toolbar. The label stays the accessible name. */
+  icon?: ViewCommandIcon;
 }
 
 /** Who wrote a message. The host sets it; a client never sends it. */
@@ -1077,6 +1084,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
       ...(node.default_expanded === undefined
         ? {}
         : { default_expanded: node.default_expanded === true }),
+      ...viewCommandIcon(node.icon),
     };
   }
   if ((LIVE_INPUT_TYPES as readonly string[]).includes(type)) {
@@ -1130,6 +1138,8 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         variant: viewButtonVariant(node.variant),
         is_disabled: node.is_disabled === true,
         ...reveals(node.reveals),
+        ...viewCommandIcon(node.icon),
+        ...(typeof node.is_selected === 'boolean' ? { is_selected: node.is_selected } : {}),
         clicks: count(node.clicks, 0),
       };
     case 'status':
@@ -1257,13 +1267,14 @@ function sceneSettings(raw: Record<string, unknown>, held: SceneSettings): Scene
   };
 }
 
-/** The toolbar of a diff: buttons and groups of buttons, the rest dropped (`view.json` `diff`). */
+/** A toolbar command: a button, or a menu of commands. A menu inside a menu is a submenu. */
+function isDiffCommand(node: LiveNode): boolean {
+  return node.type === 'button' || (node.type === 'group' && node.children.every(isDiffCommand));
+}
+
+/** The toolbar of a diff: buttons and menus, the rest dropped (`view.json` `diff`). */
 function diffToolbarFromWire(raw: unknown): { children?: LiveNode[] } {
-  const children = liveNodesFromWire(raw).filter(
-    (node) =>
-      node.type === 'button' ||
-      (node.type === 'group' && node.children.every((child) => child.type === 'button')),
-  );
+  const children = liveNodesFromWire(raw).filter(isDiffCommand);
   return children.length > 0 ? { children } : {};
 }
 

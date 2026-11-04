@@ -563,18 +563,30 @@
                    (expect (= [:edit "new"] (first @calls)))
                    (expect (= :activate (first (second @calls)))))))
 
-(defdescribe shortcut-legend-merge
-             (it "joins the keys of one label, so a narrow legend keeps every action"
-                 (expect (= [["←/h" "Left"] ["→/l" "Right"] ["Del" "Delete"]]
-                            (surface/shortcut-legend
-                              {:id "k"
-                               :placement :attachment
-                               :nodes []
-                               :shortcuts [{:key "ArrowLeft" :label "Left" :action "left"}
-                                           {:key "ArrowRight" :label "Right" :action "right"}
-                                           {:key "h" :label "Left" :action "left"}
-                                           {:key "l" :label "Right" :action "right"}
-                                           {:key "Delete" :label "Delete" :action "delete"}]})))))
+(defdescribe
+  shortcut-legend-merge
+  ;; User report 2026-11-09: the review scope menu marks the choice that
+  ;; holds, as T3 Code does, instead of a dead row.
+  (it "marks the button of the choice that holds and keeps its key"
+      (expect
+        (= [["1" "This session"] ["2" "• Uncommitted"]]
+           (surface/shortcut-legend
+             {:id "r"
+              :placement :attachment
+              :nodes [{:id "session" :type :button :label "This session" :is-selected false}
+                      {:id "uncommitted" :type :button :label "Uncommitted" :is-selected true}]
+              :shortcuts [{:key "1" :node-id "session"} {:key "2" :node-id "uncommitted"}]}))))
+  (it "joins the keys of one label, so a narrow legend keeps every action"
+      (expect (= [["←/h" "Left"] ["→/l" "Right"] ["Del" "Delete"]]
+                 (surface/shortcut-legend {:id "k"
+                                           :placement :attachment
+                                           :nodes []
+                                           :shortcuts
+                                           [{:key "ArrowLeft" :label "Left" :action "left"}
+                                            {:key "ArrowRight" :label "Right" :action "right"}
+                                            {:key "h" :label "Left" :action "left"}
+                                            {:key "l" :label "Right" :action "right"}
+                                            {:key "Delete" :label "Delete" :action "delete"}]})))))
 
 ;; Review scenarios S06/S07/S18/S22, Council #9489.
 (defdescribe

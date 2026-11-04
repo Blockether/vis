@@ -141,6 +141,10 @@
   "Wire button variant to internal variant."
   (keyword-map (get-in live-nodes ["button" "properties" "variant" "enum"])))
 
+(def command-icons
+  "Wire names of the pictures that a diff toolbar command can show."
+  (set (enum-values "command_icon")))
+
 (def link-targets
   "Wire link target name to internal target type."
   (keyword-map (enum-values "link_target")))

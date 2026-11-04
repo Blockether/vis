@@ -817,7 +817,7 @@ it('restores one review after another session uses the same node ids', async () 
   mounted.rerender(surface('resume-a'));
   await screen.findByRole('button', { name: 'Split' });
   expect(screen.getByRole('button', { name: 'Split' })).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getByRole('button', { name: 'Wrap' })).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.getByRole('button', { name: 'Wrap' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('textbox')).toHaveValue('Only session A');
   expect(screen.getByRole('button', { name: 'Open src/a.ts' })).toHaveAttribute('aria-current', 'true');
   expect(screen.getByRole('button', { name: 'Fold src/a.ts' })).toBeInTheDocument();

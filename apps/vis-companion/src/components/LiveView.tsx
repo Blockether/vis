@@ -2218,7 +2218,7 @@ export function LiveViewPanel({
             {view.nodes.map((node, index) => (
               <li
                 key={node.id}
-                className={`min-w-0 ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${
+                className={`min-w-0 ${node.type === 'divider' || node.type === 'diff' ? '' : 'px-(--live-view-inset)'} ${
                   node.type === 'log' && index > 0
                     ? 'relative pt-4 before:absolute before:inset-x-(--live-view-inset) before:top-0 before:border-t before:border-dialog-edge/40'
                     : ''

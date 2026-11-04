@@ -42,11 +42,15 @@ def items(recorder, menu_id):
 
 
 def controls(recorder):
-    """Every button of the diff toolbar by id, the buttons in its menus included."""
+    """Every button of the diff toolbar by id, the buttons in its menus and submenus included."""
     found = {}
-    for child in recorder.node("diff")["children"]:
-        for button in child.get("children") or [child]:
-            found[button["id"]] = button["is_disabled"]
+    nodes = list(recorder.node("diff")["children"])
+    while nodes:
+        node = nodes.pop()
+        if node["type"] == "group":
+            nodes.extend(node["children"])
+        else:
+            found[node["id"]] = node["is_disabled"]
     return found
 
 
@@ -376,6 +380,19 @@ def buttons_of(recorder):
     return controls(recorder)
 
 
+def chosen(recorder):
+    """The ids of the toolbar buttons that the app marks as the choice that holds now."""
+    nodes = list(recorder.node("diff")["children"])
+    found = set()
+    while nodes:
+        node = nodes.pop()
+        if node["type"] == "group":
+            nodes.extend(node["children"])
+        elif node.get("is_selected"):
+            found.add(node["id"])
+    return found
+
+
 def test_show_full_files_puts_every_unchanged_line_in_the_diff(tmp_path, recorder):
     # "Expand all" (scenario S15): the far apart changes join in one hunk.
     root, journal, app = setup(tmp_path, recorder)
@@ -452,7 +469,8 @@ def test_a_session_review_shows_only_its_own_changes_by_default(tmp_path, record
     journal.checkpoint("block", "edit a")
     app.refresh()
     assert items(recorder, "file") == ["file-all", "file:a.py"]
-    assert buttons_of(recorder)["session"] is True
+    assert chosen(recorder) == {"session", "file-all"}
+    assert buttons_of(recorder)["session"] is False
     recorder.send("activate", "all")
     assert wait_for(
         lambda: items(recorder, "file") == ["file-all", "file:a.py", "file:theirs.py"]
@@ -512,3 +530,13 @@ def test_an_idle_app_shows_only_the_diff(tmp_path, recorder):
     journal.checkpoint("block")
     app.refresh()
     assert recorder.ids() == ["diff"]
+
+
+def test_an_added_picture_shows_no_status_row(tmp_path, recorder):
+    # User report 2026-11-09: an added picture gave a "Waiting / Ready / info binary-file"
+    # row under the diff. The file list and the image already show the new file.
+    root, journal, app = setup(tmp_path, recorder)
+    put(root, "logo.png", png(2, 2))
+    journal.checkpoint("block")
+    app.refresh()
+    assert recorder.ids() == ["diff", "images"]

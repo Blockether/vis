@@ -828,6 +828,10 @@ app = vis.attach(vis.ui.app(
   [components](components.md) of a live view, plus `vis.ui.diff` and `vis.ui.thread`.
 - `vis.ui.diff(node_id, patch)` shows a unified diff. People comment on one line of it.
   `old_revision` and `new_revision` name the compared versions.
+- `children=[...]` gives the diff a toolbar of actions. A `vis.ui.group` of buttons is one menu,
+  and its label names the current choice. A group in a menu opens a submenu. Give
+  `is_selected=True` to the button of the current choice. Give `icon="refresh"` or `icon="more"`
+  to show a picture instead of the label. The label stays the name for screen readers.
 - `vis.ui.thread(node_id)` shows one conversation.
 - `vis.ui.image(node_id, data_or_path, alt=..., label=None, before=None)` shows a PNG, JPEG, GIF
   or WebP picture from bytes or a file. Vis reads the type and the size from the bytes. With

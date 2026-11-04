@@ -1062,6 +1062,15 @@
       (fail! (str ":max_columns must be a whole number from " lo " to " hi)))
     (long n)))
 
+(defn- command-icon
+  "The wire name of the toolbar picture of `node`. A name outside the schema fails."
+  [fail! node]
+  (let [icon (some-> (:icon node)
+                     name)]
+    (if (contains? view-spec/command-icons icon)
+      icon
+      (fail! (str ":icon must be one of " (str/join ", " (sort view-spec/command-icons)))))))
+
 (def ^:private ^:dynamic *host-patch*
   "True while the host writes a patch itself. Its messages keep their authors and it
    may write Send receipts. An owner's patch is never trusted that way."
@@ -1244,7 +1253,10 @@
 
                (some? (:default-expanded node))
                (assoc :default-expanded
-                 (bool-value group-fail! ":default-expanded" (:default-expanded node) false)))))
+                 (bool-value group-fail! ":default-expanded" (:default-expanded node) false))
+
+               (some? (:icon node))
+               (assoc :icon (command-icon group-fail! node)))))
          (let [id (or (trimmed (:id node))
                       (fail!
                         "a node needs a non-blank :id — every patch names the node it speaks to"))
@@ -1313,7 +1325,14 @@
                               (:variant node)))
 
                  (some? (:reveals node))
-                 (assoc :reveals (live-text node-fail! "button :reveals" (:reveals node))))
+                 (assoc :reveals (live-text node-fail! "button :reveals" (:reveals node)))
+
+                 (some? (:icon node))
+                 (assoc :icon (command-icon node-fail! node))
+
+                 (some? (:is-selected node))
+                 (assoc :is-selected
+                   (bool-value node-fail! ":is-selected" (:is-selected node) false)))
 
                :card
                (cond-> (assoc base :title (live-text node-fail! "a card's :title" (:title node)))

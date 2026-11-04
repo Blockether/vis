@@ -34,6 +34,15 @@ export function viewButtonVariant(raw: unknown): ViewButtonVariant {
     : ((BUTTON_VARIANT?.default ?? 'secondary') as ViewButtonVariant);
 }
 
+export type ViewCommandIcon = 'refresh' | 'more';
+/** The pictures of diff toolbar commands (`command_icon` in view.json). CLOSED. */
+export const VIEW_COMMAND_ICONS = viewSchema.$defs.command_icon.enum as readonly ViewCommandIcon[];
+
+/** Read a command icon; an absent or unknown one is no icon. */
+export function viewCommandIcon(raw: unknown): { icon?: ViewCommandIcon } {
+  return (VIEW_COMMAND_ICONS as readonly unknown[]).includes(raw) ? { icon: raw as ViewCommandIcon } : {};
+}
+
 /** The largest `max_columns` of a grid group (view.json). */
 export const VIEW_MAX_COLUMNS =
   (viewSchema.$defs.component.oneOf as unknown as SchemaBranch[]).find(

@@ -1015,6 +1015,13 @@
         }
       ]
     },
+    "command_icon": {
+      "description": "A picture that a surface can show instead of the label of a diff toolbar command. The label stays the accessible name.",
+      "enum": [
+        "refresh",
+        "more"
+      ]
+    },
     "reveals": {
       "description": "The key of another app of the same owner and session. When a person activates the node, the surface shows that app. It waits for the app to open.",
       "$ref": "common.json#/$defs/non_blank_string"
@@ -1423,6 +1430,9 @@
             },
             "default_expanded": {
               "type": "boolean"
+            },
+            "icon": {
+              "$ref": "#/$defs/command_icon"
             }
           },
           "required": [
@@ -1572,8 +1582,15 @@
             "is_disabled": {
               "type": "boolean"
             },
+            "is_selected": {
+              "type": "boolean",
+              "description": "The choice that holds now. A menu of a diff toolbar marks it, and a press chooses it again."
+            },
             "reveals": {
               "$ref": "#/$defs/reveals"
+            },
+            "icon": {
+              "$ref": "#/$defs/command_icon"
             },
             "clicks": {
               "type": "integer",

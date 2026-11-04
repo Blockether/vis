@@ -39,7 +39,7 @@ import { ReviewMemoryContext, useReviewScroll, useVisitState } from '../lib/revi
 import { LiveViewPanel, RunDialog } from './LiveView';
 import { AppLogButton, AppLogPanel } from './AppLog';
 import { ChevronIcon, FullScreenIcon } from './icons';
-import { BandButton, BandLabel, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, closeWith } from './ui';
+import { BandButton, BandLabel, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, PaneHeader, closeWith } from './ui';
 
 /** The open apps of the session, with their surfaces, for the rows of the transcript. */
 export const SessionAppViewsContext = createContext<readonly LiveViewModel[]>([]);
@@ -549,6 +549,11 @@ export function AppSurface({
     </>
   );
   const logPanel = appLog.isOpen && log ? <AppLogPanel log={log} title={title} isPane={!isFramed} /> : null;
+  const backButton = backLabel ? (
+    <BandButton label={backLabel} onClick={onClose}>
+      <ChevronIcon back className="size-4" />
+    </BandButton>
+  ) : undefined;
   if (isFramed) {
     return (
       // Escape inside the app closes it, as it closes the dialog. An armed control
@@ -564,25 +569,34 @@ export function AppSurface({
           }
         }}
       >
-        <DialogHeader
-          title={title}
-          isTitleTruncated
-          subtitle={subtitle}
-          leading={
-            backLabel ? (
-              <BandButton label={backLabel} onClick={onClose}>
-                <ChevronIcon back className="size-4" />
-              </BandButton>
-            ) : undefined
-          }
-          actions={bandActions}
-          {...closeWith(backLabel ? undefined : onClose, leave)}
-        />
+        {isPane ? (
+          <PaneHeader
+            title={title}
+            subtitle={subtitle}
+            leading={backButton}
+            actions={bandActions}
+            {...closeWith(backLabel ? undefined : onClose, leave)}
+          />
+        ) : (
+          <DialogHeader
+            title={title}
+            isTitleTruncated
+            subtitle={subtitle}
+            leading={backButton}
+            actions={bandActions}
+            {...closeWith(backLabel ? undefined : onClose, leave)}
+          />
+        )}
         {/* In a pane the log takes at most half of the frame and scrolls; the app keeps the rest. */}
         {logPanel && (
           <div className={`border-t border-dialog-edge ${isPane ? 'flex max-h-[50%] min-h-0 flex-col' : ''}`}>{logPanel}</div>
         )}
-        <div className={`border-t border-dialog-edge ${isPane ? 'flex min-h-0 flex-1 flex-col' : ''}`}>{body}</div>
+        {/* A pane header is light like the app, so the app meets it without a rule, as in T3 Code. */}
+        <div
+          className={`${isPane && !logPanel ? '' : 'border-t border-dialog-edge'} ${isPane ? 'flex min-h-0 flex-1 flex-col' : ''}`}
+        >
+          {body}
+        </div>
         {footer && (
           <footer className="border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-meta text-dialog-hint">
             {footer}

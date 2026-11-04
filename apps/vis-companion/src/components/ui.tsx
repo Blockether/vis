@@ -3235,6 +3235,45 @@ export function closeWith(
   return onClose ? { onClose, closeLabel: label } : {};
 }
 
+/**
+ * The header of an app that fills a pane beside the chat, drawn like the tab bar of
+ * the T3 Code diff panel: a light row with the app's name as a chip, its state, its
+ * verbs and the way out. A pane stands beside the chat, not over it, so it does not
+ * wear the dark band of a dialog.
+ */
+export function PaneHeader({
+  title,
+  subtitle,
+  leading,
+  actions,
+  onClose,
+  closeLabel,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  /** A Back control before the name. */
+  leading?: ReactNode;
+  /** `BandButton` cells; the header draws them as 28px squares. */
+  actions?: ReactNode;
+  onClose?: () => void;
+  closeLabel?: string;
+}) {
+  return (
+    <header role="presentation" className="pane-header flex h-11 shrink-0 items-center gap-1 px-2 text-fg">
+      {leading}
+      <h2 className="pane-header-title flex h-6 min-w-0 shrink items-center rounded-lg bg-hover px-2 text-[12px] leading-4 font-medium">
+        <span className="truncate">{title}</span>
+      </h2>
+      {subtitle && (
+        <div className="pane-header-title min-w-0 truncate px-1 text-[12px] leading-4 text-dialog-hint">{subtitle}</div>
+      )}
+      <span className="flex-1" />
+      {actions}
+      {onClose && closeLabel && <CloseButton label={closeLabel} onClick={onClose} />}
+    </header>
+  );
+}
+
 export function DialogHeader({
   title,
   titleId,

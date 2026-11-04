@@ -203,12 +203,62 @@ describe('DiffNodeView', () => {
     };
     render(<DiffNodeView node={node} commands={{ onActivate, isSettled: false }} />);
     fireEvent.click(screen.getByRole('button', { name: 'This session' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Checkpoint #2' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Checkpoint #2' }));
     await waitFor(() => expect(onActivate).toHaveBeenCalledWith('checkpoint-2'));
     expect(screen.queryByRole('dialog', { name: 'This session' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(onActivate).toHaveBeenLastCalledWith('refresh'));
     expect(onActivate).toHaveBeenCalledTimes(2);
+  });
+
+  // User report 2026-11-09: the review toolbar must work like the T3 Code diff panel.
+  // A nested group opens a submenu, the choice that holds is checked, and a command
+  // drawn as a picture keeps its label as its name.
+  it('opens a toolbar submenu, checks the choice that holds, and names picture commands', async () => {
+    const onActivate = vi.fn(async () => {});
+    const button = (id: string, label: string, more: { is_selected?: boolean; icon?: 'refresh' } = {}) => ({
+      id,
+      type: 'button' as const,
+      label,
+      action: 'activate' as const,
+      variant: 'secondary' as const,
+      is_disabled: false,
+      clicks: 0,
+      ...more,
+    });
+    const node: LiveDiffNode = {
+      ...DIFF,
+      children: [
+        {
+          id: 'scope',
+          type: 'group',
+          label: 'Uncommitted',
+          direction: 'column',
+          children: [
+            button('all', 'All changes', { is_selected: false }),
+            button('uncommitted', 'Uncommitted', { is_selected: true }),
+            {
+              id: 'checkpoints',
+              type: 'group',
+              label: 'Checkpoint',
+              direction: 'column',
+              children: [button('checkpoint-2', '#2 edit', { is_selected: false })],
+            },
+          ],
+        },
+        button('refresh', 'Refresh diff', { icon: 'refresh' }),
+      ],
+    };
+    render(<DiffNodeView node={node} commands={{ onActivate, isSettled: false }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Uncommitted' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Uncommitted' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('menuitemradio', { name: 'All changes' })).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Checkpoint' }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: '#2 edit' }));
+    await waitFor(() => expect(onActivate).toHaveBeenCalledWith('checkpoint-2'));
+    expect(screen.queryByRole('menuitemradio')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh diff' }));
+    await waitFor(() => expect(onActivate).toHaveBeenLastCalledWith('refresh'));
   });
 
   it('is read only without app actions and when the app is closed', () => {

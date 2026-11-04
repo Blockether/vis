@@ -15,10 +15,15 @@ import { LiveView, ToneMark, runSummary, runTone } from './LiveView';
 import type { GatewayClient } from '../lib/gateway';
 import type { LiveView as LiveViewModel } from '../lib/live-view';
 
-/** The side panel width in CSS pixels, and the step of one arrow key. */
-export const LIVE_PANEL_WIDTH = { min: 280, initial: 384, max: 720, step: 16 } as const;
+/**
+ * The side panel width in CSS pixels, and the step of one arrow key. A new panel
+ * takes `share` of the window between `fitMin` and `fitMax`, like the T3 Code diff
+ * panel, so a review toolbar fits on one row.
+ */
+export const LIVE_PANEL_WIDTH = { min: 280, max: 720, step: 16, share: 0.42, fitMin: 360, fitMax: 560 } as const;
 
-const WIDTH_KEY = 'vis.live-panel.width';
+/** Only a width that the person chose is kept. The old key held every first width. */
+const WIDTH_KEY = 'vis.live-panel.chosen-width';
 
 /** The extension that owns `view`. A view without an owner stands under `session`. */
 export function liveViewOwner(view: LiveViewModel): string {
@@ -29,12 +34,19 @@ function clampWidth(width: number): number {
   return Math.round(Math.min(LIVE_PANEL_WIDTH.max, Math.max(LIVE_PANEL_WIDTH.min, width)));
 }
 
+/** The width of a panel that the person has not resized, for a window `windowWidth` wide. */
+export function initialPanelWidth(windowWidth: number): number {
+  const { share, fitMin, fitMax } = LIVE_PANEL_WIDTH;
+  return Math.round(Math.min(fitMax, Math.max(fitMin, windowWidth * share)));
+}
+
 function storedWidth(): number {
+  const initial = initialPanelWidth(window.innerWidth);
   try {
     const stored = Number(window.localStorage.getItem(WIDTH_KEY));
-    return Number.isFinite(stored) && stored > 0 ? clampWidth(stored) : LIVE_PANEL_WIDTH.initial;
+    return Number.isFinite(stored) && stored > 0 ? clampWidth(stored) : initial;
   } catch {
-    return LIVE_PANEL_WIDTH.initial;
+    return initial;
   }
 }
 
@@ -166,18 +178,23 @@ export function LivePanel({
 /** A panel beside the transcript. Drag its edge, or use the arrow keys on it, to resize it. */
 export function ResizablePanel({ children }: { children: ReactNode }) {
   const [width, setWidth] = useState(storedWidth);
+  const [isChosen, setIsChosen] = useState(false);
   useEffect(() => {
+    if (!isChosen) return;
     try {
       window.localStorage.setItem(WIDTH_KEY, String(width));
     } catch {
       // Private browsing can refuse storage. The width then lasts for this page only.
     }
-  }, [width]);
+  }, [width, isChosen]);
   const drag = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = width;
-    const move = (moved: PointerEvent) => setWidth(clampWidth(startWidth + startX - moved.clientX));
+    const move = (moved: PointerEvent) => {
+      setIsChosen(true);
+      setWidth(clampWidth(startWidth + startX - moved.clientX));
+    };
     const stop = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
@@ -191,6 +208,7 @@ export function ResizablePanel({ children }: { children: ReactNode }) {
     const step = event.key === 'ArrowLeft' ? 1 : event.key === 'ArrowRight' ? -1 : 0;
     if (step === 0) return;
     event.preventDefault();
+    setIsChosen(true);
     setWidth((held) => clampWidth(held + step * LIVE_PANEL_WIDTH.step));
   };
   return (

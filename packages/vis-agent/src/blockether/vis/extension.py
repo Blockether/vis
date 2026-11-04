@@ -7429,6 +7429,9 @@ def _ui_diff(
     thread. `old_revision` and `new_revision` name the compared versions.
     `children` is the toolbar of the diff. Each button is one action. Each
     `vis.ui.group(...)` of buttons is one menu, and its label names the current choice.
+    A group in a menu opens a submenu. `is_selected=True` marks the button of the
+    current choice. `icon="refresh"` or `icon="more"` shows a picture instead of
+    the label, and the label stays the accessible name.
     """
     return _live_node(
         "diff",

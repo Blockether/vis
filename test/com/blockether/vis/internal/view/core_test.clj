@@ -3192,6 +3192,81 @@
                                          (assoc-in (shortcut-app sid [])
                                            ["view" "nodes"]
                                            [(assoc (first nodes) "reveals" " ")]))))))))
+  ;; User report 2026-11-09: the review toolbar showed word buttons where T3 Code shows
+  ;; pictures. The surfaces read `icon` from the toolbar commands of a diff.
+  (it
+    "keeps the icon of a diff toolbar command for the surfaces, and refuses an unknown one"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              diff
+              {"id" "diff"
+               "type" "diff"
+               "patch" ""
+               "children" [{"id" "refresh" "type" "button" "label" "Refresh" "icon" "refresh"}
+                           {"id" "more"
+                            "type" "group"
+                            "direction" "column"
+                            "label" "More actions"
+                            "icon" "more"
+                            "children" [{"id" "run" "type" "button" "label" "Run"}]}]}
+
+              view-id
+              (get (app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] [diff]))
+                   "view_id")]
+
+          (try (expect (= {"refresh" "refresh" "more" "more"}
+                          (into {}
+                                (map (juxt #(get % "id") #(get % "icon")))
+                                (-> (app-seam! sid {"op" "state" "view_id" view-id})
+                                    (get-in ["view" "nodes" 0 "children"])))))
+               (finally (hi/close-live! view-id)))
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(app-seam! sid
+                                       (assoc-in (shortcut-app sid [])
+                                         ["view" "nodes"]
+                                         [(assoc-in diff ["children" 0 "icon"] "rocket")]))))))))
+  ;; User report 2026-11-09: the review scope menu showed the current scope as a dead
+  ;; row, where T3 Code marks the choice that holds. The surfaces read `is_selected`.
+  (it
+    "keeps the chosen button of a diff toolbar menu for the surfaces, and refuses a word"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              diff
+              {"id" "diff"
+               "type" "diff"
+               "patch" ""
+               "children"
+               [{"id" "scope"
+                 "type" "group"
+                 "direction" "column"
+                 "label" "Uncommitted"
+                 "children"
+                 [{"id" "all" "type" "button" "label" "All changes"}
+                  {"id" "uncommitted" "type" "button" "label" "Uncommitted" "is_selected" true}]}]}
+
+              view-id
+              (get (app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] [diff]))
+                   "view_id")]
+
+          (try (expect (= {"all" nil "uncommitted" true}
+                          (into {}
+                                (map (juxt #(get % "id") #(get % "is_selected")))
+                                (-> (app-seam! sid {"op" "state" "view_id" view-id})
+                                    (get-in ["view" "nodes" 0 "children" 0 "children"])))))
+               (finally (hi/close-live! view-id)))
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(app-seam! sid
+                                       (assoc-in (shortcut-app sid [])
+                                         ["view" "nodes"]
+                                         [(assoc-in diff
+                                            ["children" 0 "children" 1 "is_selected"]
+                                            "yes")]))))))))
   ;; Live apps D3: the owner hears an accepted selection.
   (it "pushes one select event with the selected row ids"
       (recorded

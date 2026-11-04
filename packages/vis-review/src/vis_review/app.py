@@ -141,6 +141,8 @@ class ReviewApp:
         self.is_full = False
         # "HEAD" or "base" compares the files with a git commit, None with checkpoints.
         self.against: str | None = None
+        # The git ref that the last "against" paint compared with, for example "origin/main".
+        self.against_ref: str | None = None
         # A session door knows which checkpoints the session wrote itself; its first
         # range then shows only those changes, never the edits of other sessions.
         self.is_session_scoped = is_session_scoped
@@ -248,6 +250,7 @@ class ReviewApp:
             ref = "HEAD" if self.against == "HEAD" else base_ref(self.journal.root)
             found = None if ref is None else self.journal.against(ref, self._context())
             if found is not None:
+                self.against_ref = ref
                 return found
             self.notice = (f"Git cannot show {_AGAINST[self.against]} here", "warn")
             self.against = None
@@ -284,6 +287,9 @@ class ReviewApp:
         detail = "\n\n".join(part for part in (self.ai_summary, *off_lines) if part)
         if tone == "idle" and not detail:
             return None
+        if tone == "idle":
+            # Nothing ran, so there is no result to tell: only findings off the diff lines.
+            text, tone = "Outside the diff", "warn"
         if detail:
             return ui.status("notice", text=text, tone=tone, detail=detail[:2000])
         return ui.status("notice", text=text, tone=tone)
@@ -307,56 +313,70 @@ class ReviewApp:
         return "All changes" if self._is_all() else f"#{self.start} to now"
 
     def _toolbar(self, diffs_all: list[FileDiff], has_diffs: bool) -> list[dict]:
-        """The diff toolbar: the scope, file and actions menus.
+        """The diff toolbar of a T3 Code review: the scope menu, refresh and one more menu.
 
-        Each control is off when it cannot do anything now.
+        A nested group is a submenu. The choice that holds now is selected, like a T3 Code
+        radio item; a control is off only when it cannot do anything now.
         """
         has_change = self.selected is not None and self.selected > 1
         own = self._is_own_range() and self.against is None
-        session = [
-            ui.button("session", "This session", is_disabled=own and self.path is None)
-        ]
         checkpoints = [
             ui.button(
                 f"checkpoint-{e.seq}",
                 f"#{e.seq} {e.label or e.kind}",
-                is_disabled=e.seq == self.selected,
+                is_selected=e.seq == self.selected,
             )
             for e in reversed(self.journal.entries[-MOST_MENU_ITEMS:])
         ]
         files = [
-            ui.button(f"file:{d.path}", d.path, is_disabled=d.path == self.path)
+            ui.button(f"file:{d.path}", d.path, is_selected=d.path == self.path)
             for d in diffs_all[:MOST_MENU_ITEMS]
         ]
-        return [
-            ui.group(
-                *(session if self.is_session_scoped else []),
-                ui.button(
-                    "all",
-                    "All changes",
-                    is_disabled=self._is_all() and self.path is None,
-                ),
-                ui.button(
-                    "latest",
-                    "Latest change",
-                    is_disabled=self.journal.last <= 1
-                    or self.selected == self.journal.last,
-                ),
-                ui.button(
-                    "uncommitted", "Uncommitted", is_disabled=self.against == "HEAD"
-                ),
-                ui.button(
-                    "branch", "Against base branch", is_disabled=self.against == "base"
-                ),
-                *checkpoints,
-                id="scope",
-                label=self._scope_label(),
+        scope = [
+            *(
+                [
+                    ui.button(
+                        "session", "This session", is_selected=own and self.path is None
+                    )
+                ]
+                if self.is_session_scoped
+                else []
+            ),
+            ui.button(
+                "all", "All changes", is_selected=self._is_all() and self.path is None
+            ),
+            ui.button("uncommitted", "Uncommitted", is_selected=self.against == "HEAD"),
+            ui.button(
+                "latest",
+                "Latest change",
+                is_disabled=self.journal.last <= 1,
+                is_selected=self.selected == self.journal.last,
+            ),
+            ui.button(
+                "branch", "Against base branch", is_selected=self.against == "base"
+            ),
+            *(
+                [ui.group(*checkpoints, id="checkpoints", label="Checkpoint")]
+                if checkpoints
+                else []
+            ),
+        ]
+        more = [
+            ui.button("checks", "Run checks", is_disabled=not has_diffs),
+            ui.button(
+                "tests", "Run tests", is_disabled=not has_diffs or self._call is None
+            ),
+            ui.button(
+                "ai", "AI review", is_disabled=not has_diffs or self._ask is None
+            ),
+            ui.button(
+                "full", "Show changes only" if self.is_full else "Show full files"
             ),
             *(
                 [
                     ui.group(
                         ui.button(
-                            "file-all", "All files", is_disabled=self.path is None
+                            "file-all", "All files", is_selected=self.path is None
                         ),
                         *files,
                         id="file",
@@ -366,44 +386,36 @@ class ReviewApp:
                 if files
                 else []
             ),
-            ui.group(
-                ui.button("refresh", "Refresh"),
-                ui.button(
-                    "checks", "Run checks", variant="primary", is_disabled=not has_diffs
-                ),
-                ui.button(
-                    "tests",
-                    "Run tests",
-                    is_disabled=not has_diffs or self._call is None,
-                ),
-                ui.button(
-                    "ai", "AI review", is_disabled=not has_diffs or self._ask is None
-                ),
-                ui.button(
-                    "full", "Show changes only" if self.is_full else "Show full files"
-                ),
-                ui.button(
-                    "undo-file",
-                    "Undo file",
-                    variant="destructive",
-                    is_disabled=self.path is None or self.against is not None,
-                ),
-                ui.button(
-                    "undo",
-                    "Undo checkpoint",
-                    variant="destructive",
-                    is_disabled=not has_change,
-                ),
-                ui.button(
-                    "restore",
-                    "Restore to here",
-                    variant="destructive",
-                    is_disabled=self.selected is None,
-                ),
-                id="actions",
-                label="Actions",
+            ui.button(
+                "undo-file",
+                "Undo file",
+                variant="destructive",
+                is_disabled=self.path is None or self.against is not None,
+            ),
+            ui.button(
+                "undo",
+                "Undo checkpoint",
+                variant="destructive",
+                is_disabled=not has_change,
+            ),
+            ui.button(
+                "restore",
+                "Restore to here",
+                variant="destructive",
+                is_disabled=self.selected is None,
             ),
         ]
+        return [
+            ui.group(*scope, id="scope", label=self._scope_label()),
+            ui.button("refresh", "Refresh", icon="refresh"),
+            ui.group(*more, id="actions", label="More actions", icon="more"),
+        ]
+
+    def _old_revision(self) -> str:
+        """What the diff compares with: a git ref or the first checkpoint of the range."""
+        if self.against is not None:
+            return self.against_ref or self.against
+        return f"#{max(self.start, 0)}"
 
     def _diff(self, diffs: list[FileDiff], diffs_all, findings, end: int) -> dict:
         """The diff node of `diffs` with its toolbar and one thread for each finding on a line."""
@@ -412,7 +424,7 @@ class ReviewApp:
         return ui.diff(
             "diff",
             patch or "No change in this range.\n",
-            old_revision=self.against or f"#{max(self.start, 0)}",
+            old_revision=self._old_revision(),
             new_revision=f"#{end}"
             if self.end is not None and not self.against
             else "now",
@@ -814,7 +826,8 @@ def _off_lines(findings, diffs: list[FileDiff]) -> list[str]:
     return [
         f"{f.level} {f.check} {_where(f)}: {f.message[:500]}"
         for f in findings
-        if f.line < 1 or f.path not in shown
+        # The file list already marks an added binary file.
+        if (f.line < 1 or f.path not in shown) and f.check != "binary-file"
     ]
 
 

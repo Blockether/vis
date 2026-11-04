@@ -490,9 +490,14 @@
                            button-refusal)
             (:shortcuts view))
 
+          ;; The choice that holds now (`is_selected`) keeps its key, marked like a
+          ;; checked menu row.
           pairs
           (merged-pairs (mapv (fn [s]
-                                [(get key-glyphs (:key s) (:key s)) (shortcut-label view s)])
+                                [(get key-glyphs (:key s) (:key s))
+                                 (cond->> (shortcut-label view s)
+                                   (:is-selected (model/find-node view (:node-id s)))
+                                   (str "• "))])
                               enabled))]
 
       (if (model/stale? view)

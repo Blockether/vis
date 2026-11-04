@@ -225,12 +225,11 @@ export const Split: Story = {
   },
 };
 
-/** One file scroller moves every hunk when wrapping is off. */
+/** One file scroller moves every hunk when wrapping is off, as it is by default in T3 Code. */
 export const WrapOff: Story = {
   args: { view: review(), app },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { name: 'Wrap' }));
     await expect(canvas.getByRole('button', { name: 'Wrap' })).toHaveAttribute('aria-pressed', 'false');
   },
 };

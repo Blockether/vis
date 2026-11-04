@@ -1,0 +1,349 @@
+{
+ "placement": "attachment",
+ "title": "Review",
+ "nodes": [
+  {
+   "threads": [],
+   "patch": "diff --git a/assets/blob.bin b/assets/blob.bin\nBinary files differ\ndiff --git a/assets/logo.png b/assets/logo.png\nBinary files differ\ndiff --git a/assets/new_icon.png b/assets/new_icon.png\nnew file mode 100644\nBinary files differ\ndiff --git a/docs/README.md b/docs/README.md\n--- a/docs/README.md\n+++ b/docs/README.md\n@@ -1,3 +1,7 @@\n # Fixture\n \n A small project for diff checks.\n+\n+## Usage\n+\n+Run the tests with `pytest`.\ndiff --git a/pkg/mod_03.py b/pkg/mod_03.py\n--- a/pkg/mod_03.py\n+++ b/pkg/mod_03.py\n@@ -1 +1 @@\n-N = 3\n+N = 30\ndiff --git a/pkg/mod_07.py b/pkg/mod_07.py\n--- a/pkg/mod_07.py\n+++ b/pkg/mod_07.py\n@@ -1 +1 @@\n-N = 7\n+N = 70\ndiff --git a/src/calc.py b/src/calc.py\n--- a/src/calc.py\n+++ b/src/calc.py\n@@ -2,9 +2,16 @@\n     return a + b\n \n \n-def sub(a, b):\n+def subtract(a, b):\n+    \"\"\"Return a minus b.\"\"\"\n     return a - b\n \n \n def mul(a, b):\n     return a * b\n+\n+\n+def div(a, b):\n+    if b == 0:\n+        raise ZeroDivisionError('b is zero')\n+    return a / b\ndiff --git a/src/gone.py b/src/gone.py\ndeleted file mode 100644\n--- a/src/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-def unused():\n-    return None\ndiff --git a/src/greeting.py b/src/greeting.py\nnew file mode 100644\n--- /dev/null\n+++ b/src/greeting.py\n@@ -0,0 +1,5 @@\n+GREETING = 'hello'\n+\n+\n+def greet(name):\n+    return f'{GREETING}, {name}'\ndiff --git a/src/long.py b/src/long.py\n--- a/src/long.py\n+++ b/src/long.py\n@@ -48,7 +48,7 @@\n VALUE_47 = 47\n VALUE_48 = 48\n VALUE_49 = 49\n-VALUE_50 = 50\n+VALUE_50 = 5000\n VALUE_51 = 51\n VALUE_52 = 52\n VALUE_53 = 53\n@@ -298,7 +298,7 @@\n VALUE_297 = 297\n VALUE_298 = 298\n VALUE_299 = 299\n-VALUE_300 = 300\n+VALUE_300 = 'changed'\n VALUE_301 = 301\n VALUE_302 = 302\n VALUE_303 = 303\ndiff --git a/src/new_feature.py b/src/new_feature.py\nnew file mode 100644\n--- /dev/null\n+++ b/src/new_feature.py\n@@ -0,0 +1,6 @@\n+class Feature:\n+    def __init__(self, name: str) -> None:\n+        self.name = name\n+\n+    def enabled(self) -> bool:\n+        return bool(self.name)\ndiff --git a/src/old_name.py b/src/old_name.py\ndeleted file mode 100644\n--- a/src/old_name.py\n+++ /dev/null\n@@ -1,5 +0,0 @@\n-GREETING = 'hello'\n-\n-\n-def greet(name):\n-    return f'{GREETING}, {name}'\ndiff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -1,5 +1,6 @@\n export function clamp(value: number, low: number, high: number): number {\n+  if (low > high) throw new RangeError('low > high');\n   return Math.min(Math.max(value, low), high);\n }\n \n-export const VERSION = '1.0.0';\n+export const VERSION = '1.1.0';\ndiff --git a/src/wide.js b/src/wide.js\n--- a/src/wide.js\n+++ b/src/wide.js\n@@ -1 +1 @@\n-const message = 'this line is intentionally very long so that the wrap toggle has a visible effect in the diff panel when the window is narrow';\n+const message = 'this line is intentionally very long so that the wrap toggle has a visible effect in the diff panel when the narrow window is used';\ndiff --git a/tests/test_calc.py b/tests/test_calc.py\n--- a/tests/test_calc.py\n+++ b/tests/test_calc.py\n@@ -1,5 +1,9 @@\n-from src.calc import add\n+from src.calc import add, div\n \n \n def test_add():\n     assert add(1, 2) == 3\n+\n+\n+def test_div():\n+    assert div(6, 3) == 2\n",
+   "old_revision": "HEAD",
+   "new_revision": "now",
+   "children": [
+    {
+     "type": "group",
+     "direction": "column",
+     "children": [
+      {
+       "is_selected": false,
+       "label": "This session",
+       "is_disabled": false,
+       "type": "button",
+       "id": "session"
+      },
+      {
+       "is_selected": false,
+       "label": "All changes",
+       "is_disabled": false,
+       "type": "button",
+       "id": "all"
+      },
+      {
+       "is_selected": true,
+       "label": "Uncommitted",
+       "is_disabled": false,
+       "type": "button",
+       "id": "uncommitted"
+      },
+      {
+       "is_selected": false,
+       "label": "Latest change",
+       "is_disabled": true,
+       "type": "button",
+       "id": "latest"
+      },
+      {
+       "is_selected": false,
+       "label": "Against base branch",
+       "is_disabled": false,
+       "type": "button",
+       "id": "branch"
+      },
+      {
+       "type": "group",
+       "direction": "column",
+       "children": [
+        {
+         "is_selected": false,
+         "label": "#1 Review opened",
+         "is_disabled": false,
+         "type": "button",
+         "id": "checkpoint-1"
+        }
+       ],
+       "id": "checkpoints",
+       "label": "Checkpoint"
+      }
+     ],
+     "id": "scope",
+     "label": "Uncommitted"
+    },
+    {
+     "icon": "refresh",
+     "label": "Refresh",
+     "is_disabled": false,
+     "type": "button",
+     "id": "refresh"
+    },
+    {
+     "type": "group",
+     "direction": "column",
+     "children": [
+      {
+       "label": "Run checks",
+       "is_disabled": false,
+       "type": "button",
+       "id": "checks"
+      },
+      {
+       "label": "Run tests",
+       "is_disabled": false,
+       "type": "button",
+       "id": "tests"
+      },
+      {
+       "label": "AI review",
+       "is_disabled": false,
+       "type": "button",
+       "id": "ai"
+      },
+      {
+       "label": "Show full files",
+       "is_disabled": false,
+       "type": "button",
+       "id": "full"
+      },
+      {
+       "type": "group",
+       "direction": "column",
+       "children": [
+        {
+         "is_selected": true,
+         "label": "All files",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file-all"
+        },
+        {
+         "is_selected": false,
+         "label": "assets/blob.bin",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:assets/blob.bin"
+        },
+        {
+         "is_selected": false,
+         "label": "assets/logo.png",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:assets/logo.png"
+        },
+        {
+         "is_selected": false,
+         "label": "assets/new_icon.png",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:assets/new_icon.png"
+        },
+        {
+         "is_selected": false,
+         "label": "docs/README.md",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:docs/README.md"
+        },
+        {
+         "is_selected": false,
+         "label": "pkg/mod_03.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:pkg/mod_03.py"
+        },
+        {
+         "is_selected": false,
+         "label": "pkg/mod_07.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:pkg/mod_07.py"
+        },
+        {
+         "is_selected": false,
+         "label": "src/calc.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/calc.py"
+        },
+        {
+         "is_selected": false,
+         "label": "src/gone.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/gone.py"
+        },
+        {
+         "is_selected": false,
+         "label": "src/greeting.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/greeting.py"
+        },
+        {
+         "is_selected": false,
+         "label": "src/long.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/long.py"
+        },
+        {
+         "is_selected": false,
+         "label": "src/new_feature.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/new_feature.py"
+        },
+        {
+         "is_selected": false,
+         "label": "src/old_name.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/old_name.py"
+        },
+        {
+         "is_selected": false,
+         "label": "src/util.ts",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/util.ts"
+        },
+        {
+         "is_selected": false,
+         "label": "src/wide.js",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:src/wide.js"
+        },
+        {
+         "is_selected": false,
+         "label": "tests/test_calc.py",
+         "is_disabled": false,
+         "type": "button",
+         "id": "file:tests/test_calc.py"
+        }
+       ],
+       "id": "file",
+       "label": "All files"
+      },
+      {
+       "label": "Undo file",
+       "is_disabled": true,
+       "variant": "destructive",
+       "type": "button",
+       "id": "undo-file"
+      },
+      {
+       "label": "Undo checkpoint",
+       "is_disabled": true,
+       "variant": "destructive",
+       "type": "button",
+       "id": "undo"
+      },
+      {
+       "label": "Restore to here",
+       "is_disabled": true,
+       "variant": "destructive",
+       "type": "button",
+       "id": "restore"
+      }
+     ],
+     "id": "actions",
+     "label": "More actions",
+     "icon": "more"
+    }
+   ],
+   "type": "diff",
+   "id": "diff"
+  },
+  {
+   "type": "group",
+   "direction": "column",
+   "id": "images",
+   "children": [
+    {
+     "media_type": "image/png",
+     "data": "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAoCAIAAADBrGu+AAAAWUlEQVR4nO3PUQkAIBTAwBfCdEY0pSH8OITBAtxmnf11wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWPHYBzEfwl5JghzEAAAAASUVORK5CYII=",
+     "width": 64,
+     "height": 40,
+     "before": {
+      "media_type": "image/png",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAoCAIAAADBrGu+AAAAWUlEQVR4nO3PUQkAIBTAwBfHTGY3jCH8OITBAtxm7fN1wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWPHYBmp6sxEEsLVoAAAAASUVORK5CYII=",
+      "width": 64,
+      "height": 40
+     },
+     "alt": "The new version of assets/logo.png",
+     "label": "assets/logo.png (modified)",
+     "type": "image",
+     "id": "image-149272c65057"
+    },
+    {
+     "media_type": "image/png",
+     "data": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGN4ViFHU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULAEhc8ExXmMbVAAAAAElFTkSuQmCC",
+     "width": 32,
+     "height": 32,
+     "alt": "The new version of assets/new_icon.png",
+     "label": "assets/new_icon.png (added)",
+     "type": "image",
+     "id": "image-3c8368eb9cbc"
+    }
+   ],
+   "label": "Changed images"
+  }
+ ],
+ "description": "What changed, the checks and undo.",
+ "key": "review",
+ "shortcuts": [
+  {
+   "key": "1",
+   "node_id": "session"
+  },
+  {
+   "key": "2",
+   "node_id": "all"
+  },
+  {
+   "key": "3",
+   "node_id": "latest"
+  },
+  {
+   "key": "4",
+   "node_id": "uncommitted"
+  },
+  {
+   "key": "5",
+   "node_id": "branch"
+  },
+  {
+   "key": "F",
+   "node_id": "full"
+  },
+  {
+   "key": "R",
+   "node_id": "refresh"
+  },
+  {
+   "key": "C",
+   "node_id": "checks"
+  },
+  {
+   "key": "T",
+   "node_id": "tests"
+  },
+  {
+   "key": "A",
+   "node_id": "ai"
+  },
+  {
+   "key": "U",
+   "node_id": "undo-file"
+  },
+  {
+   "key": "Z",
+   "node_id": "undo"
+  },
+  {
+   "key": "B",
+   "node_id": "restore"
+  }
+ ],
+ "surfaces": {
+  "inline": false,
+  "session": "sidebar"
+ }
+}

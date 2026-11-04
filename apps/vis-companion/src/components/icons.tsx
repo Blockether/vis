@@ -6,18 +6,18 @@
  */
 import {
   AlignLeft,
-  FileDiff,
   File,
   FileCode2,
   FileText,
-  FilePlus2,
-  FileMinus2,
-  FileSymlink,
+  FlaskConicalOff,
+  FolderTree,
   Pilcrow,
-  TestTube2,
-  ListTree,
-  Rows2,
-  WrapText,
+  Rows3,
+  SquareChevronRight,
+  SquareDot,
+  SquareMinus,
+  SquarePlus,
+  TextWrap,
   Archive,
   ArrowDown,
   ArrowLeft,
@@ -44,6 +44,7 @@ import {
   Copy,
   Crop,
   Download,
+  Ellipsis,
   EllipsisVertical,
   Eraser,
   Focus,
@@ -444,12 +445,17 @@ export function SideBySideIcon({ className }: { className?: string }) {
 
 /** A diff drawn as one column: old and new lines one under the other. */
 export function UnifiedDiffIcon({ className }: { className?: string }) {
-  return <Mark icon={Rows2} className={className} />;
+  return <Mark icon={Rows3} className={className} />;
 }
 
 /** Long lines continue on the next row, not past the edge. */
 export function WrapIcon({ className }: { className?: string }) {
-  return <Mark icon={WrapText} className={className} />;
+  return <Mark icon={TextWrap} className={className} />;
+}
+
+/** More commands, in a menu. */
+export function MoreIcon({ className }: { className?: string }) {
+  return <Mark icon={Ellipsis} className={className} />;
 }
 
 /** Every file folds to its header. */
@@ -464,7 +470,7 @@ export function ExpandAllIcon({ className }: { className?: string }) {
 
 /** The files of a change as a tree of folders. */
 export function FileTreeIcon({ className }: { className?: string }) {
-  return <Mark icon={ListTree} className={className} />;
+  return <Mark icon={FolderTree} className={className} />;
 }
 
 /** One picture split by a line that moves: the old part on one side, the new on the other. */
@@ -605,16 +611,16 @@ export function DiffChangeIcon({
   kind: 'added' | 'deleted' | 'modified' | 'renamed';
   className?: string;
 }) {
-  const icons = { added: FilePlus2, deleted: FileMinus2, modified: FileDiff, renamed: FileSymlink };
+  const icons = { added: SquarePlus, deleted: SquareMinus, modified: SquareDot, renamed: SquareChevronRight };
   return <Mark icon={icons[kind]} className={className} />;
 }
 /** Whitespace changes in a review. */
 export function WhitespaceIcon({ className }: { className?: string }) {
   return <Mark icon={Pilcrow} className={className} />;
 }
-/** Test files in a review. */
+/** Test files in a review, crossed out: the press hides them. */
 export function TestFilesIcon({ className }: { className?: string }) {
-  return <Mark icon={TestTube2} className={className} />;
+  return <Mark icon={FlaskConicalOff} className={className} />;
 }
 
 /** A review tree shows the file type separately from its change status. */

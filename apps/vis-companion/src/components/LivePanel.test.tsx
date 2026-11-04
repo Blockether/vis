@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIVE_CHANGE_DEBOUNCE_MS, LiveViewPanel } from './LiveView';
-import { LivePanel } from './LivePanel';
+import { LivePanel, ResizablePanel, initialPanelWidth } from './LivePanel';
 import type { GatewayClient } from '../lib/gateway';
 import { liveInputNodes, liveViewFromWire, livePlacement, type LiveView } from '../lib/live-view';
 
@@ -97,6 +97,25 @@ const client = () =>
   }) as unknown as GatewayClient;
 
 describe('the side panel', () => {
+  // User report 2026-11-09: the review sidebar opened 384px wide, so the T3 Code style
+  // toolbar hid its menus; and the first width was stored, so no new default applied.
+  it('opens at 42% of the window within 360 to 560 px, and keeps only a width that the person chose', () => {
+    expect([800, 1280, 1600].map(initialPanelWidth)).toEqual([360, 538, 560]);
+    window.localStorage.clear();
+    vi.stubGlobal('innerWidth', 1280);
+    try {
+      render(<ResizablePanel>body</ResizablePanel>);
+      const edge = screen.getByRole('separator', { name: 'Resize live views' });
+      expect(edge.getAttribute('aria-valuenow')).toBe('538');
+      expect(window.localStorage.length).toBe(0);
+      fireEvent.keyDown(edge, { key: 'ArrowLeft' });
+      expect(edge.getAttribute('aria-valuenow')).toBe('554');
+      expect(window.localStorage.getItem('vis.live-panel.chosen-width')).toBe('554');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('shows one tab for each owner when views come from two extensions', () => {
     const views = [status('a', 'Deploy board', 'deploy'), status('b', 'Job queue', 'jobs')];
     render(<LivePanel views={views} client={client()} sid="s1" onClose={() => {}} />);
