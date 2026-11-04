@@ -320,7 +320,7 @@ function StatusRow({ node, action }: { node: LiveStatusNode; action?: ReactNode 
           <InlineMarkdown>{node.detail}</InlineMarkdown>
         </p>
       )}
-      {action && <div className="flex pt-2">{action}</div>}
+      {action && <div className="flex pt-4">{action}</div>}
     </div>
   );
 }
@@ -2141,7 +2141,7 @@ export function LiveViewPanel({
                   </span>
                 )}
                 {/* The stop follows the title and the description, never beside them. */}
-                {canInterrupt && <span className="flex pt-2">{stopButton}</span>}
+                {canInterrupt && <span className="flex pt-4">{stopButton}</span>}
               </span>
             )
           )}
