@@ -4,6 +4,7 @@ import {
   parseTracks,
   planRelease,
   playCall,
+  playToken,
   promoteBundle,
   publishBundle,
   TESTING_TRACKS,
@@ -172,6 +173,24 @@ describe('playCall', () => {
     await expect(request()).rejects.toThrow(/403 no access/);
     expect(seen).toHaveLength(1);
     expect(waits).toEqual([]);
+  });
+});
+
+describe('playToken', () => {
+  // Regression, release runs of v0.5.1 and v0.5.2: Google closed the token connection
+  // once ("other side closed"), and the signed Android bundle was never published.
+  it('retries a closed token connection', async () => {
+    const closed = Object.assign(new TypeError('fetch failed'), {
+      cause: { code: 'UND_ERR_SOCKET' },
+    });
+    const seen = transport(closed, token());
+
+    await expect(
+      playToken(serviceAccount, { wait: async (ms) => void waits.push(ms) }),
+    ).resolves.toEqual({ token: 'tok', account: 'releases@example.com' });
+
+    expect(seen).toHaveLength(2);
+    expect(waits).toEqual([1_000]);
   });
 });
 

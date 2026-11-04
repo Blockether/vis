@@ -32,7 +32,7 @@ const base64url = (buf) =>
  * The same key serves a second surface: pass the Reporting scope and the token reads Vitals
  * (scripts/android-crashes.mjs), which androidpublisher cannot see at all.
  */
-export const playToken = async (serviceAccount, { scope = SCOPE } = {}) => {
+export const playToken = async (serviceAccount, { scope = SCOPE, wait = sleep } = {}) => {
   const sa = typeof serviceAccount === 'string' ? JSON.parse(serviceAccount) : serviceAccount;
   if (sa.type !== 'service_account' || !sa.private_key || !sa.client_email) {
     throw new Error(
@@ -55,18 +55,33 @@ export const playToken = async (serviceAccount, { scope = SCOPE } = {}) => {
   );
   const assertion = `${header}.${claims}.${signature}`;
 
-  const res = await fetch(sa.token_uri ?? 'https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion,
-    }),
-  });
-  const json = await res.json();
-  if (!res.ok)
-    throw new Error(`Google OAuth → ${res.status} ${json.error_description ?? json.error ?? ''}`);
-  return { token: json.access_token, account: sa.client_email };
+  for (let n = 0; ; n += 1) {
+    let res;
+    let json;
+    try {
+      res = await fetch(sa.token_uri ?? 'https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+          assertion,
+        }),
+      });
+      json = parseJson(await res.text());
+    } catch (cause) {
+      const code = cause.cause?.code ? ` (${cause.cause.code})` : '';
+      if (n >= BACKOFF_MS.length)
+        throw new Error(`Google OAuth → ${cause.message}${code}`, { cause });
+      await wait(BACKOFF_MS[n]);
+      continue;
+    }
+    if (res.ok) return { token: json.access_token, account: sa.client_email };
+    const err = new Error(
+      `Google OAuth → ${res.status} ${json.error_description ?? json.error ?? ''}`,
+    );
+    if (!RETRYABLE.has(res.status) || n >= BACKOFF_MS.length) throw err;
+    await wait(BACKOFF_MS[n]);
+  }
 };
 
 const parseJson = (text) => {
