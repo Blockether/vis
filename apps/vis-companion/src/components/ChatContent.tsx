@@ -19,7 +19,7 @@ import {
 } from 'react';
 import Prism from '../lib/prism-core';
 import { ArtifactLinkContext } from '../lib/artifact-links';
-import { useClampMotion } from '../lib/clamp-motion';
+import { CLAMP_CLASS, useClampMotion } from '../lib/clamp-motion';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunDialog, LiveRunRow, liveRunName } from './LiveArtifact';
@@ -4961,9 +4961,14 @@ function CouncilRequestBody({ children }: { children: string }) {
     const body = bodyRef.current;
     if (!body) return;
     const measure = () => {
-      if (isPaintSkipped(body)) return;
-      const lineHeight = Number.parseFloat(window.getComputedStyle(body).lineHeight) || 20;
-      const overflows = body.scrollHeight > lineHeight * 4 + 1;
+      // A sliding body has the slide's height, not its own.
+      if (isPaintSkipped(body) || body.getAnimations?.().length) return;
+      // Ask the clamp itself whether it cuts text. Each authored line is a block with a
+      // gap, so four short lines were taller than four line heights and got a toggle.
+      const isClamped = body.classList.contains(CLAMP_CLASS);
+      if (!isClamped) body.classList.add(CLAMP_CLASS);
+      const overflows = body.scrollHeight > body.clientHeight + 1;
+      if (!isClamped) body.classList.remove(CLAMP_CLASS);
       return () => setCollapsible(overflows);
     };
     measure()?.();

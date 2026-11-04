@@ -358,6 +358,22 @@ describe('request speaker labels', () => {
     }
   });
 
+  // User report 2026-11-04, Council thread #2509: a reply of four short lines showed "Show less"
+  // with no more text. Its line gaps made it taller than four line heights, but the clamp cut nothing.
+  it('shows no disclosure when the four-line clamp cuts nothing', () => {
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(110);
+    const client = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(110);
+    try {
+      const view = render(
+        <UserMessage requestKind="council">{'Line one\nLine two\nLine three\nLine four'}</UserMessage>,
+      );
+      expect(view.queryByRole('button', { name: 'Show full message' })).toBeNull();
+    } finally {
+      scroll.mockRestore();
+      client.mockRestore();
+    }
+  });
+
   // User report 2026-10-31, Council thread #8805: the request showed raw backticks and
   // ran a plain line after a list into the last list item.
   it('renders Council Markdown and keeps each authored line as its own block', () => {
