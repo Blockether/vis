@@ -84,10 +84,13 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
                             type="button"
                             title={failure.message}
                             onClick={() => jumpToTurn(failure.turnId)}
-                            className="grid min-h-8 w-full grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-3 text-left mouse:min-h-6 mouse:hover:text-accent-ink"
+                            className="flex min-h-8 w-full min-w-0 items-baseline gap-2 text-left mouse:min-h-6 mouse:hover:text-accent-ink"
                           >
-                            <span className="tabular-nums text-dialog-hint">{failure.scope}</span>
-                            <span className="truncate text-err">{failure.message}</span>
+                            <span className="shrink-0 tabular-nums text-dialog-hint">{failure.scope}</span>
+                            <span className="shrink-0 text-dialog-hint" aria-hidden="true">
+                              ·
+                            </span>
+                            <span className="min-w-0 truncate text-err">{failure.message}</span>
                           </button>
                           {failure.code && (
                             <div className="mt-1 max-h-72 overflow-auto bg-code px-3 py-2">
