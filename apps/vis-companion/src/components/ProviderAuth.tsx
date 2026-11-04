@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { onRouterRefresh, type GatewayClient } from '../lib/gateway';
 import type {
   AuthFlow,
@@ -1075,9 +1075,9 @@ export function ProviderNotice({
  */
 export function presetHint(preset: ProviderPreset): string {
   if (preset.is_local) return 'Local runtime';
-  if (preset.auth_kind === 'oauth') return 'Sign in with your account';
-  if (preset.auth_kind === 'command') return 'Credential minted on that machine';
-  return 'Needs an API key';
+  if (preset.auth_kind === 'oauth') return 'Sign in';
+  if (preset.auth_kind === 'command') return 'Machine credential';
+  return 'API key';
 }
 
 /**
@@ -1165,91 +1165,109 @@ export function AddProviderPicker({ auth, onClose }: { auth: ProviderAuth; onClo
 
   if (chosen)
     return (
-      <div className="space-y-3 bg-panel-2 p-3">
-        <div className="space-y-2">
-          <label className="block" htmlFor="add-provider-base-url">
-            <Text variant="label">Where {chosen.label} listens on that machine</Text>
-          </label>
-          <Input
-            id="add-provider-base-url"
-            value={baseUrl}
-            inputMode="url"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
-            onChange={(event) => setBaseUrl(event.target.value)}
-          />
-          <Text as="p" variant="description" className="break-words">
-            Leave it blank for {chosen.base_url ?? 'the default'}. The gateway resolves this
-            address, not this device.
-          </Text>
+      <AddProviderBand>
+        <div className="space-y-3 px-3 pb-3 sm:px-4">
+          <div className="space-y-2">
+            <label className="block" htmlFor="add-provider-base-url">
+              <Text variant="label">Where {chosen.label} listens on that machine</Text>
+            </label>
+            <Input
+              id="add-provider-base-url"
+              value={baseUrl}
+              inputMode="url"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
+              onChange={(event) => setBaseUrl(event.target.value)}
+            />
+            <Text as="p" variant="description" className="break-words">
+              Leave it blank for {chosen.base_url ?? 'the default'}. The gateway resolves this
+              address, not this device.
+            </Text>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              className="flex-1"
+              disabled={busy}
+              onClick={() => {
+                void (async () => {
+                  await auth.addProvider(chosen, baseUrl.trim() || undefined);
+                  setBaseUrl('');
+                  onClose();
+                })();
+              }}
+            >
+              {busy ? 'Adding…' : `Add ${chosen.label}`}
+            </Button>
+            <Button
+              variant="secondary"
+              className="flex-1"
+              disabled={busy}
+              onClick={() => setChosen(null)}
+            >
+              Back
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
-            className="flex-1"
-            disabled={busy}
-            onClick={() => {
-              void (async () => {
-                await auth.addProvider(chosen, baseUrl.trim() || undefined);
-                setBaseUrl('');
-                onClose();
-              })();
-            }}
-          >
-            {busy ? 'Adding…' : `Add ${chosen.label}`}
-          </Button>
-          <Button
-            variant="secondary"
-            className="flex-1"
-            disabled={busy}
-            onClick={() => setChosen(null)}
-          >
-            Back
-          </Button>
-        </div>
-      </div>
+      </AddProviderBand>
     );
 
   return (
-    <div className="space-y-2 bg-panel-2 p-3">
-      {presets.map((preset) => {
-        const adding = pending === `add:${preset.id}`;
-        return (
-          <ListRow
-            key={preset.id}
-            isFramed
-            density="compact"
-            disabled={adding}
-            onClick={() => {
-              if (preset.is_local) {
-                setBaseUrl('');
-                setChosen(preset);
-                return;
-              }
-              void (async () => {
-                await auth.addProvider(preset);
-                onClose();
-              })();
-            }}
-          >
-            {/* ONE LINE, AND THE WHOLE ROW IS THE PRESS. A trailing plus or
-                chevron only repeated what pressing the row already does, so what
-                the pick asks for next rides the name's own line instead — and
-                drops to a line of its own only where it cannot fit beside it. */}
-            <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
-              <Text variant="label" className="min-w-0 flex-auto truncate">
-                {preset.label}
-              </Text>
-              {/* Alignment is the call site's; the type is `Text`'s own. */}
-              <span className="ms-auto min-w-0 max-w-full truncate text-right">
-                <Text variant="meta">{adding ? 'Adding…' : presetHint(preset)}</Text>
+    <AddProviderBand>
+      <div className="space-y-2 px-3 pb-3 sm:px-4">
+        {presets.map((preset) => {
+          const adding = pending === `add:${preset.id}`;
+          return (
+            <ListRow
+              key={preset.id}
+              isFramed
+              density="compact"
+              disabled={adding}
+              onClick={() => {
+                if (preset.is_local) {
+                  setBaseUrl('');
+                  setChosen(preset);
+                  return;
+                }
+                void (async () => {
+                  await auth.addProvider(preset);
+                  onClose();
+                })();
+              }}
+            >
+              {/* ONE LINE, AND THE WHOLE ROW IS THE PRESS. What the pick asks for
+                  next rides the name's line and never wraps under it: a long name
+                  such as "Anthropic (Claude Subscription)" truncates instead. */}
+              <span className="flex min-w-0 flex-1 items-baseline gap-3">
+                <Text variant="label" className="min-w-0 flex-1 truncate" title={preset.label}>
+                  {preset.label}
+                </Text>
+                <Text variant="meta" className="shrink-0">
+                  {adding ? 'Adding…' : presetHint(preset)}
+                </Text>
               </span>
-            </span>
-          </ListRow>
-        );
-      })}
-    </div>
+            </ListRow>
+          );
+        })}
+      </div>
+    </AddProviderBand>
+  );
+}
+
+/**
+ * THE OFFERS STAND IN THEIR OWN NAMED, TINTED BLOCK. `bg-panel-2` equals the panel
+ * in the shipped themes, so the offers read as more accounts. Reported over a
+ * phone screenshot: the plus's list must look apart from the active providers.
+ */
+function AddProviderBand({ children }: { children: ReactNode }) {
+  return (
+    <section className="bg-level-project">
+      <Text as="h5" variant="group" className="block px-3 pb-2 pt-3 sm:px-4">
+        Add a provider
+      </Text>
+      {children}
+    </section>
   );
 }
 
