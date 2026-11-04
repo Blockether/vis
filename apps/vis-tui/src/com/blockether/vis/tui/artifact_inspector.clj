@@ -1031,7 +1031,7 @@
                                            (download-thumbnail session-id row))))
                (delay (if (and (:width image) (:height image))
                         {:path path :mime media-type :width (:width image) :height (:height image)}
-                        (some-> path
+                        (some-> ^String path
                                 File.
                                 (picture media-type)))))
 

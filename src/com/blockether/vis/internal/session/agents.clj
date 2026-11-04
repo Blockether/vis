@@ -849,7 +849,9 @@
       (loop []
 
         (let [left (- until (util/now-ms))]
-          (when (and (= gens (signal-gens ks)) (pos? left)) (.wait team-signal left) (recur)))))))
+          (when (and (= gens (signal-gens ks)) (pos? left))
+            (.wait ^Object team-signal (long left))
+            (recur)))))))
 
 (defn council-inserted!
   "A Council entry was stored: wake the questions that wait on its thread or on the entry that it

@@ -1083,8 +1083,8 @@
       group (resolve-group-key key c group state)
       ;; C-x p → command palette. A PLAIN `p` is the advertised trigger; a Ctrl'd
       ;; second key (C-x C-p) is also accepted for old muscle memory.
-      (and c (= (Character/toLowerCase ^char c) keymap/prefix-palette-key)) {:action :show-palette
-                                                                             :state state}
+      (and c (= (Character/toLowerCase ^char c) (char keymap/prefix-palette-key)))
+      {:action :show-palette :state state}
       (and c (keymap/prefix-group-for c)) {:action :continue
                                            :state (assoc state
                                                     :prefix :cx
