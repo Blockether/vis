@@ -3,9 +3,9 @@
    artifacts, and its activity pages and exports."
   (:require [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.transcript-export :as transcript-export]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util]
@@ -63,28 +63,28 @@
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- transcript-md-handler
-  "Render a session's user/assistant dialog as Markdown — the canonical
-   `transcript->md :dialog` every surface (CLI, web, file export) renders
-   through — served as text so a channel can DISPLAY it without re-implementing
-   transcript rendering client-side."
+  "Render a session as the Markdown export (`transcript-export/md`): each turn as the Compact
+   mode of the session screen shows it. Every surface (CLI, `/export`, TUI viewer) exports
+   through it, so a channel can show it without its own transcript renderer."
   [request]
-  (if-let [sid (http/path-sid request)]
-    {:status 200
-     :headers {"Content-Type" "text/markdown; charset=utf-8"}
-     :body (str (transcript/transcript-md (lp/db-info) sid {:mode :dialog}))}
+  (if-let [body (some-> (http/path-sid request)
+                        transcript-export/md)]
+    {:status 200 :headers {"Content-Type" "text/markdown; charset=utf-8"} :body body}
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- transcript-html-handler
-  "Render a session's transcript as a STANDALONE HTML document — the canonical
-   `transcript->html` every surface (CLI, web, file export) renders through, the
-   HTML sibling of `transcript-md-handler`. `:dialog` when `?mode=dialog`, else
-   the full forensic report."
+  "Render a session as the standalone HTML export: the Companion's own transcript
+   page with the session's rows in it (`transcript-export/html`). Every surface (CLI,
+   `/export`, SDK) exports through it. A gateway without the web app answers 503."
   [request]
   (if-let [sid (http/path-sid request)]
-    (let [mode (if (= "dialog" (get-in request [:query-params "mode"])) :dialog :full)]
-      {:status 200
-       :headers {"Content-Type" "text/html; charset=utf-8"}
-       :body (str (transcript/transcript-html (lp/db-info) sid {:mode mode}))})
+    (try (if-let [html (transcript-export/html sid)]
+           {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"} :body html}
+           (http/session-404 (get-in request [:path-params :sid])))
+         (catch clojure.lang.ExceptionInfo error
+           (if (= :transcript-export/no-template (:type (ex-data error)))
+             (http/error-response 503 "web_app_missing" (ex-message error))
+             (throw error))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- activity-page-request

@@ -1332,18 +1332,3 @@
               "--level-machine" (rgb->css bg)
               "--level-project" (rgb->css bg)
               "--page" (rgb->css bg)}))))
-
-(defn web-css-root
-  "A `:root{...}` CSS block for a theme id (or theme map): every shared
-   var from `theme->web-css-vars` plus `color-scheme`, ready to serve
-   AFTER the static stylesheet so it overrides the baked-in defaults."
-  [theme-or-id]
-  (let [theme-map (if (map? theme-or-id) theme-or-id (theme theme-or-id))]
-    (str ":root{"
-         (->> (theme->web-css-vars theme-map)
-              (map (fn [[k v]]
-                     (str k ":" v)))
-              (str/join ";"))
-         ";color-scheme:"
-         (name (:mode theme-map :light))
-         "}")))

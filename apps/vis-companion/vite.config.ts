@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
-import { defineConfig, type PreviewServer } from 'vite';
+import { defineConfig, type Plugin, type PreviewServer } from 'vite';
 import pkg from './package.json' with { type: 'json' };
 import {
   devConnectionStorageScript,
@@ -14,6 +14,38 @@ import {
 import { companionBuildInfo } from './scripts/build-info.ts';
 
 const buildInfo = companionBuildInfo();
+// `vite build --mode export` writes the HTML transcript export template (`transcript-export.html`)
+// beside the web bundle. The engine copies that one file and writes a session's JSON into it, so
+// the page must hold all its code, styles and fonts: an export opens without a gateway or network.
+const EXPORT_PAGE = 'transcript-export.html';
+function inlineExportPage(): Plugin {
+  return {
+    name: 'vis-export-single-file',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      const page = bundle[EXPORT_PAGE];
+      if (!page || page.type !== 'asset') throw new Error(`export build: ${EXPORT_PAGE} is missing`);
+      let html = String(page.source);
+      for (const [name, file] of Object.entries(bundle)) {
+        if (file.type === 'chunk' && file.isEntry) {
+          // Module scripts run after the parse, as the external file did. `</script` would end the element.
+          const code = file.code.replaceAll('</script', '<\\/script');
+          html = html.replace(new RegExp(`<script type="module" crossorigin src="[^"]*${name}"></script>`), () => `<script type="module">${code}</script>`);
+          delete bundle[name];
+        } else if (file.type === 'asset' && name.endsWith('.css')) {
+          html = html.replace(new RegExp(`<link rel="stylesheet" crossorigin href="[^"]*${name}">`), () => `<style>${String(file.source)}</style>`);
+          delete bundle[name];
+        }
+      }
+      const left = Object.keys(bundle).filter((name) => name !== EXPORT_PAGE);
+      if (left.length > 0 || /<script[^>]+src=|<link[^>]+stylesheet/.test(html)) {
+        throw new Error(`export build: files are not inlined: ${left.join(', ')}`);
+      }
+      page.source = html;
+    },
+  };
+}
 // The dev page imports only Vite's client here, never the app, so it runs when the app cannot.
 const DEV_BLANK_PAGE_RECOVERY = [
   "import { createHotContext } from '/@vite/client';",
@@ -53,7 +85,22 @@ export default defineConfig(async ({ command, mode }) => {
     build:
       mode === 'perf'
         ? { outDir: 'dist-perf', minify: false, sourcemap: true }
-        : { outDir: mode === 'web' ? 'dist-web' : 'dist' },
+        : mode === 'export'
+          ? {
+              outDir: 'dist-web',
+              // `build:web` writes the web bundle first; the export page joins it.
+              emptyOutDir: false,
+              assetsInlineLimit: () => true,
+              cssCodeSplit: false,
+              modulePreload: false,
+              copyPublicDir: false,
+              rolldownOptions: {
+                input: resolve(import.meta.dirname, EXPORT_PAGE),
+                output: { codeSplitting: false },
+              },
+            }
+          : { outDir: mode === 'web' ? 'dist-web' : 'dist' },
+    ...(mode === 'export' ? { base: './' } : {}),
     // The preview page carries the same bearer tokens as the dev page: loopback only.
     preview: { host: '127.0.0.1', port: 5274 },
     plugins: [
@@ -110,6 +157,7 @@ export default defineConfig(async ({ command, mode }) => {
           return children ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }] : [];
         },
       },
+      ...(mode === 'export' ? [inlineExportPage()] : []),
       react(),
       // React Compiler is this app's React checker AND its optimizer: it runs the
       // full Rules-of-React static analysis (purity, immutability, hook rules,

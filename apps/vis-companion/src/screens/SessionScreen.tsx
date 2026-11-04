@@ -18,6 +18,13 @@ import {
   transcriptEnterClass,
   UserMessage,
 } from '../components/ChatContent';
+import {
+  OUTLINE_MIN_TURNS,
+  OUTLINE_RAIL_CLASS,
+  StoredTurnRow,
+  TRANSCRIPT_SCROLLER_CLASS,
+  transcriptColumnClass,
+} from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
@@ -5034,45 +5041,26 @@ export function SessionScreen({
 
   const turnRows = useMemo(
     () =>
-      visibleTurns.map((turn, index) => {
-        const request = turn.request ?? '';
-        // A turn skips its own paint, in `AssistantMessage`
-        // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
-        // stands in for has to be the one that turn MEASURED, and a wrapper
-        // knows nothing about it. The 480px intrinsic-size guess that used to
-        // live here is what rendered white placeholder bands and shifted the
-        // scroll position when you flew up into a turn on iOS.
-        return (
-          <div className={index === 0 ? '' : 'mt-10'} key={turn.turn_id} data-turn-id={turn.turn_id}>
-            {(request || (turn.attachments?.length ?? 0) > 0) && !isChildWake(turn.request_kind, turn.council) && (
-              <UserMessage
-                position={turn.position}
-                createdAt={turn.created_at}
-                requestKind={turn.request_kind}
-                council={turn.council}
-                attachments={turn.attachments}
-              >
-                {request}
-              </UserMessage>
-            )}
-            <AssistantMessage
-              agentName={session?.agent_name}
-              turn={turn}
-              onFork={turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined}
-              isForking={forkingTurnId === turn.turn_id}
-              settled={turnsSettled || hasRunningTurn || index < visibleTurns.length - 1}
-              // The row that just replaced the running-turn bubble inherits a trace the
-              // reader is looking at: it mounts whole instead of ramping the
-              // transcript back down to a screenful and up again.
-              whole={handedOverRowId !== '' && rowId(turn) === handedOverRowId}
-              client={client}
-              sid={sid}
-              onOpenAttachment={openLinkedArtifact}
-              team={teamFor(turn.turn_id, storedLeaderLane(turn))}
-            />
-          </div>
-        );
-      }),
+      visibleTurns.map((turn, index) => (
+        <StoredTurnRow
+          key={turn.turn_id}
+          turn={turn}
+          isFirst={index === 0}
+          hidesRequest={isChildWake(turn.request_kind, turn.council)}
+          agentName={session?.agent_name}
+          onFork={turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined}
+          isForking={forkingTurnId === turn.turn_id}
+          settled={turnsSettled || hasRunningTurn || index < visibleTurns.length - 1}
+          // The row that just replaced the running-turn bubble inherits a trace the
+          // reader is looking at: it mounts whole instead of ramping the
+          // transcript back down to a screenful and up again.
+          whole={handedOverRowId !== '' && rowId(turn) === handedOverRowId}
+          client={client}
+          sid={sid}
+          onOpenAttachment={openLinkedArtifact}
+          team={teamFor(turn.turn_id, storedLeaderLane(turn))}
+        />
+      )),
     [
       teamFor,
       isChildWake,
@@ -5433,7 +5421,7 @@ export function SessionScreen({
   const outlineTotal = earlierRemaining + outlineEntries.length;
   // The gutter beside the text comes from the turns that the veil already holds, so the
   // reveal keeps the width of every line. Only the rail waits for the veil to drop.
-  const outlineGutter = !zen && outlineTotal >= 2;
+  const outlineGutter = !zen && outlineTotal >= OUTLINE_MIN_TURNS;
   const showsOutline = !loading && outlineGutter;
   const readOutline = (signal: AbortSignal) =>
     client
@@ -5810,7 +5798,7 @@ export function SessionScreen({
             actually wants: one short phase message, not the entire log re-scanned. */}
             <div
               ref={scrollRef}
-              className={`@container/transcript min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 [overflow-anchor:none] ${zen ? '' : 'bg-ink'}`}
+              className={`${TRANSCRIPT_SCROLLER_CLASS} ${zen ? '' : 'bg-ink'}`}
               data-keeps-reading-position
               onClickCapture={handleDisclosureClick}
               onScroll={handleScroll}
@@ -5822,11 +5810,7 @@ export function SessionScreen({
             >
               <div
                 ref={transcriptRef}
-                className={`transcript-column mx-auto min-h-full w-full pt-4 sm:pt-6 ${zen ? 'zen-column' : 'max-w-3xl mouse:max-w-6xl'} ${outlineGutter ? 'has-outline' : ''} ${
-                  !turns.length && !runningTurn
-                    ? 'flex flex-col pb-4 sm:pb-6'
-                    : 'flex flex-col justify-end pb-10'
-                }`}
+                className={transcriptColumnClass({ zen, outline: outlineGutter, empty: !turns.length && !runningTurn })}
               >
                 {error && <Banner kind="err">{error}</Banner>}
 
@@ -5890,10 +5874,7 @@ export function SessionScreen({
               </div>
             </div>
             {showsOutline && (
-              // The rail stands in the gutter that `has-outline` keeps beside the text,
-              // centred on the transcript, and never in the unsafe edge of a notched phone.
-              // A narrow screen has no gutter: the rail stands over the text, hidden.
-              <div className="pointer-events-none absolute inset-0 z-10 mx-auto flex max-w-3xl items-center justify-end pr-[env(safe-area-inset-right)] mouse:max-w-6xl">
+              <div className={OUTLINE_RAIL_CLASS}>
                 <TranscriptOutline
                   key={sid}
                   className="pointer-events-auto"

@@ -8,8 +8,8 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.gateway.transcript-export :as transcript-export]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -262,14 +262,6 @@
     (commandline/stdout! "")
     (shutdown-agents)))
 
-(defn- export-html-str
-  "Standalone, vis-light-styled HTML transcript for a session — the canonical
-   `transcript/transcript-html` render (DB lookup + summary card + turn-by-turn
-   forensic body, all CSS inlined), the SAME renderer every other surface
-   (`/export`, gateway, companion) uses. No extra extension required."
-  [db sid]
-  (transcript/transcript-html db sid))
-
 (defn- resolve-out-path
   "Resolve a user-supplied output path against the invocation directory.
    `bin/vis-agent` runs the JVM source runtime from its source root (so
@@ -430,10 +422,13 @@
           html-path (let [target (io/file html-path)]
                       (when-let [parent (.getParentFile ^java.io.File target)]
                         (.mkdirs parent))
-                      (spit target (export-html-str d (:id session)))
+                      (spit target
+                            (or (try (transcript-export/html (:id session))
+                                     (catch clojure.lang.ExceptionInfo e (refuse! (ex-message e))))
+                                (refuse! (str "No session " (:id session)))))
                       (commandline/stdout! (str "Exported HTML: "
                                                 (paths/abbreviate-home (.getPath target)))))
-          :else (commandline/write-stdout! (transcript/transcript-md d (:id session))))
+          :else (commandline/write-stdout! (transcript-export/md (:id session))))
     (shutdown-agents)))
 
 (defn- cli-import-session!

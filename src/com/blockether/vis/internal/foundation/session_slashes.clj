@@ -11,18 +11,17 @@
    title mutation point."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.foundation.transcript :as transcript]
+            [com.blockether.vis.internal.gateway.transcript-export :as transcript-export]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.session.goals :as goals]))
 
 (defn- render-transcript
-  "Render a session's transcript as Markdown (`:md`) or a STANDALONE,
-   vis-light-styled HTML document (`:html`). Reuses the canonical
-   `transcript-md`/`transcript-html` renderers in foundation.transcript —
-   one DB-lookup-plus-render surface (also degrades to a `Session not found`
-   string instead of throwing), no web extension required."
-  [db sid fmt]
-  (if (= fmt :html) (transcript/transcript-html db sid) (transcript/transcript-md db sid)))
+  "Render a session's transcript as the Markdown of the web app's Compact mode (`:md`, see
+   [[transcript-export/md]]) or as its standalone HTML page (`:html`, see
+   [[transcript-export/html]]). The HTML export throws when the web app is not built."
+  [sid fmt]
+  (or (if (= fmt :html) (transcript-export/html sid) (transcript-export/md sid))
+      (str "Session not found: " sid)))
 
 (defn- path->fmt
   "Infer the export format from a target path's extension: `.html`/`.htm`
@@ -88,13 +87,16 @@
                       target
                       (io/file fname)]
 
-                  (when-let [parent (.getParentFile ^java.io.File target)]
-                    (.mkdirs parent))
-                  (spit target (render-transcript db sid fmt))
-                  {:slash/status :ok
-                   :slash/title (str "Exported " (str/upper-case ext)
-                                     " transcript to " (.getPath target))
-                   :slash/data {:session-id sid :path (.getPath target) :format fmt}}))))
+                  (if-let [failure (try (when-let [parent (.getParentFile ^java.io.File target)]
+                                          (.mkdirs parent))
+                                        (spit target (render-transcript sid fmt))
+                                        nil
+                                        (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+                    (err failure)
+                    {:slash/status :ok
+                     :slash/title (str "Exported " (str/upper-case ext)
+                                       " transcript to " (.getPath target))
+                     :slash/data {:session-id sid :path (.getPath target) :format fmt}})))))
 
 (defn- handle-export
   "`/export [path]` — write this session's transcript to a file, format chosen

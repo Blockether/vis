@@ -308,15 +308,11 @@
                                     :forms [{:scope "t1/i1/f1" :tag :mutation :src code}]})
                (persistance/db-update-session-turn! s qid {:status :done})
                (let [data (transcript/transcript s cid)
-                     out (transcript/transcript->md data)
-                     html (transcript/transcript->html data)]
+                     out (transcript/transcript->md data)]
 
                  (expect (str/includes? out "````python\n"))
                  (expect (str/includes? out inner))
-                 (expect (str/includes? out "\n````\n"))
-                 (expect (= 1 (count (re-seq #"<pre><code" html))))
-                 (expect (str/includes? html "<code class=\"language-python\">"))
-                 (expect (str/includes? html "```clojure"))))
+                 (expect (str/includes? out "\n````\n"))))
              (finally (persistance/db-dispose-connection! s))))))
 
   ;; Removed: "renders header + per-turn block + per-iteration block

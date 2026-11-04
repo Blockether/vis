@@ -1031,8 +1031,8 @@
                      "/transcript" (when (seq qs) (str "?" (str/join "&" qs)))))))
 
 (defn transcript-md
-  "The gateway-rendered user/assistant dialog Markdown for `sid` — the canonical
-   `transcript->md :dialog`. Returns the string, or nil on a non-2xx."
+  "The gateway's Markdown export of `sid` (`transcript-export/md`): each turn as the
+   Compact mode of the session screen shows it. Returns the string, or nil on a non-2xx."
   [sid]
   (let [entry
         (target!)
@@ -1046,9 +1046,8 @@
     (when (< (long (:status response)) 400) (:body response))))
 
 (defn transcript-html
-  "The gateway-rendered STANDALONE HTML transcript for `sid` — the canonical
-   `transcript->html`, the HTML sibling of `transcript-md`. Returns the string,
-   or nil on a non-2xx."
+  "The standalone HTML export of `sid`: the web app's own transcript page with the
+   session in it, rendered by the gateway. Returns the string, or nil on a non-2xx."
   [sid]
   (let [entry
         (target!)

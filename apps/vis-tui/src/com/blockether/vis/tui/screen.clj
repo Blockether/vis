@@ -6643,9 +6643,9 @@
       (state/dispatch [:reasoning-unconfigurable]))))
 
 (defn- export-dialog-md
-  "Markdown dialog document for the bare `/export` viewer, fetched from the
-   GATEWAY's canonical `transcript->md :dialog` renderer — the SAME output every
-   surface (CLI, web, file export) produces — instead of re-rendering the
+  "Markdown document for the bare `/export` viewer, fetched from the GATEWAY's Markdown
+   export (`transcript-export/md`) — the SAME output every surface (CLI, `/export`
+   file) produces — instead of re-rendering the
    conversation client-side. Falls back to a placeholder when the session has no
    persisted transcript yet (e.g. a brand-new chat)."
   []

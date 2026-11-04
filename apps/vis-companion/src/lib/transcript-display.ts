@@ -3,6 +3,15 @@ import { useSyncExternalStore } from 'react';
 
 const CHANGE = 'vis:transcript-display';
 let storageWritable = true;
+let pinned = false;
+
+/**
+ * Show every switch at its starting value and never read storage. The HTML export calls this, so
+ * an export always shows Compact steps with their code, whatever this browser chose before.
+ */
+export function pinTranscriptDisplay(): void {
+  pinned = true;
+}
 
 function subscribe(changed: () => void): () => void {
   globalThis.addEventListener?.(CHANGE, changed);
@@ -20,6 +29,7 @@ function subscribe(changed: () => void): () => void {
 function displaySwitch(key: string, words: { on: string; off: string }, initial: boolean) {
   let fallback = initial;
   const read = (): boolean => {
+    if (pinned) return initial;
     try {
       if (!storageWritable || !globalThis.localStorage) return fallback;
       const stored = localStorage.getItem(key);

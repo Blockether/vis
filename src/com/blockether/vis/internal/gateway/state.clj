@@ -7406,6 +7406,12 @@
             child
             (filter #(= (:team_id child) (:team_id %)))))))
 
+(defn agent-rows
+  "The team rows of session `sid`, as `GET /v1/sessions/:sid/agents` answers them. A read of the
+   store only, so it runs in a process without a gateway, as an export does."
+  [sid]
+  (agent-list {:db-info (lp/db-info) :session-id (str sid)} {}))
+
 (defn- agent-model!
   [router provider model]
   (let [pair

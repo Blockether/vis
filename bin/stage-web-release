@@ -5,7 +5,7 @@
 #   bin/stage-web-release apps/vis-companion/dist-web vis-web.tar.gz
 #
 # Archive layout:
-#   vis-web/   static web build: index.html, assets/, ...
+#   vis-web/   static web build: index.html, transcript-export.html, assets/, ...
 set -euo pipefail
 
 die() { printf 'stage-web-release: %s\n' "$@" >&2; exit 1; }
@@ -17,6 +17,8 @@ asset="${2:-}"
 
 [[ -n "$build" && -n "$asset" && $# -eq 2 ]] || die "usage: stage-web-release <web-build-dir> <asset.tar.gz>"
 [[ -f "$build/index.html" ]] || die "missing web app build: $build/index.html" \
+  "Build it in apps/vis-companion with: npm run build:web"
+[[ -f "$build/transcript-export.html" ]] || die "missing HTML transcript export page: $build/transcript-export.html" \
   "Build it in apps/vis-companion with: npm run build:web"
 [[ "$asset" == *.tar.gz ]] || die "asset must end in .tar.gz: $asset"
 
