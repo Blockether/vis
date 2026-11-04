@@ -26,11 +26,15 @@
   (:import [java.io File]))
 
 (def ^:private scan-timeout-ms
-  "Ceiling on how long `open!` blocks for fff's initial scan (paths +
-   content index) to COMPLETE before the instance is usable. wait-for-scan
-   returns false on timeout; a half-built index silently under-reports
-   grep/search hits, so past this ceiling we fail loud instead of searching a
-   partial index."
+  "Ceiling on how long `open!` blocks for fff's initial PATH scan to COMPLETE
+   before the instance is usable. wait-for-scan returns false on timeout; a
+   half-built path list silently under-reports grep/search hits, so past this
+   ceiling we fail loud instead of searching a partial index.
+
+   The content index is NOT inside this wait. fff builds it in the background
+   after the path scan, on its own thread pool. A grep before it is ready reads
+   files without the bigram prefilter, so `rg-fff-grep-files` enforces a time
+   budget on every native page (issue #438)."
   30000)
 
 ;; rg is fff-first: fff owns workspace discovery/ranking, this namespace only

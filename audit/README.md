@@ -146,12 +146,12 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `clj-kondo/clj-kondo` | `2026.08.04` | EPL-1.0 | 733 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
-| `com.blockether/fff` | `0.12.15` | MIT | 12 KB | Blockether (in-house) |
+| `com.blockether/fff` | `0.12.16` | MIT | 12 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.12` | MIT | 23 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.223` | Apache-2.0 | 1009 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:868f5f983ad2be63ce4763494bc2abdd44f3ba06` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:19b885eaece931c104542aced55d1107ef10111e` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.4` | Apache-2.0 | 585 KB | 3rd-party |
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.4` | Apache-2.0 | 72 KB | 3rd-party |

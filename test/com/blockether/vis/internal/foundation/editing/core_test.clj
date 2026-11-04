@@ -2078,6 +2078,20 @@
                      "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → next(r), or"
                      " THIS SAME query with grep({…, \"offset\": 50}); 125 more files match — add"
                      " \"is_files_only\": True for every file with its hit count")
+                   head))))
+  (it "a page capped only on file NAMES does not read as a capped content sweep"
+      ;; Issue #438: `0 hits · 0 files  capped by limit` read as a content cap, and
+      ;; its offset 50 was the NAME page, not the 500-file files-only page.
+      (let [head (first (string/split-lines ((private-fn "render-grep-text")
+                                              {"query" "zzq_vis_probe"
+                                               "matches" {}
+                                               "paths" ["a.clj"]
+                                               "hit_count" 0
+                                               "file_count" 0
+                                               "truncated_by" "limit"
+                                               "next_offset" 50})))]
+        (expect (= (str "grep 'zzq_vis_probe'  0 hits · 0 files  file NAME matches capped by limit"
+                        " → next(r), or THIS SAME query with grep({…, \"offset\": 50})")
                    head)))))
 
 (defdescribe
@@ -5310,6 +5324,35 @@
                 (expect (string/includes? (str (get out "hint")) "PARTIAL"))
                 (expect (string/includes? (str (get out "hint")) "Narrow"))
                 (expect (false? (get out "total_file_count_is_exact"))))))))
+    (it "a native grep page cut by its time budget labels the result PARTIAL"
+        ;; Issue #438: a grep with no hits read a large tree for minutes, because
+        ;; fff counts its page budget only after a hit unless the call enforces it.
+        ;; With the budget enforced, a cut page must not read as end-of-results.
+        (let [_
+              (write-temp! "grepnativecut/a.clj" ";; ZZNATIVECUTZZ\n")
+
+              dir
+              (temp-dir-path "grepnativecut")
+
+              real-grep
+              fff/grep
+
+              cut-page
+              (fn [idx opts]
+                (if (:enforce-time-budget? opts)
+                  {:matches [] :count 0 :next-file-offset (inc (long (:file-offset opts 0)))}
+                  (real-grep idx opts)))]
+
+          (with-redefs [fff/grep cut-page]
+            (let [content (rg-search {"query" "ZZNATIVECUTZZ" "paths" [dir] "limit" 50})
+                  files-only
+                  (rg-search
+                    {"query" "ZZNATIVECUTZZ" "paths" [dir] "limit" 50 "is_files_only" true})]
+
+              (expect (= :time (:truncated-by content)))
+              (expect (false? (:total-file-count-exact? content)))
+              (expect (= :time (:truncated-by files-only)))
+              (expect (false? (:total-file-count-exact? files-only)))))))
     (it "streaming a file keeps the SAME context windows the slurping walk produced"
         (let [rel
               (write-temp! "grepstream/ctx.txt"

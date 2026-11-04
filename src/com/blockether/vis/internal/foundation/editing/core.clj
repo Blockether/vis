@@ -190,7 +190,14 @@
    from a file scope for a pattern that works, which is exactly what teaches a
    caller to hand-roll a walk. The caller widens the candidate set instead.
 
-   Returns `{:items [fff-item …] :degraded? BOOL}`."
+   Each page ENFORCES its time budget. Without that, fff counts the budget only
+   after a hit, so a needle with no hits read every file of the tree in one
+   call: minutes on a large tree whose content index was still building (issue
+   #438). A page cut by time has fewer than `page-limit` matches and a resume
+   offset. When the last page is such a page, the candidates are incomplete and
+   `:timed-out?` says so.
+
+   Returns `{:items [fff-item …] :degraded? BOOL :timed-out? BOOL}`."
   [idx ^String query is-regex?]
   (loop [offset
          0
@@ -212,7 +219,8 @@
                      :page-limit rg-fff-grep-page-limit
                      :max-matches-per-file 1
                      :max-file-size rg-fff-grep-max-file-size
-                     :time-budget-ms 1500})
+                     :time-budget-ms 1500
+                     :enforce-time-budget? true})
 
           degraded?
           (or degraded? (and is-regex? (not (str/blank? (str regex-fallback-error)))))
@@ -224,7 +232,10 @@
           (long (or next-file-offset 0))]
 
       (if (or degraded? (zero? next-offset) (>= (inc page) (long rg-fff-grep-max-pages)))
-        {:items (persistent! acc) :degraded? degraded?}
+        {:items (persistent! acc)
+         :degraded? degraded?
+         :timed-out?
+         (and (not degraded?) (pos? next-offset) (< (count matches) (long rg-fff-grep-page-limit)))}
         (recur next-offset (inc page) degraded? acc)))))
 
 (defn- rg-fff-rel-files
@@ -254,20 +265,22 @@
    and drags in a page of files that carry no match at all. Native regex grep
    already owns content discovery in that mode.
 
-   Returns `{:files [File …] :degraded? BOOL}` — `:degraded?` when the native
-   regex prefilter could not run the pattern, so these candidates are NOT the
-   universe the pattern really matches (see `rg-fff-grep-files`)."
+   Returns `{:files [File …] :degraded? BOOL :timed-out? BOOL}` — `:degraded?` when
+   the native regex prefilter could not run the pattern, so these candidates are
+   NOT the universe the pattern really matches, and `:timed-out?` when native
+   grep stopped at its time budget (see `rg-fff-grep-files`)."
   [idx ^File base query is-regex?]
   (let [path-items
         (when (and (not is-regex?) (not (rg-needle-hostile-to-fff? query)))
           (->> (:items (fff/search idx {:query query :page-size 1000}))
                (filter #(rg-fff-path-hit? query %))))
 
-        {:keys [items degraded?]}
+        {:keys [items degraded? timed-out?]}
         (rg-fff-grep-files idx query is-regex?)]
 
     {:files (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base items))
-     :degraded? (boolean degraded?)}))
+     :degraded? (boolean degraded?)
+     :timed-out? (boolean timed-out?)}))
 
 (defn- search-root-kind
   "What a resolved search root IS on disk right now: `:dir` (fff can index it), `:file`
@@ -319,7 +332,9 @@
                          base
                          (:items (fff/search idx {:query "" :page-size rg-fff-wide-page-size}))))
            :degraded? true}
-          {:files (vec (mapcat :files per-needle)) :degraded? false})))
+          {:files (vec (mapcat :files per-needle))
+           :degraded? false
+           :timed-out? (boolean (some :timed-out? per-needle))})))
 
     {:files [] :degraded? false}))
 
@@ -347,7 +362,9 @@
    Rust's `regex` cannot run that pattern at all, in which case the candidate set
    WIDENS to fff's whole ignore-aware enumeration of the scope and the returned
    vec carries `{:prefilter-degraded? true}` as METADATA, so the caller can say so
-   in a `hint`. The JVM matcher runs the pattern either way.
+   in a `hint`. The JVM matcher runs the pattern either way. When native grep
+   stopped at its time budget, the metadata carries `{:prefilter-timed-out? true}`:
+   the candidates are incomplete, so the result is partial.
    Returns a File vec, deduped by canonical path."
   [roots needles is-regex? is-ignored? overlay]
   (let [per-root
@@ -363,7 +380,9 @@
              vals
              vec)]
 
-    (with-meta files {:prefilter-degraded? (boolean (some :degraded? per-root))})))
+    (with-meta files
+      {:prefilter-degraded? (boolean (some :degraded? per-root))
+       :prefilter-timed-out? (boolean (some :timed-out? per-root))})))
 
 (def ^:private default-find-limit 50)
 
@@ -2019,7 +2038,11 @@
           (cond (= "time" content-cap) "  stopped at the scan budget — PARTIAL, narrow the scope"
                 (and next-offset
                      (or (contains? #{"limit" "bytes"} content-cap) (= "limit" name-cap)))
-                (str "  capped by " (or content-cap name-cap)
+                ;; Only the fuzzy NAME list can be capped while the content sweep is
+                ;; complete; then the offset pages names, not content (issue #438).
+                (str (if (contains? #{"limit" "bytes"} content-cap)
+                       (str "  capped by " content-cap)
+                       "  file NAME matches capped by limit")
                      " → next(r), or THIS SAME query with grep({…, \"offset\": " next-offset
                      "})" complete)
                 :else ""))
@@ -2435,14 +2458,13 @@
              "\" — CONTENT matching is LITERAL smart-case substring by DEFAULT. Pass `is_regex: True` "
              "to run it as a regular expression; only the file NAME matches in `paths` are real.")))
 
-       ;; The scan stopped at its wall-clock budget, so these results are
-       ;; PARTIAL. Said LAST because it outranks every hint above: "nothing
-       ;; matched" is a lie when the sweep never finished.
+       ;; The scan or the native prefilter stopped at its wall-clock budget, so
+       ;; these results are PARTIAL. Said LAST because it outranks every hint
+       ;; above: "nothing matched" is a lie when the sweep never finished.
        (= "time" (get content "hits_truncated_by"))
        (assoc "hint"
          (str
-           "Search stopped at its " (quot (long rg-search-budget-ms) 1000)
-           "s scan budget — these results are PARTIAL, not the whole tree. "
+           "Search stopped at its time budget — these results are PARTIAL, not the whole tree. "
            "Narrow `paths` to a subdirectory, add `include`/`exclude` globs, or search a more distinctive term.")))
 
      ;; HOW the search ran — a literal query rescued as a regex, a repaired
@@ -3167,6 +3189,11 @@
         prefilter-degraded?
         (boolean (:prefilter-degraded? (meta raw-candidates)))
 
+        ;; Native grep stopped at its time budget, so files it did not read are
+        ;; missing from `raw-candidates` and the answer is partial.
+        prefilter-timed-out?
+        (boolean (:prefilter-timed-out? (meta raw-candidates)))
+
         candidates
         (->> raw-candidates
              (filter scan-file?)
@@ -3253,10 +3280,11 @@
                        :file-counts @counts
                        :prefilter-degraded? prefilter-degraded?
                        :truncated-by (cond @capped? :limit
-                                           @time-capped? :time
+                                           (or @time-capped? prefilter-timed-out?) :time
                                            :else :end-of-results)
                        :total-file-count @total-files
-                       :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))})
+                       :total-file-count-exact?
+                       (and (not @breadth-capped?) (not @time-capped?) (not prefilter-timed-out?))})
       :else
       (let [out
             (atom [])
@@ -3320,9 +3348,11 @@
                                                                                    :bytes)))))))))
         {:hits (vec @out)
          :prefilter-degraded? prefilter-degraded?
-         :truncated-by (or @cap-reason (when @time-capped? :time) :end-of-results)
+         :truncated-by
+         (or @cap-reason (when (or @time-capped? prefilter-timed-out?) :time) :end-of-results)
          :total-file-count @total-files
-         :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))}))))
+         :total-file-count-exact?
+         (and (not @breadth-capped?) (not @time-capped?) (not prefilter-timed-out?))}))))
 
 (defn- atomic-replace!
   "Replace `file` through a sibling temporary file, preserving its permissions.

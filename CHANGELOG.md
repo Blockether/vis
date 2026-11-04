@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the rule under the heading of a notification card is exactly as wide as the heading, so it never reaches the close mark.
 - TUI: a notification card has whole rounded side lines and one empty column between each side and the text. Its page counter shows `1/3` without arrows, on the row over the bottom border; a click on it shows the next notice.
 - Companion: the Android release retries a Google Play token request after a closed connection.
+- grep: a wide search stays inside its time budget. A search with no hits read every file of a large tree for minutes while the content index was still building. Now each native page stops at 1.5 s, and a cut search says `truncated_by: time` with a hint to narrow it (#438).
+- grep: a large content index build no longer makes other index scans in the gateway fail with `File index scan did not complete in time`. `com.blockether/fff` is at 0.12.16, which builds content indexes on their own thread pool (#438).
+- grep: when only the file NAME list is capped, line 1 says `file NAME matches capped by limit`. It said `capped by limit` with 0 content hits before (#438).
 
 ## [v0.5.2] - 2026-11-04
 
