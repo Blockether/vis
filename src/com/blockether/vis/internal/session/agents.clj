@@ -770,7 +770,7 @@
       opts)))
 
 (defn runtime-op!
-  "Validate `opts` and run one gateway runtime operation: :spawn, :list, :cancel, :route or :grant."
+  "Validate `opts` and run one gateway runtime operation: :spawn, :cancel, :route or :grant."
   [env operation opts]
   (let [opts (checked env operation opts)]
     (if-let [f (get @runtime operation)]
@@ -2026,7 +2026,7 @@
 (defn operation!
   "Run one managed-subagent operation for the calling session and answer its plain result.
    Gateway routes and extensions call this entry point; model tools call the same functions.
-   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :extend, :deny, :answer,
+   `operation` is :spawn, :route, :run, :wait, :cancel, :extend, :deny, :answer,
    :grant or :timeline. Records answer in their wire form."
   [env operation opts]
   (let [opts
@@ -2036,7 +2036,7 @@
         (select-keys opts [:timeout_secs])]
 
     (when (contains? #{:run :wait} operation) (check-arguments! operation (wire/->wire opts)))
-    (if (contains? #{:spawn :list :route} operation)
+    (if (contains? #{:spawn :route} operation)
       (runtime-op! env operation opts)
       (wire/->wire
         (case operation

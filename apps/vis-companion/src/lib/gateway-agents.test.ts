@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import teamUpdated from '../../../../packages/vis-contract/resources/vis-contract/fixtures/team-updated.json';
 import { GatewayClient } from './gateway';
-import type { Subagent } from './types';
+import { SessionSubscriptionHub } from './subscriptions';
+import type { SseEvent, Subagent } from './types';
 
 const conn = { url: 'http://gateway.example.com' };
 
@@ -64,29 +65,49 @@ describe('Subagent control client', () => {
   });
 });
 
+// Contract fixture `team-updated.json`: the Companion must draw the same team as the gateway.
+describe('streamed agent rows', () => {
+  function hubWith(remember = vi.fn()) {
+    let emit: (event: SseEvent) => void = () => {};
+    const client = {
+      streamSessionEvents: (_cursors: Map<string, number>, next: (event: SseEvent) => void) => {
+        emit = next;
+        return vi.fn();
+      },
+      streamFleetStatus: () => vi.fn(),
+      rememberAgents: remember,
+    } as unknown as GatewayClient;
+    const hub = new SessionSubscriptionHub(client);
+    hub.subscribeSession('lead', () => {});
+    return { hub, emit: (event: Record<string, unknown>) => emit({ session_id: 'lead', ...event } as SseEvent) };
+  }
 
-describe('pushed agent rows', () => {
-  const answer = (rows: unknown) =>
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(rows), { headers: { 'Content-Type': 'application/json' } })));
-
-  // Contract fixture `team-updated.json`: the Companion must draw the same team as the gateway pushes.
-  it('merges each session.team_updated into the read team, and a repeated event changes nothing', async () => {
-    answer(teamUpdated.base);
-    const client = new GatewayClient({ url: 'http://team-merge.example.com' });
-    await client.agents('lead');
-    for (const event of teamUpdated.events) client.applyTeamUpdate('lead', event);
-    expect(client.cachedAgents('lead')).toEqual(teamUpdated.merged as unknown as Subagent[]);
-    for (const event of teamUpdated.events) client.applyTeamUpdate('lead', event);
-    expect(client.cachedAgents('lead')).toEqual(teamUpdated.merged as unknown as Subagent[]);
+  it('merges each session.team_updated into the ready team, and a repeated event changes nothing', () => {
+    const { hub, emit } = hubWith();
+    emit({ type: 'subscription.ready', cursor: 1, agents: teamUpdated.base });
+    for (const event of teamUpdated.events) emit({ type: 'session.team_updated', ...event });
+    expect(hub.team('lead')).toEqual(teamUpdated.merged as unknown as Subagent[]);
+    for (const event of teamUpdated.events) emit({ type: 'session.team_updated', ...event });
+    expect(hub.team('lead')).toEqual(teamUpdated.merged as unknown as Subagent[]);
+    hub.dispose();
   });
 
-  // Without a read, one changed row is not the team: the dock would hide the other children.
-  it('keeps no team from an event alone unless its rows count every child', () => {
-    const client = new GatewayClient({ url: 'http://team-first.example.com' });
-    const [partial] = teamUpdated.events;
-    expect(client.applyTeamUpdate('lead', partial)).toBeNull();
+  // One changed row is not the team: before the ready frame, a push would hide the other children.
+  it('keeps no team from a push before the ready frame', () => {
+    const { hub, emit } = hubWith();
+    emit({ type: 'session.team_updated', ...teamUpdated.events[0] });
+    expect(hub.team('lead')).toBeUndefined();
+    hub.dispose();
+  });
+
+  it('keeps the last team of a session for the next app start, and forgets it with the session', () => {
+    const client = new GatewayClient({ url: 'http://team-cache.example.com' });
+    client.rememberAgents('lead', teamUpdated.base as unknown as Subagent[]);
+    expect(client.cachedAgents('lead')).toEqual(teamUpdated.base);
+    client.rememberAgents('lead', []);
     expect(client.cachedAgents('lead')).toBeNull();
-    expect(client.applyTeamUpdate('lead', { team: { active: 1, total: 1 }, agents: partial.agents })).toEqual(partial.agents);
-    expect(client.applyTeamUpdate('lead', { team: { active: 1, total: 1 } })).toBeNull();
+    client.rememberAgents('lead', teamUpdated.base as unknown as Subagent[]);
+    client.forgetDeletedSession('lead');
+    expect(client.cachedAgents('lead')).toBeNull();
   });
 });

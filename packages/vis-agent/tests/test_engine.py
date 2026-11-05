@@ -845,9 +845,9 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
         turn = parent.send("Delegate a bounded task")
         assert turn.wait(timeout=30)["status"] == "completed"
         team = parent.council()
-        agents = team.subagents()
-        assert len(agents) == 1 and agents[0].parent_id == parent.id
-        child = client.session(agents[0].session_id)
+        records = team.wait(timeout_secs=30)
+        assert len(records) == 1
+        child = client.session(records[0].session_id)
         settled_turns(child, 1)
         hold.set()
         active = parent.send("Collect another child report")
@@ -900,7 +900,7 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport):
             session.send("Verify the default").wait(timeout=30)["status"] == "completed"
         )
         team = session.council()
-        assert team.subagents() == ()
+        assert team.wait(timeout_secs=1) == ()
         with pytest.raises(GatewayError) as disabled:
             team.members()
         assert disabled.value.status == 409

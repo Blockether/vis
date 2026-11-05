@@ -265,16 +265,6 @@ class Council:
         validate("agents", "spawn", body)
         return Subagent.from_wire(self._session._call("POST", "/agents", body=body))
 
-    def subagents(self) -> tuple[Subagent, ...]:
-        """Inspect team lineage, task, model, lifecycle, budget and human-input state.
-
-        This lists the bound session's managed team, not all Council group members.
-        The handle's group_id does not change session ownership.
-        """
-        return tuple(
-            Subagent.from_wire(row) for row in self._session._call("GET", "/agents")
-        )
-
     def timeline(self, session_id: str) -> dict[str, Any]:
         """Return the steps of one owned subagent, oldest first.
 

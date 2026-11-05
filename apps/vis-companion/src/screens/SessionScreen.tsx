@@ -30,7 +30,6 @@ import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedAge
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
-import { pushesTeamRows } from '../lib/compat';
 import {
   ComposerAttachmentPicker,
   type ComposerAttachmentCommands,
@@ -817,7 +816,6 @@ export function SessionScreen({
   onBack,
   onOpenSession,
   onManageProviders,
-  gatewayProtocol = null,
   fresh = false,
   talk,
   sidebar,
@@ -829,8 +827,6 @@ export function SessionScreen({
   onOpenSession: (sid: string, fresh?: boolean) => void;
   /** Open this gateway's settings, where provider accounts and OAuth live; an id focuses one provider. */
   onManageProviders?: (providerId?: string) => void;
-  /** The protocol of this session's gateway, or null before its handshake answers. */
-  gatewayProtocol?: number | null;
   fresh?: boolean;
   /** The nonce of a Talk link (the Action Button). A new value arms voice conversation once. */
   talk?: string;
@@ -4770,18 +4766,9 @@ export function SessionScreen({
   // Kept as a boolean (not `runningTurn`) so streaming frames don't re-run the memo.
   const hasRunningTurn = runningTurn != null;
   // Subagents belong to the turn that started them, so each turn shows its own. The transcript
-  // turn holds its team, so the team paints with its turn. A session row without children, or a
-  // transcript that holds all of them, spares the team read of the open.
-  // An older gateway pushes no rows: its team is read on a timer while the turn runs.
+  // turn holds its team, so the team paints with its turn. The stream gives the current team.
   const stored = useMemo(() => storedAgents(turns), [turns]);
-  const team = useAgentTeam(
-    client,
-    sid,
-    session?.id === sid ? (session.team?.total ?? null) : null,
-    pushesTeamRows(gatewayProtocol) ? null : hasRunningTurn,
-    stored,
-    turnsFresh,
-  );
+  const team = useAgentTeam(client, sid, stored);
   const agents = team.agents;
   const teams = useMemo(() => agentsByTurn(agents), [agents]);
   // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.

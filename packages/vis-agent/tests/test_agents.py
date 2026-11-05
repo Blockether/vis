@@ -40,12 +40,13 @@ def test_council_is_the_only_public_team_api():
     assert not hasattr(engine.Session, "agents")
     assert not hasattr(Council, "publish_spawn")
     assert not hasattr(Council, "list")
+    # The subscription.ready frame carries the team; the gateway has no team read.
+    assert not hasattr(Council, "subagents")
     assert not hasattr(Council, "resume")
     assert all(
         callable(getattr(Council, operation))
         for operation in (
             "spawn",
-            "subagents",
             "run",
             "wait",
             "cancel",
@@ -62,7 +63,7 @@ def test_managed_team_transport():
         if result := council_compatible(method, path, body):
             return result
         if path.endswith("/agents"):
-            return 200, [CHILD] if method == "GET" else CHILD
+            return 200, CHILD
         return 200, [{"session_id": "child", "status": "cancelled"}]
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
@@ -81,7 +82,6 @@ def test_managed_team_transport():
         assert isinstance(child, Subagent)
         assert child.parent_id == "leader" and child.role == "verify"
         assert child.pending_input and child.usage == {"cost_usd": 0.02}
-        assert team.subagents() == (child,)
         team.route("small", provider="p", session_id=child.session_id)
         assert team.cancel(child.session_id).status == "cancelled"
         requests = [
@@ -104,7 +104,6 @@ def test_managed_team_transport():
                     "key": "contract",
                 },
             ),
-            ("GET", "/v1/sessions/leader/agents", None),
             (
                 "POST",
                 "/v1/sessions/leader/agents/route",
@@ -223,12 +222,11 @@ def test_unavailable_council_binding_does_not_block_team_controls(code):
         if "/council" in path:
             return 403, {"error": {"type": code, "message": "Unavailable binding"}}
         if path.endswith("/agents"):
-            return 200, [CHILD] if method == "GET" else CHILD
+            return 200, CHILD
         return 200, [{"session_id": "child", "status": "cancelled"}]
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
-        assert team.subagents() == (Subagent.from_wire(CHILD),)
         team.cancel("child")
         team.route("small", provider="p")
         team.spawn("Check the contract")
@@ -261,7 +259,6 @@ def test_group_members_are_not_the_managed_team():
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         council = client.session("leader").council(group_id="G")
         assert [member.session_id for member in council.members()] == ["peer"]
-        assert [child.session_id for child in council.subagents()] == ["child"]
         assert [
             (method, path)
             for method, path, _, _ in calls
@@ -269,7 +266,6 @@ def test_group_members_are_not_the_managed_team():
         ] == [
             ("GET", "/v1/sessions/leader/council?group_id=G"),
             ("GET", "/v1/sessions/leader/council/members?group_id=G"),
-            ("GET", "/v1/sessions/leader/agents"),
         ]
 
 
@@ -393,11 +389,10 @@ def test_empty_team_and_default_spawn_and_self_route():
                 "model": "small",
                 "effective": "next_request",
             }
-        return 200, [] if method == "GET" else CHILD
+        return 200, CHILD
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
-        assert team.subagents() == ()
         team.spawn("Check the contract")
         assert team.route("small", provider="p")["effective"] == "next_request"
         bodies = [
@@ -442,7 +437,7 @@ def test_managed_team_recipe(capsys):
     def respond(method, path, body):
         if result := council_compatible(method, path, body):
             return result
-        return 200, [CHILD] if method == "GET" else CHILD
+        return 200, CHILD
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
@@ -452,8 +447,7 @@ def test_managed_team_recipe(capsys):
             key="sdk-contract",
         )
         assert child.session_id == CHILD["session_id"]
-        for child in team.subagents():
-            print(child.task, child.status, child.iterations_used, child.usage)
+        print(child.task, child.status, child.iterations_used, child.usage)
         assert "Check the contract running 1" in capsys.readouterr().out
         spawn = next(
             json.loads(body)

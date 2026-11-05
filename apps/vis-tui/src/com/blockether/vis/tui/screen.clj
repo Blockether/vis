@@ -6844,7 +6844,7 @@
                   :goal-sync
                   (state/dispatch [:sync-session-goal tab-id chunk])
 
-                  ;; The changed rows merge into the cached team. No timed read backs it up.
+                  ;; The changed rows merge after the rows of the last ready frame.
                   :team-sync
                   (agent-team/team-updated! (or (:session-id chunk) session-id) chunk)
 
@@ -6891,7 +6891,7 @@
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
                   :gateway-ready
-                  (do (agent-team/stream-ready! session-id)
+                  (do (agent-team/stream-ready! session-id (:agents chunk))
                       ;; A reconnect can hide a model change; read the pref again.
                       (vis/refresh-session-model! session-id)
                       (state/dispatch [:sync-agent-name tab-id chunk])
@@ -11229,9 +11229,6 @@
                  open-session-tab!
                  (fn [{:keys [id history] :as session-result} notify? & [background?]]
                    (when (and id session-result)
-                     ;; Before the tab opens, so the open read knows a leader without agents.
-                     (when-not (:agent session-result)
-                       (agent-team/note-team! id (:team session-result)))
                      (state/dispatch [:open-session-tab
                                       (select-keys session-result
                                                    [:id :status :current-turn-id :history-cursor

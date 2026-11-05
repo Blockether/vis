@@ -767,11 +767,6 @@
     {
       "audience": "sdk",
       "operations": {
-        "get": {
-          "request": "none",
-          "response": "json",
-          "extension": "background"
-        },
         "post": {
           "request": "json",
           "response": "json",
@@ -2173,7 +2168,7 @@
     },
     "team_update": {
       "type": "object",
-      "description": "The payload of session.team_updated since protocol 21. team is the new summary of the leader. agents has the rows of the children that changed, in the GET /v1/sessions/:sid/agents row shape. A client replaces the row with the same session_id and appends a row with an unknown session_id at the end, which keeps spawn order. A repeated event gives the same rows.",
+      "description": "The payload of session.team_updated since protocol 21. team is the new summary of the leader. agents has the rows of the children that changed, in the row shape of subscription.ready agents. A client replaces the row with the same session_id and appends a row with an unknown session_id at the end, which keeps spawn order. A repeated event gives the same rows.",
       "properties": {
         "team": {
           "$ref": "#/$defs/session_team"
@@ -2685,7 +2680,7 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 21
+          "const": 22
         },
         "min_client": {
           "type": "integer",
@@ -2693,7 +2688,7 @@
         },
         "min_gateway": {
           "type": "integer",
-          "const": 20
+          "const": 22
         },
         "version": {
           "type": [
@@ -3100,6 +3095,13 @@
         "latest_iteration": {
           "type": "integer",
           "minimum": 0
+        },
+        "agents": {
+          "type": "array",
+          "description": "Since protocol 22: the team rows of the session at the time of this frame. For a leader, each child that it started. For a subagent, each member of its team. Absent when the session has no team. A client replaces its team rows with these rows, then applies each session.team_updated after this frame.",
+          "items": {
+            "$ref": "agents.json#/$defs/agent"
+          }
         }
       },
       "required": [

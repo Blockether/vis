@@ -4,12 +4,14 @@ import { approxBytes, registerMemoryOwner, type MemoryCell } from './perf';
 import { bufferStreamEvent } from './session-stream';
 import { MAX_SUBSCRIBED_SESSIONS } from './storage';
 import { onAway, onWake } from './wake';
-import type { SseEvent } from './types';
+import type { SseEvent, Subagent } from './types';
+import { mergeAgents, teamRowsFromWire } from './gateway';
 
 type SessionListener = (event: SseEvent) => void;
 type FleetListener = (event: SseEvent) => void;
 type FleetStateListener = (streaming: boolean) => void;
 type ConnectionListener = (connected: boolean) => void;
+type TeamListener = () => void;
 
 const MAX_BUFFERED_EVENTS = 2_048;
 
@@ -80,6 +82,10 @@ export class SessionSubscriptionHub {
   // to the listeners that asked for those frames.
   private readonly delivered = new Map<string, number>();
   private readonly listenerFrom = new WeakMap<SessionListener, number>();
+  // The agent team of each session, from its last `subscription.ready` and the
+  // `session.team_updated` pushes after it. The hub is the one writer.
+  private readonly teams = new Map<string, readonly Subagent[]>();
+  private readonly teamListeners = new Map<string, Set<TeamListener>>();
   private stopStream: (() => void) | null = null;
   private connected = false;
   private disposed = false;
@@ -132,6 +138,7 @@ export class SessionSubscriptionHub {
       this.buffers.delete(sid);
       this.ended.delete(sid);
       this.forgetCoverage(sid);
+      this.setTeam(sid, undefined);
       changed = true;
     }
     if (changed) this.restart({ reason: 'watch_changed' });
@@ -158,6 +165,55 @@ export class SessionSubscriptionHub {
     const ended = this.ended.get(sid);
     if (ended === undefined) return false;
     return !turnId || !ended || ended === turnId;
+  }
+
+  /**
+   * The agent team of `sid` that this hub streamed, or undefined before the first
+   * `subscription.ready` of `sid`. The value keeps its identity until the team changes.
+   */
+  team(sid: string): readonly Subagent[] | undefined {
+    return this.teams.get(sid);
+  }
+
+  /** Call `listener` after each change of `team(sid)`. */
+  subscribeTeam(sid: string, listener: TeamListener): () => void {
+    let listeners = this.teamListeners.get(sid);
+    if (!listeners) {
+      listeners = new Set();
+      this.teamListeners.set(sid, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      const current = this.teamListeners.get(sid);
+      current?.delete(listener);
+      if (current?.size === 0) this.teamListeners.delete(sid);
+    };
+  }
+
+  private setTeam(sid: string, rows: readonly Subagent[] | undefined): void {
+    if (this.teams.get(sid) === rows) return;
+    if (rows) this.teams.set(sid, rows);
+    else this.teams.delete(sid);
+    // The device keeps the team for the next app start.
+    if (rows) this.client.rememberAgents?.(sid, rows);
+    for (const listener of [...(this.teamListeners.get(sid) ?? [])]) listener();
+  }
+
+  /**
+   * The ready frame gives the whole team of `sid`: it replaces the rows, and a frame without
+   * `agents` means no team. A `session.team_updated` after it replaces the rows with the same
+   * `session_id` and adds the new ones at the end. The gateway never replays a push, so a
+   * reconnect gets the team again only from its ready frame.
+   */
+  private noteTeam(sid: string, event: SseEvent): void {
+    if (event.type === 'subscription.ready') {
+      const rows = event.agents === undefined ? [] : teamRowsFromWire(event.agents);
+      if (rows) this.setTeam(sid, rows);
+      return;
+    }
+    const base = this.teams.get(sid);
+    const changed = teamRowsFromWire(event.agents);
+    if (base && changed?.length) this.setTeam(sid, mergeAgents(base, changed));
   }
 
   watchedSessionIds(): ReadonlySet<string> {
@@ -344,6 +400,8 @@ export class SessionSubscriptionHub {
     this.deleted.clear();
     this.buffers.clear();
     this.ended.clear();
+    this.teams.clear();
+    this.teamListeners.clear();
   }
 
   /**
@@ -490,6 +548,9 @@ export class SessionSubscriptionHub {
       this.buffers.delete(sid);
       this.ended.delete(sid);
       this.forgetCoverage(sid);
+      this.teams.delete(sid);
+      for (const listener of [...(this.teamListeners.get(sid) ?? [])]) listener();
+      this.teamListeners.delete(sid);
       for (const listener of [...(this.sessionListeners.get(sid) ?? [])]) listener(event);
       this.sessionListeners.delete(sid);
       for (const listener of [...this.fleetListeners]) listener(event);
@@ -504,9 +565,11 @@ export class SessionSubscriptionHub {
     // which is the one thing a reconnect cannot infer from its own cursor.
     if (event.type === 'subscription.ready') {
       if (typeof event.cursor === 'number') this.noteCovered(sid, event.cursor);
+      this.noteTeam(sid, event);
       for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
       return;
     }
+    if (event.type === 'session.team_updated') this.noteTeam(sid, event);
     // A `notification` is live only. The gateway never replays it, so the hub never
     // buffers it: a screen that mounts later must not show an old notice again.
     if (event.type === 'notification') {

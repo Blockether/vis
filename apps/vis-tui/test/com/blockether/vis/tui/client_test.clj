@@ -474,23 +474,6 @@
              (expect (= first-page second-page))))
         (expect (= [nil "W/\"a\""] (mapv second @sent))))))
 
-(defdescribe gateway-protocol-follows-the-handshake
-             ;; The agent team falls back to a timed read only for a gateway below protocol 21.
-             (it "keeps the protocol of the checked gateway"
-                 (with-redefs-fn {#'client/target-checked? (atom false)
-                                  #'client/gateway-protocol* (atom nil)
-                                  #'client/gw-send! (fn [& _]
-                                                      {:status 200
-                                                       :body (wire/json-str
-                                                               {"status" "ok"
-                                                                "protocol" {"protocol" 20
-                                                                            "min_client" 20
-                                                                            "min_gateway" 20
-                                                                            "version" "0.0.1"}})})}
-                   #(do (expect (nil? (client/gateway-protocol)))
-                        (#'client/check-target! {})
-                        (expect (= 20 (client/gateway-protocol)))))))
-
 (defdescribe router-refresh-failure-keeps-data-and-backs-off
              (it "router refresh failure keeps data and backs off"
                  (let [rows [{"id" "test-provider" "default_model" "old-model"}]]

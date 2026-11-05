@@ -95,7 +95,7 @@
                    (expect (= :feature-disabled
                               (:error (failure-data
                                         #(gateway/agents-operation! sid :spawn {"task" "Work"})))))
-                   (expect (= [] (gateway/agents-operation! sid :list {})))
+                   (expect (= [] (gateway/agents-operation! sid :wait {"timeout_secs" 1})))
                    (expect (zero? @bootstraps)))
                  (expect (nil? (agents/prompt {})))
                  (expect (every? #(false? ((:ext.symbol/active-fn %) {})) agents/symbols))

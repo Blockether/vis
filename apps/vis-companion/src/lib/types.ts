@@ -1493,7 +1493,7 @@ export interface TranscriptTurn {
   /** Number of earlier steps omitted from this window. */
   iterations_offset?: number;
   iterations_total?: number;
-  /** The subagents that this turn started, as `GET /agents` gives them. Absent without subagents. */
+  /** The subagents that this turn started, in the row shape of the `subscription.ready` agents. Absent without subagents. */
   agents?: Subagent[];
   model?: string;
   provider?: string;

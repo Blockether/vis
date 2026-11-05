@@ -160,7 +160,7 @@
   canonical-agent-routes-and-validation-test
   (it "canonical agent routes and validation"
       (doseq [[path methods]
-              [["/v1/sessions/:sid/agents" [:get :post]] ["/v1/sessions/:sid/agents/answer" [:post]]
+              [["/v1/sessions/:sid/agents" [:post]] ["/v1/sessions/:sid/agents/answer" [:post]]
                ["/v1/sessions/:sid/agents/cancel" [:post]] ["/v1/sessions/:sid/agents/deny" [:post]]
                ["/v1/sessions/:sid/agents/extend" [:post]]
                ["/v1/sessions/:sid/agents/grant" [:post]] ["/v1/sessions/:sid/agents/route" [:post]]
@@ -173,6 +173,8 @@
         (expect (some? (contract/operation method path))))
       ;; A follow-up task is a Council ping now, so the contract has no resume route.
       (expect (nil? (contract/operation :post "/v1/sessions/:sid/agents/resume")))
+      ;; The subscription.ready frame carries the team, so the contract has no team read.
+      (expect (nil? (contract/operation :get "/v1/sessions/:sid/agents")))
       (let [db
             (h/store)
 
@@ -187,13 +189,11 @@
 
                       lp/env-for
                       (fn [_]
-                        (expect false "Listing a team must not bootstrap a session"))]
+                        (expect false "A refused request must not bootstrap a session"))]
 
-          (expect (= [] (json/read-json (:body (request :get path nil)))))
           (doseq [body ["[]" "not json" "{}" (json/write-json-str {:task " "})
                         "{\"task\":\"Work\",\"iteration_budget\":0}"]]
             (expect (= 400 (:status (request :post path body))) body))
-          (expect (= 404 (:status (request :get "/v1/sessions/unknown/agents" nil))))
           (expect (= 404 (:status (request :get (str path "/missing/timeline") nil)))
                   "A timeline needs a subagent of the session")))))
 
@@ -750,32 +750,48 @@
                                                                        {:turn_id "t"})))))
             (expect (= "Read" (get (last-row events child) "activity"))))))))
 
+(defn- ready-frame
+  "The `subscription.ready` frame that a new stream of session `sid` gets first."
+  [sid]
+  (with-open [out (java.io.ByteArrayOutputStream.)]
+    (#'server/sse-ready! out sid 0 [] (state/soul sid))
+    (->> (str/split-lines (.toString out "UTF-8"))
+         (some #(when (str/starts-with? % "data:") (subs % 5)))
+         json/read-json)))
+
 ;; A team pushed rows to nobody: without an open client, each child step still read the store.
+;; The clients then read the team with GET /agents. The ready frame of each stream holds it now.
 (defdescribe
   team-watcher-test
-  (it "builds nothing without a watcher and pushes the live rows when the first client attaches"
-      (with-team {:statuses ["running" "completed"]}
-                 (fn [{:keys [leader children events]}]
-                   (let [[running] children]
-                     (state/append-event! running "turn.started" {:turn_id "t"})
-                     (drain!)
-                     (expect (zero? (long (push-statements #(state/append-event!
-                                                              running
-                                                              "iteration.completed"
-                                                              {:turn_id "t"})))))
-                     (expect (empty? @events))
-                     (let [replay (state/subscribe! leader
-                                                    "client-1"
-                                                    (fn [_])
-                                                    0)]
-                       (expect (vector? (vec replay))))
-                     (drain!)
-                     (expect (= [running]
-                                (mapv #(get % "session_id") (get (second (last @events)) "agents")))
-                             "Only the queued or running child is sent")
-                     (expect (.exists (#'bus/watch-file leader)) "Other processes see the watcher")
-                     (state/unsubscribe! leader "client-1")
-                     (expect (not (.exists (#'bus/watch-file leader))))))))
+  (it "builds nothing without a watcher and gives the whole team in the ready frame of a stream"
+      (with-team
+        {:statuses ["running" "completed"]}
+        (fn [{:keys [db leader children events]}]
+          (let [[running] children]
+            (state/append-event! running "turn.started" {:turn_id "t"})
+            (drain!)
+            (expect (zero? (long (push-statements #(state/append-event! running
+                                                                        "iteration.completed"
+                                                                        {:turn_id "t"})))))
+            (expect (empty? @events))
+            (state/subscribe! leader
+                              "client-1"
+                              (fn [_])
+                              0)
+            (let [frame (ready-frame leader)]
+              (expect (document/valid-json? "gateway" "subscription_ready" frame))
+              (expect (= (set children) (set (map #(get % "session_id") (get frame "agents"))))
+                      "The frame has each child, the ended one too")
+              (expect (= #{leader} (set (map #(get % "parent_id") (get frame "agents"))))))
+            (expect (= (set children)
+                       (set (map #(get % "session_id") (get (ready-frame running) "agents"))))
+                    "A subagent stream gets its team")
+            (expect (not (contains? (ready-frame (str (h/store-session! db {:channel :api})))
+                                    "agents"))
+                    "A session without a team has no rows")
+            (expect (.exists (#'bus/watch-file leader)) "Other processes see the watcher")
+            (state/unsubscribe! leader "client-1")
+            (expect (not (.exists (#'bus/watch-file leader))))))))
   (it "counts the watch marker of another live process and deletes one of a dead process"
       (with-team
         {:statuses ["running"]}

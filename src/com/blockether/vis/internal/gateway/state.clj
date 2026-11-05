@@ -210,7 +210,7 @@
   (boolean (some client-subscriber? (keys (:subscribers (session-entry sid))))))
 
 ;; The team push below reacts to subscribers, model picks, grants and deletes.
-(declare team-changed! team-attached! team-dropped! broadcast-team!)
+(declare team-changed! team-dropped! broadcast-team!)
 
 (defn session-known?
   "True when this process holds a registry entry for `sid`."
@@ -1177,15 +1177,12 @@
    (let [lock
          (event-store/lock-for sid)
 
-         [events first? held]
+         [events held]
          (locking lock
            ;; Forget may have won while hydration ran outside the replay lock.
            (ensure-session-entry! sid)
            (let [events
                  (read-replay! sid cursor replay)
-
-                 first?
-                 (and (client-subscriber? sub-id) (not (client-watched? sid)))
 
                  ;; A client opens the session: it takes the session notices that waited.
                  held
@@ -1194,11 +1191,9 @@
              (update-session! sid
                               #(cond-> (assoc-in % [:subscribers sub-id] sink) held
                                  (dissoc :held-notices)))
-             [events first? held]))]
+             [events held]))]
 
      (when (client-subscriber? sub-id) (bus/sync-watching! sid #(client-watched? sid)))
-     ;; A push without a watcher sent nothing, so the first client gets the live rows now.
-     (when first? (team-attached! sid))
      ;; After registration, so each held notice reaches the new sink after its replay.
      (doseq [notice held]
        (append-event! sid "notification" notice {:store? false}))
@@ -2804,7 +2799,7 @@
 
 (defn stop-team-pusher!
   "Stop the push thread and drop its queue and row cache. Pushes are live only, so nothing is lost
-   for a reconnect: a client reads `GET /agents` again. A later change starts a new thread."
+   for a reconnect: its `subscription.ready` frame has the team again. A later change starts a new thread."
   []
   (when-let [executor (first (reset-vals! team-pusher nil))]
     (.shutdownNow ^java.util.concurrent.ScheduledExecutorService executor)
@@ -3076,23 +3071,6 @@
     (doseq [child child-ids]
       (swap! team-leaders assoc (str child) (str leader))
       (mark-team! leader child true))))
-
-(defn- team-attached!
-  "The first client stream of session `sid` attached: push the rows of its queued and running
-   children and of its recently changed children, so the client also gets a change that a push
-   without a watcher skipped, an end included."
-  [sid]
-  (let [sid (str sid)]
-    (run-team! #(broadcast-team!
-                  sid
-                  (distinct (concat
-                              (keep (fn [child]
-                                      (when (team-live? (:status child)) (str (:session_id child))))
-                                    (read-or {:read :team-attach :session-id sid}
-                                             []
-                                             (fn []
-                                               (persistance/db-agent-list (lp/db-info) sid))))
-                              (map second (team-recent @team-cache #{sid} (util/now-ms)))))))))
 
 (defn- team-open?
   "True when registry entry `entry` has a running or queued turn."
@@ -3450,7 +3428,7 @@
 
 (defn- with-turn-agents
   "Put the team rows of each turn of `rows` (canonical transcript turns) into that turn as
-   `agents`, in the shape of `GET /v1/sessions/:sid/agents`. A team belongs to the turn that
+   `agents`, in the row shape of the `subscription.ready` frame. A team belongs to the turn that
    started it (`team_id`), so the transcript shows it with the rest of the turn and a client
    does not wait for a second read. A turn without subagents gets no key. One read lists the
    children of `sid`; only the children of these turns are built."
@@ -7412,13 +7390,16 @@
       activity
       (assoc :activity activity))))
 
-(defn- agent-list
-  [env _opts]
+(defn agent-rows
+  "The team rows of session `sid`: each child of a leader, or the team of a child. The
+   `subscription.ready` frame of each stream carries them. A read of the store only, so it runs in
+   a process without a gateway, as an export does."
+  [sid]
   (let [db
-        (:db-info env)
+        (lp/db-info)
 
         sid
-        (str (:session-id env))
+        (str sid)
 
         child
         (agents/info db sid)
@@ -7430,12 +7411,6 @@
           (cond->> (persistance/db-agent-list db leader)
             child
             (filter #(= (:team_id child) (:team_id %)))))))
-
-(defn agent-rows
-  "The team rows of session `sid`, as `GET /v1/sessions/:sid/agents` answers them. A read of the
-   store only, so it runs in a process without a gateway, as an export does."
-  [sid]
-  (agent-list {:db-info (lp/db-info) :session-id (str sid)} {}))
 
 (defn- agent-model!
   [router provider model]
@@ -7941,7 +7916,6 @@
   "The session-agent operations `agents/install-runtime!` receives at startup."
   {:spawn #'agent-spawn
    :settle-dependents #'settle-dependents!
-   :list #'agent-list
    :cancel #'agent-cancel
    :route #'agent-route
    :grant #'agent-grant

@@ -2980,7 +2980,6 @@ def _calls():
         ('council.threads', lambda: council.threads()),
         ('council.members', lambda: council.members()),
         ('council.wake', lambda: council.wake('Done')),
-        ('council.subagents', lambda: council.subagents()),
         ('council.spawn', lambda: council.spawn('Check')),
         ('council.run', lambda: council.run(['Check'])),
         ('council.wait', lambda: council.wait()),
@@ -3071,7 +3070,6 @@ vis.register_extension(vis.Extension(
                      "council.threads" ["GET" "/council/threads"]
                      "council.members" ["GET" "/council/members"]
                      "council.wake" ["POST" "/council/wake"]
-                     "council.subagents" ["GET" "/agents"]
                      "council.spawn" ["POST" "/agents"]
                      "council.run" ["POST" "/agents/run"]
                      "council.wait" ["POST" "/agents/wait"]

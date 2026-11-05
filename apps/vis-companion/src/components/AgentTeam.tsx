@@ -4,15 +4,13 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useEffectEvent,
   useId,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
-import { mergeAgents, teamRowsFromWire, type GatewayClient } from '../lib/gateway';
+import { mergeAgents, type GatewayClient } from '../lib/gateway';
 import type { Subagent, TranscriptIteration, TranscriptTurn } from '../lib/types';
 import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
@@ -762,110 +760,38 @@ export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnI
     .map(([, team]) => team);
 }
 
-/** How often the team of a gateway older than protocol 21 is read while it is live. */
-const LEGACY_TEAM_POLL_MS = 3000;
-
 /** No agents: one value, so a default argument keeps its identity. */
 const NO_AGENTS: readonly Subagent[] = [];
 
+const NO_SUBSCRIPTION = () => () => {};
+
 /**
- * One reader for a session's subagents. Three sources give the rows, oldest first: the last
- * team that this device read for `sid`, the rows of the transcript turns (`stored`), and the
- * rows that this visit read or got from `session.team_updated`. A newer source replaces the
- * row of an older one, so a cached row never hides a newer transcript row.
- *
- * It has no timer. It reads the team after a stream reconnect, when the page shows again,
- * after a control call, and on an event without usable rows. On open it waits for the first
- * transcript read of this visit (`isStoredFresh`), and reads only when its rows do not count
- * every child (`teamTotal`): else that transcript read gave the whole team. It does not read when `teamTotal` is 0 and no rows are cached.
- *
- * `legacyRunning` is null for a gateway that pushes rows. For an older gateway it says whether
- * the leader's turn runs: such a gateway sends only counts, so the team is read every 3 s
- * while the turn runs or a child is live.
+ * One reader for a session's subagents. It reads nothing from the gateway. The
+ * `subscription.ready` frame of each stream connect gives the whole team of `sid`, and each
+ * `session.team_updated` after it changes rows; the session hub keeps both. Before the first
+ * ready frame, the last team that this device knew stands in. The rows of the transcript turns
+ * (`stored`) are under them, so a team of an older turn still shows. A newer source replaces
+ * the row of an older one.
  */
-export function useAgentTeam(
-  client: GatewayClient,
-  sid: string,
-  teamTotal: number | null = null,
-  legacyRunning: boolean | null = null,
-  stored: readonly Subagent[] = NO_AGENTS,
-  isStoredFresh = true,
-) {
+export function useAgentTeam(client: GatewayClient, sid: string, stored: readonly Subagent[] = NO_AGENTS) {
   const hub = useContext(SessionEventsContext);
-  // The rows that this visit read or got pushed, for `sid`.
-  const [state, setState] = useState<{ sid: string; agents: readonly Subagent[] }>(() => ({ sid, agents: NO_AGENTS }));
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // The read requests of `sid`. The first effect run of a session is its open.
-  const [revision, setRevision] = useState({ sid, count: 0 });
-  // Counts the applied events, so a read that an event passed reads again.
-  const pushes = useRef(0);
-  const live = state.sid === sid ? state.agents : NO_AGENTS;
-  // The transcript rows count every child, so the cache has nothing that they do not have.
-  const isStoredWhole = teamTotal !== null && teamTotal > 0 && stored.length >= teamTotal;
+  const subscribe = useCallback(
+    (changed: () => void) => (hub ? hub.subscribeTeam(sid, changed) : NO_SUBSCRIPTION()),
+    [hub, sid],
+  );
+  const streamed = useSyncExternalStore(subscribe, () => hub?.team(sid));
   const current = useMemo(() => {
-    const base = isStoredWhole ? stored : mergeAgents(client.cachedAgents?.(sid) ?? [], stored);
-    return live.length ? mergeAgents(base, live) : base;
-  }, [client, sid, stored, live, isStoredWhole]);
-  const hasNoTeam = useEffectEvent(() => teamTotal === 0 && !client.cachedAgents?.(sid)?.length);
-  const opensWhole = useEffectEvent(() => isStoredWhole);
-  // On open, the team read waits for the transcript read, which can make it needless.
-  const waitsForTranscript = revision.sid !== sid || revision.count === 0 ? !isStoredFresh : false;
-  const polls = legacyRunning !== null && (legacyRunning || current.some(isLive));
-  useEffect(() => {
-    const controller = new AbortController();
-    let fetching = false;
-    const refresh = async () => {
-      if (fetching || controller.signal.aborted || document.hidden || hasNoTeam()) return;
-      fetching = true;
-      const seen = pushes.current;
-      try {
-        const rows = await client.agents(sid, controller.signal);
-        if (!controller.signal.aborted && Array.isArray(rows)) setState({ sid, agents: rows });
-      } catch {
-        // The rows that the reader has stay; the next read tries again.
-      } finally {
-        fetching = false;
-      }
-      // The answer can be older than an event that came during the read.
-      if (pushes.current !== seen) void refresh();
-    };
-    const isOpen = revision.sid !== sid || revision.count === 0;
-    if (!isOpen || (!waitsForTranscript && !opensWhole())) void refresh();
-    const timer = polls ? window.setInterval(() => void refresh(), LEGACY_TEAM_POLL_MS) : undefined;
-    document.addEventListener('visibilitychange', refresh);
-    let wasConnected: boolean | null = null;
-    const offConnection = hub?.subscribeConnection((connected) => {
-      if (connected && wasConnected === false) void refresh();
-      wasConnected = connected;
-    });
-    return () => {
-      controller.abort();
-      if (timer !== undefined) window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', refresh);
-      offConnection?.();
-    };
-  }, [client, hub, sid, revision, waitsForTranscript, polls]);
-  useEffect(() => {
-    if (!hub) return;
-    const readAgain = () => setRevision((value) => ({ sid, count: value.sid === sid ? value.count + 1 : 1 }));
-    return hub.subscribeSession(
-      sid,
-      (event) => {
-        if (event.type !== 'session.team_updated') return;
-        // The cache keeps the team for the next visit; this visit keeps only the changed rows.
-        const team = client.applyTeamUpdate?.(sid, event) ?? null;
-        const changed = teamRowsFromWire((event as { agents?: unknown }).agents);
-        if (changed) {
-          pushes.current += 1;
-          setState((value) => ({ sid, agents: mergeAgents(value.sid === sid ? value.agents : NO_AGENTS, changed) }));
-        }
-        if (!changed || (!team && !opensWhole())) readAgain();
-      },
-      { replay: false },
-    );
-  }, [client, hub, sid]);
-  // One control call at a time for each child. It reads the team again after the call.
+    // The stream rows are newer than the transcript rows. The cached rows of an earlier visit are older.
+    if (streamed) {
+      if (!streamed.length || !stored.length) return streamed.length ? streamed : stored;
+      return mergeAgents(stored, streamed);
+    }
+    const cached = client.cachedAgents?.(sid);
+    return cached?.length ? mergeAgents(cached, stored) : stored;
+  }, [client, sid, stored, streamed]);
+  // One control call at a time for each child. The gateway pushes the changed row after it.
   // The result is the error text, or null when the call worked.
   const control = useCallback(async (child: string, call: () => Promise<unknown>, fallback: string) => {
     setPending(child);
@@ -876,7 +802,6 @@ export function useAgentTeam(
       return cause instanceof Error && cause.message ? cause.message : fallback;
     } finally {
       setPending(null);
-      setRevision((value) => ({ sid: value.sid, count: value.count + 1 }));
     }
   }, []);
   // The gateway stops a child only for a session that controls it: its parent. In a child session

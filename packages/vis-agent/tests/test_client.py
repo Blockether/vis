@@ -812,8 +812,6 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
                 "items": [{"at": 1, "kind": "finished", "status": "completed"}],
             }
         if "/agents" in route:
-            if method == "GET":
-                return 200, [child]
             if route.endswith("/agents") or route.endswith("/route"):
                 return 200, child
             return 200, [record]
@@ -832,7 +830,6 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.publish("Entry")
         council.wake("Finished")
         council.spawn("Check the contract")
-        council.subagents()
         council.run(["Check the contract"], timeout_secs=1)
         council.wait(["child"], timeout_secs=1)
         council.cancel("child")

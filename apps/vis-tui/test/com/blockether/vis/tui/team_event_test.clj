@@ -1,11 +1,9 @@
 (ns com.blockether.vis.tui.team-event-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.tui.agent-team :as team]
+  (:require [com.blockether.vis.tui.agent-team :as team]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.state :as state]
-            [lazytest.core :refer [defdescribe describe expect it]])
-  (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- row [id status] {"session_id" id "task" "Work" "status" status})
 
@@ -17,23 +15,23 @@
 
 (defn- with-live-session
   "Open the live subscription of `sid` with the refresh worker, and call `f` with the raw
-   gateway event sink. `reads` gets the URL of each team read and `body` is its answer."
-  [sid reads body f]
+   gateway event sink. `requests` gets each gateway request: the team needs none."
+  [sid requests f]
   (let [sink (atom nil)]
     (with-redefs-fn {#'vis/add-title-listener! (fn [& _])
                      #'vis/add-title-pending-listener! (fn [& _])
                      #'vis/remove-title-listener! (fn [& _])
                      #'vis/remove-title-pending-listener! (fn [& _])
+                     #'vis/refresh-session-model! (fn [& _])
                      #'vis/worker-future (fn [& _])
                      #'vis/gateway-current-seq (constantly 0)
                      #'vis/gateway-mux-subscribe! (fn [_ s _]
                                                     (reset! sink s)
                                                     (fn []))
                      #'vis/setting (constantly {"enabled" true})
-                     #'vis/request! (fn [_ url _]
-                                      (when (str/includes? url sid)
-                                        (.offer ^LinkedBlockingQueue reads url))
-                                      {:status 200 :body @body})
+                     #'vis/request! (fn [& args]
+                                      (swap! requests conj args)
+                                      {:status 404})
                      #'state/tab-id-for-session (fn [& _]
                                                   "tab")
                      #'state/dispatch (fn [& _])
@@ -42,127 +40,81 @@
              (team/start-refresh! (constantly sid)
                                   (fn []))] (try (f @sink) (finally (stop) (cleanup)))))))
 
-(defdescribe
-  team-event-refresh-test
-  ;; User report 2026-11-01: the running agent team showed only after seconds,
-  ;; at the next poll. A child lifecycle event must show the team at once.
-  (it "shows the agents of session.team_updated at once, without a team read"
-      (let [reads (LinkedBlockingQueue.)]
-        (with-live-session
-          "team-leader"
-          reads
-          (atom "[]")
-          (fn [sink]
-            (expect (some? (.poll reads 2 TimeUnit/SECONDS)) "The open read")
-            (sink {"type" "session.team_updated"
-                   "session_id" "team-leader"
-                   "team" {"active" 1 "total" 1}
-                   "agents" [(row "child" "running")]})
-            (expect (wait-for #(= "running"
-                                  (get-in (team/summary "team-leader") [:agents 0 "status"]))))
-            (expect (nil? (.poll reads 1 TimeUnit/SECONDS)) "The event rows need no read")))))
-  (it "reads the team when session.team_updated has no usable agents"
-      ;; A gateway before protocol 21 sends only the counts.
-      (let [reads
-            (LinkedBlockingQueue.)
+(defn- statuses [sid] (mapv #(get % "status") (:agents (team/summary sid))))
 
-            body
-            (atom "[]")]
+(defdescribe ready-frame-team-test
+             ;; Requirement (leader task "remove GET /agents", 2026-11): the gateway answers the team read
+             ;; no more. The rows of subscription.ready are the team, and pushed rows merge after them.
+             (it "shows the agents of subscription.ready without a team read"
+                 (let [requests (atom [])]
+                   (with-live-session
+                     "ready-leader"
+                     requests
+                     (fn [sink]
+                       (sink {"type" "subscription.ready"
+                              "session_id" "ready-leader"
+                              "agents" [(row "c1" "running") (row "c2" "completed")]})
+                       (expect (wait-for #(= ["running" "completed"] (statuses "ready-leader"))))
+                       (expect (= "Agents 1 active/2 cached"
+                                  (team/header-label "ready-leader" false)))
+                       (Thread/sleep 300)
+                       (expect (= [] @requests) "No request reads the team")))))
+             (it "merges the rows of session.team_updated after the ready frame rows"
+                 (with-live-session
+                   "push-leader"
+                   (atom [])
+                   (fn [sink]
+                     (sink {"type" "subscription.ready"
+                            "session_id" "push-leader"
+                            "agents" [(row "c1" "running")]})
+                     (sink {"type" "session.team_updated"
+                            "session_id" "push-leader"
+                            "team" {"active" 1 "total" 2}
+                            "agents" [(row "c1" "completed") (row "c2" "running")]})
+                     (expect (wait-for #(= ["completed" "running"] (statuses "push-leader")))))))
+             (it "keeps the team when session.team_updated has no usable agents"
+                 (with-live-session "count-leader"
+                                    (atom [])
+                                    (fn [sink]
+                                      (sink {"type" "subscription.ready"
+                                             "session_id" "count-leader"
+                                             "agents" [(row "c1" "running")]})
+                                      (expect (wait-for #(= ["running"] (statuses "count-leader"))))
+                                      (sink {"type" "session.team_updated"
+                                             "session_id" "count-leader"
+                                             "team" {"active" 0 "total" 1}})
+                                      (Thread/sleep 400)
+                                      (expect (= ["running"] (statuses "count-leader")))))))
 
-        (with-live-session
-          "old-gateway-leader"
-          reads
-          body
-          (fn [sink]
-            (expect (some? (.poll reads 2 TimeUnit/SECONDS)) "The open read")
-            (reset! body "[{\"session_id\":\"child\",\"task\":\"Work\",\"status\":\"running\"}]")
-            (sink {"type" "session.team_updated"
-                   "session_id" "old-gateway-leader"
-                   "team" {"active" 1 "total" 1}})
-            (expect (some? (.poll reads 2 TimeUnit/SECONDS)) "The event reads the team")
-            (expect (wait-for #(= "running"
-                                  (get-in (team/summary "old-gateway-leader")
-                                          [:agents 0 "status"])))))))))
-
-(defdescribe
-  team-reconnect-test
-  ;; The gateway does not replay session.team_updated. Without a read after a reconnect, an
-  ;; agent that started during the gap never shows, because no timed read heals it.
-  (describe
-    "a reconnected event stream"
-    (it "reads the team again and shows the agents of the gap"
-        (let [reads
-              (LinkedBlockingQueue.)
-
-              body
-              (atom "[]")]
-
-          (with-live-session
-            "gap-leader"
-            reads
-            body
-            (fn [sink]
-              (expect (some? (.poll reads 2 TimeUnit/SECONDS)) "The open read")
-              (sink {"type" "subscription.ready" "session_id" "gap-leader"})
-              (expect (nil? (.poll reads 1 TimeUnit/SECONDS))
-                      "The first subscription.ready follows the open read")
-              (sink {:type "gateway.disconnected"})
-              (expect (wait-for #(= "Agents stale" (team/header-label "gap-leader" false))))
-              (reset! body "[{\"session_id\":\"child\",\"task\":\"Work\",\"status\":\"running\"}]")
-              (sink {"type" "subscription.ready" "session_id" "gap-leader"})
-              (expect (some? (.poll reads 2 TimeUnit/SECONDS)) "The reconnect reads the team")
-              (expect (wait-for #(= "Agents 1 active/1 cached"
-                                    (team/header-label "gap-leader" false))))))))
-    (it "reads also a leader whose session row counted no agents"
-        (let [reads (LinkedBlockingQueue.)]
-          (team/note-team! "empty-leader" {"active" 0 "total" 0})
-          (with-live-session "empty-leader"
-                             reads
-                             (atom "[]")
+(defdescribe team-reconnect-test
+             ;; The gateway does not replay session.team_updated. An agent that starts during a dropped
+             ;; stream shows only through the rows of the next subscription.ready.
+             (describe "a reconnected event stream"
+                       (it "replaces the team with the rows of the new ready frame"
+                           (with-live-session
+                             "gap-leader"
+                             (atom [])
                              (fn [sink]
-                               (expect (nil? (.poll reads 1 TimeUnit/SECONDS))
-                                       "A team of 0 needs no open read")
-                               (sink {"type" "subscription.ready" "session_id" "empty-leader"})
+                               (sink {"type" "subscription.ready"
+                                      "session_id" "gap-leader"
+                                      "agents" [(row "c1" "running")]})
+                               (expect (wait-for #(= ["running"] (statuses "gap-leader"))))
                                (sink {:type "gateway.disconnected"})
-                               (sink {"type" "subscription.ready" "session_id" "empty-leader"})
-                               (expect (some? (.poll reads 2 TimeUnit/SECONDS))
-                                       "The gap can hold the first agents")))))))
-
-(defdescribe
-  no-timed-team-read-test
-  ;; Requirement (leader task "stop polling GET /agents", 2026-11): the request count is the
-  ;; requirement. The TUI read the team and the Subagents setting every 5 s, 24 requests a
-  ;; minute for each open session. Now an open session reads once, and events keep it.
-  (it "reads the team and the setting once while an active team runs"
-      (let [requests (atom {})]
-        (with-redefs [vis/setting (fn [& _]
-                                    (swap! requests update :setting (fnil inc 0))
-                                    {"enabled" true})
-                      vis/request!
-                      (fn [& _]
-                        (swap! requests update :agents (fnil inc 0))
-                        {:status 200
-                         :body
-                         "[{\"session_id\":\"c\",\"task\":\"Work\",\"status\":\"running\"}]"})]
-
-          (let [stop (team/start-refresh! (constantly "timer-leader")
-                                          (fn []))]
-            (try (Thread/sleep 6000)
-                 (expect (= {:setting 1 :agents 1} @requests))
-                 (finally (stop)))))))
-  (it "reads only the setting of a leader whose session row counts no agents"
-      (let [requests (atom {})]
-        (team/note-team! "no-team-leader" {"active" 0 "total" 0})
-        (with-redefs [vis/setting (fn [& _]
-                                    (swap! requests update :setting (fnil inc 0))
-                                    {"enabled" true})
-                      vis/request! (fn [& _]
-                                     (swap! requests update :agents (fnil inc 0))
-                                     {:status 200 :body "[]"})]
-
-          (let [stop (team/start-refresh! (constantly "no-team-leader")
-                                          (fn []))]
-            (try (Thread/sleep 1000)
-                 (expect (= {:setting 1} @requests))
-                 (expect (= "Agents 0 active/0 cached" (team/header-label "no-team-leader" false)))
-                 (finally (stop))))))))
+                               (expect (wait-for #(= "Agents stale"
+                                                     (team/header-label "gap-leader" false))))
+                               (sink {"type" "subscription.ready"
+                                      "session_id" "gap-leader"
+                                      "agents" [(row "c1" "completed") (row "c2" "running")]})
+                               (expect (wait-for #(= "Agents 1 active/2 cached"
+                                                     (team/header-label "gap-leader" false)))))))
+                       (it "shows no rows when the new ready frame has no agents"
+                           (with-live-session
+                             "emptied-leader"
+                             (atom [])
+                             (fn [sink]
+                               (sink {"type" "subscription.ready"
+                                      "session_id" "emptied-leader"
+                                      "agents" [(row "c1" "running")]})
+                               (expect (wait-for #(= ["running"] (statuses "emptied-leader"))))
+                               (sink {"type" "subscription.ready" "session_id" "emptied-leader"})
+                               (expect (wait-for #(= [] (statuses "emptied-leader")))))))))

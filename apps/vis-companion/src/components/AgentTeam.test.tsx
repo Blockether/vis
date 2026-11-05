@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GatewayClient } from '../lib/gateway';
+import type { GatewayClient } from '../lib/gateway';
 import { SessionEventsContext } from '../lib/session-events';
-import type { SessionSubscriptionHub } from '../lib/subscriptions';
+import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent, Subagent } from '../lib/types';
 import {
   StopAgent,
@@ -29,12 +29,6 @@ const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: '
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
   provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 }, created_at: T0 };
 const props = { onOpen: vi.fn() };
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
-}
 
 const rowTexts = () => screen.getAllByRole('button').map((row) => row.textContent);
 
@@ -323,29 +317,25 @@ describe('teams', () => {
   });
 });
 
-function fakeHub() {
-  const listeners = new Set<(event: SseEvent) => void>();
-  const connection = new Set<(connected: boolean) => void>();
-  const hub = {
-    subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
+/** A real session hub over a fake stream: a test emits gateway frames into it. */
+function streamHub(rememberAgents = vi.fn()) {
+  const streams: ((event: SseEvent) => void)[] = [];
+  const client = {
+    streamSessionEvents: (_cursors: Map<string, number>, emit: (event: SseEvent) => void) => {
+      streams.push(emit);
+      return vi.fn();
     },
-    subscribeConnection: (listener: (connected: boolean) => void) => {
-      connection.add(listener);
-      listener(true);
-      return () => connection.delete(listener);
-    },
-  } as unknown as SessionSubscriptionHub;
-  return {
-    hub,
-    emit: (event: SseEvent) => listeners.forEach((listener) => listener(event)),
-    connect: (connected: boolean) => connection.forEach((listener) => listener(connected)),
-  };
+    streamFleetStatus: () => vi.fn(),
+    rememberAgents,
+  } as unknown as GatewayClient;
+  const hub = new SessionSubscriptionHub(client);
+  // The session screen watches the session, which opens the stream.
+  hub.subscribeSession('leader', () => {});
+  return { hub, emit: (event: Record<string, unknown>) => act(() => streams.at(-1)!(event as SseEvent)) };
 }
 
-function TeamView({ client, sid, total, legacy = null }: { client: GatewayClient; sid: string; total?: number | null; legacy?: boolean | null }) {
-  const team = useAgentTeam(client, sid, total, legacy);
+function TeamView({ client, sid, stored }: { client: GatewayClient; sid: string; stored?: Subagent[] }) {
+  const team = useAgentTeam(client, sid, stored);
   return (
     <>
       <TurnAgents agents={team.agents} error={team.error} onOpen={vi.fn()} />
@@ -354,145 +344,59 @@ function TeamView({ client, sid, total, legacy = null }: { client: GatewayClient
   );
 }
 
-function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; total?: number | null; legacy?: boolean | null; hub?: SessionSubscriptionHub | null }) {
+function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; stored?: Subagent[]; hub?: SessionSubscriptionHub | null }) {
   return <SessionEventsContext.Provider value={hub}><TeamView {...props} /></SessionEventsContext.Provider>;
 }
 
-const fakeClient = (agents: ReturnType<typeof vi.fn>, more: Record<string, unknown> = {}) =>
-  ({ agents, cancelAgent: vi.fn(), ...more }) as unknown as GatewayClient;
+const fakeClient = (more: Record<string, unknown> = {}) => ({ cancelAgent: vi.fn(), ...more }) as unknown as GatewayClient;
+
+const ready = (agents?: Subagent[]) => ({ type: 'subscription.ready', session_id: 'leader', cursor: 1, ...(agents ? { agents } : {}) });
 
 describe('agent team reader', () => {
-  it('reads single-flight, pauses while hidden and aborts on replacement and unmount', async () => {
-    const first = deferred<Subagent[]>();
-    const agents = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue([child]);
-    const client = fakeClient(agents);
-    const { rerender, unmount } = render(<Team client={client} sid="leader" />);
-    await act(async () => {});
-    const signal = agents.mock.calls[0][1] as AbortSignal;
-    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-    expect(agents).toHaveBeenCalledTimes(1);
-    await act(async () => { first.resolve([child]); });
-    expect(screen.getByRole('button', { name: /^agent#1/ })).toBeInTheDocument();
-    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
-    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-    expect(agents).toHaveBeenCalledTimes(1);
-    hidden.mockReturnValue(false);
-    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-    expect(agents).toHaveBeenCalledTimes(2);
-    rerender(<Team client={client} sid="next" />);
-    expect(signal.aborted).toBe(true);
-    await act(async () => {});
-    expect(agents).toHaveBeenLastCalledWith('next', expect.any(AbortSignal));
-    const lastSignal = agents.mock.calls.at(-1)![1] as AbortSignal;
-    unmount();
-    expect(lastSignal.aborted).toBe(true);
+  let hub: SessionSubscriptionHub | null = null;
+  afterEach(() => {
+    hub?.dispose();
+    hub = null;
   });
 
-  // Requirement (agent team push, protocol 21): the Companion read GET /agents every 3 s
-  // while a team worked. The gateway now pushes changed rows, so no timer reads the team.
-  it('reads a working team once and never on a timer', async () => {
-    vi.useFakeTimers();
-    const agents = vi.fn().mockResolvedValue([child, { ...child, session_id: 'second' }]);
-    render(<Team client={fakeClient(agents)} sid="leader" total={2} hub={fakeHub().hub} />);
-    await act(async () => {});
-    await act(async () => { vi.advanceTimersByTime(60_000); });
-    expect(agents).toHaveBeenCalledTimes(1);
-  });
-
-  // A gateway before protocol 21 sends only counts, so the rows of its team change only on a read.
-  it('reads the team of an older gateway every 3 s while it is live, and stops when it ends', async () => {
-    vi.useFakeTimers();
-    const agents = vi.fn().mockResolvedValue([child]);
-    const view = render(<Team client={fakeClient(agents)} sid="leader" total={1} legacy={false} hub={fakeHub().hub} />);
-    await act(async () => {});
-    const opened = agents.mock.calls.length;
-    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
-    expect(agents).toHaveBeenCalledTimes(opened + 3);
-    agents.mockResolvedValue([{ ...child, status: 'completed' }]);
-    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
-    const ended = agents.mock.calls.length;
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(agents).toHaveBeenCalledTimes(ended);
-    view.unmount();
-  });
-
-  it('draws the pushed rows without a read, and reads on an event without rows', async () => {
-    const { hub, emit } = fakeHub();
-    const agents = vi.fn().mockResolvedValue([child]);
-    const applyTeamUpdate = vi.fn().mockReturnValueOnce([{ ...child, status: 'completed' }]).mockReturnValue(null);
-    render(<Team client={fakeClient(agents, { applyTeamUpdate })} sid="leader" total={1} hub={hub} />);
-    await act(async () => {});
+  // Protocol 22: the ready frame of each stream connect is the only team read. A reconnect
+  // replaces the team, so a row that the stream lost while it was down does not stay.
+  it('shows the rows of the ready frame, merges each push, and replaces them on a reconnect', () => {
+    const remember = vi.fn();
+    const stream = streamHub(remember);
+    hub = stream.hub;
+    render(<Team client={fakeClient()} sid="leader" hub={hub} />);
+    stream.emit(ready([child]));
     expect(screen.getByText('running')).toBeInTheDocument();
-    act(() => emit({ type: 'session.team_updated', team: { active: 0, total: 1 }, agents: [{ ...child, status: 'completed' }] } as SseEvent));
+    stream.emit({ type: 'session.team_updated', session_id: 'leader', team: { active: 1, total: 2 },
+      agents: [{ ...child, session_id: 'second', status: 'queued' }] });
+    expect(rowTexts().filter((text) => text?.startsWith('agent#'))).toHaveLength(2);
+    stream.emit(ready([{ ...child, status: 'completed' }]));
     expect(screen.getByText('done')).toBeInTheDocument();
-    expect(agents).toHaveBeenCalledTimes(1);
-    await act(async () => { emit({ type: 'session.team_updated', team: { active: 0, total: 1 } } as SseEvent); });
-    expect(agents).toHaveBeenCalledTimes(2);
-  });
-
-  // A pushed row that arrives while a read runs is newer than the read's answer.
-  it('reads again when an event arrives during a read', async () => {
-    const { hub, emit } = fakeHub();
-    const first = deferred<Subagent[]>();
-    const agents = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue([{ ...child, status: 'completed' }]);
-    const applyTeamUpdate = vi.fn().mockReturnValue([{ ...child, status: 'completed' }]);
-    render(<Team client={fakeClient(agents, { applyTeamUpdate })} sid="leader" total={1} hub={hub} />);
-    await act(async () => {});
-    act(() => emit({ type: 'session.team_updated', team: { active: 0, total: 1 }, agents: [] } as SseEvent));
-    await act(async () => { first.resolve([child]); });
-    expect(agents).toHaveBeenCalledTimes(2);
-    expect(screen.getByText('done')).toBeInTheDocument();
-  });
-
-  // The stream drops events while it is down, so the team reads again after a reconnect.
-  it('reads again after a stream reconnect, not on the first connect', async () => {
-    const { hub, connect } = fakeHub();
-    const agents = vi.fn().mockResolvedValue([child]);
-    render(<Team client={fakeClient(agents)} sid="leader" total={1} hub={hub} />);
-    await act(async () => {});
-    expect(agents).toHaveBeenCalledTimes(1);
-    act(() => connect(false));
-    await act(async () => { connect(true); });
-    expect(agents).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not read a session without children, but reads one with cached rows', async () => {
-    const agents = vi.fn().mockResolvedValue([]);
-    const cachedAgents = vi.fn().mockReturnValue(null);
-    const client = fakeClient(agents, { cachedAgents });
-    const { unmount } = render(<Team client={client} sid="leader" total={0} />);
-    await act(async () => {});
-    expect(agents).not.toHaveBeenCalled();
-    unmount();
-    cachedAgents.mockReturnValue([child]);
-    render(<Team client={client} sid="leader" total={0} />);
-    await act(async () => {});
-    expect(agents).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps its rows on a malformed answer and ignores a late answer for another session', async () => {
-    const old = deferred<Subagent[]>();
-    const agents = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce({}).mockResolvedValue([]);
-    const client = { agents, cancelAgent: vi.fn() } as unknown as GatewayClient;
-    const { rerender } = render(<Team client={client} sid="old" />);
-    await act(async () => {});
-    rerender(<Team client={client} sid="new" />);
-    await act(async () => {});
-    await act(async () => { old.resolve([child]); });
+    expect(rowTexts().filter((text) => text?.startsWith('agent#'))).toHaveLength(1);
+    expect(remember).toHaveBeenLastCalledWith('leader', [{ ...child, status: 'completed' }]);
+    stream.emit(ready());
     expect(screen.queryByRole('button', { name: /^agent#1/ })).not.toBeInTheDocument();
   });
 
-  it('keeps a stop failure visible across background reads until a stop succeeds', async () => {
-    const agents = vi.fn().mockResolvedValue([child]);
+  // Before the first ready frame of this app run, the team of the last visit shows at once.
+  // A transcript row is newer than that cached row, but older than a stream row.
+  it('shows the cached team before the ready frame, under the transcript rows', () => {
+    const stream = streamHub();
+    hub = stream.hub;
+    const cachedAgents = vi.fn().mockReturnValue([child]);
+    render(<Team client={fakeClient({ cachedAgents })} sid="leader" stored={[{ ...child, status: 'completed' }]} hub={hub} />);
+    expect(screen.getByText('done')).toBeInTheDocument();
+    stream.emit(ready([{ ...child, status: 'running' }]));
+    expect(screen.getByText('running')).toBeInTheDocument();
+  });
+
+  it('keeps a stop failure visible until a stop succeeds', async () => {
     const cancelAgent = vi.fn().mockRejectedValue(new Error('Stop failed. Try again.'));
-    render(<Team client={{ agents, cancelAgent } as unknown as GatewayClient} sid="leader" />);
-    await act(async () => {});
+    render(<Team client={fakeClient({ cancelAgent, cachedAgents: () => [child] })} sid="leader" />);
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');
-    expect(screen.getByRole('alert')).toHaveTextContent('Stop failed. Try again.');
-    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-    expect(agents).toHaveBeenCalledTimes(3);
     expect(screen.getByRole('alert')).toHaveTextContent('Stop failed. Try again.');
     cancelAgent.mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
@@ -504,32 +408,9 @@ describe('agent team reader', () => {
   // session goes through its parent.
   it('stops an agent from its own session through its parent', async () => {
     const cancelAgent = vi.fn().mockResolvedValue(undefined);
-    render(<Team client={{ agents: vi.fn().mockResolvedValue([child]), cancelAgent } as unknown as GatewayClient} sid="child" />);
-    await act(async () => {});
+    render(<Team client={fakeClient({ cancelAgent, cachedAgents: () => [child] })} sid="child" />);
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');
-  });
-
-  // User report 2026-11-01: the running agent team showed only after 3-4 seconds, and a
-  // session switch lost it until a new read finished.
-  it('shows the last team of a session at once after a switch back, before the new read', async () => {
-    const reads = new Map<string, (rows: Subagent[]) => void>();
-    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => new Promise<Response>((done) => {
-      reads.set(new URL(String(input)).pathname.split('/')[3], (rows) =>
-        done(new Response(JSON.stringify(rows), { headers: { 'Content-Type': 'application/json' } })));
-    })));
-    const client = new GatewayClient({ url: 'http://team-switch.example.com' });
-    const { rerender } = render(<Team client={client} sid="switch-leader" />);
-    await act(async () => {});
-    await act(async () => { reads.get('switch-leader')!([child]); });
-    expect(screen.getByRole('button', { name: /^agent#1/ })).toBeInTheDocument();
-    rerender(<Team client={client} sid="switch-other" />);
-    await act(async () => {});
-    await act(async () => { reads.get('switch-other')!([]); });
-    expect(screen.queryByRole('button', { name: /^agent#1/ })).not.toBeInTheDocument();
-    rerender(<Team client={client} sid="switch-leader" />);
-    expect(screen.getByRole('button', { name: /^agent#1/ })).toBeInTheDocument();
-    vi.unstubAllGlobals();
   });
 });

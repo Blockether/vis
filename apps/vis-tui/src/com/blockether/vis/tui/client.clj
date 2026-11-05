@@ -56,9 +56,6 @@
 
 (defonce ^:private target-checked? (atom false))
 
-;; The protocol that the checked gateway announced in its `/healthz` handshake, or nil.
-(defonce ^:private gateway-protocol* (atom nil))
-
 ;; Last answer and validator of each revalidated GET, keyed by path.
 (defonce ^:private etag-cache* (atom {}))
 
@@ -154,7 +151,6 @@
   (reset! target* (target-entry (or url (System/getenv url-env))
                                 (or token (System/getenv token-env))))
   (reset! target-checked? false)
-  (reset! gateway-protocol* nil)
   (reset! etag-cache* {})
   (reset! client-id nil)
   @target*)
@@ -362,14 +358,7 @@
             (throw (ex-info "gateway protocol is incompatible"
                             {:type :gateway/incompatible :verdict verdict})))
           (report-newer-gateway! verdict)
-          (reset! gateway-protocol* (:protocol handshake))
           (reset! target-checked? true))))))
-
-(defn gateway-protocol
-  "The protocol of the checked gateway, or nil before the first `/healthz` check.
-   A gateway below 21 pushes no agent rows in `session.team_updated`."
-  []
-  @gateway-protocol*)
 
 (defn- target!
   []

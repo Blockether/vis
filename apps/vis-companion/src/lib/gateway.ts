@@ -1162,7 +1162,7 @@ export function sessionTeamFromWire(raw: unknown): SessionTeam | null {
   return count(active) && count(total) ? { active: active as number, total: total as number } : null;
 }
 
-/** The agent rows of a `session.team_updated` event, or null when it has no usable rows. */
+/** The agent rows of `subscription.ready` or `session.team_updated`, or null when they are not usable. */
 export function teamRowsFromWire(raw: unknown): Subagent[] | null {
   if (!Array.isArray(raw)) return null;
   const text = (value: unknown) => typeof value === 'string' && value.length > 0;
@@ -3815,6 +3815,7 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('queued', sid));
     snapshots.delete(this.snapshotKey('running-turn', sid));
     snapshots.delete(this.snapshotKey('model', sid));
+    snapshots.delete(this.snapshotKey('agents', sid));
     // A session nothing holds any more has no stream left to resume either.
     if (sessionCursors.delete(this.snapshotKey('cursor', sid))) scheduleCursorFlush();
     for (const key of Array.from(this.sentAttachments.keys())) {
@@ -4320,37 +4321,20 @@ export class GatewayClient {
     return res.turns ?? [];
   }
 
-  async agents(sid: string, signal?: AbortSignal): Promise<Subagent[]> {
-    const rows = await this.request<Subagent[]>(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/agents`,
-      undefined,
-      signal,
-    );
-    if (Array.isArray(rows)) writeSnapshot(this.snapshotKey('agents', sid), rows);
-    return rows;
-  }
-
-  /** The last team that `agents` read for `sid`, or null before the first read. */
+  /** The last team that this device knew for `sid`, or null when it knows none. */
   cachedAgents(sid: string): Subagent[] | null {
     return this.isSessionDeleted(sid) ? null : readSnapshot<Subagent[]>(this.snapshotKey('agents', sid));
   }
 
   /**
-   * Apply the rows of a live `session.team_updated` event to the cached team of `sid`.
-   * Answer the new team, or null when the event cannot complete it; then the caller reads the team.
+   * Keep the team of `sid` for the next app start. Only the session hub writes it, from the
+   * ready frame and the pushes of its stream. An empty team keeps no row.
    */
-  applyTeamUpdate(sid: string, raw: unknown): Subagent[] | null {
-    if (!raw || typeof raw !== 'object' || this.isSessionDeleted(sid)) return null;
-    const { agents, team } = raw as Record<string, unknown>;
-    const changed = teamRowsFromWire(agents);
-    if (!changed) return null;
-    const base = this.cachedAgents(sid);
-    const next = mergeAgents(base ?? [], changed);
-    // Without an earlier read, the rows are the whole team only when they count all its children.
-    if (!base && next.length !== sessionTeamFromWire(team)?.total) return null;
-    writeSnapshot(this.snapshotKey('agents', sid), next);
-    return next;
+  rememberAgents(sid: string, rows: readonly Subagent[]): void {
+    if (this.isSessionDeleted(sid)) return;
+    const key = this.snapshotKey('agents', sid);
+    if (rows.length) writeSnapshot(key, rows);
+    else if (snapshots.delete(key)) scheduleSnapshotFlush(snapshotStores);
   }
 
   async cancelAgent(sid: string, childId: string): Promise<void> {

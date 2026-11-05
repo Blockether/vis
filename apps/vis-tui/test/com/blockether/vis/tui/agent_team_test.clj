@@ -21,41 +21,45 @@
                                      (with-redefs [vis/setting (constantly {"enabled" true})]
                                        (f)))])
 
-(defdescribe
-  feature-opt-in-controls-fetches-and-cached-availability-test
-  (it "feature opt in controls fetches and cached availability"
-      (let [enabled
-            (atom false)
+(defn- apply-work!
+  "Do the queued team work of `sid` as the refresh worker does. Returns the new snapshot."
+  [sid]
+  (#'team/sync! sid (#'team/take-work! sid)))
 
-            requests
-            (atom 0)]
+(defn- no-team-read
+  "A `vis/request!` that fails the test: nothing reads the team from the gateway."
+  [& args]
+  (throw (ex-info "No team read" {:args args})))
 
-        (with-redefs [vis/setting
-                      (fn [id _target]
-                        (expect (= "subagents" id))
-                        {"enabled" @enabled})
+(defdescribe feature-opt-in-controls-cached-availability-test
+             (it "shows the ready frame rows only while Subagents is on"
+                 (let [enabled
+                       (atom false)
 
-                      vis/request!
-                      (fn [& _]
-                        (swap! requests inc)
-                        {:status 200 :body "[]"})]
+                       rows
+                       [{"session_id" "c" "task" "Work" "status" "running"}]]
 
-          (expect (not (team/enabled? "experimental-team")))
-          (team/fetch! "experimental-team")
-          (expect (zero? @requests))
-          (expect (not (team/enabled? "experimental-team")))
-          (reset! enabled true)
-          (team/fetch! "experimental-team")
-          (expect (team/enabled? "experimental-team"))
-          (expect (= 1 @requests))
-          (reset! enabled false)
-          (team/fetch! "experimental-team")
-          (expect (not (team/enabled? "experimental-team")))
-          (expect (= 1 @requests)))
-        (with-redefs [vis/setting (fn [& _]
-                                    (throw (java.io.IOException. "offline")))]
-          (team/fetch! "experimental-team")
-          (expect (not (team/enabled? "experimental-team")))))))
+                   (with-redefs [vis/setting
+                                 (fn [id _target]
+                                   (expect (= "subagents" id))
+                                   {"enabled" @enabled})
+
+                                 vis/request!
+                                 no-team-read]
+
+                     (team/stream-ready! "experimental-team" rows)
+                     (apply-work! "experimental-team")
+                     (expect (not (team/enabled? "experimental-team")))
+                     (expect (= [] (:agents (team/summary "experimental-team"))))
+                     (reset! enabled true)
+                     (team/settings-changed! "experimental-team")
+                     (apply-work! "experimental-team")
+                     (expect (team/enabled? "experimental-team"))
+                     (expect (= rows (:agents (team/summary "experimental-team"))))
+                     (reset! enabled false)
+                     (team/settings-changed! "experimental-team")
+                     (apply-work! "experimental-team")
+                     (expect (not (team/enabled? "experimental-team")))))))
 
 (defdescribe subagents-follow-the-session-scope-test
              ;; Regression, issue #311: a project `.vis/config.yml` overlay can turn Subagents on
@@ -64,51 +68,32 @@
                  (let [reads (atom [])]
                    (with-redefs [vis/setting (fn [id target]
                                                (swap! reads conj [id target])
-                                               {"enabled" (= "session" (:scope target))})
-                                 vis/request! (fn [& _]
-                                                {:status 200 :body "[]"})]
-
-                     (team/fetch! "project-session")
+                                               {"enabled" (= "session" (:scope target))})]
+                     (team/settings-changed! "project-session")
+                     (apply-work! "project-session")
                      (expect (team/enabled? "project-session"))
                      (expect (= [["subagents" {:scope "session" :target-id "project-session"}]]
                                 @reads))))))
 
-(defdescribe read-errors-are-recoverable-test
-             (it "read errors are recoverable"
-                 (doseq [response [{:status 503} {:status 200 :body "not json"}
-                                   {:status 200 :body "{}"} {:status 200 :body "[1]"}]]
-                   (with-redefs [vis/request! (fn [& _]
-                                                response)]
-                     (expect (string? (:error (team/fetch! "leader"))))))
-                 (with-redefs [vis/request! (fn [& _]
-                                              (throw (java.io.IOException. "offline")))]
-                   (expect (string? (:error (team/fetch! "leader")))))))
-
-(defdescribe
-  failed-refresh-keeps-dock-test
-  ;; Regression (user report): one failed team refresh hid the agent dock until the next
-  ;; refresh. The snapshot dropped the last agent list on a gateway or settings error.
-  (it "keeps the last agent list after a failed refresh"
-      (let [body (str "[{\"session_id\":\"c1\",\"team_id\":\"turn-1\",\"task\":\"Fix the parser\","
-                      "\"status\":\"running\",\"created_at\":0}]")]
-        (with-redefs [vis/request! (constantly {:status 200 :body body})]
-          (team/fetch! "flaky-leader"))
-        (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120)))
-        (with-redefs [vis/request! (fn [& _]
-                                     (throw (java.io.IOException. "offline")))]
-          (expect (string? (:error (team/fetch! "flaky-leader"))))
-          (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120))
-                  "A gateway error keeps the dock")
-          (expect (= "Agents !" (team/header-label "flaky-leader" false))
-                  "The header still shows the failed refresh"))
-        (with-redefs [vis/setting (fn [& _]
-                                    (throw (java.io.IOException. "offline")))
-                      vis/request! (constantly {:status 503})]
-
-          (team/fetch! "flaky-leader")
-          (expect (team/enabled? "flaky-leader") "A settings error keeps Subagents on")
-          (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120))
-                  "A settings error keeps the dock")))))
+(defdescribe failed-setting-read-keeps-dock-test
+             ;; Regression (user report): one failed refresh hid the agent dock. The snapshot dropped the
+             ;; last agent list on a settings error.
+             (it "keeps the agent list and Subagents on after a failed setting read"
+                 (team/stream-ready! "flaky-leader"
+                                     [{"session_id" "c1"
+                                       "team_id" "turn-1"
+                                       "task" "Fix the parser"
+                                       "status" "running"
+                                       "created_at" 0}])
+                 (apply-work! "flaky-leader")
+                 (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120)))
+                 (with-redefs [vis/setting (fn [& _]
+                                             (throw (java.io.IOException. "offline")))]
+                   (team/settings-changed! "flaky-leader")
+                   (apply-work! "flaky-leader")
+                   (expect (team/enabled? "flaky-leader") "A settings error keeps Subagents on")
+                   (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120))
+                           "A settings error keeps the dock"))))
 
 (defdescribe team-row-information-test
              (it "team row information"
@@ -213,8 +198,7 @@
   (it "stops an agent through its parent only after a confirmation"
       (doseq [confirmed? [false true]]
         (let [requests (atom [])]
-          (with-redefs [team/fetch! (constantly nil)
-                        dlg/select-dialog! (constantly {:action (if confirmed? :stop :keep)})
+          (with-redefs [dlg/select-dialog! (constantly {:action (if confirmed? :stop :keep)})
                         vis/request! (fn [& args]
                                        (swap! requests conj args)
                                        {:status 200})]
@@ -234,7 +218,6 @@
 
             [snapshot text]
             [[{:loading? true} "Loading"] [{:agents []} "No subagents"]
-             [{:error "Could not load team. Refresh to retry."} "Unavailable"]
              ;; The status stands at the end of the row and stays in view at 40 columns.
              [{:agents [(assoc review-agent "status" "completed")]} "DONE"]
              [{:agents [(assoc review-agent "status" "budget_limited")]} "FAILED"]
@@ -316,16 +299,11 @@
                    {:agents [{"session_id" "c" "task" "Work" "status" "completed"}] :enabled? true}
 
                    fresh
-                   (assoc idle
-                     :checked-at 1000
-                     :read-mark 1)]
+                   (assoc idle :checked-at 1000)]
 
                (it "repaints after the first refresh" (expect (true? (shown-change? nil idle))))
                (it "draws nothing for an unchanged idle team"
-                   (expect (false? (shown-change? fresh
-                                                  (assoc idle
-                                                    :checked-at 2000
-                                                    :read-mark 2)))))
+                   (expect (false? (shown-change? fresh (assoc idle :checked-at 2000)))))
                (it "repaints when the team changes"
                    (expect (true? (shown-change? fresh (assoc idle :agents [])))))
                (it "repaints a stale header that the refresh makes fresh"
@@ -345,23 +323,13 @@
             sid
             (atom "live-header")
 
-            status
-            (atom "running")
-
-            calls
-            (atom 0)
-
             row
             (fn [s]
               {"session_id" "child" "task" "Work" "status" s})]
 
-        (with-redefs [vis/request! (fn [& _]
-                                     (swap! calls inc)
-                                     {:status 200
-                                      :body (str "[{\"session_id\":\"child\",\"task\":\"Work\","
-                                                 "\"status\":\""
-                                                 @status
-                                                 "\"}]")})]
+        (with-redefs [vis/request! no-team-read]
+          ;; Before the worker starts, so its first change has the ready rows.
+          (team/stream-ready! @sid [(row "running")])
           (let [stop (team/start-refresh! #(deref sid) #(.offer changed true))]
             (try (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
                  (expect (= "running" (get-in (team/summary @sid) [:agents 0 "status"])))
@@ -372,22 +340,21 @@
                  (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
                  (expect (= "completed" (get-in (team/summary @sid) [:agents 0 "status"])))
                  (expect (= "Agents 0 active/1 cached" (team/header-label @sid false)))
+                 (team/stream-ready! "other-header" [(row "cancelled")])
                  (reset! sid "other-header")
-                 (reset! status "cancelled")
                  (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
                  (expect (= "cancelled" (get-in (team/summary @sid) [:agents 0 "status"])))
-                 (expect (= 2 @calls) "The event merges its rows without a read")
                  (finally (stop)))
-            (let [stopped-calls @calls]
-              (reset! sid "after-stop")
-              (expect (nil? (.poll changed 1 java.util.concurrent.TimeUnit/SECONDS)))
-              (expect (= stopped-calls @calls))))))))
+            (.clear changed)
+            (reset! sid "after-stop")
+            (team/stream-ready! "after-stop" [(row "running")])
+            (expect (nil? (.poll changed 1 java.util.concurrent.TimeUnit/SECONDS))))))))
 
 (defdescribe header-observation-states-test
              (it "header observation states"
                  ;; An old snapshot is current while its event stream is connected. Only a dropped stream
                  ;; makes it stale, until the next read.
-                 (doseq [[snapshot label] [[nil "Agents ?"] [{:error "Offline"} "Agents !"]
+                 (doseq [[snapshot label] [[nil "Agents ?"]
                                            [{:agents [] :checked-at 0 :stale? true} "Agents stale"]
                                            [{:agents [] :checked-at 0} "Agents 0 active/0 cached"]]]
                    (with-redefs [team/summary (constantly snapshot)]
@@ -422,35 +389,6 @@
               "• 1 DONE  • 4 FAILED"]]]
       (expect (= label (team/summary-counts (map-indexed #(team/team-row (inc %1) %2) agents)))))))
 
-(defdescribe legacy-gateway-team-read-test
-             ;; A gateway below protocol 21 pushes only the team counts in `session.team_updated`.
-             ;; Without a timed read, the dock then shows the rows of the first read for good.
-             (letfn
-               [(agent-reads [protocol]
-                  (let [reads
-                        (atom 0)
-
-                        changed
-                        (java.util.concurrent.LinkedBlockingQueue.)]
-
-                    (with-redefs-fn {#'vis/gateway-protocol (constantly protocol)
-                                     #'team/legacy-read-ms 200
-                                     #'vis/request! (fn [_ url _]
-                                                      (when (str/includes? (str url) "/agents")
-                                                        (swap! reads inc))
-                                                      {:status 200 :body "[]"})}
-                      #(let [stop
-                             (team/start-refresh! (constantly (str "legacy-" protocol))
-                                                  (fn []
-                                                    (.offer changed true)))] (try
-                                                                               (Thread/sleep 1300)
-                                                                               (finally (stop)))))
-                    @reads))]
-               (it "reads the team on a timer from a gateway below protocol 21"
-                   (expect (<= 4 (agent-reads 20))))
-               (it "reads the team only on open from a gateway of protocol 21"
-                   (expect (= 1 (agent-reads 21))))))
-
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
              (it "old tab response does not repaint new tab"
                  (let [entered
@@ -465,11 +403,11 @@
                        sid
                        (atom "old-tab")]
 
-                   (with-redefs [vis/request! (fn [_ url _]
-                                                (when (str/includes? url "old-tab")
-                                                  (deliver entered true)
-                                                  (deref release 2000 nil))
-                                                {:status 200 :body "[]"})]
+                   (with-redefs [vis/setting (fn [_ target]
+                                               (when (= "old-tab" (:target-id target))
+                                                 (deliver entered true)
+                                                 (deref release 2000 nil))
+                                               {"enabled" true})]
                      (let [stop (team/start-refresh! #(deref sid) #(.offer changed @sid))]
                        (try (expect (deref entered 2000 false))
                             (reset! sid nil)

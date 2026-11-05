@@ -22,17 +22,6 @@ export const APP_PROTOCOL = gatewaySchema.$defs.handshake.properties.protocol.co
 /** Read the gateway floor from the same contract as the engine. */
 export const APP_MIN_GATEWAY_PROTOCOL = gatewaySchema.$defs.handshake.properties.min_gateway.const;
 
-/**
- * The first protocol whose `session.team_updated` carries the changed agent rows
- * (`$defs/team_update`). An older gateway sends only the counts, so the app polls its team.
- */
-export const TEAM_PUSH_PROTOCOL = 21;
-
-/** Whether a gateway of `protocol` pushes agent rows. An unknown protocol is the current one. */
-export function pushesTeamRows(protocol: number | null | undefined): boolean {
-  return protocol == null || protocol >= TEAM_PUSH_PROTOCOL;
-}
-
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';
 

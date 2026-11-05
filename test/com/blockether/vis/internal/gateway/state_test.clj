@@ -594,8 +594,7 @@
                                         #'bus/sync-watching! (fn [& _])
                                         #'state/hydrate-foreign-turn! (fn [_])
                                         #'state/read-replay! (fn [& _]
-                                                               [])
-                                        #'state/team-attached! (fn [_])}
+                                                               [])}
                          #(f appended))))]
 
                (it "sends a session notice live while a client shows the session"

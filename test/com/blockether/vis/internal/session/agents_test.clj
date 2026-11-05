@@ -365,7 +365,7 @@
    visible through `ps/db-council-get`, as in the gateway. `entries` is the atom of the
    published entries. Restores the gateway runtime, and registers the Council ops for
    direct calls."
-  [db leader live f]
+  [db live f]
   (let [entries
         (atom {})
 
@@ -379,8 +379,6 @@
     (agents/install-runtime!
       {:live? (fn [sid]
                 (contains? @live (str sid)))
-       :list (fn [_ _]
-               (ps/db-agent-list db leader))
        ;; The gateway also resolves and checks the rules; here they stay as given.
        :grant (fn [_ {:keys [session_id files replace]}]
                 (let [old (:files (ps/db-agent-info db session_id))]
@@ -508,7 +506,6 @@
 
       (with-fake-runtime
         db
-        leader
         (atom #{})
         (fn [_]
           (let [child-env {:db-info db :session-id child :turn-state-atom (atom {})}]
@@ -551,7 +548,6 @@
 
       (with-fake-runtime
         db
-        leader
         (atom #{leader})
         (fn [entries]
           (with-redefs [ps/db-council-get (fn [_ id]
@@ -627,7 +623,6 @@
       (ps/db-agent-update! db sibling {:status "running"})
       (with-fake-runtime
         db
-        leader
         (atom #{leader})
         (fn [entries]
           (with-redefs [ps/db-council-get
@@ -733,7 +728,6 @@
 
         (with-fake-runtime
           db
-          leader
           (atom #{})
           (fn [_]
             (expect (agents/claim-iteration! child-env))
@@ -762,7 +756,6 @@
 
       (with-fake-runtime
         db
-        leader
         (atom #{})
         (fn [_]
           (with-redefs [ps/db-list-session-turns (fn [_ sid]
@@ -857,7 +850,6 @@
 
       (with-fake-runtime
         db
-        leader
         live
         (fn [_]
           (agents/finish! db child "completed")
@@ -1723,21 +1715,21 @@
 
 ;; Regression, issue #405: an extension's extend or deny of an open budget request
 ;; failed with inactive-session, because the reply had no live parent execution.
-(defdescribe agent-answers-use-the-live-parent-env
-             (it "extend and deny run in the parent's live env; reads do not need it"
-                 (let [seen (atom [])]
-                   (with-redefs-fn {#'lp/db-info (constantly ::db)
-                                    #'ps/db-get-session (constantly {:id "parent"})
-                                    (ns-resolve 'com.blockether.vis.internal.gateway.state
-                                                'live-env)
-                                    (constantly {:live? true})
-                                    #'agents/operation! (fn [env operation _]
-                                                          (swap! seen conj [operation (:live? env)])
-                                                          [])}
-                     (fn []
-                       (doseq [operation [:extend :deny :wait :list]]
-                         (gateway/agents-operation! "parent" operation {}))
-                       (expect (= [[:extend true] [:deny true] [:wait nil] [:list nil]] @seen)))))))
+(defdescribe
+  agent-answers-use-the-live-parent-env
+  (it "extend and deny run in the parent's live env; reads do not need it"
+      (let [seen (atom [])]
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'ps/db-get-session (constantly {:id "parent"})
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state 'live-env)
+                         (constantly {:live? true})
+                         #'agents/operation! (fn [env operation _]
+                                               (swap! seen conj [operation (:live? env)])
+                                               [])}
+          (fn []
+            (doseq [operation [:extend :deny :wait :timeline]]
+              (gateway/agents-operation! "parent" operation {}))
+            (expect (= [[:extend true] [:deny true] [:wait nil] [:timeline nil]] @seen)))))))
 
 ;; Regression for #405: a cancel of a finished child must keep its outcome.
 (defdescribe cancel-of-a-finished-child-test
@@ -1817,7 +1809,7 @@
 
     (it
       "returns when the first child ends and shows only new progress notes"
-      (let [{:keys [db leader env done busy]}
+      (let [{:keys [db env done busy]}
             (team)
 
             live
@@ -1828,7 +1820,6 @@
 
         (with-fake-runtime
           db
-          leader
           live
           (fn [_]
             (with-redefs [ps/db-list-session-turns
@@ -1876,7 +1867,7 @@
                         "A second check-in shows only new notes")))))))
     (it
       "returns when a running child publishes a Council message"
-      (let [{:keys [db leader env busy]}
+      (let [{:keys [db env busy]}
             (team)
 
             live
@@ -1890,7 +1881,6 @@
 
         (with-fake-runtime
           db
-          leader
           live
           (fn [_]
             (with-redefs [ps/db-list-session-turns-meta
@@ -1930,7 +1920,7 @@
                 ;; Release run 41120931788: the SDK refused this record, as messages had no kind.
                 (expect (document/valid-json? "agents" "record" record) (pr-str record))))))))
     (it "does not end the wait for a child that ended before it"
-        (let [{:keys [db leader env done busy]}
+        (let [{:keys [db env done busy]}
               (team)
 
               live
@@ -1938,7 +1928,6 @@
 
           (with-fake-runtime
             db
-            leader
             live
             (fn [_]
               (with-redefs [ps/db-list-session-turns (answer done)]
@@ -1957,45 +1946,39 @@
 ;; now reads the store rows of its team and parks on the signal of a team change or a reply.
 (defdescribe
   waits-park-on-team-signals-test
-  (it
-    "an idle wait builds no team row and wakes at the signal of a change"
-    (let [db
-          (h/store)
+  (it "an idle wait builds no team row and wakes at the signal of a change"
+      (let [db
+            (h/store)
 
-          leader
-          (str (h/store-session! db {:channel :api}))
+            leader
+            (str (h/store-session! db {:channel :api}))
 
-          child
-          (child! db leader {:status "running"})
+            child
+            (child! db leader {:status "running"})
 
-          reads
-          (atom 0)]
+            reads
+            (atom 0)]
 
-      (with-fake-runtime
-        db
-        leader
-        (atom #{child})
-        (fn [_]
-          (swap! @#'agents/runtime assoc
-            :list
-            (fn [& _]
-              (throw (ex-info "built team rows" {}))))
-          (with-redefs [ps/db-agent-list (let [f ps/db-agent-list]
-                                           (fn [& args]
-                                             (swap! reads inc)
-                                             (apply f args)))]
-            (let [started (System/currentTimeMillis)
-                  waited (future (outcome #(agents/wait-agents {:db-info db :session-id leader}
-                                                               [child]
-                                                               {:timeout_secs 20})))]
+        (with-fake-runtime
+          db
+          (atom #{child})
+          (fn [_]
+            (with-redefs [ps/db-agent-list (let [f ps/db-agent-list]
+                                             (fn [& args]
+                                               (swap! reads inc)
+                                               (apply f args)))]
+              (let [started (System/currentTimeMillis)
+                    waited (future (outcome #(agents/wait-agents {:db-info db :session-id leader}
+                                                                 [child]
+                                                                 {:timeout_secs 20})))]
 
-              (Thread/sleep 2500)
-              (expect (= 1 @reads) "An idle wait reads its team once for each tick of 5 s")
-              (ps/db-agent-update! db child {:status "failed"})
-              (agents/signal! [:team leader])
-              (let [records (deref waited 2000 ::timeout)]
-                (expect (= "failed" (get (first records) "status")) (pr-str records))
-                (expect (< (- (System/currentTimeMillis) started) 4500)))))))))
+                (Thread/sleep 2500)
+                (expect (= 1 @reads) "An idle wait reads its team once for each tick of 5 s")
+                (ps/db-agent-update! db child {:status "failed"})
+                (agents/signal! [:team leader])
+                (let [records (deref waited 2000 ::timeout)]
+                  (expect (= "failed" (get (first records) "status")) (pr-str records))
+                  (expect (< (- (System/currentTimeMillis) started) 4500)))))))))
   (it "a question gets its reply at the signal of the reply"
       (let [db
             (h/store)
@@ -2008,7 +1991,6 @@
 
         (with-fake-runtime
           db
-          leader
           (atom #{leader})
           (fn [entries]
             (with-redefs [ps/db-council-get (fn [_ id]
@@ -2041,7 +2023,6 @@
 
         (with-fake-runtime
           db
-          leader
           (atom #{})
           (fn [_]
             (with-redefs [agents/runtime-op! (fn [_ op _]
@@ -2379,7 +2360,6 @@
 
       (with-fake-runtime
         db
-        leader
         live
         (fn [entries]
           (agents/install-runtime! (assoc @@#'agents/runtime
@@ -2443,7 +2423,6 @@
 
       (with-fake-runtime
         db
-        leader
         (atom #{})
         (fn [_]
           (with-redefs [agents/runtime-op!

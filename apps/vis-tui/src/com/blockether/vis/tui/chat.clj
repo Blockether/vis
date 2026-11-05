@@ -1419,7 +1419,7 @@
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 
-      ;; Since protocol 21, `agents` holds the changed team rows (gateway.json `team_update`).
+      ;; `agents` holds the changed team rows (gateway.json `team_update`).
       "session.team_updated"
       {:phase :team-sync
        :session-id (event-get event :session-id)
@@ -1473,7 +1473,12 @@
         (assoc :agent-name (event-get event :agent-name))
 
         (some? (event-get event :goal))
-        (assoc :goal (event-get event :goal)))
+        (assoc :goal (event-get event :goal))
+
+        ;; The team rows of this session (gateway.json `subscription_ready`). They replace the
+        ;; cached team, so the ready frame is the only team read.
+        (some? (event-get event :agents))
+        (assoc :agents (event-get event :agents)))
 
       nil)))
 

@@ -1524,7 +1524,6 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
                     sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
                     onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
                     onManageProviders={openProviderSettings}
-                    gatewayProtocol={compat?.gatewayProtocol ?? null}
                   />
                 </SessionEventsContext.Provider>
               )}

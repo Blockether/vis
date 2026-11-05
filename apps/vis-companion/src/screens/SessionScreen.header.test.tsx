@@ -135,7 +135,7 @@ describe('a subagent session', () => {
   it('has no composer, and its header names the path from the leader', async () => {
     renderSessionScreen({
       session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
-      client: { agents: () => Promise.resolve([]) },
+      client: {},
     });
     expect(await screen.findByRole('heading', { name: 'leader → Fix the parser' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Message Vis' })).toBeNull();
@@ -149,7 +149,7 @@ describe('a subagent session', () => {
     const opened: string[] = [];
     renderSessionScreen({
       session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
-      client: { agents: () => Promise.resolve([]) },
+      client: {},
       onOpenSession: (sid) => void opened.push(sid),
     });
     await screen.findByRole('heading', { name: 'leader → Fix the parser' });
@@ -167,7 +167,7 @@ describe('a subagent session', () => {
     const row = { session_id: 's1', parent_id: 'lead', leader_id: 'lead', team_id: 't1', task: 'Fix', status: 'running', iteration_budget: 4, iterations_used: 1 };
     const { unmount } = renderSessionScreen({
       session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
-      client: { agents: () => Promise.resolve([row]), cancelAgent: (sid: string, child: string) => { stops.push([sid, child]); return Promise.resolve(); } },
+      client: { cachedAgents: () => [row], cancelAgent: (sid: string, child: string) => { stops.push([sid, child]); return Promise.resolve(); } },
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Stop agent' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
@@ -175,9 +175,9 @@ describe('a subagent session', () => {
     unmount();
     renderSessionScreen({
       session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
-      client: { agents: () => Promise.resolve([{ ...row, status: 'completed' }]) },
+      client: { cachedAgents: () => [{ ...row, status: 'completed' }] },
     });
-    await screen.findByRole('heading', { name: /Fix the parser/ });
+    await screen.findByRole('heading', { name: /^leader →/ });
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop agent' })).toBeNull());
   });
 });

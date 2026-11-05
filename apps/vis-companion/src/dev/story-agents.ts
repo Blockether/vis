@@ -75,7 +75,7 @@ export const STORY_DONE_TEAM: Subagent[] = [
       'Verify the gateway agent routes against the agents contract.',
       '',
       '## Acceptance criteria',
-      '- `GET /v1/sessions/:sid/agents` lists every child of the session in spawn order.',
+      '- The `subscription.ready` frame lists every child of the session in spawn order.',
       '- `GET /v1/sessions/:sid/agents/:child/timeline` gives the steps oldest first.',
       '- A grandchild timeline answers 200 for its leader, and 404 for another session.',
       '- `POST /v1/sessions/:sid/agents/:child/cancel` stops the child and its descendants.',

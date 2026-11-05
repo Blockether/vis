@@ -166,10 +166,6 @@
       },
       "additionalProperties": false
     },
-    "list": {
-      "type": "object",
-      "additionalProperties": false
-    },
     "cancel": {
       "type": "object",
       "properties": {

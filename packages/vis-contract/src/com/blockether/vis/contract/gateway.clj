@@ -334,8 +334,8 @@
 
 (defn subscription-ready-event
   "Build the canonical first frame for one session subscription."
-  [{:keys [session-id cursor current-turn-id is-live server-time-ms latest-iteration goal
-           agent-name]}]
+  [{:keys [session-id cursor current-turn-id is-live server-time-ms latest-iteration goal agent-name
+           agents]}]
   (cond-> {"type" (get-in @source ["$defs" "subscription_ready" "properties" "type" "const"])
            "session_id" (str session-id)
            "cursor" cursor
@@ -348,7 +348,10 @@
     (assoc "agent_name" agent-name)
 
     (some? latest-iteration)
-    (assoc "latest_iteration" latest-iteration)))
+    (assoc "latest_iteration" latest-iteration)
+
+    (seq agents)
+    (assoc "agents" (vec agents))))
 
 (def event-types
   "All event names on session, dedicated-job and relay-push streams."
