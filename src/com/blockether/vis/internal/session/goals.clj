@@ -234,10 +234,10 @@
    authorized action remains without user input or an external change. Never lower the
    objective, and never mark blocked only to deliver a progress reply. After the tools of
    this iteration finish, the reason becomes the final reply without another model
-   request. Write the reason in Markdown: one plain sentence first, then an empty line. For
-   complete, write one '-' evidence item for each requirement. For blocked, write the sections
-   **Done** (optional), **Blockers** (numbered, with indented '- Tried:' items) and
-   **Needed from you**."
+   request. Write the reason in Markdown: one plain sentence first, then bold sections. For
+   complete: **Verified** (numbered, one item for each requirement) and the optional
+   **Not checked**, **Outside this goal** and **Needed from you**. For blocked: **Done**
+   (optional), **Blockers** (numbered, with indented '- Tried:' items) and **Needed from you**."
   [env goal-id version status reason]
   (when-not (contains? #{"complete" "blocked"} status)
     (fail! "Only complete or blocked may be declared by the model."))
@@ -391,14 +391,33 @@ impasse is status='blocked' with the concrete blocker, not complete.
 Write the reason in Markdown, because the person reads it as the final reply and in the goal
 view. Write only about the current goal; session['goal_history'] holds the earlier goals.
 Start with one plain sentence that states the result or the blocker, without a heading.
-For complete, then write an empty line and one '-' item of evidence for each requirement.
-For blocked, then write these sections. Each section is a bold label line, an empty line and a list:
+Then write sections. Each section is a bold label line, an empty line and a list. Keep each
+item short: give the proof (a commit, a run, a test count), not every detail.
+For complete, write these sections:
+**Verified**: one numbered item for each requirement: its short bold name and the evidence.
+Under an item, write at most a few indented '-' details.
+**Not checked**: only when a check, platform or test was not run; '-' items.
+**Outside this goal**: only for problems that you found but that are not part of the goal.
+**Needed from you**: only when the user must act, for example to approve an uncommitted change.
+For blocked, write these sections:
 **Done**: only when part of the work is done; '-' items with evidence.
 **Blockers**: one numbered item for each independent blocker: its short bold name and what stops
 the work. Under a blocker, write one indented '- Tried:' item for each remedy that you tried.
 Write no Tried item when you tried nothing.
 **Needed from you**: '-' items with the actions of the user. When only an external change can
 help, name it and tell the user what to do until then.
+Example of a complete reason:
+v0.2.22 is released and runs on the server.
+
+**Verified**
+
+1. **Release**: run 35688483669 passed 31/31 jobs; GitHub, Clojars and PyPI have 0.2.22.
+2. **Server**: `/healthz` returns 200 with version 0.2.22.
+
+**Not checked**
+
+- The Windows desktop build.
+End of example.
 Example of a blocked reason:
 v0.4.2 is still a draft because Apple rejects the iOS job.
 
