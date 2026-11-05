@@ -31,7 +31,8 @@
   (:import [com.blockether.vispython Interpreter Locations]
            [java.io File]
            [java.lang ProcessBuilder$Redirect ProcessHandle]
-           [java.nio.file CopyOption Files StandardCopyOption]
+           [java.nio.file CopyOption FileVisitResult Files LinkOption Path SimpleFileVisitor
+            StandardCopyOption]
            [java.security MessageDigest]
            [java.util.concurrent TimeUnit]))
 
@@ -447,18 +448,18 @@
     (boolean (or (.exists (project-environment project (System/getenv "UV_PROJECT_ENVIRONMENT")))
                  (.exists (project-environment project (automatic-environment)))))))
 
+(defn- environment-home
+  "The base interpreter directory that the PEP 405 pyvenv.cfg of `environment` names, or nil."
+  [^File environment]
+  (let [config (io/file environment "pyvenv.cfg")]
+    (when (.isFile config)
+      (some #(second (re-matches #"\s*home\s*=\s*(.+?)\s*" %)) (str/split-lines (slurp config))))))
+
 (defn- own-environment?
   "True when the PEP 405 pyvenv.cfg of `environment` names the directory of this
    process's embedded Python as home. Reads one file and starts no uv."
   [^File environment]
-  (let [config
-        (io/file environment "pyvenv.cfg")
-
-        home
-        (when (.isFile config)
-          (some #(second (re-matches #"\s*home\s*=\s*(.+?)\s*" %))
-                (str/split-lines (slurp config))))]
-
+  (let [home (environment-home environment)]
     (boolean (and home
                   (= (.getCanonicalFile (io/file home))
                      (-> (io/file (Interpreter/pythonExecutable))
@@ -491,6 +492,44 @@
                (not-any? #(or (.isFile ^File %) (Files/isSymbolicLink (.toPath ^File %)))
                          (file-seq environment)))
       (delete-tree! environment))))
+
+(def ^:private ^"[Ljava.nio.file.LinkOption;" no-follow
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
+(defn- delete-environment!
+  "Delete `root` depth-first. A link is removed as a link, never followed."
+  [^File root]
+  (Files/walkFileTree
+    (.toPath root)
+    (proxy [SimpleFileVisitor] []
+      (visitFile [^Path p _attrs] (Files/deleteIfExists p) FileVisitResult/CONTINUE)
+      (postVisitDirectory [^Path p _e] (Files/deleteIfExists p) FileVisitResult/CONTINUE))))
+
+(defn- remove-orphan-environments!
+  "Remove the automatic environments in `project` whose base interpreter is gone.
+   A native release keeps its interpreter in its own directory, so each release
+   prepares a new environment. When the release is removed, no process can use
+   that environment again. The bytecode cache of a removed tree is swept at startup.
+   A link, a project `.venv` and an environment of an existing interpreter stay."
+  [^File project]
+  (let [own (automatic-environment)]
+    (doseq [^File environment (or (.listFiles project) (make-array File 0))
+            :let [name (.getName environment)]
+            :when (and (re-matches #"\.venv-[0-9a-f]{12}" name)
+                       (not= own name)
+                       (Files/isDirectory (.toPath environment) no-follow))
+            :let [home (environment-home environment)]
+            :when (and home (.isAbsolute (io/file home)) (not (.exists (io/file home))))]
+
+      (try (delete-environment! environment)
+           (tel/log! {:level :info
+                      :id ::orphan-environment-removed
+                      :data {:project (.getPath project) :environment name}})
+           (catch java.io.IOException e
+             (tel/log! {:level :warn
+                        :id ::orphan-environment-not-removed
+                        :data {:project (.getPath project) :environment name}
+                        :error e}))))))
 
 (defn- embedded-python
   "uv options that select the worker's embedded Python and never download another."
@@ -778,25 +817,26 @@
 
       (try (if-let [packages (stamped-packages project)]
              (do (preparation-stage! project "cached") packages)
-             (if (shared-project? project true)
-               (do (preparation-stage! project "cached")
-                   (.getCanonicalFile (io/file (runtime/packages-dir))))
-               (let [ready? (try (and (runtime-environment? project)
-                                      (do (run-uv! project
-                                                   (into [(bundled-uv!) "sync" "--check"
-                                                          "--offline"]
-                                                         (embedded-python)))
-                                          true))
-                                 (catch clojure.lang.ExceptionInfo _ false))]
-                 (when-not ready?
-                   (preparation-stage! project "installing")
-                   (remove-environment-shell! project)
-                   (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
-                 (let [packages (project-packages project)]
-                   (compile-bytecode! project packages)
-                   (stamp-prepared! project packages)
-                   (preparation-stage! project (if ready? "cached" "ready"))
-                   packages))))
+             (do (remove-orphan-environments! project)
+                 (if (shared-project? project true)
+                   (do (preparation-stage! project "cached")
+                       (.getCanonicalFile (io/file (runtime/packages-dir))))
+                   (let [ready? (try (and (runtime-environment? project)
+                                          (do (run-uv! project
+                                                       (into [(bundled-uv!) "sync" "--check"
+                                                              "--offline"]
+                                                             (embedded-python)))
+                                              true))
+                                     (catch clojure.lang.ExceptionInfo _ false))]
+                     (when-not ready?
+                       (preparation-stage! project "installing")
+                       (remove-environment-shell! project)
+                       (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
+                     (let [packages (project-packages project)]
+                       (compile-bytecode! project packages)
+                       (stamp-prepared! project packages)
+                       (preparation-stage! project (if ready? "cached" "ready"))
+                       packages)))))
            (catch Throwable t (throw (preparation-failure project t)))))))
 
 (def ^:private shared-sync-selection-options

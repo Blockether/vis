@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Extensions: preparation removes the automatic environments (`.venv-<hash>`) of a Python that no longer exists. Each native release has its own Python, so each deployment added one environment to each extension, about 150 MB, and kept it after the release was removed. Startup then removes the bytecode of these environments. A project `.venv`, a link and the environment of an existing Python stay.
+
 ## [v0.5.4] - 2026-11-04
 
 ### Added

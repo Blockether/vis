@@ -676,6 +676,78 @@
                         (expect (nil? (#'python-runtime/own-venv project)))
                         (finally (#'python-runtime/delete-tree! project))))))
 
+;; kate140, 2026-11-05: each native release has its own interpreter path, so each release
+;; prepared a new `.venv-<hash>` in every extension and none was removed: 21 GB of venvs.
+(defdescribe
+  automatic-project-preparation-removes-environments-of-a-removed-python
+  (it
+    "removes an automatic environment whose interpreter is gone and keeps the others"
+    (python-runtime/ensure-library!)
+    (let [project
+          (temp-dir "vis-orphan-environments")
+
+          outside
+          (temp-dir "vis-orphan-outside")
+
+          live-home
+          (temp-dir "vis-live-python")
+
+          gone-home
+          (.getPath (io/file project "removed-release" "bin"))
+
+          environment!
+          (fn [^java.io.File dir home]
+            (.mkdirs (io/file dir "lib"))
+            (spit (io/file dir "lib" "module.py") "VALUE = 1\n")
+            (spit (io/file dir "pyvenv.cfg") (str "home = " home "\n"))
+            dir)
+
+          own
+          (environment! (io/file project (#'python-runtime/automatic-environment)) gone-home)
+
+          orphan
+          (environment! (io/file project ".venv-0123456789ab") gone-home)
+
+          live
+          (environment! (io/file project ".venv-abcdefabcdef") live-home)
+
+          project-venv
+          (environment! (io/file project ".venv") gone-home)
+
+          other-name
+          (environment! (io/file project ".venv-notes") gone-home)
+
+          target
+          (environment! (io/file outside "target") gone-home)
+
+          link
+          (io/file project ".venv-fedcba987654")]
+
+      (try (Files/createSymbolicLink (.toPath link) (.toPath target) (make-array FileAttribute 0))
+           (spit (io/file project "pyproject.toml") "[project]\nname = \"orphans\"\n")
+           (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                       (when (some #{"--check"} args)
+                                                         (throw (ex-info "not ready" {}))))
+                            #'python-runtime/shared-project? (constantly false)
+                            #'python-runtime/runtime-environment? (constantly true)
+                            #'python-runtime/remove-environment-shell! (fn [_])
+                            #'python-runtime/compile-bytecode! (fn [_ _])
+                            #'python-runtime/project-packages (fn [_]
+                                                                (.getCanonicalFile project))}
+             (fn []
+               (python-runtime/ensure-project! project)))
+           (expect (not (.exists orphan)) "the environment of a removed Python stays")
+           (expect (.isDirectory own) "preparation removed its own environment")
+           (expect (.isDirectory live) "preparation removed the environment of a live Python")
+           (expect (.isDirectory project-venv) "preparation removed the project .venv")
+           (expect (.isDirectory other-name) "preparation removed a directory it does not name")
+           (expect (Files/isSymbolicLink (.toPath link)) "preparation removed a linked environment")
+           (expect (.isFile (io/file target "lib" "module.py"))
+                   "preparation deleted through a link")
+           (finally (#'python-runtime/delete-tree! project)
+                    (#'python-runtime/delete-tree! outside)
+                    (#'python-runtime/delete-tree! live-home))))))
+
 (defdescribe
   automatic-project-preparation-replaces-an-environment-from-another-python
   (it "automatic project preparation replaces an environment from another python"
