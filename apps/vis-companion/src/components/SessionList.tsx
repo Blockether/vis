@@ -23,6 +23,7 @@ import {
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import {
   ArchiveIcon,
+  CopyIcon,
   FolderPlusIcon,
   ForkIcon,
   PencilIcon,
@@ -47,6 +48,7 @@ import {
 } from '../lib/fleet';
 import { hasHardwarePointer } from '../lib/pointer';
 import { SESSION_DRAG_MIME, useSessionLift } from '../lib/session-drag';
+import { markSessionId } from '../lib/session-id';
 
 const transcriptRows = new Map<Element, (near: boolean) => void>();
 let transcriptObserver: IntersectionObserver | null = null;
@@ -524,6 +526,18 @@ export const SessionRow = memo(function SessionRow({
     }
   }, [commands, conn, session]);
 
+  // The menu closes under the press, so a copy that worked says nothing; only a
+  // refused clipboard speaks, in the row's own banner. Same marked id as the header.
+  const [copyError, setCopyError] = useState('');
+  const copySessionId = useCallback(async () => {
+    setCopyError('');
+    try {
+      await navigator.clipboard.writeText(markSessionId(session.id));
+    } catch {
+      setCopyError('Could not copy the session id.');
+    }
+  }, [session.id]);
+
   // The star is the GATEWAY's, and the row is holding the only copy of it there is:
   // `favorite_rank`, straight off this session. No device-side store can disagree
   // with it — which is what used to leave one screen starred and another plain.
@@ -694,6 +708,13 @@ export const SessionRow = memo(function SessionRow({
                         },
                       ]
                     : []),
+                  {
+                    key: 'copy-id',
+                    label: 'Copy ID',
+                    name: 'Copy session id',
+                    icon: <CopyIcon className="size-4" />,
+                    onSelect: () => void copySessionId(),
+                  },
                   ...filing,
                   ...archiving,
                   {
@@ -895,7 +916,7 @@ export const SessionRow = memo(function SessionRow({
           </div>
         </SwipeActions>
       )}
-      {(renameError || forkError || archiveError || deletion?.error) && (
+      {(renameError || forkError || copyError || archiveError || deletion?.error) && (
         <div className="px-3 pb-2">
           <Banner
             kind="err"
@@ -904,12 +925,13 @@ export const SessionRow = memo(function SessionRow({
               onClick: () => {
                 setRenameError('');
                 setForkError('');
+                setCopyError('');
                 setArchiveError('');
                 if (deletion?.error) deletion.cancel();
               },
             }}
           >
-            {renameError || forkError || archiveError || deletion?.error}
+            {renameError || forkError || copyError || archiveError || deletion?.error}
           </Banner>
         </div>
       )}
