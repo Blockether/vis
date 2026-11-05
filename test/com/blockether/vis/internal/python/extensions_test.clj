@@ -5757,6 +5757,66 @@ vis.register_extension(vis.Extension(
           (expect (nil? ((:provider/refresh-token-fn provider) "fixture-rejected")))
           (expect (= 1 (get-in ((symbol-fn (registered "refresh-once") 'calls)) [:result]))))))))
 
+(defn- reload-provider-py
+  "A managed provider whose token is `token` (#445)."
+  [token]
+  (str "import blockether.vis.extension as vis\n\ndef _token():\n"
+       "    return vis.ProviderCredential('"
+       token
+       "', api_url='https://corp.test/v1')\n\n"
+       "vis.register_extension(vis.Extension(name='reload-provider', "
+       "description='Reload provider fixture.', alias='reload_provider', "
+       "providers=[vis.Provider(id='reload-provider', label='Reload provider', "
+       "is_managed=True, get_token_fn=_token)]))\n"))
+
+(defdescribe
+  python-provider-reload-test
+  ;; #445: a /reload in one session retired the provider context. A token lookup in
+  ;; another session, with no extension worker, then failed as an authentication error.
+  (it "follows the replacement registration from a token function kept before a reload"
+      (with-fresh-loaded
+        {"provider.py" (reload-provider-py "before")}
+        (fn [_ {:keys [ext-dir]}]
+          (let [kept (:provider/get-token-fn (registry/provider-by-id :reload-provider))]
+            (expect (= "before" (:token (kept))))
+            (write-ext! ext-dir "provider.py" (reload-provider-py "after"))
+            (expect (= 0 (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))
+            (expect (= "after"
+                       (:token (binding [extension/*current-environment* nil]
+                                 (kept)))))))))
+  (it "keeps a project provider usable while the reload publishes its replacement"
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)
+
+            catalog
+            {:dirs [(str root "/.vis/extensions")] :project-root root}
+
+            publish
+            extension/set-project-extensions!
+
+            during
+            (atom [])]
+
+        (write-ext! dir ".vis/extensions/provider.py" (reload-provider-py "before"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! catalog)
+               (let [kept (:provider/get-token-fn (registry/provider-by-id :reload-provider))]
+                 (write-ext! dir ".vis/extensions/provider.py" (reload-provider-py "after"))
+                 ;; Until publication, the registry still answers the token function of the
+                 ;; old registration.
+                 (with-redefs [extension/set-project-extensions!
+                               (fn [project-root extensions]
+                                 (swap! during conj (:token (kept)))
+                                 (publish project-root extensions))]
+                   (expect (= 0 (:failed (pyx/reload-python-extensions! catalog)))))
+                 (expect (= ["before"] @during))
+                 (expect (= "after" (:token (kept))))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root})))))))
+
 ;; Regression: a MANAGED provider declared by a PYTHON extension was a flag that
   ;; never crossed the host boundary - `is_managed=True` in `vis.Provider(...)`
   ;; reached the entry decoder and every credential seam below still saw an

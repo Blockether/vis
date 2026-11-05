@@ -1519,9 +1519,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                (delete-tree! (io/file snapshot))))))))
    nil))
 
+(defn- context-retired?
+  "True when `ctx` is closed or closing, so no new call may start in it."
+  [ctx]
+  (or (not (contains? @live-contexts ctx)) (get-in @context-lifecycle [ctx :closing?])))
+
 (defn- acquire-context!
   [ctx]
-  (when (or (not (contains? @live-contexts ctx)) (get-in @context-lifecycle [ctx :closing?]))
+  (when (context-retired? ctx)
     (throw (ex-info "Python extension context was retired before the call started"
                     {:type ::context-retired})))
   (swap! context-lifecycle update-in [ctx :calls] (fnil inc 0)))
@@ -1690,7 +1695,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    the calling workspace, else the global one. A session keeps the hooks it had
    before a reload, so its calls must follow the new registration."
   [ext-name env]
-  (let [root (workspace/workspace-root env)]
+  ;; A call without a session env, such as a provider token lookup, uses the bound
+  ;; workspace, like the provider registry (#445).
+  (let [root (or (workspace/workspace-root env)
+                 (workspace/normalize-root workspace/*workspace-root*))]
     (some (fn [scope]
             (some (fn [[_ entry]]
                     (when (and (= ext-name (:ext-name entry)) (= scope (:project-root entry)))
@@ -1838,16 +1846,27 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
     (when (and worker site (not (pyext/worker-live? worker)))
       (throw (ex-info "Python extension session is no longer running" {:type ::session-closed})))
-    (if-not (and worker site)
-      [source-ctx source-f]
-      (if-let [entry (or (source-entry ext-name source-ctx)
-                         (replacement-entry ext-name effective-env))]
-        (let [local (session-context! [worker ext-name]
-                                      (:context entry)
-                                      (context-builder worker ext-name entry effective-env))]
-          [(:context local) (session-callable ext-name source-ctx site local)])
-        (throw (ex-info "Python extension registration was replaced before the call started"
-                        {:type ::context-retired}))))))
+    (cond (and (nil? worker) site (context-retired? source-ctx))
+          ;; A call with no session worker, such as a provider token lookup, follows the
+          ;; registration that replaced a retired one (#445).
+          (if-let [entry (replacement-entry ext-name effective-env)]
+            [(:context entry)
+             (session-callable ext-name
+                               source-ctx
+                               site
+                               {:source-context (:context entry) :callables (:callables entry)})]
+            (throw (ex-info "Python extension registration was replaced before the call started"
+                            {:type ::context-retired})))
+          (not (and worker site)) [source-ctx source-f]
+          :else
+          (if-let [entry (or (source-entry ext-name source-ctx)
+                             (replacement-entry ext-name effective-env))]
+            (let [local (session-context! [worker ext-name]
+                                          (:context entry)
+                                          (context-builder worker ext-name entry effective-env))]
+              [(:context local) (session-callable ext-name source-ctx site local)])
+            (throw (ex-info "Python extension registration was replaced before the call started"
+                            {:type ::context-retired}))))))
 
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
 ;; registry expects. Every adapter is defensive: a closed context (after
@@ -4123,6 +4142,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             :ext-name (:ext/name spec)
             :ext validated
             :context ctx
+            :callables (registration-callables (:registration initialized))
             :sealed (:sealed initialized)}))
        (catch Throwable t (close-context! ctx) (throw t))))))
 
@@ -4358,7 +4378,11 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                    (read-manifest project-root path #(file-inputs f % (:packages frozen))))))))
 
          reloaded
-         (atom 0)]
+         (atom 0)
+
+         ;; Contexts that this scan replaced or removed. They close after publication.
+         retired
+         (atom [])]
 
      (if (= fp (get @last-fingerprint project-root))
        {:loaded (count (scope-entries project-root))
@@ -4443,10 +4467,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                      (doseq [[opath {oname :ext-name octx :context}] (scope-entries project-root)
                              :when (and (= oname ext-name) (not= opath entry-key))]
 
-                       (close-context! octx)
+                       (swap! retired conj octx)
                        (swap! loaded dissoc opath))
                      (swap! loaded assoc entry-key entry)
-                     (close-context! prev-ctx))
+                     (swap! retired conj prev-ctx))
                    (catch Throwable t
                      (tel/log! {:level :warn
                                 :id ::load-failed
@@ -4481,7 +4505,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
              (when-not project-root
                (try (extension/deregister-extension! ext-name) (catch Throwable _)))
-             (close-context! (:context e))
+             (swap! retired conj (:context e))
              (swap! loaded dissoc opath))
            (swap! last-fingerprint assoc project-root fp)
            ;; Propagate to live surfaces (cached session envs, TUI slash
@@ -4504,6 +4528,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             :failed (count (filter #(= project-root (:project-root %)) @failures))
             :changed? true}
            (finally
+             ;; Retire replaced contexts only after the catalog is published, so a registry
+             ;; lookup never answers adapters of a closed context (#445).
+             (doseq [ctx @retired]
+               (try (close-context! ctx)
+                    (catch Throwable t
+                      (tel/log!
+                        {:level :warn :id ::context-retire-failed :data {:error (ex-message t)}}))))
              ;; A reload can unload the last extension: keep a spare only while one is loaded.
              (try (pyext/retain-spares! (spare-packages))
                   (catch Throwable t
