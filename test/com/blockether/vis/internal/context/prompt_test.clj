@@ -493,7 +493,7 @@
                    (doseq [rule ["Use `shell` only to run programs" "returns a handle"
                                  "`logs(-n)` (last n lines)"
                                  "each returns `out`, `exit` and `status`"
-                                 "`r = (await shell(cmd)).wait(300)`"]]
+                                 "`print((await shell(cmd)).wait(300).out)`"]]
                      (expect (str/includes? text rule) rule)
                      (expect (not (str/includes? off rule)) rule))
                    (expect (not (str/includes? text "\"id\"")))))
@@ -523,7 +523,9 @@
                    ;; 1.75k → 1.95k: CTB round m11 — name the sandbox as the Vis environment and send
                    ;; project package checks to the project interpreter through `shell`.
                    ;; 1.95k → 1.6k: user review cut the build-global, install and shell prose.
-                   (expect (< (count text) 1600)))))
+                   ;; 1.6k → 0.7k: user review cut the auto-import list, the build globals and the
+                   ;; SDK note, and named no unbound `r` in the shell example.
+                   (expect (< (count text) 800)))))
 
 (defdescribe
   project-instructions-hoist-test

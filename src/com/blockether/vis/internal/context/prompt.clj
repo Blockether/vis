@@ -14,7 +14,6 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.python.env :as env-python]
-            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.paths :as paths]
@@ -789,28 +788,12 @@
                          (some #(and (= 'shell (:ext.symbol/symbol %))
                                      (extension/symbol-active? % nil))
                                (extension/ext-symbols ext)))
-                       (or active-extensions [])))
-
-        auto-imports
-        (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
+                       (or active-extensions [])))]
 
     (prompt-block
       "sandbox-shims"
       (str
-        "Already imported: `"
-        auto-imports
-        "`."
-        "\nBuild globals, for diagnostics only: "
-        (str/join ", "
-                  (map (fn [[name value]]
-                         (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))
-                       (sort (python-runtime/version-globals))))
-        ". `dev` or `None` means no release data. `blockether.vis.extension` is the bundled, "
-        "frozen SDK (no `__file__`; it wins over pip copies): import it for types only. "
-        "`python_execution` cannot register extensions or use extension host APIs."
-        "\nThe sandbox is real CPython: the Python environment of Vis, not the interpreter of the project. "
-        "It reads the same `~/.vis/python/packages` as extensions, read-only. Imports never install "
-        "packages; use `vis-agent python uv sync` or `vis-agent python -m pip install`."
+        "The sandbox is the Python of Vis, not of the project. Imports never install packages."
         (when (seq shim-imports)
           (str "\nModules from Vis (import first; they call the host, never PyPI): `"
                (str/join "`, `" shim-imports)
@@ -825,7 +808,7 @@
             "\nUse `shell` only to run programs, such as the project interpreter for its packages. "
             "Do file and data work in Python. `sh = await shell(cmd)` returns a handle with `logs(-n)` "
             "(last n lines), `wait(s)`, `type(text)` and `stop()`; each returns `out`, `exit` and "
-            "`status`. Run to the end in one block: `r = (await shell(cmd)).wait(300)`."))))))
+            "`status`. To run to the end in one block: `print((await shell(cmd)).wait(300).out)`."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

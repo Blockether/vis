@@ -152,7 +152,7 @@
   (when (seq m)
     (str SESSION_CONTEXT_HEADER
          "# The host keeps it current; mid-session changes arrive as later\n"
-         "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
+         "# `session[...] = …` / `del session[...]` lines.\n"
          "session = " (session-literal m)
          "\n" "```")))
 
