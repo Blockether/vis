@@ -35,7 +35,7 @@ Automations support these features:
 - **Targets.** An existing session, a new session for each run or a temporary session.
 - **Delivery.** Phone notifications and signed callbacks. `[SILENT]` reports only changes.
 - **Control.** Manual runs, pause and resume, secrets and the last 200 runs of each automation.
-- **Access.** A chat, the TUI, the app and the [Automations API](automations-api.md).
+- **Access.** The app, the TUI and the [Automations API](automations-api.md).
 
 Each automation has these parts:
 
@@ -121,34 +121,31 @@ run, the run ends as `unknown`.
 
 ## Create an automation
 
-Ask Vis in a chat. Say when the automation runs, what Vis does and where you want the result. For
-example:
-
-```text
-Every weekday at 8:00, list the open pull requests in this repository that wait for a review.
-Send the list to my phone.
-```
-
-```text
-At 17:30 today, check whether the release build passed and tell me the result.
-```
-
-Vis creates the automation with its `automations` tool and shows you the result. To change it
-later, ask again, for example `Move the morning review list to 7:30.` A run that an automation
-started cannot create, change or delete automations.
-
-You can also create an automation in the app. Open **Settings** and open the row of the machine.
-Select **+** in the header of its **Automations** band. The app asks one question at a time. It
-asks what starts the automation, when it runs, what Vis does, where it runs and how Vis answers.
-Check the summary on the **Review** step, then select **Create automation**.
+Create an automation in the app. Open **Settings** and open the row of the machine. Select **+** in
+the header of its **Automations** band. The app asks one question at a time. It asks what starts
+the automation, when it runs, what Vis does, where it runs and how Vis answers. Check the summary on
+the **Review** step, then select **Create automation**.
 
 To change an automation, open it and select **Edit**. The review opens, and **Change** opens the
-step of that line. The app keeps the [filters](#filter-events) of a webhook trigger. To change
-them, ask Vis in a chat.
+step of that line.
 
-To create automations from your own program, use the [Automations
+A chat cannot create, change or run automations. The TUI can run, pause, resume and delete them,
+but it cannot create them. To create automations from your own program, use the [Automations
 API](automations-api.md#create-an-automation). [How automations work](#how-automations-work) lists
 the parts of an automation.
+
+### Add payload filters in the app
+
+A webhook trigger in the app has a **Payload filters** list. Select **Add filter** and fill in
+three fields:
+
+1. The payload field as a dot path, for example `pull_request.base.ref`.
+2. The test: **Equals**, **Contains** or **Is one of**.
+3. The value. For **Is one of**, put commas between the values, for example `main, develop`.
+
+For **Equals** and **Is one of**, the app reads `12`, `true`, `false` and `null` as JSON values. To
+compare text, put the value in double quotes, for example `"12"`. Select the trash button of a
+filter to remove it. [Filter events](#filter-events) tells how Vis tests each filter.
 
 ## Manage automations
 
@@ -227,9 +224,9 @@ minutes, 10 minutes, 1 hour and 6 hours. It stops after 6 attempts. A repeated a
 
 A webhook trigger starts a run when another service sends a signed request.
 
-1. Ask Vis for an automation with a webhook trigger. Name the service and the events, for example
-   `When GitHub reports a new pull request for main, review it in a new session.` In the app form,
-   add a **Webhook** trigger instead.
+1. [Create an automation](#create-an-automation) with a **Webhook** trigger. Choose the signature
+   of the service and give the events, for example `pull_request`. To keep only some events, [add
+   payload filters](#add-payload-filters-in-the-app).
 2. Open the automation in the [automation views](#manage-automations). Select **Create webhook
    secret** and copy the secret. Vis shows it only once.
 3. Copy the webhook address. The app shows it as **Webhook address**. It is the gateway address

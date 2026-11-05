@@ -288,7 +288,7 @@
         (let [automations (get body "automations")
               items (if (seq automations)
                       (rows automations)
-                      [{:label "No automations. Ask Vis in the chat to create one."}])
+                      [{:label "No automations. Create one in the Companion app."}])
               choice (dlg/list-dialog!
                        screen
                        "Automations"

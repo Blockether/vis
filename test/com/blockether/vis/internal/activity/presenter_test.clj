@@ -895,3 +895,45 @@
 
         (expect (.contains (pr-str (get view "content")) "uncached input 5545"))
         (expect (= ["Regular input tokens" "5445" "400"] regular)))))
+
+(defdescribe
+  automation-activity-test
+  (it
+    "keeps the error of a failed or cancelled automation call of an old session"
+    (doseq [op
+            [:automations.create :automations.list :automations.run]
+
+            outcome
+            [:failed :cancelled]]
+
+      (let [ctx
+            (event/context)
+
+            invocation
+            (event/invocation ctx nil)
+
+            details
+            {:operation op
+             :presenter :generic
+             :activity (presenter/for-tool op)
+             :started-at-ms (System/currentTimeMillis)
+             :args []
+             :classification :observation}
+
+            terminal
+            (event/terminal-event ctx
+                                  invocation
+                                  (assoc details
+                                    :outcome outcome
+                                    :error (ex-info "Automation a-1 was not found" {})))
+
+            projection
+            (activity/presentation (activity/replay [(event/start-event ctx invocation details)
+                                                     terminal]))
+
+            row
+            (first (:rows projection))]
+
+        (expect (contract/valid-projection? projection))
+        (expect (= (name outcome) (:state row)))
+        (expect (= "Automation a-1 was not found" (:error-summary row)))))))

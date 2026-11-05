@@ -82,8 +82,7 @@
 (defonce ^:private run-sessions (atom {}))
 
 (defn automation-session?
-  "True while an automation run uses this session. Such a run cannot create,
-   change, run or delete automations."
+  "True while an automation run uses this session."
   [sid]
   (contains? @run-sessions (str sid)))
 
@@ -117,7 +116,7 @@
                            turn-id (util/now-ms))))))
 
 (defn overview
-  "List every automation of this machine for the gateway and the Python host."
+  "List every automation of this machine for the gateway."
   [db now]
   {"automations" (automation/list-all db now)})
 

@@ -18,6 +18,7 @@ import {
   stepProblem,
   type Automation,
   type AutomationDraft,
+  type FilterDraft,
 } from './automations';
 import { STORY_AUTOMATIONS } from '../dev/story-data';
 
@@ -160,6 +161,67 @@ describe('automation form', () => {
     ).toEqual({
       delivery: { push: false, callback: { url: 'https://gateway.example.com/results' } },
     });
+  });
+
+  it('edits payload filters and reads typed values back unchanged', () => {
+    const review = STORY_AUTOMATIONS[1];
+    const filters = [
+      { field: 'action', equals: 'opened' },
+      { field: 'number', equals: 12 },
+      { field: 'label', equals: '12' },
+      { field: 'draft', equals: false },
+      { field: 'milestone', equals: null },
+      { field: 'title', contains: 'fix' },
+      { field: 'base', in: ['main', 'a, b', 3, 'true'] },
+    ];
+    const filtered: Automation = {
+      ...review,
+      triggers: [{ kind: 'webhook', signature: 'github', filters }],
+    };
+    const draft = automationDraft(filtered, NOW, 'UTC');
+    expect(draft.triggers[0].filters.map((filter) => filter.value)).toEqual([
+      'opened',
+      '12',
+      '"12"',
+      'false',
+      'null',
+      'fix',
+      'main, "a, b", 3, "true"',
+    ]);
+    expect(automationPatch(draft, filtered)).toEqual({});
+    const [trigger] = draft.triggers;
+    expect(
+      automationPatch(
+        { ...draft, triggers: [{ ...trigger, filters: trigger.filters.slice(0, 1) }] },
+        filtered,
+      ),
+    ).toEqual({
+      triggers: [{ kind: 'webhook', signature: 'github', filters: filters.slice(0, 1) }],
+    });
+    expect(
+      automationPatch({ ...draft, triggers: [{ ...trigger, filters: [] }] }, filtered),
+    ).toEqual({ triggers: [{ kind: 'webhook', signature: 'github', filters: [] }] });
+    const one = (filter: Partial<FilterDraft>) => ({
+      ...draft,
+      name: 'Review',
+      triggers: [
+        { ...trigger, filters: [{ field: 'action', test: 'equals', value: 'x', ...filter }] },
+      ],
+    });
+    expect(draftProblem(one({}), NOW)).toBeNull();
+    expect(draftProblem(one({ field: ' ' }), NOW)).toBe(
+      'Give the payload field, for example action or pull_request.base.ref.',
+    );
+    expect(draftProblem(one({ value: ' ' }), NOW)).toBe('Give the value. Type "" for an empty text.');
+    expect(draftProblem(one({ test: 'contains', value: '' }), NOW)).toBe(
+      'Give the text that the field contains.',
+    );
+    expect(draftProblem(one({ test: 'in', value: ' , ' }), NOW)).toBe(
+      'Give one or more values, with commas between them.',
+    );
+    expect(draftProblem(one({ test: 'in', value: Array(33).fill('a').join(',') }), NOW)).toBe(
+      'Give 32 values or fewer.',
+    );
   });
 
   it('keeps the exact time of a saved one-time trigger and asks for a future time', () => {

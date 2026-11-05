@@ -311,6 +311,25 @@ export const RUN_EVENT_OPTIONS = RUN_EVENTS.map((event) => ({
   label: wordLabel(event.replace(/^run\./, '')),
 }));
 
+const FILTER = DEFS.webhook_filter.properties;
+const FILTER_TEST_LABELS: Record<string, string> = { in: 'Is one of' };
+
+/** The tests of one payload filter in contract order: equals, contains, in. */
+export const FILTER_TEST_OPTIONS = Object.keys(FILTER)
+  .filter((test) => test !== 'field')
+  .map((test) => ({ value: test, label: FILTER_TEST_LABELS[test] ?? wordLabel(test) }));
+
+/** The most payload filters of one webhook trigger. */
+export const FILTERS_MAX = DEFS.webhook_trigger.properties.filters.maxItems;
+
+/** One payload filter as the form edits it. `value` keeps what you typed. */
+export interface FilterDraft {
+  field: string;
+  /** A value of `FILTER_TEST_OPTIONS`. */
+  test: string;
+  value: string;
+}
+
 /** One trigger as the form edits it. The text fields keep what you typed. */
 export interface TriggerDraft {
   kind: string;
@@ -324,7 +343,9 @@ export interface TriggerDraft {
   signature: string;
   /** Webhook event names, separated by commas or spaces. */
   events: string;
-  /** The saved trigger. The form keeps the fields that it does not show, such as filters. */
+  /** Webhook payload filters. */
+  filters: FilterDraft[];
+  /** The saved trigger. The form keeps its exact values, such as the seconds of a one-time trigger. */
   saved: AutomationTrigger | null;
 }
 
@@ -370,6 +391,88 @@ function localMillis(text: string): number {
     : NaN;
 }
 
+type FilterScalar = string | number | boolean | null;
+
+/** A JSON scalar that you typed, such as 12, true or "12", else the text itself. */
+function scalarValue(text: string): FilterScalar {
+  const trimmed = text.trim();
+  try {
+    const value: unknown = JSON.parse(trimmed);
+    if (value === null || ['string', 'number', 'boolean'].includes(typeof value))
+      return value as FilterScalar;
+  } catch {
+    // Plain text, not JSON.
+  }
+  return trimmed;
+}
+
+/** The text of a filter value that `scalarValue` reads back as the same value. */
+function scalarText(value: FilterScalar, isListItem = false): string {
+  if (typeof value !== 'string') return JSON.stringify(value);
+  const isPlain =
+    value === value.trim() && scalarValue(value) === value && !(isListItem && value.includes(','));
+  return isPlain ? value : JSON.stringify(value);
+}
+
+/** Commas separate the values of an `in` test, except inside double quotes. */
+function listItems(text: string): string[] {
+  return (text.match(/("(?:[^"\\]|\\.)*"|[^,])+/g) ?? [])
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/** A saved payload filter in the form. */
+export function filterDraft(filter: AutomationWebhookFilter): FilterDraft {
+  if (filter.in !== undefined)
+    return {
+      field: filter.field,
+      test: 'in',
+      value: filter.in.map((item) => scalarText(item, true)).join(', '),
+    };
+  if (filter.contains !== undefined)
+    return { field: filter.field, test: 'contains', value: filter.contains };
+  return { field: filter.field, test: 'equals', value: scalarText(filter.equals ?? null) };
+}
+
+/** A new payload filter: a field that equals a value. */
+export const NEW_FILTER: FilterDraft = { field: '', test: 'equals', value: '' };
+
+function filterInput(draft: FilterDraft): AutomationWebhookFilter {
+  const field = draft.field.trim();
+  switch (draft.test) {
+    case 'contains':
+      return { field, contains: draft.value };
+    case 'in':
+      return {
+        field,
+        in: listItems(draft.value).map((item) => scalarValue(item) ?? 'null'),
+      };
+    default:
+      return { field, equals: scalarValue(draft.value) };
+  }
+}
+
+function filterProblem(draft: FilterDraft): string | null {
+  const field = draft.field.trim();
+  if (!field) return 'Give the payload field, for example action or pull_request.base.ref.';
+  if (field.length > FILTER.field.maxLength)
+    return `Make the payload field shorter. The limit is ${FILTER.field.maxLength} characters.`;
+  switch (draft.test) {
+    case 'contains':
+      if (!draft.value) return 'Give the text that the field contains.';
+      return draft.value.length > FILTER.contains.maxLength
+        ? `Make the text shorter. The limit is ${FILTER.contains.maxLength} characters.`
+        : null;
+    case 'in': {
+      const count = listItems(draft.value).length;
+      if (count === 0) return 'Give one or more values, with commas between them.';
+      return count > FILTER.in.maxItems ? `Give ${FILTER.in.maxItems} values or fewer.` : null;
+    }
+    default:
+      return draft.value.trim() ? null : 'Give the value. Type "" for an empty text.';
+  }
+}
+
 /** A saved trigger in the form, or a new interval of one day. */
 export function triggerDraft(
   trigger: AutomationTrigger | null,
@@ -388,6 +491,7 @@ export function triggerDraft(
     at: localInput(at ?? (Math.floor(now / HOUR_MS) + 1) * HOUR_MS),
     signature: (trigger?.kind === 'webhook' ? trigger.signature : undefined) ?? SIGNATURE_KINDS[0],
     events: trigger?.kind === 'webhook' ? (trigger.events ?? []).join(', ') : '',
+    filters: trigger?.kind === 'webhook' ? (trigger.filters ?? []).map(filterDraft) : [],
     saved: trigger,
   };
 }
@@ -443,11 +547,12 @@ function triggerInput(draft: TriggerDraft): AutomationTrigger {
       return { kind: 'once', at: onceMillis(draft) };
     case 'webhook': {
       const events = words(draft.events);
+      const filters = draft.filters.map(filterInput);
       return {
         kind: 'webhook',
         signature: draft.signature,
         ...(events.length > 0 ? { events } : {}),
-        ...(saved?.filters ? { filters: saved.filters } : {}),
+        ...(filters.length > 0 || saved?.filters ? { filters } : {}),
       };
     }
     default:
@@ -537,6 +642,14 @@ function triggerProblem(draft: TriggerDraft, now: number): string | null {
       if (!Number.isFinite(at)) return 'Choose the date and time of the run.';
       const kept = draft.saved?.kind === 'once' && draft.saved.at === at;
       return at > now || kept ? null : 'Choose a time in the future.';
+    }
+    case 'webhook': {
+      if (draft.filters.length > FILTERS_MAX) return `Give ${FILTERS_MAX} payload filters or fewer.`;
+      for (const [index, filter] of draft.filters.entries()) {
+        const problem = filterProblem(filter);
+        if (problem) return draft.filters.length > 1 ? `Filter ${index + 1}: ${problem}` : problem;
+      }
+      return null;
     }
     default:
       return null;

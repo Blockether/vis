@@ -240,7 +240,7 @@ describe('Automations workspace', () => {
     expect(screen.getByText('Cron 30 7 * * 1-5 · Europe/Warsaw')).toBeVisible();
   });
 
-  it('keeps the payload filters of a webhook trigger that you edit', async () => {
+  it('changes, adds and keeps the payload filters of a webhook trigger', async () => {
     const story = storyAutomationsClient();
     const filters = [{ field: 'action', equals: 'opened' }];
     const client = {
@@ -261,15 +261,25 @@ describe('Automations workspace', () => {
     await openAutomation('Review new pull requests', client);
     click('Edit');
     click('Change when it runs');
-    expect(
-      screen.getByText('This trigger keeps its 1 payload filter. Ask Vis in a chat to change it.'),
-    ).toBeVisible();
-    type(/^Events/, 'pull_request, push');
+    expect(field(/^Filter 1 field/)).toHaveValue('action');
+    expect(field(/^Filter 1 value/)).toHaveValue('opened');
+    type(/^Filter 1 value/, 'reopened');
+    click('Add filter');
+    type(/^Filter 2 field/, 'pull_request.draft');
+    type(/^Filter 2 value/, 'false');
     click('Save automation');
     expect(await screen.findByText('Automation saved.')).toBeVisible();
     expect(update).toHaveBeenCalledWith('auto-review', {
       triggers: [
-        { kind: 'webhook', signature: 'github', events: ['pull_request', 'push'], filters },
+        {
+          kind: 'webhook',
+          signature: 'github',
+          events: ['pull_request'],
+          filters: [
+            { field: 'action', equals: 'reopened' },
+            { field: 'pull_request.draft', equals: false },
+          ],
+        },
       ],
     });
   });

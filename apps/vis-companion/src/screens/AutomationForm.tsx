@@ -15,6 +15,8 @@ import { TrashIcon } from '../components/icons';
 import { FormLabel } from './settings/SettingsLayout';
 import {
   ANSWER_OPTIONS,
+  FILTER_TEST_OPTIONS,
+  FILTERS_MAX,
   NAME_MAX,
   RUN_EVENT_OPTIONS,
   SIGNATURE_OPTIONS,
@@ -27,6 +29,7 @@ import {
   automationInput,
   deliveryLabel,
   deviceTimeZone,
+  NEW_FILTER,
   draftStepProblem,
   stepProblem,
   targetLabel,
@@ -35,6 +38,7 @@ import {
   type Automation,
   type AutomationDraft,
   type AutomationStep,
+  type FilterDraft,
   type TriggerDraft,
 } from '../lib/automations';
 
@@ -95,8 +99,6 @@ function TriggerFields({
   onChange: (fields: Partial<TriggerDraft>) => void;
   onRemove?: () => void;
 }) {
-  const saved = trigger.saved?.kind === 'webhook' ? trigger.saved : null;
-  const filters = trigger.kind === 'webhook' ? (saved?.filters?.length ?? 0) : 0;
   return (
     <div role="group" aria-label={label} className="space-y-3 border border-dialog-edge p-3">
       {(isKindShown || onRemove) && (
@@ -230,11 +232,78 @@ function TriggerFields({
               onChange={(event) => onChange({ events: event.target.value })}
             />
           </FormLabel>
-          {filters > 0 && (
+          <div role="group" aria-label={`${label} payload filters`} className="space-y-2">
             <p className="font-mono text-meta text-dialog-hint">
-              {`This trigger keeps its ${filters} payload ${filters === 1 ? 'filter' : 'filters'}. Ask Vis in a chat to change ${filters === 1 ? 'it' : 'them'}.`}
+              Payload filters: a run starts only when each filter matches. The field is a dot path in
+              the JSON payload. Type "12" with quotes to compare the number as text.
             </p>
-          )}
+            {trigger.filters.map((filter, index) => {
+              const name = `Filter ${index + 1}`;
+              const update = (fields: Partial<FilterDraft>) =>
+                onChange({
+                  filters: trigger.filters.map((item, place) =>
+                    place === index ? { ...item, ...fields } : item,
+                  ),
+                });
+              return (
+                <div
+                  key={index}
+                  role="group"
+                  aria-label={name}
+                  className="flex flex-wrap items-center gap-2 font-mono text-ui"
+                >
+                  <span className="min-w-0 flex-1 basis-32">
+                    <Input
+                      aria-label={`${name} field`}
+                      value={filter.field}
+                      placeholder="action"
+                      disabled={busy}
+                      {...CODE_INPUT}
+                      onChange={(event) => update({ field: event.target.value })}
+                    />
+                  </span>
+                  <Select
+                    aria-label={`${name} test`}
+                    value={filter.test}
+                    disabled={busy}
+                    onValueChange={(test) => update({ test })}
+                    options={FILTER_TEST_OPTIONS}
+                    className="w-32 shrink-0"
+                  />
+                  <span className="min-w-0 flex-1 basis-32">
+                    <Input
+                      aria-label={`${name} value`}
+                      value={filter.value}
+                      placeholder={filter.test === 'in' ? 'main, develop' : 'opened'}
+                      disabled={busy}
+                      {...CODE_INPUT}
+                      onChange={(event) => update({ value: event.target.value })}
+                    />
+                  </span>
+                  <IconButton
+                    label={`Remove ${name.toLowerCase()}`}
+                    variant="remove"
+                    disabled={busy}
+                    onClick={() =>
+                      onChange({ filters: trigger.filters.filter((_, place) => place !== index) })
+                    }
+                  >
+                    <TrashIcon className="size-3.5" />
+                  </IconButton>
+                </div>
+              );
+            })}
+            {trigger.filters.length < FILTERS_MAX && (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => onChange({ filters: [...trigger.filters, NEW_FILTER] })}
+              >
+                Add filter
+              </Button>
+            )}
+          </div>
           <p className="font-mono text-meta text-dialog-hint">
             After you save, create the webhook secret and give the webhook address to the sender.
           </p>
