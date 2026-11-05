@@ -1538,7 +1538,8 @@
                 []
                 [(menu-item :new-session "New session here" :new-session)])
         true
-        (into [(menu-item :details "Show session details" :details)
+        (into [(menu-item :copy-session-id "Copy session id" :copy-session-id)
+               (menu-item :details "Show session details" :details)
                (menu-item :toggle-session
                           (if (contains? selected sid) "Deselect session" "Select session")
                           :select)

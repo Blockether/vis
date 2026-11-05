@@ -494,6 +494,7 @@
    sidebar menu, and a chosen command runs as its key on the selected row."
   [{:id :open :keys "Enter" :label "Open the row"}
    {:id :new-session :key \n :label "Start a session here"}
+   {:id :copy-session-id :key \y :label "Copy the session id"}
    {:id :new-group :key \G :label "Create a group"}
    {:id :add-project :key \a :label "Add a project"}
    {:id :use-project :key \p :label "Use the project"}

@@ -8197,6 +8197,9 @@
       :details
       (show-session-details! screen sid session)
 
+      :copy-session-id
+      (when sid (copy-session-id! sid))
+
       :favorite
       (vis/worker-future "tui-session-favorite"
                          (fn []
