@@ -4888,7 +4888,14 @@ function CouncilRequestBody({ children }: { children: string }) {
 
   return (
     <>
-      <div id={bodyId} ref={bodyRef} className={`whitespace-normal ${clampClass}`}>
+      {/* The edge blocks lose their outer margins. A clamped or sliding body holds them
+          inside its box, an open one lets them collapse out; the slide ended a margin short
+          and the toggle jumped on its last frame. */}
+      <div
+        id={bodyId}
+        ref={bodyRef}
+        className={`whitespace-normal [&>:first-child]:mt-0 [&>:last-child]:mb-0 ${clampClass}`}
+      >
         {children && <Markdown hardBreaks>{councilMarkdown(children)}</Markdown>}
       </div>
       {collapsible && (
