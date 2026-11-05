@@ -543,7 +543,7 @@
   ls-shim-paging-test
   "`limit` caps a page level by level, and the page continues itself like grep."
   (it
-    "names the continuation in the header and walks every page exactly once"
+    "shows the page range in the header and walks every page exactly once"
     (let
       [ctx
        (sandbox)
@@ -568,7 +568,7 @@
 
       (expect
         (=
-          "'d  2d 1f  1-4 of 8 → next(r), or the same call with offset=4\\nb/ 2  c.txt\\na/ 3\\n  1.txt  +2 more (2 .txt)'\n'd  2d 1f  5-8 of 8\\na/ 3\\n  2.txt  3.txt\\nb/ 2\\n  1.txt  2.txt'\n4 True None None\n[4, None] True True\nTrue str\n"
+          "'d  2d 1f  1-4 of 8\\nb/ 2  c.txt\\na/ 3\\n  1.txt  +2 more (2 .txt)'\n'd  2d 1f  5-8 of 8\\na/ 3\\n  2.txt  3.txt\\nb/ 2\\n  1.txt  2.txt'\n4 True None None\n[4, None] True True\nTrue str\n"
           (out ctx code)))))
   (it
     "pages each directory of a batch on its own and refuses a bad window"

@@ -361,6 +361,8 @@
     "\n" "## Calls\n"
     "- `ls`, `cat`, `grep` and `patch` return text (a `str`), not a map with fields. Print the whole result; "
     "do not parse or slice it. To see less, narrow the call. A refused `patch` raises an error.\n"
+    "- `ls` and `grep` return one page of at most `limit` entries. A capped page says `capped` or `1-50 of "
+    "120` in line 1. `next(r, None)` gives the next page or None, and `r.all()` gives every page.\n"
     "- `ls(paths=\".\", depth=1, *, pattern=None)` lists a directory tree as text; `as_paths=True` gives a "
     "list of paths. Example: `print(ls(project_root_path / \"src\", depth=2))`.\n"
     "- `cat(path, start=None, end=None)` returns a `path @version` line, then `N│ text` rows. The one space "

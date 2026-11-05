@@ -2043,8 +2043,7 @@
                 (str (if (contains? #{"limit" "bytes"} content-cap)
                        (str "  capped by " content-cap)
                        "  file NAME matches capped by limit")
-                     " → next(r), or THIS SAME query with grep({…, \"offset\": " next-offset
-                     "})" complete)
+                     complete)
                 :else ""))
 
         from
@@ -2573,7 +2572,7 @@
      await grep({\"query\": \"defn-? +grep-tool\", \"is_regex\": True, \"context\": 3})
 
    The whole call surface is `grep-data`'s; this is its projection. Line 1 always
-   summarizes — hits, files, truncation and the literal next call — then each
+   summarizes — hits, files and truncation — then each
    `path @version` header heads a block of `  <line>│ <text>` rows, context lines
    numbered too. A hit is therefore already a `patch` address: its line number and
    the header's version, with no `cat` in between."
@@ -4927,8 +4926,8 @@
      :symbol 'grep
      :result
      (str
-       "Text, not a map. Line 1 gives the hit count, the file count, any truncation and the exact "
-       "next call. Then each path has a `<path> @<version>  (<count>)` header and one `  <line>│ "
+       "Text, not a map. Line 1 gives the hit count, the file count, and any truncation. "
+       "Then each path has a `<path> @<version>  (<count>)` header and one `  <line>│ "
        "<text>` row per hit. Context lines have line numbers too, and `⋮` marks a gap. Fuzzy "
        "file-name matches follow as `~ path`, then a `hint:` line. Give the version and the line "
        "numbers directly to `patch`.\n\n"
@@ -4961,7 +4960,7 @@
        "`limit` caps the total results per page, not per file: a positive integer, default 50. "
        "`is_files_only: True` gives one row per matching file with its match count instead of the "
        "lines. Use it when a query matches too much to page through, and `limit` then counts files "
-       "(default 500). A capped result is never silent: line 1 names the next call, and the result "
+       "(default 500). A capped result is never silent: line 1 says `capped`, and the result "
        "pages itself with `next(r)`, `r.pages()` or `r.all()`. You can also pass `offset` by hand. "
        "`offset` belongs to ONE query: another query's offset skips real hits, and its empty page "
        "says so.\n\n"

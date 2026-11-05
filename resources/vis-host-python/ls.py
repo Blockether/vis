@@ -138,7 +138,7 @@ def __vis_install_ls__():
     def _section(path, entries, offset, limit):
         """One directory page: the header line, then its tree. Answers `(text, next_offset)`.
 
-        The header comes first and names the continuation, because a printed block is
+        The header comes first and shows the page range, because a printed block is
         clipped from the end and a trailing note would be lost first."""
         home = _os.path.expanduser("~")
         shown = "~" + path[len(home) :] if home and path.startswith(home) else path
@@ -155,14 +155,7 @@ def __vis_install_ls__():
                 total,
             ), None
         following = hi if hi < total else None
-        if following is not None:
-            head += "  %d-%d of %d → next(r), or the same call with offset=%d" % (
-                offset + 1,
-                hi,
-                total,
-                hi,
-            )
-        elif offset:
+        if following is not None or offset:
             head += "  %d-%d of %d" % (offset + 1, hi, total)
         out = [head]
         opened = set()
@@ -303,8 +296,8 @@ def __vis_install_ls__():
         "from 64k up. A name with whitespace is quoted."
         "\n\nA page shows at most `limit` entries, counted level by level, so the "
         "shallow levels are complete first. `+K more (28 .md, 2 dirs)` ends a directory "
-        "that continues on the next page. A capped header names the next call: "
-        "`1-250 of 625 → next(r), or the same call with offset=250`. limit=None lists "
+        "that continues on the next page. A capped header shows its range, such as "
+        "`1-250 of 625`. limit=None lists "
         "everything."
         "\n\n`next(r)` gives the next page and raises StopIteration after the last, so "
         "use `next(r, None)` as the sentinel form. `r.pages()` walks the pages with a "
