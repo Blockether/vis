@@ -2842,7 +2842,7 @@
     {:name "prune"
      :kind :flag
      :type :boolean
-     :doc "Remove only sync-owned links absent from configuration; retain all source."}
+     :doc "Unlink sync-owned packages absent from configuration and remove old snapshots that no live process uses; keep local source."}
     {:name "dry-run"
      :kind :flag
      :type :boolean
@@ -2874,7 +2874,7 @@
                                    (when-let [error (get result "error")]
                                      (str " — " error)))))
        (commandline/stdout!
-         (str "Synced " (count results)
+         (str "Synced " (count (remove #(contains? #{"pruned" "would-prune"} (get % "status")) results))
               " package(s) in " (quot (- (System/nanoTime) started) 1000000)
               " ms; " failed
               " failed." (when-not dry-run

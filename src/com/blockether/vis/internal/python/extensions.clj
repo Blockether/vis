@@ -3752,6 +3752,28 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                 (binding [workspace/*workspace-root* project-root]
                   (python-runtime/shared-environment?)))))
 
+(defn- claim-package-snapshot!
+  "Claim the managed package snapshot that `project` loads from, so that
+   `extension sync --prune` in another process keeps it while this process runs
+   (#444). Only a snapshot with an install receipt next to a `current` link gets a
+   claim; a local source project gets no claim file."
+  [^File project]
+  (when-let [^File snapshot
+             (paths/nearest-ancestor (fn [^File dir]
+                                       (and (.isFile (io/file dir "receipt.json"))
+                                            (some-> (.getParentFile dir)
+                                                    (io/file "current")
+                                                    .toPath
+                                                    Files/isSymbolicLink)))
+                                     (.getCanonicalFile project))]
+    (try (paths/with-claim-lock (.getParentFile (.getParentFile snapshot))
+                                #(paths/claim-dir! snapshot))
+         (catch Throwable t
+           (tel/log! {:level :debug
+                      :id ::snapshot-claim-lock-failed
+                      :data {:snapshot (.getPath snapshot) :error (ex-message t)}})
+           (paths/claim-dir! snapshot)))))
+
 (defn- prepare-root!
   "Snapshot sources and prepare dependencies for an admitted project catalog.
    Unmanaged explicit-directory scans prepare missing environments only when requested.
@@ -3764,6 +3786,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                               (.getName root))
                             #(freeze-root! roots))]
     (try
+      (some-> project claim-package-snapshot!)
       (let [prepare? (or automatic? sync-projects?)
             packages (when project
                        (timed-phase :environment

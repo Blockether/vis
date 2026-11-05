@@ -171,7 +171,13 @@ is recorded in its `.venv`, so the next start skips uv until the project, lock o
 
 When you remove a declaration, sync keeps its installation as `orphaned`. Preview removals with
 `sync --dry-run --prune`. Then use `sync --trust --prune` to unlink them. Sync can remove only
-current links that it still owns. It keeps development checkouts and installed version directories.
+current links that it still owns. It never removes development checkouts.
+
+Each GitHub update installs the new version in a new directory with its own environment. The old
+directory stays. `--prune` also removes these old versions. It keeps the active version and one other
+version: the rollback version, or else the newest one. It also keeps each version that a running
+Vis process still uses. The output shows each removed version as `pruned`, and a dry run shows it
+as `would-prune`.
 
 Sync never adopts or replaces links that you installed manually or that changed outside sync. Keep
 them and resolve the conflict before you sync. Do not edit the private `.sync.json` receipt. Do not

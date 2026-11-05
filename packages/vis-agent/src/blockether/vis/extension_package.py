@@ -1351,6 +1351,95 @@ def rollback_saved_install(directory, name, save_state):
         _release(lock, fd)
 
 
+# --prune keeps this many inactive snapshots of each package, newest first: one for a
+# rollback and for a gateway that still runs the replaced version (#444).
+PRUNE_KEEP = 1
+# A live Vis process holds an OS lock on this file in each snapshot that it serves.
+# Engine `paths/claim-dir!` writes it; `paths/with-claim-lock` serializes on the scope lock.
+_CLAIM_FILE = ".vis-live"
+_CLAIMS_LOCK = ".vis-claims.lock"
+_PRUNE_PREFIX = ".prune-"
+
+
+def _claimed(snapshot):
+    """True while a live process claims `snapshot`. A claim that cannot be tested is held."""
+    path = snapshot / _CLAIM_FILE
+    if not os.path.lexists(path):
+        return False
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    except OSError:
+        return True
+    try:
+        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def _sweep_pruned(directory):
+    """Remove snapshots that an interrupted prune already moved out of their packages."""
+    for leftover in directory.glob(_PRUNE_PREFIX + "*"):
+        if leftover.is_dir() and not leftover.is_symlink():
+            shutil.rmtree(leftover)
+
+
+def _prune_snapshots(directory, name, dry_run, removing=False):
+    """Remove inactive managed snapshots of one package and report each one.
+
+    Keep the active snapshot and PRUNE_KEEP others: its rollback target first, then the
+    newest by version order. Local source links, unmanaged entries and claimed snapshots stay. A
+    removal first moves the snapshot out of its package, so an interrupted run leaves no
+    partial version; the next prune deletes what it moved.
+    """
+    container = directory / _name(name)
+    if not container.is_dir() or container.is_symlink():
+        return []
+    destination = container / "current"
+    active = (
+        None if removing or not destination.is_symlink() else os.readlink(destination)
+    )
+    snapshots = {}
+    for entry in container.iterdir():
+        if entry.name == "current" or entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            snapshots[entry.name] = _receipt(entry, name)
+        except (OSError, ValueError):
+            continue
+    previous = snapshots.get(active, {}).get("previous")
+    inactive = sorted((v for v in snapshots if v != active), key=Version, reverse=True)
+    kept = [v for v in inactive if v == previous]
+    kept += [v for v in inactive if v != previous][: max(0, PRUNE_KEEP - len(kept))]
+    results = []
+    for version in (v for v in inactive if v not in kept):
+        snapshot = container / version
+        row = {"name": name, "version": version, "path": str(snapshot)}
+        if dry_run:
+            if not _claimed(snapshot):
+                results.append({**row, "status": "would-prune"})
+            continue
+        lock = directory / ("." + name + ".install-lock")
+        fd = _acquire(lock)
+        try:
+            claims = os.open(directory / _CLAIMS_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.lockf(claims, fcntl.LOCK_EX)
+                if _claimed(snapshot):
+                    continue
+                holder = Path(tempfile.mkdtemp(prefix=_PRUNE_PREFIX, dir=directory))
+                os.rename(snapshot, holder / version)
+            finally:
+                os.close(claims)
+        finally:
+            _release(lock, fd)
+        shutil.rmtree(holder)
+        results.append({**row, "status": "pruned"})
+    return results
+
+
 def _sync_one(name, spec, directory, current, refresh, vis_version):
     destination = _destination(directory, name)
     exists = os.path.lexists(destination)
@@ -1454,10 +1543,11 @@ def sync(
     dry_run=False,
     vis_version=None,
 ):
-    """Reconcile one YAML scope. Reuse pins until refresh, and prune only owned links.
+    """Reconcile one YAML scope. Reuse pins until refresh, and prune only owned packages.
 
     A `latest` version follows the newest approved stable release on every sync.
-    Receipts and pointers are atomic. Old Git snapshots and local source stay on disk. A
+    Receipts and pointers are atomic. Prune unlinks orphaned packages and removes old Git
+    snapshots that no live process claims; local source always stays on disk. A
     failed package is reported, and its previous source and other packages stay. Dry-run
     makes no writes, imports or network calls. After source admission, the host prepares
     dependencies with upstream uv's own readiness and cache checks.
@@ -1478,6 +1568,8 @@ def sync(
     fd = None if dry_run else _acquire(lock)
     try:
         records = _sync_records(directory)
+        if prune and not dry_run:
+            _sweep_pruned(directory)
         results = []
         for name in sorted(set(specs) | set(records)):
             spec, current = specs.get(name), records.get(name)
@@ -1525,6 +1617,10 @@ def sync(
                         records[name] = record
                         _save_sync_records(directory, records)
                 results.append(result)
+                if prune:
+                    results.extend(
+                        _prune_snapshots(directory, name, dry_run, spec is None)
+                    )
             except (ValueError, OSError) as error:
                 results.append(
                     {"name": name, "status": "failed", "error": str(error)[:1024]}

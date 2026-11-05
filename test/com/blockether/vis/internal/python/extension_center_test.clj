@@ -4,6 +4,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.extensions-test :as fixtures]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -301,6 +302,8 @@
                            (get (pyx/install-package! "example/extensions" options) "version")))
                 (reload-release)
                 (expect (= "1.0.0" (active-version)))
+                ;; Issue #444: sync --prune in another process keeps a snapshot that this one loaded.
+                (expect (= :held (paths/claim-state (io/file directory "vis-release-fixture" "1.0.0"))))
                 (let [status (pyx/package-versions "Example/Extensions" {:directory directory})]
                   (expect (= "1.0.0" (get status "installed")))
                   (expect (= "1.1.0" (get status "latest")))

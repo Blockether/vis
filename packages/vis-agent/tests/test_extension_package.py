@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -1020,6 +1021,73 @@ def test_sync_local_install_cache_and_explicit_prune(tmp_path):
     assert package.sync({}, target, trust=True, prune=True)[0]["status"] == "removed"
     assert source.is_dir()
     assert not (target / "vis-greeter/current").exists()
+
+
+@contextlib.contextmanager
+def held_claim(snapshot):
+    """Hold a live claim on `snapshot` from another process, as `paths/claim-dir!` does."""
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl, os, sys\n"
+            "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n"
+            "fcntl.lockf(fd, fcntl.LOCK_SH)\n"
+            "print('held', flush=True)\n"
+            "sys.stdin.read()\n",
+            str(snapshot / ".vis-live"),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout.readline().strip() == "held"
+        yield
+    finally:
+        child.stdin.close()
+        child.wait(10)
+
+
+# Issue #444: --prune removes old snapshots, never the active, rollback or claimed ones.
+def test_sync_prune_removes_old_snapshots_by_version_and_claim(releases):
+    _, target, _ = releases
+    spec = {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    for version in ("1.0.0", "1.1.0", "2.0.0rc1"):
+        package.sync({"vis-greeter": {**spec, "version": version}}, target, trust=True)
+    container = target / "vis-greeter"
+    configured = {"vis-greeter": {**spec, "version": "2.0.0rc1"}}
+
+    def versions():
+        return sorted(p.name for p in container.iterdir() if p.name != "current")
+
+    def rows(**options):
+        found = package.sync(configured, target, **options)
+        return [(r["status"], r.get("version")) for r in found]
+
+    assert rows(trust=True)[0][0] == "cached"
+    assert versions() == ["1.0.0", "1.1.0", "2.0.0rc1"]
+    with held_claim(container / "1.0.0"):
+        assert [s for s, _ in rows(trust=True, prune=True)] == ["cached"]
+    assert versions() == ["1.0.0", "1.1.0", "2.0.0rc1"]
+    assert rows(prune=True, dry_run=True) == [
+        ("cached", None),
+        ("would-prune", "1.0.0"),
+    ]
+    assert versions() == ["1.0.0", "1.1.0", "2.0.0rc1"]
+    (target / ".prune-interrupted").mkdir()
+    pruned = rows(trust=True, prune=True)
+    assert pruned[1:] == [("pruned", "1.0.0")]
+    assert versions() == ["1.1.0", "2.0.0rc1"]
+    assert [s for s, _ in rows(trust=True, prune=True)] == ["cached"]
+    assert not [p for p in target.iterdir() if p.name.startswith(".prune-")]
+    assert package.rollback(REPOSITORY, target, trust=True)["version"] == "1.1.0"
+    removed = package.sync({}, target, trust=True, prune=True)
+    assert [(r["status"], r.get("version")) for r in removed] == [
+        ("removed", None),
+        ("pruned", "1.1.0"),
+    ]
+    assert versions() == ["2.0.0rc1"]
 
 
 # A read-only image holds prepared packages; loading them must not need the sync lock.
