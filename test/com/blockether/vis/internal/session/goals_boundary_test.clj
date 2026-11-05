@@ -69,7 +69,7 @@
                (throw (ex-info "Unexpected continuation" {}))))]
           (let [result (turn/run-turn! env "/goal Verify goal integration" {})]
             ;; #216: terminal tool evidence is the summary, not another model request.
-            (expect (= "Goal complete: All requested checks passed."
+            (expect (= "**Goal complete**\n\nAll requested checks passed."
                        (get-in result [:answer :answer])))
             (expect (= 2 @requests))
             (expect (= "complete" (get (goals/check-goal env) "status")))
@@ -162,7 +162,7 @@
                 (expect (= 1 (count (:trace result))))
                 (expect (= status (get (goals/check-goal env) "status")))
                 (expect (= 1 (get (goals/check-goal env) "iterations_used")))
-                (expect (= (str "Goal " status ": Verified result or external blocker.")
+                (expect (= (str "**Goal " status "**\n\nVerified result or external blocker.")
                            (get-in result [:answer :answer])))
                 (expect (str/includes? (str (:trace result)) "Current iteration tools finished."))))
             (finally (loop-env/dispose-environment! env)))))))
@@ -323,7 +323,7 @@
                       resumed (first @snapshots)
                       preserved ["id" "objective" "iteration_budget" "iterations_used"]]
 
-                  (expect (= "Goal complete: All acceptance criteria verified."
+                  (expect (= "**Goal complete**\n\nAll acceptance criteria verified."
                              (get-in result [:answer :answer])))
                   (expect (= 2 @requests))
                   (expect (= "active" (get resumed "status")))
@@ -497,7 +497,7 @@
                 progress-chunks
                 (filterv :assistant-prose @chunks)]
 
-            (expect (= "Goal complete: All requested checks passed."
+            (expect (= "**Goal complete**\n\nAll requested checks passed."
                        (get-in result [:answer :answer])))
             (expect (= "complete" (get (goals/check-goal env) "status")))
             (expect (= (inc progress-count) @requests))

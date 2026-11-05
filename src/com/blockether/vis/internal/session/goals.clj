@@ -234,8 +234,10 @@
    authorized action remains without user input or an external change. Never lower the
    objective, and never mark blocked only to deliver a progress reply. After the tools of
    this iteration finish, the reason becomes the final reply without another model
-   request. Write the reason in Markdown: one plain sentence first, then an empty line and
-   short '-' items. For blocked, use the labels **Blocker**, **Tried** and **Needed**."
+   request. Write the reason in Markdown: one plain sentence first, then an empty line. For
+   complete, write one '-' evidence item for each requirement. For blocked, write the sections
+   **Done** (optional), **Blockers** (numbered, with indented '- Tried:' items) and
+   **Needed from you**."
   [env goal-id version status reason]
   (when-not (contains? #{"complete" "blocked"} status)
     (fail! "Only complete or blocked may be declared by the model."))
@@ -322,7 +324,7 @@
   [started-goal goal]
   (when (and (= (get started-goal "id") (get goal "id"))
              (contains? #{"complete" "blocked"} (get goal "status")))
-    {:status :success :answer (str "Goal " (get goal "status") ": " (get goal "reason"))}))
+    {:status :success :answer (str "**Goal " (get goal "status") "**\n\n" (get goal "reason"))}))
 
 (defn request-halt-result
   "Stop resolved goals and enforce iteration budgets after the previous tools finish.
@@ -387,10 +389,28 @@ update_goal(goal_id, version, status, reason), with id/version from session['goa
 Declare status='complete' only with concise evidence for every requirement; a genuine
 impasse is status='blocked' with the concrete blocker, not complete.
 Write the reason in Markdown, because the person reads it as the final reply and in the goal
-view. Start with one plain sentence that states the result or the blocker, without a heading.
-Then write an empty line and short '-' items. For complete, write one item of evidence for each
-requirement. For blocked, write the items under the labels **Blocker**, **Tried** and
-**Needed**: what stops the work, what you tried, and what the user or an external change must do.
+view. Write only about the current goal; session['goal_history'] holds the earlier goals.
+Start with one plain sentence that states the result or the blocker, without a heading.
+For complete, then write an empty line and one '-' item of evidence for each requirement.
+For blocked, then write these sections. Each section is a bold label line, an empty line and a list:
+**Done**: only when part of the work is done; '-' items with evidence.
+**Blockers**: one numbered item for each independent blocker: its short bold name and what stops
+the work. Under a blocker, write one indented '- Tried:' item for each remedy that you tried.
+Write no Tried item when you tried nothing.
+**Needed from you**: '-' items with the actions of the user. When only an external change can
+help, name it and tell the user what to do until then.
+Example of a blocked reason:
+v0.4.2 is still a draft because Apple rejects the iOS job.
+
+**Blockers**
+
+1. **App Store 403**: the upload fails until the account holder accepts the new license.
+   - Tried: one rerun of the failed jobs; the same 403.
+
+**Needed from you**
+
+- Accept the license, then rerun the failed jobs.
+End of example.
 session['goal_history'] holds earlier goals, and the current goal when it no longer directs work,
 newest first, with id, objective, status and reason. It is a record, not a task: never work on
 an entry. Only session['goal'] directs goal work. The model cannot

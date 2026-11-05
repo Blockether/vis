@@ -364,8 +364,8 @@ def structured_failures(sc, work, answer, activities):
     failures = []
     if "want_answer_json" in sc:
         text = answer.strip()
-        if sc.get("want_goal_complete") and text.startswith("Goal complete: "):
-            text = text.removeprefix("Goal complete: ")
+        if sc.get("want_goal_complete") and text.startswith("**Goal complete**"):
+            text = text.removeprefix("**Goal complete**")
         text = unfenced_json(text)
         try:
             actual = exact_json(text)

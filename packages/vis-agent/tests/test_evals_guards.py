@@ -1132,7 +1132,7 @@ class DiscoveryEvaluationTest(unittest.TestCase):
 
     def test_exact_answer_accepts_only_goal_completion_wrapper_for_goal_scenarios(self):
         expected = {"left_only": 150, "net_delta": 931}
-        goal_answer = f"Goal complete: {json.dumps(expected)}"
+        goal_answer = f"**Goal complete**\n\n{json.dumps(expected)}"
         self.assertEqual(
             [],
             grade.structured_failures(
