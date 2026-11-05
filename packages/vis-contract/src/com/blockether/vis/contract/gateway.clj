@@ -101,6 +101,12 @@
   [goal]
   (document/valid-json? "gateway" "session_goal" goal))
 
+(defn shown-session-goal
+  "The goal that a person or the model may see, or nil. A cleared goal was forgotten: it
+   stays only so that `newer-session-goal` keeps its revision."
+  [goal]
+  (when-not (= "cleared" (get goal "status")) goal))
+
 (defn newer-session-goal
   "Keep the highest valid session-wide revision across HTTP snapshots and event replay.
    Goal replacement increments revision too; invalid, absent and older snapshots cannot rewind it."

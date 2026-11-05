@@ -2049,6 +2049,11 @@
             {
               "const": "cancelled",
               "title": "Cancelled"
+            },
+            {
+              "const": "cleared",
+              "title": "Cleared",
+              "description": "The user forgot the goal with /goal --clear or --clear-all. Clients show no goal, and the model does not see it. The record stays so that clients keep the highest revision."
             }
           ]
         },

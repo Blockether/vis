@@ -3551,7 +3551,9 @@ class Session:
 
         No goal is inferred from ordinary messages. Read its state in
         `read()['goal']`. To pause, resume or cancel it, use
-        `send('/goal --pause')`, `--resume` or `--cancel`.
+        `send('/goal --pause')`, `--resume` or `--cancel`. `--clear` forgets the
+        goal and `--clear-all` also forgets the goal history; the goal then has
+        status 'cleared' and the model no longer sees it.
 
         The optional budget counts loop iterations, including prose and empty
         replies. The last iteration can run its tools, and then the limit blocks

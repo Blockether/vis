@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.context.prompt]
             [com.blockether.vis.internal.foundation.core :as foundation]
+            [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.test-python-context :as tpc]
             [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
@@ -846,6 +847,23 @@
                           ;; An unstarred row says nothing, instead of claiming a rank it lacks.
                           (expect (not (contains? (get by-title "plain") :favorite-rank))))
                         (finally (persistance/db-dispose-connection! s))))))
+
+(defdescribe
+  cleared-goal-session-rows-test
+  (it "shows the model a goal of another session, but never a cleared goal"
+      (let [s (persistance/db-create-connection! :memory)]
+        (try (let [cid (h/store-session! s {:channel :tui :title "Goal fixture"})
+                   _ (goals/set-goal! s cid "Secret objective" nil)
+                   goal-of
+                   (fn []
+                     [(:goal (@#'introspection/foundation-session-descriptor {:db-info s} cid))
+                      (:goal (first (@#'introspection/foundation-sessions-data {:db-info s})))])]
+
+               (expect (= ["Secret objective" "Secret objective"]
+                          (mapv #(get % "objective") (goal-of))))
+               (goals/control! s cid :clear)
+               (expect (= [nil nil] (goal-of))))
+             (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   get-session-descriptor-test

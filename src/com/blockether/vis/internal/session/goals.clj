@@ -76,7 +76,7 @@
 
         entries
         (cond->> history
-          (and goal (not active?))
+          (and goal (not active?) (not= "cleared" (get goal "status")))
           (cons goal))]
 
     {"session_goal" (when active? (active-view goal))
@@ -85,49 +85,57 @@
 (defn- fail! [message] (throw (ex-info message {:type :goal/invalid})))
 
 (defn- archive
-  "Keep the goal that `candidate` replaces at the start of the history."
+  "Keep the goal that `candidate` replaces at the start of the history. A cleared goal was
+   forgotten, so it never enters the history."
   [history before candidate]
-  (if (and before (not= (get before "id") (get candidate "id")))
+  (if (and before
+           (not= "cleared" (get before "status"))
+           (not= (get before "id") (get candidate "id")))
     (vec (take history-limit (cons before history)))
     (vec history)))
 
 (defn- change!
-  [db sid f]
-  (when-not (and db sid) (fail! "A persisted session is required for a goal."))
-  (loop [attempt 0]
-    ;; Read the goal first: the revision check then also protects the history read after it.
-    (let [before (check-goal db sid)
-          history (persistence/db-get-session-goal-history db sid)
-          candidate (f before)]
+  "Write `(f goal)` and the goal history in one revision check. `history-f`, when given,
+   replaces the history; else the history keeps the goal that a new goal replaces."
+  ([db sid f] (change! db sid f nil))
+  ([db sid f history-f]
+   (when-not (and db sid) (fail! "A persisted session is required for a goal."))
+   (loop [attempt 0]
+     ;; Read the goal first: the revision check then also protects the history read after it.
+     (let [before (check-goal db sid)
+           history (vec (persistence/db-get-session-goal-history db sid))
+           candidate (f before)
+           next-history (if history-f (vec (history-f history)) (archive history before candidate))]
 
-      (if (= before candidate)
-        before
-        (let [now (util/now-ms)
-              after (cond-> (assoc candidate
-                              "revision" (inc (long (get before "revision" 0)))
-                              "updated_at" now)
-                      (and (= (get before "id") (get candidate "id"))
-                           (= "active" (get before "status")))
-                      (assoc "time_used_ms"
-                        (+ (long (get before "time_used_ms"))
-                           (max 0 (- now (long (get before "updated_at")))))))]
+       (if (and (= before candidate) (= history next-history))
+         before
+         (let [now (util/now-ms)
+               after (cond-> (assoc candidate
+                               "revision" (inc (long (get before "revision" 0)))
+                               "updated_at" now)
+                       (and (= (get before "id") (get candidate "id"))
+                            (= "active" (get before "status")))
+                       (assoc "time_used_ms"
+                         (+ (long (get before "time_used_ms"))
+                            (max 0 (- now (long (get before "updated_at")))))))]
 
-          (when-not (document/valid-json? "gateway" "session_goal" after)
-            (fail! "Invalid goal state."))
-          (if (persistence/db-compare-session-goal! db
-                                                    sid
-                                                    (get before "revision" 0)
-                                                    after
-                                                    (archive history before after))
-            (do (doseq [listener @listeners]
-                  (try (listener sid after)
-                       (catch Exception e
-                         (tel/log!
-                           {:level :warn :id ::listener-failed :data {:error (ex-message e)}}))))
-                after)
-            (if (< attempt 8)
-              (recur (inc attempt))
-              (fail! "The goal changed concurrently or the session no longer exists. Retry."))))))))
+           (when-not (document/valid-json? "gateway" "session_goal" after)
+             (fail! "Invalid goal state."))
+           (if (persistence/db-compare-session-goal! db
+                                                     sid
+                                                     (get before "revision" 0)
+                                                     after
+                                                     next-history)
+             (do (doseq [listener @listeners]
+                   (try (listener sid after)
+                        (catch Exception e
+                          (tel/log!
+                            {:level :warn :id ::listener-failed :data {:error (ex-message e)}}))))
+                 after)
+             (if (< attempt 8)
+               (recur (inc attempt))
+               (fail!
+                 "The goal changed concurrently or the session no longer exists. Retry.")))))))))
 
 (defn set-goal!
   "Explicit user mutation. Replacing a goal creates a new identity and resets usage."
@@ -155,12 +163,19 @@
     (>= (long (get goal "iterations_used" 0)) (long budget))))
 
 (defn control!
-  "User-only pause/resume/cancel. Resume never resets usage or expands a budget."
+  "User-only pause/resume/cancel/clear/clear-all. Resume never resets usage or expands a
+   budget. Clear forgets the goal: it stops goal work, leaves model context and the goal
+   history, and clients hide it. Clear-all also empties the goal history. The goal stays
+   as a cleared record, because clients keep the highest goal revision that they saw.
+   Both are idempotent."
   [db sid action]
   (change! db
            sid
            (fn [goal]
-             (when-not goal (fail! "This session has no goal. Use /goal <objective>."))
+             (when (or (nil? goal)
+                       (and (= "cleared" (get goal "status"))
+                            (not (contains? #{:clear :clear-all} action))))
+               (fail! "This session has no goal. Use /goal <objective>."))
              (let [status
                    (get goal "status")
 
@@ -175,15 +190,21 @@
                      :cancel
                      (when-not (= "cancelled" status) "cancelled")
 
+                     (:clear :clear-all)
+                     "cleared"
+
                      nil)]
 
                (when-not next-status (fail! (str "Cannot " (name action) " a " status " goal.")))
                (when (and (= "active" next-status) (budget-reached? goal))
                  (fail! "Goal iteration budget is exhausted. Set a new explicit goal and budget."))
-               (-> goal
-                   (assoc "status" next-status
-                          "reason" nil)
-                   (update "version" inc))))))
+               (if (= status next-status "cleared")
+                 goal
+                 (-> goal
+                     (assoc "status" next-status
+                            "reason" nil)
+                     (update "version" inc)))))
+           (when (= :clear-all action) (constantly []))))
 
 (defn resume-for-user-turn!
   "Resume an existing paused/blocked goal for a new user message. Preserve usage and
@@ -291,7 +312,7 @@
         {:status :success
          :answer
          "Goal iteration budget reached. Work stopped before the next model request; the goal is not complete. See the transcript for progress. Set a new explicit goal and iteration budget to continue."}
-        (or (contains? #{"paused" "cancelled"} (get goal "status"))
+        (or (contains? #{"paused" "cancelled" "cleared"} (get goal "status"))
             (and (= "active" (get goal "status"))
                  (not= (get started-goal "version") (get goal "version"))))
         {:status :cancelled :answer "Goal stopped by the user."}))))
@@ -374,6 +395,8 @@ session['goal_history'] holds earlier goals, and the current goal when it no lon
 newest first, with id, objective, status and reason. It is a record, not a task: never work on
 an entry. Only session['goal'] directs goal work. The model cannot
 cancel, replace, resume or enlarge a goal; /goal --pause, --resume and --cancel are user controls.
+/goal --clear forgets the goal, and --clear-all also forgets the goal history; a forgotten
+goal is not in session['goal'] or session['goal_history'].
 A new user message resumes an existing paused or blocked goal if its iteration budget remains.
 Command-only turns and Council wakes do not resume goals; completed or cancelled goals stay stopped.
 iteration_budget is a count of loop iterations, not tokens; null means no goal-specific limit.
@@ -433,7 +456,8 @@ New user instructions and a user stop always take priority over continuation.\n"
        `reason`, `created_at`, `updated_at`. Budget and usage are loop iterations, not tokens."})])
 
 (defn slash!
-  "Parse /goal with --budget N before or after the objective, or --pause/--resume/--cancel.
+  "Parse /goal with --budget N before or after the objective, or
+   --pause/--resume/--cancel/--clear/--clear-all.
    N is in loop iterations. A leading -- on the objective preserves all following text.
    Accept iOS smart dashes in recognized flags, without rewriting the objective.
    Parse raw text so quotes and newlines in the user's objective stay intact."
@@ -450,8 +474,8 @@ New user instructions and a user stop always take priority over continuation.\n"
     (try
       (let
         [action
-         ({"pause" :pause "resume" :resume "cancel" :cancel}
-          (second (re-matches #"(?:--|[—–])(pause|resume|cancel)" raw)))
+         ({"pause" :pause "resume" :resume "cancel" :cancel "clear" :clear "clear-all" :clear-all}
+          (second (re-matches #"(?:--|[—–])(pause|resume|cancel|clear|clear-all)" raw)))
 
          [prefix leading-budget remaining]
          (re-matches #"(?s)^(?:--|[—–])budget(?:\s+(\S+))?(?:\s+(.*))?$" raw)
@@ -475,7 +499,7 @@ New user instructions and a user stop always take priority over continuation.\n"
          _
          (when (and (not action) (nil? literal) (str/starts-with? text "--"))
            (fail!
-             "Use /goal [--budget N] [--] <objective> or /goal <objective> --budget N, or --pause/--resume/--cancel."))
+             "Use /goal [--budget N] [--] <objective> or /goal <objective> --budget N, or --pause/--resume/--cancel/--clear/--clear-all."))
 
          budget
          (when (or prefix suffix)

@@ -41,7 +41,7 @@ export interface GatewayConn {
 export interface SessionGoal {
   id: string;
   objective: string;
-  status: 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete' | 'cancelled';
+  status: 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete' | 'cancelled' | 'cleared';
   iteration_budget: number | null;
   iterations_used: number;
   tokens_used: number;

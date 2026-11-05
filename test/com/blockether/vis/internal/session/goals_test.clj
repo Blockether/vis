@@ -95,6 +95,69 @@
         (expect (= [] (persistence/db-get-session-goal-history db-info session-id))))))
 
 (defdescribe
+  goal-clear-test
+  (it
+    "/goal --clear forgets the goal, stops its work and keeps earlier goals"
+    (let [{:keys [db-info session-id] :as env}
+          (environment)
+
+          invoke
+          #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})
+
+          earlier
+          (goals/set-goal! db-info session-id "Earlier goal" nil)
+
+          running
+          (goals/set-goal! db-info session-id "Forget me" nil)
+
+          cleared
+          (get-in (invoke "/goal --clear") [:slash/data :goal])]
+
+      (expect (= "cleared" (get cleared "status")))
+      (expect (nil? (get cleared "reason")))
+      (expect (document/valid-json? "gateway" "session_goal" cleared))
+      ;; Work that started under the goal stops before its next model request.
+      (expect (= :cancelled (:status (goals/halt-result env running))))
+      (expect (nil? (goals/continuation-prompt env)))
+      (expect (nil? (get (goals/context env) "session_goal")))
+      (expect (= [(get earlier "id")]
+                 (mapv #(get % "id") (get (goals/context env) "session_goal_history"))))
+      ;; A repeated clear changes nothing; other controls see no goal.
+      (expect (= :ok (:slash/status (invoke "/goal --clear"))))
+      (expect (= cleared (goals/check-goal env)))
+      (doseq [raw ["/goal --pause" "/goal --resume" "/goal --cancel"]]
+        (expect (= :error (:slash/status (invoke raw))) raw))
+      ;; The forgotten goal never enters the history.
+      (goals/set-goal! db-info session-id "Next goal" nil)
+      (expect (= [(get earlier "id")]
+                 (mapv #(get % "id")
+                       (persistence/db-get-session-goal-history db-info session-id))))))
+  (it "/goal --clear-all also forgets the goal history and repeats safely"
+      (let [{:keys [db-info session-id] :as env}
+            (environment)
+
+            invoke
+            #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})]
+
+        (expect (= :error (:slash/status (invoke "/goal --clear-all"))))
+        (goals/set-goal! db-info session-id "First" nil)
+        (goals/set-goal! db-info session-id "Second" nil)
+        (expect (= :ok (:slash/status (invoke "/goal --clear-all"))))
+        (expect (= "cleared" (get (goals/check-goal env) "status")))
+        (expect (= [] (persistence/db-get-session-goal-history db-info session-id)))
+        (expect (= {"session_goal" nil "session_goal_history" nil} (goals/context env)))
+        (let [before (goals/check-goal env)]
+          (expect (= :ok (:slash/status (invoke "/goal --clear-all"))))
+          (expect (= before (goals/check-goal env))))
+        ;; After a clear, clear-all still empties the history that the clear kept.
+        (goals/set-goal! db-info session-id "Third" nil)
+        (goals/set-goal! db-info session-id "Fourth" nil)
+        (invoke "/goal --clear")
+        (expect (= 1 (count (persistence/db-get-session-goal-history db-info session-id))))
+        (invoke "/goal --clear-all")
+        (expect (= [] (persistence/db-get-session-goal-history db-info session-id))))))
+
+(defdescribe
   goal-objective-length-test
   (it "accepts objectives up to 44000 characters and rejects longer ones"
       (let [{:keys [db-info session-id]}

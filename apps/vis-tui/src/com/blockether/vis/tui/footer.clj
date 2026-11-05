@@ -693,7 +693,7 @@
   "Full objective, state, iterations and active wall time at the time the viewer opens."
   ([goal] (goal-detail-lines goal (System/currentTimeMillis)))
   ([goal now-ms]
-   (if-not goal
+   (if-not (gateway-contract/shown-session-goal goal)
      ["No session goal. Use /goal <objective> to create one."]
      (cond-> [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
               (get goal "objective") ""
@@ -711,7 +711,8 @@
        (into ["" (get goal "reason")])
 
        true
-       (into ["" "Use /goal --pause, --resume or --cancel in the composer."])))))
+       (into [""
+              "Use /goal --pause, --resume, --cancel, --clear or --clear-all in the composer."])))))
 
 (defn goal-detail-markdown
   "`goal-detail-lines` as Markdown paragraphs. The model writes the reason in Markdown."
@@ -740,7 +741,7 @@
                    :region :right
                    :priority 2})
 
-            (get-in db [:session :goal])
+            (gateway-contract/shown-session-goal (get-in db [:session :goal]))
             (conj {:text (str " Goal: "
                               (get gateway-contract/session-goal-labels
                                    (get-in db [:session :goal "status"]))

@@ -106,6 +106,16 @@ describe('SessionHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close session goal' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+  it('shows no goal after /goal --clear', () => {
+    render(
+      <SessionHeader
+        model={{ ...model, goal: { ...STORY_GOAL, status: 'cleared' as const, reason: null } }}
+        commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /^Goal:/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(STORY_GOAL.objective.trim())).not.toBeInTheDocument();
+  });
   it('distinguishes unlimited iterations from a reached iteration limit', () => {
     const { rerender } = render(
       <SessionHeader

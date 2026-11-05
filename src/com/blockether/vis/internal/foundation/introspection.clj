@@ -27,6 +27,7 @@
             [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.util :as util]))
 
@@ -525,7 +526,7 @@
              (cond-> {:id session-id
                       :channel (:channel session)
                       :title (:title session)
-                      :goal (:goal session)
+                      :goal (gateway-contract/shown-session-goal (:goal session))
                       :model (:model session)
                       :created-at (:created-at session)
                       :turns turns
@@ -576,7 +577,7 @@
      (cond-> {:id (:id session)
               :channel (:channel session)
               :title (:title session)
-              :goal (:goal session)
+              :goal (gateway-contract/shown-session-goal (:goal session))
               :created-at (:created-at session)
               :modified-at modified-at
               :turn-count (count turns)}

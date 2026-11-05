@@ -204,7 +204,8 @@ export function SessionHeader({
     }
     copyReset.current = window.setTimeout(() => setCopy(null), 1_500);
   }
-  const goal = model.goal;
+  // A cleared goal was forgotten. It stays only so that its revision keeps older snapshots out.
+  const goal = model.goal?.status === 'cleared' ? null : model.goal;
   const path = model.agentPath;
   const openParent = commands.openParent;
   const backToParent = path && openParent ? () => openParent(path.parentId) : undefined;
@@ -377,7 +378,7 @@ export function SessionHeader({
               {/* The model writes the reason in Markdown: a sentence, then labeled items. */}
               {goal.reason && <Markdown>{goal.reason}</Markdown>}
               <p className="text-ui text-dialog-hint">
-                Use /goal --pause, --resume or --cancel in the composer.
+                Use /goal --pause, --resume, --cancel, --clear or --clear-all in the composer.
               </p>
             </div>
           </DialogFrame>

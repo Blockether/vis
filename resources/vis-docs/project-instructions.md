@@ -145,6 +145,8 @@ replaces it. Ordinary messages never create a goal.
 /goal --pause
 /goal --resume
 /goal --cancel
+/goal --clear
+/goal --clear-all
 ```
 
 The goal appears in the Companion header and in the TUI's **Goal: <status>**
@@ -159,7 +161,16 @@ goal. Sending a new message resumes a paused or blocked goal if it has budget
 left, keeping its objective and usage. Use `/goal --resume` to resume without
 adding instructions.
 
-Completed, cancelled and budget-limited goals stay stopped. Command-only turns and Council
+Completed, cancelled and budget-limited goals stay stopped. When you set a new goal, Vis keeps the
+old goal in the goal history. Vis sees the recent entries, so it knows what earlier goals reached.
+
+### Forget a goal
+
+Use `/goal --clear` when Vis must not see the current goal any longer. The command stops the goal
+work, and the apps no longer show the goal. A cleared goal does not go into the goal history. Use
+`/goal --clear-all` to also forget the goal history. You cannot undo these commands.
+
+Completed, cancelled and cleared goals stay stopped. Command-only turns and Council
 notifications do not resume goals. A goal does not give Vis extra permissions or override your newer
 instructions. No background scheduler restarts a goal without a new user message.
 
@@ -190,6 +201,7 @@ A goal never gives Vis extra permissions. Your newer messages always win over th
 | `budget_limited` | The iteration budget is used up. The apps show "iteration-limit reached". Set a new goal to continue |
 | `complete` | Vis recorded the evidence |
 | `cancelled` | You cancelled it |
+| `cleared` | You forgot it with `--clear` or `--clear-all`. The apps show no goal |
 
 Elapsed time counts only while the goal is active. Your own program can set, read and control
 goals. Read [Project instructions API](project-instructions-api.md#set-a-goal).

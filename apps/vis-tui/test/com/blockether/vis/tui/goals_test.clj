@@ -98,6 +98,16 @@
            (expect (nil? (get-in @state/app-db [:session :goal])))
            (state/dispatch [:sync-gateway-ready "b" {:is-state-known true :goal replacement}])
            (expect (= replacement (get-in @state/app-db [:tab-locals "b" :session :goal])))
+           ;; /goal --clear arrives as a newer revision; an older snapshot cannot bring the goal back.
+           (let [cleared (assoc replacement
+                           "revision" 6
+                           "status" "cleared"
+                           "reason" nil)]
+             (state/dispatch [:sync-session-goal "b" {:goal cleared}])
+             (state/dispatch [:sync-session-goal "b" {:goal replacement}])
+             (expect (= cleared (get-in @state/app-db [:tab-locals "b" :session :goal])))
+             (expect (= ["No session goal. Use /goal <objective> to create one."]
+                        (footer/goal-detail-lines cleared))))
            (finally (reset! state/app-db before))))))
 
 (defdescribe
@@ -141,9 +151,12 @@
         (expect (not (str/includes? row "tokens")))
         (expect (not (str/includes? row "12,400")))
         (expect (nil? limits))
-        (expect (some? goal-hit))
-        (doseq [col (range 2 (long (get-in goal-hit [:bounds :col])))]
-          (expect (nil? (.lookup interactions/hit-map col 1)))))))
+        (if (= "cleared" status)
+          ;; A cleared goal was forgotten: no button and no goal text.
+          (do (expect (nil? goal-hit)) (expect (not (str/includes? row "Goal"))))
+          (do (expect (some? goal-hit))
+              (doseq [col (range 2 (long (get-in goal-hit [:bounds :col])))]
+                (expect (nil? (.lookup interactions/hit-map col 1)))))))))
   (it "shows each detail on its own row and the Markdown reason as a list"
       ;; User report: a blocked goal reason was one unreadable block of raw text.
       (let [rows (->> (layout/ast->lines
