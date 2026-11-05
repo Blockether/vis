@@ -6,12 +6,13 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
-import { mergeAgents, type GatewayClient } from '../lib/gateway';
+import { mergeAgents, teamRowsFromWire, type GatewayClient } from '../lib/gateway';
 import type { Subagent, TranscriptIteration, TranscriptTurn } from '../lib/types';
 import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
@@ -735,14 +736,9 @@ export function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: (
   );
 }
 
-/**
- * The subagents of the session: the team rows that the transcript gives in each turn,
- * changed by the rows that `useAgentTeam` read or got pushed. The transcript holds the
- * teams of its turns, so a turn shows its team together with the rest of the turn.
- */
-export function transcriptAgents(turns: readonly TranscriptTurn[], live: readonly Subagent[]): Subagent[] {
-  const stored = turns.flatMap((turn) => turn.agents ?? []);
-  return stored.length ? mergeAgents(stored, live) : [...live];
+/** The team rows that the transcript turns hold: each turn has the agents that it started. */
+export function storedAgents(turns: readonly TranscriptTurn[]): Subagent[] {
+  return turns.flatMap((turn) => turn.agents ?? []);
 }
 
 /** The session's subagents grouped by the turn that started them (`team_id`). */
@@ -769,12 +765,19 @@ export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnI
 /** How often the team of a gateway older than protocol 21 is read while it is live. */
 const LEGACY_TEAM_POLL_MS = 3000;
 
+/** No agents: one value, so a default argument keeps its identity. */
+const NO_AGENTS: readonly Subagent[] = [];
+
 /**
- * One reader for a session's subagents. It starts from the last team that this device
- * read for `sid`, so a switch back shows the dock at once. It has no timer: the rows of
- * each `session.team_updated` event go into the same cache. It reads the team on open,
- * after a stream reconnect, when the page shows again, after a control call, and on an
- * event without usable rows. It does not read when `teamTotal` is 0 and no rows are cached.
+ * One reader for a session's subagents. Three sources give the rows, oldest first: the last
+ * team that this device read for `sid`, the rows of the transcript turns (`stored`), and the
+ * rows that this visit read or got from `session.team_updated`. A newer source replaces the
+ * row of an older one, so a cached row never hides a newer transcript row.
+ *
+ * It has no timer. It reads the team after a stream reconnect, when the page shows again,
+ * after a control call, and on an event without usable rows. On open it waits for the first
+ * transcript read of this visit (`isStoredFresh`), and reads only when its rows do not count
+ * every child (`teamTotal`): else that transcript read gave the whole team. It does not read when `teamTotal` is 0 and no rows are cached.
  *
  * `legacyRunning` is null for a gateway that pushes rows. For an older gateway it says whether
  * the leader's turn runs: such a gateway sends only counts, so the team is read every 3 s
@@ -785,19 +788,29 @@ export function useAgentTeam(
   sid: string,
   teamTotal: number | null = null,
   legacyRunning: boolean | null = null,
+  stored: readonly Subagent[] = NO_AGENTS,
+  isStoredFresh = true,
 ) {
   const hub = useContext(SessionEventsContext);
-  const [state, setState] = useState<{ sid: string; agents: Subagent[] }>(() => ({
-    sid,
-    agents: client.cachedAgents?.(sid) ?? [],
-  }));
+  // The rows that this visit read or got pushed, for `sid`.
+  const [state, setState] = useState<{ sid: string; agents: readonly Subagent[] }>(() => ({ sid, agents: NO_AGENTS }));
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
+  // The read requests of `sid`. The first effect run of a session is its open.
+  const [revision, setRevision] = useState({ sid, count: 0 });
   // Counts the applied events, so a read that an event passed reads again.
   const pushes = useRef(0);
-  const current = state.sid === sid ? state.agents : (client.cachedAgents?.(sid) ?? []);
+  const live = state.sid === sid ? state.agents : NO_AGENTS;
+  // The transcript rows count every child, so the cache has nothing that they do not have.
+  const isStoredWhole = teamTotal !== null && teamTotal > 0 && stored.length >= teamTotal;
+  const current = useMemo(() => {
+    const base = isStoredWhole ? stored : mergeAgents(client.cachedAgents?.(sid) ?? [], stored);
+    return live.length ? mergeAgents(base, live) : base;
+  }, [client, sid, stored, live, isStoredWhole]);
   const hasNoTeam = useEffectEvent(() => teamTotal === 0 && !client.cachedAgents?.(sid)?.length);
+  const opensWhole = useEffectEvent(() => isStoredWhole);
+  // On open, the team read waits for the transcript read, which can make it needless.
+  const waitsForTranscript = revision.sid !== sid || revision.count === 0 ? !isStoredFresh : false;
   const polls = legacyRunning !== null && (legacyRunning || current.some(isLive));
   useEffect(() => {
     const controller = new AbortController();
@@ -817,7 +830,8 @@ export function useAgentTeam(
       // The answer can be older than an event that came during the read.
       if (pushes.current !== seen) void refresh();
     };
-    void refresh();
+    const isOpen = revision.sid !== sid || revision.count === 0;
+    if (!isOpen || (!waitsForTranscript && !opensWhole())) void refresh();
     const timer = polls ? window.setInterval(() => void refresh(), LEGACY_TEAM_POLL_MS) : undefined;
     document.addEventListener('visibilitychange', refresh);
     let wasConnected: boolean | null = null;
@@ -831,20 +845,22 @@ export function useAgentTeam(
       document.removeEventListener('visibilitychange', refresh);
       offConnection?.();
     };
-  }, [client, hub, sid, revision, polls]);
+  }, [client, hub, sid, revision, waitsForTranscript, polls]);
   useEffect(() => {
     if (!hub) return;
+    const readAgain = () => setRevision((value) => ({ sid, count: value.sid === sid ? value.count + 1 : 1 }));
     return hub.subscribeSession(
       sid,
       (event) => {
         if (event.type !== 'session.team_updated') return;
-        const rows = client.applyTeamUpdate?.(sid, event) ?? null;
-        if (!rows) {
-          setRevision((value) => value + 1);
-          return;
+        // The cache keeps the team for the next visit; this visit keeps only the changed rows.
+        const team = client.applyTeamUpdate?.(sid, event) ?? null;
+        const changed = teamRowsFromWire((event as { agents?: unknown }).agents);
+        if (changed) {
+          pushes.current += 1;
+          setState((value) => ({ sid, agents: mergeAgents(value.sid === sid ? value.agents : NO_AGENTS, changed) }));
         }
-        pushes.current += 1;
-        setState({ sid, agents: rows });
+        if (!changed || (!team && !opensWhole())) readAgain();
       },
       { replay: false },
     );
@@ -860,7 +876,7 @@ export function useAgentTeam(
       return cause instanceof Error && cause.message ? cause.message : fallback;
     } finally {
       setPending(null);
-      setRevision((value) => value + 1);
+      setRevision((value) => ({ sid: value.sid, count: value.count + 1 }));
     }
   }, []);
   // The gateway stops a child only for a session that controls it: its parent. In a child session

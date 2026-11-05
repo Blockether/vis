@@ -26,7 +26,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedLeaderLane, transcriptAgents, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -4769,17 +4769,20 @@ export function SessionScreen({
   // only when it is the LAST visible row and no running-turn bubble is painting.
   // Kept as a boolean (not `runningTurn`) so streaming frames don't re-run the memo.
   const hasRunningTurn = runningTurn != null;
-  // Subagents belong to the turn that started them, so each turn shows its own.
-  // A session row without children spares the team read.
+  // Subagents belong to the turn that started them, so each turn shows its own. The transcript
+  // turn holds its team, so the team paints with its turn. A session row without children, or a
+  // transcript that holds all of them, spares the team read of the open.
   // An older gateway pushes no rows: its team is read on a timer while the turn runs.
+  const stored = useMemo(() => storedAgents(turns), [turns]);
   const team = useAgentTeam(
     client,
     sid,
     session?.id === sid ? (session.team?.total ?? null) : null,
     pushesTeamRows(gatewayProtocol) ? null : hasRunningTurn,
+    stored,
+    turnsFresh,
   );
-  // Each turn of the transcript holds its team, so a team paints with its turn; live rows update it.
-  const agents = useMemo(() => transcriptAgents(turns, team.agents), [turns, team.agents]);
+  const agents = team.agents;
   const teams = useMemo(() => agentsByTurn(agents), [agents]);
   // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.
   const docked = useMemo(

@@ -1462,7 +1462,7 @@
         ;; Council traffic between the leader and its own agents takes no rows; the dock and
         ;; the team block show the agents instead.
         hidden
-        (let [child-ids (agent-team/child-session-ids session-id)]
+        (let [child-ids (agent-team/child-session-ids session-id messages)]
           (if (empty? child-ids)
             #{}
             (into #{}

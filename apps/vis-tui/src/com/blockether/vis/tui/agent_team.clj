@@ -948,8 +948,8 @@
    The rows come from the transcript turns (`:session-agents`), and the cached snapshot of `sid`
    replaces each row that it also has, so a card paints with its turn. A team in the dock gets
    no block: the turn `running-turn` still runs, or an agent still works. Returns `messages`
-   unchanged when no team is known. An unchanged team keeps the decorated message identity, so height caches
-   still hit."
+   unchanged when no team is known. An unchanged team keeps the decorated message identity, so
+   height caches still hit."
   ([messages sid] (decorate-messages messages sid nil))
   ([messages sid running-turn]
    (let [agents (merge-agents (into [] (mapcat :session-agents) messages) (:agents (summary sid)))]
@@ -1302,9 +1302,13 @@
 ;; ── Child traffic ───────────────────────────────────────────────────────────
 
 (defn child-session-ids
-  "The session ids of the cached agents of `sid`."
-  [sid]
-  (into #{} (keep #(get % "session_id")) (:agents (summary sid))))
+  "The session ids of the agents of `sid`: the rows that the transcript turns of `messages` hold
+   (`:session-agents`) and the cached rows. The transcript rows hide the traffic of the children
+   before the first team read."
+  [sid messages]
+  (into #{}
+        (keep #(get % "session_id"))
+        (concat (mapcat :session-agents messages) (:agents (summary sid)))))
 
 (defn child-traffic?
   "Whether `message` is a Council request that an agent of the session sent, such as a

@@ -834,7 +834,7 @@
 (defdescribe child-traffic-test
              (it "hides Council requests that the leader's own agents send"
                  (with-redefs [team/summary (constantly {:agents waiting-team})]
-                   (let [ids (team/child-session-ids "leader")
+                   (let [ids (team/child-session-ids "leader" [])
                          council (fn [author]
                                    {:role :user
                                     :request-kind :council
@@ -843,7 +843,15 @@
                      (expect (team/child-traffic? (council "c2") ids))
                      (expect (not (team/child-traffic? (council "peer") ids)) "Peer messages stay")
                      (expect (not (team/child-traffic? {:role :user :text "hi"} ids)))
-                     (expect (not (team/child-traffic? (council "c2") #{})))))))
+                     (expect (not (team/child-traffic? (council "c2") #{}))))))
+             ;; The transcript turn holds its team, so the traffic of its children hides before
+             ;; the first team read.
+             (it "hides the traffic of the children that the transcript turns hold"
+                 (with-redefs [team/summary (constantly nil)]
+                   (expect (= #{"c9"}
+                              (team/child-session-ids
+                                "leader"
+                                [{:role :assistant :session-agents [{"session_id" "c9"}]}]))))))
 
 (defdescribe
   row-markdown-test

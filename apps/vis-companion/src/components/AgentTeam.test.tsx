@@ -423,7 +423,7 @@ describe('agent team reader', () => {
     render(<Team client={fakeClient(agents, { applyTeamUpdate })} sid="leader" total={1} hub={hub} />);
     await act(async () => {});
     expect(screen.getByText('running')).toBeInTheDocument();
-    act(() => emit({ type: 'session.team_updated', team: { active: 0, total: 1 }, agents: [] } as SseEvent));
+    act(() => emit({ type: 'session.team_updated', team: { active: 0, total: 1 }, agents: [{ ...child, status: 'completed' }] } as SseEvent));
     expect(screen.getByText('done')).toBeInTheDocument();
     expect(agents).toHaveBeenCalledTimes(1);
     await act(async () => { emit({ type: 'session.team_updated', team: { active: 0, total: 1 } } as SseEvent); });
