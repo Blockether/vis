@@ -46,7 +46,7 @@
 (def ^:private reserved-context-keys
   "Core fields cannot be replaced by custom extension keys."
   #{"id" "turn" "scope" "workspace" "access" "env" "routing" "symbols" "council" "agent" "goal"
-    "apps" "utilization"})
+    "goal_history" "apps" "utilization"})
 
 (defn- extension-context
   [view]
@@ -72,6 +72,9 @@
 
      (get view "session_goal")
      (assoc "goal" (get view "session_goal"))
+
+     (get view "session_goal_history")
+     (assoc "goal_history" (get view "session_goal_history"))
 
      (get view "session_apps")
      (assoc "apps" (get view "session_apps"))
@@ -186,6 +189,9 @@
       (get view "session_goal")
       (assoc "goal" (get view "session_goal"))
 
+      (get view "session_goal_history")
+      (assoc "goal_history" (get view "session_goal_history"))
+
       (get view "session_apps")
       (assoc "apps" (get view "session_apps"))
 
@@ -219,6 +225,9 @@
         goal
         (get view "session_goal")
 
+        goal-history
+        (get view "session_goal_history")
+
         apps
         (get view "session_apps")]
 
@@ -227,6 +236,8 @@
                 (when utilization
                   (str "\nsession[\"utilization\"] = " (env/ctx->python-line utilization)))
                 (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-line goal)))
+                (when goal-history
+                  (str "\nsession[\"goal_history\"] = " (env/ctx->python-line goal-history)))
                 (cond apps (str "\nsession[\"apps\"] = " (env/ctx->python-line apps))
                       (contains? baseline "apps") "\ndel session[\"apps\"]"))
      :baseline (if apps (assoc baseline "apps" apps) (dissoc baseline "apps"))}))

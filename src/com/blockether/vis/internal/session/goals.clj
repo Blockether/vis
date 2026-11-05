@@ -23,6 +23,13 @@
   ([env] (check-goal (:db-info env) (:session-id env)))
   ([db sid] (when (and db sid) (persistence/db-get-session-goal db sid))))
 
+(defn- active-view
+  [goal]
+  (select-keys goal
+               (cond-> ["id" "version" "status" "objective" "iteration_budget" "reason"]
+                 (get goal "iteration_budget")
+                 (conj "iterations_used"))))
+
 (defn active-goal
   "The goal that still directs the model, or nil. Model context shows only an active goal.
    The goal rules stay in the cached system prompt, so a status change keeps the prefix cache.
@@ -30,19 +37,67 @@
    context delta line. `iterations_used` stays only when a budget limits it."
   [env]
   (let [goal (check-goal env)]
-    (when (= "active" (get goal "status"))
-      (select-keys goal
-                   (cond-> ["id" "version" "status" "objective" "iteration_budget" "reason"]
-                     (get goal "iteration_budget")
-                     (conj "iterations_used"))))))
+    (when (= "active" (get goal "status")) (active-view goal))))
+
+(def ^:private history-limit "Earlier goals that a session keeps." 20)
+
+(def ^:private history-view-limit
+  "Entries of `session['goal_history']`. Each entry costs context on every turn."
+  5)
+
+(def ^:private history-objective-chars
+  "The longest objective that a `goal_history` entry shows."
+  500)
+
+(defn- history-entry
+  [goal]
+  (let [objective (get goal "objective")]
+    {"id" (get goal "id")
+     "objective" (if (> (count objective) (long history-objective-chars))
+                   (str (subs objective 0 history-objective-chars) "…")
+                   objective)
+     "status" (get goal "status")
+     "reason" (get goal "reason")}))
+
+(defn context
+  "The goal keys of the model session view, from one read of the goal.
+   `session_goal` is the goal that still directs the model. `session_goal_history` holds
+   earlier goals and the current goal when it no longer directs work, newest first."
+  [env]
+  (let [goal
+        (check-goal env)
+
+        active?
+        (= "active" (get goal "status"))
+
+        history
+        (when (and (:db-info env) (:session-id env))
+          (persistence/db-get-session-goal-history (:db-info env) (:session-id env)))
+
+        entries
+        (cond->> history
+          (and goal (not active?))
+          (cons goal))]
+
+    {"session_goal" (when active? (active-view goal))
+     "session_goal_history" (not-empty (mapv history-entry (take history-view-limit entries)))}))
 
 (defn- fail! [message] (throw (ex-info message {:type :goal/invalid})))
+
+(defn- archive
+  "Keep the goal that `candidate` replaces at the start of the history."
+  [history before candidate]
+  (if (and before (not= (get before "id") (get candidate "id")))
+    (vec (take history-limit (cons before history)))
+    (vec history)))
 
 (defn- change!
   [db sid f]
   (when-not (and db sid) (fail! "A persisted session is required for a goal."))
   (loop [attempt 0]
+    ;; Read the goal first: the revision check then also protects the history read after it.
     (let [before (check-goal db sid)
+          history (persistence/db-get-session-goal-history db sid)
           candidate (f before)]
 
       (if (= before candidate)
@@ -59,7 +114,11 @@
 
           (when-not (document/valid-json? "gateway" "session_goal" after)
             (fail! "Invalid goal state."))
-          (if (persistence/db-compare-session-goal! db sid (get before "revision" 0) after)
+          (if (persistence/db-compare-session-goal! db
+                                                    sid
+                                                    (get before "revision" 0)
+                                                    after
+                                                    (archive history before after))
             (do (doseq [listener @listeners]
                   (try (listener sid after)
                        (catch Exception e
@@ -154,7 +213,8 @@
    authorized action remains without user input or an external change. Never lower the
    objective, and never mark blocked only to deliver a progress reply. After the tools of
    this iteration finish, the reason becomes the final reply without another model
-   request."
+   request. Write the reason in Markdown: one plain sentence first, then an empty line and
+   short '-' items. For blocked, use the labels **Blocker**, **Tried** and **Needed**."
   [env goal-id version status reason]
   (when-not (contains? #{"complete" "blocked"} status)
     (fail! "Only complete or blocked may be declared by the model."))
@@ -304,7 +364,15 @@ reply, not rejected for an active goal. The engine automatically continues the s
 without completing or blocking the goal. Use the Python host command
 update_goal(goal_id, version, status, reason), with id/version from session['goal'].
 Declare status='complete' only with concise evidence for every requirement; a genuine
-impasse is status='blocked' with the concrete blocker, not complete. The model cannot
+impasse is status='blocked' with the concrete blocker, not complete.
+Write the reason in Markdown, because the person reads it as the final reply and in the goal
+view. Start with one plain sentence that states the result or the blocker, without a heading.
+Then write an empty line and short '-' items. For complete, write one item of evidence for each
+requirement. For blocked, write the items under the labels **Blocker**, **Tried** and
+**Needed**: what stops the work, what you tried, and what the user or an external change must do.
+session['goal_history'] holds earlier goals, and the current goal when it no longer directs work,
+newest first, with id, objective, status and reason. It is a record, not a task: never work on
+an entry. Only session['goal'] directs goal work. The model cannot
 cancel, replace, resume or enlarge a goal; /goal --pause, --resume and --cancel are user controls.
 A new user message resumes an existing paused or blocked goal if its iteration budget remains.
 Command-only turns and Council wakes do not resume goals; completed or cancelled goals stay stopped.

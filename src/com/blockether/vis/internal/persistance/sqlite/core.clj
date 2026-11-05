@@ -3627,9 +3627,21 @@
             :goal
             json/read-json)))
 
+(defn db-get-session-goal-history
+  "Read the earlier goals of a session, newest first. Answers [] when there are none."
+  [db-info session-id]
+  (or (when (and (ds db-info) session-id)
+        (some-> (query-one!
+                  db-info
+                  {:select [:goal_history] :from :session_soul :where [:= :id (->ref session-id)]})
+                :goal_history
+                json/read-json))
+      []))
+
 (defn db-compare-session-goal!
-  "Replace a goal only if its persisted revision still matches. Missing sessions refuse."
-  [db-info session-id revision goal]
+  "Replace a goal and the goal history only if the persisted goal revision still matches.
+   Missing sessions refuse."
+  [db-info session-id revision goal history]
   (locking sqlite-write-lock
     (pos?
       (long
@@ -3638,8 +3650,8 @@
             (first
               (jdbc/execute!
                 (ds db-info)
-                ["UPDATE session_soul SET goal = ? WHERE id = ? AND COALESCE(json_extract(goal, '$.revision'), 0) = ?"
-                 (->json goal) (->ref session-id) revision])))
+                ["UPDATE session_soul SET goal = ?, goal_history = ? WHERE id = ? AND COALESCE(json_extract(goal, '$.revision'), 0) = ?"
+                 (->json goal) (when (seq history) (->json history)) (->ref session-id) revision])))
           0)))))
 
 (defn db-get-session-model-pref
@@ -6440,6 +6452,7 @@
                                              :llm_pref_provider (:llm_pref_provider soul)
                                              :llm_pref_model (:llm_pref_model soul)
                                              :goal (:goal soul)
+                                             :goal_history (:goal_history soul)
                                              :origin (:origin soul)
                                              :imported_from (->json (cond-> (assoc imported-from
                                                                               "session_id" old-sid)

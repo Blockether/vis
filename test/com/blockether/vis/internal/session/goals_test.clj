@@ -28,7 +28,7 @@
           (expect (= "Verify the SDK" (get goal "objective")))
           (expect (= "active" (get goal "status")))
           (expect (string? (goals/continuation-prompt env)))
-          (expect (false? (persistence/db-compare-session-goal! db-info session-id 0 goal)))
+          (expect (false? (persistence/db-compare-session-goal! db-info session-id 0 goal [])))
           (let [done
                 (goals/update-goal env (get goal "id") 1 "complete" "SDK boundary tests pass.")]
             (expect (= "complete" (get done "status")))
@@ -48,6 +48,51 @@
                    (expect (not-any? #(contains? (goals/active-goal env) %)
                                      ["tokens_used" "time_used_ms" "revision" "updated_at"
                                       "created_at"])))))
+
+(defdescribe
+  goal-history-test
+  (it "keeps replaced goals and shows the model the current goal after it stops"
+      (let [{:keys [db-info session-id] :as env}
+            (environment)
+
+            first-goal
+            (goals/set-goal! db-info session-id "Ship the parser" nil)]
+
+        (expect (nil? (get (goals/context env) "session_goal_history")))
+        (goals/update-goal env (get first-goal "id") 1 "blocked" "CI is down.\n\n- **Blocker**: CI")
+        (expect (nil? (get (goals/context env) "session_goal")))
+        (expect (= [{"id" (get first-goal "id")
+                     "objective" "Ship the parser"
+                     "status" "blocked"
+                     "reason" "CI is down.\n\n- **Blocker**: CI"}]
+                   (get (goals/context env) "session_goal_history")))
+        (let [second-goal (goals/set-goal! db-info session-id "Ship the lexer" nil)]
+          (expect (= (get second-goal "id") (get-in (goals/context env) ["session_goal" "id"])))
+          (expect (= [(get first-goal "id")]
+                     (mapv #(get % "id") (get (goals/context env) "session_goal_history"))))
+          (expect (= "blocked"
+                     (get (first (persistence/db-get-session-goal-history db-info session-id))
+                          "status"))))))
+  (it "bounds the stored history and the model view, and shortens long objectives"
+      (let [{:keys [db-info session-id] :as env} (environment)]
+        (dotimes [i 25]
+          (goals/set-goal! db-info session-id (str "Goal " i) nil))
+        (goals/set-goal! db-info session-id (str/join (repeat 600 "x")) nil)
+        (goals/set-goal! db-info session-id "Last" nil)
+        (expect (= 20 (count (persistence/db-get-session-goal-history db-info session-id))))
+        (let [view (get (goals/context env) "session_goal_history")]
+          (expect (= 5 (count view)))
+          (expect (= 501 (count (get (first view) "objective"))))
+          (expect (= "Goal 24" (get (second view) "objective"))))))
+  (it "writes no history when the goal CAS loses"
+      (let [{:keys [db-info session-id]}
+            (environment)
+
+            goal
+            (goals/set-goal! db-info session-id "Original" nil)]
+
+        (expect (false? (persistence/db-compare-session-goal! db-info session-id 0 goal [goal])))
+        (expect (= [] (persistence/db-get-session-goal-history db-info session-id))))))
 
 (defdescribe
   goal-objective-length-test

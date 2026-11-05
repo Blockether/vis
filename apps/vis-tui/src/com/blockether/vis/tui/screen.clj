@@ -9057,11 +9057,11 @@
                 (state/dispatch [:search-clear])
 
                 :footer-goal
-                (with-dialog-lock #(dlg/text-view-dialog! screen
-                                                          "Session goal"
-                                                          (footer/goal-detail-lines
-                                                            (get-in @state/app-db
-                                                                    [:session :goal]))))
+                (with-dialog-lock #(dlg/markdown-viewer-dialog! screen
+                                                                "Session goal"
+                                                                (footer/goal-detail-markdown
+                                                                  (get-in @state/app-db
+                                                                          [:session :goal]))))
 
                 :header-help
                 (state/dispatch [:toggle-help])
@@ -9277,10 +9277,11 @@
             (state/dispatch [:toggle-help])
 
             :footer-goal
-            (with-dialog-lock #(dlg/text-view-dialog! screen
-                                                      "Session goal"
-                                                      (footer/goal-detail-lines
-                                                        (get-in @state/app-db [:session :goal]))))
+            (with-dialog-lock #(dlg/markdown-viewer-dialog! screen
+                                                            "Session goal"
+                                                            (footer/goal-detail-markdown
+                                                              (get-in @state/app-db
+                                                                      [:session :goal]))))
 
             :header-help
             (state/dispatch [:toggle-help])
@@ -9452,10 +9453,11 @@
           ;; the chips fell through to `open-click-target!`
           ;; (a no-op) and never toggled their panel.
           :footer-goal
-          (with-dialog-lock #(dlg/text-view-dialog! screen
-                                                    "Session goal"
-                                                    (footer/goal-detail-lines
-                                                      (get-in @state/app-db [:session :goal]))))
+          (with-dialog-lock #(dlg/markdown-viewer-dialog! screen
+                                                          "Session goal"
+                                                          (footer/goal-detail-markdown
+                                                            (get-in @state/app-db
+                                                                    [:session :goal]))))
 
           :header-help
           (state/dispatch [:toggle-help])

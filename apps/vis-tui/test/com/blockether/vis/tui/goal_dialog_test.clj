@@ -33,7 +33,7 @@
           (goal-handlers)
 
           original-viewer
-          dialogs/text-view-dialog!
+          dialogs/markdown-viewer-dialog!
 
           draw-lock
           ^ReentrantLock @#'screen/draw-lock]
@@ -49,8 +49,8 @@
                         "iterations_used" 13)
               ownership (atom nil)
               frame (with-redefs [state/app-db db
-                                  dialogs/text-view-dialog!
-                                  (fn [terminal title lines]
+                                  dialogs/markdown-viewer-dialog!
+                                  (fn [terminal title md]
                                     (reset! ownership [(:dialog-open? @db)
                                                        (.isHeldByCurrentThread draw-lock)])
                                     ;; A backend worker remains free to publish newer iterations.
@@ -69,7 +69,7 @@
                                                                acquired?))
                                                            2000
                                                            :timeout)))
-                                    (original-viewer terminal title lines))]
+                                    (original-viewer terminal title md))]
 
                       (capture/capture! {:cols 60
                                          :rows 20

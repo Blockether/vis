@@ -112,6 +112,8 @@ CREATE TABLE session_soul (
   llm_pref_model    TEXT,
   -- Explicit user-owned objective and its versioned lifecycle, independent of folds.
   goal              TEXT CHECK (goal IS NULL OR json_valid(goal)),
+  -- Earlier goals that a new goal replaced, newest first, as a JSON array.
+  goal_history      TEXT CHECK (goal_history IS NULL OR json_valid(goal_history)),
   created_at        INTEGER NOT NULL,
 
   -- Adoption stamp. NULL = unclaimed warm-pool scaffolding (hidden from

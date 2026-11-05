@@ -272,6 +272,11 @@
               (expect (= (system-text active-request) (system-text later-request)))
               (expect (str/includes? (system-text later-request) "Explicit session goals"))
               (expect (not (str/includes? (pr-str (last later-request)) "session[\\\"goal\\\"]")))
+              ;; The model still sees the finished goal as a record, with its result.
+              (let [boundary (pr-str (last later-request))]
+                (expect (str/includes? boundary "session[\\\"goal_history\\\"]"))
+                (expect (str/includes? boundary "Ship the finished objective"))
+                (expect (str/includes? boundary status)))
               (expect (= status (get (goals/check-goal env) "status")))))
           (finally (loop-env/dispose-environment! env)))))))
 

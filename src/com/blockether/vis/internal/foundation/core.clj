@@ -106,7 +106,7 @@
         apps-context
         (session-apps-context env)]
 
-    (cond-> {"session_goal" (goals/active-goal env) "session_agent" (agents/context env)}
+    (cond-> (assoc (goals/context env) "session_agent" (agents/context env))
       council-context
       (assoc "session_council" council-context)
 

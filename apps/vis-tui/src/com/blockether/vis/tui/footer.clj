@@ -713,6 +713,11 @@
        true
        (into ["" "Use /goal --pause, --resume or --cancel in the composer."])))))
 
+(defn goal-detail-markdown
+  "`goal-detail-lines` as Markdown paragraphs. The model writes the reason in Markdown."
+  ([goal] (goal-detail-markdown goal (System/currentTimeMillis)))
+  ([goal now-ms] (str/join "\n\n" (remove str/blank? (goal-detail-lines goal now-ms)))))
+
 (defn- build-limits-segments
   "Cached quota information is plain text; only the adjacent goal chip is interactive. The
    agent dock above the prompt shows the team, so the footer does not repeat it."
