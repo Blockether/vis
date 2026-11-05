@@ -168,40 +168,46 @@
       (close [_])))
 
 (defdescribe
-  writes-only-rescan-overlapping-draft-roots-test
-  (it "writes only rescan overlapping draft roots"
-      (with-pool
-        (fn [_ _]
-          (let [a
-                (index/lease (java.io.File. "target/draft-a") true)
+  writes-only-resync-the-trees-they-change-test
+  (it
+    "a write refreshes the trees that contain it, and an ignore file rescans the trees below it"
+    (with-pool
+      (fn [_ _]
+        (let [a
+              (index/lease (java.io.File. "target/draft-a") true)
 
-                nested
-                (index/lease (java.io.File. "target/draft-a/src") true)
+              nested
+              (index/lease (java.io.File. "target/draft-a/src") true)
 
-                b
-                (index/lease (java.io.File. "target/draft-ab") true)
+              b
+              (index/lease (java.io.File. "target/draft-ab") true)
 
-                rescans
-                (atom [])]
+              syncs
+              (atom [])]
 
-            (with-redefs-fn {#'index/open! fake-index
-                             #'fff/rescan! (fn [idx _]
-                                             (swap! rescans conj idx)
-                                             true)}
-              (fn []
-                (let [a-index
-                      (index/with-index* a identity)
+          (with-redefs-fn {#'index/open! fake-index
+                           #'fff/rescan! (fn [idx _]
+                                           (swap! syncs conj [:rescan idx])
+                                           true)
+                           #'fff/refresh-paths! (fn [idx paths _]
+                                                  (swap! syncs conj [:refresh idx (count paths)])
+                                                  true)}
+            (fn []
+              (let [a-index
+                    (index/with-index* a identity)
 
-                      nested-index
-                      (index/with-index* nested identity)]
+                    nested-index
+                    (index/with-index* nested identity)]
 
-                  (index/with-index* b identity)
-                  ;; Ignore files affect nested roots, not a sibling with a shared prefix.
-                  (index/note-fs-write! (java.io.File. "target/draft-a/.gitignore"))
-                  (doseq [lease [a nested b a nested b]]
-                    (index/with-index* lease identity))
-                  (expect (= [a-index nested-index] @rescans))
-                  (expect (= 2 (get-in (index/pool-stats) [:counters :events :scan])))))))))))
+                (index/with-index* b identity)
+                ;; A file above a tree does not change it; an ignore file there does.
+                ;; A sibling with a shared prefix never changes.
+                (index/note-fs-write! (java.io.File. "target/draft-a/notes.md"))
+                (index/note-fs-write! (java.io.File. "target/draft-a/.gitignore"))
+                (doseq [lease [a nested b a nested b]]
+                  (index/with-index* lease identity))
+                (expect (= [[:refresh a-index 2] [:rescan nested-index]] @syncs))
+                (expect (= 2 (get-in (index/pool-stats) [:counters :events :scan])))))))))))
 
 ;; Regression for Blockether/vis#384 and Blockether/vis#385: a write rescan that timed
 ;; out failed every caller, and the next caller rescanned the same index again. One
@@ -218,9 +224,9 @@
                 (atom 0)]
 
             (with-redefs-fn {#'index/open! fake-index
-                             #'fff/rescan! (fn [& _]
-                                             (swap! attempts inc)
-                                             false)}
+                             #'fff/refresh-paths! (fn [& _]
+                                                    (swap! attempts inc)
+                                                    false)}
               (fn []
                 (let [first-handle (index/with-index* (lease) identity)]
                   (index/note-fs-write! (java.io.File. "marker.txt"))
@@ -236,7 +242,7 @@
                   (expect (= 1 @searches))))))))))
 
 (defn- blocking-rescan
-  "A `fff/rescan!` stub that blocks until `release` opens, and counts its calls."
+  "A `fff/refresh-paths!` stub that blocks until `release` opens, and counts its calls."
   [started release calls]
   (fn [& _]
     (swap! calls inc)
@@ -259,7 +265,7 @@
                 (atom 0)]
 
             (with-redefs-fn {#'index/open! fake-index
-                             #'fff/rescan! (blocking-rescan started release calls)}
+                             #'fff/refresh-paths! (blocking-rescan started release calls)}
               (fn []
                 (index/with-index* (lease) identity)
                 (index/note-fs-write! (java.io.File. "marker.txt"))
@@ -293,7 +299,7 @@
 
             (with-redefs-fn {#'index/open! fake-index
                              #'index/scan-timeout-ms 100
-                             #'fff/rescan! (blocking-rescan started release (atom 0))}
+                             #'fff/refresh-paths! (blocking-rescan started release (atom 0))}
               (fn []
                 (index/with-index* (lease) identity)
                 (index/note-fs-write! (java.io.File. "marker.txt"))
@@ -315,7 +321,7 @@
               (java.util.concurrent.CountDownLatch. 1)]
 
           (with-redefs-fn {#'index/open! fake-index
-                           #'fff/rescan! (blocking-rescan started release (atom 0))}
+                           #'fff/refresh-paths! (blocking-rescan started release (atom 0))}
             (fn []
               (index/with-index* (lease) identity)
               (index/note-fs-write! (java.io.File. "marker.txt"))
@@ -358,9 +364,9 @@
                        (with-redefs-fn {#'index/open! (fn [& args]
                                                         (swap! opened conj (nth args 4))
                                                         (fake-index))
-                                        #'fff/rescan! (fn [& _]
-                                                        (swap! rescans inc)
-                                                        true)}
+                                        #'fff/refresh-paths! (fn [& _]
+                                                               (swap! rescans inc)
+                                                               true)}
                          (fn []
                            (let [paths (index/lease (java.io.File. ".")
                                                     true
@@ -381,17 +387,83 @@
                  (with-pool (fn [_ _]
                               (let [scans (atom 0)]
                                 (with-redefs-fn {#'index/open! fake-index
-                                                 #'fff/rescan! (fn [& _]
-                                                                 (when (= 1 (swap! scans inc))
-                                                                   (index/note-fs-write!
-                                                                     (java.io.File. "marker.txt")))
-                                                                 true)}
+                                                 #'fff/refresh-paths!
+                                                 (fn [& _]
+                                                   (when (= 1 (swap! scans inc))
+                                                     (index/note-fs-write! (java.io.File.
+                                                                             "marker.txt")))
+                                                   true)}
                                   (fn []
                                     (index/with-index* (lease) identity)
                                     (index/note-fs-write! (java.io.File. "marker.txt"))
                                     (dotimes [_ 3]
                                       (index/with-index* (lease) identity))
                                     (expect (= 2 @scans)))))))))
+
+;; Regression for Blockether/vis#442: the read-your-writes rescan of a large tree waited
+;; for its whole content index and always timed out at 30 s. The pool then evicted the
+;; index, and the next search built it again.
+(defdescribe
+  write-refreshes-its-path-without-a-rescan-test
+  (it "the next grep sees a write, and a tree whose rescan always times out keeps its index"
+      (with-pool
+        (fn [pool _]
+          (let [root
+                (fs/file (fs/create-temp-dir {:prefix "vis-fff-refresh"}))
+
+                file
+                (io/file root "note.txt")
+
+                hits
+                (fn [idx query]
+                  (mapv :relative-path (:matches (fff/grep idx {:query query}))))]
+
+            (spit file "old text\n")
+            (try (with-redefs-fn {#'fff/rescan! (fn [& _]
+                                                  false)}
+                   (fn []
+                     (expect (= ["note.txt"]
+                                (index/with-index* (index/lease root true) #(hits % "old text"))))
+                     (spit file "new text\n")
+                     (index/note-fs-write! file)
+                     (expect (= ["note.txt"]
+                                (index/with-index* (index/lease root true) #(hits % "new text"))))
+                     (expect (= 1 (count @pool)))
+                     (expect (nil? (get-in (index/pool-stats) [:counters :evictions])))))
+                 (finally (fs/delete-tree root))))))))
+
+(defdescribe interrupted-resync-keeps-its-writes-test
+             (it "a resync interrupted before its rescan leaves the write for the next search"
+                 (with-pool
+                   (fn [_ _]
+                     (let [rescans
+                           (atom 0)
+
+                           permits
+                           (atom 0)
+
+                           nested
+                           (index/lease (java.io.File. "target/draft-a/src") true)]
+
+                       (with-redefs-fn {#'index/open! fake-index
+                                        #'fff/rescan! (fn [& _]
+                                                        (swap! rescans inc)
+                                                        true)
+                                        #'fff/refresh-paths! (fn [& _]
+                                                               true)
+                                        #'index/with-scan-permit* (fn [thunk]
+                                                                    (if (= 1 (swap! permits inc))
+                                                                      (throw
+                                                                        (InterruptedException.))
+                                                                      (thunk)))}
+                         (fn []
+                           (index/with-index* nested identity)
+                           (index/note-fs-write! (java.io.File. "target/draft-a/.gitignore"))
+                           (expect (= :interrupted
+                                      (try (index/with-index* nested identity)
+                                           (catch InterruptedException _ :interrupted))))
+                           (index/with-index* nested identity)
+                           (expect (= 1 @rescans)))))))))
 
 (defdescribe
   lifecycle-events-and-active-users-test

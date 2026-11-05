@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - grep: a large content index build no longer makes other index scans in the gateway fail with `File index scan did not complete in time`. `com.blockether/fff` is at 0.12.16, which builds content indexes on their own thread pool (#438).
 - grep: when only the file NAME list is capped, line 1 says `file NAME matches capped by limit`. It said `capped by limit` with 0 content hits before (#438).
 - grep: `com.blockether/fff` is at 0.12.17 with the upstream fff fixes. A grep on a very large tree no longer misses hits through shared index columns. Git status on a large repository no longer takes minutes.
+- grep: the first search after a write no longer waits for a full rescan of the tree. That rescan waited for the whole content index, so on a large tree it timed out after 30 s every time and the index was built again. Now the search refreshes only the written paths, in a few milliseconds. A change during the content index build also stays visible. `com.blockether/fff` is at 0.12.19 (#442).
 
 ## [v0.5.2] - 2026-11-04
 

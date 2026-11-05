@@ -17,7 +17,8 @@
    - all gateway workers share the pool and the same root/policy index,
    - the body must NOT close `idx`; borrowed indexes cannot be evicted,
    - filesystem mutations call `note-fs-write!` with the changed path so the
-     next search reads its own writes without rescanning unrelated drafts."
+     next search refreshes that path and reads its own writes. A refresh does not
+     rescan the tree, and unrelated drafts do not change."
   (:require [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.paths :as paths]
@@ -305,6 +306,23 @@
 
 (defonce ^:private index-sequence (java.util.concurrent.atomic.AtomicLong. 0))
 
+(def ^:private no-writes
+  "The writes that an index has not applied yet. `:paths` are canonical paths
+   inside its tree; `:rescan?` asks for a full rescan instead."
+  {:paths #{} :rescan? false})
+
+(def ^:private max-pending-paths
+  "Above this many unapplied paths, one full rescan replaces them. It bounds the
+   memory of an entry whose leases never resync."
+  1024)
+
+(defn- add-writes
+  "Merge `more` into the unapplied writes `writes`."
+  [writes more]
+  (let [merged {:paths (into (:paths writes) (:paths more))
+                :rescan? (boolean (or (:rescan? writes) (:rescan? more)))}]
+    (if (> (count (:paths merged)) (long max-pending-paths)) {:paths #{} :rescan? true} merged)))
+
 (defn- entry-data
   [entry]
   {:index-id (:index-id entry)
@@ -465,25 +483,46 @@
         (.start runner))))
   nil)
 
+(defn- ignore-file?
+  "True when `file` holds ignore rules for the index of pool key `k`."
+  [k ^File file]
+  (contains? (into #{".gitignore" ".ignore"} (first (nth k 2))) (.getName file)))
+
 (defn note-fs-write!
-  "Invalidate pooled trees overlapping the changed path's directory. Taking the
-   parent also covers ancestor ignore-file changes and directory replacement.
-   Unrelated draft roots keep their read-your-writes epoch and do not rescan."
+  "Record a write for each pooled tree that it changes. The next search refreshes
+   only the written path, so it reads its own write without a rescan.
+
+   - A tree that contains the path refreshes that path. fff rescans the tree itself
+     when the path is an ignore file.
+   - An ignore file in a directory above a tree changes the rules of that tree, so
+     the tree rescans.
+   - Other trees keep their read-your-writes epoch."
   [^File path]
   (let [canonical
         (.getCanonicalFile path)
 
-        changed
+        written
+        (.toPath canonical)
+
+        parent
         (.toPath (or (.getParentFile canonical) canonical))]
 
     (locking pool
-      (doseq [[[root-path] entry]
+      (doseq [[[root-path :as k] entry]
               @pool
 
               :let [indexed
-                    (.toPath (File. ^String root-path))]
-              :when (or (.startsWith indexed changed) (.startsWith changed indexed))]
+                    (.toPath (File. ^String root-path))
 
+                    writes
+                    (cond (.startsWith written indexed) {:paths #{(.getPath canonical)}}
+                          (and (.startsWith indexed parent) (ignore-file? k canonical)) {:rescan?
+                                                                                         true})]
+              :when writes]
+
+        ;; The path goes in before the epoch moves, so a resync that sees the epoch
+        ;; also takes the path.
+        (swap! (:writes entry) add-writes writes)
         (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong (:write-epoch entry))
         (record-event! :invalidate (entry-data entry)))))
   nil)
@@ -502,10 +541,12 @@
     (when removed? (record-event! :evict (assoc (entry-data entry) :reason reason)))))
 
 (defn- resync!
-  "Rescan a shared index after writes, so that the body reads its own writes.
+  "Apply this process's writes to a shared index, so that the body reads its own
+   writes. A write inside the tree refreshes only its path; it does not walk the
+   tree or wait for the content index. Only an ignore file above the tree rescans.
 
-   - One rescan runs at a time for each index. A caller that waited for it uses its
-     result and does not start another rescan.
+   - One resync runs at a time for each index. A caller that waited for it uses its
+     result and does not start another resync.
    - The wait is bounded and interruptible, so a turn cancel reaches a waiting thread.
    - A failed or late rescan never fails the caller. The caller uses the watcher-live
      index, and the pool retires the entry, so the next lease builds a fresh index.
@@ -539,41 +580,62 @@
                 :else (let [now
                             (.get written)
 
+                            ;; Read after the epoch: a write that moved the epoch to
+                            ;; `now` added its path first.
+                            [writes]
+                            (swap-vals! (:writes entry) (constantly no-writes))
+
+                            rescan?
+                            (:rescan? writes)
+
                             requested-at
-                            (System/nanoTime)]
+                            (System/nanoTime)
 
-                        (with-scan-permit*
-                          (fn []
-                            (let [started-at
-                                  (System/nanoTime)
+                            sync!
+                            (fn []
+                              (let [started-at
+                                    (System/nanoTime)
 
-                                  data
-                                  (assoc (entry-data entry)
-                                    :reason :write
-                                    :queued-ms (quot (- started-at requested-at) 1000000))
+                                    data
+                                    (assoc (entry-data entry)
+                                      :reason :write
+                                      :sync (if rescan? :rescan :paths)
+                                      :paths (count (:paths writes))
+                                      :queued-ms (quot (- started-at requested-at) 1000000))
 
-                                  scan-ms
-                                  #(quot (- (System/nanoTime) started-at) 1000000)
+                                    scan-ms
+                                    #(quot (- (System/nanoTime) started-at) 1000000)
 
-                                  failed!
-                                  (fn [error]
-                                    (record-event! :scan
-                                                   (assoc data
-                                                     :status :failed
-                                                     :scan-ms (scan-ms)
-                                                     :error error))
-                                    (retire-failed! entry :rescan-failed)
-                                    (stale! :rescan-failed))]
+                                    failed!
+                                    (fn [error]
+                                      (record-event! :scan
+                                                     (assoc data
+                                                       :status :failed
+                                                       :scan-ms (scan-ms)
+                                                       :error error))
+                                      (retire-failed! entry :rescan-failed)
+                                      (stale! :rescan-failed))]
 
-                              (try (if (fff/rescan! idx scan-timeout-ms)
-                                     (do (.set synced now)
-                                         (record-event! :scan
-                                                        (assoc data
-                                                          :status :ready
-                                                          :scan-ms (scan-ms))))
-                                     (failed! "File index rescan after a write timed out"))
-                                   (catch InterruptedException e (throw e))
-                                   (catch Throwable t (failed! (ex-message t)))))))))
+                                (try (if (if rescan?
+                                           (fff/rescan! idx scan-timeout-ms)
+                                           (fff/refresh-paths! idx (:paths writes) scan-timeout-ms))
+                                       (do (.set synced now)
+                                           (record-event! :scan
+                                                          (assoc data
+                                                            :status :ready
+                                                            :scan-ms (scan-ms))))
+                                       (failed! (if rescan?
+                                                  "File index rescan after a write timed out"
+                                                  "File index refresh after a write timed out")))
+                                     (catch InterruptedException e (throw e))
+                                     (catch Throwable t (failed! (ex-message t))))))]
+
+                        ;; Only a full rescan walks the tree, so only it takes a scan permit.
+                        ;; An interrupted resync gives its writes back to the next one.
+                        (try (if rescan? (with-scan-permit* sync!) (sync!))
+                             (catch InterruptedException e
+                               (swap! (:writes entry) add-writes writes)
+                               (throw e)))))
           (finally (.unlock lock)))))))
 
 (defn- pool-key
@@ -610,6 +672,7 @@
      :closed (java.util.concurrent.atomic.AtomicBoolean. false)
      :dead (java.util.concurrent.atomic.AtomicBoolean. false)
      :write-epoch (java.util.concurrent.atomic.AtomicLong. 0)
+     :writes (atom no-writes)
      :synced-epoch (java.util.concurrent.atomic.AtomicLong. 0)
      :resync-lock (java.util.concurrent.locks.ReentrantLock.)}))
 
