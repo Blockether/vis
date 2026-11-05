@@ -1379,9 +1379,8 @@
                 {:repo-id "slashroot" :repo-root trunk :root trunk :fork-ms 0})
 
               sid
-              (ps/db-store-session!
-                store
-                {:channel :tui :workspace-id (:id trunk-ws) :title "slashroot" :system-prompt ""})
+              (ps/db-store-session! store
+                                    {:channel :tui :workspace-id (:id trunk-ws) :title "slashroot"})
 
               ctx
               (:python-context (ep/create-python-context {} nil {:worker? true} nil))
@@ -1434,9 +1433,7 @@
                                        {:repo-id "slashapp" :repo-root root :root root :fork-ms 0})
 
               sid
-              (ps/db-store-session!
-                store
-                {:channel :tui :workspace-id (:id ws) :title "slashapp" :system-prompt ""})
+              (ps/db-store-session! store {:channel :tui :workspace-id (:id ws) :title "slashapp"})
 
               ctx
               (:python-context (ep/create-python-context {} nil {:worker? true} nil))

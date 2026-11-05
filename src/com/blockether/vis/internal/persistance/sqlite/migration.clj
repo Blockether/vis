@@ -329,10 +329,14 @@
    move it.
 
    `council_entry.kind` classified each message as a complaint, coordination or
-   information. Council messages have no kind any more."
+   information. Council messages have no kind any more.
+
+   `session_state.system_prompt` held the core prompt text from when the session
+   was created. Each environment build makes the prompt again, so nothing read the
+   copy back, and it was out of date after each configuration change."
   [["session_turn_iteration" "llm_assistant_message"] ["session_attachment" "classification"]
    ["session_attachment" "activity_anchor"] ["session_soul" "last_opened_at"]
-   ["council_entry" "kind"]])
+   ["council_entry" "kind"] ["session_state" "system_prompt"]])
 
 (def ^:private retired-values
   "Values a narrowed CHECK no longer admits, as `[table column old new]`.

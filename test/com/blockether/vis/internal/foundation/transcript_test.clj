@@ -19,12 +19,9 @@
    Returns the session id."
   [s]
   (let [cid
-        (h/store-session! s
-                          {:channel :tui
-                           :title "Transcript fixture"
-                           :provider :openai
-                           :model "gpt-4o"
-                           :system-prompt "sys"})
+        (h/store-session!
+          s
+          {:channel :tui :title "Transcript fixture" :provider :openai :model "gpt-4o"})
 
         q1
         (persistance/db-store-session-turn!

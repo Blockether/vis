@@ -2941,8 +2941,7 @@
                       (expect (= (if name [linked] []) (mapv :path project-roots)))
                       (when name
                         (expect (= "available" (get-in project-roots [0 :guidance :status]))))
-                      (doseq [text [(:system-prompt (persistance/db-get-session db sid))
-                                    (prompt/stable-prompt-text
+                      (doseq [text [(prompt/stable-prompt-text
                                       (prompt/assemble-stable-prompt-messages environment
                                                                               {:active-extensions
                                                                                []}))]]

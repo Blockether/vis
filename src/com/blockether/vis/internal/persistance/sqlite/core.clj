@@ -1461,13 +1461,13 @@
 
    Session identity and LLM root defaults are first-class columns:
      session_soul.channel / external_id
-     session_state.system_prompt / llm_root_provider / llm_root_model
+     session_state.llm_root_provider / llm_root_model
      session_state.title.
 
    Optional `:origin` is a JSON map that names the program that created the session."
   [db-info
-   {:keys [channel external-id title system-prompt provider model workspace-id parent-state-id
-           claimed? owner-id origin]
+   {:keys [channel external-id title provider model workspace-id parent-state-id claimed? owner-id
+           origin]
     :or {claimed? true}}]
   (when-not workspace-id
     (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
@@ -1514,7 +1514,6 @@
                                        :workspace_id (->ref workspace-id)
                                        :title title
                                        :version 0
-                                       :system_prompt (or system-prompt "")
                                        :llm_root_model (or model "")
                                        :created_at now}
                                 provider
@@ -1522,7 +1521,7 @@
           soul-id)))))
 
 (def ^:private latest-state-sql
-  (str "SELECT id, title, version, system_prompt, llm_root_model, llm_root_provider "
+  (str "SELECT id, title, version, llm_root_model, llm_root_provider "
        "FROM session_state WHERE session_soul_id = ? "
        "AND version = (SELECT MAX(version) FROM session_state WHERE session_soul_id = ?)"))
 
@@ -1551,7 +1550,6 @@
            :title (:title state)
            :goal (some-> (:goal soul)
                          json/read-json)
-           :system-prompt (:system_prompt state)
            :model (:llm_root_model state)
            :version (or (:version state) 0)
            :created-at (->date (:created_at soul))
@@ -3390,8 +3388,8 @@
 (defn db-list-session-states
   "List every `session_state` row for the soul behind `session-id`,
    oldest version first. Each row maps to
-   `{:state-id :version :parent-state-id :title :system-prompt :provider :model
-     :created-at :turn-count}` - the raw fork tree of one session soul.
+   `{:state-id :version :parent-state-id :title :provider :model :created-at
+     :turn-count}` - the raw fork tree of one session soul.
 
    The trunk is `:version 0` with `:parent-state-id nil`. A fork is any row
    whose `:parent-state-id` points at another `:state-id` in the same vector;
@@ -3409,8 +3407,8 @@
 
           rows
           (query! db-info
-                  {:select [:cs.id :cs.version :cs.parent_state_id :cs.title :cs.system_prompt
-                            :cs.llm_root_provider :cs.llm_root_model :cs.created_at
+                  {:select [:cs.id :cs.version :cs.parent_state_id :cs.title :cs.llm_root_provider
+                            :cs.llm_root_model :cs.created_at
                             [{:select [[[:count :*]]]
                               :from :session_turn_soul
                               :where [:= :session_turn_soul.session_state_id :cs.id]} :turn_count]]
@@ -3426,9 +3424,6 @@
                        :title (:title row)
                        :created-at (->date (:created_at row))
                        :turn-count (or (:turn_count row) 0)}
-                (:system_prompt row)
-                (assoc :system-prompt (:system_prompt row))
-
                 (:llm_root_provider row)
                 (assoc :provider (->kw-back (:llm_root_provider row)))
 
@@ -3500,7 +3495,7 @@
    exactly one workspace. Callers (screen handlers, cli) call
    `workspace/spawn-branch!` or `workspace/ensure-trunk!` first and pass
    the returned id here."
-  [db-info session-id {:keys [system-prompt provider model title workspace-id]}]
+  [db-info session-id {:keys [provider model title workspace-id]}]
   (when-not workspace-id
     (throw (ex-info "db-fork-session! requires :workspace-id (1:1 invariant)"
                     {:type :persistance/missing-workspace-id})))
@@ -3524,8 +3519,6 @@
                                            :workspace_id (->ref workspace-id)
                                            :title fork-title
                                            :version new-version
-                                           :system_prompt (or system-prompt
-                                                              (:system_prompt current))
                                            :llm_root_model (or model (:llm_root_model current))
                                            :created_at now}
                                     (or provider (:llm_root_provider current))
@@ -5595,8 +5588,8 @@
         states
         (by-column :session_soul_id
                    (query! db-info
-                           {:select [:s.id :s.session_soul_id :s.title :s.version :s.system_prompt
-                                     :s.llm_root_model :s.llm_root_provider :s.workspace_id]
+                           {:select [:s.id :s.session_soul_id :s.title :s.version :s.llm_root_model
+                                     :s.llm_root_provider :s.workspace_id]
                             :from [[:session_state :s]]
                             :where [:and [:in :s.session_soul_id ids]
                                     [:= :s.version
@@ -6034,7 +6027,6 @@
                                            :workspace_id (->ref workspace-id)
                                            :title fork-title
                                            :version 0
-                                           :system_prompt (or (:system_prompt current) "")
                                            :llm_root_model (or (:llm_root_model current) "")
                                            :created_at now}
                                     (:llm_root_provider current)
@@ -6463,7 +6455,6 @@
                                      :workspace_id (->ref (workspace-for tx-info old-sid))
                                      :title (:title state)
                                      :version 0
-                                     :system_prompt (or (:system_prompt state) "")
                                      :llm_root_provider (:llm_root_provider state)
                                      :llm_root_model (or (:llm_root_model state) "")
                                      :created_at (:created_at soul)}]})

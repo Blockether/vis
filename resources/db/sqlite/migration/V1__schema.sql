@@ -360,7 +360,6 @@ CREATE TABLE session_state (
                         REFERENCES workspace(id) ON DELETE RESTRICT,
   title                 TEXT,
   version               INTEGER NOT NULL CHECK (version >= 0),
-  system_prompt         TEXT,
   llm_root_provider     TEXT,
   llm_root_model        TEXT,
   prompt_cache_state    BLOB,  -- Nippy: one latest exact provider-prefix checkpoint

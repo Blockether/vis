@@ -2256,7 +2256,7 @@
             (h/store)
 
             id
-            (h/store-session! s {:channel :tui :system-prompt "Hi" :model "gpt-4o" :title "T"})
+            (h/store-session! s {:channel :tui :model "gpt-4o" :title "T"})
 
             session
             (persistance/db-get-session s id)]
@@ -2264,7 +2264,6 @@
         (expect (= 1 (raw-count s :session_soul)))
         (expect (= 1 (raw-count s :session_state)))
         (expect (= :tui (:channel session)))
-        (expect (= "Hi" (:system-prompt session)))
         (expect (= "gpt-4o" (:model session)))
         (expect (= "T" (:title session)))
         (expect (= 0 (:version session)))))
@@ -2305,7 +2304,7 @@
             (h/store)
 
             session-id
-            (h/store-session! s {:channel :api :title "Metadata" :system-prompt "Keep me"})
+            (h/store-session! s {:channel :api :title "Metadata" :model "gpt-4o"})
 
             state-id
             (persistance/db-latest-session-state-id s session-id)
@@ -2323,7 +2322,7 @@
         (with-redefs [jdbc/execute! (fn [& args]
                                       (let [rows (apply execute! args)]
                                         (swap! state-reads into
-                                          (filter #(and (contains? % :system_prompt)
+                                          (filter #(and (contains? % :llm_root_model)
                                                         (contains? % :version))
                                                   rows))
                                         rows))]
@@ -2333,7 +2332,7 @@
           (h/fork-session! s session-id {})
           (let [session (persistance/db-get-session s session-id)]
             (expect (= "Renamed (fork)" (:title session)))
-            (expect (= "Keep me" (:system-prompt session)))
+            (expect (= "gpt-4o" (:model session)))
             (expect (= 1 (:version session)))))
         (expect (seq @state-reads))
         (expect (every? #(not (contains? % :prompt_cache_state)) @state-reads))
@@ -2344,7 +2343,7 @@
             (h/store)
 
             session-id
-            (h/store-session! s {:channel :api :system-prompt (apply str (repeat 65536 "x"))})
+            (h/store-session! s {:channel :api})
 
             state-id
             (persistance/db-latest-session-state-id s session-id)
@@ -2900,7 +2899,7 @@
                        (h/store)
 
                        cid
-                       (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
+                       (h/store-session! s {:channel :tui :model "gpt-4o"})
 
                        rows
                        (persistance/db-list-session-states s cid)]
@@ -2909,7 +2908,6 @@
                    (expect (= 1 (count rows)))
                    (expect (= 0 (:version (first rows))))
                    (expect (nil? (:parent-state-id (first rows))))
-                   (expect (= "v0" (:system-prompt (first rows))))
                    (expect (= "gpt-4o" (:model (first rows))))
                    (expect (= 0 (:turn-count (first rows))))))
              (it "surfaces every fork in version order with parent links"
@@ -2917,10 +2915,10 @@
                        (h/store)
 
                        cid
-                       (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})]
+                       (h/store-session! s {:channel :tui :model "gpt-4o"})]
 
-                   (h/fork-session! s cid {:title "Branch A" :system-prompt "vA"})
-                   (h/fork-session! s cid {:title "Branch B" :system-prompt "vB"})
+                   (h/fork-session! s cid {:title "Branch A"})
+                   (h/fork-session! s cid {:title "Branch B"})
                    (let [rows (persistance/db-list-session-states s cid)]
                      (expect (= 3 (count rows)))
                      (expect (= [0 1 2] (mapv :version rows)))
@@ -2928,8 +2926,7 @@
                      ;; Each later fork's parent points at the immediately previous
                      ;; state (latest-state-for picks the highest-version row).
                      (expect (= (:state-id (nth rows 0)) (:parent-state-id (nth rows 1))))
-                     (expect (= (:state-id (nth rows 1)) (:parent-state-id (nth rows 2))))
-                     (expect (= ["vA" "vB"] (mapv :system-prompt (drop 1 rows)))))))
+                     (expect (= (:state-id (nth rows 1)) (:parent-state-id (nth rows 2)))))))
              (it "reports :turn-count per state - turns belong to one specific branch"
                  (let [s
                        (h/store)
@@ -3028,7 +3025,7 @@
             (h/store)
 
             cid
-            (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
+            (h/store-session! s {:channel :tui :model "gpt-4o"})
 
             _
             (h/fork-session! s cid {:title "Branch A"})
@@ -3039,24 +3036,22 @@
         (expect (= 2 (raw-count s :session_state)))
         (expect (= 1 (:version session)))
         (expect (= "Branch A" (:title session)))
-        (expect (= "v0" (:system-prompt session)))
         (let [states (raw-query s {:select [:*] :from :session_state :order-by [[:version :asc]]})]
           (expect (nil? (:parent_state_id (first states))))
           (expect (some? (:parent_state_id (second states)))))))
-  (it "overrides model and system-prompt"
+  (it "overrides the model"
       (let [s
             (h/store)
 
             cid
-            (h/store-session! s {:channel :tui :system-prompt "old" :model "gpt-4o"})
+            (h/store-session! s {:channel :tui :model "gpt-4o"})
 
             _
-            (h/fork-session! s cid {:system-prompt "new" :model "claude-4"})
+            (h/fork-session! s cid {:model "claude-4"})
 
             session
             (persistance/db-get-session s cid)]
 
-        (expect (= "new" (:system-prompt session)))
         (expect (= "claude-4" (:model session)))))
   (it "forked state inherits ancestor turns across multiple hops"
       (let [s

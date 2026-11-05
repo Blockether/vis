@@ -40,9 +40,8 @@
            {:repo-id "test" :repo-root root :root root :state :active :fork-ms 0})
 
          soul-id
-         (persistance/db-store-session!
-           store
-           {:channel :tui :workspace-id (:id ws) :title "bang-test" :system-prompt ""})]
+         (persistance/db-store-session! store
+                                        {:channel :tui :workspace-id (:id ws) :title "bang-test"})]
 
      {:extensions (atom [])
       :db-info store

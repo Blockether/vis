@@ -162,6 +162,19 @@
         column
         "); END")])
 
+(defn- scalar
+  [^javax.sql.DataSource ds ^String sql]
+  (with-open [conn
+              (.getConnection ds)
+
+              st
+              (.createStatement conn)
+
+              rs
+              (.executeQuery st sql)]
+
+    (when (.next rs) (.getString rs 1))))
+
 ;; Regression: `llm_assistant_message` shipped in V1 and was then retired, but a
 ;; store CREATED by the older V1 kept the column — and 471 MB of raw provider
 ;; envelopes in it — because one canonical migration cannot alter a database
@@ -221,20 +234,20 @@
              (migration/migrate! ds [migration-dir])
              (expect (not (contains? (columns-of ds "session_soul") "last_opened_at")))
              (expect (= 1 (row-count ds "session_soul")))
+             (finally (.delete file)))))
+  (it "drops the stored system prompt from a session state, keeping the state"
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             ;; the shape a V1 with the stored system prompt left behind
+             (exec! ds "ALTER TABLE session_state ADD COLUMN system_prompt TEXT")
+             (exec! ds
+                    (str "INSERT INTO session_state (id, session_soul_id, workspace_id, title,"
+                         " version, system_prompt, created_at)"
+                         " VALUES ('st1', 's1', 'w1', 'Kept', 0, 'old prompt', 1)"))
+             (migration/migrate! ds [migration-dir])
+             (expect (not (contains? (columns-of ds "session_state") "system_prompt")))
+             (expect (= "Kept" (scalar ds "SELECT title FROM session_state WHERE id = 'st1'")))
              (finally (.delete file))))))
-
-(defn- scalar
-  [^javax.sql.DataSource ds ^String sql]
-  (with-open [conn
-              (.getConnection ds)
-
-              st
-              (.createStatement conn)
-
-              rs
-              (.executeQuery st sql)]
-
-    (when (.next rs) (.getString rs 1))))
 
 (defdescribe
   retired-council-kind-test

@@ -77,7 +77,6 @@
     {:id (:id session) ; UUID
      :channel (:channel session)
      :external-id (:external-id session)
-     :system-prompt (:system-prompt session)
      :model (:model session) ; the state's ROOT model, not the user's pin
      :model-pref (:model-pref session) ; {:provider :model} pin, or nil for router default
      :title (:title session)

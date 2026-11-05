@@ -696,8 +696,8 @@
 (defn- foundation-session-forks
   "List every `session_state` row for the session soul behind
    `session-id`, oldest version first. Each row maps to
-   `{:state-id :version :parent-state-id :title :system-prompt :provider
-     :model :created-at :turn-count}`. The trunk is `:version 0` with
+   `{:state-id :version :parent-state-id :title :provider :model
+     :created-at :turn-count}`. The trunk is `:version 0` with
    `:parent-state-id nil`; any later row with non-nil `:parent-state-id`
    is a fork off the referenced state. Returns `[]` (never nil) when
    the session has no rows OR the env is missing handles - lets

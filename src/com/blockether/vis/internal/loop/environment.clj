@@ -514,15 +514,12 @@
                                  workspace-id (persistance/db-workspace-get db-info workspace-id)
                                  ;; New session, no pre-spawn: clone cwd.
                                  :else (workspace/ensure-workspace! db-info {})))
-            ;; Persist the prompt from the pinned project, including on resume.
-            system-prompt (prompt/build-system-prompt {:workspace-root (:root active-workspace)})
             session-id (or resolved-session-id
                            (persistance/db-store-session! db-info
                                                           (cond-> {:channel resolved-channel
                                                                    :external-id external-id
                                                                    :model root-model
                                                                    :title title
-                                                                   :system-prompt system-prompt
                                                                    :workspace-id (:id
                                                                                    active-workspace)
                                                                    ;; Every session is created for somebody
