@@ -763,8 +763,8 @@
    sentences are `env-python/PROCESS_SURFACE`, the same ones `subprocess` raises
    and an undriveable handle reports, so the rule the model reads in the prompt
    and the rule it hits at the call site cannot drift apart. With shell ON the
-   prompt gets `ban` plus a short handle summary, so the shell rules cost nothing
-   when the tool is off; with shell OFF it gets `off`, which names the tool
+   prompt gets `ban`, and the routing rules ride in `shell/prompt` with the tool;
+   with shell OFF it gets `off`, which names the tool
    AND `subprocess` / `os.system` / `os.popen`: silence read as an invitation to
    try, and the attempt only surfaced as an opaque spawn failure."
   [active-extensions]
@@ -792,23 +792,16 @@
 
     (prompt-block
       "sandbox-shims"
-      (str
-        "The sandbox is the Python of Vis, not of the project. Imports never install packages."
-        (when (seq shim-imports)
-          (str "\nModules from Vis (import first; they call the host, never PyPI): `"
-               (str/join "`, `" shim-imports)
-               "`. `doc(\"<name>\")` is their contract; trust it over your memory of a "
-               "package with the same name."))
-        (when (seq shim-globals)
-          (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
-        "\n"
-        (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))
-        (when shell?
-          (str
-            "\nUse `shell` only to run programs, such as the project interpreter for its packages. "
-            "Do file and data work in Python. `sh = await shell(cmd)` returns a handle with `logs(-n)` "
-            "(last n lines), `wait(s)`, `type(text)` and `stop()`; each returns `out`, `exit` and "
-            "`status`. To run to the end in one block: `print((await shell(cmd)).wait(300).out)`."))))))
+      (str "The sandbox is the Python of Vis, not of the project. Imports never install packages."
+           (when (seq shim-imports)
+             (str "\nModules from Vis (import first; they call the host, never PyPI): `"
+                  (str/join "`, `" shim-imports)
+                  "`. `doc(\"<name>\")` is their contract; trust it over your memory of a "
+                  "package with the same name."))
+           (when (seq shim-globals)
+             (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
+           "\n"
+           (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

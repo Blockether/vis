@@ -23,8 +23,8 @@
 (defn- combined-prompt
   "Render the toggle-gated core guidance."
   [env]
-  (->> [(drafts/prompt env) (introspection/prompt env) (agents/prompt env) (council/prompt env)
-        (automation-host/prompt env)]
+  (->> [(shell/prompt env) (drafts/prompt env) (introspection/prompt env) (agents/prompt env)
+        (council/prompt env) (automation-host/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 

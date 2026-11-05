@@ -3149,6 +3149,18 @@
   (mapv #(assoc % :ext.symbol/active-fn shell-enabled?)
         [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol]))
 
+(defn prompt
+  "Routing for `shell`, only while the shell layer is on. The handle methods live in
+   `doc(\"shell\")`."
+  [env]
+  (when (shell-enabled? env)
+    (str
+      "## Shell\n"
+      "- Use `shell` only to run programs, such as the project interpreter for its packages. Do "
+      "file and data work in Python.\n"
+      "- `shell(cmd)` returns a handle at once, before the program ends; `doc(\"shell\")` gives its "
+      "methods. To run to the end in one block: `print((await shell(cmd)).wait(300).out)`.")))
+
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live
    background shell's PTY in your OWN terminal (finish a browser OAuth, answer a

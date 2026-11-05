@@ -476,8 +476,8 @@
                  (let [text (var-get (ns-resolve 'com.blockether.vis.internal.context.prompt
                                                  'CORE_SYSTEM_PROMPT))]
                    (expect (< (count text) 5200))))
-             (it "bans subprocess and states the shell handle only when shell is active"
-                 ;; User review: shell rules cost every request, so they ride only with an active shell.
+             (it "bans subprocess either way and names the shell verb only when shell is active"
+                 ;; User review: the shell routing rules live in `shell/prompt`, with the tool.
                  (let [text
                        (#'prompt/sandbox-shims-prompt-block
                         [{:ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'shell}]}}])
@@ -490,12 +490,7 @@
                    (expect (str/includes? text "subprocess"))
                    (expect (str/includes? text "os.system"))
                    (expect (str/includes? text "os.popen"))
-                   (doseq [rule ["Use `shell` only to run programs" "returns a handle"
-                                 "`logs(-n)` (last n lines)"
-                                 "each returns `out`, `exit` and `status`"
-                                 "`print((await shell(cmd)).wait(300).out)`"]]
-                     (expect (str/includes? text rule) rule)
-                     (expect (not (str/includes? off rule)) rule))
+                   (expect (str/includes? off (get env-python/PROCESS_SURFACE "off")))
                    (expect (not (str/includes? text "\"id\"")))))
              (it "pushes every REGISTERED shim's names, and its prose nowhere"
                  ;; The registry itself, not a fixture: the model gets exactly these names. The

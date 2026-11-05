@@ -3182,3 +3182,23 @@
                    (expect (= 5 (opt {"secs" 5} :seconds :secs :timeout)))
                    (expect (false? (opt {"is_enter" false} :is_enter)))
                    (expect (= "/m" (opt (java.util.HashMap. {"cwd" "/m"}) :cwd))))))
+
+(defdescribe shell-prompt-test
+             ;; User review: the shell routing rules belong to the shell tool, so the core
+             ;; extension prompt carries them only while the shell layer is on.
+             (it "states the shell rules in the core extension prompt only while shell is on"
+                 (let [prompt-of
+                       (fn [on?]
+                         (binding [toggles/*overrides* {"shell" on?}]
+                           ((:ext/prompt-fn foundation/vis-extension) {})))
+
+                       on
+                       (prompt-of true)
+
+                       off
+                       (prompt-of false)]
+
+                   (doseq [rule ["## Shell" "Use `shell` only to run programs" "`doc(\"shell\")`"
+                                 "`print((await shell(cmd)).wait(300).out)`"]]
+                     (expect (str/includes? on rule) rule)
+                     (expect (not (str/includes? off rule)) rule)))))
