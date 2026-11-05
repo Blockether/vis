@@ -26,7 +26,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedLeaderLane, transcriptAgents, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -4778,11 +4778,13 @@ export function SessionScreen({
     session?.id === sid ? (session.team?.total ?? null) : null,
     pushesTeamRows(gatewayProtocol) ? null : hasRunningTurn,
   );
-  const teams = useMemo(() => agentsByTurn(team.agents), [team.agents]);
+  // Each turn of the transcript holds its team, so a team paints with its turn; live rows update it.
+  const agents = useMemo(() => transcriptAgents(turns, team.agents), [turns, team.agents]);
+  const teams = useMemo(() => agentsByTurn(agents), [agents]);
   // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.
   const docked = useMemo(
-    () => new Set(dockTeams(team.agents, sid, runningTurnId).map((members) => members[0].team_id)),
-    [team.agents, sid, runningTurnId],
+    () => new Set(dockTeams(agents, sid, runningTurnId).map((members) => members[0].team_id)),
+    [agents, sid, runningTurnId],
   );
   // The leader lane of the running turn heads the chart of the dock.
   const runningLeader = useMemo(
@@ -4791,10 +4793,10 @@ export function SessionScreen({
   );
   const teamFor = useCallback(
     (turnId: string | undefined, leader?: LeaderLane) => {
-      const agents = turnId && !docked.has(turnId) ? teams.get(turnId) : undefined;
-      return agents ? (
+      const members = turnId && !docked.has(turnId) ? teams.get(turnId) : undefined;
+      return members ? (
         <TurnAgents
-          agents={agents}
+          agents={members}
           error={team.error}
           onOpen={onOpenSession}
           leader={leader}
@@ -4806,8 +4808,8 @@ export function SessionScreen({
   // Traffic between this leader and its own subagents stays out of its transcript:
   // the team rows show their work, and each child session keeps its own record.
   const children = useMemo(
-    () => new Set(team.agents.filter((agent) => agent.parent_id === sid).map((agent) => agent.session_id)),
-    [team.agents, sid],
+    () => new Set(agents.filter((agent) => agent.parent_id === sid).map((agent) => agent.session_id)),
+    [agents, sid],
   );
   const isChildWake = useCallback(
     (kind: RequestKind | undefined, council: CouncilRequest | undefined) =>
@@ -5931,7 +5933,7 @@ export function SessionScreen({
 
             {/* The live team of this session, above the composer. */}
             <AgentDock
-              agents={team.agents}
+              agents={agents}
               sid={sid}
               runningTurnId={runningTurnId}
               error={team.error}

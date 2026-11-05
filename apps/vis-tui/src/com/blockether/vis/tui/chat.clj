@@ -883,6 +883,10 @@
                                         (get q "turn_id") :turn-position
                                         (get q "position"))
 
+                                      ;; The turn holds its team, so its card paints with it.
+                                      (seq (get q "agents"))
+                                      (assoc :session-agents (vec (get q "agents")))
+
                                       (seq traces)
                                       (assoc :traces traces)
 

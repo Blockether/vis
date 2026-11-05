@@ -944,14 +944,15 @@
           decorated)))))
 
 (defn decorate-messages
-  "Give the last assistant message of each turn that started a team its `:agent-team-card`
-   from the cached snapshot of `sid`. A team in the dock gets no block: the turn
-   `running-turn` still runs, or an agent still works. Returns `messages` unchanged when no
-   team is known. An unchanged team keeps the decorated message identity, so height caches
+  "Give the last assistant message of each turn that started a team its `:agent-team-card`.
+   The rows come from the transcript turns (`:session-agents`), and the cached snapshot of `sid`
+   replaces each row that it also has, so a card paints with its turn. A team in the dock gets
+   no block: the turn `running-turn` still runs, or an agent still works. Returns `messages`
+   unchanged when no team is known. An unchanged team keeps the decorated message identity, so height caches
    still hit."
   ([messages sid] (decorate-messages messages sid nil))
   ([messages sid running-turn]
-   (let [agents (:agents (summary sid))]
+   (let [agents (merge-agents (into [] (mapcat :session-agents) messages) (:agents (summary sid)))]
      (if (or (empty? agents) (empty? messages))
        messages
        (let [docked (dock-team-ids agents running-turn)

@@ -3,6 +3,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.agent-team :as team]
+            [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.frame :as frame]
@@ -709,7 +710,38 @@
           (expect (nil? (:agent-team-card (first decorated))))
           (expect (= "turn-2" (get-in decorated [1 :agent-team-card :team-id])))
           (expect (= #{"turn-1"} (team/dock-team-ids waiting-team nil)))
-          (expect (= #{"turn-1" "turn-2"} (team/dock-team-ids waiting-team "turn-2")))))))
+          (expect (= #{"turn-1" "turn-2"} (team/dock-team-ids waiting-team "turn-2"))))))
+  ;; User report 2026-11-05: the card came after the rest of the transcript, when the team read
+  ;; ended. The transcript turn holds its team rows, so the card needs no read.
+  (it "paints the team that the transcript turn holds before any team read"
+      (let [row
+            {"session_id" "c1"
+             "parent_id" "leader"
+             "leader_id" "leader"
+             "team_id" "turn-1"
+             "title" "Contract review"
+             "task" "Review"
+             "status" "completed"}
+
+            messages
+            (@#'chat/turns->messages
+             [{"turn_id" "turn-1"
+               "request" "go"
+               "status" "completed"
+               "created_at" 1
+               "content" [{"type" "markdown" "markdown" "ok"}]
+               "agents" [row]}])]
+
+        (with-redefs [team/summary (constantly nil)]
+          (let [card (some :agent-team-card (team/decorate-messages messages "leader"))]
+            (expect (= "turn-1" (:team-id card)))
+            (expect (= ["c1"] (mapv :session-id (:rows card))))))
+        (with-redefs [team/summary (constantly {:agents [(assoc row "result" "All keys pass")]})]
+          (expect (= ["All keys pass"]
+                     (mapv :now
+                           (:rows (some :agent-team-card
+                                        (team/decorate-messages messages "leader")))))
+                  "A row that the team read gives replaces the stored row")))))
 
 (defdescribe
   dock-test

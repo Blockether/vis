@@ -3448,6 +3448,29 @@
       tokens-per-second
       (assoc :tokens-per-second tokens-per-second))))
 
+(defn- with-turn-agents
+  "Put the team rows of each turn of `rows` (canonical transcript turns) into that turn as
+   `agents`, in the shape of `GET /v1/sessions/:sid/agents`. A team belongs to the turn that
+   started it (`team_id`), so the transcript shows it with the rest of the turn and a client
+   does not wait for a second read. A turn without subagents gets no key. One read lists the
+   children of `sid`; only the children of these turns are built."
+  [db sid rows]
+  (let [ids
+        (into #{} (map #(get % "turn_id")) rows)
+
+        teams
+        (->> (persistance/db-agent-list db sid)
+             (filter #(contains? ids (str (:team_id %))))
+             (group-by #(str (:team_id %))))]
+
+    (if (empty? teams)
+      rows
+      (mapv (fn [row]
+              (if-let [team (get teams (get row "turn_id"))]
+                (assoc row "agents" (wire/canonical (mapv #(agent-view db %) team)))
+                row))
+            rows))))
+
 (defn transcript
   "Rich persisted transcript rows for `sid` in THE canonical wire shape
   (`wire/canonical`): turns oldest-first, each carrying its persisted iteration
@@ -3456,25 +3479,27 @@
   mobile) see the SAME maps, so there is exactly ONE transcript shape and a
   channel can never again be written against a shape only one transport sees."
   [sid]
-  (try (let [db
-             (lp/db-info)
+  (try
+    (let [db
+          (lp/db-info)
 
-             turns
-             (persistance/db-list-session-turns db sid)
+          turns
+          (persistance/db-list-session-turns db sid)
 
-             att-by-soul
-             (try (persistance/db-list-turns-attachments db (map :id turns))
-                  (catch Throwable _ {}))]
+          att-by-soul
+          (try (persistance/db-list-turns-attachments db (map :id turns)) (catch Throwable _ {}))]
 
-         ;; One batch read for the iterations of all turns: a read for each turn
-         ;; took 20 ms of a 40-turn transcript, the batch 9 ms.
-         (with-turn-iterations db
-                               turns
-                               #(wire/canonical (mapv (partial transcript-turn db att-by-soul)
-                                                      turns))))
-       (catch Throwable t
-         (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
-         [])))
+      ;; One batch read for the iterations of all turns: a read for each turn
+      ;; took 20 ms of a 40-turn transcript, the batch 9 ms.
+      (with-turn-agents db
+                        sid
+                        (with-turn-iterations
+                          db
+                          turns
+                          #(wire/canonical (mapv (partial transcript-turn db att-by-soul) turns)))))
+    (catch Throwable t
+      (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
+      [])))
 
 (def ^:private TRANSCRIPT_PAGE_MAX_BYTES
   "Byte ceiling for ONE WINDOWED transcript page — the fact that makes a page a
@@ -3614,7 +3639,7 @@
           from
           (long (+ start (long dropped)))]
 
-      {:turns rows :total total :offset from :has-more (pos? from)})
+      {:turns (with-turn-agents db sid rows) :total total :offset from :has-more (pos? from)})
     (catch Throwable t
       (tel/log! :warn ["gateway: transcript page hydration failed" (ex-message t)])
       {:turns [] :total 0 :offset 0 :has-more false})))

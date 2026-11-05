@@ -11,7 +11,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
-import type { GatewayClient } from '../lib/gateway';
+import { mergeAgents, type GatewayClient } from '../lib/gateway';
 import type { Subagent, TranscriptIteration, TranscriptTurn } from '../lib/types';
 import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
@@ -733,6 +733,16 @@ export function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: (
       </Button>
     </>
   );
+}
+
+/**
+ * The subagents of the session: the team rows that the transcript gives in each turn,
+ * changed by the rows that `useAgentTeam` read or got pushed. The transcript holds the
+ * teams of its turns, so a turn shows its team together with the rest of the turn.
+ */
+export function transcriptAgents(turns: readonly TranscriptTurn[], live: readonly Subagent[]): Subagent[] {
+  const stored = turns.flatMap((turn) => turn.agents ?? []);
+  return stored.length ? mergeAgents(stored, live) : [...live];
 }
 
 /** The session's subagents grouped by the turn that started them (`team_id`). */

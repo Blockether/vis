@@ -1028,3 +1028,37 @@
                                        (str "/v1/sessions/" leader "/agents/cancel")
                                        (json/write-json-str {:session_id "a7"}))))
                   "An unknown task id names no child"))))))
+
+;; User report 2026-11-05: the team block of a turn came after the rest of the transcript. The
+;; transcript had no team rows, so each client read them with a second request.
+(defdescribe
+  transcript-team-test
+  (it "puts the team rows of a turn into that turn of each transcript read"
+      (with-team
+        {:statuses ["completed" "running"]}
+        (fn [{:keys [db leader children]}]
+          (let [quiet
+                (str (ps/db-store-session-turn! db
+                                                {:parent-session-id leader
+                                                 :user-request "No team"}))
+
+                reads
+                [(:turns (state/transcript-page leader {:limit 10 :iteration-limit 8}))
+                 (:turns (state/transcript-page leader {})) (state/transcript leader)]]
+
+            (doseq [turns
+                    reads
+
+                    :let [by-id
+                          (into {} (map (juxt #(get % "turn_id") identity)) turns)
+
+                          [team-row]
+                          (remove #(= quiet (get % "turn_id")) turns)]]
+
+              (expect (= 2 (count turns)))
+              (expect (= children (mapv #(get % "session_id") (get team-row "agents"))))
+              (expect (= ["completed" "running"] (mapv #(get % "status") (get team-row "agents"))))
+              (expect (not (contains? (get by-id quiet) "agents"))
+                      "A turn without subagents has no agents key"))
+            (expect (every? #(not (contains? % "agents")) (state/transcript (first children)))
+                    "A child session shows no team in its own turns"))))))
