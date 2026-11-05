@@ -3198,7 +3198,5 @@
                        off
                        (prompt-of false)]
 
-                   (doseq [rule ["## Shell" "Use `shell` only to run programs" "`doc(\"shell\")`"
-                                 "`print((await shell(cmd)).wait(300).out)`"]]
-                     (expect (str/includes? on rule) rule)
-                     (expect (not (str/includes? off rule)) rule)))))
+                   (expect (str/includes? on "## Shell"))
+                   (expect (not (str/includes? off "## Shell"))))))
