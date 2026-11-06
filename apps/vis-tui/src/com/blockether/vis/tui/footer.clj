@@ -689,27 +689,36 @@
 
 (defn- goal-count [n] (String/format Locale/ROOT "%,d" (object-array [(long n)])))
 
+(defn- shown-goal
+  "The goal that the footer shows, or nil. A complete goal leaves the footer: the transcript
+   keeps the final reply of the model."
+  [goal]
+  (when-not (= "complete" (get goal "status")) (gateway-contract/shown-session-goal goal)))
+
+(defn- goal-time
+  "Active wall time includes tools; an inactive goal keeps its saved duration."
+  [goal now-ms]
+  (fmt/format-duration (+ (long (get goal "time_used_ms"))
+                          (if (= "active" (get goal "status"))
+                            (max 0 (- (long now-ms) (long (get goal "updated_at"))))
+                            0))))
+
 (defn goal-detail-lines
-  "Full objective, state, iterations and active wall time at the time the viewer opens."
+  "State, iterations and active wall time at the time the viewer opens. The objective is in
+   the transcript."
   ([goal] (goal-detail-lines goal (System/currentTimeMillis)))
   ([goal now-ms]
-   (if-not (gateway-contract/shown-session-goal goal)
+   (if-not (shown-goal goal)
      ["No session goal. Use /goal <objective> to create one."]
      [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
-      (get goal "objective") ""
       (str "Iterations: " (goal-count (get goal "iterations_used"))
            " / " (if-let [budget (get goal "iteration_budget")]
                    (goal-count budget)
-                   "unlimited"))
-      (str "Time in goal: "
-           (fmt/format-duration (+ (long (get goal "time_used_ms"))
-                                   (if (= "active" (get goal "status"))
-                                     (max 0 (- (long now-ms) (long (get goal "updated_at"))))
-                                     0)))) ""
+                   "unlimited")) (str "Time in goal: " (goal-time goal now-ms)) ""
       "Use /goal --pause, --resume, --cancel or --clear in the composer."])))
 
 (defn goal-detail-markdown
-  "`goal-detail-lines` as Markdown paragraphs. The person writes the objective in Markdown."
+  "`goal-detail-lines` as Markdown paragraphs."
   ([goal] (goal-detail-markdown goal (System/currentTimeMillis)))
   ([goal now-ms] (str/join "\n\n" (remove str/blank? (goal-detail-lines goal now-ms)))))
 
@@ -735,17 +744,13 @@
                    :region :right
                    :priority 2})
 
-            (gateway-contract/shown-session-goal (get-in db [:session :goal]))
+            (shown-goal (get-in db [:session :goal]))
             (conj {:text (str " Goal: "
                               (get gateway-contract/session-goal-labels
                                    (get-in db [:session :goal "status"]))
-                              " "
-                              (goal-count (get-in db [:session :goal "iterations_used"] 0))
-                              "/"
-                              (if-let [budget (get-in db [:session :goal "iteration_budget"])]
-                                (goal-count budget)
-                                "—")
-                              " iter ")
+                              " - "
+                              (goal-time (get-in db [:session :goal]) now-ms)
+                              " ")
                    :kind :footer-goal
                    :region :left
                    :priority 1

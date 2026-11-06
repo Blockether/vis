@@ -148,10 +148,15 @@
         (expect (not (str/includes? row "tokens")))
         (expect (not (str/includes? row "12,400")))
         (expect (nil? limits))
-        (if (= "cleared" status)
-          ;; A cleared goal was forgotten: no button and no goal text.
+        (expect (not (str/includes? row "Verify session goals")))
+        (if (contains? #{"cleared" "complete"} status)
+          ;; A cleared goal was forgotten, and a complete goal leaves the footer.
           (do (expect (nil? goal-hit)) (expect (not (str/includes? row "Goal"))))
           (do (expect (some? goal-hit))
+              (when (= 120 cols)
+                (expect (str/includes?
+                          row
+                          (str "Goal: " (get contract/session-goal-labels status) " - 32.0s"))))
               (doseq [col (range 2 (long (get-in goal-hit [:bounds :col])))]
                 (expect (nil? (.lookup interactions/hit-map col 1)))))))))
   (it "shows each detail on its own row"
@@ -170,6 +175,6 @@
   (it "adds uncheckpointed active wall time but freezes all inactive states"
       (expect (some #{"Time in goal: 35.0s"} (footer/goal-detail-lines goal 3002)))
       (expect (some #{"Time in goal: 32.0s"} (footer/goal-detail-lines goal 0)))
-      (doseq [status ["paused" "blocked" "budget_limited" "complete" "cancelled"]]
+      (doseq [status ["paused" "blocked" "budget_limited" "cancelled"]]
         (expect (some #{"Time in goal: 32.0s"}
                       (footer/goal-detail-lines (assoc goal "status" status) 100000))))))

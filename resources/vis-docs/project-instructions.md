@@ -148,11 +148,13 @@ replaces it. Ordinary messages never create a goal.
 /goal --clear
 ```
 
-The goal appears in the Companion header and in the TUI's **Goal: <status>**
-button. Open it to see the objective, status, iterations used and their limit,
-and elapsed time. The TUI's separate
-**Limits** button shows provider quotas and reset times. No toggle is needed.
-Goal details appear when the session has a goal.
+The Companion header and the TUI show the goal as a **Goal: <status> - <time>**
+button. The button does not show the objective. The conversation holds it. Open
+the button to see the status, the iterations used and their limit, and the
+elapsed time. When the goal is complete, the button goes away.
+
+The TUI's separate **Limits** button shows provider quotas and reset times. No
+toggle is needed.
 
 Pause, resume and cancel commands use the normal message queue. To interrupt
 work immediately, use **Stop**. An interrupted or failed goal turn pauses the

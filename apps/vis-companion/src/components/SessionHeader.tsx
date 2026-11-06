@@ -204,7 +204,8 @@ export function SessionHeader({
     copyReset.current = window.setTimeout(() => setCopy(null), 1_500);
   }
   // A cleared goal was forgotten. It stays only so that its revision keeps older snapshots out.
-  const goal = model.goal?.status === 'cleared' ? null : model.goal;
+  // A complete goal leaves the header: the transcript keeps the final reply of the model.
+  const goal = model.goal?.status === 'cleared' || model.goal?.status === 'complete' ? null : model.goal;
   const path = model.agentPath;
   const openParent = commands.openParent;
   const backToParent = path && openParent ? () => openParent(path.parentId) : undefined;
@@ -256,7 +257,6 @@ export function SessionHeader({
               density="compact"
               pressEffect="none"
               className="-my-1.5 min-w-0 max-w-full"
-              title={goal.objective}
               aria-haspopup="dialog"
               onClick={() => setGoalDetails(true)}
             >
@@ -366,7 +366,6 @@ export function SessionHeader({
             onClose={() => setGoalDetails(false)}
           >
             <div className="space-y-3 p-4 text-body text-white">
-              <p className="whitespace-pre-wrap break-words">{goal.objective}</p>
               <p className="text-ui text-dialog-hint">
                 Iterations: {goal.iterations_used.toLocaleString('en-US')} /{' '}
                 {goal.iteration_budget?.toLocaleString('en-US') ?? 'unlimited'}

@@ -71,7 +71,7 @@ describe('SessionHeader', () => {
       window.removeEventListener('keydown', below);
     }
   });
-  it('shows only explicitly supplied goals and opens the full objective', () => {
+  it('shows only status and time, also in the goal dialog, without the objective', () => {
     const { rerender } = render(
       <SessionHeader model={model} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />,
     );
@@ -89,9 +89,9 @@ describe('SessionHeader', () => {
     );
     const goalButton = screen.getByRole('button', { name: /^Goal: Blocked/ });
     expect(goalButton).toHaveTextContent(/^Goal: Blocked - 32s$/);
-    expect(screen.queryByText(goal.objective.trim())).not.toBeInTheDocument();
+    expect(goalButton).not.toHaveAttribute('title');
     fireEvent.click(goalButton);
-    expect(screen.getByText(goal.objective.trim())).toBeInTheDocument();
+    expect(screen.queryByText(goal.objective.trim())).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Session goal' })).toBeInTheDocument();
     expect(screen.getByText('Iterations: 12 / 30')).toBeInTheDocument();
     expect(screen.getByText('Time in goal: 32s')).toBeInTheDocument();
@@ -100,15 +100,17 @@ describe('SessionHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close session goal' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
-  it('shows no goal after /goal --clear', () => {
-    render(
-      <SessionHeader
-        model={{ ...model, goal: { ...STORY_GOAL, status: 'cleared' as const } }}
-        commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
-      />,
-    );
-    expect(screen.queryByRole('button', { name: /^Goal:/ })).not.toBeInTheDocument();
-    expect(screen.queryByText(STORY_GOAL.objective.trim())).not.toBeInTheDocument();
+  it('shows no goal after /goal --clear or a complete goal', () => {
+    for (const status of ['cleared', 'complete'] as const) {
+      const { unmount } = render(
+        <SessionHeader
+          model={{ ...model, goal: { ...STORY_GOAL, status } }}
+          commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: /^Goal:/ })).not.toBeInTheDocument();
+      unmount();
+    }
   });
   it('distinguishes unlimited iterations from a reached iteration limit', () => {
     const { rerender } = render(
@@ -153,7 +155,6 @@ describe('SessionHeader', () => {
         'paused',
         'blocked',
         'budget_limited',
-        'complete',
         'cancelled',
       ] as const) {
         rerender(
