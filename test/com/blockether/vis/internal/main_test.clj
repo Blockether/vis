@@ -204,7 +204,34 @@
             (expect (= expected (select-keys @submitted [:provider :model])) (pr-str opts))
             (expect (= "low" (get-in @submitted [:engine-opts :reasoning-effort])))
             (when (:model expected)
-              (expect (= (:model expected) (get-in @submitted [:engine-opts :model])))))))))
+              (expect (= (:model expected) (get-in @submitted [:engine-opts :model]))))))))
+  (it "opens the --db store that the CLI gives as a spec map"
+      (let [before
+            (System/getProperty "vis.db.path")
+
+            seen
+            (atom nil)]
+
+        (try (with-redefs [loop-router/rebuild-router!
+                           (constantly nil)
+
+                           gateway-state/create-session!
+                           (fn [_]
+                             (reset! seen (System/getProperty "vis.db.path"))
+                             {"id" "wire-session"})
+
+                           gateway-state/submit-turn-sync!
+                           (constantly {"content" []})]
+
+               (main/run! {}
+                          "hi"
+                          {:config {:providers []}
+                           :persist? true
+                           :db {:backend :sqlite :path "/tmp/vis-main-test-store"}})
+               (expect (= "/tmp/vis-main-test-store" @seen)))
+             (finally (if before
+                        (System/setProperty "vis.db.path" before)
+                        (System/clearProperty "vis.db.path")))))))
 
 (defdescribe
   fast-help-test

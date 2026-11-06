@@ -783,9 +783,12 @@
             (when local-router? (loop-router/rebuild-router! cfg))
 
             ;; `--db PATH` names the store of a persisted run too, as it does for the
-            ;; gateway commands, so the in-process gateway opens that store.
+            ;; gateway commands, so the in-process gateway opens that store. The CLI
+            ;; gives a resolved spec map; a library caller can give the path string.
             _
-            (when (and (string? db) (not= ":memory" db)) (System/setProperty "vis.db.path" db))
+            (when-let [path (cond (map? db) (:path db)
+                                  (and (string? db) (not= ":memory" db)) db)]
+              (System/setProperty "vis.db.path" (str path)))
 
             resolve-session
             (fn [input]
