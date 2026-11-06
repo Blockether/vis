@@ -629,9 +629,10 @@
    - :on-chunk    - Streaming callback fn
    - :debug?      - Enable debug logging (default false)
    - :config      - Provider config override (skips ~/.vis/config.edn)
-   - :db          - DB target for ephemeral runs (`:memory`, path, or db spec)
-   - :persist?    - Write the run to ~/.vis/vis.mdb as a `:cli`
-                    session. Default false.
+   - :db          - DB target (`:memory`, store directory, or db spec). A
+                    persisted run uses a store directory and ignores `:memory`.
+   - :persist?    - Write the run to the store (default ~/.vis/vis.mdb) as a
+                    `:cli` session. Default false.
    - :session-id  - Continue an existing persisted session (full UUID or
                     unambiguous prefix). Implies persistent execution.
    - :tools       - Tool list (see `loop-env/tool-selection`). A new session keeps it;
@@ -780,6 +781,11 @@
       ;; machinery.
       (let [_
             (when local-router? (loop-router/rebuild-router! cfg))
+
+            ;; `--db PATH` names the store of a persisted run too, as it does for the
+            ;; gateway commands, so the in-process gateway opens that store.
+            _
+            (when (and (string? db) (not= ":memory" db)) (System/setProperty "vis.db.path" db))
 
             resolve-session
             (fn [input]
@@ -1715,9 +1721,9 @@
   (commandline/stdout! "  --name NAME          Set the agent name (default: cli).")
   (commandline/stdout! "  --db PATH|:memory    Override the SQLite store directory (or :memory).")
   (commandline/stdout! "  --session-id ID      Continue an existing persisted session.")
-  (commandline/stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
-  (commandline/stdout! "                       resumable :cli session. Without it a run is")
-  (commandline/stdout! "                       ephemeral: no resume, no session row on disk.")
+  (commandline/stdout! "  --persist            Write this run to the --db store (default")
+  (commandline/stdout! "                       ~/.vis/vis.mdb) as a resumable :cli session.")
+  (commandline/stdout! "                       Without it a run is ephemeral: no resume.")
   (commandline/stdout!
     "  --no-global          Skip ~/.vis config, extensions, AGENTS.md and skills.")
   (commandline/stdout!
