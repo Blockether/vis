@@ -37,12 +37,16 @@
           (expect (= goal (get (state/soul sid) "goal")))
           (expect (= goal (:goal (lp/by-id sid))))
           (expect (= goal (:goal (first (lp/by-channel :api)))))
-          ;; Session introspection must expose the same durable goal, not a parallel API.
-          (let [env {:db-info db :session-id sid}]
-            (expect (= goal (:goal (#'introspection/foundation-session-descriptor env sid))))
-            (expect (= goal (:goal (first (#'introspection/foundation-sessions-data env)))))
-            (expect
-              (= goal (get-in (#'introspection/foundation-inspect-data env sid) [:session :goal]))))
+          ;; Session introspection gives the model only the goal status, not the objective.
+          (let [env {:db-info db :session-id sid}
+                descriptor (#'introspection/foundation-session-descriptor env sid)
+                row (first (#'introspection/foundation-sessions-data env))
+                inspected (:session (#'introspection/foundation-inspect-data env sid))]
+
+            (expect (= "active" (:goal-status descriptor)))
+            (expect (= "active" (:goal-status row)))
+            (expect (= "active" (:goal-status inspected)))
+            (expect (not-any? #(contains? % :goal) [descriptor row inspected])))
           (with-open [out (ByteArrayOutputStream.)]
             (#'server/sse-ready! out (str sid) 0 [] (state/soul sid))
             (let [frame (->> (str/split-lines (.toString out "UTF-8"))
