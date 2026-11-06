@@ -7,13 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.5] - 2026-11-06
+
 ### Added
 - TUI and Companion: a bare `http://` or `https://` URL in a message that you send is now a link (#446). The TUI underlines it and a click opens it in the browser, also in a queued message that a running turn received. The Companion shows it in the link style and a click opens it outside the app. Punctuation after the URL, such as `.`, `,`, `?` or an unmatched `)`, is not part of the link. A URL in inline code or in a code block stays text. The text that the model gets and that the session keeps does not change.
+- Goals: `/goal --clear` forgets the current goal. Goal work stops, the model does not see the goal, and the TUI and the Companion hide it. The command is idempotent.
+- TUI and Companion: the session row menu has Copy session id, after New session.
 
 ### Changed
+- Goals: the session keeps only the goal status. The model sees `session["goal_status"]` only for an active, paused, blocked or budget-limited goal, and the goal rules come only with it. A goal has no reason now, and a migration removes the goal history. The TUI button shows `Goal: <status> - <time>`, and a complete goal leaves the TUI footer and the Companion header. A blocked or complete reply starts with a bold heading and uses short sections.
+- Automations: the model cannot create, change, run or delete automations. Use the Companion app, the TUI or the Automations API. The Companion form now edits webhook payload filters.
+- Gateway: the ready frame sends all team rows, and the GET operation on `/v1/sessions/:sid/agents` is removed. Protocol 22 needs gateway 22, so update the TUI and the Companion with the gateway.
 - Extensions: `vis-agent extension sync --prune` also removes old GitHub versions of each package (#444). Each update kept the old version directory and its environment, about 70 MB or more. Prune keeps the active version and one other version, the rollback version or else the newest one. It never removes a local source link or a version that a running Vis process uses. The output shows each removed version as `pruned`, and a dry run shows it as `would-prune`.
 
 ### Fixed
+- Providers: a `/reload` in one session no longer causes a false authentication failure for a Python provider in another session (#445). A token function that cannot start no longer starts a sign-in.
+- grep: after a write, grep refreshes only the written paths, not the whole index (#442). On a large tree, the grep after a write took minutes and timed out after 30 s. `next(r)` on a capped grep result gets the next page again.
+- CLI: a run with `--persist` and `--db PATH` writes the session to that store, not to `~/.vis/vis.mdb`. A second run with the same `--db` directory works.
 - Providers: a connection that the provider closes during the TLS handshake (`Remote host terminated the handshake`) is now a transport failure that Vis tries again (#447). Before, the error had no category, Vis did not try again and the turn failed. The provider did not get the request, so the retry is safe. A certificate failure stays a failure. svar 0.7.224 contains the fix.
 - Extensions: preparation removes the automatic environments (`.venv-<hash>`) of a Python that no longer exists. Each native release has its own Python, so each deployment added one environment to each extension, about 150 MB, and kept it after the release was removed. Startup then removes the bytecode of these environments. A project `.venv`, a link and the environment of an existing Python stay.
 
