@@ -231,8 +231,9 @@
   finished-goal-leaves-later-turns-test
   (it "finished goal leaves later turns and keeps the system prefix"
       ;; User report: a completed goal still showed its state in later turns, so the model
-      ;; treated a question as progress and kept working. The goal rules stay in the system
-      ;; message, so a goal status change does not rewrite the cached prefix.
+      ;; treated a question as progress and kept working. A complete goal also takes its
+      ;; rules out of the system message. A budget-limited goal keeps its status and rules,
+      ;; so its cached prefix stays the same.
       (doseq [status ["complete" "budget_limited"]]
         (let [env (environment)
               requests (atom [])
@@ -268,8 +269,10 @@
 
                 (expect (= "Do you want a local fix only?" (get-in result [:answer :answer])))
                 (expect (= question (count @requests)))
-                (expect (= (system-text active-request) (system-text later-request)))
-                (expect (str/includes? (system-text later-request) "Explicit session goals"))
+                (if (= "budget_limited" status)
+                  (expect (= (system-text active-request) (system-text later-request)))
+                  (expect (not (str/includes? (system-text later-request)
+                                              "Explicit session goals"))))
                 ;; A complete goal leaves the session view; a budget-limited goal keeps its status.
                 (if (= "budget_limited" status)
                   (expect (str/includes? boundary
@@ -404,6 +407,31 @@
                  (expect (= :cancelled (:status result)))
                  (expect (= "paused" (get (goals/check-goal env) "status")))))
              (finally (loop-env/dispose-environment! env))))))
+
+(defdescribe ended-goal-adds-no-goal-rules-test
+             (it "ended goal adds no goal rules to a later task"
+                 ;; A later CLI or SDK task in the same session is an ordinary task.
+                 (doseq [end ["complete" "cancelled" "cleared"]]
+                   (let [{:keys [db-info session-id] :as env} (environment)
+                         messages (atom nil)]
+
+                     (try (goals/set-goal! db-info session-id "Finished objective" nil)
+                          (case end
+                            "complete"
+                            (goals/update-goal env "complete")
+
+                            "cancelled"
+                            (goals/control! db-info session-id :cancel)
+
+                            "cleared"
+                            (goals/control! db-info session-id :clear))
+                          (with-redefs [svar/ask-code! (fn [_ opts]
+                                                         (reset! messages (str (:messages opts)))
+                                                         {:stop-reason :end :content "Done."})]
+                            (turn/run-turn! env "Ordinary task" {}))
+                          (expect (not (str/includes? @messages "update_goal")) end)
+                          (expect (not (str/includes? @messages "goal_status")) end)
+                          (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe active-goal-does-not-reject-progress-answer-test
              (it "active goal does not reject progress answer"

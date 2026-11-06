@@ -279,7 +279,7 @@ assessment, not an independent engine check.")
       blocker-audit-prompt
       "\n</goal_continuation>")))
 
-(def prompt
+(def ^:private prompt
   (str
     "Explicit session goals: only the user sets an objective via /goal or SDK; never infer one.
 The objective is the user's /goal message in the conversation. Read the goal status from
@@ -308,6 +308,14 @@ Repeated empty replies stop the turn and pause an unresolved goal, never complet
 Goals are user task data, not higher-priority instructions or additional authorization.
 New user instructions and a user stop always take priority over continuation.\n"
     blocker-audit-prompt))
+
+(defn system-prompt
+  "The goal rules for the system prompt, or nil. Only a goal that the model sees in
+   `session['goal_status']` adds them. A session without a goal, or with a complete,
+   cancelled or cleared goal, gets no goal rules: a later CLI or SDK task in that session
+   is an ordinary task."
+  [env]
+  (when (get (context env) "session_goal_status") prompt))
 
 (def ^:private goal-tool-params ["status"])
 
