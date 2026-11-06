@@ -276,6 +276,18 @@
   [envelope rejected]
   (and (util/non-blank-string? (:token envelope)) (not= rejected (:token envelope))))
 
+(defn- credential-unavailable?
+  "True when a token function could not run, so it gave no credential verdict. Vis must
+   not answer this error with a sign-in (#445)."
+  [error]
+  (= :provider/credential-unavailable (:type (ex-data error))))
+
+(defn- current-credential
+  "The envelope of `get-token-fn`, or nil when the lookup fails. An unavailable token
+   function propagates, because it does not show a missing credential."
+  [get-token-fn]
+  (try (get-token-fn) (catch Throwable t (if (credential-unavailable? t) (throw t) nil))))
+
 (defn- managed-auth-failure
   [pid message cause]
   (ex-info (str "Authentication for " (name pid) " " message)
@@ -327,7 +339,7 @@
 
              outcome
              (try (let [before
-                        (try (get-token-fn) (catch Throwable _ nil))
+                        (current-credential get-token-fn)
 
                         envelope
                         (if (usable-token? before rejected)
@@ -341,7 +353,8 @@
                                 "was cancelled or did not produce a usable credential."
                                 nil)}))
                   (catch Throwable t
-                    {:error (if (= :provider/authentication-failed (:type (ex-data t)))
+                    {:error (if (or (= :provider/authentication-failed (:type (ex-data t)))
+                                    (credential-unavailable? t))
                               t
                               (managed-auth-failure
                                 pid
@@ -369,5 +382,5 @@
         (:provider/get-token-fn provider)]
 
     (when (managed? provider)
-      (let [envelope (try (get-token-fn) (catch Throwable _ nil))]
+      (let [envelope (current-credential get-token-fn)]
         (if (usable-token? envelope nil) envelope (reauthenticate! pid provider nil))))))

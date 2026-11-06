@@ -87,3 +87,29 @@
             (expect (:ok? (auth/logout! :auth-limits-test)))
             (expect (= ["fresh" "signed-out"] @observed)))
           (finally (limits/flush-limits-cache! :auth-limits-test))))))
+
+(defdescribe unavailable-token-function-test
+             ;; #445: a token function that could not run gave no credential verdict. Vis
+             ;; started a sign-in and reported a false authentication failure.
+             (it "passes the error through and does not start a sign-in"
+                 (let [signed-in
+                       (atom 0)
+
+                       provider
+                       {:provider/is-managed true
+                        :provider/get-token-fn #(throw (ex-info
+                                                         "Python extension context was retired"
+                                                         {:type :provider/credential-unavailable}))
+                        :provider/auth-fn (fn [_]
+                                            (swap! signed-in inc))}]
+
+                   (with-redefs [registry/provider-by-id (constantly provider)]
+                     (expect (= :provider/credential-unavailable
+                                (try (auth-health/ensure-authenticated! :auth-limits-test)
+                                     nil
+                                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                     (expect (= :provider/credential-unavailable
+                                (try (auth-health/reauthenticate! :auth-limits-test provider nil)
+                                     nil
+                                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+                   (expect (= 0 @signed-in)))))

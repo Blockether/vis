@@ -5815,7 +5815,25 @@ vis.register_extension(vis.Extension(
                  (expect (= ["before"] @during))
                  (expect (= "after" (:token (kept))))))
              (finally (binding [workspace/*workspace-root* root]
-                        (pyx/reload-python-extensions! {:dirs [] :project-root root})))))))
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "reports a removed provider extension as unavailable, not as a missing credential"
+      (with-fresh-loaded
+        {"provider.py" (reload-provider-py "before")}
+        (fn [_ {:keys [ext-dir]}]
+          (let [kept (:provider/get-token-fn (registry/provider-by-id :reload-provider))]
+            (io/delete-file (io/file ext-dir "provider.py"))
+            (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+            (expect
+              (= :provider/credential-unavailable
+                 (try (kept) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+  (it "keeps a token function that raises a missing credential"
+      (with-fresh-loaded
+        {"provider.py"
+         (str/replace (reload-provider-py "unused")
+                      "    return vis.ProviderCredential('unused', api_url='https://corp.test/v1')"
+                      "    raise RuntimeError('fixture token is not set')")}
+        (fn [_ _]
+          (expect (nil? ((:provider/get-token-fn (registry/provider-by-id :reload-provider)))))))))
 
 ;; Regression: a MANAGED provider declared by a PYTHON extension was a flag that
   ;; never crossed the host boundary - `is_managed=True` in `vis.Provider(...)`

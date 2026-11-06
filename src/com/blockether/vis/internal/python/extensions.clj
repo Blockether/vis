@@ -2553,18 +2553,34 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    provider."
   {:base-url as-str :api-style as-api-style :default-models as-strs :is-hidden as-bool})
 
+(defn- call-not-started?
+  "True when `t` stopped a call before guest code ran: the context was retired, the
+   session closed, or a reload removed or changed the callable."
+  [t]
+  (let [data (ex-data t)]
+    (and (not (::call-started data))
+         (contains? #{::context-retired ::session-closed ::callable-refused} (:type data)))))
+
 (defn- provider-fn-adapter
   "Wrap a Python provider callable as a Clojure provider fn. Args marshal in; the
    result is plainified and DECODED against `fields`, the shape that slot's host
    schema declares. A raised Python error is logged and surfaces as nil so a
-   broken provider fn never bricks router build / auth."
-  [ext-name ctx pyfn fields]
+   broken provider fn never bricks router build / auth.
+
+   A `credential?` callable that did not start gave no credential verdict. It throws
+   `:provider/credential-unavailable`, so Vis does not start a sign-in for it (#445)."
+  [ext-name ctx pyfn fields credential?]
   (fn [& args]
     (try (decoded-result fields (plainify (call-py-ext ext-name nil ctx pyfn (vec args))))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::provider-fn-failed
                       :data {:extension ext-name :error (ex-message t)}})
+           (when (and credential? (call-not-started? t))
+             (throw (ex-info (str "Python extension `" ext-name
+                                  "` could not read its provider credential: " (ex-message t))
+                             {:type :provider/credential-unavailable :extension ext-name}
+                             t)))
            nil))))
 
 (def ^:private auth-success-results
@@ -2721,7 +2737,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (let [adapt
         (fn [pk fields]
           (let [v (get spec pk)]
-            (when (fn? v) (provider-fn-adapter ext-name ctx v fields))))
+            (when (fn? v) (provider-fn-adapter ext-name ctx v fields (= "get_token_fn" pk)))))
 
         preset
         (decode preset-fields (get spec "preset"))]
