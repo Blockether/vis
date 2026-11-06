@@ -186,8 +186,17 @@
                    (expect (= :invalid-request
                               (perr/provider-error-kind
                                 {:message "Exceptional status code: 400"
-                                 :data {:status 400
-                                        :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
+                                 :data {:status 400 :body "{\"error\":{\"message\":\"bad\"}}"}}))))
+               (it "a TLS handshake that the provider ends is a retryable transport failure (#447)"
+                   (let [handshake-err {:message "Remote host terminated the handshake" :data {}}]
+                     (expect (= :transport (perr/provider-error-kind handshake-err)))
+                     (expect (true? (perr/provider-error-retryable? handshake-err)))))
+               (it "a certificate failure is not a transport failure"
+                   (let [cert-err
+                         {:message
+                          "PKIX path building failed: unable to find valid certification path"
+                          :data {}}]
+                     (expect (not= :transport (perr/provider-error-kind cert-err)))))))
 
 (defdescribe
   stream-connection-error-test

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Extensions: `vis-agent extension sync --prune` also removes old GitHub versions of each package (#444). Each update kept the old version directory and its environment, about 70 MB or more. Prune keeps the active version and one other version, the rollback version or else the newest one. It never removes a local source link or a version that a running Vis process uses. The output shows each removed version as `pruned`, and a dry run shows it as `would-prune`.
 
 ### Fixed
+- Providers: a connection that the provider closes during the TLS handshake (`Remote host terminated the handshake`) is now a transport failure that Vis tries again (#447). Before, the error had no category, Vis did not try again and the turn failed. The provider did not get the request, so the retry is safe. A certificate failure stays a failure. svar 0.7.224 contains the fix.
 - Extensions: preparation removes the automatic environments (`.venv-<hash>`) of a Python that no longer exists. Each native release has its own Python, so each deployment added one environment to each extension, about 150 MB, and kept it after the release was removed. Startup then removes the bytecode of these environments. A project `.venv`, a link and the environment of an existing Python stay.
 
 ## [v0.5.4] - 2026-11-04
