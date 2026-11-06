@@ -205,8 +205,11 @@
   (set (map #(get % "id") (get (request-json! :get "/v1/sessions" {}) "sessions"))))
 
 (defn- children
+  "The subagent ids of `sid`. A wait without ids answers the records of all children."
   [sid]
-  (set (keep #(get % "session_id") (request-json! :get (str "/v1/sessions/" sid "/agents") {}))))
+  (set (keep
+         #(get % "session_id")
+         (request-json! :post (str "/v1/sessions/" sid "/agents/wait") {:body {:timeout_secs 1}}))))
 
 (defn- install-fixtures!
   [^File dir]

@@ -27,6 +27,11 @@ def _session_ids():
     return {row.get("id") or row.get("session_id") for row in vis.sessions.list()}
 
 
+def _children():
+    """Session ids of this session's subagents. A wait without ids covers all of them."""
+    return [r.session_id for r in vis.council.wait(timeout_secs=1)]
+
+
 def _render(*, result, error, **_):
     return vis.ActivityPresentation("E2E sessions", str(error) if error else "Done")
 
@@ -51,7 +56,7 @@ class Sessions:
             vis.council.spawn(task, key=key, iteration_budget=iterations).session_id
             for _ in range(repeat)
         ]
-        return {"ids": ids, "children": [a.session_id for a in vis.council.subagents()]}
+        return {"ids": ids, "children": _children()}
 
     @vis.method(activity=_activity("Wait for children"))
     def wait(self, ids: list[str] | None = None, timeout: int = 240) -> list:
@@ -100,7 +105,7 @@ class Sessions:
         thread = threading.Thread(target=work)
         thread.start()
         thread.join(60)
-        out["children"] = [a.session_id for a in vis.council.subagents()]
+        out["children"] = _children()
         return out
 
     @vis.method(tag="mutation", activity=_activity("Run a session"))
