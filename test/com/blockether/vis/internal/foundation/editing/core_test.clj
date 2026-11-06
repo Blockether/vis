@@ -2056,7 +2056,7 @@
         (expect (= [] (get hit "after")))
         (expect (= 1 (count rows)))
         (expect (= "  1│ ZZONEZZ" (first rows)))))
-  (it "a capped sweep says capped on line 1, breadth included"
+  (it "a capped sweep gives the cap and the next offset on line 1, breadth included"
       (let [render
             (private-fn "render-grep-text")
 
@@ -2074,10 +2074,11 @@
         ;; A capped page also names the answer that is NOT a page: without it, the
         ;; caller who wants "which files, how many times" rewrites the search as a
         ;; hand-rolled walk instead of asking for files-only.
-        (expect
-          (= (str "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit; 125 more files"
-                  " match — add \"is_files_only\": True for every file with its hit count")
-             head))))
+        ;; The Python runtime reads `next(r)` from the `"offset": N` field of this line.
+        (expect (= (str "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit, next"
+                        " \"offset\": 50; 125 more files match — add \"is_files_only\": True for"
+                        " every file with its hit count")
+                   head))))
   (it "a page capped only on file NAMES does not read as a capped content sweep"
       ;; Issue #438: `0 hits · 0 files  capped by limit` read as a content cap, and
       ;; its offset 50 was the NAME page, not the 500-file files-only page.
@@ -2089,7 +2090,8 @@
                                                "file_count" 0
                                                "truncated_by" "limit"
                                                "next_offset" 50})))]
-        (expect (= "grep 'zzq_vis_probe'  0 hits · 0 files  file NAME matches capped by limit"
+        (expect (= (str "grep 'zzq_vis_probe'  0 hits · 0 files  file NAME matches capped by limit,"
+                        " next \"offset\": 50")
                    head)))))
 
 (defdescribe

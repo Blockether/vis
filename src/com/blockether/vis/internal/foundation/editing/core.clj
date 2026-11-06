@@ -1975,14 +1975,13 @@
           tuples))
 
 (defn- grep-summary-line
-  "Line 1, ALWAYS: the query, the counts, and — when the sweep was capped — how
-   to CONTINUE: `next(r)` first, because the caller is Python and that is the
-   whole step, then the literal call, which carries the offset the next page
-   starts at and is what the sandbox reads back out of this line. Both name THIS
-   query: an `offset` carried onto a DIFFERENT search silently skips its hits.
-   The continuation goes FIRST because a block's printed output is HEAD-clipped,
-   so a trailing summary is the first casualty of exactly the wide grep whose
-   truncation you must know about."
+  "Line 1, ALWAYS: the query, the counts, and — when the sweep was capped — the
+   cap and the offset where the next page starts, as `next \"offset\": N`. The
+   sandbox reads that offset back out of this line for `next(r)`, `r.pages()`
+   and `r.all()`, so the field is a contract with the Python runtime. The cap goes
+   on line 1 because a block's printed output is HEAD-clipped, so a trailing
+   summary is the first casualty of exactly the wide grep whose truncation you
+   must know about."
   ^String [result]
   (let [ls?
         (str/blank? (str (get result "query")))
@@ -2043,6 +2042,8 @@
                 (str (if (contains? #{"limit" "bytes"} content-cap)
                        (str "  capped by " content-cap)
                        "  file NAME matches capped by limit")
+                     ", next \"offset\": "
+                     next-offset
                      complete)
                 :else ""))
 
@@ -4960,8 +4961,9 @@
        "`limit` caps the total results per page, not per file: a positive integer, default 50. "
        "`is_files_only: True` gives one row per matching file with its match count instead of the "
        "lines. Use it when a query matches too much to page through, and `limit` then counts files "
-       "(default 500). A capped result is never silent: line 1 says `capped`, and the result "
-       "pages itself with `next(r)`, `r.pages()` or `r.all()`. You can also pass `offset` by hand. "
+       "(default 500). A capped result is never silent: line 1 says `capped` and the next offset, and "
+       "the result pages itself with `next(r)`, `r.pages()` or `r.all()`. You can also pass "
+       "`offset` by hand. "
        "`offset` belongs to ONE query: another query's offset skips real hits, and its empty page "
        "says so.\n\n"
        "A near-miss key maps to the key it means, so a search does not fail over one word. `glob` "
