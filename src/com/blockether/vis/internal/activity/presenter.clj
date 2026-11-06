@@ -558,8 +558,8 @@
    "mcp__call" ["Call MCP tool" "Called MCP tool" true]})
 
 (def ^:private result-fields
-  {"get_session" ["title" "goal" "turn_count" "model" "last_turn"]
-   "list_sessions" ["title" "goal" "turn_count" "request_snippet" "reply_snippet"]
+  {"get_session" ["title" "goal_status" "turn_count" "model" "last_turn"]
+   "list_sessions" ["title" "goal_status" "turn_count" "request_snippet" "reply_snippet"]
    "draft_approve" ["files"]
    "mcp__call" ["content" "tools"]})
 
@@ -1041,23 +1041,24 @@
          (when present?
            [{"headline" "Session details"
              "summary" "Metadata and complete usage"
-             "content"
-             (vec (concat (result-blocks (visible-result (select-result ["title" "goal" "model"
-                                                                         "provider" "created_at"]
-                                                                        session)))
-                          (when (or totals cost)
-                            [(heading "Usage breakdown")
-                             {"type" "table"
-                              "columns" ["Metric" "Session" "Current turn"]
-                              "rows" (conj (mapv (fn [[title total-key current-key]]
-                                                   [title (metric total-key)
-                                                    (display (field cost current-key))])
-                                                 metrics)
-                                           ["Cost (USD)" (display (field totals "cost_usd"))
-                                            (display (field cost "total_cost"))])}])
-                          (when (seq (field diagnosis "next_actions"))
-                            [(heading "Next actions")
-                             (text (str/join "\n" (field diagnosis "next_actions")))])))}])
+             "content" (vec
+                         (concat (result-blocks (visible-result (select-result
+                                                                  ["title" "goal_status" "model"
+                                                                   "provider" "created_at"]
+                                                                  session)))
+                                 (when (or totals cost)
+                                   [(heading "Usage breakdown")
+                                    {"type" "table"
+                                     "columns" ["Metric" "Session" "Current turn"]
+                                     "rows" (conj (mapv (fn [[title total-key current-key]]
+                                                          [title (metric total-key)
+                                                           (display (field cost current-key))])
+                                                        metrics)
+                                                  ["Cost (USD)" (display (field totals "cost_usd"))
+                                                   (display (field cost "total_cost"))])}])
+                                 (when (seq (field diagnosis "next_actions"))
+                                   [(heading "Next actions")
+                                    (text (str/join "\n" (field diagnosis "next_actions")))])))}])
          (when (seq turns)
            [{"headline" "Turn details"
              "summary" (str (counted-label (count turns) "turn") " · full requests and answers")

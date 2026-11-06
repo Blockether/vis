@@ -261,6 +261,21 @@
                                                       "session_goal_status" "active")}
                                               nil))]
         (expect (str/includes? boundary "session[\"goal_status\"] = \"active\""))))
+  (it "removes the goal status that the model saw when the goal left the view"
+      ;; A complete, cancelled or cleared goal leaves the view, also between turns.
+      (let [{:keys [text baseline]}
+            (cr/turn-boundary {:ctx (assoc base-ctx
+                                      "session_turn" 5
+                                      "session_goal_status" "active")}
+                              {})
+
+            later
+            (cr/turn-boundary {:ctx (assoc base-ctx "session_turn" 6)} baseline)]
+
+        (expect (= "active" (get baseline "goal_status")))
+        (expect (not (str/includes? text "del session")))
+        (expect (str/includes? (:text later) "del session[\"goal_status\"]"))
+        (expect (not (contains? (:baseline later) "goal_status")))))
   (describe
     "app notes"
     (let [apps

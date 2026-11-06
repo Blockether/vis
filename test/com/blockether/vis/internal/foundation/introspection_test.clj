@@ -849,20 +849,22 @@
                         (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
-  cleared-goal-session-rows-test
-  (it "shows the model a goal of another session, but never a cleared goal"
+  goal-session-rows-test
+  (it "shows the model only the status of a goal that still directs work"
+      ;; The objective is in the transcript; a complete or cleared goal leaves the rows.
       (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "Goal fixture"})
                    _ (goals/set-goal! s cid "Secret objective" nil)
-                   goal-of
-                   (fn []
-                     [(:goal (@#'introspection/foundation-session-descriptor {:db-info s} cid))
-                      (:goal (first (@#'introspection/foundation-sessions-data {:db-info s})))])]
+                   rows (fn []
+                          [(@#'introspection/foundation-session-descriptor {:db-info s} cid)
+                           (first (@#'introspection/foundation-sessions-data {:db-info s}))])]
 
-               (expect (= ["Secret objective" "Secret objective"]
-                          (mapv #(get % "objective") (goal-of))))
+               (expect (= ["active" "active"] (mapv :goal-status (rows))))
+               (expect (not (str/includes? (pr-str (rows)) "Secret objective")))
+               (goals/control! s cid :pause)
+               (expect (= ["paused" "paused"] (mapv :goal-status (rows))))
                (goals/control! s cid :clear)
-               (expect (= [nil nil] (goal-of))))
+               (expect (= [nil nil] (mapv :goal-status (rows)))))
              (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe

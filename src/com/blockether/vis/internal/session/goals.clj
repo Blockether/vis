@@ -29,12 +29,17 @@
    directs no more work, so `session['goal_status']` disappears."
   #{"active" "paused" "blocked" "budget_limited"})
 
+(defn visible-status
+  "The status of `goal` that a model may see, or nil when the goal directs no more work."
+  [goal]
+  (let [status (get goal "status")]
+    (when (contains? visible-statuses status) status)))
+
 (defn context
   "The goal key of the model session view, from one read of the goal. The model sees only
    the status: the objective is in the transcript, where the user set it."
   [env]
-  {"session_goal_status" (let [status (get (check-goal env) "status")]
-                           (when (contains? visible-statuses status) status))})
+  {"session_goal_status" (visible-status (check-goal env))})
 
 (defn- fail! [message] (throw (ex-info message {:type :goal/invalid})))
 
@@ -262,7 +267,7 @@ continuation, identify concrete progress, a verified live operation worth waitin
 no progress. Continue other authorized work while one branch waits. Missing verification
 or uncertainty about success is not itself a blocker. Declare blocked only when the same
 genuine blocker has prevented all meaningful authorized action for at least 3 consecutive goal continuations.
-Reset this audit after user input, resume, or new progress; an old blocked reason is not current evidence.
+Reset this audit after user input, resume, or new progress; an earlier blocker reply is not current evidence.
 Do not invent activity or repeatedly poll just to reach the count. Report the blocker,
 attempted alternatives and remaining requirements in your final reply. This audit is your
 assessment, not an independent engine check.")

@@ -27,8 +27,8 @@
             [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.provider.error :as perr]
+            [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.util :as util]))
 
 ;; ---------------------------------------------------------------------------
@@ -526,7 +526,8 @@
              (cond-> {:id session-id
                       :channel (:channel session)
                       :title (:title session)
-                      :goal (gateway-contract/shown-session-goal (:goal session))
+                      ;; The model sees only the goal status; the objective is in the transcript.
+                      :goal-status (goals/visible-status (:goal session))
                       :model (:model session)
                       :created-at (:created-at session)
                       :turns turns
@@ -577,7 +578,7 @@
      (cond-> {:id (:id session)
               :channel (:channel session)
               :title (:title session)
-              :goal (gateway-contract/shown-session-goal (:goal session))
+              :goal-status (goals/visible-status (:goal session))
               :created-at (:created-at session)
               :modified-at modified-at
               :turn-count (count turns)}
@@ -1562,7 +1563,8 @@
      :result
      (str
        "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
-       "usage, transcript}`. `session.goal` is the persisted goal or None. In a fork, "
+       "usage, transcript}`. `session.goal_status` is the status of a goal that still directs work "
+       "(`active`, `paused`, `blocked` or `budget_limited`), else None. In a fork, "
        "`session.forked_from` has the source `session_id`, the last copied `turn_id` and the "
        "current `outcome` of that turn. A turn that the fork settled has the outcome `forked`. "
        "Printing shows a summary, "
@@ -1585,12 +1587,14 @@
        "`get_session(target)` is another session. `target` takes an id, an unambiguous prefix or the "
        "copied `vis_session_id#<uuid>` marker. It has no transcript: read the content with "
        "`read_session(id)` and the whole index with `list_sessions()`.")
-     :result (str
-               "String-keyed row `{id, channel, title, goal, turn_count, created_at, modified_at, "
-               "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
-               "(`{id, outcome, user_request}`) when known. `goal` is the persisted goal or None. "
-               "A starred session adds `favorite_rank` — the human's star order, lowest first. "
-               "None when nothing matches.")}))
+     :result
+     (str
+       "String-keyed row `{id, channel, title, goal_status, turn_count, created_at, modified_at, "
+       "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
+       "(`{id, outcome, user_request}`) when known. `goal_status` is the status of a goal that "
+       "still directs work (`active`, `paused`, `blocked` or `budget_limited`), else None. "
+       "A starred session adds `favorite_rank` — the human's star order, lowest first. "
+       "None when nothing matches.")}))
 
 (def list-sessions-symbol
   (extension/symbol
@@ -1609,8 +1613,10 @@
        "in python_execution, and do not convert them to a string or slice them blindly.")
      :result
      (str
-       "String-keyed rows `{id, channel, title, goal, turn_count, created_at, modified_at}`. `goal` "
-       "is the persisted goal or None. A starred session adds `favorite_rank`, the human's star "
+       "String-keyed rows `{id, channel, title, goal_status, turn_count, created_at, modified_at}`. "
+       "`goal_status` is the status of a goal that still directs work (`active`, `paused`, "
+       "`blocked` or `budget_limited`), else None. "
+       "A starred session adds `favorite_rank`, the human's star "
        "order, lowest first. A matched row adds `rank` and "
        "`is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking`. The `request_snippet` and "
        "`reply_snippet` windows are optional, and one or both keys can be absent. Use "

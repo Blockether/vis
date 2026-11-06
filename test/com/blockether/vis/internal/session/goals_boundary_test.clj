@@ -41,11 +41,17 @@
           (atom 0)
 
           snapshots
+          (atom [])
+
+          deletes
           (atom [])]
 
       (try
         (with-redefs [svar/ask-code!
                       (fn [_ opts]
+                        (swap! deletes conj
+                          (boolean (some #(str/includes? % "del session[\"goal_status\"]")
+                                         (filter string? (tree-seq coll? seq (:messages opts))))))
                         (expect (str/includes? (str (:messages opts)) "update_goal"))
                         (expect (str/includes? (str (:messages opts)) "goal_status"))
                         (swap! snapshots conj (ctx-loop/session-snapshot env))
@@ -79,7 +85,9 @@
             ;; The final reply after the completion is not goal work.
             (expect (= 16 (get (goals/check-goal env) "tokens_used")))
             (expect (= 2 (get (goals/check-goal env) "iterations_used")))
-            (expect (= "active" (get (first @snapshots) "session_goal_status")))))
+            (expect (= "active" (get (first @snapshots) "session_goal_status")))
+            ;; The model must see the status go away, not keep reading "active".
+            (expect (= [false false true] @deletes))))
         (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
@@ -138,11 +146,14 @@
             (environment)
 
             requests
-            (atom 0)]
+            (atom 0)
+
+            final-request
+            (atom nil)]
 
         (try
           (with-redefs [svar/ask-code!
-                        (fn [_ _]
+                        (fn [_ opts]
                           (case (swap! requests inc)
                             1
                             {:stop-reason :tool-calls
@@ -155,7 +166,10 @@
                                                    "print('Current iteration tools finished.')"}}]}
 
                             2
-                            {:stop-reason :end :content "Verified result or external blocker."}
+                            (do (reset! final-request (filter
+                                                        string?
+                                                        (tree-seq coll? seq (:messages opts))))
+                                {:stop-reason :end :content "Verified result or external blocker."})
 
                             (throw (AssertionError. "Unexpected request after the final reply"))))]
             (let [result (turn/run-turn!
@@ -168,7 +182,12 @@
               (expect (= status (get (goals/check-goal env) "status")))
               (expect (= 1 (get (goals/check-goal env) "iterations_used")))
               (expect (= "Verified result or external blocker." (get-in result [:answer :answer])))
-              (expect (str/includes? (str (:trace result)) "Current iteration tools finished."))))
+              (expect (str/includes? (str (:trace result)) "Current iteration tools finished."))
+              ;; A complete goal leaves the view at once, so the final reply must not read it.
+              (expect (= (= "complete" status)
+                         (boolean (some #(str/includes? % "del session[\"goal_status\"]")
+                                        @final-request)))
+                      status)))
           (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe

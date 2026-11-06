@@ -691,7 +691,7 @@
      {"title" "Session review"
       "model" "example-model"
       "turn_count" 3
-      "goal" "Verify a complete session read."
+      "goal_status" "active"
       "turns"
       [{"id" "turn-1"
         "outcome" "completed"

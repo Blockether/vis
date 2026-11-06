@@ -200,7 +200,8 @@
 
    The goal status rides here for the same reason: `/goal` persists AFTER the frozen
    standing block was rendered, so without this line the very turn that sets a
-   goal shows the model a session without one.
+   goal shows the model a session without one. When the goal leaves the view and
+   `baseline` still holds its status, the boundary removes it.
 
    The app notes ride here too: the newest note of each app and HTML page reaches
    the model with every user message. When the notes are gone and `baseline`
@@ -226,11 +227,23 @@
                 (env/ctx->python-line turn)
                 (when utilization
                   (str "\nsession[\"utilization\"] = " (env/ctx->python-line utilization)))
-                (when goal-status
-                  (str "\nsession[\"goal_status\"] = " (env/ctx->python-line goal-status)))
+                (cond goal-status (str "\nsession[\"goal_status\"] = "
+                                       (env/ctx->python-line goal-status))
+                      (contains? baseline "goal_status") "\ndel session[\"goal_status\"]")
                 (cond apps (str "\nsession[\"apps\"] = " (env/ctx->python-line apps))
                       (contains? baseline "apps") "\ndel session[\"apps\"]"))
-     :baseline (if apps (assoc baseline "apps" apps) (dissoc baseline "apps"))}))
+     :baseline (cond-> baseline
+                 goal-status
+                 (assoc "goal_status" goal-status)
+
+                 (not goal-status)
+                 (dissoc "goal_status")
+
+                 apps
+                 (assoc "apps" apps)
+
+                 (not apps)
+                 (dissoc "apps"))}))
 
 (defn- ctx-path-str
   "A key path `[\"env\" \"host\" \"os\"]` → the Python subscript chain
