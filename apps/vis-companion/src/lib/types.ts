@@ -48,7 +48,6 @@ export interface SessionGoal {
   time_used_ms: number;
   revision: number;
   version: number;
-  reason: string | null;
   created_at: number;
   updated_at: number;
 }

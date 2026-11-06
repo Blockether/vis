@@ -7,7 +7,6 @@ import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
 import { markSessionId } from '../lib/session-id';
-import { Markdown } from './ChatContent';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
 import {
   AlertIcon,
@@ -375,10 +374,8 @@ export function SessionHeader({
               <p className="text-ui text-dialog-hint">
                 Time in goal: <GoalTime key={goal.id} goal={goal} />
               </p>
-              {/* The model writes the reason in Markdown: a sentence, then labeled items. */}
-              {goal.reason && <Markdown>{goal.reason}</Markdown>}
               <p className="text-ui text-dialog-hint">
-                Use /goal --pause, --resume, --cancel, --clear or --clear-all in the composer.
+                Use /goal --pause, --resume, --cancel or --clear in the composer.
               </p>
             </div>
           </DialogFrame>

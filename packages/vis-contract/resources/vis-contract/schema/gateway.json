@@ -2053,7 +2053,7 @@
             {
               "const": "cleared",
               "title": "Cleared",
-              "description": "The user forgot the goal with /goal --clear or --clear-all. Clients show no goal, and the model does not see it. The record stays so that clients keep the highest revision."
+              "description": "The user forgot the goal with /goal --clear. Clients show no goal, and the model does not see it. The record stays so that clients keep the highest revision."
             }
           ]
         },
@@ -2083,13 +2083,6 @@
           "type": "integer",
           "minimum": 1
         },
-        "reason": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "maxLength": 2000
-        },
         "created_at": {
           "type": "integer",
           "minimum": 0
@@ -2101,7 +2094,7 @@
         "iterations_used": {
           "type": "integer",
           "minimum": 0,
-          "description": "Completed model responses and their tools, including prose, empty responses and the completion summary. Provider retries within one request are not separate iterations."
+          "description": "Completed model responses and their tools, including prose, empty responses and the response whose tools complete or block the goal. The final reply after that response is not counted. Provider retries within one request are not separate iterations."
         }
       },
       "required": [
@@ -2114,7 +2107,6 @@
         "time_used_ms",
         "revision",
         "version",
-        "reason",
         "created_at",
         "updated_at"
       ]

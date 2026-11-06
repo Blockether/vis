@@ -99,7 +99,7 @@
              "engine_private" "hidden"
              "session_resources" ["hidden"]
              "id" "wrong"
-             "goal" "wrong"
+             "goal_status" "wrong"
              "workspace" {"root" "/wrong"}}]
 
         (with-redefs [prompt/active-extensions
@@ -112,7 +112,7 @@
             (expect (= ["Visible repair"] (get live "python_syntax_repairs")))
             (expect (= "s1" (get live "id")))
             (expect (= "/repo" (get-in live ["workspace" "root"])))
-            (doseq [key ["engine_private" "session_resources" "goal"]]
+            (doseq [key ["engine_private" "session_resources" "goal_status"]]
               (expect (not (contains? live key)))))))))
 
 (defdescribe
@@ -255,18 +255,12 @@
   ;; Regression: `/goal` persists ~13 ms AFTER the frozen standing block was
   ;; rendered, so iteration 1 of the turn that SETS a goal used to read a
   ;; session without one and spent a step re-checking whether it saved.
-  (it "renders a goal set by this very turn for iteration 1"
+  (it "renders a goal status set by this very turn for iteration 1"
       (let [boundary (:text (cr/turn-boundary {:ctx (assoc base-ctx
                                                       "session_turn" 4
-                                                      "session_goal" {"id" "g1"
-                                                                      "objective"
-                                                                      "remove the legacy cache"
-                                                                      "status" "active"
-                                                                      "revision" 1})}
+                                                      "session_goal_status" "active")}
                                               nil))]
-        (expect (str/includes? boundary "session[\"goal\"] = "))
-        (expect (str/includes? boundary "\"objective\": \"remove the legacy cache\""))
-        (expect (str/includes? boundary "\"status\": \"active\""))))
+        (expect (str/includes? boundary "session[\"goal_status\"] = \"active\""))))
   (describe
     "app notes"
     (let [apps
@@ -299,14 +293,12 @@
           (let [view (ctx-engine/session-view (assoc ctx
                                                 "session_extension_context" {"apps" "replaced"}))]
             (expect (= apps (get (cr/project-ctx view) "apps")))))))
-  (it "keeps the changing goal after the cached system prefix"
+  (it "keeps the changing goal status after the cached system prefix"
       (let [active
-            (assoc base-ctx
-              "session_goal"
-              {"id" "g1" "objective" "finish the task" "status" "active" "iterations_used" 1})
+            (assoc base-ctx "session_goal_status" "active")
 
             paused
-            (assoc-in active ["session_goal" "status"] "paused")
+            (assoc base-ctx "session_goal_status" "paused")
 
             frozen
             (cr/render-ctx-static {:ctx active})
@@ -324,11 +316,11 @@
             (cr/render-ctx-delta (cr/ctx-delta-map {:ctx paused})
                                  (cr/ctx-delta-map {:ctx base-ctx}))]
 
-        (expect (not (str/includes? frozen "finish the task")))
-        (expect (not (contains? initial "goal")))
-        (expect (str/includes? first-delta "session[\"goal\"] = "))
-        (expect (str/includes? update-delta "session[\"goal\"][\"status\"] = \"paused\""))
-        (expect (str/includes? removal-delta "del session[\"goal\"]")))))
+        (expect (not (str/includes? frozen "goal_status")))
+        (expect (not (contains? initial "goal_status")))
+        (expect (str/includes? first-delta "session[\"goal_status\"] = \"active\""))
+        (expect (str/includes? update-delta "session[\"goal_status\"] = \"paused\""))
+        (expect (str/includes? removal-delta "del session[\"goal_status\"]")))))
 
 (defdescribe
   model-facing-utilization-test

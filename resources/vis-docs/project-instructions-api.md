@@ -184,6 +184,7 @@ event stream also sends it in the `subscription.ready` event, also when the sess
 
 - `status` is `active`, `paused`, `blocked`, `budget_limited`, `complete`, `cancelled` or `cleared`.
   The apps show `budget_limited` as "iteration-limit reached" and show no goal for `cleared`.
+  The goal has no reason text. The final reply of the turn gives the evidence or the blocker.
 - `iteration_budget` is a positive integer or `None`. `iterations_used` is zero or more.
 - `tokens_used` counts the measured input, output and cached input. It is for statistics and does
   not limit the work.
@@ -204,6 +205,7 @@ stream also sends it in the `subscription.ready` event, also when the session is
 
 - `status` is `active`, `paused`, `blocked`, `budget_limited`, `complete`, `cancelled` or `cleared`.
   The apps show `budget_limited` as "iteration-limit reached" and show no goal for `cleared`.
+  The goal has no reason text. The final reply of the turn gives the evidence or the blocker.
 - `iteration_budget` is a positive integer or `null`. `iterations_used` is zero or more.
 - `tokens_used` counts the measured input, output and cached input. It is for statistics and does
   not limit the work.
@@ -221,11 +223,9 @@ session.send("/goal --pause").wait(timeout=60)
 session.send("/goal --resume")
 session.send("/goal --cancel")
 session.send("/goal --clear")
-session.send("/goal --clear-all")
 ```
 
 `--clear` forgets the goal: its status becomes `cleared`, and the model no longer sees it.
-`--clear-all` also forgets the goal history.
 
 These commands wait in the normal message queue. To stop the work at once, cancel the running turn
 as in [Queue and cancel messages](sessions-api.md#queue-and-cancel-messages). The SDK has no other
@@ -240,9 +240,8 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/turns" -H 'content-typ
   --data '{"request": "/goal --pause", "idempotency_key": "goal-pause-1"}'
 ```
 
-Send `/goal --resume`, `/goal --cancel`, `/goal --clear` or `/goal --clear-all` in the same way.
-`--clear` forgets the goal, and `--clear-all` also forgets the goal history. These commands wait in the normal message
-queue. To stop the work at once, cancel the running turn as in [Queue and cancel
+Send `/goal --resume`, `/goal --cancel` or `/goal --clear` in the same way. `--clear` forgets the
+goal. These commands wait in the normal message queue. To stop the work at once, cancel the running turn as in [Queue and cancel
 messages](sessions-api.md#queue-and-cancel-messages). The API has no other requests to read or
 change a goal.
 

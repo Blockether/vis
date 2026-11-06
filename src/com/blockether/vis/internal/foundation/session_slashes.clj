@@ -121,9 +121,9 @@
    via `:ext/slash-commands` (concatenated with the workspace slashes)."
   [{:slash/name "goal"
     :slash/doc
-    "Set an explicit goal with an optional iteration budget, or pause, resume, cancel or forget it. --clear forgets the goal; --clear-all also forgets the goal history."
+    "Set an explicit goal with an optional iteration budget, or pause, resume, cancel or forget it. --clear forgets the goal."
     :slash/usage
-    "/goal [--budget ITERATIONS] [--] <objective> | <objective> --budget ITERATIONS | --pause | --resume | --cancel | --clear | --clear-all"
+    "/goal [--budget ITERATIONS] [--] <objective> | <objective> --budget ITERATIONS | --pause | --resume | --cancel | --clear"
     :slash/prompt-arg "Objective"
     ;; A goal is real prompt content, so the TUI keeps it in the prompt history (#360).
     :slash/saveable? true

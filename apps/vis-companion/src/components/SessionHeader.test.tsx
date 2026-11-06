@@ -80,7 +80,6 @@ describe('SessionHeader', () => {
       ...STORY_GOAL,
       objective: 'Verify a very long objective '.repeat(50),
       status: 'blocked' as const,
-      reason: 'Awaiting test credentials.\n\n- **Blocker**: no credentials\n- **Needed**: a test key',
     };
     rerender(
       <SessionHeader
@@ -94,11 +93,6 @@ describe('SessionHeader', () => {
     fireEvent.click(goalButton);
     expect(screen.getByText(goal.objective.trim())).toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Session goal' })).toBeInTheDocument();
-    // User report: a blocked reason was one block of raw text. It renders as Markdown now.
-    expect(screen.getByText('Awaiting test credentials.')).toBeInTheDocument();
-    expect(screen.getByText('Blocker').tagName).toBe('STRONG');
-    expect(screen.getByText(/a test key/).closest('li')).not.toBeNull();
-    expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
     expect(screen.getByText('Iterations: 12 / 30')).toBeInTheDocument();
     expect(screen.getByText('Time in goal: 32s')).toBeInTheDocument();
     expect(screen.queryByText(/tokens used/)).not.toBeInTheDocument();
@@ -109,7 +103,7 @@ describe('SessionHeader', () => {
   it('shows no goal after /goal --clear', () => {
     render(
       <SessionHeader
-        model={{ ...model, goal: { ...STORY_GOAL, status: 'cleared' as const, reason: null } }}
+        model={{ ...model, goal: { ...STORY_GOAL, status: 'cleared' as const } }}
         commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
       />,
     );

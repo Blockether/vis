@@ -216,14 +216,12 @@
              [:draft_discard
               {:status "recovered" :label "review" :root "~/vis" :preserved_root "~/draft"}
               "review · Returned to ~/vis · Preserved ~/draft"]
-             [:update_goal {:status "complete" :objective "Verify Activity" :reason "Checks pass"}
-              "Complete · Verify Activity"]]]
+             [:update_goal {:goal_status "complete"} "Complete"]]]
       (let [view (get-in (result-fixture [[operation "" result nil]]) ["rows" 0 "presentation"])]
         (expect (contract/valid-presentation? view))
         (expect (= summary (get view "summary")))
         (expect (not (re-find #"\"type\" \"table\"" (pr-str view))))
-        (when-not (contains? #{:update_goal :draft_sync} operation)
-          (expect (empty? (get view "content")))))))
+        (when-not (= :draft_sync operation) (expect (empty? (get view "content")))))))
   (it "names absent results instead of showing empty summaries or tables"
       (doseq [[operation _]
               [[:draft_status "No draft status"] [:draft_create "No draft result"]
@@ -241,10 +239,7 @@
     (doseq [[operation result summary evidence]
             [[:draft_approve
               {:status "approved" :published true :target_branch "main" :files ["src/example.clj"]}
-              "Published to main · 1 file" ["src/example.clj"]]
-             [:update_goal
-              {:status "blocked" :objective "Verify Activity" :reason "Missing test dependency"}
-              "Blocked · Verify Activity" ["Missing test dependency"]]]]
+              "Published to main · 1 file" ["src/example.clj"]]]]
       (let [view (result-view {:operation operation} result)
             content (pr-str (get view "content"))]
 

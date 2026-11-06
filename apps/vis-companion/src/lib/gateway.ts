@@ -1202,11 +1202,6 @@ function sessionGoalFromWire(raw: unknown): SessionGoal | null {
       (status) => status.const === g.status,
     ) ||
     !(
-      g.reason === null ||
-      (typeof g.reason === 'string' &&
-        g.reason.length <= gatewaySchema.$defs.session_goal.properties.reason.maxLength)
-    ) ||
-    !(
       g.iteration_budget === null ||
       (Number.isSafeInteger(g.iteration_budget) && (g.iteration_budget as number) > 0)
     ) ||

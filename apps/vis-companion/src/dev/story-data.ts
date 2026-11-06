@@ -2135,7 +2135,6 @@ export const STORY_GOAL = {
   time_used_ms: 32000,
   revision: 3,
   version: 1,
-  reason: null,
   created_at: 1780000000000,
   updated_at: 1780000032000,
 };

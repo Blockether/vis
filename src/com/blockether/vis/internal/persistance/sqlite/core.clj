@@ -1539,6 +1539,12 @@
   [db-info soul-id-s]
   (:id (first (query-sql! db-info [latest-state-id-sql soul-id-s soul-id-s]))))
 
+(defn- read-goal
+  "Parse a stored goal. Goals before the status-only lifecycle also had a `reason`."
+  [json-text]
+  (some-> (json/read-json json-text)
+          (dissoc "reason")))
+
 (defn- session-row->session
   "The canonical session map of one `session_soul` row, its latest `state` and its
    project name. [[db-get-session]] and [[db-session-page-facts]] build it alike."
@@ -1549,7 +1555,7 @@
            :external-id (:external_id soul)
            :title (:title state)
            :goal (some-> (:goal soul)
-                         json/read-json)
+                         read-goal)
            :model (:llm_root_model state)
            :version (or (:version state) 0)
            :created-at (->date (:created_at soul))
@@ -1669,7 +1675,7 @@
               :external-id (:external_id row)
               :title (:state_title row)
               :goal (some-> (:goal row)
-                            json/read-json)
+                            read-goal)
               :version (:version row)
               :fork-count (or (:fork_count row) 0)
               :created-at (->date (:created_at row))
@@ -3625,23 +3631,11 @@
     (some-> (query-one! db-info
                         {:select [:goal] :from :session_soul :where [:= :id (->ref session-id)]})
             :goal
-            json/read-json)))
-
-(defn db-get-session-goal-history
-  "Read the earlier goals of a session, newest first. Answers [] when there are none."
-  [db-info session-id]
-  (or (when (and (ds db-info) session-id)
-        (some-> (query-one!
-                  db-info
-                  {:select [:goal_history] :from :session_soul :where [:= :id (->ref session-id)]})
-                :goal_history
-                json/read-json))
-      []))
+            read-goal)))
 
 (defn db-compare-session-goal!
-  "Replace a goal and the goal history only if the persisted goal revision still matches.
-   Missing sessions refuse."
-  [db-info session-id revision goal history]
+  "Replace a goal only if the persisted goal revision still matches. Missing sessions refuse."
+  [db-info session-id revision goal]
   (locking sqlite-write-lock
     (pos?
       (long
@@ -3650,8 +3644,8 @@
             (first
               (jdbc/execute!
                 (ds db-info)
-                ["UPDATE session_soul SET goal = ?, goal_history = ? WHERE id = ? AND COALESCE(json_extract(goal, '$.revision'), 0) = ?"
-                 (->json goal) (when (seq history) (->json history)) (->ref session-id) revision])))
+                ["UPDATE session_soul SET goal = ? WHERE id = ? AND COALESCE(json_extract(goal, '$.revision'), 0) = ?"
+                 (->json goal) (->ref session-id) revision])))
           0)))))
 
 (defn db-get-session-model-pref
@@ -6452,7 +6446,6 @@
                                              :llm_pref_provider (:llm_pref_provider soul)
                                              :llm_pref_model (:llm_pref_model soul)
                                              :goal (:goal soul)
-                                             :goal_history (:goal_history soul)
                                              :origin (:origin soul)
                                              :imported_from (->json (cond-> (assoc imported-from
                                                                               "session_id" old-sid)

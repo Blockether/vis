@@ -13,149 +13,95 @@
 
 (defn- rejected? [f] (try (f) false (catch clojure.lang.ExceptionInfo _ true)))
 
-(defdescribe
-  explicit-goals-test
-  (it "explicit goals"
-      (let [{:keys [db-info session-id] :as env} (environment)]
-        (expect (nil? (goals/check-goal env)))
-        (expect (nil? (goals/continuation-prompt env)))
-        (let [goal (goals/set-goal! db-info session-id "  Verify the SDK  " 100)]
-          (expect (document/valid-json? "gateway" "session_goal" goal))
-          (expect (= 100 (get goal "iteration_budget")))
-          (expect (= 0 (get goal "iterations_used")))
-          (expect (not (contains? goal "token_budget")))
-          (expect (= goal (goals/check-goal env)))
-          (expect (= "Verify the SDK" (get goal "objective")))
-          (expect (= "active" (get goal "status")))
-          (expect (string? (goals/continuation-prompt env)))
-          (expect (false? (persistence/db-compare-session-goal! db-info session-id 0 goal [])))
-          (let [done
-                (goals/update-goal env (get goal "id") 1 "complete" "SDK boundary tests pass.")]
-            (expect (= "complete" (get done "status")))
-            (expect (nil? (goals/continuation-prompt env)))
-            (expect (= 2 (get done "revision")))
-            (expect (= 2 (get done "version"))))))))
-
-(defdescribe active-goal-view-test
-             (it "shows the model only stable goal fields and usage that a budget limits"
-                 ;; Each changed field adds a context delta line at every iteration of a goal run.
+(defdescribe explicit-goals-test
+             (it "explicit goals"
                  (let [{:keys [db-info session-id] :as env} (environment)]
-                   (goals/set-goal! db-info session-id "No budget" nil)
-                   (expect (= #{"id" "version" "status" "objective" "iteration_budget" "reason"}
-                              (set (keys (goals/active-goal env)))))
-                   (goals/set-goal! db-info session-id "With budget" 5)
-                   (expect (= 0 (get (goals/active-goal env) "iterations_used")))
-                   (expect (not-any? #(contains? (goals/active-goal env) %)
-                                     ["tokens_used" "time_used_ms" "revision" "updated_at"
-                                      "created_at"])))))
+                   (expect (nil? (goals/check-goal env)))
+                   (expect (nil? (goals/continuation-prompt env)))
+                   (let [goal (goals/set-goal! db-info session-id "  Verify the SDK  " 100)]
+                     (expect (document/valid-json? "gateway" "session_goal" goal))
+                     (expect (= 100 (get goal "iteration_budget")))
+                     (expect (= 0 (get goal "iterations_used")))
+                     (expect (not (contains? goal "token_budget")))
+                     (expect (= goal (goals/check-goal env)))
+                     (expect (= "Verify the SDK" (get goal "objective")))
+                     (expect (= "active" (get goal "status")))
+                     (expect (string? (goals/continuation-prompt env)))
+                     (expect (false?
+                               (persistence/db-compare-session-goal! db-info session-id 0 goal)))
+                     (let [done (goals/update-goal env "complete")]
+                       (expect (= "complete" (get done "status")))
+                       (expect (not (contains? done "reason")))
+                       (expect (nil? (goals/continuation-prompt env)))
+                       (expect (= 2 (get done "revision")))
+                       (expect (= 2 (get done "version"))))))))
 
 (defdescribe
-  goal-history-test
-  (it "keeps replaced goals and shows the model the current goal after it stops"
+  goal-status-view-test
+  (it "shows the model only the status, and only while the goal can still direct work"
+      (doseq [[setup status] [[(fn [_ _]) "active"]
+                              [(fn [env _]
+                                 (goals/control! (:db-info env) (:session-id env) :pause)) "paused"]
+                              [(fn [env _]
+                                 (goals/update-goal env "blocked")) "blocked"]
+                              [(fn [env goal]
+                                 (goals/account! env goal {})
+                                 (goals/request-halt-result env goal)) "budget_limited"]
+                              [(fn [env _]
+                                 (goals/update-goal env "complete")) nil]
+                              [(fn [env _]
+                                 (goals/control! (:db-info env) (:session-id env) :cancel)) nil]
+                              [(fn [env _]
+                                 (goals/control! (:db-info env) (:session-id env) :clear)) nil]]]
+        (let [{:keys [db-info session-id] :as env} (environment)
+              goal (goals/set-goal! db-info session-id "Ship the parser" 1)]
+
+          (setup env goal)
+          (expect (= {"session_goal_status" status} (goals/context env)) (str status))))))
+
+(defdescribe
+  stored-goal-reason-test
+  (it "reads and changes a goal that an older version stored with a reason"
       (let [{:keys [db-info session-id] :as env}
-            (environment)
-
-            first-goal
-            (goals/set-goal! db-info session-id "Ship the parser" nil)]
-
-        (expect (nil? (get (goals/context env) "session_goal_history")))
-        (goals/update-goal env (get first-goal "id") 1 "blocked" "CI is down.\n\n- **Blocker**: CI")
-        (expect (nil? (get (goals/context env) "session_goal")))
-        (expect (= [{"id" (get first-goal "id")
-                     "objective" "Ship the parser"
-                     "status" "blocked"
-                     "reason" "CI is down.\n\n- **Blocker**: CI"}]
-                   (get (goals/context env) "session_goal_history")))
-        (let [second-goal (goals/set-goal! db-info session-id "Ship the lexer" nil)]
-          (expect (= (get second-goal "id") (get-in (goals/context env) ["session_goal" "id"])))
-          (expect (= [(get first-goal "id")]
-                     (mapv #(get % "id") (get (goals/context env) "session_goal_history"))))
-          (expect (= "blocked"
-                     (get (first (persistence/db-get-session-goal-history db-info session-id))
-                          "status"))))))
-  (it "bounds the stored history and the model view, and shortens long objectives"
-      (let [{:keys [db-info session-id] :as env} (environment)]
-        (dotimes [i 25]
-          (goals/set-goal! db-info session-id (str "Goal " i) nil))
-        (goals/set-goal! db-info session-id (str/join (repeat 600 "x")) nil)
-        (goals/set-goal! db-info session-id "Last" nil)
-        (expect (= 20 (count (persistence/db-get-session-goal-history db-info session-id))))
-        (let [view (get (goals/context env) "session_goal_history")]
-          (expect (= 5 (count view)))
-          (expect (= 501 (count (get (first view) "objective"))))
-          (expect (= "Goal 24" (get (second view) "objective"))))))
-  (it "writes no history when the goal CAS loses"
-      (let [{:keys [db-info session-id]}
             (environment)
 
             goal
-            (goals/set-goal! db-info session-id "Original" nil)]
+            (goals/set-goal! db-info session-id "Ship the parser" nil)]
 
-        (expect (false? (persistence/db-compare-session-goal! db-info session-id 0 goal [goal])))
-        (expect (= [] (persistence/db-get-session-goal-history db-info session-id))))))
+        (expect (persistence/db-compare-session-goal! db-info
+                                                      session-id
+                                                      (get goal "revision")
+                                                      (assoc goal
+                                                        "revision" (inc (get goal "revision"))
+                                                        "reason" "Old evidence.")))
+        (expect (not (contains? (goals/check-goal env) "reason")))
+        (expect (= "paused" (get (goals/control! db-info session-id :pause) "status"))))))
 
-(defdescribe
-  goal-clear-test
-  (it
-    "/goal --clear forgets the goal, stops its work and keeps earlier goals"
-    (let [{:keys [db-info session-id] :as env}
-          (environment)
+(defdescribe goal-clear-test
+             (it "/goal --clear forgets the goal and stops its work"
+                 (let [{:keys [db-info session-id] :as env}
+                       (environment)
 
-          invoke
-          #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})
+                       invoke
+                       #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})
 
-          earlier
-          (goals/set-goal! db-info session-id "Earlier goal" nil)
+                       running
+                       (goals/set-goal! db-info session-id "Forget me" nil)
 
-          running
-          (goals/set-goal! db-info session-id "Forget me" nil)
+                       cleared
+                       (get-in (invoke "/goal --clear") [:slash/data :goal])]
 
-          cleared
-          (get-in (invoke "/goal --clear") [:slash/data :goal])]
-
-      (expect (= "cleared" (get cleared "status")))
-      (expect (nil? (get cleared "reason")))
-      (expect (document/valid-json? "gateway" "session_goal" cleared))
-      ;; Work that started under the goal stops before its next model request.
-      (expect (= :cancelled (:status (goals/halt-result env running))))
-      (expect (nil? (goals/continuation-prompt env)))
-      (expect (nil? (get (goals/context env) "session_goal")))
-      (expect (= [(get earlier "id")]
-                 (mapv #(get % "id") (get (goals/context env) "session_goal_history"))))
-      ;; A repeated clear changes nothing; other controls see no goal.
-      (expect (= :ok (:slash/status (invoke "/goal --clear"))))
-      (expect (= cleared (goals/check-goal env)))
-      (doseq [raw ["/goal --pause" "/goal --resume" "/goal --cancel"]]
-        (expect (= :error (:slash/status (invoke raw))) raw))
-      ;; The forgotten goal never enters the history.
-      (goals/set-goal! db-info session-id "Next goal" nil)
-      (expect (= [(get earlier "id")]
-                 (mapv #(get % "id")
-                       (persistence/db-get-session-goal-history db-info session-id))))))
-  (it "/goal --clear-all also forgets the goal history and repeats safely"
-      (let [{:keys [db-info session-id] :as env}
-            (environment)
-
-            invoke
-            #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})]
-
-        (expect (= :error (:slash/status (invoke "/goal --clear-all"))))
-        (goals/set-goal! db-info session-id "First" nil)
-        (goals/set-goal! db-info session-id "Second" nil)
-        (expect (= :ok (:slash/status (invoke "/goal --clear-all"))))
-        (expect (= "cleared" (get (goals/check-goal env) "status")))
-        (expect (= [] (persistence/db-get-session-goal-history db-info session-id)))
-        (expect (= {"session_goal" nil "session_goal_history" nil} (goals/context env)))
-        (let [before (goals/check-goal env)]
-          (expect (= :ok (:slash/status (invoke "/goal --clear-all"))))
-          (expect (= before (goals/check-goal env))))
-        ;; After a clear, clear-all still empties the history that the clear kept.
-        (goals/set-goal! db-info session-id "Third" nil)
-        (goals/set-goal! db-info session-id "Fourth" nil)
-        (invoke "/goal --clear")
-        (expect (= 1 (count (persistence/db-get-session-goal-history db-info session-id))))
-        (invoke "/goal --clear-all")
-        (expect (= [] (persistence/db-get-session-goal-history db-info session-id))))))
+                   (expect (= "cleared" (get cleared "status")))
+                   (expect (document/valid-json? "gateway" "session_goal" cleared))
+                   ;; Work that started under the goal stops before its next model request.
+                   (expect (= :cancelled (:status (goals/halt-result env running))))
+                   (expect (nil? (goals/continuation-prompt env)))
+                   (expect (= {"session_goal_status" nil} (goals/context env)))
+                   ;; A repeated clear changes nothing; other controls see no goal.
+                   (expect (= :ok (:slash/status (invoke "/goal --clear"))))
+                   (expect (= cleared (goals/check-goal env)))
+                   (doseq [raw ["/goal --pause" "/goal --resume" "/goal --cancel"]]
+                     (expect (= :error (:slash/status (invoke raw))) raw)))))
 
 (defdescribe
   goal-objective-length-test
@@ -181,62 +127,58 @@
                    (goals/control! db-info session-id :pause)
                    (expect (nil? (goals/continuation-prompt env))))))
 
-(defdescribe
-  user-controls-and-stale-work-test
-  (it "user controls and stale work"
-      (let [{:keys [db-info session-id] :as env}
-            (environment)
+(defdescribe user-controls-and-stale-work-test
+             (it "user controls and stale work"
+                 (let [{:keys [db-info session-id] :as env}
+                       (environment)
 
-            first-goal
-            (goals/set-goal! db-info session-id "First" nil)]
+                       first-goal
+                       (goals/set-goal! db-info session-id "First" nil)]
 
-        (expect (= "paused" (get (goals/control! db-info session-id :pause) "status")))
-        (expect (rejected?
-                  #(goals/update-goal env (get first-goal "id") 1 "complete" "Stale evidence")))
-        (expect (= "active" (get (goals/control! db-info session-id :resume) "status")))
-        (goals/account! env first-goal {:input-tokens 10 :output-tokens 5})
-        (expect (= 0 (get (goals/check-goal env) "tokens_used")))
-        (let [replacement (goals/set-goal! db-info session-id "Second" nil)]
-          (expect (not= (get first-goal "id") (get replacement "id")))
-          (expect (= 4 (get replacement "revision")))
-          (expect (rejected?
-                    #(goals/update-goal env (get first-goal "id") 1 "blocked" "Old blocker")))
-          (expect (= "cancelled" (get (goals/control! db-info session-id :cancel) "status")))
-          (expect (rejected? #(goals/control! db-info session-id :resume)))))))
+                   (expect (= "paused" (get (goals/control! db-info session-id :pause) "status")))
+                   (expect (rejected? #(goals/update-goal env "complete")))
+                   (expect (= "active" (get (goals/control! db-info session-id :resume) "status")))
+                   (goals/account! env first-goal {:input-tokens 10 :output-tokens 5})
+                   (expect (= 0 (get (goals/check-goal env) "tokens_used")))
+                   (let [replacement (goals/set-goal! db-info session-id "Second" nil)]
+                     (expect (not= (get first-goal "id") (get replacement "id")))
+                     (expect (= 4 (get replacement "revision")))
+                     (expect (= "cancelled"
+                                (get (goals/control! db-info session-id :cancel) "status")))
+                     (expect (rejected? #(goals/control! db-info session-id :resume)))))))
 
 (defdescribe
   user-turn-resume-keeps-nonresumable-goals-unchanged-test
-  (it
-    "user turn resume keeps nonresumable goals unchanged"
-    (expect (nil? (goals/resume-for-user-turn! (environment))))
-    (doseq [status [:active :complete :cancelled :budget-limited :paused-exhausted
-                    :blocked-exhausted]]
-      (let [{:keys [db-info session-id] :as env} (environment)
-            goal (goals/set-goal! db-info session-id "Preserve the goal and its budget" 1)]
+  (it "user turn resume keeps nonresumable goals unchanged"
+      (expect (nil? (goals/resume-for-user-turn! (environment))))
+      (doseq [status [:active :complete :cancelled :budget-limited :paused-exhausted
+                      :blocked-exhausted]]
+        (let [{:keys [db-info session-id] :as env} (environment)
+              goal (goals/set-goal! db-info session-id "Preserve the goal and its budget" 1)]
 
-        (when (contains? #{:budget-limited :paused-exhausted :blocked-exhausted} status)
-          (goals/account! env goal nil))
-        (case status
-          :active
-          nil
+          (when (contains? #{:budget-limited :paused-exhausted :blocked-exhausted} status)
+            (goals/account! env goal nil))
+          (case status
+            :active
+            nil
 
-          :complete
-          (goals/update-goal env (get goal "id") (get goal "version") "complete" "Verified.")
+            :complete
+            (goals/update-goal env "complete")
 
-          :cancelled
-          (goals/control! db-info session-id :cancel)
+            :cancelled
+            (goals/control! db-info session-id :cancel)
 
-          :budget-limited
-          (goals/request-halt-result env goal)
+            :budget-limited
+            (goals/request-halt-result env goal)
 
-          :paused-exhausted
-          (goals/control! db-info session-id :pause)
+            :paused-exhausted
+            (goals/control! db-info session-id :pause)
 
-          :blocked-exhausted
-          (goals/update-goal env (get goal "id") (get goal "version") "blocked" "Need user input."))
-        (let [before (goals/check-goal env)]
-          (expect (= before (goals/resume-for-user-turn! env)))
-          (expect (= before (goals/check-goal env))))))))
+            :blocked-exhausted
+            (goals/update-goal env "blocked"))
+          (let [before (goals/check-goal env)]
+            (expect (= before (goals/resume-for-user-turn! env)))
+            (expect (= before (goals/check-goal env))))))))
 
 (defdescribe user-turn-resume-preserves-concurrent-user-controls-test
              (it "user turn resume preserves concurrent user controls"
@@ -268,29 +210,29 @@
                          (expect (= @concurrent result))
                          (expect (= @concurrent (goals/check-goal env)))))))))
 
-(defdescribe
-  iteration-budget-test
-  (it "iteration budget"
-      (let [{:keys [db-info session-id] :as env}
-            (environment)
+(defdescribe iteration-budget-test
+             (it
+               "iteration budget"
+               (let [{:keys [db-info session-id] :as env}
+                     (environment)
 
-            goal
-            (goals/set-goal! db-info session-id "Bounded work" 1)]
+                     goal
+                     (goals/set-goal! db-info session-id "Bounded work" 1)]
 
-        (goals/account! env goal {:input-tokens 10 :output-tokens 7 :cache-read-tokens 8})
-        (expect (= "active" (get (goals/check-goal env) "status")))
-        (expect (nil? (goals/halt-result env goal)))
-        (expect (some? (goals/request-halt-result env goal)))
-        (let [limited (goals/check-goal env)]
-          (expect (= 1 (get limited "iterations_used")))
-          (expect (= 17 (get limited "tokens_used")))
-          (expect (= (- (get limited "updated_at") (get goal "updated_at"))
-                     (get limited "time_used_ms")))
-          (expect (= "budget_limited" (get limited "status")))
-          (expect (nil? (goals/continuation-prompt env)))
-          (expect (rejected? #(goals/control! db-info session-id :resume)))
-          (expect (rejected? #(goals/update-goal env (get goal "id") 1 "complete" "Too late")))
-          (expect (= 1 (get limited "version")))))))
+                 (goals/account! env goal {:input-tokens 10 :output-tokens 7 :cache-read-tokens 8})
+                 (expect (= "active" (get (goals/check-goal env) "status")))
+                 (expect (nil? (goals/halt-result env goal)))
+                 (expect (some? (goals/request-halt-result env goal)))
+                 (let [limited (goals/check-goal env)]
+                   (expect (= 1 (get limited "iterations_used")))
+                   (expect (= 17 (get limited "tokens_used")))
+                   (expect (= (- (get limited "updated_at") (get goal "updated_at"))
+                              (get limited "time_used_ms")))
+                   (expect (= "budget_limited" (get limited "status")))
+                   (expect (nil? (goals/continuation-prompt env)))
+                   (expect (rejected? #(goals/control! db-info session-id :resume)))
+                   (expect (rejected? #(goals/update-goal env "complete")))
+                   (expect (= 1 (get limited "version")))))))
 
 (defdescribe iteration-usage-survives-resume-and-reset-is-explicit-test
              (it "iteration usage survives resume and reset is explicit"
@@ -337,7 +279,7 @@ and newlines"
         (expect (false? (get-in (invoke "/goal --pause") [:slash/data :goal-run?])))
         (expect (true? (get-in (invoke "/goal --resume") [:slash/data :goal-run?])))
         (doseq [raw ["/goal" "/goal --budget 0 work" "/goal --budget 999999999999999999999 work"
-                     "/goal --budget -1 work" "/goal --unknown"]]
+                     "/goal --budget -1 work" "/goal --unknown" "/goal --clear-all"]]
           (expect (= :error (:slash/status (invoke raw))) raw)))))
 
 (defdescribe trailing-budget-parsing-test
@@ -473,26 +415,16 @@ and --code intact"]
           (let [resumed (goals/control! db-info session-id :resume)]
             (expect (= 8000 (get resumed "time_used_ms")))
             (reset! now 95000)
-            (expect (= 13000
-                       (get (goals/update-goal env
-                                               (get resumed "id")
-                                               (get resumed "version")
-                                               "blocked"
-                                               "Awaiting input.")
-                            "time_used_ms")))))
+            (expect (= 13000 (get (goals/update-goal env "blocked") "time_used_ms")))))
         (reset! now 100000)
-        (let [resumed (goals/control! db-info session-id :resume)]
-          (reset! now 105000)
-          (let [done (goals/update-goal env
-                                        (get resumed "id")
-                                        (get resumed "version")
-                                        "complete"
-                                        "All checks passed.")]
-            (expect (= 18000 (get done "time_used_ms")))
-            (reset! now 200000)
-            (goals/account! env done nil)
-            (expect (= 18000 (get (goals/check-goal env) "time_used_ms")))
-            (expect (= 18000 (get (goals/control! db-info session-id :cancel) "time_used_ms")))))
+        (goals/control! db-info session-id :resume)
+        (do (reset! now 105000)
+            (let [done (goals/update-goal env "complete")]
+              (expect (= 18000 (get done "time_used_ms")))
+              (reset! now 200000)
+              (goals/account! env done nil)
+              (expect (= 18000 (get (goals/check-goal env) "time_used_ms")))
+              (expect (= 18000 (get (goals/control! db-info session-id :cancel) "time_used_ms")))))
         (expect (= 0 (get (goals/set-goal! db-info session-id "New goal" nil) "time_used_ms")))))))
 
 (defdescribe goal-time-stops-at-budget-cancellation-and-failure-test
@@ -525,11 +457,10 @@ and --code intact"]
 (defdescribe model-cannot-create-or-expand-test
              (it "model cannot create or expand"
                  (let [{:keys [db-info session-id] :as env} (environment)]
-                   (expect (rejected? #(goals/update-goal env "missing" 1 "complete" "No goal")))
+                   (expect (rejected? #(goals/update-goal env "complete")))
                    (let [goal (goals/set-goal! db-info session-id "Original scope" nil)]
                      (doseq [status ["active" "paused" "cancelled"]]
-                       (expect (rejected? #(goals/update-goal env (get goal "id") 1 status "No"))))
-                     (expect (rejected? #(goals/update-goal env (get goal "id") 1 "complete" "  ")))
+                       (expect (rejected? #(goals/update-goal env status))))
                      (expect (= goal (goals/check-goal env)))))))
 
 (defdescribe mutation-events-test

@@ -24,7 +24,6 @@
    "time_used_ms" 32000
    "revision" 3
    "version" 1
-   "reason" nil
    "created_at" 1
    "updated_at" 2})
 
@@ -72,8 +71,7 @@
           done
           (assoc goal
             "revision" 4
-            "status" "complete"
-            "reason" "All affected tests pass.")
+            "status" "complete")
 
           replacement
           (assoc goal
@@ -101,8 +99,7 @@
            ;; /goal --clear arrives as a newer revision; an older snapshot cannot bring the goal back.
            (let [cleared (assoc replacement
                            "revision" 6
-                           "status" "cleared"
-                           "reason" nil)]
+                           "status" "cleared")]
              (state/dispatch [:sync-session-goal "b" {:goal cleared}])
              (state/dispatch [:sync-session-goal "b" {:goal replacement}])
              (expect (= cleared (get-in @state/app-db [:tab-locals "b" :session :goal])))
@@ -157,25 +154,19 @@
           (do (expect (some? goal-hit))
               (doseq [col (range 2 (long (get-in goal-hit [:bounds :col])))]
                 (expect (nil? (.lookup interactions/hit-map col 1)))))))))
-  (it "shows each detail on its own row and the Markdown reason as a list"
-      ;; User report: a blocked goal reason was one unreadable block of raw text.
-      (let [rows (->> (layout/ast->lines
-                        (client/markdown->ast
-                          (footer/goal-detail-markdown
-                            (assoc goal
-                              "status" "blocked"
-                              "reason" "CI is down.\n\n- **Blocker**: CI\n- **Needed**: a rerun")
-                            0))
-                        80)
+  (it "shows each detail on its own row"
+      (let [rows (->> (layout/ast->lines (client/markdown->ast (footer/goal-detail-markdown
+                                                                 (assoc goal "status" "blocked")
+                                                                 0))
+                                         80)
                       (map (fn [{:keys [runs]}]
                              (str/trim (apply str (map :text runs)))))
                       (remove str/blank?)
                       set)]
         (expect (contains? rows "Iterations: 12 / 30"))
         (expect (contains? rows "Time in goal: 32.0s"))
-        (expect (some #(and (str/includes? % "Needed: a rerun") (not (str/includes? % "Blocker")))
-                      rows))
-        (expect (not-any? #(str/includes? % "**") rows))))
+        (expect (contains? rows
+                           "Use /goal --pause, --resume, --cancel or --clear in the composer."))))
   (it "adds uncheckpointed active wall time but freezes all inactive states"
       (expect (some #{"Time in goal: 35.0s"} (footer/goal-detail-lines goal 3002)))
       (expect (some #{"Time in goal: 32.0s"} (footer/goal-detail-lines goal 0)))

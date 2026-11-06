@@ -347,41 +347,34 @@
             (goals/resume-for-user-turn! env)))
 
         result
-        (try
-          (let [raw
-                ;; Turn ids in the Telemere context reach the log file and the problem
-                ;; log, so a provider failure is found by its turn (issue #403).
-                (tel/with-ctx+ {:session-turn-id session-turn-id :turn (or turn-position 1)}
-                               (iteration/iteration-loop env
-                                                         user-request
-                                                         (assoc loop-opts
-                                                           :session-turn-id session-turn-id)))
+        (try (let [raw
+                   ;; Turn ids in the Telemere context reach the log file and the problem
+                   ;; log, so a provider failure is found by its turn (issue #403).
+                   (tel/with-ctx+ {:session-turn-id session-turn-id :turn (or turn-position 1)}
+                                  (iteration/iteration-loop env
+                                                            user-request
+                                                            (assoc loop-opts
+                                                              :session-turn-id session-turn-id)))
 
-                raw
-                (if (and (= :cancelled (:status raw)) park-requested? (park-requested?))
-                  (assoc raw
-                    :status :parked
-                    :status-id (loop-router/status->id :parked)
-                    :park-clean? false)
-                  raw)
+                   raw
+                   (if (and (= :cancelled (:status raw)) park-requested? (park-requested?))
+                     (assoc raw
+                       :status :parked
+                       :status-id (loop-router/status->id :parked)
+                       :park-clean? false)
+                     raw)
 
-                result
-                (if-let [prepare-result (when-not (= :parked (:status raw))
-                                          (get-in loop-opts [:hooks :prepare-result]))]
-                  (let [prepared (prepare-result raw)]
-                    (assoc prepared :status-id (loop-router/status->id (:status prepared))))
-                  raw)]
+                   result
+                   (if-let [prepare-result (when-not (= :parked (:status raw))
+                                             (get-in loop-opts [:hooks :prepare-result]))]
+                     (let [prepared (prepare-result raw)]
+                       (assoc prepared :status-id (loop-router/status->id (:status prepared))))
+                     raw)]
 
-            (when-not (= :parked (:status result))
-              (goals/finish-turn! env
-                                  goal-at-turn-start
-                                  (:status result)
-                                  (some-> (transcript/turn-error-data (:answer result))
-                                          (get "message"))))
-            result)
-          (catch Throwable t
-            (goals/finish-turn! env goal-at-turn-start :error (ex-message t))
-            (throw t)))
+               (when-not (= :parked (:status result))
+                 (goals/finish-turn! env goal-at-turn-start (:status result)))
+               result)
+             (catch Throwable t (goals/finish-turn! env goal-at-turn-start :error) (throw t)))
 
         ;; Deferred auto-title: only a successful foreground turn earns a cosmetic
         ;; provider call. Cancellation, failure and a halted, complete or blocked goal

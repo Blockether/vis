@@ -44,38 +44,42 @@
           (atom [])]
 
       (try
-        (with-redefs
-          [svar/ask-code!
-           (fn [_ opts]
-             (expect (str/includes? (str (:messages opts)) "update_goal"))
-             (expect (str/includes? (str (:messages opts)) "iteration_budget"))
-             (swap! snapshots conj (ctx-loop/session-snapshot env))
-             (case (swap! requests inc)
-               1
-               {:stop-reason :end
-                :content "Premature answer"
-                :api-usage {:input-tokens 5 :output-tokens 2}}
+        (with-redefs [svar/ask-code!
+                      (fn [_ opts]
+                        (expect (str/includes? (str (:messages opts)) "update_goal"))
+                        (expect (str/includes? (str (:messages opts)) "goal_status"))
+                        (swap! snapshots conj (ctx-loop/session-snapshot env))
+                        (case (swap! requests inc)
+                          1
+                          {:stop-reason :end
+                           :content "Premature answer"
+                           :api-usage {:input-tokens 5 :output-tokens 2}}
 
-               2
-               {:stop-reason :tool-calls
-                :api-usage {:input-tokens 6 :output-tokens 3}
-                :tool-calls
-                [{:id "goal-update"
-                  :name "python_execution"
-                  :input
-                  {:code
-                   "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All requested checks passed.'))"}}]}
+                          2
+                          {:stop-reason :tool-calls
+                           :api-usage {:input-tokens 6 :output-tokens 3}
+                           :tool-calls
+                           [{:id "goal-update"
+                             :name "python_execution"
+                             :input
+                             {:code
+                              "print(session['goal_status'])\nprint(update_goal('complete'))"}}]}
 
-               (throw (ex-info "Unexpected continuation" {}))))]
+                          ;; The goal no longer directs work, so the model writes the final reply.
+                          3
+                          {:stop-reason :end
+                           :content "All requested checks passed."
+                           :api-usage {:input-tokens 7 :output-tokens 4}}
+
+                          (throw (ex-info "Unexpected continuation" {}))))]
           (let [result (turn/run-turn! env "/goal Verify goal integration" {})]
-            ;; #216: terminal tool evidence is the summary, not another model request.
-            (expect (= "**Goal complete**\n\nAll requested checks passed."
-                       (get-in result [:answer :answer])))
-            (expect (= 2 @requests))
+            (expect (= "All requested checks passed." (get-in result [:answer :answer])))
+            (expect (= 3 @requests))
             (expect (= "complete" (get (goals/check-goal env) "status")))
+            ;; The final reply after the completion is not goal work.
             (expect (= 16 (get (goals/check-goal env) "tokens_used")))
             (expect (= 2 (get (goals/check-goal env) "iterations_used")))
-            (expect (str/includes? (str @snapshots) "Verify goal integration"))))
+            (expect (= "active" (get (first @snapshots) "session_goal_status")))))
         (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
@@ -120,52 +124,52 @@
 
 (defdescribe
   terminal-goal-finishes-current-tools-without-next-request-test
-  (it "terminal goal finishes current tools without next request"
-      ;; #216: terminal goals stop with unlimited, remaining or exhausted iteration budgets.
-      (doseq [status
-              ["complete" "blocked"]
+  (it
+    "terminal goal finishes current tools without next request"
+    ;; #216: the current tools finish, then one final reply ends the turn. This holds with
+    ;; unlimited, remaining or exhausted iteration budgets.
+    (doseq [status
+            ["complete" "blocked"]
 
-              budget
-              [nil 10 1]]
+            budget
+            [nil 10 1]]
 
-        (let [env
-              (environment)
+      (let [env
+            (environment)
 
-              requests
-              (atom 0)]
+            requests
+            (atom 0)]
 
-          (try
-            (with-redefs
-              [svar/ask-code!
-               (fn [_ _]
-                 (if (> (swap! requests inc) 1)
-                   {:stop-reason :end :content "Unexpected extra summary."}
-                   {:stop-reason :tool-calls
-                    :tool-calls
-                    [{:id "resolve"
-                      :name "python_execution"
-                      :input {:code
-                              (str "g = session['goal']\nprint(update_goal(g['id'], g['version'], '"
-                                   status
-                                   "', 'Verified result or external blocker.'))")}}
-                     {:id "finish-current-tools"
-                      :name "python_execution"
-                      :input {:code "print('Current iteration tools finished.')"}}]}))]
-              (let [result (turn/run-turn! env
-                                           (str "/goal "
-                                                (when budget (str "--budget " budget " "))
-                                                "Resolve goal")
-                                           {})]
-                (expect (= 1 @requests))
-                (expect (= :success (:status result)))
-                (expect (= 1 (:iteration-count result)))
-                (expect (= 1 (count (:trace result))))
-                (expect (= status (get (goals/check-goal env) "status")))
-                (expect (= 1 (get (goals/check-goal env) "iterations_used")))
-                (expect (= (str "**Goal " status "**\n\nVerified result or external blocker.")
-                           (get-in result [:answer :answer])))
-                (expect (str/includes? (str (:trace result)) "Current iteration tools finished."))))
-            (finally (loop-env/dispose-environment! env)))))))
+        (try
+          (with-redefs [svar/ask-code!
+                        (fn [_ _]
+                          (case (swap! requests inc)
+                            1
+                            {:stop-reason :tool-calls
+                             :tool-calls [{:id "resolve"
+                                           :name "python_execution"
+                                           :input {:code (str "print(update_goal('" status "'))")}}
+                                          {:id "finish-current-tools"
+                                           :name "python_execution"
+                                           :input {:code
+                                                   "print('Current iteration tools finished.')"}}]}
+
+                            2
+                            {:stop-reason :end :content "Verified result or external blocker."}
+
+                            (throw (AssertionError. "Unexpected request after the final reply"))))]
+            (let [result (turn/run-turn!
+                           env
+                           (str "/goal " (when budget (str "--budget " budget " ")) "Resolve goal")
+                           {})]
+              (expect (= 2 @requests))
+              ;; A normal final reply has no failure status.
+              (expect (nil? (:status result)))
+              (expect (= status (get (goals/check-goal env) "status")))
+              (expect (= 1 (get (goals/check-goal env) "iterations_used")))
+              (expect (= "Verified result or external blocker." (get-in result [:answer :answer])))
+              (expect (str/includes? (str (:trace result)) "Current iteration tools finished."))))
+          (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe
   prose-and-empty-replies-consume-iterations-without-token-usage-test
@@ -225,115 +229,105 @@
 
 (defdescribe
   finished-goal-leaves-later-turns-test
-  (it
-    "finished goal leaves later turns and keeps the system prefix"
-    ;; User report: a completed goal still showed its state in later turns, so the model
-    ;; treated a question as progress and kept working. The goal rules stay in the system
-    ;; message, so a goal status change does not rewrite the cached prefix.
-    (doseq [status ["complete" "budget_limited"]]
-      (let [env (environment)
-            requests (atom [])
-            system-text #(pr-str (filterv (fn [m]
-                                            (= "system" (:role m)))
-                                   %))]
+  (it "finished goal leaves later turns and keeps the system prefix"
+      ;; User report: a completed goal still showed its state in later turns, so the model
+      ;; treated a question as progress and kept working. The goal rules stay in the system
+      ;; message, so a goal status change does not rewrite the cached prefix.
+      (doseq [status ["complete" "budget_limited"]]
+        (let [env (environment)
+              requests (atom [])
+              question (if (= "complete" status) 3 2)
+              system-text #(pr-str (filterv (fn [m]
+                                              (= "system" (:role m)))
+                                     %))]
 
-        (try
-          (with-redefs
-            [svar/ask-code!
-             (fn [_ opts]
-               (swap! requests conj (:messages opts))
-               (case (count @requests)
-                 1
-                 (if (= "complete" status)
-                   {:stop-reason :tool-calls
-                    :tool-calls
-                    [{:id "finish-goal"
-                      :name "python_execution"
-                      :input
-                      {:code
-                       "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All checks passed.'))"}}]}
-                   {:stop-reason :end :content "Progress so far."})
+          (try
+            (with-redefs [svar/ask-code!
+                          (fn [_ opts]
+                            (swap! requests conj (:messages opts))
+                            (condp = (count @requests)
+                              1 (if (= "complete" status)
+                                  {:stop-reason :tool-calls
+                                   :tool-calls [{:id "finish-goal"
+                                                 :name "python_execution"
+                                                 :input {:code "print(update_goal('complete'))"}}]}
+                                  {:stop-reason :end :content "Progress so far."})
+                              question {:stop-reason :end :content "Do you want a local fix only?"}
+                              2 {:stop-reason :end :content "All checks passed."}
+                              (throw (AssertionError. "A question must end the turn."))))]
+              (turn/run-turn! env
+                              (str "/goal "
+                                   (when (= "budget_limited" status) "--budget 1 ")
+                                   "Ship the finished objective")
+                              {})
+              (expect (= status (get (goals/check-goal env) "status")))
+              (let [result (turn/run-turn! env "fix" {})
+                    active-request (first @requests)
+                    later-request (last @requests)
+                    boundary (pr-str (last later-request))]
 
-                 2
-                 {:stop-reason :end :content "Do you want a local fix only?"}
-
-                 (throw (AssertionError. "A question must end the turn."))))]
-            (turn/run-turn! env
-                            (str "/goal "
-                                 (when (= "budget_limited" status) "--budget 1 ")
-                                 "Ship the finished objective")
-                            {})
-            (expect (= status (get (goals/check-goal env) "status")))
-            (let [result (turn/run-turn! env "fix" {})
-                  [active-request later-request] @requests]
-
-              (expect (= "Do you want a local fix only?" (get-in result [:answer :answer])))
-              (expect (= 2 (count @requests)))
-              (expect (= (system-text active-request) (system-text later-request)))
-              (expect (str/includes? (system-text later-request) "Explicit session goals"))
-              (expect (not (str/includes? (pr-str (last later-request)) "session[\\\"goal\\\"]")))
-              ;; The model still sees the finished goal as a record, with its result.
-              (let [boundary (pr-str (last later-request))]
-                (expect (str/includes? boundary "session[\\\"goal_history\\\"]"))
-                (expect (str/includes? boundary "Ship the finished objective"))
-                (expect (str/includes? boundary status)))
-              (expect (= status (get (goals/check-goal env) "status")))))
-          (finally (loop-env/dispose-environment! env)))))))
+                (expect (= "Do you want a local fix only?" (get-in result [:answer :answer])))
+                (expect (= question (count @requests)))
+                (expect (= (system-text active-request) (system-text later-request)))
+                (expect (str/includes? (system-text later-request) "Explicit session goals"))
+                ;; A complete goal leaves the session view; a budget-limited goal keeps its status.
+                (if (= "budget_limited" status)
+                  (expect (str/includes? boundary
+                                         "session[\\\"goal_status\\\"] = \\\"budget_limited\\\""))
+                  (expect (not (str/includes? boundary "goal_status"))))
+                (expect (not (str/includes? boundary "goal_history")))
+                (expect (= status (get (goals/check-goal env) "status")))))
+            (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe
   user-message-resumes-goal-before-model-request-test
-  (it
-    "user message resumes goal before model request"
-    ;; A follow-up must resume the existing goal, not silently become a one-reply turn.
-    (doseq [status ["paused" "blocked"]]
-      (let [{:keys [db-info session-id] :as env} (environment)
-            requests (atom 0)
-            snapshots (atom [])]
+  (it "user message resumes goal before model request"
+      ;; A follow-up must resume the existing goal, not silently become a one-reply turn.
+      (doseq [status ["paused" "blocked"]]
+        (let [{:keys [db-info session-id] :as env} (environment)
+              requests (atom 0)
+              snapshots (atom [])]
 
-        (try
-          (let [goal (goals/set-goal! db-info session-id "Verify all acceptance criteria" 10)]
-            (goals/account! env goal {:input-tokens 10 :output-tokens 5})
-            (if (= "paused" status)
-              (goals/control! db-info session-id :pause)
-              (goals/update-goal env
-                                 (get goal "id")
-                                 (get goal "version")
-                                 "blocked"
-                                 "Need user input."))
-            (let [before (goals/check-goal env)]
-              (with-redefs
-                [svar/ask-code!
-                 (fn [_ _]
-                   (swap! snapshots conj (get (ctx-loop/session-snapshot env) "session_goal"))
-                   (case (swap! requests inc)
-                     1
-                     {:stop-reason :end :content "Premature answer"}
+          (try
+            (let [goal (goals/set-goal! db-info session-id "Verify all acceptance criteria" 10)]
+              (goals/account! env goal {:input-tokens 10 :output-tokens 5})
+              (if (= "paused" status)
+                (goals/control! db-info session-id :pause)
+                (goals/update-goal env "blocked"))
+              (let [before (goals/check-goal env)]
+                (with-redefs [svar/ask-code!
+                              (fn [_ _]
+                                (swap! snapshots conj
+                                  [(get (ctx-loop/session-snapshot env) "session_goal_status")
+                                   (goals/check-goal env)])
+                                (case (swap! requests inc)
+                                  1
+                                  {:stop-reason :end :content "Premature answer"}
 
-                     2
-                     {:stop-reason :tool-calls
-                      :tool-calls
-                      [{:id "finish-resumed-goal"
-                        :name "python_execution"
-                        :input
-                        {:code
-                         "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All acceptance criteria verified.'))"}}]}
+                                  2
+                                  {:stop-reason :tool-calls
+                                   :tool-calls [{:id "finish-resumed-goal"
+                                                 :name "python_execution"
+                                                 :input {:code "print(update_goal('complete'))"}}]}
 
-                     (throw (AssertionError. "Unexpected goal continuation"))))]
-                (let [result (turn/run-turn! env "Use this new information and continue" {})
-                      resumed (first @snapshots)
-                      preserved ["id" "objective" "iteration_budget" "iterations_used"]]
+                                  3
+                                  {:stop-reason :end :content "All acceptance criteria verified."}
 
-                  (expect (= "**Goal complete**\n\nAll acceptance criteria verified."
-                             (get-in result [:answer :answer])))
-                  (expect (= 2 @requests))
-                  (expect (= "active" (get resumed "status")))
-                  (expect (nil? (get resumed "reason")))
-                  (expect (= (inc (get before "version")) (get resumed "version")))
-                  (expect (not (contains? resumed "revision")))
-                  (expect (= (select-keys before preserved) (select-keys resumed preserved)))
-                  (expect (= "complete" (get (goals/check-goal env) "status")))
-                  (expect (= 3 (get (goals/check-goal env) "iterations_used")))))))
-          (finally (loop-env/dispose-environment! env)))))))
+                                  (throw (AssertionError. "Unexpected goal continuation"))))]
+                  (let [result (turn/run-turn! env "Use this new information and continue" {})
+                        [model-status resumed] (first @snapshots)
+                        preserved ["id" "objective" "iteration_budget" "iterations_used"]]
+
+                    (expect (= "All acceptance criteria verified."
+                               (get-in result [:answer :answer])))
+                    (expect (= 3 @requests))
+                    (expect (= "active" model-status))
+                    (expect (= "active" (get resumed "status")))
+                    (expect (= (inc (get before "version")) (get resumed "version")))
+                    (expect (= (select-keys before preserved) (select-keys resumed preserved)))
+                    (expect (= "complete" (get (goals/check-goal env) "status")))
+                    (expect (= 3 (get (goals/check-goal env) "iterations_used")))))))
+            (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe
   non-user-and-cancelled-turns-do-not-resume-goal-test
@@ -351,14 +345,10 @@
             token
             (cancellation/cancellation-token)]
 
-        (try (let [goal (goals/set-goal! db-info session-id "Keep the stopped goal" nil)]
+        (try (let [_ (goals/set-goal! db-info session-id "Keep the stopped goal" nil)]
                (if (= "paused" status)
                  (goals/control! db-info session-id :pause)
-                 (goals/update-goal env
-                                    (get goal "id")
-                                    (get goal "version")
-                                    "blocked"
-                                    "Need user input."))
+                 (goals/update-goal env "blocked"))
                (when (= :cancel-token source) (cancellation/cancel! token))
                (let [before (goals/check-goal env)]
                  (with-redefs [council/runtime (fn [_ sid]
@@ -389,12 +379,8 @@
 (defdescribe command-only-turns-do-not-resume-goal-test
              (it "command only turns do not resume goal"
                  (let [{:keys [db-info session-id] :as env} (environment)]
-                   (try (let [goal (goals/set-goal! db-info session-id "Await user input" nil)
-                              blocked (goals/update-goal env
-                                                         (get goal "id")
-                                                         (get goal "version")
-                                                         "blocked"
-                                                         "Need user input.")]
+                   (try (let [_ (goals/set-goal! db-info session-id "Await user input" nil)
+                              blocked (goals/update-goal env "blocked")]
 
                           (with-redefs [svar/ask-code! (fn [& _]
                                                          (throw
@@ -460,31 +446,29 @@
           ctx-loop/finalize-turn!]
 
       (try
-        (with-redefs
-          [ctx-loop/finalize-turn!
-           (fn [& args]
-             (swap! finalizations inc)
-             (apply finalize args))
+        (with-redefs [ctx-loop/finalize-turn!
+                      (fn [& args]
+                        (swap! finalizations inc)
+                        (apply finalize args))
 
-           svar/ask-code!
-           (fn [_ opts]
-             (swap! request-states conj
-               {:finalizations @finalizations
-                :answer (:answer (ctx-loop/read-turn-state env))
-                :goal-status (get (goals/check-goal env) "status")})
-             (swap! messages conj (:messages opts))
-             (let [n (swap! requests inc)]
-               (cond
-                 (<= n progress-count) {:stop-reason :end :content (str "Progress report " n ".")}
-                 (= n (inc progress-count))
-                 {:stop-reason :tool-calls
-                  :tool-calls
-                  [{:id "complete-goal"
-                    :name "python_execution"
-                    :input
-                    {:code
-                     "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All requested checks passed.'))"}}]}
-                 :else (throw (AssertionError. "Unexpected goal continuation")))))]
+                      svar/ask-code!
+                      (fn [_ opts]
+                        (swap! request-states conj
+                          {:finalizations @finalizations
+                           :answer (:answer (ctx-loop/read-turn-state env))
+                           :goal-status (get (goals/check-goal env) "status")})
+                        (swap! messages conj (:messages opts))
+                        (let [n (swap! requests inc)]
+                          (cond (<= n progress-count) {:stop-reason :end
+                                                       :content (str "Progress report " n ".")}
+                                (= n (inc progress-count))
+                                {:stop-reason :tool-calls
+                                 :tool-calls [{:id "complete-goal"
+                                               :name "python_execution"
+                                               :input {:code "print(update_goal('complete'))"}}]}
+                                (= n (+ 2 progress-count)) {:stop-reason :end
+                                                            :content "All requested checks passed."}
+                                :else (throw (AssertionError. "Unexpected goal continuation")))))]
 
           (let [result
                 (turn/run-turn! env
@@ -497,11 +481,11 @@
                 progress-chunks
                 (filterv :assistant-prose @chunks)]
 
-            (expect (= "**Goal complete**\n\nAll requested checks passed."
-                       (get-in result [:answer :answer])))
+            (expect (= "All requested checks passed." (get-in result [:answer :answer])))
             (expect (= "complete" (get (goals/check-goal env) "status")))
-            (expect (= (inc progress-count) @requests))
-            (expect (= @requests (get (goals/check-goal env) "iterations_used")))
+            (expect (= (+ 2 progress-count) @requests))
+            ;; The final reply after the completion is not goal work.
+            (expect (= (dec @requests) (get (goals/check-goal env) "iterations_used")))
             (expect (= 1 @finalizations))
             (expect (every? #(and (zero? (:finalizations %)) (nil? (:answer %))) @request-states))
             (expect (every? #(= "active" (:goal-status %)) (take progress-count @request-states)))

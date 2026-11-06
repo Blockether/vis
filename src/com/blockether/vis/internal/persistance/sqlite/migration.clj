@@ -333,10 +333,13 @@
 
    `session_state.system_prompt` held the core prompt text from when the session
    was created. Each environment build makes the prompt again, so nothing read the
-   copy back, and it was out of date after each configuration change."
+   copy back, and it was out of date after each configuration change.
+
+   `session_soul.goal_history` held the earlier goals of a session. The transcript
+   holds each goal and the replies about it, so the copy was not necessary."
   [["session_turn_iteration" "llm_assistant_message"] ["session_attachment" "classification"]
    ["session_attachment" "activity_anchor"] ["session_soul" "last_opened_at"]
-   ["council_entry" "kind"] ["session_state" "system_prompt"]])
+   ["council_entry" "kind"] ["session_state" "system_prompt"] ["session_soul" "goal_history"]])
 
 (def ^:private retired-values
   "Values a narrowed CHECK no longer admits, as `[table column old new]`.

@@ -408,7 +408,7 @@ class LargeInputScenariosTest(unittest.TestCase):
                         "net_delta": sum(right[key] - left[key] for key in shared),
                     }
                     self.assertTrue(sc["prompt"].startswith("/goal "))
-                    self.assertIn("Do not print the full goal result", sc["prompt"])
+                    self.assertIn('update_goal(status="complete")', sc["prompt"])
                     self.assertIn("Skip the CSV header", sc["prompt"])
                     self.assertEqual(1100, sc["max_form_output_chars"])
                     self.assertEqual(2200, sc["max_total_output_chars"])
@@ -1129,33 +1129,6 @@ class DiscoveryEvaluationTest(unittest.TestCase):
                 [],
             ),
         )
-
-    def test_exact_answer_accepts_only_goal_completion_wrapper_for_goal_scenarios(self):
-        expected = {"left_only": 150, "net_delta": 931}
-        goal_answer = f"**Goal complete**\n\n{json.dumps(expected)}"
-        self.assertEqual(
-            [],
-            grade.structured_failures(
-                {"want_answer_json": expected, "want_goal_complete": True},
-                ".",
-                goal_answer,
-                [],
-            ),
-        )
-        for answer, goal in (
-            (goal_answer, False),
-            (f"Completed: {json.dumps(expected)}", True),
-            (goal_answer + " more prose", True),
-        ):
-            with self.subTest(answer=answer, goal=goal):
-                self.assertTrue(
-                    grade.structured_failures(
-                        {"want_answer_json": expected, "want_goal_complete": goal},
-                        ".",
-                        answer,
-                        [],
-                    )
-                )
 
     def test_operation_sequence_rejects_missing_extra_or_reordered_calls(self):
         expected = ["probe.cards", "probe.cards", "probe.monitor"]

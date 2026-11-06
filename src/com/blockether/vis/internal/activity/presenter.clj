@@ -561,7 +561,6 @@
   {"get_session" ["title" "goal" "turn_count" "model" "last_turn"]
    "list_sessions" ["title" "goal" "turn_count" "request_snippet" "reply_snippet"]
    "draft_approve" ["files"]
-   "update_goal" ["objective" "reason"]
    "mcp__call" ["content" "tools"]})
 
 (defn select-result
@@ -1119,10 +1118,9 @@
                 (= op "grep") (or (first (str/split-lines (or text ""))) "")
                 (= op "fold_session") (fold-summary text)
                 (str/starts-with? op "draft_") (draft-summary op value)
-                (= op "update_goal")
-                (summary-line [(if-let [status (field value "status")]
-                                 (label status)
-                                 "No goal result") (session-preview (field value "objective") 120)])
+                (= op "update_goal") (if-let [status (field value "goal_status")]
+                                       (label status)
+                                       "No goal result")
                 (= op "list_sessions")
                 (if (seq value) (counted-label (count value) "session") "No sessions found")
                 (= op "mcp__call") (summary-line [(field value "server") (field value "tool")
@@ -1132,7 +1130,7 @@
 
           content
           (cond (contains? summary-only-results op) []
-                (contains? #{"patch" "read_session"} op) []
+                (contains? #{"patch" "read_session" "update_goal"} op) []
                 (str/starts-with? op "council.") []
                 (str/starts-with? op "automations.") []
                 (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"

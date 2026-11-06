@@ -695,27 +695,21 @@
   ([goal now-ms]
    (if-not (gateway-contract/shown-session-goal goal)
      ["No session goal. Use /goal <objective> to create one."]
-     (cond-> [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
-              (get goal "objective") ""
-              (str "Iterations: " (goal-count (get goal "iterations_used"))
-                   " / " (if-let [budget (get goal "iteration_budget")]
-                           (goal-count budget)
-                           "unlimited"))
-              (str "Time in goal: "
-                   (fmt/format-duration (+ (long (get goal "time_used_ms"))
-                                           (if (= "active" (get goal "status"))
-                                             (max 0
-                                                  (- (long now-ms) (long (get goal "updated_at"))))
-                                             0))))]
-       (seq (get goal "reason"))
-       (into ["" (get goal "reason")])
-
-       true
-       (into [""
-              "Use /goal --pause, --resume, --cancel, --clear or --clear-all in the composer."])))))
+     [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
+      (get goal "objective") ""
+      (str "Iterations: " (goal-count (get goal "iterations_used"))
+           " / " (if-let [budget (get goal "iteration_budget")]
+                   (goal-count budget)
+                   "unlimited"))
+      (str "Time in goal: "
+           (fmt/format-duration (+ (long (get goal "time_used_ms"))
+                                   (if (= "active" (get goal "status"))
+                                     (max 0 (- (long now-ms) (long (get goal "updated_at"))))
+                                     0)))) ""
+      "Use /goal --pause, --resume, --cancel or --clear in the composer."])))
 
 (defn goal-detail-markdown
-  "`goal-detail-lines` as Markdown paragraphs. The model writes the reason in Markdown."
+  "`goal-detail-lines` as Markdown paragraphs. The person writes the objective in Markdown."
   ([goal] (goal-detail-markdown goal (System/currentTimeMillis)))
   ([goal now-ms] (str/join "\n\n" (remove str/blank? (goal-detail-lines goal now-ms)))))
 

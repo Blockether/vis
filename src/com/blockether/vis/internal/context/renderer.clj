@@ -45,8 +45,8 @@
 
 (def ^:private reserved-context-keys
   "Core fields cannot be replaced by custom extension keys."
-  #{"id" "turn" "scope" "workspace" "access" "env" "routing" "symbols" "council" "agent" "goal"
-    "goal_history" "apps" "utilization"})
+  #{"id" "turn" "scope" "workspace" "access" "env" "routing" "symbols" "council" "agent"
+    "goal_status" "apps" "utilization"})
 
 (defn- extension-context
   [view]
@@ -70,11 +70,8 @@
      (not-empty (get view "session_access"))
      (assoc "access" (get view "session_access"))
 
-     (get view "session_goal")
-     (assoc "goal" (get view "session_goal"))
-
-     (get view "session_goal_history")
-     (assoc "goal_history" (get view "session_goal_history"))
+     (get view "session_goal_status")
+     (assoc "goal_status" (get view "session_goal_status"))
 
      (get view "session_apps")
      (assoc "apps" (get view "session_apps"))
@@ -186,11 +183,8 @@
         (project-ctx-static view)]
 
     (cond-> m
-      (get view "session_goal")
-      (assoc "goal" (get view "session_goal"))
-
-      (get view "session_goal_history")
-      (assoc "goal_history" (get view "session_goal_history"))
+      (get view "session_goal_status")
+      (assoc "goal_status" (get view "session_goal_status"))
 
       (get view "session_apps")
       (assoc "apps" (get view "session_apps"))
@@ -204,7 +198,7 @@
    and includes utilization when available, so iteration 1 never relies on a
    stale frozen system snapshot.
 
-   The goal rides here for the same reason: `/goal` persists AFTER the frozen
+   The goal status rides here for the same reason: `/goal` persists AFTER the frozen
    standing block was rendered, so without this line the very turn that sets a
    goal shows the model a session without one.
 
@@ -222,11 +216,8 @@
         utilization
         (get view "session_utilization")
 
-        goal
-        (get view "session_goal")
-
-        goal-history
-        (get view "session_goal_history")
+        goal-status
+        (get view "session_goal_status")
 
         apps
         (get view "session_apps")]
@@ -235,9 +226,8 @@
                 (env/ctx->python-line turn)
                 (when utilization
                   (str "\nsession[\"utilization\"] = " (env/ctx->python-line utilization)))
-                (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-line goal)))
-                (when goal-history
-                  (str "\nsession[\"goal_history\"] = " (env/ctx->python-line goal-history)))
+                (when goal-status
+                  (str "\nsession[\"goal_status\"] = " (env/ctx->python-line goal-status)))
                 (cond apps (str "\nsession[\"apps\"] = " (env/ctx->python-line apps))
                       (contains? baseline "apps") "\ndel session[\"apps\"]"))
      :baseline (if apps (assoc baseline "apps" apps) (dissoc baseline "apps"))}))

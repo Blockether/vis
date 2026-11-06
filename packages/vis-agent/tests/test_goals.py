@@ -83,7 +83,6 @@ def test_removed_token_budget_is_not_silently_forwarded_as_a_turn_option():
             "revision": 3,
             "created_at": 1,
             "updated_at": 2,
-            "reason": None,
         },
     ],
 )

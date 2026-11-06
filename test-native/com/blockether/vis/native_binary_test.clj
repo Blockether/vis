@@ -713,11 +713,10 @@
   [stream? status]
   (python-call-body stream?
                     "native-goal-update"
-                    (str "g = session['goal']\n"
-                         "assert g['status'] == 'active', g\n"
-                         "print(update_goal(g['id'], g['version'], '"
+                    (str "assert session['goal_status'] == 'active', session.get('goal_status')\n"
+                         "print(update_goal('"
                          status
-                         "', 'Native fixture verified the terminal condition.'))")))
+                         "'))")))
 
 (defn- native-goal-case!
   [{:keys [progress-count resolution budget status iterations]}]
@@ -770,7 +769,8 @@
 
               (expect finished? "Native goal continuation must finish without a process timeout")
               (when-not (= "paused" status) (expect (= 0 exit) output))
-              (expect (= iterations (count requests))
+              ;; After a resolution, one more request writes the final reply.
+              (expect (= (+ (long iterations) (if resolution 1 0)) (count requests))
                       (str output
                            "\nProvider request summaries: "
                            (pr-str (mapv (fn [{:keys [path body]}]
@@ -790,13 +790,9 @@
               (expect (str/includes? (:body (first requests)) "3 consecutive goal continuations")
                       "The linked image must include the current model-assessed blocker audit")
               (when resolution
-                ;; #216: terminal tool evidence ends the goal without another provider request.
-                (expect (str/includes? output
-                                       (str "Goal "
-                                            resolution
-                                            ": Native fixture verified the terminal condition."))
-                        output)
-                (expect (not (str/includes? output "Native goal resolved.")))
+                ;; #216: after the terminal tools, the model writes the final reply once.
+                (expect (str/includes? output "Native goal resolved.") output)
+                (expect (not (str/includes? output (str "Goal " resolution ":"))) output)
                 (doseq [n (range 1 (inc progress-count))]
                   (let [messages (get (json/read-json (:body (nth requests n))) "messages")
                         previous (filter #(= "assistant" (get % "role")) messages)]

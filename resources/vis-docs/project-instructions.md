@@ -146,12 +146,11 @@ replaces it. Ordinary messages never create a goal.
 /goal --resume
 /goal --cancel
 /goal --clear
-/goal --clear-all
 ```
 
 The goal appears in the Companion header and in the TUI's **Goal: <status>**
 button. Open it to see the objective, status, iterations used and their limit,
-elapsed time, and any completion evidence or blocker. The TUI's separate
+and elapsed time. The TUI's separate
 **Limits** button shows provider quotas and reset times. No toggle is needed.
 Goal details appear when the session has a goal.
 
@@ -161,14 +160,13 @@ goal. Sending a new message resumes a paused or blocked goal if it has budget
 left, keeping its objective and usage. Use `/goal --resume` to resume without
 adding instructions.
 
-Completed, cancelled and budget-limited goals stay stopped. When you set a new goal, Vis keeps the
-old goal in the goal history. Vis sees the recent entries, so it knows what earlier goals reached.
+Completed, cancelled and budget-limited goals stay stopped. Vis keeps no goal history. The
+conversation holds each goal that you set and each reply about it.
 
 ### Forget a goal
 
 Use `/goal --clear` when Vis must not see the current goal any longer. The command stops the goal
-work, and the apps no longer show the goal. A cleared goal does not go into the goal history. Use
-`/goal --clear-all` to also forget the goal history. You cannot undo these commands.
+work, and the apps no longer show the goal. You cannot undo this command.
 
 Completed, cancelled and cleared goals stay stopped. Command-only turns and Council
 notifications do not resume goals. A goal does not give Vis extra permissions or override your newer
@@ -185,9 +183,10 @@ also any `--budget` text.
 
 ### How a goal ends
 
-Vis records a goal as complete only with evidence, such as passing tests. If it cannot continue,
-it marks the goal blocked and names the blocker. A progress reply does not end the goal, and Vis
-continues the work in the same turn. Saying "done" in a reply does not complete a goal.
+Vis marks a goal complete only when it has evidence, such as passing tests. If it cannot continue,
+it marks the goal blocked. The goal records only the status. Vis then writes its final reply, which
+gives the evidence or the blocker. A progress reply does not end the goal, and Vis continues the
+work in the same turn. Saying "done" in a reply does not complete a goal.
 
 A goal never gives Vis extra permissions. Your newer messages always win over the goal.
 
@@ -197,11 +196,11 @@ A goal never gives Vis extra permissions. Your newer messages always win over th
 |---|---|
 | `active` | Vis works on the goal |
 | `paused` | You paused it, or a turn failed or was stopped. A new message resumes it |
-| `blocked` | Vis named a blocker. A new message resumes it if budget remains |
+| `blocked` | Vis cannot continue. Its reply names the blocker. A new message resumes it if budget remains |
 | `budget_limited` | The iteration budget is used up. The apps show "iteration-limit reached". Set a new goal to continue |
-| `complete` | Vis recorded the evidence |
+| `complete` | Vis verified the work. Its reply gives the evidence |
 | `cancelled` | You cancelled it |
-| `cleared` | You forgot it with `--clear` or `--clear-all`. The apps show no goal |
+| `cleared` | You forgot it with `--clear`. The apps show no goal |
 
 Elapsed time counts only while the goal is active. Your own program can set, read and control
 goals. Read [Project instructions API](project-instructions-api.md#set-a-goal).

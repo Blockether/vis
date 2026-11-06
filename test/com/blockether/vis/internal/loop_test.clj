@@ -5319,12 +5319,7 @@
                  (goals/set-goal! (:db-info env) (:session-id env) "Verify the titling boundary" 4))
                (with-redefs [iteration/iteration-loop
                              (fn [env _ _]
-                               (when-let [goal (goals/check-goal env)]
-                                 (goals/update-goal env
-                                                    (get goal "id")
-                                                    (get goal "version")
-                                                    status
-                                                    "Verified the titling boundary."))
+                               (when (goals/check-goal env) (goals/update-goal env status))
                                {:status :success :iteration-count 1 :duration-ms 0})
                              titling/maybe-auto-title! (fn [& _]
                                                          nil)
@@ -8485,12 +8480,10 @@
               (let [card (first (:answer result))]
                 (expect (= "error" (get card "type")))
                 (expect (= :error (:status row)))
-                ;; The paused goal carries the concrete cause, not a generic notice.
+                ;; The error card names the cause; the goal records only that it paused.
+                (expect (seq (get card "message")))
                 (expect (= "paused" (get goal-after "status")))
-                (expect (str/starts-with? (str (get goal-after "reason"))
-                                          "Turn stopped before completion: "))
-                (expect (str/includes? (str (get goal-after "reason"))
-                                       (str (get card "message")))))))
+                (expect (not (contains? goal-after "reason"))))))
           (finally (stop!) (loop-env/dispose-environment! environment)))
         ;; The abandoned attempts' watchdogs outlive the turn. Their deadline must
         ;; never interrupt this thread now that it runs the next work.

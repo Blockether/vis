@@ -1873,14 +1873,12 @@ describe('session goal revisions', () => {
         status,
         revision: revision++,
         objective: 'o'.repeat(properties.objective.maxLength),
-        reason: 'r'.repeat(properties.reason.maxLength),
       };
       expect(client.noteSessionGoal('s1', goal)?.goal).toEqual(goal);
     }
     const current = client.cachedSession('s1')?.goal;
     for (const invalid of [
       { objective: 'o'.repeat(properties.objective.maxLength + 1) },
-      { reason: 'r'.repeat(properties.reason.maxLength + 1) },
       { status: 'unknown' },
     ]) {
       expect(
