@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- TUI and Companion: a bare `http://` or `https://` URL in a message that you send is now a link (#446). The TUI underlines it and a click opens it in the browser, also in a queued message that a running turn received. The Companion shows it in the link style and a click opens it outside the app. Punctuation after the URL, such as `.`, `,`, `?` or an unmatched `)`, is not part of the link. A URL in inline code or in a code block stays text. The text that the model gets and that the session keeps does not change.
+
 ### Changed
 - Extensions: `vis-agent extension sync --prune` also removes old GitHub versions of each package (#444). Each update kept the old version directory and its environment, about 70 MB or more. Prune keeps the active version and one other version, the rollback version or else the newest one. It never removes a local source link or a version that a running Vis process uses. The output shows each removed version as `pruned`, and a dry run shows it as `would-prune`.
 

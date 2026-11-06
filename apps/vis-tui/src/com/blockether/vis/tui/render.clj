@@ -8880,6 +8880,46 @@
   "One collapsed fence in a delivered message: kind, summary token and payload."
   #"(?s)(?:^|\n)````vis-(paste|transcript|image)\n([^\n]*)\n(.*?)\n````(?=\n|\z)")
 
+(defn- delivered-prose-entries
+  "The rows of delivered prose `s`, wrapped to `width`. Each bare URL is underlined and
+   opens on click (#446). A URL that wraps opens its whole address from each of its rows."
+  [^String s width]
+  (let [spans (vis/url-spans s)]
+    (loop [[^String line & more] (wrap-text s width)
+           from 0
+           out []]
+
+      (if (nil? line)
+        out
+        (let [at (.indexOf s line (int from))
+              hits (when-not (neg? at)
+                     (keep (fn [{:keys [start end url]}]
+                             (let [a (max (long start) at)
+                                   b (min (long end) (+ at (.length line)))]
+
+                               (when (< a b) {:from (- a at) :to (- b at) :url url})))
+                           spans))
+              text (reduce (fn [^String text {:keys [from to]}]
+                             (str (subs text 0 from)
+                                  p/INLINE_LINK_ON
+                                  (subs text from to)
+                                  p/INLINE_LINK_OFF
+                                  (subs text to)))
+                           line
+                           (reverse hits))]
+
+          (recur more
+                 (if (neg? at) from (+ at (.length line)))
+                 (conj out
+                       {:line (str user-input-marker text)
+                        ;; The painter puts the text two columns after the rail.
+                        :meta (when (seq hits)
+                                {:links (mapv (fn [{:keys [from to url]}]
+                                                {:col (+ 2 (p/display-width (subs line 0 from)))
+                                                 :width (p/display-width (subs line from to))
+                                                 :url url})
+                                              hits)})})))))))
+
 (defn- delivered-message-entries
   "The bubble rows of one queued message that a running turn received (`→ Send now`).
    Prose wraps on the bubble paper. A `vis-paste` or `vis-transcript` fence becomes a
@@ -8897,7 +8937,7 @@
         prose
         (fn [s]
           (let [s (str/replace s #"\A\n" "")]
-            (when-not (str/blank? s) (mapv row (wrap-text s fill-w)))))
+            (when-not (str/blank? s) (delivered-prose-entries s fill-w))))
 
         fence
         (fn [[_ kind summary payload]]

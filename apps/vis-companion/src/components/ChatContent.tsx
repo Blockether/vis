@@ -94,6 +94,7 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { councilMarkdown } from '../lib/council-markdown';
 import { parseUserMessage, type UserMessagePart } from '../lib/paste';
+import { messageLinkParts } from '../lib/message-links';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import { untilScrollRests } from '../lib/reader-gesture';
@@ -4913,6 +4914,22 @@ function CouncilRequestBody({ children }: { children: string }) {
   );
 }
 
+/**
+ * User text with each bare URL as a link that opens outside the app (#446). The parts are
+ * plain `a` elements, so `JustifiedProse` still measures the line.
+ */
+function linkedText(text: string): ReactNode[] {
+  return messageLinkParts(text).map((part, index) =>
+    typeof part === 'string' ? (
+      part
+    ) : (
+      <a key={index} href={part.url} className={MARKDOWN_LINK} target="_blank" rel="noreferrer">
+        {part.url}
+      </a>
+    ),
+  );
+}
+
 function UserRequestText({ text }: { text: string }) {
   // Keep authored breaks and literal spacing. Native justification keeps ordinary lines
   // aligned without collapsing their spaces.
@@ -4936,14 +4953,14 @@ function UserRequestText({ text }: { text: string }) {
     const prose = line && !literal && line.trim() === line && !/[\t\r]/.test(line);
     return prose && ordinarySpacing ? (
       <JustifiedProse key={index} className={`${PROSE} whitespace-normal break-words`}>
-        {line}
+        {linkedText(line)}
       </JustifiedProse>
     ) : (
       <p
         key={index}
         className={`min-h-[1lh] whitespace-pre-wrap break-words ${prose ? PROSE : 'text-left'}`}
       >
-        {line}
+        {literal ? line : linkedText(line)}
       </p>
     );
   });
@@ -4961,7 +4978,7 @@ function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
       {parts.map((part) =>
         part.type === 'text' ? (
           hasInlineImage || !part.text ? (
-            <span key={part.key}>{part.text}</span>
+            <span key={part.key}>{linkedText(part.text)}</span>
           ) : (
             <UserRequestText key={part.key} text={part.text} />
           )

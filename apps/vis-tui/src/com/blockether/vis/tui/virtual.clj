@@ -856,6 +856,14 @@
   [message]
   (or (:client-turn-id message) (:session-turn-id message)))
 
+(defn- message-ast
+  "The Markdown tree of a user or assistant `message`. Bare URLs in a user message become
+   links, so a click opens them (#446); the message text stays the same."
+  [message]
+  (cond-> (ast/markdown->ast (or (:text message) ""))
+    (= :user (:role message))
+    ast/linkify-urls))
+
 (defn project-message
   "Apply the same `:text` projection `screen/apply-settings` used to
    apply, but for ONE message at a time so the virtual layer can call
@@ -918,7 +926,7 @@
                         :line-meta line-meta)
                  strip-ts))
            windowed? (let [ast
-                           (ast/markdown->ast (:text message))
+                           (message-ast message)
 
                            content-w
                            (max 10 (- bubble-w 4))
@@ -934,8 +942,8 @@
                                                  :window-num (long window-num)
                                                  :full-justify? full-justify?})
 
-                           ;; Clickable block windows are excluded above; their line metadata
-                           ;; remains inert here, as it was in the previous window adapter.
+                           ;; Clickable block windows are excluded above. Rows keep only their
+                           ;; link spans, so a link in a long message still opens.
                            prewrapped
                            (mapv :line entries)
 
@@ -945,7 +953,9 @@
                        (-> message
                            (assoc :text text-display
                                   :prewrapped-lines prewrapped
-                                  :line-meta (vec (repeat (count prewrapped) nil))
+                                  :line-meta (mapv #(some->> (:links (:meta %))
+                                                             (hash-map :links))
+                                                   entries)
                                   :lines-window {:start (long window-start)
                                                  :total-h (long (or window-total-h
                                                                     (+ (count prewrapped)
@@ -970,7 +980,7 @@
                         :answer-line answer-at)
                  strip-ts))
            (#{:assistant :user} (:role message)) (let [ast
-                                                       (ast/markdown->ast (or (:text message) ""))
+                                                       (message-ast message)
 
                                                        {:keys [text lines line-meta]}
                                                        (render/format-answer-markdown-data

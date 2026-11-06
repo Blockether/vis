@@ -1,0 +1,109 @@
+{
+  "description": "Bare http(s) URLs that the TUI and the Companion show as links in a message that the user sends (#446). Each case gives the message text and the URLs of its links, in order. The message text itself never changes.",
+  "cases": [
+    {
+      "name": "a URL at the start of the message",
+      "text": "https://jira.example.com/jira/browse/CARS-12085 please look at this",
+      "links": [
+        "https://jira.example.com/jira/browse/CARS-12085"
+      ]
+    },
+    {
+      "name": "a full stop after the URL stays outside",
+      "text": "Open https://example.com/docs.",
+      "links": [
+        "https://example.com/docs"
+      ]
+    },
+    {
+      "name": "other trailing punctuation stays outside",
+      "text": "Is it https://a.example/x? Or https://b.example/y, or https://c.example/z! See https://d.example/w: and https://e.example/v;",
+      "links": [
+        "https://a.example/x",
+        "https://b.example/y",
+        "https://c.example/z",
+        "https://d.example/w",
+        "https://e.example/v"
+      ]
+    },
+    {
+      "name": "an unmatched closing parenthesis stays outside",
+      "text": "(see https://example.com/page)",
+      "links": [
+        "https://example.com/page"
+      ]
+    },
+    {
+      "name": "matched parentheses stay inside",
+      "text": "Read https://en.wikipedia.org/wiki/Clojure_(programming_language).",
+      "links": [
+        "https://en.wikipedia.org/wiki/Clojure_(programming_language)"
+      ]
+    },
+    {
+      "name": "a query and a fragment stay inside",
+      "text": "Search https://example.com/search?q=a&b=2#top now",
+      "links": [
+        "https://example.com/search?q=a&b=2#top"
+      ]
+    },
+    {
+      "name": "http and a port",
+      "text": "Check http://localhost:8080/health",
+      "links": [
+        "http://localhost:8080/health"
+      ]
+    },
+    {
+      "name": "quotes stay outside",
+      "text": "The \"https://example.com/quoted\" address",
+      "links": [
+        "https://example.com/quoted"
+      ]
+    },
+    {
+      "name": "an angle-bracket URL",
+      "text": "Go to <https://example.com/angle> first",
+      "links": [
+        "https://example.com/angle"
+      ]
+    },
+    {
+      "name": "one URL on each line",
+      "text": "first https://one.example/a\nsecond https://two.example/b",
+      "links": [
+        "https://one.example/a",
+        "https://two.example/b"
+      ]
+    },
+    {
+      "name": "inline code keeps its URL as text",
+      "text": "Run `curl https://example.com/api` then open https://example.com/ui",
+      "links": [
+        "https://example.com/ui"
+      ]
+    },
+    {
+      "name": "a code block keeps its URL as text",
+      "text": "Before https://a.example/one\n```\nhttps://b.example/two\n```\nAfter",
+      "links": [
+        "https://a.example/one"
+      ]
+    },
+    {
+      "name": "no scheme, another scheme or a scheme alone is no link",
+      "text": "Only example.com, ftp://example.com and https:// here",
+      "links": []
+    },
+    {
+      "name": "a scheme inside a word is no link",
+      "text": "xhttps://example.com is not a link",
+      "links": []
+    },
+    {
+      "name": "a message without a URL",
+      "text": "Fix the failing test, please.",
+      "links": []
+    }
+  ]
+}

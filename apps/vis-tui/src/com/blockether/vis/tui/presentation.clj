@@ -755,6 +755,85 @@
          ;; non-string, non-canonical — best-effort coerce via ->ast
          (->ast text))))
 
+(def ^:private bare-url-re
+  "A bare http(s) URL that does not continue a word; group 1 is the URL. JavaScript `\\s`
+   also matches the Unicode spaces, so the class names them. The Companion uses the same
+   rule, and `vis-contract/fixtures/message-links.json` holds the cases of both clients."
+  #"(?i)(?:^|[^A-Za-z0-9_])(https?://[^\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff<>\"`]+)")
+
+(def ^:private url-trailing-punctuation #{\. \, \: \; \! \? \' \" \* \_ \~})
+
+(def ^:private url-closing->opening {\) \( \] \[ \} \{})
+
+(defn- trim-url
+  "Drop the trailing punctuation of `url`, and each closing bracket that it does not open."
+  [^String url]
+  (loop [^String url url]
+    (let [n (.length url)
+          c (when (pos? n) (.charAt url (dec n)))
+          opening (url-closing->opening c)]
+
+      (if (or (contains? url-trailing-punctuation c)
+              (and opening (> (count (filter #{c} url)) (count (filter #{opening} url)))))
+        (recur (subs url 0 (dec n)))
+        url))))
+
+(defn url-spans
+  "Each bare http(s) URL of `text` as `{:start :end :url}`, in order. Trailing punctuation
+   and an unmatched closing bracket stay outside the URL. A scheme alone is no URL."
+  [text]
+  (let [^java.util.regex.Matcher m (re-matcher bare-url-re (str text))]
+    (loop [out []]
+      (if (.find m)
+        (let [start (.start m 1)
+              url (trim-url (.group m 1))]
+
+          (recur (cond-> out
+                   (re-matches #"(?i)https?://.+" url)
+                   (conj {:start start :end (+ start (count url)) :url url}))))
+        out))))
+
+(defn- linkify-span
+  "The inline nodes of span text `s`: its bare URLs become links, the rest stays text."
+  [attrs ^String s]
+  (let [spans (url-spans s)]
+    (if (empty? spans)
+      [[:span attrs s]]
+      (loop [at 0
+             [{:keys [start end url]} & more :as left] spans
+             out []]
+
+        (if (empty? left)
+          (cond-> out
+            (< (long at) (count s))
+            (conj [:span attrs (subs s at)]))
+          (recur end
+                 more
+                 (cond-> out
+                   (< (long at) (long start))
+                   (conj [:span attrs (subs s at start)])
+
+                   true
+                   (conj [:a {:href url} [:span attrs url]]))))))))
+
+(defn linkify-urls
+  "Make each bare http(s) URL in Markdown tree `node` a link, so the TUI paints and opens
+   it like a Markdown link. Code, links and images keep their text. Only the tree changes:
+   the message text that the model gets and the session keeps stays the same."
+  [node]
+  (if (and (vector? node) (not (contains? #{:a :c :code :img} (first node))))
+    (let [[tag attrs & children] node]
+      (into [tag attrs]
+            (mapcat (fn [child]
+                      (if (and (vector? child)
+                               (= :span (first child))
+                               (= 3 (count child))
+                               (string? (nth child 2)))
+                        (linkify-span (nth child 1) (nth child 2))
+                        [(linkify-urls child)])))
+            children))
+    node))
+
 (def reasoning-preview-line-limit
   "Canonical reasoning PREVIEW height shared by every channel. Up to this many
    rows/lines of a thinking trace stay visible; the remainder folds behind a

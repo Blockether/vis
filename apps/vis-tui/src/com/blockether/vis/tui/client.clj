@@ -3213,6 +3213,8 @@
 
 (def council->ast presentation/council->ast)
 
+(def url-spans presentation/url-spans)
+
 (def reasoning-preview-line-limit presentation/reasoning-preview-line-limit)
 
 (def reasoning-collapse-min-hidden presentation/reasoning-collapse-min-hidden)
