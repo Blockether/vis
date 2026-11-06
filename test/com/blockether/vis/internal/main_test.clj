@@ -511,8 +511,13 @@
       (=
         ["--db /nonexistent-dir-xyz/vis.mdb needs an existing directory; /nonexistent-dir-xyz does not exist"]
         (:flag-errors (#'main/check-db-target {:db "/nonexistent-dir-xyz/vis.mdb"}))))
-    (expect (= ["--db /tmp is a directory, not a database file"]
-               (:flag-errors (#'main/check-db-target {:db "/tmp"})))))
+    (let [file (java.io.File/createTempFile "vis-check-db-target" ".db")]
+      (try (expect (= [(str "--db " file " is a file; give the store directory, such as vis.mdb")]
+                      (:flag-errors (#'main/check-db-target {:db (str file)}))))
+           (finally (.delete file)))))
+  (it "accepts an existing store directory, as a second run with the same --db gives"
+      (expect (nil? (:flag-errors (#'main/check-db-target
+                                   {:db (System/getProperty "java.io.tmpdir")})))))
   (it "accepts :memory and a writable path"
       (expect (nil? (:flag-errors (#'main/check-db-target {:db ":memory"}))))
       (expect (nil? (:flag-errors (#'main/check-db-target

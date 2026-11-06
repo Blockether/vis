@@ -1508,8 +1508,10 @@
 
 (defn- check-db-target
   "`--db PATH` used to reach SQLite as a raw `[SQLITE_CANTOPEN] Failed to
-   initialize pool` fatal that never named the path or the reason. Refuse a
-   missing directory, a directory given as the file, and an unwritable target."
+   initialize pool` fatal that never named the path or the reason. PATH is the
+   store DIRECTORY, like the default `~/.vis/vis.mdb`: the store keeps `vis.db`
+   inside it and creates it when it is missing. Refuse a regular file, a missing
+   parent directory and an unwritable target."
   [{:keys [db] :as opts}]
   (if (or (nil? db) (= ":memory" db))
     opts
@@ -1521,8 +1523,8 @@
 
           err
           (cond
-            (.isDirectory f) (str "--db " db " is a directory, not a database file")
-            (and parent (not (.isDirectory parent)))
+            (.isFile f) (str "--db " db " is a file; give the store directory, such as vis.mdb")
+            (and (not (.exists f)) parent (not (.isDirectory parent)))
             (str "--db " db " needs an existing directory; " (.getPath parent) " does not exist")
             (and (.exists f) (not (.canWrite f))) (str "--db " db " is not writable")
             (and (not (.exists f)) parent (not (.canWrite parent)))
@@ -1711,7 +1713,7 @@
   (commandline/stdout!
     "  --reasoning-effort E  Exact provider-native effort that the model offers (e.g. low or xhigh).")
   (commandline/stdout! "  --name NAME          Set the agent name (default: cli).")
-  (commandline/stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
+  (commandline/stdout! "  --db PATH|:memory    Override the SQLite store directory (or :memory).")
   (commandline/stdout! "  --session-id ID      Continue an existing persisted session.")
   (commandline/stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
   (commandline/stdout! "                       resumable :cli session. Without it a run is")
@@ -3094,7 +3096,7 @@
      (help-row "--model MODEL" "Override model, or use provider/model.")
      (help-row "--reasoning-effort E" "Exact provider-native effort that the model offers.")
      (help-row "--name NAME" "Agent name for this run.")
-     (help-row "--db PATH|:memory" "SQLite DB path or in-memory DB.")
+     (help-row "--db PATH|:memory" "SQLite store directory or in-memory DB.")
      (help-row "--session-id ID" "Continue an existing persisted session.")
      (help-row "--persist" "Persist as a :cli session.")
      (help-row "--no-global" "Skip ~/.vis config, extensions, AGENTS.md and skills.")
