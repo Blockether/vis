@@ -22,9 +22,7 @@ it('updates the header from a goal event without another HTTP request', async ()
       goal: { ...STORY_GOAL, revision: 4, status: 'complete' },
     } as never),
   );
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: /^Goal: Complete/ })).toBeInTheDocument(),
-  );
+  await waitFor(() => expect(screen.queryByRole('button', { name: /^Goal:/ })).toBeNull());
   expect(note).toHaveBeenCalledOnce();
   expect(read).toHaveBeenCalledTimes(before);
 });
