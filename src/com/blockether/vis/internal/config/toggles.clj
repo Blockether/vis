@@ -864,4 +864,32 @@
                        :owner :vis
                        :group :session
                        :persist? true})
+    ;; The gateway plays the sounds on its own machine (`gateway.sounds`), so these are
+    ;; machine settings. An empty file row plays the bundled sound of that cue.
+    (register-toggle!
+      {:id "sounds"
+       :label "Sounds"
+       :description
+       "Play a sound on the gateway machine when a turn ends or Vis waits for you. Subagents are silent."
+       :type :boolean
+       :default false
+       :scopes ["global"]
+       :owner :vis
+       :group :sounds
+       :persist? true})
+    (doseq [[id label event] [["sound_finish" "Finish sound" "a finished turn"]
+                              ["sound_input" "Question sound" "a question to you"]
+                              ["sound_error" "Error sound" "a failed or stopped turn"]]]
+      (register-toggle! {:id id
+                         :label label
+                         :description (str "Sound file for "
+                                           event
+                                           ". Empty plays the bundled sound; off plays none.")
+                         :type :string
+                         :default ""
+                         :parent "sounds"
+                         :scopes ["global"]
+                         :owner :vis
+                         :group :sounds
+                         :persist? true}))
     true))

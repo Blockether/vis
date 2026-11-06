@@ -1,0 +1,11 @@
+Vis bundled sounds
+
+The sounds in this directory come from "Interface Sounds" (version 1.0) by Kenney
+(https://kenney.nl/assets/interface-sounds). Kenney released them under
+Creative Commons Zero (CC0 1.0): https://creativecommons.org/publicdomain/zero/1.0/
+
+Vis converted each file from Ogg Vorbis to 16-bit mono WAV at 44.1 kHz:
+
+- finish.wav from confirmation_002.ogg (a turn completed)
+- input.wav from question_001.ogg (Vis waits for your answer)
+- error.wav from error_006.ogg (a turn failed or stopped)

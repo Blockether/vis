@@ -67,6 +67,10 @@
       "Speak text, transcribe recordings and add your own voices from a short recording."
       :page "speech"
       :title "Speech and voices"}
+     {:blurb
+      "Hear a sound when a turn finishes, when Vis waits for your answer and when a turn fails."
+      :page "sounds"
+      :title "Sounds"}
     {:blurb
      "Understand where the agent runs Python, which packages it uses and what it can access."
      :page "python-sandbox"
@@ -139,6 +143,11 @@
         :label "Speech"
         :page "speech-api"
         :title "Speech API"}
+       {:blurb
+        "Turn the sounds on or off and choose your own sound files from Python or with HTTP requests."
+        :label "Sounds"
+        :page "sounds-api"
+        :title "Sounds API"}
       {:blurb
        "Read and change settings for the gateway, a project, a group or a session from Python or with HTTP requests."
        :label "Configuration"

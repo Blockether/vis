@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Sounds: the gateway can play a sound when a turn finishes, when Vis waits for your answer and when a turn fails or stops (#308). Turn it on in the **Sounds** section of the TUI or Companion settings. It is off by default. Vis includes three CC0 sounds from Kenney Interface Sounds. Each setting accepts a path to your own sound file, or `off` for no sound. Subagent turns, Council turns and quiet turns play no sound. The Python SDK and extensions read and change the settings with `vis.sounds`. The sound plays on the computer that runs the gateway: `afplay` on macOS, PowerShell on Windows and `pw-play`, `paplay` or `aplay` on Linux.
+
 ## [v0.5.5] - 2026-11-06
 
 ### Added

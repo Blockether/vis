@@ -30,6 +30,7 @@ from blockether.vis.views import InputView, LiveView, ViewEvent
 
 if TYPE_CHECKING:
     from ._agent import ResponseModel
+    from ._sounds import Sounds
     from ._speech import Speech
 
 JSONValue: TypeAlias = (
@@ -437,6 +438,13 @@ class ExecutionLayer(ABC):
         from ._speech import Speech
 
         return Speech(self)
+
+    @property
+    def sounds(self) -> Sounds:
+        """Return the `Sounds` API: the sounds that the gateway machine plays."""
+        from ._sounds import Sounds
+
+        return Sounds(self)
 
     def session(self, sid: str) -> Session:
         """Return a lightweight handle for an existing session ID.

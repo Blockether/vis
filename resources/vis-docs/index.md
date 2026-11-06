@@ -299,6 +299,7 @@ Each concept page explains one feature: what it does, when to use it and how to 
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Speech and voices](speech.md) — speak text, transcribe recordings and add your own voices.
+- [Sounds](sounds.md) — hear a sound when a turn finishes, waits for you or fails.
 - [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
 - [Configuration](configuration.md) — providers, models and project settings.
 - [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
@@ -325,6 +326,7 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
 - [Evaluations API](evals-api.md) — benchmark scores, failure causes and comparisons from Python or HTTP.
 - [Speech API](speech-api.md) — speech, transcription and your own voices from Python or HTTP.
+- [Sounds API](sounds-api.md) — sound settings and your own sound files from Python or HTTP.
 - [Configuration API](configuration-api.md) — settings and extension reloads from Python or HTTP.
 
 <span id="put-your-expertise-into-code"></span>

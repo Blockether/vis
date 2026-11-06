@@ -618,6 +618,15 @@
                                  :view_id (str (get document "id"))
                                  :type "view.open"})})))
 
+(defn operator-turn?
+  "True when the person waits on the terminal turn `event` of session `sid`. A
+   Council wake, a subagent turn and a quiet turn (such as an automation run) are
+   not operator turns: they raise no alert and no sound."
+  [sid event]
+  (and (not= "council" (get event "request_kind"))
+       (not (true? (get event "subagent")))
+       (not (@quiet-turn? sid event))))
+
 (defn on-event!
   "Push on terminal turns and on input Views that need the operator."
   [sid event]
@@ -628,10 +637,7 @@
              (and (= "view.open" event-type) (= "input" (get event "kind")))
 
              terminal?
-             (and (#{"turn.completed" "turn.failed"} event-type)
-                  (not= "council" (get event "request_kind"))
-                  (not (true? (get event "subagent")))
-                  (not (@quiet-turn? sid event)))]
+             (and (#{"turn.completed" "turn.failed"} event-type) (operator-turn? sid event))]
 
          (when (and (or input? terminal?) (pos? (device-count)) (any-configured?))
            (future (broadcast! (if input?

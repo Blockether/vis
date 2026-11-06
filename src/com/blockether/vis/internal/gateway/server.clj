@@ -30,6 +30,7 @@
     [com.blockether.vis.internal.gateway.pairing :as pairing]
     [com.blockether.vis.internal.gateway.runtime :as protocol]
     [com.blockether.vis.internal.gateway.push :as push]
+    [com.blockether.vis.internal.gateway.sounds :as sounds]
     [com.blockether.vis.internal.gateway.state :as state]
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
@@ -2193,6 +2194,8 @@
              ;; only means anything on the gateway that minted it.
              (push/set-gateway-id! (instance/gateway-instance-id db host port))
              (state/add-event-tap! ::push push/on-event!)
+             ;; Sounds: the same terminal turns and input Views play a cue on this machine.
+             (state/add-event-tap! ::sounds sounds/on-event!)
              ;; Human-input bridge: a `request-human-input!` raised inside a
              ;; session becomes a session event, so the companion app sees the
              ;; blocked run live (and the push tap above alerts the phone).

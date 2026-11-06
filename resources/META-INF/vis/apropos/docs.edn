@@ -15,6 +15,7 @@
  {:kind "doc" :name "project-instructions-api" :resource "vis-docs/project-instructions-api.md"}
  {:kind "doc" :name "drafts-api" :resource "vis-docs/drafts-api.md"}
  {:kind "doc" :name "speech-api" :resource "vis-docs/speech-api.md"}
+ {:kind "doc" :name "sounds-api" :resource "vis-docs/sounds-api.md"}
  {:kind "doc" :name "council-api" :resource "vis-docs/council-api.md"}
  {:kind "doc" :name "automations-api" :resource "vis-docs/automations-api.md"}
  {:kind "doc" :name "evals-api" :resource "vis-docs/evals-api.md"}
@@ -43,4 +44,5 @@
  {:kind "doc" :name "live-views" :resource "vis-docs/live-views.md"}
  {:kind "doc" :name "components" :resource "vis-docs/components.md"}
  {:kind "doc" :name "speech" :resource "vis-docs/speech.md"}
+ {:kind "doc" :name "sounds" :resource "vis-docs/sounds.md"}
  {:kind "doc" :name "provider-extensions" :resource "vis-docs/provider-extensions.md"}]
