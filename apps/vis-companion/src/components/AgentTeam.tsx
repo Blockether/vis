@@ -393,13 +393,14 @@ function StatusMark({ status }: { status: string }) {
 const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1 text-left';
 
 // The columns of a team on a wide screen: ROLE, TITLE, then the NOTE, or the time bar while the
-// timeline shows, then TIME and the status mark. A hairline stands between ROLE and TITLE.
-// TIME fits `59m 59s`, so a ticking time never moves a column. TITLE takes at most a third of
-// the row; a longer title wraps. A wide row carries the frame's own inset, so its hover fills the frame and its text lines up with the team line.
+// timeline shows, then TIME and the status mark. A hairline stands after ROLE, TITLE, NOTE and
+// TIME. TIME fits `59m 59s`, so a ticking time never moves a column. TITLE takes at most a third
+// of the row; a longer title wraps. A wide row carries the frame's own inset, so its hover fills
+// the frame and its text lines up with the team line.
 const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-3';
 
-// The hairline after ROLE: in the middle of the gap, through the row inset, so the rows join it.
-const ROLE_RULE = 'relative self-stretch after:absolute after:-inset-y-1 after:-right-1.5 after:w-px after:bg-dialog-edge';
+// The hairline after a cell: in the middle of the gap, through the row inset, so the rows join it.
+const CELL_RULE = 'relative self-stretch after:absolute after:-inset-y-1 after:-right-1.5 after:w-px after:bg-dialog-edge';
 
 const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
@@ -524,14 +525,14 @@ function WideAgentTable(props: TableProps) {
                 onClick={() => onSelect(agent.session_id)}
                 className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${WIDE_ROW}`}
               >
-                <span className={`uppercase ${ROLE_RULE} ${role.ink}`}>{role.text}</span>
-                <HoverNote className="min-w-0" note={taskNote(agent.task)}>
+                <span className={`uppercase ${CELL_RULE} ${role.ink}`}>{role.text}</span>
+                <HoverNote className={`min-w-0 ${CELL_RULE}`} note={taskNote(agent.task)}>
                   <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
                 </HoverNote>
-                <HoverNote className="min-w-0" note={update}>
+                <HoverNote className={`min-w-0 ${CELL_RULE}`} note={update}>
                   <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{update ?? ''}</span>
                 </HoverNote>
-                <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
+                <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${CELL_RULE}`}>{time === undefined ? '' : formatAgentTime(time)}</span>
                 <span className={`text-center ${status.ink}`}>
                   <span className="sr-only">{status.text}</span>
                   <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
