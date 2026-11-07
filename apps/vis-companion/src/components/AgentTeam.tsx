@@ -397,6 +397,9 @@ const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32
 // The hairline after a cell: in the middle of the gap, through the row inset, so the rows join it.
 const CELL_RULE = 'relative self-stretch after:absolute after:-inset-y-1 after:-right-1.5 after:w-px after:bg-dialog-edge';
 
+// The TIME cell of a chart row also has the hairline before it, after the time bar.
+const TIME_RULES = `${CELL_RULE} before:absolute before:-inset-y-1 before:-left-1.5 before:w-px before:bg-dialog-edge`;
+
 const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
 // The widths of the columns, in `ch` of the monospace font. ROLE is the same for every team. TITLE
@@ -562,20 +565,22 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
   return (
     <div style={widths} className="pb-1" data-team-chart>
       <div aria-hidden className={`pt-1 text-dialog-hint ${CHART_ROW}`}>
-        <span className="relative col-start-2 h-[calc(1lh+0.25rem)] border-b border-dialog-edge/50"><AxisLabels total={total} /></span>
+        <span className={CELL_RULE} />
+        <span className="relative h-[calc(1lh+0.25rem)] border-b border-dialog-edge/50"><AxisLabels total={total} /></span>
+        <span className={TIME_RULES} />
       </div>
       <div className="relative">
         <GridLines total={total} />
         <ul aria-label="Timeline">
           {leader && (
             <li className={`py-1 ${CHART_ROW}`} data-leader-lane>
-              <span className={`font-bold ${LEADER_INK}`}>{LEADER_KEY}<span className="sr-only"> {LEADER_ROLE}</span></span>
+              <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}<span className="sr-only"> {LEADER_ROLE}</span></span>
               <span aria-hidden className="relative h-2 self-center">
                 {parts.map((part) => (
                   <LanePart key={part.start} bar={{ start: share(part.start), end: share(part.end), isWaiting: part.isWaiting }} ink="bg-white" />
                 ))}
               </span>
-              <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{formatAgentTime(leaderTime)}</span>
+              <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>{formatAgentTime(leaderTime)}</span>
               <StatusWord status={agentStatus({ status: leader.end == null ? 'running' : 'completed' } as Subagent)} />
             </li>
           )}
@@ -592,12 +597,12 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
                   onClick={() => onSelect(agent.session_id)}
                   className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${CHART_ROW}`}
                 >
-                  <span className={`group-hover:underline ${role.ink}`}>
+                  <span className={`group-hover:underline ${CELL_RULE} ${role.ink}`}>
                     {keys[index]}
                     <span className="sr-only"> {agentLabel(agent, rows)}</span>
                   </span>
                   <span aria-hidden className="relative h-2 self-center">{bar && <LanePart bar={bar} ink={BAR_INK[status.text]} />}</span>
-                  <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
+                  <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>{time === undefined ? '' : formatAgentTime(time)}</span>
                   <StatusWord status={status} />
                 </button>
               </li>
@@ -605,12 +610,12 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           })}
         </ul>
       </div>
-      <ul aria-label="Legend" className="mt-1 border-t border-dialog-edge/50 pt-1.5">
+      <ul aria-label="Legend" className="border-t border-dialog-edge pt-1">
         {leader && (
           <li className={LEGEND_ROW} data-hover-note-frame>
-            <span className={`font-bold ${LEADER_INK}`}>{LEADER_KEY}</span>
-            <span className={`font-bold uppercase ${LEADER_INK}`}>{LEADER_ROLE}</span>
-            <span className="whitespace-nowrap text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
+            <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
+            <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
+            <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE}`}>{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
             <HoverNote className="min-w-0" note={leader.note}>
               <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>
@@ -621,9 +626,9 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           const update = agentUpdate(agent);
           return (
             <li key={agent.session_id} className={LEGEND_ROW} data-hover-note-frame>
-              <span className={role.ink}>{keys[index]}</span>
-              <span className={`uppercase ${role.ink}`}>{role.text}</span>
-              <HoverNote className="min-w-0" note={taskNote(agent.task)}>
+              <span className={`${CELL_RULE} ${role.ink}`}>{keys[index]}</span>
+              <span className={`uppercase ${CELL_RULE} ${role.ink}`}>{role.text}</span>
+              <HoverNote className={`min-w-0 ${CELL_RULE}`} note={taskNote(agent.task)}>
                 <span className="font-bold [overflow-wrap:anywhere]">{agentLabel(agent, rows)}</span>
               </HoverNote>
               <HoverNote className="min-w-0" note={update}>
