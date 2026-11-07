@@ -17,7 +17,8 @@
     :label "Workspace paths"
     :default []
     :type "array"
-    :editor "paths"}
+    :editor "paths"
+    :description "Folders that Vis can use besides the current project."}
    {:id "jail_enabled"
     :section ["jail"]
     :key "enabled"

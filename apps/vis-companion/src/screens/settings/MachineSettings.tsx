@@ -57,7 +57,7 @@ import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsLoading, SettingsPanel, SettingsSection } from './SettingsLayout';
 import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
-import { SettingField, SettingMachine } from './SettingField';
+import { ownsLegend, SettingField, SettingMachine } from './SettingField';
 import { machineLabel } from '../../lib/fleet';
 import { AutomationsPanel } from './AutomationsPanel';
 import { PresetsField } from './PresetsField';
@@ -398,7 +398,7 @@ export function ValueSetting({
       }}
     >
       {/* A list's own legend holds the label, the description and its add action. */}
-      {toggle.editor !== 'list' && (
+      {!ownsLegend(toggle) && (
         <div>
           <Text as="p" variant="label">
             {toggle.label}

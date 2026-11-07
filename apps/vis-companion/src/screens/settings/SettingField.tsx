@@ -42,6 +42,10 @@ function numericSchema(pointer?: string): NumericSchema {
   return node && typeof node === 'object' && pointer ? (node as NumericSchema) : {};
 }
 
+/** The editors whose own legend shows the setting's label and description, so the row adds none. */
+export const ownsLegend = (setting: Toggle) =>
+  setting.editor === 'list' || setting.editor === 'tools' || setting.editor === 'paths';
+
 /** The machine whose settings these are, so a folder field can browse its disk. */
 export const SettingMachine = createContext<{ client: GatewayClient; label: string } | null>(null);
 
@@ -264,7 +268,7 @@ function ToggleRow({
   );
 }
 
-function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
+function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
   const machine = useContext(SettingMachine);
   // The root that the folder sheet fills (an index, or `'new'`), the button and the place.
   const [picking, setPicking] = useState<
@@ -326,11 +330,13 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
           machine ? pick('new', anchor) : onChange([...rows, { id: '', path: '', access: 'read-write' }])
         }
       >
-        Workspace roots
+        {setting.label}
       </ListHeader>
-      <Text as="p" variant="description">
-        Folders that Vis can use besides the current project.
-      </Text>
+      {setting.description && (
+        <Text as="p" variant="description">
+          {setting.description}
+        </Text>
+      )}
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         const access = String(row.access ?? 'read-write');
