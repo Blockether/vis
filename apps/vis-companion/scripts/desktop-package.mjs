@@ -100,9 +100,16 @@ export const RFD_DEPENDENCY = 'rfd = { version = "0.15", default-features = fals
 /** Vis's own commands in `native/desktop/artifact.rs`. */
 export const ARTIFACT_COMMANDS = ['open_xlsx', 'reveal_artifact', 'save_artifact_as'];
 
+/** The Pake line that creates the main window. */
+export const WINDOW_SETUP =
+  'let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;';
+
+/** Reloads a window after WebKit ends its page process; see `native/desktop/web_content.rs`. */
+export const WEB_CONTENT_RELOAD = 'web_content::reload_after_web_content_exit(&window);';
+
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Install a private Pake template with Vis's native file commands. */
+/** Install a private Pake template with Vis's native file commands and window hooks. */
 export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = false }) {
   if (windowsSigning) {
     for (const name of ['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER']) {
@@ -135,15 +142,20 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
   if (!lib.includes(module) || !lib.includes(handler)) {
     throw new Error('Pake native command registration changed');
   }
+  if (!lib.includes(WINDOW_SETUP)) throw new Error('Pake window setup changed');
   // A kept tools directory holds the registration of an earlier build, so drop it first.
   lib = lib
     .replace(/\nmod artifact;\nuse artifact::\{[^}]*\};/, '')
+    .replace('\nmod web_content;', '')
+    .replace(new RegExp(`\\n *${escapeRegExp(WEB_CONTENT_RELOAD)}`), '')
     .replace(
       new RegExp(`(${escapeRegExp(handler)})(?:\\n {12}(?:${ARTIFACT_COMMANDS.join('|')}),)+`),
       '$1',
     );
   lib = lib.replace(module, `${module}\nmod artifact;\nuse artifact::{${ARTIFACT_COMMANDS.join(', ')}};`);
   lib = lib.replace(handler, `${handler}${ARTIFACT_COMMANDS.map((name) => `\n            ${name},`).join('')}`);
+  lib = lib.replace(module, `${module}\nmod web_content;`);
+  lib = lib.replace(WINDOW_SETUP, `${WINDOW_SETUP}\n            ${WEB_CONTENT_RELOAD}`);
   writeFileSync(libPath, lib);
   const cargoPath = join(pakeDir, 'src-tauri', 'Cargo.toml');
   const cargo = readFileSync(cargoPath, 'utf8');
@@ -151,10 +163,12 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
     if (!cargo.includes('\n[dependencies]\n')) throw new Error('Pake Cargo.toml changed');
     writeFileSync(cargoPath, cargo.replace('\n[dependencies]\n', `\n[dependencies]\n${RFD_DEPENDENCY}\n`));
   }
-  writeFileSync(
-    join(sourceDir, 'artifact.rs'),
-    readFileSync(new URL('../native/desktop/artifact.rs', import.meta.url), 'utf8'),
-  );
+  for (const name of ['artifact.rs', 'web_content.rs']) {
+    writeFileSync(
+      join(sourceDir, name),
+      readFileSync(new URL(`../native/desktop/${name}`, import.meta.url), 'utf8'),
+    );
+  }
   const configPath = join(pakeDir, 'src-tauri', 'tauri.windows.conf.json');
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
   if (windowsSigning) {

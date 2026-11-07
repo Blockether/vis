@@ -10,6 +10,8 @@ import {
   prepareDesktopHost,
   ARTIFACT_COMMANDS,
   RFD_DEPENDENCY,
+  WEB_CONTENT_RELOAD,
+  WINDOW_SETUP,
 } from './desktop-package.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -25,7 +27,7 @@ vi.mock('node:fs', async (importOriginal) => {
     writeFileSync: vi.fn(),
     readFileSync: vi.fn((...args) => {
       if (String(args[0]).endsWith('lib.rs')) {
-        return 'mod util;\nfn run() { builder.invoke_handler(tauri::generate_handler![download_file,]); }\n';
+        return 'mod util;\nfn run() { builder.invoke_handler(tauri::generate_handler![download_file,]); }\nfn setup() {\n            let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;\n}\n';
       }
       if (String(args[0]).endsWith('Cargo.toml')) {
         return '[package]\n\n[dependencies]\nserde = "1"\n';
@@ -135,13 +137,14 @@ describe('desktop package', () => {
     ).toBe(false);
   });
 
-  // A kept tools directory already holds an earlier registration. A second `mod artifact;`
-  // or `rfd` line fails the Rust build, and an older command list misses the new commands.
+  // A kept tools directory already holds an earlier registration. A second `mod artifact;`,
+  // `mod web_content;` or `rfd` line fails the Rust build, and an older command list misses
+  // the new commands.
   it('replaces the registration of an earlier build in a kept tools directory', () => {
     const fresh = readFileSync.getMockImplementation();
     readFileSync.mockImplementation((path, ...rest) => {
       if (String(path).endsWith('lib.rs')) {
-        return 'mod util;\nmod artifact;\nuse artifact::{open_xlsx, reveal_artifact};\nfn run() { builder.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,download_file,]); }\n';
+        return 'mod util;\nmod web_content;\nmod artifact;\nuse artifact::{open_xlsx, reveal_artifact};\nfn run() { builder.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,download_file,]); }\nfn setup() {\n            let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;\n            web_content::reload_after_web_content_exit(&window);\n}\n';
       }
       if (String(path).endsWith('Cargo.toml')) {
         return `[package]\n\n[dependencies]\n${RFD_DEPENDENCY}\nserde = "1"\n`;
@@ -153,6 +156,8 @@ describe('desktop package', () => {
       prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
       const [, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
       expect(lib.match(/mod artifact;/g)).toHaveLength(1);
+      expect(lib.match(/mod web_content;/g)).toHaveLength(1);
+      expect(lib.split(WEB_CONTENT_RELOAD)).toHaveLength(2);
       expect(lib).toContain(`use artifact::{${ARTIFACT_COMMANDS.join(', ')}};`);
       for (const name of ARTIFACT_COMMANDS) {
         expect(lib.match(new RegExp(`\\n {12}${name},`, 'g'))).toHaveLength(1);
@@ -160,6 +165,41 @@ describe('desktop package', () => {
       expect(writeFileSync.mock.calls.some(([path]) => String(path).endsWith('Cargo.toml'))).toBe(
         false,
       );
+    } finally {
+      readFileSync.mockImplementation(fresh);
+    }
+  });
+
+  // Without this hook a page process that macOS ends leaves the window white until the
+  // person reloads it or starts the app again.
+  it('reloads the main window after its page process ends', () => {
+    vi.clearAllMocks();
+    prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+    const [, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
+    expect(lib).toContain('mod util;\nmod web_content;');
+    expect(lib).toContain(`${WINDOW_SETUP}\n            ${WEB_CONTENT_RELOAD}\n}`);
+    const [hookPath, hook] = writeFileSync.mock.calls.find(([path]) =>
+      String(path).endsWith('web_content.rs'),
+    );
+    expect(hookPath).toBe(
+      join('/tools', 'node_modules', 'pake-cli', 'src-tauri', 'src', 'web_content.rs'),
+    );
+    expect(hook).toContain('pub fn reload_after_web_content_exit(window: &tauri::WebviewWindow)');
+  });
+
+  // A Pake release that makes the window in a different way must stop the build. Else the
+  // app ships without the reload, and a lost page process makes the window white again.
+  it('refuses a Pake template without the main window line', () => {
+    const fresh = readFileSync.getMockImplementation();
+    readFileSync.mockImplementation((path, ...rest) =>
+      String(path).endsWith('lib.rs')
+        ? 'mod util;\nfn run() { builder.invoke_handler(tauri::generate_handler![download_file,]); }\n'
+        : fresh(path, ...rest),
+    );
+    try {
+      expect(() =>
+        prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env }),
+      ).toThrow('Pake window setup changed');
     } finally {
       readFileSync.mockImplementation(fresh);
     }
