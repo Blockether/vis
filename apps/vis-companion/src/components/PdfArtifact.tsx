@@ -207,6 +207,8 @@ export const PdfReader = memo(function PdfReader({
   }, [viewportRef, aspect]);
 
   const position = pageCount ? `${page} of ${pageCount}` : `${page}`;
+  // The counter holds its widest text, so a turn from page 9 to 10 never moves the buttons.
+  const positionWidth = pageCount ? `${String(pageCount).length * 2 + 4}ch` : undefined;
   return chrome({
     // THE PAGER FLOATS OVER THE FOOT OF THE PAGE, AS IN EVERY PDF READER.
     //
@@ -259,7 +261,12 @@ export const PdfReader = memo(function PdfReader({
               <ChevronIcon back className="size-3" />
             </PagerButton>
           </span>
-          <span className="min-w-[9ch] px-2 py-1.5 text-center tabular-nums mouse:py-0">{position}</span>
+          <span
+            className="box-content px-2 py-1.5 text-center tabular-nums mouse:px-1 mouse:py-0"
+            style={{ minWidth: positionWidth }}
+          >
+            {position}
+          </span>
           <span className="hidden mouse:contents">
             <PagerButton
               label="Next page"
@@ -285,7 +292,7 @@ export const PdfReader = memo(function PdfReader({
   });
 });
 
-/** One square of the floating pager: 32px, with the 44px reach a finger needs. */
+/** One cell of the floating pager: 24px by 32px, close to its label, with a 36px by 44px reach. */
 function PagerButton({
   label,
   isWide = false,
@@ -307,7 +314,7 @@ function PagerButton({
       disabled={disabled}
       onClick={onClick}
       className={`relative grid h-8 place-items-center bg-transparent font-bold text-current transition-colors duration-150 after:absolute after:-inset-1.5 after:content-[""] enabled:hover:bg-current/10 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none ${
-        isWide ? 'min-w-[6ch] px-2' : 'w-8'
+        isWide ? 'box-content min-w-[4ch] px-1' : 'w-6'
       }`}
     >
       {children}
