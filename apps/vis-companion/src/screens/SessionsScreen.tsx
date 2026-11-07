@@ -46,6 +46,7 @@ import {
   type ListAnchor,
 } from '../lib/list-scroll';
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
+import { keepWheelSpin } from '../lib/wheel-spin';
 import { ProjectFolderSheet } from '../components/ProjectFolderSheet';
 import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
 import {
@@ -1213,6 +1214,13 @@ export function SessionsScreen({
   // the search dialog sits in the far top corner of the app bar; the thumb already
   // reading this list has a gesture for it, and every native list answers it.
   usePullToSearch(listRef, hintRef, setPullPhase, onSearch);
+
+  // A wheel spun over the transcript keeps moving the transcript when the pointer
+  // drifts onto this list before the spin stops.
+  useEffect(() => {
+    const element = listRef.current;
+    return element ? keepWheelSpin(element) : undefined;
+  }, []);
 
   // THE QUESTION ON THE WIRE while the dialog is open: the settled needle, or the
   // RECENTS (`''`) while the field is blank, as the terminal's switcher lists them
