@@ -16,7 +16,6 @@ import { SessionEventsContext } from '../lib/session-events';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
 export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
-import { CheckIcon, CloseIcon, MARK_NUDGE } from './icons';
 import { Button, HoverNote } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
@@ -379,13 +378,9 @@ const BAR_INK: Record<string, string> = {
   failed: 'bg-err-ink',
 };
 
-// The mark of a status word on a wide screen. The word stays for a screen reader. The mark sits on
-// the baseline of the row's first line, and a 12px mark takes the nudge down to the caps.
-function StatusMark({ status }: { status: string }) {
-  if (status === 'done') return <CheckIcon className={`size-3 text-ok-ink ${MARK_NUDGE}`} />;
-  if (status === 'failed') return <CloseIcon className={`size-3 text-err-ink ${MARK_NUDGE}`} />;
-  if (status === 'queued') return <span className="inline-block size-2 rounded-full border border-dialog-hint" />;
-  return <span className="inline-block size-2 rounded-full bg-accent-ink motion-safe:animate-pulse" />;
+// The status word of a row on a wide screen, in capitals and in its ink, such as DONE or FAILED.
+function StatusWord({ status }: { status: { text: string; ink: string } }) {
+  return <span className={`whitespace-nowrap uppercase ${status.ink}`}>{status.text}</span>;
 }
 
 // The columns of a team on a phone: ROLE, TITLE and STATUS, then UPDATE and TIME on the second
@@ -393,11 +388,11 @@ function StatusMark({ status }: { status: string }) {
 const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1 text-left';
 
 // The columns of a team on a wide screen: ROLE, TITLE, then the NOTE, or the time bar while the
-// timeline shows, then TIME and the status mark. A hairline stands after ROLE, TITLE, NOTE and
-// TIME. TIME fits `59m 59s`, so a ticking time never moves a column. TITLE takes at most a third
+// timeline shows, then TIME and STATUS. A hairline stands after ROLE, TITLE, NOTE and TIME.
+// TIME fits `59m 59s` and STATUS fits `running`, so a ticking time never moves a column. TITLE takes at most a third
 // of the row; a longer title wraps. A wide row carries the frame's own inset, so its hover fills
 // the frame and its text lines up with the team line.
-const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-3';
+const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_7ch] items-baseline gap-x-3 px-3';
 
 // The hairline after a cell: in the middle of the gap, through the row inset, so the rows join it.
 const CELL_RULE = 'relative self-stretch after:absolute after:-inset-y-1 after:-right-1.5 after:w-px after:bg-dialog-edge';
@@ -414,14 +409,14 @@ function columnWidths(rows: readonly Subagent[]): CSSProperties {
   } as CSSProperties;
 }
 
-// The columns of the chart of a team: the KEY of each lane, its time BAR, its TIME and its status
-// mark. The legend under the chart gives each KEY its ROLE, TITLE and the NOTE of its row.
-const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-3';
+// The columns of the chart of a team: the KEY of each lane, its time BAR, its TIME and its
+// STATUS. The legend under the chart gives each KEY its ROLE, TITLE and the NOTE of its row.
+const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_7ch] items-baseline gap-x-3 px-3';
 const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
 
 // The bar column of a chart row: the inset of the row, the KEY and one gap on the left; one gap,
-// TIME, one gap, the mark and the inset on the right. The grid lines stand there behind the bars.
-const BAR_COLUMN: CSSProperties = { left: 'calc(1.5rem + var(--key))', right: 'calc(3.25rem + 7ch)' };
+// TIME, one gap, STATUS and the inset on the right. The grid lines stand there behind the bars.
+const BAR_COLUMN: CSSProperties = { left: 'calc(1.5rem + var(--key))', right: 'calc(2.25rem + 14ch)' };
 
 // The time axis above the bars: a label at each mark.
 function AxisLabels({ total }: { total: number }) {
@@ -533,10 +528,7 @@ function WideAgentTable(props: TableProps) {
                   <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{update ?? ''}</span>
                 </HoverNote>
                 <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${CELL_RULE}`}>{time === undefined ? '' : formatAgentTime(time)}</span>
-                <span className={`text-center ${status.ink}`}>
-                  <span className="sr-only">{status.text}</span>
-                  <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
-                </span>
+                <StatusWord status={status} />
               </button>
             </li>
           );
@@ -584,10 +576,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
                 ))}
               </span>
               <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{formatAgentTime(leaderTime)}</span>
-              <span className="text-center">
-                <span className="sr-only">{leader.end == null ? 'running' : 'done'}</span>
-                <span aria-hidden className="inline-flex"><StatusMark status={leader.end == null ? 'running' : 'done'} /></span>
-              </span>
+              <StatusWord status={agentStatus({ status: leader.end == null ? 'running' : 'completed' } as Subagent)} />
             </li>
           )}
           {rows.map((agent, index) => {
@@ -609,10 +598,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
                   </span>
                   <span aria-hidden className="relative h-2 self-center">{bar && <LanePart bar={bar} ink={BAR_INK[status.text]} />}</span>
                   <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
-                  <span className={`text-center ${status.ink}`}>
-                    <span className="sr-only">{status.text}</span>
-                    <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
-                  </span>
+                  <StatusWord status={status} />
                 </button>
               </li>
             );
