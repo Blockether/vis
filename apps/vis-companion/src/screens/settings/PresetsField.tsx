@@ -232,7 +232,6 @@ export function PresetsField({
       {isDeleteAsked && custom && (
         <ConfirmRow
           question={`Delete ${custom.name}?`}
-          cost={`${options.builtin[0]?.label ?? 'The first built-in preset'} plays instead.`}
           keepLabel="Keep"
           confirmLabel={busy ? 'Deleting…' : 'Delete'}
           isBusy={busy}
