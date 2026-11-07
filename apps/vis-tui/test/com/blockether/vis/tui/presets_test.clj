@@ -88,20 +88,29 @@
                      (:locked (first (filter #(= "sound_presets" (:toggle-id %)) rows))))))))
   (describe
     "the editor"
-    (it "shows built-in presets first, then custom presets and the slots of the active one"
+    (it "shows the active preset, its slots and the actions on one screen"
         (let [frame
               (first (:frames (drive [:esc])))
 
               at
               #(str/index-of frame %)]
 
-          (expect (< (at "Classic") (at "Bright") (at "My mix") (at "Finish")))
+          (expect (< (at "Active preset") (at "My mix") (at "Finish") (at "Delete My mix")))
           (expect (str/includes? frame "Glass (built in)"))
           (expect (str/includes? frame "~/Sounds/done.wav"))
           (expect (str/includes? frame "No sound"))))
+    (it "picks among built-in presets first, then custom presets"
+        (let [frame
+              (some #(when (str/includes? % "Built-in presets") %)
+                    (:frames (drive [:enter :esc :esc])))
+
+              at
+              #(str/index-of frame %)]
+
+          (expect (< (at "Classic") (at "Bright") (at "My mix")))))
     (it "writes the whole value with the chosen preset active"
         (expect (= {"active" "bright" "custom" (get-in catalog-row ["value" "custom"])}
-                   (written-value (drive [:up :enter :esc])))))
+                   (written-value (drive [:enter :up :enter :esc])))))
     (it "previews the slot value of the active preset"
         (let [{:keys [previews writes]} (drive [:down :down :enter :esc])]
           (expect (empty? writes))
@@ -130,7 +139,7 @@
         (expect (= {"active" "classic" "custom" []}
                    (written-value (drive [:down :down :down :down :down :down :enter \y :esc])))))
     (it "shows the message of a refused write"
-        (let [{:keys [frames]} (drive [:up :enter \q :esc]
+        (let [{:keys [frames]} (drive [:enter :up :enter \q :esc]
                                       :write
                                       (fn [& _]
                                         (throw (ex-info "Preset A: no sound file at ~/nope.wav."

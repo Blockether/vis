@@ -117,7 +117,7 @@ export function PresetsField({
         aria-busy={preview?.key === key && preview.note === undefined}
         onClick={() => void play(key, slot, text)}
       >
-        <PlayIcon className="size-4" />
+        <PlayIcon />
       </IconButton>
     );
 

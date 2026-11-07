@@ -206,19 +206,27 @@ export function NewSessionIcon({ className }: { className?: string }) {
   return <Mark icon={SquarePen} className={className} />;
 }
 
+/**
+ * A SOLID MARK DRAWS ITS STROKE ON TOP OF ITS FILL, so in the same box it carries far
+ * more ink than an outline mark and reads a size too large beside one. It keeps the
+ * box of its neighbours and draws its ink smaller. `scale` is its own CSS property,
+ * so a caller's `translate` still applies.
+ */
+const SOLID = 'fill-current scale-80';
+
 /** Play. Solid, because a hollow triangle at thumbnail size reads as a flaw. */
 export function PlayIcon({ className }: { className?: string }) {
-  return <Mark icon={Play} className={classes('fill-current', className)} />;
+  return <Mark icon={Play} className={classes(SOLID, className)} />;
 }
 
 /** Stop — a solid square paired with Play's solid triangle. */
 export function StopIcon({ className }: { className?: string }) {
-  return <Mark icon={Square} className={classes('fill-current', className)} />;
+  return <Mark icon={Square} className={classes(SOLID, className)} />;
 }
 
 /** Pause — the same solid weight as play, because they are one control. */
 export function PauseIcon({ className }: { className?: string }) {
-  return <Mark icon={Pause} className={classes('fill-current', className)} />;
+  return <Mark icon={Pause} className={classes(SOLID, className)} />;
 }
 
 /** More of the same, below: what "Load 12 more" does to the list. */

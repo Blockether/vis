@@ -5308,7 +5308,7 @@
 
     (let [items
           (vec (concat [{:label "Name" :description name :value :name}
-                        {:section? true :label "Sounds · empty, a preset id or a file path"}]
+                        {:section? true :label "Sounds"}]
                        (map (fn [{:strs [id label]}]
                               {:label label
                                :description (presets/slot-meaning options (get slots id ""))
@@ -5347,7 +5347,7 @@
                         (mini-read! screen
                                     g
                                     region
-                                    (str label " sound · empty, a preset id or a file path")
+                                    (str label " sound")
                                     {:initial (get slots slot "")
                                      :placeholder (presets/help options)})]
 
@@ -5382,45 +5382,48 @@
             (some? (presets/custom value current))
 
             preset-item
-            (fn [preset label hint]
-              (cond-> {:label label :value [:choose preset]}
-                hint
-                (assoc :hint hint)
-
+            (fn [preset label]
+              (cond-> {:label label :value preset}
                 (= preset current)
-                (assoc :hint (if hint (str hint " · active") "active"))))
+                (assoc :hint "active")))
+
+            ;; The picker of the active preset, like the select of the Companion row.
+            preset-items
+            (vec (concat [{:section? true :label "Built-in presets"}]
+                         (map #(preset-item (get % "id") (get % "label"))
+                              (presets/builtins options))
+                         (when (seq (presets/customs value))
+                           (cons {:section? true :label "Your presets"}
+                                 (map #(preset-item (get % "name") (get % "name"))
+                                      (presets/customs value))))))
+
+            slot-item
+            (fn [{:strs [id label]}]
+              (let [text (get (presets/preset-slots options value current) id)]
+                (cond-> {:label label
+                         :description (presets/slot-meaning options text)
+                         :value [:slot id]}
+                  ;; An empty slot has nothing to play, so it shows no mark.
+                  (and previewable? (not (str/blank? text)))
+                  (assoc :hint "▶ play"))))
 
             items
-            (vec
-              (concat [{:section? true :label "Built-in presets"}]
-                      (map #(preset-item (get % "id") (get % "label") "built in")
-                           (presets/builtins options))
-                      (when (seq (presets/customs value))
-                        (cons {:section? true :label "Your presets"}
-                              (map #(preset-item (get % "name") (get % "name") nil)
-                                   (presets/customs value))))
-                      [{:section? true
-                        :label (str (presets/preset-label options current)
-                                    " · "
-                                    (if previewable? "Enter plays a slot" "slots"))}]
-                      (map (fn [{:strs [id label]}]
-                             {:label label
-                              :description (presets/slot-meaning
-                                             options
-                                             (get (presets/preset-slots options value current) id))
-                              :value [:slot id]})
-                           (presets/slots options))
-                      [{:section? true :label "Presets"}]
-                      (when-not (presets/full? options value) [{:label "New preset" :value :new}])
-                      (when custom?
-                        [{:label (str "Edit " current) :value :edit}
-                         {:label (str "Delete " current) :value :delete}])))
+            (vec (concat [{:label "Active preset"
+                           :description (presets/preset-label options current)
+                           :value :pick} {:section? true :label "Sounds"}]
+                         (map slot-item (presets/slots options))
+                         [{:section? true :label "Presets"}]
+                         (when-not (presets/full? options value)
+                           [{:label "New preset" :value :new}])
+                         (when custom?
+                           [{:label (str "Edit " current) :value :edit}
+                            {:label (str "Delete " current) :value :delete}])))
 
             values
             (mapv :value items)
 
             selected
-            (max 0 (.indexOf ^java.util.List values (or focus [:choose current])))
+            (max 0 (.indexOf ^java.util.List values (or focus :pick)))
 
             choice
             (settings-preset-pick! screen (:label row) items selected)
@@ -5430,10 +5433,16 @@
               (save-presets-value! screen g region id next-value))]
 
         (cond (nil? choice) nil
-              (= :choose (when (vector? choice) (first choice)))
-              (let [preset (second choice)]
-                (recur (or (when (not= preset current) (save! (presets/choose value preset))) value)
-                       choice))
+              (= :pick choice)
+              (let [preset (settings-preset-pick!
+                             screen
+                             (:label row)
+                             preset-items
+                             (max 0 (.indexOf ^java.util.List (mapv :value preset-items) current)))]
+                (recur (or (when (and (some? preset) (not= preset current))
+                             (save! (presets/choose value preset)))
+                           value)
+                       :pick))
               (= :slot (when (vector? choice) (first choice)))
               (do (when previewable?
                     (preview-preset-slot! screen g region id options value current (second choice)))
