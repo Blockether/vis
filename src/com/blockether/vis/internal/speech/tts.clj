@@ -17,6 +17,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.speech.assets :as assets]
+            [com.blockether.vis.internal.speech.residency :as residency]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.speech.voices :as voices]
             [com.blockether.vis.internal.paths :as paths]
@@ -391,7 +392,26 @@
     (tel/log! {:level :info
                :id ::model-cache
                :data {:synthesis-id synthesis-id :family family :hit (= cache-key (:key current))}})
-    (try @(:tts slot)
+    (try (let [tts
+               @(:tts slot)
+
+               id
+               (name family)]
+
+           ;; The thread that put the slot in reports it. A release only drops the
+           ;; slot: sherpa frees the model after its last synthesis (#448).
+           (if (identical? slot fresh)
+             (residency/loaded! id
+                                {:token slot
+                                 :bytes (residency/file-bytes [(second cache-key)])
+                                 :release! #(do (swap! loaded* (fn [slots]
+                                                                 (if (identical? slot
+                                                                                 (get slots family))
+                                                                   (dissoc slots family)
+                                                                   slots)))
+                                                true)})
+             (residency/used! id))
+           tts)
          (catch Throwable t
            ;; a failed load must not stay cached: the next request tries again
            (swap! loaded* (fn [slots]

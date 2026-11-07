@@ -12,6 +12,7 @@ also add your own voice from a short recording and use it like a built-in voice.
 - **You want to change or remove a voice that you added.** Read [Change or remove a
   voice](#change-or-remove-a-voice).
 - **You want to check what a recording says.** Read [Transcribe a recording](#transcribe-a-recording).
+- **You want the voice models to use less memory.** Read [Memory use](#memory-use).
 
 To make these calls from a program or an extension, read [Speech API](speech-api.md). To choose
 the engines in the app, read [Configuration](configuration.md).
@@ -34,6 +35,20 @@ The **Voice** section of the Companion settings selects the default engines.
 
 The `qwen3-tts-local` model is 3.7 GB, and Vis downloads it on first use. On a CPU, it speaks at about
 the speed of playback.
+
+## Memory use
+
+A loaded model stays in the memory of the gateway, so the next request does not wait for it. Two
+settings in the **Voice** section control this memory:
+
+- **Voice model memory limit** (default 4 GB): when the loaded models are larger than the limit, the
+  gateway unloads the least recently used model. It does not unload a model that a request uses, or
+  the model that it used last.
+- **Unload idle voice models** (default 5 minutes): the gateway unloads a model that nothing used for
+  this time. The next request loads the model again, and this takes some seconds.
+
+When **Preload the voice model** is on, the gateway keeps the transcription model when it is idle. The
+limit compares the sizes of the model files, and the gateway process uses more memory than that.
 
 ## Speak text
 

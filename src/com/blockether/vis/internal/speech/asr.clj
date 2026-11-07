@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.speech.assets :as assets]
+            [com.blockether.vis.internal.speech.residency :as residency]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.paths :as paths]
             [taoensso.telemere :as tel])
@@ -167,6 +168,8 @@
 ;; flight, so no decode ever runs on a freed model.
 (defonce ^:private model-lock (ReentrantReadWriteLock.))
 
+(def ^:private model-id "The name of the recognizer in `/healthz`." "parakeet")
+
 ;; One load at a time. A clip that wants the model a load is building waits on this
 ;; lock, never on the write lock: a write lock behind a decode in flight made the
 ;; second of two first clips wait for the whole first decode.
@@ -187,7 +190,18 @@
     (.lock write)
     (try (let [current @loaded*]
            (reset! loaded* nil)
+           (residency/released! model-id (:recognizer current))
            (release-native! (:recognizer current)))
+         (finally (.unlock write)))))
+
+(defn- release-loaded!
+  "Release recognizer `r` when it is still the loaded one, for the residency
+   registry (#448). True: the registry may forget `r` either way."
+  [r]
+  (let [^Lock write (.writeLock ^ReentrantReadWriteLock model-lock)]
+    (.lock write)
+    (try (when (identical? r (:recognizer @loaded*)) (reset! loaded* nil) (release-native! r))
+         true
          (finally (.unlock write)))))
 
 (defn- cached-recognizer
@@ -212,6 +226,14 @@
               (try (release-native! (:recognizer @loaded*))
                    (reset! loaded* {:key files :recognizer r})
                    (finally (.unlock write)))
+              ;; A preloaded model stays when it is idle; the memory limit still applies.
+              (residency/loaded! model-id
+                                 {:token r
+                                  :bytes (residency/file-bytes (vals files))
+                                  :in-use? #(pos? (.getReadLockCount ^ReentrantReadWriteLock
+                                                                     model-lock))
+                                  :release! #(release-loaded! r)
+                                  :keep-toggle "speech_preload_model"})
               (tel/log! {:level :info
                          :id ::recognizer-loaded
                          :data {:elapsed-ms (/ (- (System/nanoTime) started) 1e6)
@@ -230,7 +252,9 @@
       (.lock read)
       (let [current @loaded*]
         (if (= files (:key current))
-          (try (f (:recognizer current)) (finally (.unlock read)))
+          (try (residency/used! model-id)
+               (f (:recognizer current))
+               (finally (residency/used! model-id) (.unlock read)))
           (do (.unlock read) (cached-recognizer files) (recur)))))))
 
 (defn warm!

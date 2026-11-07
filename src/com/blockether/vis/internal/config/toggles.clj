@@ -837,6 +837,33 @@
        :owner :vis
        :group :voice
        :persist? true})
+    ;; Loaded voice models stayed in the gateway until it stopped, so a podcast
+    ;; render held Parakeet and VibeVoice ASR long after it ended (#448). The
+    ;; residency registry releases the least recently used model over this limit.
+    ;; 4 GB holds Parakeet and VibeVoice ASR together. The size is the size of the
+    ;; model files, not the process memory.
+    (register-toggle!
+      {:id "speech_model_memory"
+       :label "Voice model memory limit"
+       :description
+       "Unload the least recently used voice model when the loaded voice models are larger than this."
+       :type :enum
+       :choices ["2 GB" "4 GB" "8 GB" "16 GB" "no limit"]
+       :default "4 GB"
+       :owner :vis
+       :group :voice
+       :persist? true})
+    (register-toggle!
+      {:id "speech_model_idle_unload"
+       :label "Unload idle voice models"
+       :description
+       "Unload a voice model that nothing used for this time. The next use loads it again."
+       :type :enum
+       :choices ["1 minute" "5 minutes" "15 minutes" "never"]
+       :default "5 minutes"
+       :owner :vis
+       :group :voice
+       :persist? true})
     ;; Automatic fallback is a COST decision the human owns: a rescue on another
     ;; provider answers in a model they did not pick and starts that provider's
     ;; prompt cache from cold (~4x input spend for the rest of the session,

@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.speech.asr :as asr]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.engine :as engine]
+            [com.blockether.vis.internal.speech.residency :as residency]
             [com.blockether.vis.internal.speech.transcode :as transcode]
             [com.blockether.vis.internal.speech.tts :as tts])
   (:import [ai.djl.huggingface.tokenizers HuggingFaceTokenizer]
@@ -34,7 +35,8 @@
            [java.io File FileOutputStream RandomAccessFile]
            [java.nio ByteBuffer ByteOrder FloatBuffer LongBuffer]
            [java.nio.file Files]
-           [java.util HashMap Map Optional]))
+           [java.util HashMap Map Optional]
+           [java.util.concurrent.locks Lock ReentrantReadWriteLock]))
 
 (set! *warn-on-reflection* true)
 
@@ -171,9 +173,15 @@
       (.close ^OrtSession$Result r)
       (aset slots i nil))))
 
-;; Loaded bundles - one per install dir, kept for the life of the process
+;; Loaded bundles - one per install dir. Each bundle has a read-write lock: a
+;; request holds the read lock while it runs, and a release takes the write lock,
+;; so a release never closes a session that a request uses (#448).
 
 (defonce ^:private loaded* (atom {}))
+
+(def ^:dynamic *opened-bytes*
+  "While a bundle opens, an atom that counts the bytes of the graphs it opens."
+  nil)
 
 (defn read-json [^File f] (json/read-json (slurp f)))
 
@@ -182,6 +190,7 @@
    thread pool, and a spinning pool takes the cores of the next session: the Qwen3-TTS
    clone pipeline ran two times slower with spinning."
   ^OrtSession [^OrtEnvironment env ^File file]
+  (when *opened-bytes* (swap! *opened-bytes* + (.length file)))
   (with-open [options (doto (OrtSession$SessionOptions.)
                         (.addConfigEntry "session.intra_op.allow_spinning" "0"))]
     (.createSession env (.getAbsolutePath file) options)))
@@ -190,31 +199,103 @@
   ^HuggingFaceTokenizer [^File file]
   (HuggingFaceTokenizer/newInstance (.toPath file) {"truncation" "false" "padding" "false"}))
 
-(defn loaded
-  "The bundle in `dir`, opened by `open` once and shared."
+(defn- model-id
+  "The name of a bundle kind in `/healthz`."
+  [kind]
+  (case kind
+    :tts
+    "vibevoice-tts"
+
+    :asr
+    "vibevoice-asr"
+
+    (name kind)))
+
+(defn- close-bundle!
+  [bundle]
+  (doseq [v
+          (vals bundle)
+
+          :when (instance? OrtSession v)]
+
+    (.close ^OrtSession v)))
+
+(defn- drop-entry!
+  "Remove `entry` from the loaded bundles and close its sessions. The caller holds
+   the write lock of the entry."
+  [k {:keys [bundle] :as entry}]
+  (locking loaded*
+    (swap! loaded* (fn [m]
+                     (if (identical? entry (get m k)) (dissoc m k) m))))
+  (residency/released! (model-id (first k)) bundle)
+  (close-bundle! bundle))
+
+(defn- release-idle!
+  "Close the bundle of `entry` when no request uses it. False when one does."
+  [k {:keys [^ReentrantReadWriteLock lock] :as entry}]
+  (let [^Lock write (.writeLock lock)]
+    (if (.tryLock write) (try (drop-entry! k entry) true (finally (.unlock write))) false)))
+
+(defn- entry
+  "The loaded entry of `kind` in `dir`. The first call opens the bundle with `open`
+   and reports it to the residency registry."
   [kind ^File dir open]
   (let [k [kind (.getAbsolutePath dir)]]
     (or (get @loaded* k)
         (locking loaded*
           (or (get @loaded* k)
-              (let [bundle (open (environment) dir)]
-                (swap! loaded* assoc k bundle)
-                bundle))))))
+              (let [bytes (atom 0)
+                    bundle (binding [*opened-bytes* bytes]
+                             (open (environment) dir))
+                    lock (ReentrantReadWriteLock.)
+                    e {:bundle bundle :lock lock}]
+
+                (swap! loaded* assoc k e)
+                (residency/loaded! (model-id kind)
+                                   {:token bundle
+                                    :bytes @bytes
+                                    :in-use? #(pos? (.getReadLockCount lock))
+                                    :release! #(release-idle! k e)})
+                e))))))
+
+(defn loaded
+  "The bundle in `dir`, opened by `open` once and shared. Use it in a request only
+   through [[call-loaded]]: a release may close it at any other time."
+  [kind ^File dir open]
+  (:bundle (entry kind dir open)))
+
+(defn call-loaded
+  "Call `f` with the bundle of `spec`, a vector `[kind dir open]`, and return its
+   result. A release waits until `f` returns. A bundle that a release closed before
+   the read lock is opened again."
+  [[kind ^File dir open] f]
+  (let [k
+        [kind (.getAbsolutePath dir)]
+
+        id
+        (model-id kind)]
+
+    (loop []
+
+      (let [{:keys [bundle ^ReentrantReadWriteLock lock] :as e}
+            (entry kind dir open)
+
+            ^Lock read
+            (.readLock lock)]
+
+        (.lock read)
+        (if (identical? e (get @loaded* k))
+          (try (residency/used! id) (f bundle) (finally (residency/used! id) (.unlock read)))
+          (do (.unlock read) (recur)))))))
 
 (defn release!
-  "Close every loaded session. The next request loads its bundle again."
+  "Close every loaded bundle. Waits for the requests that use one. The next request
+   loads its bundle again."
   []
-  (locking loaded*
-    (doseq [bundle
-            (vals @loaded*)
-
-            v
-            (vals bundle)
-
-            :when (instance? OrtSession v)]
-
-      (.close ^OrtSession v))
-    (reset! loaded* {})))
+  (doseq [[k {:keys [^ReentrantReadWriteLock lock] :as e}] @loaded*]
+    (let [^Lock write (.writeLock lock)]
+      (.lock write)
+      (try (drop-entry! k e) (finally (.unlock write))))))
 
 (defn token-ids
   "Token ids of `text` without special tokens. DJL `Encoding` requests character
@@ -543,17 +624,17 @@
     {:keys [seed report]
      :or {seed default-seed
           report (fn [_])}}]
-   (let [bundle
-         (loaded :tts (io/file dir) open-tts)
+   (call-loaded
+     [:tts (io/file dir) open-tts]
+     (fn [bundle]
+       (let [ids
+             (token-ids (:tokenizer bundle) (str (str/trim (str text)) "\n"))
 
-         ids
-         (token-ids (:tokenizer bundle) (str (str/trim (str text)) "\n"))
+             frames
+             (latents bundle ids (voice-tensors bundle voice-id) (noise-state seed) report)]
 
-         frames
-         (latents bundle ids (voice-tensors bundle voice-id) (noise-state seed) report)]
-
-     {:samples (decode-audio bundle frames)
-      :sample-rate (long (get (:meta bundle) "sample_rate"))})))
+         {:samples (decode-audio bundle frames)
+          :sample-rate (long (get (:meta bundle) "sample_rate"))})))))
 
 (defn synthesize!
   "Speak `text` and return the WAV that was written, plus the facts a player
@@ -756,123 +837,127 @@
     {:keys [seed report context]
      :or {seed default-seed
           report (fn [_])}}]
-   (let [{:keys [^OrtEnvironment env meta encoder tokenizer] :as bundle}
-         (loaded :asr (io/file dir) open-asr)
+   (call-loaded
+     [:asr (io/file dir) open-asr]
+     (fn [{:keys [^OrtEnvironment env meta encoder tokenizer] :as bundle}]
+       (let [ids
+             (get meta "ids")
 
-         ids
-         (get meta "ids")
+             id
+             #(long (get ids %))
 
-         id
-         #(long (get ids %))
+             layers
+             (long (get meta "layers"))
 
-         layers
-         (long (get meta "layers"))
+             heads
+             (long (get meta "kv_heads"))
 
-         heads
-         (long (get meta "kv_heads"))
+             head-dim
+             (long (get meta "head_dim"))
 
-         head-dim
-         (long (get meta "head_dim"))
+             hidden
+             (long (get meta "hidden"))
 
-         hidden
-         (long (get meta "hidden"))
+             frame
+             (long (get meta "samples_per_frame"))
 
-         frame
-         (long (get meta "samples_per_frame"))
+             frames
+             (+ (long (get meta "chunk_frames")) (long (get meta "lookahead_frames")))
 
-         frames
-         (+ (long (get meta "chunk_frames")) (long (get meta "lookahead_frames")))
+             chunk
+             (* frame (long (get meta "chunk_frames")))
 
-         chunk
-         (* frame (long (get meta "chunk_frames")))
+             window
+             (* frame frames)
 
-         window
-         (* frame frames)
+             rate
+             (double (get meta "sample_rate"))
 
-         rate
-         (double (get meta "sample_rate"))
+             std
+             (double (get meta "acoustic_noise_std"))
 
-         std
-         (double (get meta "acoustic_noise_std"))
+             noise
+             (noise-state seed)
 
-         noise
-         (noise-state seed)
+             n
+             (alength samples)
 
-         n
-         (alength samples)
+             chunks
+             (max 1 (long (Math/ceil (/ (double n) chunk))))
 
-         chunks
-         (max 1 (long (Math/ceil (/ (double n) chunk))))
+             prompt
+             (str/replace (str (get meta "prompt"))
+                          "{extra}"
+                          (if context
+                            (str/replace (str (get meta "prompt_extra")) "{context}" (str context))
+                            ""))
 
-         prompt
-         (str/replace
-           (str (get meta "prompt"))
-           "{extra}"
-           (if context (str/replace (str (get meta "prompt_extra")) "{context}" (str context)) ""))
+             stop
+             #{(id "text_chunk_end") (id "eos")}
 
-         stop
-         #{(id "text_chunk_end") (id "eos")}
+             slots
+             (holder)
 
-         slots
-         (holder)
+             empty-kv
+             (vec (repeatedly (* 2 layers)
+                              #(float-tensor env (float-array 0) [1 heads 0 head-dim])))]
 
-         empty-kv
-         (vec (repeatedly (* 2 layers) #(float-tensor env (float-array 0) [1 heads 0 head-dim])))]
+         (with-open [no-speech (float-tensor env (float-array hidden) [1 1 hidden])]
+           (try
+             (loop [kv (presents
+                         (hold! slots
+                                0
+                                (asr-step bundle (token-ids tokenizer prompt) no-speech empty-kv))
+                         layers)
+                    start 0
+                    out []]
 
-     (with-open [no-speech (float-tensor env (float-array hidden) [1 1 hidden])]
-       (try
-         (loop [kv
-                (presents
-                  (hold! slots 0 (asr-step bundle (token-ids tokenizer prompt) no-speech empty-kv))
-                  layers)
-                start 0
-                out []]
+               (if (>= start n)
+                 out
+                 (let [seg (float-array window)
+                       _ (System/arraycopy samples start seg 0 (min window (- n start)))
+                       scale (* std (double (aget ^floats (gaussian noise 1) 0)))
+                       eps (gaussian noise (* frames 64))
+                       r (with-open [a (float-tensor env seg [1 window])
+                                     e (float-tensor env eps [1 frames 64])
+                                     s (float-tensor env (float-array [scale]) [1])
+                                     enc (run-session encoder
+                                                      (feed {"audio" a "noise" e "noise_scale" s}
+                                                            []))]
 
-           (if (>= start n)
-             out
-             (let [seg (float-array window)
-                   _ (System/arraycopy samples start seg 0 (min window (- n start)))
-                   scale (* std (double (aget ^floats (gaussian noise 1) 0)))
-                   eps (gaussian noise (* frames 64))
-                   r (with-open [a (float-tensor env seg [1 window])
-                                 e (float-tensor env eps [1 frames 64])
-                                 s (float-tensor env (float-array [scale]) [1])
-                                 enc (run-session encoder
-                                                  (feed {"audio" a "noise" e "noise_scale" s} []))]
+                           (hold! slots
+                                  0
+                                  (asr-step bundle
+                                            (concat [(id "speech_start")]
+                                                    (repeat frames (id "speech_pad"))
+                                                    [(id "speech_end")])
+                                            (output enc "features")
+                                            kv)))
+                       [tokens kv]
+                       (loop [r r
+                              tokens []]
 
-                       (hold! slots
-                              0
-                              (asr-step bundle
-                                        (concat [(id "speech_start")]
-                                                (repeat frames (id "speech_pad"))
-                                                [(id "speech_end")])
-                                        (output enc "features")
-                                        kv)))
-                   [tokens kv]
-                   (loop [r r
-                          tokens []]
+                         (let [tok (token-of r)]
+                           (if (or (stop tok) (>= (count tokens) max-chunk-tokens))
+                             [tokens (presents r layers)]
+                             (recur
+                               (hold! slots 0 (asr-step bundle [tok] no-speech (presents r layers)))
+                               (conj tokens tok)))))
+                       kv (presents
+                            (hold! slots 0 (asr-step bundle [(id "text_chunk_end")] no-speech kv))
+                            layers)
+                       done (inc (quot start chunk))]
 
-                     (let [tok (token-of r)]
-                       (if (or (stop tok) (>= (count tokens) max-chunk-tokens))
-                         [tokens (presents r layers)]
-                         (recur
-                           (hold! slots 0 (asr-step bundle [tok] no-speech (presents r layers)))
-                           (conj tokens tok)))))
-                   kv (presents
-                        (hold! slots 0 (asr-step bundle [(id "text_chunk_end")] no-speech kv))
-                        layers)
-                   done (inc (quot start chunk))]
-
-               (report {:phase :transcribing :progress (min 99 (long (/ (* 100 done) chunks)))})
-               (recur kv
-                      (+ start chunk)
-                      (conj out
-                            {:start (/ start rate)
-                             :end (/ (min n (+ start chunk)) rate)
-                             :text (chunk-text bundle tokens)})))))
-         (finally (close-all! slots)
-                  (doseq [^OnnxTensor t empty-kv]
-                    (.close t))))))))
+                   (report {:phase :transcribing :progress (min 99 (long (/ (* 100 done) chunks)))})
+                   (recur kv
+                          (+ start chunk)
+                          (conj out
+                                {:start (/ start rate)
+                                 :end (/ (min n (+ start chunk)) rate)
+                                 :text (chunk-text bundle tokens)})))))
+             (finally (close-all! slots)
+                      (doseq [^OnnxTensor t empty-kv]
+                        (.close t))))))))))
 
 (def ^:private markup
   "What the model writes besides speech: speaker labels and bracketed tags such as

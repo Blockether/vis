@@ -63,6 +63,7 @@
     [com.blockether.vis.internal.config.scoped :as scoped]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.speech.core :as speech]
+    [com.blockether.vis.internal.speech.residency :as speech-residency]
     [reitit.exception :as reitit-exception]
     [reitit.ring :as rr]
     [com.blockether.vis.internal.decisions.cache :as decision-cache]
@@ -368,7 +369,9 @@
      :client_releases_total gateway-client-releases-total
      :client_replacements_total gateway-client-replacements-total
      :client_leases_reaped_total gateway-client-leases-reaped-total
-     :running_turns (running-turn-count)}))
+     :running_turns (running-turn-count)
+     ;; The speech models in memory, their sizes and the limit (#448).
+     :speech_models (speech-residency/status)}))
 
 (declare stop!)
 

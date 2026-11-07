@@ -884,69 +884,49 @@
     {:keys [seed report]
      :or {seed default-seed
           report (fn [_])}}]
-   (let [imported
-         (imported-voice voice)
+   (let [imported (imported-voice voice)]
+     (vv/call-loaded
+       (if imported
+         [:qwen-tts-clone (io/file (assets/install-dir (clone-asset)))
+          #(open-bundle %1 %2 (io/file dir) (io/file (assets/install-dir (export-asset))))]
+         [:qwen-tts (io/file dir) open-bundle])
+       (fn [bundle]
+         (let [ref (when imported (reference bundle imported))
+               pieces (chunks text)
+               noise (vv/noise-state seed)
+               gap (float-array (long (* chunk-gap-seconds sample-rate)))
+               progress
+               (fn [^long i piece ^long frames]
+                 ;; About one frame for each character of text.
+                 (let [part (min 0.95 (/ (double frames) (max 20.0 (double (count piece)))))]
+                   (report {:phase :synthesizing
+                            :progress (min 99 (long (/ (* 100.0 (+ i part)) (count pieces))))})))
+               parts (vec (map-indexed (fn [i piece]
+                                         (let [{:keys [ids codec]}
+                                               (chunk-prompt bundle voice (:speaker ref) piece)]
+                                           (decode-frames
+                                             bundle
+                                             (generate-frames
+                                               bundle
+                                               (assoc (prefill-embeddings bundle ids codec ref)
+                                                 :limit (frame-limit piece))
+                                               noise
+                                               #(progress i piece %))
+                                             (:frames ref))))
+                                       pieces))
+               joined (float-array (+ (reduce + 0 (map #(alength ^floats %) parts))
+                                      (* (alength gap) (max 0 (dec (count parts))))))]
 
-         bundle
-         (if imported
-           (vv/loaded
-             :qwen-tts-clone
-             (io/file (assets/install-dir (clone-asset)))
-             #(open-bundle %1 %2 (io/file dir) (io/file (assets/install-dir (export-asset)))))
-           (vv/loaded :qwen-tts (io/file dir) open-bundle))
+           (loop [i 0
+                  at 0]
 
-         ref
-         (when imported (reference bundle imported))
+             (when (< i (count parts))
+               (let [^floats part (nth parts i)
+                     at (if (pos? i) (+ at (alength gap)) at)]
 
-         pieces
-         (chunks text)
-
-         noise
-         (vv/noise-state seed)
-
-         gap
-         (float-array (long (* chunk-gap-seconds sample-rate)))
-
-         progress
-         (fn [^long i piece ^long frames]
-           ;; About one frame for each character of text.
-           (let [part (min 0.95 (/ (double frames) (max 20.0 (double (count piece)))))]
-             (report {:phase :synthesizing
-                      :progress (min 99 (long (/ (* 100.0 (+ i part)) (count pieces))))})))
-
-         parts
-         (vec (map-indexed
-                (fn [i piece]
-                  (let [{:keys [ids codec]} (chunk-prompt bundle voice (:speaker ref) piece)]
-                    (decode-frames bundle
-                                   (generate-frames bundle
-                                                    (assoc (prefill-embeddings bundle ids codec ref)
-                                                      :limit (frame-limit piece))
-                                                    noise
-                                                    #(progress i piece %))
-                                   (:frames ref))))
-                pieces))
-
-         joined
-         (float-array (+ (reduce + 0 (map #(alength ^floats %) parts))
-                         (* (alength gap) (max 0 (dec (count parts))))))]
-
-     (loop [i
-            0
-
-            at
-            0]
-
-       (when (< i (count parts))
-         (let [^floats part
-               (nth parts i)
-
-               at
-               (if (pos? i) (+ at (alength gap)) at)]
-
-           (System/arraycopy part 0 joined at (alength part))
-           (recur (inc i) (+ at (alength part))))))
-     {:samples joined :sample-rate sample-rate})))
+                 (System/arraycopy part 0 joined at (alength part))
+                 (recur (inc i) (+ at (alength part))))))
+           {:samples joined :sample-rate sample-rate}))))))
 
 (defn synthesize!
   "Speak `text` and return the WAV that was written, plus the facts a player

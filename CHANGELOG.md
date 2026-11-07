@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Desktop app: when macOS stops the web content process of the window, for example to free memory during sleep, the app loads the page again. Before, the window stayed white until you selected **View > Reload** or started the app again.
+- Speech: the gateway now unloads a voice model that nothing used for 5 minutes, and it keeps the loaded voice models under a memory limit of 4 GB. Before, each loaded model stayed in memory until the gateway stopped, and a long podcast render kept two transcription models loaded after it ended. Two settings in the **Voice** section change the limit and the idle time. `/healthz` lists the loaded models and their sizes (#448).
 
 ## [v0.5.5] - 2026-11-06
 
