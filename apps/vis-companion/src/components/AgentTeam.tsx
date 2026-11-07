@@ -25,6 +25,9 @@ export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$
 // The word of an agent without a role, in its row.
 const NO_ROLE = 'agent';
 
+// The ROLE column fits the longest role word of the contract, so all teams line up.
+const ROLE_WIDTH = Math.max(NO_ROLE.length, ...ROLES.map((role) => role.const.length));
+
 // The ink of each contract role. A role that the Companion does not know reads like no role.
 const ROLE_INK: ReadonlyMap<string, string> = new Map([
   ['research', 'text-role-research'],
@@ -386,23 +389,26 @@ function StatusMark({ status }: { status: string }) {
 }
 
 // The columns of a team on a phone: ROLE, TITLE and STATUS, then UPDATE and TIME on the second
-// line. ROLE fits the longest word of the team.
+// line. ROLE fits the longest role word of the contract.
 const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1 text-left';
 
 // The columns of a team on a wide screen: ROLE, TITLE, then the NOTE, or the time bar while the
-// timeline shows, then TIME and the status mark. TIME fits `59m 59s`, so a ticking time never
-// moves a column. TITLE takes at most a third of the row; a longer title wraps. A wide row carries
-// the frame's own inset, so its hover fills the frame and its text lines up with the team line.
+// timeline shows, then TIME and the status mark. A hairline stands between ROLE and TITLE.
+// TIME fits `59m 59s`, so a ticking time never moves a column. TITLE takes at most a third of
+// the row; a longer title wraps. A wide row carries the frame's own inset, so its hover fills the frame and its text lines up with the team line.
 const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-3';
+
+// The hairline after ROLE: in the middle of the gap, through the row inset, so the rows join it.
+const ROLE_RULE = 'relative self-stretch after:absolute after:-inset-y-1 after:-right-1.5 after:w-px after:bg-dialog-edge';
 
 const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
-// The widths of the columns that fit the team, in `ch` of the monospace font. A heading is the
-// least width of its column; the bold title gets one more `ch`.
+// The widths of the columns, in `ch` of the monospace font. ROLE is the same for every team. TITLE
+// fits the team: its heading is the least width, and the bold title gets one more `ch`.
 function columnWidths(rows: readonly Subagent[]): CSSProperties {
   const widest = (least: string, words: string[]) => Math.max(least.length, ...words.map((word) => word.length));
   return {
-    '--role': `${widest('role', rows.map((agent) => agentRole(agent).text))}ch`,
+    '--role': `${ROLE_WIDTH}ch`,
     '--title': `${widest('title', rows.map((agent) => agentLabel(agent, rows))) + 1}ch`,
   } as CSSProperties;
 }
@@ -518,7 +524,7 @@ function WideAgentTable(props: TableProps) {
                 onClick={() => onSelect(agent.session_id)}
                 className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${WIDE_ROW}`}
               >
-                <span className={`uppercase ${role.ink}`}>{role.text}</span>
+                <span className={`uppercase ${ROLE_RULE} ${role.ink}`}>{role.text}</span>
                 <HoverNote className="min-w-0" note={taskNote(agent.task)}>
                   <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
                 </HoverNote>
@@ -552,14 +558,13 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
   const waited = parts.reduce((sum, part) => sum + (part.isWaiting ? part.end - part.start : 0), 0);
   const leaderTime = leader ? (leader.end ?? now) - leader.start : 0;
   const keys = rows.map((_, index) => agentKey(index));
-  const roles = rows.map((agent) => agentRole(agent).text);
   const titles = columnWidths(rows) as Record<string, string>;
   const widths = {
     ...titles,
     // The leader line `waited 59m 59s of 59m 59s` keeps one width while its clock ticks.
     '--title': leader ? `max(${titles['--title']}, ${LEADER_WAIT_WIDTH}ch)` : titles['--title'],
     '--key': `${Math.max(2, ...keys.map((key) => key.length))}ch`,
-    '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ...roles.map((role) => role.length))}ch`,
+    '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ROLE_WIDTH)}ch`,
   } as CSSProperties;
   return (
     <div style={widths} className="pb-1" data-team-chart>

@@ -371,10 +371,16 @@
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 
+(defn- role-width
+  "Cells of the role column: the longest role word of the contract, so all teams line up."
+  ^long []
+  (widest (map #(str/upper-case (str (get % "const"))) (roles))))
+
 (defn row-columns
-  "The cell widths of the role, title and status columns, so every row lines up."
+  "The cell widths of the role, title and status columns, so every row lines up. The role width
+   is the same for every team."
   [rows]
-  {:role (widest (map :role rows))
+  {:role (role-width)
    :label (min (long title-width) (long (widest (map :label rows))))
    :status (widest (map :status rows))})
 
@@ -573,7 +579,7 @@
           {:key k :w (widest (cons (table-heads k) texts))})
 
         role
-        (fixed :role (map :role rows))
+        {:key :role :w (max (role-width) (count (:role table-heads)))}
 
         label
         (update (fixed :label (map :label rows)) :w min (long title-width))

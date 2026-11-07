@@ -118,7 +118,7 @@
                                        (str/ends-with? % "1m 04s"))
                                  labels))
                    (expect (= :parent (:action (second (team/items [] "parent")))))
-                   (expect (some #(str/starts-with? % "AUDIT  #1")
+                   (expect (some #(str/starts-with? % "AUDIT      #1")
                                  (map :label
                                       (team/items [(dissoc (assoc row "role" "audit") "title")]
                                                   nil)))))))
@@ -521,6 +521,20 @@
                  (expect (= ["QUEUED" "RUNNING" "RUNNING" "RUNNING" "DONE" "DONE" "FAILED" "FAILED"
                              "FAILED" "FAILED"]
                             (mapv team/status-word every-state)))))
+
+;; User report: the titles of an AUDIT team and an IMPLEMENT team did not line up.
+(defdescribe
+  role-column-test
+  (it "gives the role column one width in every team"
+      (let [title-at (fn [role]
+                       (let [rows (team/team-rows
+                                    "turn-1"
+                                    [(agent-row 1 "running" "role" role "title" "Report")])]
+                         [(some #(str/index-of % "Report") (team/table-text rows 120 now-ms))
+                          (str/index-of
+                            (first (team/row-lines (first rows) (team/row-columns rows) 100 now-ms))
+                            "Report")]))]
+        (expect (= (title-at "audit") (title-at "implement"))))))
 
 (defdescribe
   team-rows-test

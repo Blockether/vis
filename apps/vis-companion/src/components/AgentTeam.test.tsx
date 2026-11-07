@@ -169,6 +169,21 @@ describe('agent rows', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  // User report: in the dock, the titles of an AUDIT team and an IMPLEMENT team did not line up.
+  it('gives the ROLE column one width in every team', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
+    }));
+    render(<>
+      <TurnAgents {...props} placement="dock" agents={[{ ...child, session_id: 'a', role: 'audit' }]} />
+      <TurnAgents {...props} placement="dock" agents={[{ ...child, session_id: 'i', team_id: 'turn-2', role: 'implement' }]} />
+    </>);
+    const widths = ['a', 'i'].map((sid) =>
+      (document.querySelector(`[data-agent-row="${sid}"]`)?.closest('[style]') as HTMLElement).style.getPropertyValue('--role'));
+    expect(widths[0]).not.toBe('');
+    expect(widths[0]).toBe(widths[1]);
+  });
+
   // User request: the chart names each lane by a short key, L for the leader and A1, A2 for the agents,
   // and the legend under it gives each key its role, title and newest note.
   it('keys the lanes of the chart, with the leader first, and explains each key with its note in the legend', () => {
