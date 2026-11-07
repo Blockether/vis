@@ -66,7 +66,7 @@ it('shows the active preset, each slot with what it plays, and previews a slot a
   expect(within(slots).getByText('Glass (built in)')).toBeVisible();
   expect(within(slots).getByText('No sound')).toBeVisible();
   // An empty slot has nothing to play.
-  expect(within(slots).getByRole('button', { name: 'Preview Error' })).toBeDisabled();
+  expect(within(slots).queryByRole('button', { name: 'Preview Error' })).toBeNull();
 
   await user().click(within(slots).getByRole('button', { name: 'Preview Question' }));
   await waitFor(() => expect(calls.some((call) => call.path === fixture.preview_path)).toBe(true));
@@ -97,7 +97,7 @@ it('adds a preset from the chosen one, edits it and deletes it back to the first
   // A custom preset is copied slot by slot.
   expect(within(form).getByRole('textbox', { name: /Finish/ })).toHaveValue('~/Sounds/done.wav');
   expect(within(form).getByRole('textbox', { name: /Question/ })).toHaveValue('glass');
-  expect(within(form).getByText(/Empty plays no sound/)).toBeVisible();
+  expect(within(form).getByText(/Leave a sound empty for silence/)).toBeVisible();
   const name = within(form).getByRole('textbox', { name: 'Name' });
   await actor.clear(name);
   await actor.type(name, 'classic');

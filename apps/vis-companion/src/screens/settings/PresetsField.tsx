@@ -1,8 +1,9 @@
 import { useContext, useId, useState } from 'react';
 import { Button, ConfirmRow, IconButton, Input, Select, Text } from '../../components/ui';
-import { PencilIcon, PlayIcon, PlusIcon, TrashIcon } from '../../components/icons';
+import { PlayIcon } from '../../components/icons';
 import type { CustomPreset, PresetsOptions, PresetsValue, SettingValue, Toggle } from '../../lib/types';
 import { SettingMachine } from './SettingField';
+import { FormLabel } from './SettingsLayout';
 
 /** The value of a presets row, with a missing or broken part read as empty. */
 export function presetsValue(value: SettingValue | undefined, options: PresetsOptions): PresetsValue {
@@ -108,11 +109,11 @@ export function PresetsField({
   }
 
   const previewButton = (key: string, slot: string, label: string, text: string) =>
-    canPreview && (
+    canPreview && text && (
       <IconButton
         type="button"
         label={`Preview ${label}`}
-        disabled={disabled || !text || preview?.key === key && preview.note === undefined}
+        disabled={disabled || preview?.key === key && preview.note === undefined}
         aria-busy={preview?.key === key && preview.note === undefined}
         onClick={() => void play(key, slot, text)}
       >
@@ -146,41 +147,49 @@ export function PresetsField({
     choices.push({ value: value.active, label: `${value.active} (missing)` });
 
   return (
-    <div className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4">
-      <div>
-        <Text as="p" variant="label">{toggle.label}</Text>
-        {toggle.description && (
-          <Text as="p" variant="description" className="mt-0.5">{toggle.description}</Text>
-        )}
+    <div className="flex min-w-0 flex-col gap-3 px-3 py-2 sm:px-4">
+      {/* The chosen preset sits on the right, like the picker of every closed-choice row. */}
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
+          {toggle.description && (
+            <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>
+          )}
+        </div>
+        <Select
+          className="self-center"
+          aria-label={toggle.label}
+          aria-busy={busy}
+          disabled={locked || draft !== null}
+          options={choices}
+          value={value.active}
+          onValueChange={(active) => {
+            if (active !== value.active) void save({ ...value, active });
+          }}
+        />
       </div>
-      <Select
-        aria-label={toggle.label}
-        aria-busy={busy}
-        disabled={locked || draft !== null}
-        options={choices}
-        value={value.active}
-        onValueChange={(active) => {
-          if (active !== value.active) void save({ ...value, active });
-        }}
-      />
-      <ul aria-label={`Sounds of ${builtin?.label ?? value.active}`} className="divide-y divide-dialog-edge">
-        {options.slots.map((slot) => {
-          const text = builtin ? builtin.id : (custom?.slots[slot.id] ?? '');
-          const key = `active:${slot.id}`;
-          return (
-            <li key={slot.id} className="flex min-w-0 items-center gap-2 py-1">
-              <div className="min-w-0 flex-1">
-                <Text as="p" variant="option">{slot.label}</Text>
-                <Text as="p" variant="description" className="break-words">{slotText(text)}</Text>
+      {draft === null && (
+        // One grid for all rows, so the slot names make one column and the values another.
+        <ul
+          aria-label={`Sounds of ${builtin?.label ?? value.active}`}
+          className={`grid min-w-0 gap-x-4 ${canPreview ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-[auto_minmax(0,1fr)]'}`}
+        >
+          {options.slots.map((slot) => {
+            const text = builtin ? builtin.id : (custom?.slots[slot.id] ?? '');
+            const key = `active:${slot.id}`;
+            return (
+              <li key={slot.id} className="col-span-full grid min-h-8 grid-cols-subgrid items-center mouse:min-h-7">
+                <Text variant="description">{slot.label}</Text>
+                <Text variant="option" className="min-w-0 break-words">{slotText(text)}</Text>
+                {previewButton(key, slot.id, slot.label, text)}
                 {preview?.key === key && preview.note && (
-                  <Text as="p" variant="description" className="text-err" role="alert">{preview.note}</Text>
+                  <Text as="p" variant="description" className="col-span-full text-err" role="alert">{preview.note}</Text>
                 )}
-              </div>
-              {previewButton(key, slot.id, slot.label, text)}
-            </li>
-          );
-        })}
-      </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {isDeleteAsked && custom ? (
         <ConfirmRow
           question={`Delete ${custom.name}?`}
@@ -201,7 +210,7 @@ export function PresetsField({
               disabled={locked || isFull}
               onClick={() => setDraft({ name: freeName(value, options), slots: presetSlots(value, options) })}
             >
-              <PlusIcon className="size-4" /> New preset
+              New preset
             </Button>
             {custom && (
               <>
@@ -209,13 +218,21 @@ export function PresetsField({
                   type="button"
                   variant="secondary"
                   density="panel"
+                  aria-label={`Edit ${custom.name}`}
                   disabled={locked}
                   onClick={() => setDraft({ editing: custom.name, name: custom.name, slots: presetSlots(value, options) })}
                 >
-                  <PencilIcon className="size-4" /> Edit {custom.name}
+                  Edit
                 </Button>
-                <Button type="button" variant="secondary" density="panel" disabled={locked} onClick={() => setDeleteAsked(true)}>
-                  <TrashIcon className="size-4" /> Delete {custom.name}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  density="panel"
+                  aria-label={`Delete ${custom.name}`}
+                  disabled={locked}
+                  onClick={() => setDeleteAsked(true)}
+                >
+                  Delete
                 </Button>
               </>
             )}
@@ -225,46 +242,41 @@ export function PresetsField({
       {draft && (
         <form
           aria-label={draft.editing === undefined ? 'New preset' : `Edit ${draft.editing}`}
-          className="flex min-w-0 flex-col gap-2 border border-dialog-edge p-2"
+          className="flex min-w-0 flex-col gap-3 border-t border-dialog-edge pt-3"
           onSubmit={(event) => {
             event.preventDefault();
             if (!locked && !problem) void submit();
           }}
         >
-          <label className="flex min-w-0 flex-col gap-1">
-            <Text variant="option">Name</Text>
+          <FormLabel label="Name">
             <Input
               value={draft.name}
               maxLength={60}
               disabled={locked}
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
             />
-          </label>
+          </FormLabel>
           {problem && (
-            <Text as="p" variant="description" className="text-err" role="alert">{problem}</Text>
+            <Text as="p" variant="description" className="-mt-2 text-err" role="alert">{problem}</Text>
           )}
           <Text as="p" id={helpId} variant="description">
-            Empty plays no sound.
-            {exampleId && ` A built-in preset id, such as ${exampleId}, plays the sound of that preset.`}
-            {' '}Other text is the path of a sound file on the gateway machine.
+            Leave a sound empty for silence. Enter a built-in preset id
+            {exampleId ? `, such as ${exampleId},` : ''} or the path of a sound file on the gateway machine.
           </Text>
           {options.slots.map((slot) => {
             const key = `draft:${slot.id}`;
+            const text = draft.slots[slot.id] ?? '';
             return (
               <div key={slot.id} className="flex min-w-0 flex-col gap-1">
-                <div className="flex min-w-0 items-end gap-2">
-                  <label className="flex min-w-0 flex-1 flex-col gap-1">
-                    <Text variant="option">{slot.label}</Text>
-                    {slot.description && <Text variant="description">{slot.description}</Text>}
-                    <Input
-                      value={draft.slots[slot.id] ?? ''}
-                      disabled={locked}
-                      aria-describedby={helpId}
-                      onChange={(event) => setDraft({ ...draft, slots: { ...draft.slots, [slot.id]: event.target.value } })}
-                    />
-                  </label>
-                  {previewButton(key, slot.id, slot.label, draft.slots[slot.id] ?? '')}
-                </div>
+                <FormLabel label={slot.label} hint={slot.description}>
+                  <Input
+                    value={text}
+                    disabled={locked}
+                    aria-describedby={helpId}
+                    action={previewButton(key, slot.id, slot.label, text) || undefined}
+                    onChange={(event) => setDraft({ ...draft, slots: { ...draft.slots, [slot.id]: event.target.value } })}
+                  />
+                </FormLabel>
                 {preview?.key === key && preview.note && (
                   <Text as="p" variant="description" className="text-err" role="alert">{preview.note}</Text>
                 )}
