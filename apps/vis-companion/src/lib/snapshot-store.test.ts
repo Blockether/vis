@@ -2,14 +2,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SnapshotStores } from './snapshot-store';
 
-const storageKey = 'vis.snapshots.v1';
+const indexKey = 'vis.snapshots.v2';
 const key = (kind: string, id: string) => `http://gateway.example.com\u0000${kind}\u0000${id}`;
+const item = (name: string) => `${indexKey}:${JSON.stringify(name)}`;
 const stores = (): SnapshotStores => ({
   snapshots: new Map(),
   stamps: new Map(),
   windows: new Map(),
 });
-const persisted = () => JSON.parse(localStorage.getItem(storageKey)!);
+// What a cold start can read: each item that the index lists.
+const persisted = () => {
+  const index = JSON.parse(localStorage.getItem(indexKey)!) as { keys: string[] };
+  const held = {
+    snapshots: {} as Record<string, any>,
+    stamps: {} as Record<string, unknown>,
+    windows: {} as Record<string, unknown>,
+  };
+  for (const name of index.keys) {
+    const body = JSON.parse(localStorage.getItem(item(name))!);
+    held.snapshots[name] = body.value;
+    if ('stamp' in body) held.stamps[name] = body.stamp;
+    if ('window' in body) held.windows[name] = body.window;
+  }
+  return held;
+};
+// The characters that the cache keeps in storage: keys and values of the index and items.
+const footprint = () => {
+  let length = 0;
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const name = localStorage.key(index)!;
+    if (name.startsWith(indexKey)) length += name.length + localStorage.getItem(name)!.length;
+  }
+  return length;
+};
 
 beforeEach(() => {
   localStorage.clear();
@@ -45,7 +70,7 @@ describe('snapshot persistence during chat', () => {
     });
     flushSnapshots(cache);
 
-    expect(localStorage.getItem(storageKey)!.length).toBeLessThanOrEqual(1_000_000);
+    expect(footprint()).toBeLessThanOrEqual(1_000_000);
     expect(Object.keys(persisted().snapshots)).toEqual(
       [6, 7, 8, 9].map((index) => key('transcript', String(index))),
     );
@@ -78,7 +103,7 @@ describe('snapshot persistence during chat', () => {
         server_time_ms: poll,
       });
       scheduleSnapshotFlush(cache);
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(30_000);
     }
 
     expect(persisted().snapshots[key('session', 'empty')].server_time_ms).toBe(2);
@@ -138,7 +163,10 @@ describe('snapshot persistence during chat', () => {
     expect(persisted().stamps[transcript]).toBe('third');
     cache.snapshots.delete(transcript);
     flushSnapshots(cache);
-    expect(persisted()).toEqual({ v: 1, snapshots: {}, stamps: {}, windows: {} });
+    expect(persisted()).toEqual({ snapshots: {}, stamps: {}, windows: {} });
+    expect(Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))).not.toContain(
+      item(transcript),
+    );
   });
 
   it('keeps LRU order across a cold start and honours later reads', async () => {
@@ -175,10 +203,10 @@ describe('snapshot persistence during chat', () => {
     scheduleSnapshotFlush(cache);
     expect(writes).not.toHaveBeenCalled();
     window.dispatchEvent(new Event('pagehide'));
-    expect(writes).toHaveBeenCalledTimes(1);
+    expect(writes.mock.calls.map(([name]) => name)).toEqual([item(key('session', 'empty')), indexKey]);
     expect(Object.keys(persisted().snapshots)).toEqual([key('session', 'empty')]);
     await vi.advanceTimersByTimeAsync(400);
-    expect(writes).toHaveBeenCalledTimes(1);
+    expect(writes).toHaveBeenCalledTimes(2);
   });
 
   it.each(['plain', 'quoted"\\\nżółć'])(
@@ -192,10 +220,10 @@ describe('snapshot persistence during chat', () => {
       cache.stamps.set(transcript, 'stamp');
       cache.windows.set(transcript, { offset: 0, total: 1 });
       flushSnapshots(cache);
-      const room = 1_000_000 - localStorage.getItem(storageKey)!.length;
+      const room = 1_000_000 - footprint();
       cache.snapshots.set(transcript, [{ answer: 'x'.repeat(room) }]);
       flushSnapshots(cache);
-      expect(localStorage.getItem(storageKey)!.length).toBe(1_000_000);
+      expect(footprint()).toBe(1_000_000);
       expect(persisted().snapshots[transcript][0].answer).toHaveLength(room);
 
       cache.snapshots.set(transcript, [{ answer: 'x'.repeat(room + 1) }]);
@@ -215,7 +243,97 @@ describe('snapshot persistence during chat', () => {
       throw new DOMException('Full', 'QuotaExceededError');
     });
     flushSnapshots(cache);
-    expect(writes).toHaveBeenCalledTimes(2);
+    // The refused row is written again after the history gave its room, then the index.
+    expect(writes).toHaveBeenCalledTimes(3);
     expect(Object.keys(persisted().snapshots)).toEqual([key('session', 'empty')]);
+  });
+});
+
+// Reported in this Vis session: the WebKit storage log of the desktop app grew by about
+// 3 MB each minute (2.5 GB in an 11-hour run). Each poll wrote all of the cache again
+// (1.76 MB), also when no row changed or when only the LRU order moved.
+describe('snapshot writes during polls', () => {
+  it('writes only the snapshots that changed', async () => {
+    const { flushSnapshots } = await import('./snapshot-store');
+    const cache = stores();
+    cache.snapshots.set(key('transcript', 'history'), [{ answer: 'x'.repeat(200_000) }]);
+    cache.snapshots.set(key('sessions', 'head'), [{ id: 'one' }, { id: 'two' }]);
+    cache.snapshots.set(key('session', 'one'), { id: 'one', server_time_ms: 0 });
+    flushSnapshots(cache);
+    const writes = vi.spyOn(localStorage, 'setItem');
+    const written = () =>
+      writes.mock.calls.reduce((length, [name, value]) => length + name.length + value.length, 0);
+
+    // A read moves an entry in the LRU order, and a poll can save an equal row again.
+    const rows = cache.snapshots.get(key('sessions', 'head'));
+    cache.snapshots.delete(key('sessions', 'head'));
+    cache.snapshots.set(key('sessions', 'head'), rows);
+    cache.snapshots.set(key('session', 'one'), { id: 'one', server_time_ms: 0 });
+    flushSnapshots(cache);
+    expect(written()).toBeLessThan(1_000);
+
+    writes.mockClear();
+    cache.snapshots.set(key('session', 'one'), { id: 'one', server_time_ms: 1 });
+    flushSnapshots(cache);
+    expect(written()).toBeLessThan(1_000);
+    expect(persisted().snapshots[key('session', 'one')].server_time_ms).toBe(1);
+  });
+
+  it('writes changed rows at most once in 30 seconds', async () => {
+    const { flushSnapshots, scheduleSnapshotFlush } = await import('./snapshot-store');
+    const cache = stores();
+    const writes = vi.spyOn(localStorage, 'setItem');
+    // A poll every 6 seconds for 90 seconds, and each poll changes the row.
+    for (let poll = 0; poll < 15; poll += 1) {
+      cache.snapshots.set(key('session', 'busy'), { id: 'busy', server_time_ms: poll });
+      scheduleSnapshotFlush(cache);
+      await vi.advanceTimersByTimeAsync(6_000);
+    }
+    // The first change at once, then one change in each 30 seconds: three writes of the
+    // row and one of the index. Before, each poll wrote all of the cache.
+    expect(writes).toHaveBeenCalledTimes(4);
+    // A hide writes the last change at once.
+    flushSnapshots(cache);
+    expect(persisted().snapshots[key('session', 'busy')].server_time_ms).toBe(14);
+  });
+
+  it('moves the cache of an earlier version into items and removes it', async () => {
+    const transcript = key('transcript', 'old');
+    localStorage.setItem(
+      'vis.snapshots.v1',
+      JSON.stringify({
+        v: 1,
+        snapshots: { [key('session', 'old')]: { id: 'old' }, [transcript]: [{ answer: 'Kept' }] },
+        stamps: { [transcript]: 'stamp' },
+        windows: { [transcript]: { offset: 4, total: 12 } },
+      }),
+    );
+    const { flushSnapshots, hydrateSnapshots } = await import('./snapshot-store');
+    const cache = stores();
+    hydrateSnapshots(cache);
+    expect(cache.windows.get(transcript)).toEqual({ offset: 4, total: 12 });
+    flushSnapshots(cache);
+
+    expect(localStorage.getItem('vis.snapshots.v1')).toBeNull();
+    expect(persisted()).toEqual({
+      snapshots: { [key('session', 'old')]: { id: 'old' }, [transcript]: [{ answer: 'Kept' }] },
+      stamps: { [transcript]: 'stamp' },
+      windows: { [transcript]: { offset: 4, total: 12 } },
+    });
+
+    // The earlier version can run again and write its item. Then that item is the newest copy.
+    const newer = { id: 'old', title: 'Newer' };
+    localStorage.setItem(
+      'vis.snapshots.v1',
+      JSON.stringify({ v: 1, snapshots: { [key('session', 'old')]: newer }, stamps: {}, windows: {} }),
+    );
+    vi.resetModules();
+    const again = await import('./snapshot-store');
+    const cold = stores();
+    again.hydrateSnapshots(cold);
+    expect(cold.snapshots.get(key('session', 'old'))).toEqual(newer);
+    again.flushSnapshots(cold);
+    expect(localStorage.getItem('vis.snapshots.v1')).toBeNull();
+    expect(persisted()).toEqual({ snapshots: { [key('session', 'old')]: newer }, stamps: {}, windows: {} });
   });
 });

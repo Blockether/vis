@@ -248,6 +248,47 @@ describe('GatewayClient session-list validators', () => {
     expect(secondFetch).toHaveBeenCalledOnce();
   });
 
+  // Found in an audit of the cache change: two tabs share one storage. One tab could save
+  // the rows and the other tab the ETag, and a cold start kept the wrong rows after a 304.
+  it('uses a saved list ETag only for the rows that it was issued for', async () => {
+    const answer = (title: string, etag: string) => () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ sessions: [{ ...sessions[0], title }], total: 1 }), {
+          headers: { ETag: etag },
+        }),
+      );
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(answer('First', '"v1"')));
+    const first = await import('./gateway');
+    const tab = new first.GatewayClient(conn);
+    await tab.listSessions();
+    first.persistGatewayCaches();
+
+    // Another tab saves other rows and their ETag.
+    vi.resetModules();
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(answer('Second', '"v2"')));
+    const second = await import('./gateway');
+    await new second.GatewayClient(conn).listSessions();
+    second.persistGatewayCaches();
+
+    // The first tab gets its own rows with a new ETag. Only the ETag changed for it.
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(answer('First', '"v3"')));
+    await tab.listSessions();
+    first.persistGatewayCaches();
+
+    vi.resetModules();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((_url: string, init: RequestInit) =>
+        new Headers(init.headers).get('If-None-Match') === '"v3"'
+          ? Promise.resolve(new Response(null, { status: 304 }))
+          : answer('First', '"v3"')(),
+      ),
+    );
+    const cold = await import('./gateway');
+    const rows = await new cold.GatewayClient(conn).listSessions();
+    expect(rows.map((row) => row.title)).toEqual(['First']);
+  });
+
   // A busy project's rows can fill the head window. The other project headers
   // must survive a restart even when revalidation returns no response body.
   it('restores every project and its totals before a cold-start 304', async () => {
@@ -520,6 +561,80 @@ describe('GatewayClient project-page snapshots', () => {
     await cold.listSessionGroups(root, undefined, 'exclude', bands);
     await cold.createSessionGroup(root, 'New work');
     expect(cold.heldSessionGroups(root, 'exclude', bands)).toBeNull();
+  });
+
+  // Reported in this Vis session: each poll read the wall of each painted project in full
+  // (8 reads of `/v1/session-groups` with a 200 every 6 seconds), and each read saved the
+  // wall again. The gateway gives each wall a validator, so a poll asks with it.
+  it('asks for a project wall again with its validator, also after a cold start', async () => {
+    const page = {
+      project_id: 'project-alpha',
+      groups: [{ id: 'group-wallet', project_id: 'project-alpha', name: 'Wallet work', session_count: 2 }],
+      total: 1,
+      session_total: 2,
+      limit: 10,
+      offset: 0,
+      has_more: false,
+    };
+    const asked: Array<string | null> = [];
+    const fetches = vi.fn(async (_url: string, init?: RequestInit) => {
+      const validator = new Headers(init?.headers).get('If-None-Match');
+      asked.push(validator);
+      return validator === 'W/"wall-1"'
+        ? new Response(null, { status: 304, headers: { ETag: 'W/"wall-1"' } })
+        : new Response(JSON.stringify(page), { headers: { ETag: 'W/"wall-1"' } });
+    });
+    vi.stubGlobal('fetch', fetches);
+    const gateway = await import('./gateway');
+    const client = new gateway.GatewayClient(conn);
+    const root = '/Users/dev/alpha';
+    const bands = { limit: 10, offset: 0 };
+    const first = await client.listSessionGroups(root, undefined, 'exclude', bands);
+    gateway.persistGatewayCaches();
+    const writes = vi.spyOn(storage, 'setItem');
+    expect(await client.listSessionGroups(root, undefined, 'exclude', bands)).toBe(first);
+    gateway.persistGatewayCaches();
+    expect(writes).not.toHaveBeenCalled();
+
+    vi.resetModules();
+    const cold = new (await import('./gateway')).GatewayClient(conn);
+    expect(await cold.listSessionGroups(root, undefined, 'exclude', bands)).toEqual(page);
+    expect(asked).toEqual([null, 'W/"wall-1"', 'W/"wall-1"']);
+  });
+
+  // Reported in this Vis session: the saved cache of one desktop install held 747 settings
+  // rows (9 for each of about 80 sessions) and 149 list pins, one for each draft overlay.
+  // They filled the storage budget, so a cold start kept the history of one session only.
+  it('keeps the scoped rows of the recent sessions and each gateway-wide row', async () => {
+    const base = 'http://gateway.example.com:7890';
+    const setting = (query: string) => `${base}\u0000setting\u0000${query}/reasoning`;
+    const saved = { snapshots: new Map<string, unknown>(), stamps: new Map(), windows: new Map() };
+    saved.snapshots.set(setting('scope=global'), { id: 'reasoning' });
+    for (let session = 0; session < 12; session += 1) {
+      saved.snapshots.set(setting(`scope=session&target_id=s${session}`), { id: 'reasoning' });
+      saved.snapshots.set(`${base}\u0000model-default\u0000s${session}`, { model: 'm' });
+      saved.snapshots.set(`${base}\u0000sessions-pin\u0000s${session}`, { etag: 'W/"1"', total: 1 });
+    }
+    saved.snapshots.set(`${base}\u0000model-default`, { model: 'm' });
+    saved.snapshots.set(`${base}\u0000sessions-pin`, { etag: 'W/"1"', total: 1 });
+    (await import('./snapshot-store')).flushSnapshots(saved);
+
+    vi.resetModules();
+    (await import('./gateway')).persistGatewayCaches();
+    vi.resetModules();
+    const cold = { snapshots: new Map<string, unknown>(), stamps: new Map(), windows: new Map() };
+    (await import('./snapshot-store')).hydrateSnapshots(cold);
+    const kept = [...cold.snapshots.keys()];
+    expect(kept).toContain(setting('scope=global'));
+    expect(kept).toContain(setting('scope=session&target_id=s11'));
+    expect(kept).not.toContain(setting('scope=session&target_id=s1'));
+    expect(kept.filter((key) => key.includes('\u0000setting\u0000'))).toHaveLength(11);
+    expect(kept.filter((key) => key.includes('\u0000model-default'))).toHaveLength(11);
+    expect(kept).toContain(`${base}\u0000model-default`);
+    expect(kept.filter((key) => key.includes('\u0000sessions-pin'))).toEqual([
+      `${base}\u0000sessions-pin\u0000s11`,
+      `${base}\u0000sessions-pin`,
+    ]);
   });
 
   it('sends group archive and restoration as PATCH requests', async () => {

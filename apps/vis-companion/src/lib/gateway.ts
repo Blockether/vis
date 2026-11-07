@@ -843,6 +843,50 @@ const SNAPSHOT_KIND_LIMITS = new Map<string, number>([
   ['model', 100],
 ]);
 
+/**
+ * Kinds with one group of rows for each scope: a settings target, a session or a
+ * draft overlay. Keep the gateway-wide rows and the most recently used scopes only.
+ * Before this bound, each session that a person opened kept its settings, and one
+ * install held hundreds of rows that it did not read again. They filled the storage
+ * budget, and each flush wrote them again.
+ */
+const SCOPED_SNAPSHOT_LIMITS = new Map<string, number>([
+  ['setting', SESSION_CACHE_LIMIT],
+  ['settings', SESSION_CACHE_LIMIT],
+  ['mcp-servers', SESSION_CACHE_LIMIT],
+  ['model-default', SESSION_CACHE_LIMIT],
+  // Only the pin of the current draft overlay can answer the next list read.
+  ['sessions-pin', 1],
+]);
+
+// Kinds keyed by `settingsKey`: `<query>/<id>`, where `<query>` names the target.
+const SETTINGS_SNAPSHOT_KINDS = new Set(['setting', 'settings', 'mcp-servers']);
+
+// Validated pages of walls of bands that the static map of `GatewayClient` holds.
+const GROUP_WALL_VALIDATOR_LIMIT = 64;
+
+/** The saved first page of a project's wall of bands (`listSessionGroups`). */
+type SavedGroupWall = { key: string; etag?: string; page: SessionGroupPage };
+
+/**
+ * A digest of the head rows and the project totals that a session-list ETag was issued
+ * for. The ETag and the rows are separate saved items: another tab or an interrupted
+ * flush can write one of them only. A cold start uses the saved ETag only for rows and
+ * totals with the same digest. Else a 304 could confirm rows that the ETag does not
+ * describe, and the list would stay stale.
+ */
+function listDigest(rows: Session[], overview: GatewayOverview | null): string {
+  const text = JSON.stringify([rows, overview]);
+  let first = 0x811c9dc5;
+  let second = 0x9747b28c;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x5bd1e995);
+  }
+  return `${text.length}:${(first >>> 0).toString(36)}:${(second >>> 0).toString(36)}`;
+}
+
 function snapshotParts(key: string): { base: string; kind: string } {
   const first = key.indexOf('\u0000');
   if (first < 0) return { base: '', kind: key };
@@ -851,6 +895,35 @@ function snapshotParts(key: string): { base: string; kind: string } {
     base: key.slice(0, first),
     kind: key.slice(first + 1, second < 0 ? key.length : second),
   };
+}
+
+/** The scope of a scoped snapshot. `''` is the gateway-wide scope, which is never evicted. */
+function snapshotScope(key: string, kind: string): string {
+  const second = key.indexOf('\u0000', key.indexOf('\u0000') + 1);
+  if (second < 0) return '';
+  const rest = key.slice(second + 1);
+  if (!SETTINGS_SNAPSHOT_KINDS.has(kind)) return rest;
+  const query = rest.split('/', 1)[0] ?? '';
+  return query.includes('target_id=') ? query : '';
+}
+
+/** Drop whole scopes of one kind, least recently used first, until `limit` stay. */
+function trimSnapshotScopes(base: string, kind: string, limit: number): void {
+  // Map order is the LRU order, so the last key of a scope tells when it was used.
+  const scopes = new Map<string, string[]>();
+  for (const candidate of snapshots.keys()) {
+    const parts = snapshotParts(candidate);
+    if (parts.base !== base || parts.kind !== kind) continue;
+    const scope = snapshotScope(candidate, kind);
+    if (!scope) continue;
+    const keys = scopes.get(scope) ?? [];
+    scopes.delete(scope);
+    keys.push(candidate);
+    scopes.set(scope, keys);
+  }
+  for (const keys of Array.from(scopes.values()).slice(0, Math.max(0, scopes.size - limit))) {
+    for (const key of keys) dropSnapshot(key);
+  }
 }
 
 function dropSnapshot(key: string): void {
@@ -864,6 +937,11 @@ function dropSnapshot(key: string): void {
 /** Keep visible answers before older LRU entries. Only visible rows can exceed the normal budget. */
 function trimSnapshotKind(key: string): void {
   const target = snapshotParts(key);
+  const scopes = SCOPED_SNAPSHOT_LIMITS.get(target.kind);
+  if (scopes !== undefined) {
+    trimSnapshotScopes(target.base, target.kind, scopes);
+    return;
+  }
   const limit = SNAPSHOT_KIND_LIMITS.get(target.kind);
   if (limit === undefined) return;
   const matching = Array.from(snapshots.keys()).filter((candidate) => {
@@ -879,7 +957,15 @@ function trimSnapshotKind(key: string): void {
 }
 
 function normalizeSnapshotLimits(): void {
-  for (const key of Array.from(snapshots.keys())) trimSnapshotKind(key);
+  // One trim for each machine and kind: a trim covers all keys of its group.
+  const trimmed = new Set<string>();
+  for (const key of Array.from(snapshots.keys())) {
+    const { base, kind } = snapshotParts(key);
+    const group = `${base}\u0000${kind}`;
+    if (trimmed.has(group)) continue;
+    trimmed.add(group);
+    trimSnapshotKind(key);
+  }
 }
 /**
  * The snapshot caches as ONE durable unit (see `snapshot-store.ts`).
@@ -956,9 +1042,11 @@ const SESSION_CURSORS_KEY = 'vis.sessionCursors.v1';
 // keeping a row for every one of them; eviction costs a single rewind.
 const MAX_PERSISTED_CURSORS = 256;
 
-// Cursors advance on nearly every streamed frame, so the writes are coalesced.
-// Losing the last couple of seconds to an OS kill costs a few seconds of replay.
-const CURSOR_FLUSH_MS = 2_000;
+// Cursors advance on nearly every streamed frame, so the writes are coalesced. A
+// write every 2 seconds added about 1 MB each minute to the storage log of the
+// desktop app. The hide listeners below write the cursors when the app goes to the
+// background. Thus only a crash loses this interval: some replay on the next connect.
+const CURSOR_FLUSH_MS = 30_000;
 
 function hydrateSessionCursors(): Array<[string, number]> {
   try {
@@ -981,6 +1069,8 @@ function hydrateSessionCursors(): Array<[string, number]> {
 const sessionCursors = new Map<string, number>(hydrateSessionCursors());
 
 let cursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
+// The JSON that the last flush wrote. A flush with no change writes nothing.
+let persistedCursors: string | null = null;
 
 /** Write the replay cursors now. Safe to call from a teardown handler. */
 function flushSessionCursors(): void {
@@ -991,7 +1081,10 @@ function flushSessionCursors(): void {
   try {
     const store = globalThis.localStorage ?? null;
     if (!store) return;
-    store.setItem(SESSION_CURSORS_KEY, JSON.stringify(Object.fromEntries(sessionCursors)));
+    const json = JSON.stringify(Object.fromEntries(sessionCursors));
+    if (json === persistedCursors) return;
+    store.setItem(SESSION_CURSORS_KEY, json);
+    persistedCursors = json;
   } catch {
     // Out of quota or a hostile embedder: persistence is an optimisation.
   }
@@ -1003,6 +1096,15 @@ function scheduleCursorFlush(): void {
     cursorFlushTimer = null;
     flushSessionCursors();
   }, CURSOR_FLUSH_MS);
+}
+
+// A backgrounded webview can be killed without running another timer. Write the
+// cursors at the last moment the platform gives, as for the snapshots.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushSessionCursors();
+  });
+  globalThis.addEventListener?.('pagehide', flushSessionCursors);
 }
 
 /** Persist the caches NOW — used when the app is being torn down. */
@@ -1523,6 +1625,13 @@ export class GatewayClient {
   private static readonly sessionsValidators = new Map<
     string,
     { full: Session[]; windows: Map<string, SessionsWindow> }
+  >();
+  // The page that each wall of bands was answered with last, keyed by `groupWallKey`.
+  // Static for the same reason. The ETag of the gateway covers the whole answer, so a
+  // 304 can only confirm the exact page that came with it.
+  private static readonly groupWallValidators = new Map<
+    string,
+    { etag: string; page: SessionGroupPage }
   >();
   /** Backing store refreshed by the head of every list read. */
   private overview: GatewayOverview | null;
@@ -3895,15 +4004,19 @@ export class GatewayClient {
     // durable head ETag back onto those exact rows, so the first cold-start request
     // can be a 304 instead of re-downloading the window.
     if (!pinned && cached?.length) {
-      const persisted = readSnapshot<{ etag?: unknown; total?: unknown }>(durablePin);
+      const persisted = readSnapshot<{ etag?: unknown; total?: unknown; digest?: unknown }>(
+        durablePin,
+      );
       // The rows on disk have to BE the window that validator was issued for: the
       // head of a list of `total`, which is the whole of a short list and
-      // `SESSIONS_PAGE` of a long one.
+      // `SESSIONS_PAGE` of a long one. The digest also proves that they are the same
+      // rows and totals, not rows that another tab or an older flush saved.
       if (
         typeof persisted?.etag === 'string' &&
         persisted.etag &&
         typeof persisted.total === 'number' &&
-        cached.length === Math.min(SESSIONS_PAGE, persisted.total)
+        cached.length === Math.min(SESSIONS_PAGE, persisted.total) &&
+        persisted.digest === listDigest(cached, this.overview)
       ) {
         pinned = {
           full: cached,
@@ -3993,7 +4106,11 @@ export class GatewayClient {
         full: rows,
         windows: new Map([[HEAD_CURSOR, { ...head, rows }]]),
       });
-      writeSnapshot(durablePin, { etag: head.etag, total: head.total });
+      writeSnapshot(durablePin, {
+        etag: head.etag,
+        total: head.total,
+        digest: listDigest(rows, this.overview),
+      });
     } else {
       GatewayClient.sessionsValidators.delete(pinKey);
       writeSnapshot(durablePin, null);
@@ -4602,19 +4719,41 @@ export class GatewayClient {
       query.set('limit', String(bands.limit));
       query.set('offset', String(bands.offset));
     }
-    const page = await this.request<SessionGroupPage>(
+    const wall = this.groupWallKey(root, archived, bands);
+    const opens = archived === 'exclude' && (bands?.offset ?? 0) === 0;
+    const durable = this.snapshotKey('project-groups', root);
+    const saved = opens ? (snapshots.get(durable) as SavedGroupWall | undefined) : undefined;
+    // Each reader polls every wall that it paints (see the gateway handler). Ask with the
+    // validator of the page held for this question, so a poll with no change is a 304.
+    // A cold start takes the validator from the saved wall.
+    const pin =
+      GatewayClient.groupWallValidators.get(wall) ??
+      (saved?.key === wall && saved.etag ? { etag: saved.etag, page: saved.page } : undefined);
+    const res = await this.requestFull<SessionGroupPage>(
       'GET',
       `/v1/session-groups?${query.toString()}`,
       undefined,
       signal,
+      pin ? { 'If-None-Match': pin.etag } : undefined,
     );
+    const held = res.status === 304 && pin ? pin : null;
+    const page = held ? held.page : (res.data as SessionGroupPage);
+    const etag = held ? held.etag : res.etag;
+    const validators = GatewayClient.groupWallValidators;
+    validators.delete(wall);
+    if (etag && Array.isArray(page?.groups)) {
+      validators.set(wall, { etag, page });
+      if (validators.size > GROUP_WALL_VALIDATOR_LIMIT)
+        validators.delete(validators.keys().next().value!);
+    }
     // The page of the wall a project OPENS on is saved beside its head, so the next cold
-    // start names its bands before this read comes back (`heldSessionGroups`).
-    if (archived === 'exclude' && (bands?.offset ?? 0) === 0 && Array.isArray(page?.groups))
-      writeSnapshot(this.snapshotKey('project-groups', root), {
-        key: this.groupWallKey(root, archived, bands),
-        page,
-      });
+    // start names its bands before this read comes back (`heldSessionGroups`). A poll
+    // that finds the same wall does not write it again.
+    if (opens && Array.isArray(page?.groups)) {
+      const current = snapshots.get(durable) as SavedGroupWall | undefined;
+      if (current?.key !== wall || current.page !== page || current.etag !== (etag ?? undefined))
+        writeSnapshot(durable, etag ? { key: wall, etag, page } : { key: wall, page });
+    }
     return page;
   }
 

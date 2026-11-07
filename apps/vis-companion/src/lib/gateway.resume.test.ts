@@ -207,4 +207,22 @@ describe('a relaunched event stream', () => {
     expect(cold.client.cachedSessionCursor('s1')).toBeNull();
     expect(cold.asked).toBe('s2:-1');
   });
+
+  // Reported in this Vis session: the desktop app wrote its cursors every 2 seconds while
+  // turns streamed, and its storage log grew without end. A hide still writes them at once.
+  it('writes the cursors when the app is hidden, not on each streamed frame', async () => {
+    vi.useFakeTimers();
+    const page = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', page);
+    const writes = vi.spyOn(storage, 'setItem');
+    await streamOnce(new Map([['s1', -1]]), [
+      { type: 'subscription.ready', session_id: 's1', cursor: 40 },
+      { type: 'content.block.delta', session_id: 's1', seq: 42 },
+    ]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(writes.mock.calls.filter(([name]) => name === 'vis.sessionCursors.v1')).toHaveLength(0);
+    page.visibilityState = 'hidden';
+    page.dispatchEvent(new Event('visibilitychange'));
+    expect(Object.values(JSON.parse(storage.getItem('vis.sessionCursors.v1')!))).toEqual([42]);
+  });
 });
