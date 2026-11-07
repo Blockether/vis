@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Agent: the core prompt tells the model to be concise. It writes only the prose and the code that a step needs. In a benchmark, the model spent about two thirds of its time on writing output tokens.
+
 ### Added
 - Sounds: the gateway can play a sound when a turn finishes, when Vis waits for your answer and when a turn fails or stops (#308). Turn it on in the **Sounds** section of the TUI or Companion settings. It is off by default. A preset gives one sound to each of the three events. Vis includes five built-in presets (Classic, Glass, Soft, Minimal and Bright) with CC0 sounds from Kenney Interface Sounds. You can save your own presets: each sound is a built-in sound, a path to your own file, or no sound. The settings editor plays a sound before you save it. Subagent turns, Council turns and quiet turns play no sound. The Python SDK and extensions choose, save, delete and preview presets with `vis.sounds`. The sound plays on the computer that runs the gateway: `afplay` on macOS, PowerShell on Windows and `pw-play`, `paplay` or `aplay` on Linux.
 - Settings: a setting can hold a structured value with its own editor in the TUI and the Companion app. The first one is the sound preset editor. `state.yml` keeps such a value as YAML.
