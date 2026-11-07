@@ -4,7 +4,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useId,
   useMemo,
   useState,
   useSyncExternalStore,
@@ -90,9 +89,6 @@ const END_REASON: Partial<Record<Subagent['status'], string>> = {
   waiting: 'waits for earlier tasks',
   blocked: 'an earlier task did not complete',
 };
-
-// A task that did not start can still be stopped.
-export const isStoppable = (agent: Subagent) => isLive(agent) || ['waiting', 'blocked'].includes(agent.status);
 
 // The start of the current task: the spawn, or the last resume.
 function startOf(agent: Subagent): number | undefined {
@@ -458,7 +454,6 @@ function taskNote(task: string): ReactNode {
 interface TableProps {
   rows: readonly Subagent[];
   now: number;
-  error?: string | null;
   onSelect: (sid: string) => void;
   /** A wide screen shows the time bars of the team instead of the notes. */
   isTimeline?: boolean;
@@ -472,7 +467,7 @@ function AgentTable(props: TableProps) {
   return useWide() ? <WideAgentTable {...props} /> : <PhoneAgentTable {...props} />;
 }
 
-function PhoneAgentTable({ rows, now, error, onSelect }: TableProps) {
+function PhoneAgentTable({ rows, now, onSelect }: TableProps) {
   return (
     <ul className="divide-y divide-dialog-edge/40" style={columnWidths(rows)}>
       {rows.map((agent) => {
@@ -500,13 +495,12 @@ function PhoneAgentTable({ rows, now, error, onSelect }: TableProps) {
           </li>
         );
       })}
-      {error && <li role="alert" className="py-1 text-err-ink">{error}</li>}
     </ul>
   );
 }
 
 function WideAgentTable(props: TableProps) {
-  const { rows, now, error, onSelect, isTimeline = false, leader } = props;
+  const { rows, now, onSelect, isTimeline = false, leader } = props;
   if (isTimeline && hasTimeline(rows, leader)) return <TeamChart {...props} />;
   return (
     <div style={columnWidths(rows)}>
@@ -540,7 +534,6 @@ function WideAgentTable(props: TableProps) {
             </li>
           );
         })}
-        {error && <li role="alert" className="py-1 text-err-ink">{error}</li>}
       </ul>
     </div>
   );
@@ -549,7 +542,7 @@ function WideAgentTable(props: TableProps) {
 // The chart of a team on a wide screen: the time axis, the lane of the leader, then one lane for
 // each agent in spawn order, on one scale. A lane shows only its key; the legend under the rule
 // gives each key its role and title. An agent lane opens the sheet of its agent.
-function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
+function TeamChart({ rows, now, onSelect, leader }: TableProps) {
   const span = chartSpan(rows, now, leader);
   if (!span) return null;
   const total = span.end - span.start;
@@ -618,7 +611,6 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
               </li>
             );
           })}
-          {error && <li role="alert" className="px-3 py-1 text-err-ink">{error}</li>}
         </ul>
       </div>
       <ul aria-label="Legend" className="mt-1 border-t border-dialog-edge/50 pt-1.5">
@@ -656,7 +648,6 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
 /** The props of a team block. */
 export interface TeamProps {
   agents: readonly Subagent[];
-  error?: string | null;
   onOpen: (sid: string) => void;
   /** The leader turn of the team, for the first lane of its chart. */
   leader?: LeaderLane;
@@ -668,7 +659,7 @@ export interface TeamProps {
  * agent. The dock shows the table without the frame. A subagent never asks a person: its
  * leader answers it, so a row has no question and no control for one.
  */
-export function TurnAgents({ agents, error, onOpen, leader, placement = 'transcript', isTimeline }: TeamProps & {
+export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', isTimeline }: TeamProps & {
   /** The dock above the composer while the team works, or the turn of the transcript after. */
   placement?: 'dock' | 'transcript';
   /** The dock owns the timeline switch of its teams; the transcript owns its own. */
@@ -679,7 +670,7 @@ export function TurnAgents({ agents, error, onOpen, leader, placement = 'transcr
   const now = useNow(agents.some((agent) => agent.status === 'running') || (leader != null && leader.end == null));
   if (agents.length === 0) return null;
   const rows = spawnOrder(agents);
-  const table = <AgentTable rows={rows} now={now} error={error} onSelect={onOpen} isTimeline={isTimeline ?? isOwnTimeline} leader={leader} />;
+  const table = <AgentTable rows={rows} now={now} onSelect={onOpen} isTimeline={isTimeline ?? isOwnTimeline} leader={leader} />;
   const toggle = isWide && hasTimeline(rows, leader)
     ? <TimelineToggle isOn={isOwnTimeline} onToggle={() => setOwnTimeline((value) => !value)} />
     : undefined;
@@ -695,43 +686,6 @@ export function TurnAgents({ agents, error, onOpen, leader, placement = 'transcr
       <div className="px-3 sm:px-0">{table}</div>
     </section>
   ) : table;
-}
-
-// How long an armed stop waits for its second press.
-const STOP_ARMED_MS = 5000;
-
-/**
- * The stop of a working agent in the header of its session. The first press arms it and turns
- * it red, and the second press stops the agent. It disarms on blur or after a wait.
- */
-export function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => void }) {
-  const [isArmed, setArmed] = useState(false);
-  const scope = useId();
-  useEffect(() => {
-    if (!isArmed) return undefined;
-    const timer = window.setTimeout(() => setArmed(false), STOP_ARMED_MS);
-    return () => window.clearTimeout(timer);
-  }, [isArmed]);
-  return (
-    <>
-      <span id={scope} className="sr-only">Stops this agent and its descendants, including queued work.</span>
-      <Button
-        variant={isArmed ? 'danger' : 'secondary'}
-        aria-label={isArmed ? 'Confirm stop' : 'Stop agent'}
-        disabled={isPending}
-        aria-describedby={scope}
-        title="Stops this agent and its descendants, including queued work."
-        onBlur={() => setArmed(false)}
-        onClick={() => {
-          if (!isArmed) { setArmed(true); return; }
-          setArmed(false);
-          onStop();
-        }}
-      >
-        Stop
-      </Button>
-    </>
-  );
 }
 
 /** The team rows that the transcript turns hold: each turn has the agents that it started. */
@@ -775,8 +729,6 @@ const NO_SUBSCRIPTION = () => () => {};
  */
 export function useAgentTeam(client: GatewayClient, sid: string, stored: readonly Subagent[] = NO_AGENTS) {
   const hub = useContext(SessionEventsContext);
-  const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const subscribe = useCallback(
     (changed: () => void) => (hub ? hub.subscribeTeam(sid, changed) : NO_SUBSCRIPTION()),
     [hub, sid],
@@ -791,27 +743,8 @@ export function useAgentTeam(client: GatewayClient, sid: string, stored: readonl
     const cached = client.cachedAgents?.(sid);
     return cached?.length ? mergeAgents(cached, stored) : stored;
   }, [client, sid, stored, streamed]);
-  // One control call at a time for each child. The gateway pushes the changed row after it.
-  // The result is the error text, or null when the call worked.
-  const control = useCallback(async (child: string, call: () => Promise<unknown>, fallback: string) => {
-    setPending(child);
-    try {
-      await call();
-      return null;
-    } catch (cause) {
-      return cause instanceof Error && cause.message ? cause.message : fallback;
-    } finally {
-      setPending(null);
-    }
-  }, []);
-  // The gateway stops a child only for a session that controls it: its parent. In a child session
-  // the child is in the rows of its siblings, so the stop of the child itself goes to its parent.
-  const cancel = useCallback(async (child: string) => {
-    const owner = current.find((agent) => agent.session_id === child)?.parent_id ?? sid;
-    setError(null);
-    setError(await control(child, () => client.cancelAgent(owner, child), 'Could not stop agent. Try again.'));
-  }, [client, sid, current, control]);
-  return { agents: current, pending, error, cancel };
+  // A person stops subagents only through their leader: the stop of a leader turn also stops them.
+  return { agents: current };
 }
 
 /** What `useAgentTeam` gives its views. */

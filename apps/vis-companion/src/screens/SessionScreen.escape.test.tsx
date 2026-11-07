@@ -7,7 +7,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SessionSearchDialog } from '../components/SessionSearchDialog';
 import { isLayerUp, useBackLayer } from '../lib/edge-back';
 import { readZenMode, setZenMode } from '../lib/transcript-display';
-import { renderSessionScreen } from './session-screen-harness';
+import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
 const runningTurn = () => ({
   turn: {
@@ -105,6 +105,26 @@ describe('Escape over a running turn', () => {
 
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Picker' }), { key: 'Escape' });
     await act(async () => {});
+    expect(cancelTurn).not.toHaveBeenCalled();
+  });
+  // User request 2026-11-07: a person stops subagents only through the leader. The stop of the
+  // leader turn also stops its subagents, so a subagent session has no stop of its own.
+  it('has no stop in a working subagent session, and Escape leaves its turn running', async () => {
+    const cancelTurn = vi.fn(() => Promise.resolve(null));
+    const row = { session_id: 's1', parent_id: 'lead', leader_id: 'lead', team_id: 't1', task: 'Fix', status: 'running', iteration_budget: 4, iterations_used: 1 };
+    renderSessionScreen({
+      session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
+      client: { cachedRunningTurn: runningTurn, cancelTurn, cachedAgents: () => [row] },
+    });
+    await screen.findByRole('heading', { name: /^leader →/ });
+    expect(screen.queryByRole('button', { name: /stop/i })).toBeNull();
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(event);
+    });
+    await act(async () => {});
+    expect(event.defaultPrevented).toBe(false);
     expect(cancelTurn).not.toHaveBeenCalled();
   });
 });

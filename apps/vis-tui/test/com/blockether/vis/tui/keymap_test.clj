@@ -111,7 +111,7 @@
         (expect (= :group-rename (:action (press \g \r)))))
     ;; User report 2026-10-31: the TUI had no keys to open a subagent or to go back to the leader.
     (it "offers the agent keys only where they can act"
-        (expect (= [:agent-team :agent-parent :agent-stop]
+        (expect (= [:agent-team :agent-parent]
                    (mapv :action (keymap/available-prefix-commands full :agents))))
         (expect (= [:agent-team]
                    (mapv :action (keymap/available-prefix-commands {:has-agents? true} :agents))))

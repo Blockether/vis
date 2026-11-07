@@ -4332,12 +4332,6 @@ export class GatewayClient {
     else if (snapshots.delete(key)) scheduleSnapshotFlush(snapshotStores);
   }
 
-  async cancelAgent(sid: string, childId: string): Promise<void> {
-    await this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/agents/cancel`, {
-      session_id: childId,
-    });
-  }
-
   async session(sid: string, signal?: AbortSignal, includeQueued = false): Promise<Session> {
     const response = await this.request<
       Session & { queued_turns?: unknown; queue_paused?: unknown }

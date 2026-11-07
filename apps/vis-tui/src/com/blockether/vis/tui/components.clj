@@ -328,7 +328,6 @@
              [(str (keymap/group-chord :agents) " 1-9") "Open the subagent with that number"]
              [(keymap/label-for :agent-team) "List the subagents, then open one"]
              [(keymap/label-for :agent-parent) "Go back from a subagent to its parent session"]
-             [(keymap/label-for :agent-stop) "Stop this subagent and its descendants"]
              ["Click a subagent row" "Open the session of that subagent"]]}
      {:title "Live views"
       :rows [[(keymap/label-for :live-panel)

@@ -1571,13 +1571,7 @@
     (conj {:id :agent-parent
            :group "Session"
            :label "Back to Parent Session"
-           :description "Open the session that started this subagent"})
-
-    (get-in @state/app-db [:session :agent :parent-id])
-    (conj {:id :agent-stop
-           :group "Session"
-           :label "Stop Agent"
-           :description "Stop this subagent and its descendants"})))
+           :description "Open the session that started this subagent"})))
 
 (defn- menu-commands
   "Command universe for typed slash suggestion/exact-match handling.
@@ -10082,8 +10076,8 @@
   "Handle one keystroke that no earlier mode took."
   [ctx locals]
   (let [{:keys [screen switch-session! show-agent-team! open-agent-parent! open-agent-nth!
-                stop-current-agent! show-session-metrics! show-sessions! show-model-picker!
-                show-reasoning-picker! retry-startup! switch-project!]}
+                show-session-metrics! show-sessions! show-model-picker! show-reasoning-picker!
+                retry-startup! switch-project!]}
         ctx
 
         {:keys [db total-h inner-h key]}
@@ -10227,9 +10221,6 @@
 
                     :agent-parent
                     (open-agent-parent!)
-
-                    :agent-stop
-                    (stop-current-agent!)
 
                     :live-panel
                     (open-live-panel!)
@@ -10532,9 +10523,6 @@
 
         :agent-parent
         (do (open-agent-parent!) ::recur)
-
-        :agent-stop
-        (do (stop-current-agent!) ::recur)
 
         :agent-open-nth
         (do (open-agent-nth! agent-index) ::recur)
@@ -11591,17 +11579,6 @@
                  open-agent! (fn [child-id]
                                (when-not (:dialog-open? @state/app-db)
                                  (switch-session! {:action :switch :id child-id})))
-                 ;; C-x t s: stop this subagent, through its parent, after a confirmation.
-                 stop-current-agent!
-                 (fn []
-                   (if-let [parent-id (not-empty (str (get-in @state/app-db
-                                                              [:session :agent :parent-id])))]
-                     (when-not (:dialog-open? @state/app-db)
-                       (with-dialog-lock
-                         #(agent-team/stop-agent! screen parent-id (current-session-id))))
-                     (vis/notify! "This session is not a subagent"
-                                  :level :warn
-                                  :ttl-ms copy-success-ttl-ms)))
                  show-session-metrics! (fn []
                                          (when-not (:dialog-open? @state/app-db)
                                            (with-dialog-lock #(dlg/session-metrics-dialog!
@@ -11792,7 +11769,6 @@
                            :open-agent-parent! open-agent-parent!
                            :open-agent-nth! open-agent-nth!
                            :open-agent! open-agent!
-                           :stop-current-agent! stop-current-agent!
                            :show-session-metrics! show-session-metrics!
                            :show-sessions! show-sessions!
                            :show-model-picker! show-model-picker!

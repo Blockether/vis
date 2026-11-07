@@ -74,7 +74,7 @@ first, such as a turn to fork, appears once it can act.
 | Ctrl+X a | Attachments: attach a file, review attachments and pictures |
 | Ctrl+X v | Voice: recording and voice conversation |
 | Ctrl+X q | Queue: send or edit queued messages |
-| Ctrl+X t | Agents: open a subagent, list the subagents, stop this subagent or go back to the parent session. This group appears only when it can act |
+| Ctrl+X t | Agents: open a subagent, list the subagents or go back to the parent session. This group appears only when it can act |
 | Ctrl+X e | Keys from extensions. This group appears only when an extension adds a key |
 | Ctrl+X p | Open the command palette with every command, then type to filter |
 | Ctrl+X h | Show or hide the keyboard shortcuts |
@@ -111,7 +111,6 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | `toggle-agent-dock` | Ctrl+X b a | Show or hide the agent team details |
 | `agent-team` | Ctrl+X t t | List the subagents, then open one |
 | `agent-parent` | Ctrl+X t b | Open the session that started this subagent |
-| `agent-stop` | Ctrl+X t s | Stop this subagent and its descendants, after a confirmation |
 | `fork-session` | Ctrl+X s f | Fork this session |
 | `fork-at-turn` | Ctrl+X s t | Fork from an earlier turn |
 | `switch-project` | Ctrl+X b w | Open **Projects** |
@@ -163,7 +162,6 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | Ctrl+X t 1 to 9 | Open the subagent with that number. The **#** column of the agent team table shows the numbers |
 | Ctrl+X t t | List the subagents of this session, then open one. A click on a row of the agent team table also opens that subagent |
 | Ctrl+X t b | In a subagent session, go back to the session that started the subagent |
-| Ctrl+X t s | In a working subagent session, stop the subagent and its descendants. Vis asks you to confirm first |
 
 ### Queued messages
 

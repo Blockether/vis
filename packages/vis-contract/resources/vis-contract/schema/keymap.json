@@ -382,14 +382,6 @@
           "x-vis-key": "b",
           "x-vis-group": "agents",
           "x-vis-show-when": "child-session"
-        },
-        {
-          "const": "agent-stop",
-          "title": "stop agent",
-          "description": "Stop this subagent and its descendants, after a confirmation",
-          "x-vis-key": "s",
-          "x-vis-group": "agents",
-          "x-vis-show-when": "child-session"
         }
       ]
     },

@@ -1045,6 +1045,42 @@
                                        (json/write-json-str {:session_id "a7"}))))
                   "An unknown task id names no child"))))))
 
+;; User request 2026-11-07: a person stops subagents only through the leader. The stop of the
+;; leader turn stops its children; a subagent session itself has no stop.
+(defdescribe
+  subagent-turn-cancel-test
+  (it "refuses a turn cancel in a subagent session and keeps the child running"
+      (with-team
+        {:statuses ["running"]}
+        (fn [{:keys [children]}]
+          (let [[child]
+                children
+
+                token
+                (cancellation/cancellation-token)
+
+                registry
+                @#'state/registry]
+
+            (swap! registry assoc
+              child
+              {:current-turn "child-turn"
+               :turns {"child-turn" {:status "running" :cancel-token token :idempotency_key "k"}}})
+            (let [by-id
+                  (request :post (str "/v1/sessions/" child "/turns/child-turn/cancel") nil)
+
+                  current
+                  (request :post
+                           (str "/v1/sessions/" child "/cancel-current")
+                           (json/write-json-str {:idempotency_key "k"}))]
+
+              (expect (= [409 409] (mapv :status [by-id current])))
+              (expect (= ["subagent-stop" "subagent-stop"]
+                         (mapv #(get-in (json/read-json (:body %)) ["error" "type"])
+                               [by-id current])))
+              (expect (not (cancellation/cancelled? token)) "The child keeps working")
+              (expect (= "running" (:status (agents/info (lp/db-info) child))))))))))
+
 ;; User report 2026-11-05: the team block of a turn came after the rest of the transcript. The
 ;; transcript had no team rows, so each client read them with a second request.
 (defdescribe

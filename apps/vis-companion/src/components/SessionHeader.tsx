@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
 import type { AgentPath, AgentStep } from './AgentCrumb';
-import { StopAgent } from './AgentTeam';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
@@ -87,8 +86,6 @@ export type SessionHeaderModel = Readonly<{
   title: string;
   /** The path of a subagent session from its leader. It replaces the title, like the TUI header. */
   agentPath?: AgentPath;
-  /** The stop of a working subagent session, with the error of its last call. */
-  agentStop?: Readonly<{ isPending: boolean; error?: string | null }>;
   sessionId: string;
   connected: boolean;
   goal?: SessionGoal | null;
@@ -103,8 +100,6 @@ export type SessionHeaderCommands = Readonly<{
   zen?: () => void;
   /** Open the session that started this subagent session. */
   openParent?: (sid: string) => void;
-  /** Stop the agent of this subagent session. */
-  stopAgent?: () => void;
 }>;
 
 /** One step of the path: the role word, then `|` and the name, like `IMPLEMENT | Fix parser`. */
@@ -250,7 +245,6 @@ export function SessionHeader({
             }`}
           />
           <span className="shrink-0">{model.connected ? 'Connected' : 'Reconnecting'}</span>
-          {model.agentStop?.error && <span role="alert" className="min-w-0 truncate text-err-ink">{model.agentStop.error}</span>}
           {goal && (
             <Button
               variant="quiet"
@@ -268,7 +262,6 @@ export function SessionHeader({
         </div>
       </div>
       <div className="flex min-w-0 shrink items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
-        {model.agentStop && commands.stopAgent && <StopAgent isPending={model.agentStop.isPending} onStop={commands.stopAgent} />}
         {panel && (
           <IconButton
             label={panel.isOpen ? 'Hide live views' : 'Show live views'}

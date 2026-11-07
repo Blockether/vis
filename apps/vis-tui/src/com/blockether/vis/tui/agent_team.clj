@@ -14,13 +14,7 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t])
   (:import [com.googlecode.lanterna.graphics TextGraphics]
-           [com.googlecode.lanterna.input KeyStroke KeyType]
-           [java.net URLEncoder]
-           [java.nio.charset StandardCharsets]))
-
-(defn- path
-  [sid suffix]
-  (str "/v1/sessions/" (URLEncoder/encode (str sid) StandardCharsets/UTF_8) "/agents" suffix))
+           [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (defonce ^:private snapshots (atom {}))
 
@@ -1349,24 +1343,6 @@
       (reset! running? false)
       (.interrupt worker)
       (.join worker 2500))))
-
-(defn- stop!
-  [sid id]
-  (try (when-not (= 200
-                    (:status (vis/request! :post (path sid "/cancel") {:body {:session_id id}})))
-         (vis/notify! "Could not stop agent; refresh its state" :level :error))
-       (catch Exception _ (vis/notify! "Could not stop agent; refresh its state" :level :error))))
-
-(defn stop-agent!
-  "Ask to stop child `child-id` of `parent-id` and its descendants. A confirmed stop asks the
-   gateway through the parent. The gateway then pushes the changed team rows."
-  [screen parent-id child-id]
-  (when (= :stop
-           (:action (dlg/select-dialog! screen
-                                        "Stop this agent and its descendants?"
-                                        [{:label "Keep working" :action :keep}
-                                         {:label "Stop agent" :action :stop}])))
-    (stop! parent-id child-id)))
 
 (def ^:private ^:const modal-row-width "The most cells of one agent row in the team modal." 200)
 

@@ -6683,12 +6683,17 @@
   ;; never vanish: when this tab has nothing of its own to stop, ask the gateway what
   ;; the session is really running, cancel that turn BY ITS OWN ID, and say either way.
   (fn [db _]
-    (if-not (:loading? db)
-      (if-let [sid (get-in db [:session :id])]
-        {:db db :fx [[:cancel-detached-turn sid]]}
-        {:db db
-         :fx [[:notify "Nothing to cancel — no session is open." :info
-               cancel-notification-ttl-ms]]})
+    (cond
+      ;; A person stops a subagent only through its leader: that stop also stops the children.
+      (keymap/subagent-session? db) {:db db
+                                     :fx [[:notify "Stop the leader session to stop this subagent."
+                                           :info cancel-notification-ttl-ms]]}
+      (not (:loading? db)) (if-let [sid (get-in db [:session :id])]
+                             {:db db :fx [[:cancel-detached-turn sid]]}
+                             {:db db
+                              :fx [[:notify "Nothing to cancel — no session is open." :info
+                                    cancel-notification-ttl-ms]]})
+      :else
       (let [sid
             (get-in db [:session :id])
 

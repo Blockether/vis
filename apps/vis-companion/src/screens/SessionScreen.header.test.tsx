@@ -159,25 +159,4 @@ describe('a subagent session', () => {
     expect(opened).toEqual(['lead']);
     expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
   });
-
-  // User report 2026-11-03: the team row now opens the subagent session at once, so a working
-  // subagent stops from its own header. A finished one shows no stop.
-  it('stops a working subagent from its header through its parent, and a finished one has no stop', async () => {
-    const stops: string[][] = [];
-    const row = { session_id: 's1', parent_id: 'lead', leader_id: 'lead', team_id: 't1', task: 'Fix', status: 'running', iteration_budget: 4, iterations_used: 1 };
-    const { unmount } = renderSessionScreen({
-      session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
-      client: { cachedAgents: () => [row], cancelAgent: (sid: string, child: string) => { stops.push([sid, child]); return Promise.resolve(); } },
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop agent' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-    await waitFor(() => expect(stops).toEqual([['lead', 's1']]));
-    unmount();
-    renderSessionScreen({
-      session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
-      client: { cachedAgents: () => [{ ...row, status: 'completed' }] },
-    });
-    await screen.findByRole('heading', { name: /^leader →/ });
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop agent' })).toBeNull());
-  });
 });

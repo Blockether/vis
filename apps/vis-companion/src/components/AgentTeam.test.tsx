@@ -6,7 +6,6 @@ import { SessionEventsContext } from '../lib/session-events';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent, Subagent } from '../lib/types';
 import {
-  StopAgent,
   TurnAgents,
   agentLabel,
   agentStatus,
@@ -243,21 +242,6 @@ describe('agent row notes', () => {
   });
 });
 
-describe('agent stop', () => {
-  it('confirms a stop of a working agent', () => {
-    const onStop = vi.fn();
-    render(<StopAgent isPending={false} onStop={onStop} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    expect(onStop).not.toHaveBeenCalled();
-    // A blur disarms the stop, so a later stray press does not stop the agent.
-    fireEvent.blur(screen.getByRole('button', { name: 'Confirm stop' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    expect(onStop).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-    expect(onStop).toHaveBeenCalledOnce();
-  });
-});
-
 describe('team line', () => {
   // The team line shows no role counts: the table names each role.
   it('counts the agents by status, the work first', () => {
@@ -336,19 +320,14 @@ function streamHub(rememberAgents = vi.fn()) {
 
 function TeamView({ client, sid, stored }: { client: GatewayClient; sid: string; stored?: Subagent[] }) {
   const team = useAgentTeam(client, sid, stored);
-  return (
-    <>
-      <TurnAgents agents={team.agents} error={team.error} onOpen={vi.fn()} />
-      <StopAgent isPending={team.pending === 'child'} onStop={() => void team.cancel('child')} />
-    </>
-  );
+  return <TurnAgents agents={team.agents} onOpen={vi.fn()} />;
 }
 
 function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; stored?: Subagent[]; hub?: SessionSubscriptionHub | null }) {
   return <SessionEventsContext.Provider value={hub}><TeamView {...props} /></SessionEventsContext.Provider>;
 }
 
-const fakeClient = (more: Record<string, unknown> = {}) => ({ cancelAgent: vi.fn(), ...more }) as unknown as GatewayClient;
+const fakeClient = (more: Record<string, unknown> = {}) => ({ ...more }) as unknown as GatewayClient;
 
 const ready = (agents?: Subagent[]) => ({ type: 'subscription.ready', session_id: 'leader', cursor: 1, ...(agents ? { agents } : {}) });
 
@@ -389,28 +368,5 @@ describe('agent team reader', () => {
     expect(screen.getByText('done')).toBeInTheDocument();
     stream.emit(ready([{ ...child, status: 'running' }]));
     expect(screen.getByText('running')).toBeInTheDocument();
-  });
-
-  it('keeps a stop failure visible until a stop succeeds', async () => {
-    const cancelAgent = vi.fn().mockRejectedValue(new Error('Stop failed. Try again.'));
-    render(<Team client={fakeClient({ cancelAgent, cachedAgents: () => [child] })} sid="leader" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
-    expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');
-    expect(screen.getByRole('alert')).toHaveTextContent('Stop failed. Try again.');
-    cancelAgent.mockResolvedValue(undefined);
-    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
-  // The gateway stops a child only for a session that controls it, so a stop from inside the child
-  // session goes through its parent.
-  it('stops an agent from its own session through its parent', async () => {
-    const cancelAgent = vi.fn().mockResolvedValue(undefined);
-    render(<Team client={fakeClient({ cancelAgent, cachedAgents: () => [child] })} sid="child" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
-    expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');
   });
 });

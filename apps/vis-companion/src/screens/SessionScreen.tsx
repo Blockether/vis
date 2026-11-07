@@ -26,7 +26,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, dockTeams, isStoppable, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -4537,8 +4537,10 @@ export function SessionScreen({
   // Zen mode is the next layer down: Escape leaves it before it stops a turn. Reported:
   // Safari's full screen window left full screen on that Escape and kept Zen, because
   // Safari leaves full screen on every Escape the page does not claim.
+  // A subagent session has no stop: the stop of its leader also stops it.
+  const stopsTurn = running && session?.agent?.role !== 'subagent';
   useEffect(() => {
-    if (!running && !zen) return;
+    if (!stopsTurn && !zen) return;
     let forLayer: KeyboardEvent | null = null;
     const onKeyArrives = (event: KeyboardEvent) => {
       forLayer = event.key === 'Escape' && isLayerUp() ? event : null;
@@ -4555,7 +4557,7 @@ export function SessionScreen({
       window.removeEventListener('keydown', onKeyArrives, true);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [running, zen]);
+  }, [stopsTurn, zen]);
 
   const slashText = prompt.trimStart();
   const slashOpen =
@@ -4787,13 +4789,12 @@ export function SessionScreen({
       return members ? (
         <TurnAgents
           agents={members}
-          error={team.error}
           onOpen={onOpenSession}
           leader={leader}
         />
       ) : undefined;
     },
-    [teams, docked, team.error, onOpenSession],
+    [teams, docked, onOpenSession],
   );
   // Traffic between this leader and its own subagents stays out of its transcript:
   // the team rows show their work, and each child session keeps its own record.
@@ -5612,9 +5613,6 @@ export function SessionScreen({
 
   // A subagent session takes no input. Its header names its path from the leader.
   const isSubagent = session?.agent?.role === 'subagent';
-  // A working subagent stops from its own header: the team row leads straight here.
-  const ownRow = isSubagent ? team.agents.find((agent) => agent.session_id === sid) : undefined;
-  const canStop = ownRow != null && isStoppable(ownRow);
   const headerModel: SessionHeaderModel = {
     title,
     sessionId: sid,
@@ -5622,12 +5620,10 @@ export function SessionScreen({
     artifacts: { count: artifacts.length + openAppCount, isOpen: artifactsOpen },
     goal: session?.goal,
     agentPath: isSubagent && session?.agent ? agentPath(sid, session.agent, team.agents, title) : undefined,
-    agentStop: canStop ? { isPending: team.pending === sid, error: team.error } : undefined,
   };
   const headerCommands: SessionHeaderCommands = {
     back: onBack,
     openParent: (parentId) => onOpenSession(parentId),
-    stopAgent: () => void team.cancel(sid),
     settings: () => setSettingsOpen(true),
     zen: () => setZenMode(true),
     toggleArtifacts: () => {
@@ -5656,7 +5652,6 @@ export function SessionScreen({
     'toggle-voice-conversation': voiceSupported && (() => void switchVoiceMode()),
     'session-settings': () => setSettingsOpen(true),
     'agent-parent': !!parentId && (() => onOpenSession(parentId)),
-    'agent-stop': canStop && (() => void team.cancel(sid)),
   });
 
   const screen = (
@@ -5926,7 +5921,6 @@ export function SessionScreen({
               agents={agents}
               sid={sid}
               runningTurnId={runningTurnId}
-              error={team.error}
               onOpen={onOpenSession}
               leader={runningLeader}
             />

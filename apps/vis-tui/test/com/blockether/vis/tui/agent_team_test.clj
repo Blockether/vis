@@ -180,7 +180,7 @@
         (expect (not-any? :action (:filtered disabled)))))))
 
 (defdescribe
-  open-and-confirmed-stop-test
+  open-row-test
   ;; User report 2026-11-03: a row opened a timeline sheet first, not the session of its agent.
   (it "opens the session of a chosen row with no dialog between"
       (with-redefs [team/choose-team!
@@ -194,20 +194,7 @@
         (expect (= "child" (team/show! nil "leader" nil))))
       (with-redefs [team/choose-team! (fn [& _]
                                         {:action :parent :session-id "parent"})]
-        (expect (= "parent" (team/show! nil "leader" "parent")))))
-  (it "stops an agent through its parent only after a confirmation"
-      (doseq [confirmed? [false true]]
-        (let [requests (atom [])]
-          (with-redefs [dlg/select-dialog! (constantly {:action (if confirmed? :stop :keep)})
-                        vis/request! (fn [& args]
-                                       (swap! requests conj args)
-                                       {:status 200})]
-
-            (team/stop-agent! nil "leader" "child")
-            (expect (= (if confirmed?
-                         [[:post "/v1/sessions/leader/agents/cancel" {:body {:session_id "child"}}]]
-                         [])
-                       @requests)))))))
+        (expect (= "parent" (team/show! nil "leader" "parent"))))))
 
 (defdescribe
   rendered-team-states-and-terminal-parity-test
