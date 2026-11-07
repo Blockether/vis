@@ -2107,6 +2107,10 @@ export function CloseButton({
  * A CELL WITH SOMETHING TO COMMIT WEARS THE ACCENT (`isPrimary`). The accent exists
  * only while the commit is live; a disabled cell drops it instead of dimming a false
  * promise.
+ *
+ * The accent fills the cell inside its rule, and only the label takes the accent ink.
+ * With the ink on the whole cell, the rule was ink at 20% on amber and the dark cell
+ * before ran into the amber with no line between them.
  */
 export function BandButton({
   className = '',
@@ -2133,7 +2137,7 @@ export function BandButton({
           ? `${iconControlClass} group w-12 bg-transparent px-0 text-current mouse:w-9`
           : `${isFirst ? '' : 'border-l border-current/20'} px-3 transition-colors duration-150 motion-reduce:transition-none sm:px-4 mouse:px-3 ${
               isLive
-                ? 'bg-accent text-accent-foreground focus-visible:bg-accent-2'
+                ? 'bg-accent bg-clip-padding text-current focus-visible:bg-accent-2'
                 : 'text-current focus-visible:bg-current/10'
             }`
       } ${className}`}
@@ -2145,7 +2149,7 @@ export function BandButton({
         className={
           isIconOnly
             ? 'pointer-events-none grid size-8 place-items-center transition-transform duration-150 group-active:scale-[0.94] group-disabled:scale-100 motion-reduce:transition-none mouse:size-7'
-            : 'translate-y-px'
+            : `translate-y-px ${isLive ? 'text-accent-foreground' : ''}`
         }
       >
         {children}
