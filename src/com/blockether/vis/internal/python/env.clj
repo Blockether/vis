@@ -1948,7 +1948,11 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
             ;; The interpreter wraps what Python raised in its own
             ;; `vis-python: ` frame. The model is owed the RAISED
             ;; error, and the class name below is what classifies it.
-            (str/replace #"^vis-python:\s+" ""))
+            (str/replace #"^vis-python:\s+" "")
+            ;; Paths in the raised text (the traversal cap, a confinement
+            ;; refusal, an OSError) show home as `~`, like every other
+            ;; path the model reads.
+            (->> (paths/compact-path-text nil)))
 
         host?
         (str/starts-with? base "VisToolError")

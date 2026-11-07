@@ -529,4 +529,23 @@
                 (expect (not (str/includes? (str failure) "env_context_retired")))
                 (expect (nil? (:error recovered)) (pr-str recovered))
                 (expect (= "279 1" (out recovered)))))
-            (finally (.delete entry) (.delete dir)))))))
+            (finally (.delete entry) (.delete dir))))))
+  ;; User report: the traversal error named `/Users/<name>/.vis/logs/...`. Every raised
+  ;; path shows home as `~`, the spelling of the rest of the context.
+  (it "shows a raised path under home as ~/"
+      (let [home
+            (System/getProperty "user.home")
+
+            leaf
+            (str "vis-missing-" (System/nanoTime))
+
+            failure
+            (ep/run-python-block
+              (py-ctx)
+              (str "import os\nopen(os.path.join(" (pr-str home) ", " (pr-str leaf) ", 'x.log'))"))
+
+            message
+            (str (get-in failure [:error :message]))]
+
+        (expect (str/includes? message (str "~/" leaf "/x.log")) message)
+        (expect (not (str/includes? message (str home "/" leaf))) message))))

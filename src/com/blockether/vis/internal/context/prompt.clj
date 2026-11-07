@@ -792,16 +792,19 @@
 
     (prompt-block
       "sandbox-shims"
-      (str "The sandbox is the Python of Vis, not of the project. Imports never install packages."
-           (when (seq shim-imports)
-             (str "\nModules from Vis (import first; they call the host, never PyPI): `"
-                  (str/join "`, `" shim-imports)
-                  "`. `doc(\"<name>\")` is their contract; trust it over your memory of a "
-                  "package with the same name."))
-           (when (seq shim-globals)
-             (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
-           "\n"
-           (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
+      (str
+        "The sandbox is the Python of Vis, not of the project. Imports never install packages."
+        (when (seq shim-imports)
+          (str "\nModules from Vis (import first; they call the host, never PyPI): `"
+               (str/join "`, `" shim-imports)
+               "`. `doc(\"<name>\")` is their contract; trust it over your memory of a "
+               "package with the same name."))
+        (when (seq shim-globals)
+          (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
+        ;; The limit is `VIS_PY_SCAN_ENTRIES` in vis-python-runtime `vispython.c`.
+        "\nDirectory walks in one block (`pathlib`, `glob`, `os.walk`, `os.listdir`) stop "
+        "after 10,000 entries. For a large tree such as `~/.vis`, use `ls` or `grep` on a narrow path."
+        "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime
