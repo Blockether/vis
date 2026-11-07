@@ -548,6 +548,11 @@
                  (spit (io/file project "uv.lock") "version = 1\n# changed\n")
                  (expect (= ["sync"] (prepare!)) "a changed lock asks uv again")
                  (expect (= [] (prepare!)))
+                 (.setLastModified site 1793827326498)
+                 (expect (= ["sync"] (prepare!)))
+                 ;; tar, cp and image layers keep whole seconds of an mtime.
+                 (.setLastModified site 1793827326000)
+                 (expect (= [] (prepare!)) "an mtime without its milliseconds keeps the stamp")
                  (.setLastModified site (- (.lastModified site) 60000))
                  (expect (= ["sync"] (prepare!)) "a changed environment asks uv again")
                  (.delete

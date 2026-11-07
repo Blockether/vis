@@ -683,7 +683,8 @@
 (defn- prepared-inputs
   "Digest what uv's offline check reads, without uv: project and lock files, local path
    sources, the environment and the embedded tools. The bytecode cache is an input too:
-   a stamp records that its compile ran. Nil without an own automatic environment."
+   a stamp records that its compile ran. Nil without an own automatic environment.
+   An mtime counts in whole seconds: tar, cp and image layers drop the milliseconds."
   [^File project ^File packages]
   (let [config
         (io/file project (automatic-environment) "pyvenv.cfg")
@@ -696,7 +697,7 @@
 
     (when (and (.isFile config) (.isDirectory packages))
       (digest-parts [(.getCanonicalPath project) (text "pyproject.toml") lock
-                     (path-sources project lock) (slurp config) (.lastModified packages)
+                     (path-sources project lock) (slurp config) (quot (.lastModified packages) 1000)
                      (str (Interpreter/pythonExecutable)) (str (runtime/uv-executable))
                      (pycache-prefix)]))))
 
@@ -1261,9 +1262,9 @@
                [(.getPath dir) pyproject lock (when lock (path-sources dir lock))]))]
 
     (when (and (some #(nth % 2) files) (.isDirectory packages))
-      (digest-parts [(.getPath project) files (.lastModified packages) (vec (sort (.list packages)))
-                     (Interpreter/pythonExecutable) (runtime/uv-executable)
-                     @shared-check-source]))))
+      (digest-parts [(.getPath project) files (quot (.lastModified packages) 1000)
+                     (vec (sort (.list packages))) (Interpreter/pythonExecutable)
+                     (runtime/uv-executable) @shared-check-source]))))
 
 (defn- shared-prepared?
   "True when `inputs` are those of the project's last passed shared check or installation."
