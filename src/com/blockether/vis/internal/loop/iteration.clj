@@ -475,6 +475,32 @@
    tool call. The gateway needs only a sign of life, not every argument token."
   1000)
 
+(defn- tool-ticker
+  "A tool event handler for one block. It calls `show!` with the start event that the ticker
+   names. A visible start names its own tool. When the named tool ends and another tool of the
+   block still runs, the ticker names the newest running tool, so a finished call does not stay
+   on the ticker while `gather` waits for a slower one."
+  [show!]
+  (let [running (volatile! [])]
+    (fn [tool-event]
+      (locking running
+        (let [id (:invocation-id tool-event)]
+          (case (:phase tool-event)
+            :start
+            (when (activity-event/visible-event? tool-event)
+              (vswap! running conj tool-event)
+              (show! tool-event))
+
+            :terminal
+            (let [shown (peek @running)
+                  left (vswap! running
+                               (fn [events]
+                                 (filterv #(not= id (:invocation-id %)) events)))]
+
+              (when (and (some? id) (seq left) (= id (:invocation-id shown))) (show! (peek left))))
+
+            nil))))))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -1003,12 +1029,10 @@
                                :duration-ms 0
                                :op :vis/guard}
                               (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
-                                                    (fn [tool-event]
-                                                      ;; Turn progress consumes starts only. Terminal truth
-                                                      ;; feeds Activity without changing that stream.
-                                                      (when (and (= :start (:phase tool-event))
-                                                                 (activity-event/visible-event?
-                                                                   tool-event))
+                                                    ;; Turn progress gets a start for each tool that the
+                                                    ;; ticker names. Activity gets the terminal truth.
+                                                    (tool-ticker
+                                                      (fn [tool-event]
                                                         (on-chunk {:phase :tool-start
                                                                    :iteration iteration-position
                                                                    :position idx

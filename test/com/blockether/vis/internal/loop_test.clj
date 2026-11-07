@@ -14093,3 +14093,44 @@
             (expect (= "vis" (:name moved)))
             (expect (= new (:root (persistance/db-workspace-get (lp/db-info) (:id trunk))))))
           (expect (= [] @prepared)))))))
+
+
+;; User report: the ticker said `waiting up to 600s for: npx …` for two minutes after npx ended,
+;; while `gather` still waited for the Clojure tests.
+(defdescribe tool-ticker-test
+             (it "names a tool that still runs when the named tool ends"
+                 (let [shown
+                       (atom [])
+
+                       ticker
+                       (#'iteration/tool-ticker #(swap! shown conj (:label %)))
+
+                       start
+                       (fn [id label]
+                         (ticker {:invocation-id id :phase :start :label label}))
+
+                       end
+                       (fn [id]
+                         (ticker {:invocation-id id :phase :terminal :succeeded true}))]
+
+                   (start "tests" "Run Clojure tests")
+                   (start "npx" "waiting for npx")
+                   (end "npx")
+                   (expect (= ["Run Clojure tests" "waiting for npx" "Run Clojure tests"] @shown))
+                   ;; An older tool that ends, and the last tool that ends, change nothing.
+                   (start "grep" "grep")
+                   (end "tests")
+                   (end "grep")
+                   (expect (= ["Run Clojure tests" "waiting for npx" "Run Clojure tests" "grep"]
+                              @shown))))
+             (it "does not name a tool whose start is hidden"
+                 (let [shown
+                       (atom [])
+
+                       ticker
+                       (#'iteration/tool-ticker #(swap! shown conj (:label %)))]
+
+                   (ticker {:invocation-id "quiet" :phase :start :show-start false :label "quiet"})
+                   (ticker {:invocation-id "loud" :phase :start :label "loud"})
+                   (ticker {:invocation-id "loud" :phase :terminal :succeeded true})
+                   (expect (= ["loud"] @shown)))))

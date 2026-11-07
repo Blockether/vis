@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Settings: a setting can hold a structured value with its own editor in the TUI and the Companion app. The first one is the sound preset editor. `state.yml` keeps such a value as YAML.
 
 ### Fixed
+- TUI and Companion: the status line of a running turn names a tool that still runs. Before, when a block ran two tools at the same time with `gather`, the status line kept the last tool that started. When that tool ended first, for example an `npm` command, the line still showed it while Vis waited for the slower tool, so the turn looked stuck on the finished command.
 - TUI and Companion: the role column of a team table has the same width in all teams, the width of the longest role (`IMPLEMENT`). Before, each team fitted the column to its own roles, so the titles of two teams in the dock did not line up. On a wide screen, the Companion shows a line between the columns of the team table and of the timeline, and it shows the status as a word, such as `DONE` or `FAILED`, not as a mark.
 - Companion: the **Allowed tools**, **Turned-off tools** and **Workspace paths** settings show their name and description one time. Before, the row showed them and the list under it showed them again.
 - Desktop app: when macOS stops the web content process of the window, for example to free memory during sleep, the app loads the page again. Before, the window stayed white until you selected **View > Reload** or started the app again.
