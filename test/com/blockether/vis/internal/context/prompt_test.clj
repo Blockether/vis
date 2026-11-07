@@ -472,10 +472,12 @@
 (defdescribe prompt-core-test
              ;; User decision: `## Calls` gives ls, cat, grep and patch their signatures
              ;; and one example each, so the budget grew from 4700 to 5200.
+             ;; User decision after a CTB round: the EDIT patch rule, the CHECK evidence rule and
+             ;; the signature rule grew it to 5600.
              (it "keeps the core prompt under its fixed size budget"
                  (let [text (var-get (ns-resolve 'com.blockether.vis.internal.context.prompt
                                                  'CORE_SYSTEM_PROMPT))]
-                   (expect (< (count text) 5200))))
+                   (expect (< (count text) 5600))))
              (it "bans subprocess either way and names the shell verb only when shell is active"
                  ;; User review: the shell routing rules live in `shell/prompt`, with the tool.
                  (let [text
