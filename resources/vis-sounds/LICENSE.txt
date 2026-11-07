@@ -4,8 +4,12 @@ The sounds in this directory come from "Interface Sounds" (version 1.0) by Kenne
 (https://kenney.nl/assets/interface-sounds). Kenney released them under
 Creative Commons Zero (CC0 1.0): https://creativecommons.org/publicdomain/zero/1.0/
 
-Vis converted each file from Ogg Vorbis to 16-bit mono WAV at 44.1 kHz:
+Each directory is one preset. Vis converted each file from Ogg Vorbis to 16-bit mono WAV
+at 44.1 kHz. finish.wav plays when a turn completes, input.wav when Vis waits for your
+answer and error.wav when a turn fails or stops.
 
-- finish.wav from confirmation_002.ogg (a turn completed)
-- input.wav from question_001.ogg (Vis waits for your answer)
-- error.wav from error_006.ogg (a turn failed or stopped)
+- classic/: finish from confirmation_002.ogg, input from question_001.ogg, error from error_006.ogg
+- glass/: finish from glass_004.ogg, input from glass_001.ogg, error from error_005.ogg
+- soft/: finish from confirmation_001.ogg, input from drop_004.ogg, error from error_007.ogg
+- minimal/: finish from pluck_002.ogg, input from toggle_001.ogg, error from error_004.ogg
+- bright/: finish from maximize_004.ogg, input from open_002.ogg, error from minimize_005.ogg

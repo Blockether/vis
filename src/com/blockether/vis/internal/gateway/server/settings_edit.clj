@@ -65,8 +65,11 @@
 
                 (when-not (and spec (some #{(:scope target)} (:scopes spec)))
                   (throw (ex-info "Setting is not available in this scope" {:status 400 :id id})))
-                (when (and (= action "value") (nil? chosen))
-                  (throw (ex-info "Choose a valid setting value" {:status 400 :id id})))
+                (when-let [problem (or (when (and (= action "value") (= :object (:type spec)))
+                                         (toggles/write-problem spec value))
+                                       (when (and (= action "value") (nil? chosen))
+                                         "Choose a valid setting value"))]
+                  (throw (ex-info problem {:status 400 :id id})))
                 {:id id :section ["toggles"] :name id :value (:value chosen)})))
 
 (defn apply!

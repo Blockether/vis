@@ -1154,7 +1154,7 @@
              ;; vendored Prism highlighter, inlined into standalone HTML
              ;; transcript exports at RUNTIME via io/resource.
              "-H:IncludeResources=vis-transcript/.*"
-             ;; the bundled CC0 sounds that `gateway.sounds` copies out and plays.
+             ;; the bundled CC0 sound presets that `internal.sounds` copies out and plays.
              "-H:IncludeResources=vis-sounds/.*"
              ;; ── Embedded CPython ────────────────────────────────────────────
              ;; The interpreter itself is a cdylib plus a vendored tree, resolved

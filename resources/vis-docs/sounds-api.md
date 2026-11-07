@@ -1,18 +1,20 @@
 # Sounds API
 
-Read and change the sounds that the gateway plays. A sound plays when a turn finishes, when Vis
-waits for your answer and when a turn fails or stops. The values are the settings of the **Sounds**
-section in the Companion app and the TUI.
+Choose the sound preset that the gateway plays, and save your own presets. A sound plays when a
+turn finishes, when Vis waits for your answer and when a turn fails or stops. The values are the
+settings of the **Sounds** section in the Companion app and the TUI.
 
 The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
 
 ## When to use
 
-- **A setup script must turn on sounds.** [Change the sounds](#change-the-sounds) with one call.
-- **An extension must use its own sound files.** Use `vis.sounds` in the extension, as in [Change
-  the sounds](#change-the-sounds).
-- **A tool must show the current sounds.** [Read the sounds](#read-the-sounds).
+- **A setup script must turn on sounds.** [Turn on sounds and choose a
+  preset](#turn-on-sounds-and-choose-a-preset) with one call.
+- **An extension must use its own sound files.** [Save your own preset](#save-your-own-preset)
+  with `vis.sounds` in the extension.
+- **A tool must play a sound before a person saves it.** [Preview a sound](#preview-a-sound).
+- **A tool must show the current sounds.** [Read the presets](#read-the-presets).
 
 To learn which events play a sound and where it plays, read [Sounds](sounds.md).
 
@@ -41,8 +43,11 @@ examples use it.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| Read the sounds | `client.sounds.get()` | `get_setting(id)` |
-| Change the sounds | `client.sounds.set(...)` | `post_settings(body=...)` |
+| Read the presets | `client.sounds.get()` | `get_setting(id)` |
+| Turn on sounds or choose a preset | `client.sounds.set(...)` | `post_settings(body=...)` |
+| Save your own preset | `client.sounds.save_preset(...)` | `post_settings(body=...)` |
+| Delete your own preset | `client.sounds.delete_preset(name)` | `post_settings(body=...)` |
+| Preview a sound | `client.sounds.preview(slot, value)` | `post_setting_preview(id, body=...)` |
 
 </div>
 
@@ -50,24 +55,29 @@ examples use it.
 
 | Task | Method and path |
 |---|---|
-| Read the sounds | `GET /v1/settings/{id}?scope=global` |
-| Change the sounds | `POST /v1/settings` |
+| Read the presets | `GET /v1/settings/{id}?scope=global` |
+| Change sounds and presets | `POST /v1/settings` |
+| Preview a sound | `POST /v1/settings/{id}/preview` |
 
 </div>
 
-The settings are `sounds` (on or off), `sound_finish`, `sound_input` and `sound_error`. A sound
-value is empty for the built-in sound, `off` for no sound, or a file path on the gateway computer.
+A preset gives one value to each slot: `finish`, `input` (the question sound) and `error`. A slot
+value is empty for no sound, the name of a built-in preset for its sound, or a file path on the
+gateway computer. The built-in presets are `classic`, `glass`, `soft`, `minimal` and `bright`.
 
-## Read the sounds
+## Read the presets
 
 <div data-variant="python">
 
 ```python
 sounds = client.sounds.get()
-print(sounds.is_enabled, sounds.finish, sounds.input, sounds.error)
+print(sounds.is_enabled, sounds.active)
+for preset in sounds.presets:
+    print(preset.name, preset.is_builtin, preset.finish, preset.input, preset.error)
 ```
 
-`get()` returns a `SoundSettings` object. An empty cue value means the built-in sound.
+`get()` returns a `SoundSettings` object. `presets` lists the built-in presets, then your own.
+`preset` is the active preset, and `custom` lists only your own presets.
 
 </div>
 
@@ -75,31 +85,25 @@ print(sounds.is_enabled, sounds.finish, sounds.input, sounds.error)
 
 ```bash
 vis_api "$VIS_GATEWAY_URL/v1/settings/sounds?scope=global"
-vis_api "$VIS_GATEWAY_URL/v1/settings/sound_finish?scope=global"
+vis_api "$VIS_GATEWAY_URL/v1/settings/sound_presets?scope=global"
 ```
 
-The `sounds` answer has `enabled`. A cue answer has `value`, which is empty for the built-in sound.
+The `sounds` answer has `enabled`. The `sound_presets` answer has `value`, with `active` and your
+`custom` presets. Its `editor_options` list the slots and the built-in presets.
 
 </div>
 
-## Change the sounds
+## Turn on sounds and choose a preset
 
 <div data-variant="python">
 
 ```python
-from pathlib import Path
-
-sounds = client.sounds.set(
-    enabled=True,
-    finish=Path("~/Sounds/done.wav"),
-    error="off",
-)
-print(sounds)
-client.sounds.set(finish=None)
+sounds = client.sounds.set(enabled=True, preset="glass")
+print(sounds.active)
 ```
 
-Arguments that you omit do not change. `None` gives a cue its built-in sound again. A path can start
-with `~`, which the gateway expands on its own computer.
+Arguments that you omit do not change. A preset name matches without regard to case. An unknown
+name raises `ValueError` and changes nothing.
 
 </div>
 
@@ -109,17 +113,76 @@ with `~`, which the gateway expands on its own computer.
 vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
   --data '{"scope": "global", "id": "sounds", "action": "value", "value": true}'
 vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
-  --data '{"scope": "global", "id": "sound_finish", "action": "value", "value": "~/Sounds/done.wav"}'
-vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
-  --data '{"scope": "global", "id": "sound_finish", "action": "inherit"}'
+  --data '{"scope": "global", "id": "sound_presets", "action": "value",
+           "value": {"active": "glass", "custom": []}}'
 ```
 
-The `inherit` action gives a cue its built-in sound again.
+The value replaces all presets, so send your `custom` presets again with each change.
 
 </div>
 
-The gateway checks a path only when it plays the sound. A path that names no file plays nothing
-and writes a warning to the gateway log.
+## Save your own preset
+
+<div data-variant="python">
+
+```python
+from pathlib import Path
+
+sounds = client.sounds.save_preset(
+    "My mix",
+    finish="glass",
+    input=Path("~/Sounds/question.wav"),
+    error=None,
+    activate=True,
+)
+print(sounds.preset)
+client.sounds.delete_preset("My mix")
+```
+
+A preset with the same name is replaced. `None` or an empty value plays no sound in that slot.
+After a delete of the active preset, the first built-in preset plays.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
+  --data '{"scope": "global", "id": "sound_presets", "action": "value",
+           "value": {"active": "My mix", "custom": [{"name": "My mix",
+             "slots": {"finish": "glass", "input": "~/Sounds/question.wav", "error": ""}}]}}'
+```
+
+</div>
+
+The gateway checks each file path when you save. A path that names no file gives an error with a
+message, and the gateway saves nothing. A path can start with `~`, which the gateway expands on its
+own computer.
+
+## Preview a sound
+
+<div data-variant="python">
+
+```python
+played = client.sounds.preview("input", "glass")
+print(played)
+```
+
+`preview()` plays one slot value on the gateway computer and saves nothing. It returns `False` for
+an empty value, while another sound plays, or when the computer has no sound program.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/settings/sound_presets/preview" \
+  -H 'content-type: application/json' --data '{"slot": "input", "value": "glass"}'
+```
+
+The answer is `{"is_played": true}` when a sound starts.
+
+</div>
 
 ## See also
 

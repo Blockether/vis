@@ -2786,6 +2786,25 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_setting_preview(
+        self,
+        id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/settings/:id/preview — json response."""
+        response = self._request(
+            "POST",
+            "/v1/settings/:id/preview",
+            path={"id": id},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_extensions_reload(
         self,
         *,

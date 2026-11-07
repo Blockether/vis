@@ -90,6 +90,7 @@ import type {
   BrowseListing,
   SessionAlert,
   ExtensionReload,
+  SettingPreviewResult,
   WorkspaceFile,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
@@ -2651,6 +2652,19 @@ export class GatewayClient {
     }
     for (const receive of settingListeners.get(this.base) ?? []) receive(updated);
     return updated;
+  }
+
+  /**
+   * Plays ONE slot value of a presets row on the gateway machine, before it is saved.
+   * For a built-in preset, the value is the id of that preset. Nothing is saved.
+   */
+  previewSetting(id: string, slot: string, value: string, signal?: AbortSignal): Promise<SettingPreviewResult> {
+    return this.request<SettingPreviewResult>(
+      'POST',
+      `/v1/settings/${encodeURIComponent(id)}/preview`,
+      { slot, value },
+      signal,
+    );
   }
 
   /**

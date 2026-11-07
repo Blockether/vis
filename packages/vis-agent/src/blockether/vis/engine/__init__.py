@@ -35,7 +35,7 @@ from ._council import (
 from ._install import InstallError, ensure_installed, install
 from ._local import LocalEngine
 from ._models import Model, SessionModel
-from ._sounds import Sounds, SoundSettings
+from ._sounds import SoundPreset, Sounds, SoundSettings
 from ._speech import Speech, SpeechAudio, Transcript, Voice
 
 __all__ = [
@@ -65,6 +65,7 @@ __all__ = [
     "Response",
     "Session",
     "SessionModel",
+    "SoundPreset",
     "Sounds",
     "SoundSettings",
     "Speech",

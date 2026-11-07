@@ -43,7 +43,8 @@
        user override survives a reload."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.contract.toggle :as toggle-contract]))
+            [com.blockether.vis.contract.toggle :as toggle-contract]
+            [com.blockether.vis.internal.sounds :as sounds]))
 
 ;; Registries
 
@@ -99,11 +100,19 @@
                              `:quick -> :balanced -> :deep`).
      `:string`            -- one line of text. `:secret? true` makes it
                              write-only in every settings UI.
+     `:object`            -- a structured value (a map or a vector). `:editor`
+                             names the settings editor, `:editor-options` gives
+                             it static data, `:validate-fn` returns nil for a
+                             valid value or a message, the optional
+                             `:check-fn` also checks a value that a person
+                             writes (it may read the machine), and the optional
+                             `:preview-fn` previews one slot value.
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle, cycle or text) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group parent type choices visible-fn
-           on-change-fn channels settings? experimental? scopes inheritance secret?]}]
+           on-change-fn channels settings? experimental? scopes inheritance secret? editor
+           editor-options validate-fn check-fn preview-fn]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -116,7 +125,10 @@
                         (->str-choice default)
 
                         :string
-                        (str (or default "")))
+                        (str (or default ""))
+
+                        :object
+                        default)
              :owner (or owner :vis)
              :persist? (boolean persist?)
              :scopes (vec (or scopes toggle-contract/default-scopes))
@@ -155,6 +167,20 @@
 
       secret?
       (assoc :secret? true)
+
+      (= :object t)
+      (assoc :editor
+        (str editor) :validate-fn
+        validate-fn)
+
+      editor-options
+      (assoc :editor-options editor-options)
+
+      check-fn
+      (assoc :check-fn check-fn)
+
+      preview-fn
+      (assoc :preview-fn preview-fn)
 
       (= :enum t)
       (assoc :choices (mapv ->str-choice choices)))))
@@ -355,6 +381,24 @@
                       (when (and (string? v) (seq v)) v)))))
           @registry)))
 
+(defn object-problem
+  "Nil when `value` is a valid value of the `:object` toggle `spec`, else a message
+   for the person. The value must be a map or a vector, and the owner's
+   `:validate-fn` must accept it. A validator that throws refuses the value."
+  [spec value]
+  (cond (not (or (map? value) (sequential? value))) "The value must be an object or a list."
+        :else (try ((:validate-fn spec) value)
+                   (catch Exception e (or (ex-message e) "The value is not valid.")))))
+
+(defn write-problem
+  "Nil when a person may write `value` to the `:object` toggle `spec`, else a
+   message. It adds the owner's optional `:check-fn`, which can read the machine,
+   to [[object-problem]]. Reading saved settings never calls it."
+  [spec value]
+  (or (object-problem spec value)
+      (when-let [check (:check-fn spec)]
+        (try (check value) (catch Exception e (or (ex-message e) "The value is not valid."))))))
+
 (defn set-value!
   "Set `id` to `value` and notify listeners. Returns the new value.
    Validation matches the registered `:type`:
@@ -391,7 +435,12 @@
           (if (toggle-contract/string-value? value)
             value
             (throw (ex-info "Toggle value is not one line of text within the bound"
-                            {:type :vis.toggles/invalid-value :id id}))))
+                            {:type :vis.toggles/invalid-value :id id})))
+
+          :object
+          (if-let [problem (object-problem spec value)]
+            (throw (ex-info problem {:type :vis.toggles/invalid-value :id id}))
+            value))
 
         old
         (value-of id)]
@@ -484,6 +533,9 @@
                            v
 
                            :string
+                           v
+
+                           :object
                            v
 
                            (boolean v))]
@@ -582,6 +634,9 @@
        (let [text (cond (string? v) (str/trim v)
                         (number? v) (str v))]
          (when (toggle-contract/string-value? text) {:value text}))
+
+       :object
+       (when-not (object-problem (target-toggle-spec root id) v) {:value v})
 
        nil))))
 
@@ -877,19 +932,21 @@
        :owner :vis
        :group :sounds
        :persist? true})
-    (doseq [[id label event] [["sound_finish" "Finish sound" "a finished turn"]
-                              ["sound_input" "Question sound" "a question to you"]
-                              ["sound_error" "Error sound" "a failed or stopped turn"]]]
-      (register-toggle! {:id id
-                         :label label
-                         :description (str "Sound file for "
-                                           event
-                                           ". Empty plays the bundled sound; off plays none.")
-                         :type :string
-                         :default ""
-                         :parent "sounds"
-                         :scopes ["global"]
-                         :owner :vis
-                         :group :sounds
-                         :persist? true}))
+    (register-toggle!
+      {:id "sound_presets"
+       :label "Sound preset"
+       :description
+       "The preset that plays. Add your own preset to mix built-in sounds and your own files."
+       :type :object
+       :editor "presets"
+       :editor-options sounds/editor-options
+       :validate-fn sounds/problem
+       :check-fn sounds/file-problem
+       :preview-fn sounds/preview!
+       :default sounds/default-value
+       :parent "sounds"
+       :scopes ["global"]
+       :owner :vis
+       :group :sounds
+       :persist? true})
     true))

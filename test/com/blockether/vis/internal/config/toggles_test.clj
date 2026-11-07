@@ -403,3 +403,34 @@
                  (expect (not (contains? data :value))))
                (finally (t/unregister-toggle! "test_secret")
                         (t/unregister-toggle! "test_plain")))))))
+
+(defdescribe
+  object-toggle-test
+  (it "stores a value that the owner accepts and keeps the last value on a refusal"
+      (with-clean-state
+        (fn []
+          (t/register-toggle! {:id "test_object"
+                               :label "Object"
+                               :type :object
+                               :editor "presets"
+                               :default {"n" 1}
+                               :validate-fn #(when-not (pos-int? (get % "n")) "n must be positive.")
+                               :check-fn #(when (= 7 (get % "n")) "Seven is taken.")})
+          (try (expect (= {"n" 1} (t/value-of "test_object")))
+               (expect (= {"n" 2} (t/set-value! "test_object" {"n" 2})))
+               (expect (= :vis.toggles/invalid-value
+                          (try (t/set-value! "test_object" {"n" 0})
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+               (expect (= {"n" 2} (t/value-of "test_object")))
+               (expect (= {:value {"n" 3}} (t/wire-value "test_object" {"n" 3})))
+               (doseq [junk [{"n" -1} "text" 4 nil]]
+                 (expect (nil? (t/wire-value "test_object" junk))))
+               (expect (= "Seven is taken."
+                          (t/write-problem (t/toggle-spec "test_object") {"n" 7})))
+               (expect (nil? (t/object-problem (t/toggle-spec "test_object") {"n" 7})))
+               (t/hydrate-from-config! {"toggles" {"test_object" {"n" 0}}})
+               (expect (= {"n" 2} (t/value-of "test_object")))
+               (t/hydrate-from-config! {"toggles" {"test_object" {"n" 5}}})
+               (expect (= {"n" 5} (t/value-of "test_object")))
+               (finally (t/unregister-toggle! "test_object")))))))

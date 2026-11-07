@@ -422,7 +422,30 @@ export type SettingEditor =
   | 'network'
   | 'list'
   | 'tools'
-  | 'secret';
+  | 'secret'
+  | 'presets';
+
+/** One slot or one built-in preset of a presets row. */
+export type PresetsEntry = { id: string; label: string; description?: string };
+
+/** The static data of a presets row: its slots, the presets that Vis includes, and limits. */
+export type PresetsOptions = {
+  slots: PresetsEntry[];
+  /** These cannot change. Their ids are also valid slot values. */
+  builtin: PresetsEntry[];
+  /** Whether `POST /v1/settings/:id/preview` can preview one slot value. */
+  is_previewable?: boolean;
+  max_custom?: number;
+};
+
+/** A preset of the person: one value for each slot id. */
+export type CustomPreset = { name: string; slots: { [slot: string]: string } };
+
+/** The value of a presets row. `active` is a built-in id or a custom name. */
+export type PresetsValue = { active: string; custom: CustomPreset[] };
+
+/** The answer of `POST /v1/settings/:id/preview`. */
+export type SettingPreviewResult = { is_played: boolean };
 
 export type SettingsScope = 'global' | 'project' | 'group' | 'session';
 
@@ -473,6 +496,8 @@ export interface Toggle {
   /** Present only when a wider scope decides this inherited row. */
   decided_in?: SettingDecidedIn;
   editor?: SettingEditor;
+  /** Static data for the editor. A `presets` row carries its slots and built-in presets. */
+  editor_options?: PresetsOptions;
   /** Values that the editor offers for completion, such as the tool names of a tools row. */
   suggestions?: string[];
   schema?: string;

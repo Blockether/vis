@@ -1376,11 +1376,14 @@
             "pattern": ".*\\S.*"
           },
           "additionalProperties": {
+            "description": "The value of one setting. An object setting, such as sound_presets, stores an object or a list; its owner checks the shape.",
             "type": [
               "string",
               "boolean",
               "number",
-              "null"
+              "null",
+              "object",
+              "array"
             ]
           }
         },

@@ -21,7 +21,7 @@
 (defn- toggle-json
   [{:keys [id label description type choices value experimental? scopes source scope is-override
            overridden-by inherited-value inherited-source own-value group parent inheritance
-           change-error decided-in secret?]}]
+           change-error decided-in secret? editor editor-options]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -37,17 +37,30 @@
                      :string
                      (if secret? "secret" "text")
 
+                     :object
+                     editor
+
                      "select")
            ;; A secret row says only whether a value is saved, never the value.
            :own-value (when-not secret? own-value)
            :inherited-source inherited-source
-           :applies (if (#{:skills :mcp :engines} group) "next_call" "next_turn")}
+           :applies (case group
+                      (:skills :mcp :engines)
+                      "next_call"
+
+                      :sounds
+                      "immediate"
+
+                      "next_turn")}
     ;; The contract has no null setting value, so a row without one omits the key.
     (and (not secret?) (some? inherited-value))
     (assoc :inherited-value inherited-value)
 
     parent
     (assoc :parent parent)
+
+    editor-options
+    (assoc :editor-options editor-options)
 
     (= "restrict" inheritance)
     (assoc :inheritance inheritance)
@@ -583,10 +596,35 @@
                 (toggle-json
                   (scoped/set-setting! (lp/db-info) target id action (get body "value")))))))))
 
+(defn- preview-setting-handler
+  "POST /v1/settings/:id/preview; preview one slot value of a machine setting whose
+   editor can preview, such as a sound of a preset. The sound plays on this machine."
+  [request]
+  (settings-response
+    (fn []
+      (let [id
+            (get-in request [:path-params :id])
+
+            body
+            (http/body-json request)
+
+            {:keys [preview-fn]}
+            (toggles/toggle-spec id)]
+
+        (cond (not (document/valid-json? "gateway" "setting_preview" body))
+              (http/error-response 400 :invalid-preview "Supply a slot and a value")
+              (not preview-fn)
+              (http/error-response 404 :unknown-setting "This setting has no preview" :id id)
+              :else (try (http/json-response {:is-played (boolean (preview-fn (get body "slot")
+                                                                              (get body "value")))})
+                         (catch clojure.lang.ExceptionInfo e
+                           (http/error-response 400 :invalid-preview (ex-message e) :id id))))))))
+
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/settings"] list-settings-handler
    [:post "/v1/settings"] set-setting-handler
    [:patch "/v1/settings"] apply-settings-handler
    [:post "/v1/extensions/reload"] reload-extensions-handler
-   [:get "/v1/settings/:id"] get-setting-handler})
+   [:get "/v1/settings/:id"] get-setting-handler
+   [:post "/v1/settings/:id/preview"] preview-setting-handler})

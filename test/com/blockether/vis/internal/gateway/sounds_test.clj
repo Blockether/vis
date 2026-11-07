@@ -5,7 +5,8 @@
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.push :as push]
-            [com.blockether.vis.internal.gateway.sounds :as sounds]))
+            [com.blockether.vis.internal.gateway.sounds :as sounds]
+            [com.blockether.vis.internal.sounds :as internal-sounds]))
 
 (defn- played
   "How often each cue plays for `events` with `settings`. Each cue plays in its own
@@ -45,21 +46,27 @@
                         (finally (push/set-quiet-filter! nil))))))
 
 (defdescribe
-  sound-file-test
-  (it "plays the bundled sound for an empty setting, none for off and the named file for a path"
-      (let [bundled (binding [toggles/*overrides* {"sound_finish" ""}]
-                      (sounds/sound-file :finish))]
-        (expect (.isFile bundled))
-        (expect (= (seq (.readAllBytes (io/input-stream (io/resource "vis-sounds/finish.wav"))))
-                   (seq (java.nio.file.Files/readAllBytes (.toPath bundled))))))
-      (binding [toggles/*overrides* {"sound_input" "off"}]
-        (expect (nil? (sounds/sound-file :input))))
-      (let [own (doto (java.io.File/createTempFile "own-sound-" ".wav")
-                  (test-temp/delete-at-exit!))]
-        (binding [toggles/*overrides* {"sound_error" (str "  " (.getPath own) " ")}]
-          (expect (= own (sounds/sound-file :error)))))
-      (binding [toggles/*overrides* {"sound_error" "/no/such/sound.wav"}]
-        (expect (= :vis.sounds/missing-file
-                   (try (sounds/sound-file :error)
-                        nil
-                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+  play-test
+  (it "plays the file of the active preset in the sound_presets setting"
+      (let [own
+            (doto (java.io.File/createTempFile "own-sound-" ".wav") (test-temp/delete-at-exit!))
+
+            files
+            (atom [])]
+
+        (with-redefs [internal-sounds/play-file! (fn [file]
+                                                   (swap! files conj file)
+                                                   true)]
+          (binding [toggles/*overrides*
+                    {"sound_presets" {"active" "Mine"
+                                      "custom" [{"name" "Mine"
+                                                 "slots" {"finish" (.getPath own) "input" ""}}]}}]
+            (sounds/play! :finish)
+            (sounds/play! :input))
+          (binding [toggles/*overrides* {"sound_presets" {"active" "glass" "custom" []}}]
+            (sounds/play! :error)))
+        (expect (= own (first @files)))
+        (expect (nil? (second @files)))
+        (expect
+          (= (seq (.readAllBytes (io/input-stream (io/resource "vis-sounds/glass/error.wav"))))
+             (seq (java.nio.file.Files/readAllBytes (.toPath ^java.io.File (nth @files 2)))))))))

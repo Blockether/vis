@@ -704,8 +704,11 @@
           nil)
 
         _
-        (when (and (not= action "inherit") (nil? selected))
-          (throw (ex-info "Invalid setting action or value" {:status 400 :id id})))
+        (when-let [problem (or (when (and (= "value" action) (= :object (:type spec)))
+                                 (toggles/write-problem spec value))
+                               (when (and (not= action "inherit") (nil? selected))
+                                 "Invalid setting action or value"))]
+          (throw (ex-info problem {:status 400 :id id})))
 
         v
         (:value selected)

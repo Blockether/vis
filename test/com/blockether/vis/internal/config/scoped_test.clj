@@ -1283,3 +1283,60 @@
           (expect (= 400 (first (reload {"scope" "project"}))))
           (#'settings-api/list-settings-handler {:query-params {}})
           (expect (= [[root nil] [nil {:global-only? true}]] @calls)))))))
+
+;; #308: a custom sound preset is an object setting. state.yml once refused any
+;; setting value that was not a scalar, so the saved preset was lost on the next read.
+(defdescribe
+  object-setting-storage-test
+  (it
+    "saves a sound preset in state.yml, reads it back and refuses a missing file"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-object-setting"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          own
+          (doto (io/file dir "own.wav") (spit "RIFF"))
+
+          value
+          {"active" "Mine"
+           "custom" [{"name" "Mine" "slots" {"finish" (.getPath own) "input" "glass" "error" ""}}]}]
+
+      (try
+        (with-redefs [config/config-dir
+                      (constantly (.getCanonicalPath dir))
+
+                      config/state-path
+                      (constantly (str (io/file dir "state.yml")))
+
+                      config/load-global-yaml-config-raw
+                      (constantly {})]
+
+          (let [db
+                (h/store)
+
+                target
+                (scoped/target db "global" nil)]
+
+            (scoped/set-setting! db target "sound_presets" "value" value)
+            (config/invalidate-config-cache!)
+            (expect (= value (get-in (config/load-global-config-raw) ["toggles" "sound_presets"])))
+            (expect (= value
+                       (:value (first (filter #(= "sound_presets" (:id %))
+                                              (scoped/settings db target))))))
+            (let [missing
+                  (assoc-in value ["custom" 0 "slots" "finish"] (str (io/file dir "gone.wav")))
+
+                  refused
+                  (try (scoped/set-setting! db target "sound_presets" "value" missing)
+                       nil
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+
+              (expect (= 400 (:status refused))))
+            (config/invalidate-config-cache!)
+            (expect (= value (get-in (config/load-global-config-raw) ["toggles" "sound_presets"])))
+            (scoped/set-setting! db target "sound_presets" "inherit" nil)))
+        (finally (config/invalidate-config-cache!)
+                 (toggles/reset-to-default! "sound_presets")
+                 (doseq [file (reverse (file-seq dir))]
+                   (io/delete-file file true)))))))

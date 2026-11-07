@@ -78,6 +78,14 @@
          :string
          (string? default)
 
+         :object
+         (and (or (map? default) (sequential? default))
+              (string? (:editor value))
+              (ifn? (:validate-fn value))
+              (or (not (contains? value :preview-fn)) (ifn? (:preview-fn value)))
+              (or (not (contains? value :check-fn)) (ifn? (:check-fn value)))
+              (nil? ((:validate-fn value) default)))
+
          false)))
 
 (defn contribution-valid?
@@ -138,6 +146,8 @@
         "on-change-fn must be a function."
         (= :enum (or type default-type)) "default must be one of the choices."
         (= :string (or type default-type)) "default must be a string for a string setting."
+        (= :object (or type default-type))
+        "an object setting needs an editor, a validate-fn and a default that it accepts."
         :else "default must be true or false for a boolean setting."))
 
 (defn contribution-problems

@@ -60,6 +60,7 @@ import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './Extension
 import { SettingField, SettingMachine } from './SettingField';
 import { machineLabel } from '../../lib/fleet';
 import { AutomationsPanel } from './AutomationsPanel';
+import { PresetsField } from './PresetsField';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
 export function EnumSetting({
@@ -521,8 +522,10 @@ export function settingTree(
  * The same value row is used for gateway and scoped settings. Only scoped settings pass
  * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
  */
-export function SettingRow({ toggle, offParent, busy, head, onToggle, onPick, onInherit, onRemove, onOpenSettings }: {
+export function SettingRow({ toggle, offParent, busy, head, error, onToggle, onPick, onInherit, onRemove, onOpenSettings }: {
   toggle: Toggle;
+  /** The gateway's refusal of this row's last write, for an editor that shows it in place. */
+  error?: string | null;
   /** The boolean parent that is off. Its rows are locked until it is on again. */
   offParent?: Toggle;
   busy: boolean;
@@ -546,6 +549,8 @@ export function SettingRow({ toggle, offParent, busy, head, onToggle, onPick, on
       {isSecret ? (
         <SecretSetting key={toggle.id} toggle={toggle} busy={busy} disabled={lock !== null}
           onSave={onPick} onRemove={isOwnSecret ? (onRemove ?? onInherit) : undefined} />
+      ) : toggle.editor === 'presets' ? (
+        <PresetsField toggle={toggle} busy={busy} disabled={lock !== null} error={error} onSave={onPick} />
       ) : toggle.type === 'string' ? (
         <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (
@@ -633,6 +638,8 @@ export function MachineSettings({
     () => client.cachedSettings()?.groups ?? null,
   );
   const [err, setErr] = useState<string | null>(null);
+  // A refusal that a row shows at its own editor, such as a presets row.
+  const [rowErr, setRowErr] = useState<{ id: string; message: string } | null>(null);
   // The project extensions of the open session; a machine reload report names them (#373).
   const [projectExtensions, setProjectExtensions] = useState<SettingsProjectExtensions | undefined>();
   const [pending, setPending] = useState<string | null>(null);
@@ -711,12 +718,15 @@ export function MachineSettings({
 
   async function pick(toggle: Toggle, value: SettingValue) {
     setErr(null);
+    setRowErr(null);
     setPending(toggle.id);
     try {
       patch(await client.setSetting(toggle.id, 'value', value));
       return true;
     } catch (e) {
-      setErr(secretSafeMessage((e as Error).message, toggle, value));
+      const message = secretSafeMessage((e as Error).message, toggle, value);
+      if (toggle.editor === 'presets') setRowErr({ id: toggle.id, message });
+      else setErr(message);
       return false;
     } finally {
       setPending(null);
@@ -744,6 +754,7 @@ export function MachineSettings({
       toggle,
       (row, offParent) => (
         <SettingRow key={row.id} toggle={row} offParent={offParent} head={row === toggle ? head : undefined} busy={pending === row.id}
+          error={rowErr?.id === row.id ? rowErr.message : null}
           onToggle={() => void flip(row)} onPick={(value) => pick(row, value)} onRemove={() => remove(row)} />
       ),
     );

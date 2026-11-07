@@ -1507,6 +1507,18 @@
         "post": {
           "request": "json",
           "response": "json",
+          "request_schema": "setting_preview",
+          "response_schema": "setting_preview_result"
+        }
+      },
+      "path": "/v1/settings/:id/preview"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
           "request_schema": "settings_target",
           "response_schema": "extension_reload"
         }
@@ -3264,7 +3276,8 @@
             "filesystem",
             "network",
             "list",
-            "tools"
+            "tools",
+            "presets"
           ]
         },
         "is_set": {
@@ -3330,6 +3343,10 @@
           "items": {
             "$ref": "#/$defs/setting"
           }
+        },
+        "editor_options": {
+          "description": "Static data for the editor. A presets row carries presets_options.",
+          "type": "object"
         }
       }
     },
@@ -3966,6 +3983,131 @@
           }
         }
       ]
+    },
+    "presets_options": {
+      "type": "object",
+      "required": [
+        "slots",
+        "builtin"
+      ],
+      "description": "The editor options of a presets row. A preset gives one value to each slot.",
+      "properties": {
+        "slots": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/presets_entry"
+          },
+          "description": "The parts of each preset, in display order."
+        },
+        "builtin": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/presets_entry"
+          },
+          "description": "Presets that Vis includes. They cannot change. Their ids are also valid slot values."
+        },
+        "is_previewable": {
+          "type": "boolean",
+          "description": "Whether POST /v1/settings/:id/preview can preview one slot value."
+        },
+        "max_custom": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "presets_entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "presets_value": {
+      "type": "object",
+      "required": [
+        "active",
+        "custom"
+      ],
+      "additionalProperties": false,
+      "description": "The value of a presets row: the active preset and the presets of the person. active is a built-in id or a custom name.",
+      "properties": {
+        "active": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "custom": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "slots"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]*\\S[^\\u0000-\\u001f\\u007f]*$"
+              },
+              "slots": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "toggle.json#/$defs/string_value"
+                },
+                "description": "Slot id to value. The owner of the setting decides what a value means."
+              }
+            }
+          }
+        }
+      }
+    },
+    "setting_preview": {
+      "type": "object",
+      "required": [
+        "slot",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "Preview one slot value of a presets row before you save it.",
+      "properties": {
+        "slot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "$ref": "toggle.json#/$defs/string_value"
+        }
+      }
+    },
+    "setting_preview_result": {
+      "type": "object",
+      "required": [
+        "is_played"
+      ],
+      "properties": {
+        "is_played": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

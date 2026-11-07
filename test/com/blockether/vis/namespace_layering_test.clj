@@ -73,7 +73,7 @@
   '[;; Leaf primitives any layer may use.
     [base
      [util error import paths content format system-trust jfr activity config.toggles perf
-      native-libs]]
+      native-libs sounds]]
     ;; The session store and the attachment blobs it persists.
     [persistance [persistance attachment.core attachment.storage attachment.image-convert]]
     ;; Merged configuration and the catalogs it reads.

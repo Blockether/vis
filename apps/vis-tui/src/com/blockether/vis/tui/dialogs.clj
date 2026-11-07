@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.mcp-model :as mcp-model]
+            [com.blockether.vis.tui.presets :as presets]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
@@ -4500,7 +4501,7 @@
 (defn- settings-option-value
   "The current value or short service status, separate from the setting's label."
   [{:keys [key type choices toggle-id toggle-type toggle-value set-key item-id inline-description
-           description secret-set?]} values]
+           description secret-set? setting]} values]
   (case type
     :secret-setting
     (if secret-set? "Saved" "Not set")
@@ -4515,11 +4516,14 @@
     (str toggle-value)
 
     :structured-setting
-    (let [n (count toggle-value)]
-      (str n
-           (if (= :array toggle-type)
-             (if (= 1 n) " entry" " entries")
-             (if (= 1 n) " field" " fields"))))
+    (if (= "presets" (get setting "editor"))
+      (presets/preset-label (get setting "editor_options")
+                            (presets/active (get setting "editor_options") toggle-value))
+      (let [n (count toggle-value)]
+        (str n
+             (if (= :array toggle-type)
+               (if (= 1 n) " entry" " entries")
+               (if (= 1 n) " field" " fields")))))
 
     :registry-toggle
     (let [spec
@@ -5265,6 +5269,209 @@
 
             (recur (if (some? next-value) (assoc value field next-value) value))))))))
 
+(defn- settings-preset-pick!
+  "Pick one item of a presets list, opened on the item at `selected`."
+  [screen title items selected]
+  (:value
+    (run-modal!
+      screen
+      (select-modal-component title items {:height :content :selected selected :min-width 56}))))
+
+(defn- save-presets-value!
+  "Write a whole presets `value`. Returns the value the gateway confirmed, or nil after its
+   refusal is shown."
+  [screen g region id value]
+  (try (let [row (notify-change-error! (vis/set-setting-value! id value *settings-target*))]
+         (cache-setting-row! row)
+         (load-settings-inventory!)
+         (if (contains? row "value") (get row "value") value))
+       (catch Exception e (mini-note! screen g region "Preset not saved" (ex-message e)))))
+
+(defn- preview-preset-slot!
+  "Play one slot of `preset` on the gateway machine. Only a failure needs words."
+  [screen g region id options value preset slot]
+  (let [{:keys [played? error]} (presets/preview! id
+                                                  (presets/preview-body options value preset slot))]
+    (cond error (mini-note! screen g region "No preview" error)
+          (not played?) (mini-note! screen g region "No preview" "This slot plays nothing.")
+          :else nil)))
+
+(defn- preset-form!
+  "Edit a preset name and its slot values. Enter on Save calls `save!` with the name and
+   the slots; a refusal keeps the form and its text open. Returns the saved value, or nil."
+  [screen g region title options draft save!]
+  (loop [{:keys [name slots] :as draft}
+         draft
+
+         selected
+         0]
+
+    (let [items
+          (vec (concat [{:label "Name" :description name :value :name}
+                        {:section? true :label "Sounds · empty, a preset id or a file path"}]
+                       (map (fn [{:strs [id label]}]
+                              {:label label
+                               :description (presets/slot-meaning options (get slots id ""))
+                               :value [:slot id]})
+                            (presets/slots options))
+                       [{:label "Save preset" :value :save}]))
+
+          choice
+          (settings-preset-pick! screen title items selected)
+
+          index
+          (max 0 (.indexOf ^java.util.List (mapv :value items) choice))]
+
+      (cond (nil? choice) nil
+            (= :name choice) (recur (if-let [text (mini-read!
+                                                    screen
+                                                    g
+                                                    region
+                                                    "Preset name"
+                                                    {:initial name :required? true :max-length 60})]
+                                      (assoc draft :name text)
+                                      draft)
+                                    index)
+            (= :save choice)
+            (if (str/blank? name)
+              (do (mini-note! screen g region "Preset not saved" "Give the preset a name.")
+                  (recur draft 0))
+              (or (save! name slots) (recur draft index)))
+            :else (let [slot
+                        (second choice)
+
+                        label
+                        (some #(when (= slot (get % "id")) (get % "label")) (presets/slots options))
+
+                        text
+                        (mini-read! screen
+                                    g
+                                    region
+                                    (str label " sound · empty, a preset id or a file path")
+                                    {:initial (get slots slot "")
+                                     :placeholder (presets/help options)})]
+
+                    (recur (if (some? text) (assoc-in draft [:slots slot] text) draft) index))))))
+
+(defn- settings-presets-editor!
+  "Pick, preview, add, change and delete the presets of a `presets` row. Each change writes
+   the whole value at once, so this returns nil: nothing is left to save."
+  [screen g region row]
+  (let [region
+        (host-band-region screen region)
+
+        id
+        (:toggle-id row)
+
+        options
+        (get-in row [:setting "editor_options"])
+
+        previewable?
+        (presets/previewable? options)]
+
+    (loop [value
+           (or (:toggle-value row) {})
+
+           focus
+           nil]
+
+      (let [current
+            (presets/active options value)
+
+            custom?
+            (some? (presets/custom value current))
+
+            preset-item
+            (fn [preset label hint]
+              (cond-> {:label label :value [:choose preset]}
+                hint
+                (assoc :hint hint)
+
+                (= preset current)
+                (assoc :hint (if hint (str hint " · active") "active"))))
+
+            items
+            (vec
+              (concat [{:section? true :label "Built-in presets"}]
+                      (map #(preset-item (get % "id") (get % "label") "built in")
+                           (presets/builtins options))
+                      (when (seq (presets/customs value))
+                        (cons {:section? true :label "Your presets"}
+                              (map #(preset-item (get % "name") (get % "name") nil)
+                                   (presets/customs value))))
+                      [{:section? true
+                        :label (str (presets/preset-label options current)
+                                    " · "
+                                    (if previewable? "Enter plays a slot" "slots"))}]
+                      (map (fn [{:strs [id label]}]
+                             {:label label
+                              :description (presets/slot-meaning
+                                             options
+                                             (get (presets/preset-slots options value current) id))
+                              :value [:slot id]})
+                           (presets/slots options))
+                      [{:section? true :label "Presets"}]
+                      (when-not (presets/full? options value) [{:label "New preset" :value :new}])
+                      (when custom?
+                        [{:label (str "Edit " current) :value :edit}
+                         {:label (str "Delete " current) :value :delete}])))
+
+            values
+            (mapv :value items)
+
+            selected
+            (max 0 (.indexOf ^java.util.List values (or focus [:choose current])))
+
+            choice
+            (settings-preset-pick! screen (:label row) items selected)
+
+            save!
+            (fn [next-value]
+              (save-presets-value! screen g region id next-value))]
+
+        (cond (nil? choice) nil
+              (= :choose (when (vector? choice) (first choice)))
+              (let [preset (second choice)]
+                (recur (or (when (not= preset current) (save! (presets/choose value preset))) value)
+                       choice))
+              (= :slot (when (vector? choice) (first choice)))
+              (do (when previewable?
+                    (preview-preset-slot! screen g region id options value current (second choice)))
+                  (recur value choice))
+              (= :new choice) (recur (or (preset-form!
+                                           screen
+                                           g
+                                           region
+                                           "New preset"
+                                           options
+                                           {:name ""
+                                            :slots (presets/preset-slots options value current)}
+                                           #(save! (presets/add-preset value %1 %2)))
+                                         value)
+                                     nil)
+              (= :edit choice) (recur (or (preset-form!
+                                            screen
+                                            g
+                                            region
+                                            (str "Edit " current)
+                                            options
+                                            {:name current
+                                             :slots (presets/preset-slots options value current)}
+                                            #(save! (presets/change-preset value current %1 %2)))
+                                          value)
+                                      choice)
+              (= :delete choice) (recur (or (when (mini-confirm! screen
+                                                                 g
+                                                                 region
+                                                                 (str "Delete " current "?")
+                                                                 {:cost "Vis forgets this preset."
+                                                                  :yes-label "Yes, delete"
+                                                                  :no-label "Keep it"})
+                                              (save! (presets/delete-preset options value current)))
+                                            value)
+                                        nil)
+              :else (recur value nil))))))
+
 (defn- settings-structured-editor!
   [screen g region row]
   (case (get-in row [:setting "editor"])
@@ -5276,6 +5483,9 @@
 
     ("list" "tools")
     (settings-list-editor! screen (:label row) (:toggle-value row))
+
+    "presets"
+    (settings-presets-editor! screen g region row)
 
     (do (mini-note! screen
                     g

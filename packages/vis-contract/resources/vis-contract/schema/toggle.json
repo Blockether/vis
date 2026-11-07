@@ -90,7 +90,8 @@
           "enum": [
             "boolean",
             "enum",
-            "string"
+            "string",
+            "object"
           ],
           "default": "boolean"
         },
@@ -133,6 +134,24 @@
           ],
           "default": "override",
           "description": "A restricted setting keeps any explicit ancestor denial: false for a boolean, the first choice for an enum with at least two choices."
+        },
+        "editor": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Settings editor of an object setting, from the editor names of the gateway setting schema."
+        },
+        "editor_options": {
+          "type": "object",
+          "description": "Static data that the editor of an object setting needs, such as the slots and built-in entries of a presets editor."
+        },
+        "validate_fn": {
+          "description": "Local callback that receives a candidate object value and returns nil when it is valid, else a message for the person."
+        },
+        "preview_fn": {
+          "description": "Local callback that receives a slot id and a slot value and previews them, for an editor with is_previewable."
+        },
+        "check_fn": {
+          "description": "Optional local callback that also checks an object value that a person writes. It can read the machine, so reading saved settings never calls it. It returns nil or a message."
         }
       },
       "required": [
@@ -233,6 +252,37 @@
             "required": [
               "type"
             ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "editor",
+              "validate_fn"
+            ],
+            "properties": {
+              "default": {
+                "type": [
+                  "object",
+                  "array"
+                ]
+              }
+            },
+            "not": {
+              "required": [
+                "choices"
+              ]
+            }
           }
         }
       ]

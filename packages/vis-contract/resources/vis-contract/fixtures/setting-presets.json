@@ -1,0 +1,184 @@
+{
+  "description": "A presets setting row of the settings catalog, its write, its preview and values that the gateway refuses. A preset gives one value to each slot. For sounds, an empty slot value plays nothing, a built-in preset id plays the sound of that preset for the slot, and any other value is the path of a sound file on the gateway machine.",
+  "row": {
+    "id": "sound_presets",
+    "label": "Sound preset",
+    "type": "object",
+    "editor": "presets",
+    "parent": "sounds",
+    "description": "The preset that plays. Add your own preset to mix built-in sounds and your own files.",
+    "scopes": [
+      "global"
+    ],
+    "scope": "global",
+    "source": "global",
+    "is_override": true,
+    "is_experimental": false,
+    "applies": "immediate",
+    "value": {
+      "active": "My mix",
+      "custom": [
+        {
+          "name": "My mix",
+          "slots": {
+            "finish": "~/Sounds/done.wav",
+            "input": "glass",
+            "error": ""
+          }
+        }
+      ]
+    },
+    "own_value": {
+      "active": "My mix",
+      "custom": [
+        {
+          "name": "My mix",
+          "slots": {
+            "finish": "~/Sounds/done.wav",
+            "input": "glass",
+            "error": ""
+          }
+        }
+      ]
+    },
+    "inherited_value": {
+      "active": "classic",
+      "custom": []
+    },
+    "inherited_source": "default",
+    "editor_options": {
+      "slots": [
+        {
+          "id": "finish",
+          "label": "Finish",
+          "description": "A turn completed."
+        },
+        {
+          "id": "input",
+          "label": "Question",
+          "description": "Vis waits for your answer."
+        },
+        {
+          "id": "error",
+          "label": "Error",
+          "description": "A turn failed or stopped."
+        }
+      ],
+      "builtin": [
+        {
+          "id": "classic",
+          "label": "Classic"
+        },
+        {
+          "id": "glass",
+          "label": "Glass"
+        },
+        {
+          "id": "soft",
+          "label": "Soft"
+        },
+        {
+          "id": "minimal",
+          "label": "Minimal"
+        },
+        {
+          "id": "bright",
+          "label": "Bright"
+        }
+      ],
+      "is_previewable": true,
+      "max_custom": 50
+    }
+  },
+  "write": {
+    "scope": "global",
+    "id": "sound_presets",
+    "action": "value",
+    "value": {
+      "active": "My mix",
+      "custom": [
+        {
+          "name": "My mix",
+          "slots": {
+            "finish": "~/Sounds/done.wav",
+            "input": "glass",
+            "error": ""
+          }
+        }
+      ]
+    }
+  },
+  "preview_path": "/v1/settings/sound_presets/preview",
+  "preview_request": {
+    "slot": "input",
+    "value": "glass"
+  },
+  "preview_result": {
+    "is_played": true
+  },
+  "invalid_values": [
+    {
+      "value": {
+        "active": "missing",
+        "custom": []
+      },
+      "reason": "active names no built-in or custom preset"
+    },
+    {
+      "value": {
+        "active": "classic",
+        "custom": [
+          {
+            "name": "Classic",
+            "slots": {}
+          }
+        ]
+      },
+      "reason": "a custom name repeats a built-in label or id, without regard to case"
+    },
+    {
+      "value": {
+        "active": "classic",
+        "custom": [
+          {
+            "name": "A",
+            "slots": {}
+          },
+          {
+            "name": "a",
+            "slots": {}
+          }
+        ]
+      },
+      "reason": "two custom names are the same without regard to case"
+    },
+    {
+      "value": {
+        "active": "classic",
+        "custom": [
+          {
+            "name": "A",
+            "slots": {
+              "volume": "1"
+            }
+          }
+        ]
+      },
+      "reason": "a slot id is not in editor_options.slots"
+    },
+    {
+      "value": {
+        "active": "classic",
+        "custom": [
+          {
+            "name": "A",
+            "slots": {
+              "finish": "~/no-such-file.wav"
+            }
+          }
+        ]
+      },
+      "reason": "a slot path names no file on the gateway machine"
+    }
+  ]
+}

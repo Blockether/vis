@@ -52,7 +52,7 @@
                (it "names missing fields, closed values and semantic failures"
                    (expect (= ["label is missing (required)."]
                               (toggle/contribution-problems (dissoc mode :label))))
-                   (expect (= ["type must be one of: boolean, enum, string (enum)."]
+                   (expect (= ["type must be one of: boolean, enum, string, object (enum)."]
                               (toggle/contribution-problems (assoc mode :type :list))))
                    (expect (= ["default must be one of the choices."]
                               (toggle/contribution-problems (assoc mode :default "other")))))))
