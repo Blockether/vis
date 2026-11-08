@@ -1085,32 +1085,48 @@
 ;; transcript had no team rows, so each client read them with a second request.
 (defdescribe
   transcript-team-test
-  (it "puts the team rows of a turn into that turn of each transcript read"
-      (with-team
-        {:statuses ["completed" "running"]}
-        (fn [{:keys [db leader children]}]
-          (let [quiet
-                (str (ps/db-store-session-turn! db
-                                                {:parent-session-id leader
-                                                 :user-request "No team"}))
+  (it
+    "puts the team rows of a turn into that turn of each transcript read"
+    (with-team
+      {:statuses ["completed" "running"]}
+      (fn [{:keys [db leader children]}]
+        (let [status
+              (zipmap children ["completed" "running"])
 
-                reads
-                [(:turns (state/transcript-page leader {:limit 10 :iteration-limit 8}))
-                 (:turns (state/transcript-page leader {})) (state/transcript leader)]]
+              ;; One spawn batch can share a millisecond. Spawn the children against their id
+              ;; order, so that an order by id alone shows the wrong order.
+              spawned
+              (vec (sort #(compare %2 %1) children))
 
-            (doseq [turns
-                    reads
+              _
+              (doseq [[i sid] (map-indexed vector spawned)]
+                (h/raw-query db
+                             {:update :session_agent
+                              ;; New task numbers above the stored ones: (parent_id, ordinal) is unique.
+                              :set {:created_at 1 :ordinal (+ 10 i)}
+                              :where [:= :session_id sid]}))
 
-                    :let [by-id
-                          (into {} (map (juxt #(get % "turn_id") identity)) turns)
+              quiet
+              (str (ps/db-store-session-turn! db
+                                              {:parent-session-id leader :user-request "No team"}))
 
-                          [team-row]
-                          (remove #(= quiet (get % "turn_id")) turns)]]
+              reads
+              [(:turns (state/transcript-page leader {:limit 10 :iteration-limit 8}))
+               (:turns (state/transcript-page leader {})) (state/transcript leader)]]
 
-              (expect (= 2 (count turns)))
-              (expect (= children (mapv #(get % "session_id") (get team-row "agents"))))
-              (expect (= ["completed" "running"] (mapv #(get % "status") (get team-row "agents"))))
-              (expect (not (contains? (get by-id quiet) "agents"))
-                      "A turn without subagents has no agents key"))
-            (expect (every? #(not (contains? % "agents")) (state/transcript (first children)))
-                    "A child session shows no team in its own turns"))))))
+          (doseq [turns
+                  reads
+
+                  :let [by-id
+                        (into {} (map (juxt #(get % "turn_id") identity)) turns)
+
+                        [team-row]
+                        (remove #(= quiet (get % "turn_id")) turns)]]
+
+            (expect (= 2 (count turns)))
+            (expect (= spawned (mapv #(get % "session_id") (get team-row "agents"))))
+            (expect (= (mapv status spawned) (mapv #(get % "status") (get team-row "agents"))))
+            (expect (not (contains? (get by-id quiet) "agents"))
+                    "A turn without subagents has no agents key"))
+          (expect (every? #(not (contains? % "agents")) (state/transcript (first children)))
+                  "A child session shows no team in its own turns"))))))

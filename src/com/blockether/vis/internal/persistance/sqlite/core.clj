@@ -5549,7 +5549,9 @@
           (query! db
                   (cond-> {:select agent-columns
                            :from :session_agent
-                           :order-by [[:created_at :asc] [:session_id :asc]]}
+                           ;; Children of one spawn batch can share a millisecond; the task number
+                           ;; keeps their spawn order.
+                           :order-by [[:created_at :asc] [:ordinal :asc] [:session_id :asc]]}
                     leader-id
                     (assoc :where [:= :leader_id (str leader-id)]))))
     []))
