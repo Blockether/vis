@@ -130,13 +130,15 @@ function useFirstCount(count: number) {
 
 /**
  * One card of a repeated editor. It starts folded to one row that names it, with an
- * `n / total` count when there are several; a card that the person adds starts open.
+ * `n / total` count on the right when there are several; a card that the person adds starts open.
  */
-function Entry({ index, count, summary, isAdded, children }: {
+function Entry({ index, count, name, detail, isAdded, children }: {
   index: number;
   count: number;
-  /** What the folded row shows, such as the folder and its access. */
-  summary: string;
+  /** What the folded row names in bold, such as the folder. */
+  name: string;
+  /** What the folded row adds in italic, such as the access. */
+  detail: string;
   isAdded: boolean;
   children: ReactNode;
 }) {
@@ -150,9 +152,10 @@ function Entry({ index, count, summary, isAdded, children }: {
         className="px-3"
         onClick={() => setOpen((open) => !open)}
       >
-        {count > 1 && <span className="shrink-0 font-bold tabular-nums">{index + 1} / {count}</span>}
+        <span className="min-w-0 truncate font-bold">{name}</span>{' '}
+        <span className="shrink-0 italic">{detail}</span>
         {count > 1 && ' '}
-        <span className="min-w-0 truncate">{summary}</span>
+        {count > 1 && <span className="ms-auto shrink-0 tabular-nums">{index + 1} / {count}</span>}
       </Disclosure>
       {isOpen && (
         <div id={bodyId} className="space-y-2 border-t border-dialog-edge p-3">
@@ -399,7 +402,8 @@ function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
             key={index}
             index={index}
             count={rows.length}
-            summary={`${path || 'New folder'} · ${ROOT_ACCESS[enumValue(workspaceProperties.access, access)] ?? access}`}
+            name={path || 'New folder'}
+            detail={ROOT_ACCESS[enumValue(workspaceProperties.access, access)] ?? access}
             isAdded={index >= first}
           >
             <CardField
@@ -598,7 +602,8 @@ function NetworkRules({
             key={index}
             index={index}
             count={rows.length}
-            summary={`${String(row.host ?? '') || 'New host'} · ${RULE_ACCESS[ruleAccess] ?? ruleAccess}`}
+            name={String(row.host ?? '') || 'New host'}
+            detail={RULE_ACCESS[ruleAccess] ?? ruleAccess}
             isAdded={index >= first}
           >
             <CardField
