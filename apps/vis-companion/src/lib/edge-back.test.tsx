@@ -386,6 +386,37 @@ describe('the pop the stroke draws', () => {
     expect(document.querySelector('[data-edge-veil]')).toBe(null);
   });
 
+  // Regression, user report (screenshot: after a swipe back the list stood a third of the
+  // width to the left, with an empty strip on its right). A stroke that went home gives its
+  // panes their styles one frame later. A stroke begun in that frame kept the list's
+  // shifted transform as its original style, and gave it back at its own end.
+  it('gives the list back its own place when a stroke starts in the frame after one went home', () => {
+    const frames: FrameRequestCallback[] = [];
+    const frame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((run) => frames.push(run));
+    const flush = () =>
+      act(() => {
+        for (const run of frames.splice(0)) run(0);
+      });
+    const onBack = vi.fn();
+    const { getByTestId, rerender } = render(<OpenSession onBack={onBack} />);
+    const list = getByTestId('list');
+
+    act(() => swipeIn(getByTestId('line'), 20, 'cancel'));
+    settle();
+    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    flush();
+    settle();
+    expect(onBack).toHaveBeenCalledTimes(1);
+    rerender(<OpenSession onBack={onBack} enabled={false} />);
+    flush();
+    frame.mockRestore();
+
+    expect(list.style.cssText).toBe('');
+    expect(document.querySelector('[data-edge-veil]')).toBe(null);
+  });
+
   it('carries on at the speed of the finger instead of lurching ahead of it', () => {
     // The curve starts at 0.72 / 0.32 of its average speed.
     const launch = (remaining: number, velocity: number) =>

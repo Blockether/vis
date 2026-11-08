@@ -454,6 +454,9 @@ export function useEdgeBack(
     under.current = element;
   }, []);
   const [swiping, setSwiping] = useState(false);
+  // A stroke that the finger let go of, whose panes get their styles back on the next
+  // frame. It outlives one run of the effect below, so it is kept here.
+  const unwinding = useRef<{ stage: EdgeStage; frame: number | null } | null>(null);
   // The same layer answers the phone's own back button, which arrives as one event
   // for the shell rather than as a finger on this pane.
   useBackLayer(isLayer ? onBack : null);
@@ -493,6 +496,15 @@ export function useEdgeBack(
       lastAt = now;
     };
 
+    /** Give a stroke that let go its panes' styles now, if its frame has not come yet. */
+    const unwind = () => {
+      const closing = unwinding.current;
+      unwinding.current = null;
+      if (!closing) return;
+      if (closing.frame !== null) view?.cancelAnimationFrame(closing.frame);
+      edgeClose(closing.stage);
+    };
+
     /**
      * Give both panes back the inline styles they arrived with, and the shell its own
      * layout. The styles go one frame after `isSwiping`, by which time the shell has
@@ -505,9 +517,23 @@ export function useEdgeBack(
       timer = null;
       setSwiping(false);
       if (!closing) return;
-      (view?.requestAnimationFrame ?? ((run: FrameRequestCallback) => run(0)))(() =>
-        edgeClose(closing),
-      );
+      unwind();
+      const pending = { stage: closing, frame: null as number | null };
+      unwinding.current = pending;
+      if (view?.requestAnimationFrame) pending.frame = view.requestAnimationFrame(unwind);
+      else unwind();
+    };
+
+    /**
+     * Set a new stage. A stroke that went home in the last frame still holds the panes:
+     * they get their own styles first, or the new stage keeps the list's shifted
+     * transform as its original style and gives it back at its own end.
+     */
+    const open = (): EdgeStage => {
+      unwind();
+      const opened = edgeOpen(pane, under.current, isLayer);
+      setSwiping(true);
+      return opened;
     };
 
     /**
@@ -570,9 +596,8 @@ export function useEdgeBack(
       // list back is a React commit; made at the first move, it took that move's frame
       // and the page stuck, then jumped. Behind a page that has not moved, it is unseen.
       if (gesture && !isLayer && wantsMotion(view)) {
-        stage = edgeOpen(pane, under.current, isLayer);
+        stage = open();
         edgePaint(stage, 0);
-        setSwiping(true);
       }
     };
 
@@ -599,8 +624,7 @@ export function useEdgeBack(
         edgeDropKeyboard(pane);
       }
       if (!stage && next.across >= EDGE_OPEN_PX && wantsMotion(view)) {
-        stage = edgeOpen(pane, under.current, isLayer);
-        setSwiping(true);
+        stage = open();
       }
       if (stage) edgePaint(stage, next.across);
     };

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Agent: when only the model's own tool can measure a stated target, the model must reach a clear margin over it, such as twice the target. In a benchmark, the model measured 11.8 times the original throughput with its own client, but the load generator of the task measured 4.9 times, under the target of 5 times.
 
+### Fixed
+- Companion: after a swipe back from a session, the session list stays in its own place. Before, a swipe that started in the frame after an unfinished swipe went home kept the list one third of the width to the left, with an empty strip on its right, until the app started again.
+
 ## [v0.5.6] - 2026-11-08
 
 ### Changed
