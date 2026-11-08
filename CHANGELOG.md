@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Agent: when only the model's own tool can measure a stated target, the model must reach a clear margin over it. In a benchmark, the model measured 11.8 times the original throughput with its own client, but the load generator of the task measured 4.9 times, under the target of 5 times.
+- Agent: each reported symptom is a bug, also when a comment or the docs seem to allow it. A mock of a service that the model can reach does not count as a check. The model gives evidence also for each limit that must hold while the change happens. In a benchmark round, the model kept a stall because a code comment allowed it, tested duplicate callbacks only against its own receiver that removed duplicates, and broke live connections while it measured only throughput.
 
 ### Fixed
 - Companion: after a swipe back from a session, the session list stays in its own place. Before, a swipe that started in the frame after an unfinished swipe went home kept the list one third of the width to the left, with an empty strip on its right, until the app started again.
