@@ -844,7 +844,8 @@
             (io/file (str archive ".part"))
 
             {:keys [exit]}
-            (b/process {:command-args ["curl" "-fsSL" "-o" (str partial) url]})]
+            (b/process {:command-args ["curl" "-fsSL" "--retry" "5" "--retry-all-errors"
+                                       "--retry-delay" "10" "-o" (str partial) url]})]
 
         (when-not (zero? exit)
           (throw (ex-info "Could not download the embedded CPython for this platform."
