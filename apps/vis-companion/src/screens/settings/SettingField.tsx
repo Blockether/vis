@@ -44,7 +44,8 @@ function numericSchema(pointer?: string): NumericSchema {
 
 /** The editors whose own legend shows the setting's label and description, so the row adds none. */
 export const ownsLegend = (setting: Toggle) =>
-  setting.editor === 'list' || setting.editor === 'tools' || setting.editor === 'paths';
+  setting.editor === 'list' || setting.editor === 'tools' || setting.editor === 'paths'
+  || setting.editor === 'filesystem' || setting.editor === 'network';
 
 /** The machine whose settings these are, so a folder field can browse its disk. */
 export const SettingMachine = createContext<{ client: GatewayClient; label: string } | null>(null);
@@ -95,6 +96,25 @@ function ListHeader({
         <PlusIcon className="size-4" />
       </IconButton>
     </legend>
+  );
+}
+
+/** An access editor: its legend is a group heading over the legends of its own lists. */
+function AccessGroup({ setting, children }: { setting: Toggle; children: ReactNode }) {
+  return (
+    <fieldset className="min-w-0 space-y-3">
+      <legend className="mb-1">
+        <Text variant="group" className="block">
+          {setting.label}
+        </Text>
+        {setting.description && (
+          <Text variant="description" className="mt-0.5 block">
+            {setting.description}
+          </Text>
+        )}
+      </legend>
+      {children}
+    </fieldset>
   );
 }
 
@@ -626,7 +646,7 @@ export function SettingField(props: FieldProps) {
   if (setting.editor === 'filesystem') {
     const object = objectValue(value);
     return (
-      <div className="space-y-3">
+      <AccessGroup setting={setting}>
         {[
           ['allow', 'Allowed paths', 'Workspace roots or folders that sandboxed commands can use.'],
           ['deny_read', 'Blocked read paths', 'No command can read these, for example **/.env*.'],
@@ -641,13 +661,13 @@ export function SettingField(props: FieldProps) {
             onChange={(next) => onChange({ ...object, [key]: next })}
           />
         ))}
-      </div>
+      </AccessGroup>
     );
   }
   if (setting.editor === 'network') {
     const object = objectValue(value);
     return (
-      <div className="space-y-3">
+      <AccessGroup setting={setting}>
         {[
           ['allowed_domains', 'Allowed domains', 'Hosts that commands can reach. *.pypi.org also works.'],
           ['denied_domains', 'Blocked domains', 'Blocked even when another list allows them.'],
@@ -683,7 +703,7 @@ export function SettingField(props: FieldProps) {
           disabled={disabled}
           onChange={(next) => onChange({ ...object, rules: next })}
         />
-      </div>
+      </AccessGroup>
     );
   }
   if (setting.editor === 'list' || setting.editor === 'tools')
