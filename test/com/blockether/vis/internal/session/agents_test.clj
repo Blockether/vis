@@ -2276,6 +2276,44 @@
         (expect (= "queued" (:status row)))
         (expect (every? #(not (contains? row %)) [:result :outcome :finished_at])))))
   (it
+    "keeps each earlier task of a resumed child, so a failed task stays on the team timeline"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:title "Build the engine"})
+
+          start
+          (:created_at (agents/info db child))]
+
+      (ps/db-agent-update! db child {:status "failed" :finished_at (+ start 60000)})
+      (ps/db-agent-resume! db child 1 (+ start 90000))
+      (expect (= [{:start start :end (+ start 60000) :status "failed"}]
+                 (:runs (agents/info db child)))
+              "The resume keeps the failed task that it replaces")
+      (ps/db-agent-update! db
+                           child
+                           {:status "completed" :outcome "passed" :finished_at (+ start 120000)})
+      (let [restore!
+            (agents/queue-turn! db child)
+
+            row
+            (agents/info db child)]
+
+        (expect
+          (= [{:start start :end (+ start 60000) :status "failed"}
+              {:start (+ start 90000) :end (+ start 120000) :status "completed" :outcome "passed"}]
+             (:runs row)))
+        (expect (document/valid-json? "agents" "agent" (walk/stringify-keys row))
+                "The rows of a team keep the contract")
+        (restore!)
+        (expect (= [{:start start :end (+ start 60000) :status "failed"}]
+                   (:runs (agents/info db child)))
+                "An undone ping takes its task out of runs again"))))
+  (it
     "lists the turns, notes, messages and end of a child, oldest first"
     (let [db
           (h/store)

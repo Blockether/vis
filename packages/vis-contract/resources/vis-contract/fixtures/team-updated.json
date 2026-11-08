@@ -1,5 +1,5 @@
 {
-  "description": "The rows of one leader's agent team. `base` is the `agents` of the subscription.ready frame. Each `events` item is a session.team_updated payload (team_update shape). `merged` is the row list after a client applies the events in order: a row with a known session_id replaces that row in place, and a row with an unknown session_id goes at the end. The last event repeats an earlier one and changes nothing.",
+  "description": "The rows of one leader's agent team. `base` is the `agents` of the subscription.ready frame. Each `events` item is a session.team_updated payload (team_update shape). `merged` is the row list after a client applies the events in order: a row with a known session_id replaces that row in place, and a row with an unknown session_id goes at the end. child-c failed once and resumed, so its earlier run is in `runs`. The last event repeats an earlier one and changes nothing.",
   "base": [
     {
       "session_id": "child-a",
@@ -67,7 +67,15 @@
           "status": "running",
           "iteration_budget": 20,
           "iterations_used": 0,
-          "created_at": 3000
+          "created_at": 3000,
+          "resumed_at": 6000,
+          "runs": [
+            {
+              "start": 3000,
+              "end": 5000,
+              "status": "failed"
+            }
+          ]
         }
       ]
     },
@@ -171,7 +179,15 @@
       "status": "running",
       "iteration_budget": 20,
       "iterations_used": 0,
-      "created_at": 3000
+      "created_at": 3000,
+      "resumed_at": 6000,
+      "runs": [
+        {
+          "start": 3000,
+          "end": 5000,
+          "status": "failed"
+        }
+      ]
     }
   ]
 }

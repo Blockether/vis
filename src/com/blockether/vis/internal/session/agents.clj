@@ -1913,10 +1913,10 @@
           (ps/db-agent-resume! db sid (count (ps/db-list-session-turns db sid)) (util/now-ms))
           #(ps/db-agent-update! db
                                 sid
-                                (merge {:result nil :outcome nil :finished_at nil}
+                                (merge {:result nil :outcome nil :finished_at nil :runs nil}
                                        (select-keys child
                                                     [:status :resumed_turns :resumed_at :result
-                                                     :outcome :finished_at]))))))
+                                                     :outcome :finished_at :runs]))))))
 
 (defn task-request
   "The turn request of a Council wake from the parent of managed child `sid`, or nil for another

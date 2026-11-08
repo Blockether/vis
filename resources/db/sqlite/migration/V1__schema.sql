@@ -205,6 +205,9 @@ CREATE TABLE session_agent (
   ordinal          INTEGER CHECK (ordinal IS NULL OR ordinal >= 1),
   -- The ordinals of the sibling tasks that must complete before this task starts, as a JSON array.
   after            TEXT CHECK (after IS NULL OR json_valid(after)),
+  -- The earlier tasks, oldest first, as a JSON array of {start, end, status, outcome}. A resume
+  -- adds the task that ended before it, so a failed task stays visible. NULL = no earlier task.
+  runs             TEXT CHECK (runs IS NULL OR json_valid(runs)),
   UNIQUE (parent_id, spawn_key),
   CHECK (session_id <> parent_id AND session_id <> leader_id)
 );

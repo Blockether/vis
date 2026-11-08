@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
+import teamFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/team-updated.json';
 import { SessionEventsContext } from '../lib/session-events';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent, Subagent } from '../lib/types';
@@ -79,9 +80,9 @@ describe('agent rows', () => {
       { ...child, session_id: 'lost', status: 'failed', created_at: T0 + 10_000 },
     ] as Subagent[];
     expect(Object.fromEntries(agentBars(team, T0 + 120_000))).toEqual({
-      done: { start: 0, end: 0.25, isWaiting: false },
-      run: { start: 0.5, end: 1, isWaiting: false },
-      wait: { start: 0.75, end: 1, isWaiting: true },
+      done: [{ start: 0, end: 0.25, isWaiting: false }],
+      run: [{ start: 0.5, end: 1, isWaiting: false }],
+      wait: [{ start: 0.75, end: 1, isWaiting: true }],
     });
     expect(agentBars([{ ...child, created_at: undefined }], T0).size).toBe(0);
   });
@@ -94,12 +95,30 @@ describe('agent rows', () => {
       { ...child, session_id: 'run', resumed_at: later + 40_000 },
     ] as Subagent[];
     expect(Object.fromEntries(agentBars(team, later + 80_000))).toEqual({
-      done: { start: 0, end: 0.5, isWaiting: false },
-      run: { start: 0.5, end: 1, isWaiting: false },
+      done: [{ start: 0, end: 0.5, isWaiting: false }],
+      run: [{ start: 0.5, end: 1, isWaiting: false }],
     });
     // The leader lane widens the chart to the start of its turn.
     const leader = { start: later - 80_000, waits: [] };
-    expect(agentBars(team, later + 80_000, leader).get('done')).toEqual({ start: 0.5, end: 0.75, isWaiting: false });
+    expect(agentBars(team, later + 80_000, leader).get('done')).toEqual([{ start: 0.5, end: 0.75, isWaiting: false }]);
+  });
+
+  // User report: an agent failed on a provider error and resumed; the chart showed only its short
+  // resumed task, as if the hour before it never happened.
+  it('keeps a failed earlier run on the chart in the failed ink, with the time down to the resume', () => {
+    const resumed = teamFixture.merged.find((row) => row.session_id === 'child-c') as Subagent;
+    const team = [{ ...resumed, status: 'completed', finished_at: 8_000 }] as Subagent[];
+    expect(agentBars(team, 8_000).get('child-c')).toEqual([
+      { start: 0, end: 0.4, isWaiting: false, status: 'failed' },
+      { start: 0.4, end: 0.6, isWaiting: true, status: 'failed' },
+      { start: 0.6, end: 1, isWaiting: false },
+    ]);
+    // A completed earlier run is a done bar with no line after it.
+    const done = [{ ...team[0], runs: [{ start: 3_000, end: 5_000, status: 'completed' }] }] as Subagent[];
+    expect(agentBars(done, 8_000).get('child-c')).toEqual([
+      { start: 0, end: 0.4, isWaiting: false, status: 'done' },
+      { start: 0.6, end: 1, isWaiting: false },
+    ]);
   });
 
   // The leader lane shows where the leader waited for its agents: in the blocks that call council.run or council.wait.

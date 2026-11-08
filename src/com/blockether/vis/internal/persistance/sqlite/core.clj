@@ -5492,7 +5492,7 @@
 (def ^:private agent-columns
   [:session_id :parent_id :leader_id :team_id :task :role :status :iteration_budget :iterations_used
    :inherited_turns :allowed_models :files :spawn_key :spawn_fingerprint :created_at :resumed_turns
-   :resumed_at :title :result :outcome :finished_at :ordinal :after])
+   :resumed_at :title :result :outcome :finished_at :ordinal :after :runs])
 
 (defn- agent-row
   [row]
@@ -5507,12 +5507,20 @@
 
           after
           (some-> (:after row)
-                  <-json)]
+                  <-json)
+
+          runs
+          (some->> (:runs row)
+                   <-json
+                   (mapv #(into {}
+                                (keep (fn [[k v]]
+                                        (when (some? v) [(keyword k) v])))
+                                %)))]
 
       ;; A child without a file grant or role has no such key: the agent contract allows no null.
       ;; The contract names a task by its id, such as a2, never by its stored ordinal.
       (cond-> (-> row
-                  (dissoc :files :ordinal :after)
+                  (dissoc :files :ordinal :after :runs)
                   (update :allowed_models
                           (fn [value]
                             (some->> (<-json value)
@@ -5531,7 +5539,10 @@
         (assoc :id (str "a" ordinal))
 
         (seq after)
-        (assoc :after (mapv #(str "a" %) after))))))
+        (assoc :after (mapv #(str "a" %) after))
+
+        (seq runs)
+        (assoc :runs runs)))))
 
 (defn db-agent-info
   "Managed-child metadata, without its potentially large context snapshot."
@@ -5686,6 +5697,11 @@
                   (contains? changes :files)
                   (assoc :files
                     (some-> (:files changes)
+                            ->json))
+
+                  (contains? changes :runs)
+                  (assoc :runs
+                    (some-> (not-empty (:runs changes))
                             ->json)))]
     (when (seq changes)
       (execute! db {:update :session_agent :set changes :where [:= :session_id (str sid)]})))
@@ -5741,21 +5757,31 @@
   (when (pos?
           (long
             (or (:next.jdbc/update-count
-                  (first (sqlite-write-tx!
-                           db
-                           (fn [tx-info]
-                             (execute! tx-info
-                                       {:update :session_agent
-                                        ;; The follow-up task has no result yet.
-                                        :set {:status "queued"
-                                              :resumed_turns (long turns)
-                                              :resumed_at (long now)
-                                              :result nil
-                                              :outcome nil
-                                              :finished_at nil}
-                                        :where [:and [:= :session_id (str sid)]
-                                                [:not-in :status ["queued" "running"]]
-                                                [:< :iterations_used :iteration_budget]]})))))
+                  (first
+                    (sqlite-write-tx!
+                      db
+                      (fn [tx-info]
+                        (execute! tx-info
+                                  {:update :session_agent
+                                   ;; The follow-up task has no result yet. The task that ended
+                                   ;; goes into runs first: SQLite reads the old row values.
+                                   :set {:runs
+                                         [:case
+                                          [:in :status
+                                           ["completed" "failed" "cancelled" "budget_limited"]]
+                                          [:json_insert [:coalesce :runs "[]"] "$[#]"
+                                           [:json_object "start" [:coalesce :resumed_at :created_at]
+                                            "end" [:coalesce :finished_at (long now)] "status"
+                                            :status "outcome" :outcome]] :else :runs]
+                                         :status "queued"
+                                         :resumed_turns (long turns)
+                                         :resumed_at (long now)
+                                         :result nil
+                                         :outcome nil
+                                         :finished_at nil}
+                                   :where [:and [:= :session_id (str sid)]
+                                           [:not-in :status ["queued" "running"]]
+                                           [:< :iterations_used :iteration_budget]]})))))
                 0)))
     (db-agent-info db sid)))
 

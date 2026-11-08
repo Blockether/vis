@@ -549,6 +549,33 @@
           "$comment": "Epoch ms when the current task ended.",
           "type": "integer",
           "minimum": 0
+        },
+        "runs": {
+          "$comment": "The earlier tasks of the agent, oldest first. A follow-up Council ping adds the task that ended before it. The current task is not in the list. A client draws each run in the color of its status, so a failed run stays visible after a resume.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start", "end", "status"],
+            "properties": {
+              "start": {
+                "$comment": "Epoch ms when the task started.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "end": {
+                "$comment": "Epoch ms when the task ended.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "status": {
+                "enum": ["completed", "failed", "cancelled", "budget_limited"]
+              },
+              "outcome": {
+                "$ref": "#/$defs/result/properties/outcome"
+              }
+            }
+          }
         }
       },
       "required": [

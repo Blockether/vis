@@ -99,6 +99,16 @@ export interface Subagent {
   resumed_at?: number | null;
   /** Epoch ms when the current task ended. */
   finished_at?: number;
+  /** The earlier tasks, oldest first. A follow-up ping adds the task that ended before it. */
+  runs?: AgentRun[];
+}
+
+/** One earlier task of an agent, from the agents contract. */
+export interface AgentRun {
+  start: number;
+  end: number;
+  status: 'completed' | 'failed' | 'cancelled' | 'budget_limited';
+  outcome?: 'passed' | 'failed';
 }
 
 /** A subagent file grant: paths or globs. Deny wins over read_only, read_only over write. */

@@ -301,12 +301,16 @@ export function storedLeaderLane(turn: TranscriptTurn): LeaderLane | undefined {
 }
 
 /**
- * The time of the chart of a team, in epoch ms: from the first current task or the start of the
- * leader, to now while anything works, else to the last end. A resumed agent counts from its
- * resume, so an old spawn does not push the current work to the end of the axis.
+ * The time of the chart of a team, in epoch ms: from the first task or the start of the leader,
+ * to now while anything works, else to the last end. A resumed agent counts from its first
+ * earlier run, else from its resume, so a spawn without a run does not push the current work to
+ * the end of the axis.
  */
 export function chartSpan(rows: readonly Subagent[], now: number, leader?: LeaderLane): Required<Span> | undefined {
-  const starts = marks([...rows.map((agent) => (agent.status === 'queued' ? agent.created_at : startOf(agent))), leader?.start]);
+  const starts = marks([
+    ...rows.map((agent) => agent.runs?.[0]?.start ?? (agent.status === 'queued' ? agent.created_at : startOf(agent))),
+    leader?.start,
+  ]);
   if (starts.length === 0) return undefined;
   const start = Math.min(...starts);
   const ends = marks([...rows.map((agent) => agent.finished_at), leader?.end]);
@@ -315,30 +319,48 @@ export function chartSpan(rows: readonly Subagent[], now: number, leader?: Leade
   return end != null && end > start ? { start, end } : undefined;
 }
 
-/** Where a part of a lane stands on the chart: its start and end, from 0 to 1. */
+/**
+ * Where a part of a lane stands on the chart: its start and end, from 0 to 1. `status` is the
+ * status word of an earlier run, or `failed` for the time between a failed run and the next start.
+ */
 export interface AgentBar {
   start: number;
   end: number;
   isWaiting: boolean;
+  status?: string;
 }
 
 const shareOf = ({ start, end }: Required<Span>) => (at: number) => Math.min(1, Math.max(0, (at - start) / (end - start)));
 
 /**
- * The bar of each agent on the chart of its team, by session id. A task goes from its start to
- * its end, or to now while it runs. A queued agent waits from its spawn to the end of the chart.
- * An agent without the marks of its task has no bar.
+ * The bars of each agent on the chart of its team, by session id, in time order. Each earlier run
+ * has a bar in the ink of its status. After a failed run, a failed dashed line goes to the next
+ * start, so the time when the agent was down stays visible. The current task goes from its start
+ * to its end, or to now while it runs. A queued agent waits from its spawn to the end of the
+ * chart. An agent without the marks of its task has no bar for it.
  */
-export function agentBars(rows: readonly Subagent[], now: number, leader?: LeaderLane): Map<string, AgentBar> {
-  const bars = new Map<string, AgentBar>();
+export function agentBars(rows: readonly Subagent[], now: number, leader?: LeaderLane): Map<string, AgentBar[]> {
+  const bars = new Map<string, AgentBar[]>();
   const span = chartSpan(rows, now, leader);
   if (!span) return bars;
   const share = shareOf(span);
   for (const agent of rows) {
+    const parts: AgentBar[] = [];
     const start = agent.status === 'queued' ? agent.created_at : startOf(agent);
     const end = agent.status === 'queued' ? span.end : agent.status === 'running' ? now : agent.finished_at;
-    if (start == null || end == null) continue;
-    bars.set(agent.session_id, { start: share(start), end: share(end), isWaiting: agent.status === 'queued' });
+    const runs = agent.runs ?? [];
+    runs.forEach((run, index) => {
+      const status = agentStatus({ ...agent, status: run.status, outcome: run.outcome }).text;
+      parts.push({ start: share(run.start), end: share(run.end), isWaiting: false, status });
+      const next = runs[index + 1]?.start ?? start;
+      if (status === 'failed' && next != null && next > run.end) {
+        parts.push({ start: share(run.end), end: share(next), isWaiting: true, status });
+      }
+    });
+    if (start != null && end != null) {
+      parts.push({ start: share(start), end: share(end), isWaiting: agent.status === 'queued' });
+    }
+    if (parts.length) bars.set(agent.session_id, parts);
   }
   return bars;
 }
@@ -441,11 +463,13 @@ function GridLines({ total }: { total: number }) {
   );
 }
 
-// One part of a lane: a solid bar for work, a dashed line for a wait.
+// One part of a lane: a solid bar for work, a dashed line for a wait. The time after a failed run is
+// a failed dashed line.
 function LanePart({ bar, ink }: { bar: AgentBar; ink: string }) {
+  const wait = bar.status === 'failed' ? 'border-err-ink' : 'border-dialog-hint';
   return (
     <span
-      className={`absolute ${bar.isWaiting ? 'inset-y-1/2 border-t border-dashed border-dialog-hint' : `inset-y-0 ${ink}`}`}
+      className={`absolute ${bar.isWaiting ? `inset-y-1/2 border-t border-dashed ${wait}` : `inset-y-0 ${ink}`}`}
       style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
     />
   );
@@ -588,7 +612,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
             const role = agentRole(agent);
             const status = agentStatus(agent);
             const time = agentTime(agent, now);
-            const bar = bars.get(agent.session_id);
+            const parts = bars.get(agent.session_id) ?? [];
             return (
               <li key={agent.session_id}>
                 <button
@@ -601,7 +625,11 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
                     {keys[index]}
                     <span className="sr-only"> {agentLabel(agent, rows)}</span>
                   </span>
-                  <span aria-hidden className="relative h-2 self-center">{bar && <LanePart bar={bar} ink={BAR_INK[status.text]} />}</span>
+                  <span aria-hidden className="relative h-2 self-center">
+                    {parts.map((part) => (
+                      <LanePart key={`${part.start}-${part.isWaiting}`} bar={part} ink={BAR_INK[part.status ?? status.text]} />
+                    ))}
+                  </span>
                   <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>{time === undefined ? '' : formatAgentTime(time)}</span>
                   <StatusWord status={status} />
                 </button>
