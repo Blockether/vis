@@ -10,6 +10,8 @@
  * the spin. The rules are the wheel transaction of Firefox.
  */
 
+import { wantsScrollMotion } from './scroll-glide';
+
 /** Wheel events nearer together than this are one spin. */
 const SPIN_GAP_MS = 300;
 
@@ -22,6 +24,13 @@ const MOVE_ENDS_SPIN_MS = 150;
 
 /** Pixels in one line of a line-mode wheel event (Chromium's line height). */
 const LINE_PX = 40;
+
+/**
+ * Where the guarded notches send the scroller of the spin. A smooth `scrollBy` starts
+ * from where an earlier glide is now, so a fast spin lost most of its notches (measured:
+ * 147 of 500 px in Chromium, 100 of 500 px in WebKit). Each notch moves this target.
+ */
+let glide: { scroller: Element; top: number } | null = null;
 
 let lastWheelAt = Number.NEGATIVE_INFINITY;
 
@@ -42,7 +51,10 @@ function onWheel(event: Event): void {
   const now = Date.now();
   if (now - lastWheelAt > SPIN_GAP_MS) {
     spinScroller = event.composedPath().find(scrollsVertically) ?? null;
+    glide = null;
   }
+  // The browser moves the scroller of the spin for a notch over it, so a held target is old.
+  else if (spinScroller && event.composedPath().includes(spinScroller)) glide = null;
   lastWheelAt = now;
 }
 
@@ -50,6 +62,7 @@ function onPointerMove(): void {
   if (Date.now() - lastWheelAt <= MOVE_ENDS_SPIN_MS) return;
   lastWheelAt = Number.NEGATIVE_INFINITY;
   spinScroller = null;
+  glide = null;
 }
 
 // Captured on `window`, so each spin is known before a guard on its target hears it.
@@ -78,7 +91,12 @@ export function keepWheelSpin(element: HTMLElement): () => void {
         : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
           ? spin.clientHeight
           : 1;
-    spin.scrollBy(0, event.deltaY * unit);
+    // A notch glides like a notch over the scroller itself. Reduced motion jumps.
+    const from = glide?.scroller === spin ? glide.top : spin.scrollTop;
+    const top = Math.max(0, Math.min(spin.scrollHeight - spin.clientHeight, from + event.deltaY * unit));
+    glide = { scroller: spin, top };
+    const view = spin.ownerDocument.defaultView;
+    spin.scrollTo({ top, behavior: wantsScrollMotion(view) ? 'smooth' : 'auto' });
   };
   element.addEventListener('wheel', onElementWheel, { capture: true, passive: false });
   return () => element.removeEventListener('wheel', onElementWheel, { capture: true });

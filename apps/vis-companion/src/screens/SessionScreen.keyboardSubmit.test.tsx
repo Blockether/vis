@@ -115,7 +115,8 @@ describe('sending from the native composer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
-    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: 'smooth' }));
+    // The end of a 1 200 px transcript in a 600 px scroller.
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: 'smooth' }));
     const smoothCall = scrollTo.mock.calls.findIndex(([options]) => options.behavior === 'smooth');
     expect(
       scrollTo.mock.calls.slice(smoothCall + 1).filter(([options]) => options.behavior === 'auto'),

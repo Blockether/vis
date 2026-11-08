@@ -5,9 +5,13 @@ import type { TranscriptTurn } from '../lib/types';
 /**
  * The scroller of a transcript. The session screen and the HTML export share it, so an exported
  * transcript lays out at the same width, with the same container queries, as the screen.
+ *
+ * iOS WebKit reads `overscroll-behavior: contain` as no rubber band at all: measured on an
+ * iOS 18.6 simulator, the transcript stopped dead at its ends. Only iOS supports
+ * `-webkit-touch-callout`, so iOS gets its own bounce back and other hosts keep `contain`.
  */
 export const TRANSCRIPT_SCROLLER_CLASS =
-  '@container/transcript min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 [overflow-anchor:none]';
+  '@container/transcript min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain supports-[-webkit-touch-callout:none]:overscroll-y-auto scroll-pb-8 [overflow-anchor:none]';
 
 /**
  * The reading column inside the scroller. `outline` keeps the gutter of the outline rail

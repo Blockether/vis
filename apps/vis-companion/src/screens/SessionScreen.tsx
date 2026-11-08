@@ -160,6 +160,7 @@ import {
 import { attachmentsFromSharedFiles } from '../lib/share-files';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
 import { readerMayBeScrolling, readerOwnsScroll, releaseReaderScroll } from '../lib/reader-gesture';
+import { glideTo } from '../lib/scroll-glide';
 import {
   arrivedAtEnd,
   bottomOf,
@@ -1786,14 +1787,19 @@ export function SessionScreen({
   // cannot move the reader, so whatever moves it then was the reader's doing.
   const layoutChangedRef = useRef(false);
 
+  // A smooth move glides only its last screen (lib/scroll-glide). Returns the function
+  // that stops listening for the end of that glide.
   const scrollToEnd = useCallback(
-    (behavior: ScrollBehavior = 'auto') => {
+    (behavior: ScrollBehavior = 'auto', onEnd?: () => void): (() => void) => {
       const viewport = scrollRef.current;
-      if (!viewport) return;
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      if (!viewport) return () => {};
       followingRef.current = true;
+      let stop = () => {};
+      if (behavior === 'smooth') stop = glideTo(viewport, () => viewport.scrollHeight, onEnd);
+      else viewport.scrollTo({ top: viewport.scrollHeight, behavior });
       correctedTopRef.current = viewport.scrollTop;
       syncJump();
+      return stop;
     },
     [syncJump],
   );
@@ -1854,33 +1860,18 @@ export function SessionScreen({
     const start = viewport.scrollTop;
     const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
     submitScrollActiveRef.current = Math.abs(start - end) >= 1;
-    let finished = false;
-    let fallback: number | null = null;
     const finish = () => {
-      if (finished) return;
-      finished = true;
       submitScrollActiveRef.current = false;
-      viewport.removeEventListener('scrollend', finish);
-      if (fallback !== null) window.clearTimeout(fallback);
       if (followingRef.current && !readerOwnsScroll()) {
         followEnd(viewport);
         correctedTopRef.current = viewport.scrollTop;
         syncJump();
       }
     };
-    viewport.addEventListener('scrollend', finish, { once: true });
-    scrollToEnd('smooth');
-    if (!submitScrollActiveRef.current) {
-      finish();
-      return;
-    }
-    // `scrollend` is the contract; this only releases browsers that do not ship it.
-    fallback = window.setTimeout(finish, 700);
+    const stop = scrollToEnd('smooth', finish);
     return () => {
-      finished = true;
+      stop();
       submitScrollActiveRef.current = false;
-      viewport.removeEventListener('scrollend', finish);
-      if (fallback !== null) window.clearTimeout(fallback);
     };
   }, [scrollToEnd, submitScrollRequest, syncJump]);
 
@@ -5312,6 +5303,9 @@ export function SessionScreen({
   // waits until the layout effect below finds its row mounted, and then puts it at
   // the top of the transcript. A turn still on the gateway is paged in first.
   const [jumpTarget, setJumpTarget] = useState<string | null>(null);
+  // Stops listening for the end of the last jump's glide.
+  const stopJumpGlideRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopJumpGlideRef.current?.(), []);
   const jumpToTurn = (id: string, index: number) => {
     setJumpTarget(id);
     if (runningTurnId === id || paintableTurns.some((turn) => turn.turn_id === id)) return;
@@ -5363,14 +5357,30 @@ export function SessionScreen({
     );
     if (!viewport || !row) return;
     followingRef.current = false;
-    viewport.scrollTop +=
-      row.getBoundingClientRect().top - viewport.getBoundingClientRect().top - JUMP_MARGIN;
+    const lineOf = () =>
+      viewport.scrollTop +
+      row.getBoundingClientRect().top -
+      viewport.getBoundingClientRect().top -
+      JUMP_MARGIN;
     // The jump is the reader's new line. The anchor is read again at it, and the
     // scroll event that the jump raises is the echo of a correction, not a gesture.
-    correctedTopRef.current = -1;
-    captureScrollAnchor();
-    correctedTopRef.current = viewport.scrollTop;
-    syncJump();
+    const settle = () => {
+      correctedTopRef.current = -1;
+      captureScrollAnchor();
+      correctedTopRef.current = viewport.scrollTop;
+      syncJump();
+    };
+    stopJumpGlideRef.current?.();
+    stopJumpGlideRef.current = glideTo(viewport, lineOf, () => {
+      stopJumpGlideRef.current = null;
+      if (!row.isConnected) return;
+      // An anchor correction under the glide is a script write, and it stops the glide
+      // short of the turn. Put the reader on the turn, unless a hand took the scroller.
+      const line = Math.max(0, Math.min(lineOf(), viewport.scrollHeight - viewport.clientHeight));
+      if (!readerOwnsScroll() && Math.abs(viewport.scrollTop - line) >= 1) seatScroller(viewport, line);
+      settle();
+    });
+    settle();
   }, [
     jumpTarget,
     paintableTurns,

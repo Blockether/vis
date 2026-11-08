@@ -14,9 +14,9 @@ function mountScroller(): HTMLDivElement {
     scrollHeight: { value: 5_000 },
     scrollTop: { value: 0, writable: true },
   });
-  scroller.scrollBy = ((_x: number, y: number) => {
-    scroller.scrollTop += y;
-  }) as typeof scroller.scrollBy;
+  scroller.scrollTo = ((options: ScrollToOptions) => {
+    scroller.scrollTop = options.top ?? scroller.scrollTop;
+  }) as typeof scroller.scrollTo;
   return scroller;
 }
 
@@ -59,6 +59,34 @@ describe('a wheel spin', () => {
 
     expect(transcript.scrollTop).toBe(200);
     expect(list.scrollTop).toBe(0);
+  });
+
+  // A smooth glide is still on its way when the next notch comes. Each notch must add
+  // its own distance to the target, not to where the glide is now.
+  it('keeps every notch of a spin faster than its glide', () => {
+    const asked: ScrollToOptions[] = [];
+    transcript.scrollTo = ((options: ScrollToOptions) => {
+      asked.push(options);
+    }) as typeof transcript.scrollTo;
+    notch(transcript);
+    movePointer();
+    notch(list);
+    notch(list);
+    notch(list);
+
+    expect(asked.map((options) => options.top)).toEqual([100, 200, 300]);
+    expect(asked.every((options) => options.behavior === 'smooth')).toBe(true);
+  });
+
+  it('starts from the scroller when the browser moved it between notches', () => {
+    notch(transcript);
+    movePointer();
+    notch(list);
+    transcript.scrollTop = 700;
+    notch(transcript);
+    notch(list);
+
+    expect(transcript.scrollTop).toBe(800);
   });
 
   it('lets the list scroll after a pause in the spin', () => {
