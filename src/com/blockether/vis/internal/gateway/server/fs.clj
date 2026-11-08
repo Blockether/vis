@@ -4,13 +4,17 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.internal.attachment.core :as attachment]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.gateway.server.http :as http]
+            [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
-            [com.blockether.vis.internal.workspace.core :as workspace]))
+            [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [ring.core.protocols :as ring-protocols]))
 
 ;; Filesystem browse — picking a workspace root
 ;;
@@ -286,21 +290,129 @@
         "image/avif"))
 
 (defn- file-head
-  "The first bytes of `file`, enough for `image-media-type`."
+  "The first bytes of `file`, enough for `image-media-type` and `playable-media-type`.
+   A Matroska header names its `webm` doc type in its first 64 bytes."
   ^bytes [^java.io.File file]
   (with-open [in (java.io.FileInputStream. file)]
-    (.readNBytes in 16)))
+    (.readNBytes in 64)))
+
+(defn- mpeg-audio-frame?
+  "True when `head` starts with an MPEG audio frame header that a player decodes:
+   the frame sync, layer II or III, a real bit rate and a real sample rate.
+   The loose sync test also accepts the UTF-16 byte order mark `FF FE`, and a
+   text file is not a recording."
+  [^bytes head]
+  (and (>= (alength head) 3)
+       (let [b1
+             (bit-and (long (aget head 1)) 0xff)
+
+             b2
+             (bit-and (long (aget head 2)) 0xff)
+
+             layer
+             (bit-and (bit-shift-right b1 1) 3)
+
+             bitrate
+             (bit-shift-right b2 4)
+
+             rate
+             (bit-and (bit-shift-right b2 2) 3)]
+
+         (and (= 0xff (bit-and (long (aget head 0)) 0xff))
+              (= 0xe0 (bit-and b1 0xe0))
+              (contains? #{1 2} layer)
+              (< 0 bitrate 15)
+              (not= 3 rate)))))
+
+(defn- playable-media-type
+  "The media type of a recording or a clip that a media element plays, read from
+   the first bytes of `head`, or nil. The bytes decide, not the file name."
+  [^bytes head]
+  (let [audio (attachment/detect-audio-mime head)]
+    (cond (and (= "audio/mpeg" audio) (not (bytes-at? head 0 "ID3")) (not (mpeg-audio-frame? head)))
+          nil
+          audio audio
+          (attachment/detect-video-mime head) (attachment/detect-video-mime head)
+          (bytes-at? head 0 "\u001aEß£")
+          (if (str/includes? (String. head java.nio.charset.StandardCharsets/ISO_8859_1) "webm")
+            "video/webm"
+            "video/x-matroska"))))
+
+;; Media content tickets
+;;
+;; An `<audio>` or `<video>` element fetches its source itself, with `Range`
+;; requests, and it cannot add a bearer header or the protocol headers. The
+;; preview hands out a signed address instead: the ticket names one session, one
+;; resolved file and one expiry, and nothing else.
+
+(def ^:private content-ticket-ttl-ms
+  "How long one content address plays. A long episode is paused and resumed; a
+   reader who comes back later reads the preview again for a new address."
+  (* 12 60 60 1000))
+
+(def ^:private content-route #"^/v1/sessions/[^/]+/fs/file/content$")
+
+(defn content-ticket-request?
+  "True when `request` asks for file content with a ticket. The auth and protocol
+   gates let it through, because the handler checks the ticket itself."
+  [request]
+  (boolean (and (re-matches content-route (str (:uri request)))
+                (let [ticket (get-in request [:query-params "ticket"])]
+                  (and (string? ticket) (not (str/blank? ticket)))))))
+
+(defonce ^:private process-ticket-key
+  ;; Realized on first use at run time, never in the native-image heap.
+  (delay (util/random-bytes 32)))
+
+(defn- ticket-key
+  "The key of content tickets: derived from the gateway token, so an address stays
+   valid across a restart, else a random key of this process."
+  ^bytes []
+  (let [token (:token @instance/server-state)]
+    (if (and (string? token) (not (str/blank? token)))
+      (util/hmac-sha256 (util/utf8 token) (util/utf8 "vis fs content ticket v1"))
+      @process-ticket-key)))
+
+(defn- content-ticket
+  "The ticket for `sid`, the resolved `path` and `expires`. The path goes last, so
+   no field can move into another."
+  ^String [sid path expires]
+  (util/base64url (util/hmac-sha256 (ticket-key) (util/utf8 (str sid "\n" expires "\n" path)))))
+
+(defn- url-encode
+  ^String [s]
+  (str/replace (java.net.URLEncoder/encode (str s) java.nio.charset.StandardCharsets/UTF_8)
+               "+"
+               "%20"))
+
+(defn- content-url
+  "The relative address of the content of `path` for `sid`, with a ticket that
+   expires at `expires`."
+  [sid path expires]
+  (str "/v1/sessions/" sid
+       "/fs/file/content?path=" (url-encode path)
+       "&expires=" expires
+       "&ticket=" (content-ticket sid path expires)))
 
 (defn- file-preview
   "The preview of `target` as one answer whose `kind` says what it holds.
 
    - `image`: a picture that a browser draws, as base64 `data` with its `media-type`,
      or 413 above `image-byte-limit`.
+   - `media`: a recording or a clip, with a signed `content-url` that streams it.
    - `binary`: another file with a NUL byte. Only its path and size come back.
    - `text`: the window of lines around `anchor`."
-  [^java.io.File target anchor]
-  (let [path (.getPath target)]
-    (if-let [media-type (image-media-type (file-head target))]
+  [sid ^java.io.File target anchor]
+  (let [path
+        (.getPath target)
+
+        head
+        (file-head target)
+
+        playable
+        (playable-media-type head)]
+
+    (if-let [media-type (image-media-type head)]
       (let [^bytes picture (with-open [in (java.io.FileInputStream. target)]
                              (.readNBytes in (int (inc (long image-byte-limit)))))]
         (if (> (alength picture) (long image-byte-limit))
@@ -312,22 +424,29 @@
                                :media-type media-type
                                :size-bytes (alength picture)
                                :data (.encodeToString (java.util.Base64/getEncoder) picture)})))
-      (if (binary-file? target)
-        (http/json-response {:path path :kind "binary" :size-bytes (.length target)})
-        (let [from (max 1 (- (long anchor) (quot preview-line-limit 2)))
-              {:keys [lines is-truncated]} (file-window target from)]
+      (cond playable (let [expires (+ (util/now-ms) (long content-ticket-ttl-ms))]
+                       (http/json-response {:path path
+                                            :kind "media"
+                                            :media-type playable
+                                            :size-bytes (.length target)
+                                            :content-url (content-url sid path expires)
+                                            :expires-at expires}))
+            (binary-file? target) (http/json-response
+                                    {:path path :kind "binary" :size-bytes (.length target)})
+            :else (let [from (max 1 (- (long anchor) (quot preview-line-limit 2)))
+                        {:keys [lines is-truncated]} (file-window target from)]
 
-          (http/json-response {:path path
-                               :kind "text"
-                               :line anchor
-                               :first-line from
-                               :lines lines
-                               :is-truncated is-truncated
-                               :size-bytes (.length target)}))))))
+                    (http/json-response {:path path
+                                         :kind "text"
+                                         :line anchor
+                                         :first-line from
+                                         :lines lines
+                                         :is-truncated is-truncated
+                                         :size-bytes (.length target)}))))))
 
 (defn- read-file-handler
   "GET /v1/sessions/:sid/fs/file?path=…&line=… — the preview of one session-readable
-   file, with a `kind` of `text`, `image` or `binary`.
+   file, with a `kind` of `text`, `image`, `media` or `binary`.
 
    A path in a transcript names a file on the machine that ran the step. Opening
    an editor there is the right answer for whoever sits at that machine, and no
@@ -352,11 +471,154 @@
         (cond (:error found) (:error found)
               (and asked-line (not (pos? (long (or line 0)))))
               (http/error-response 400 :invalid-request "line must be a positive whole number")
-              :else (try (file-preview target (or line 1))
+              :else (try (file-preview sid target (or line 1))
                          (catch java.io.IOException _
                            (http/error-response 400
                                                 :invalid-request "that file could not be read"
                                                 :path (.getPath target)))))))))
+
+(def ^:private content-chunk-bytes
+  "Bytes one read copies from disk to the socket. The file is never held whole."
+  (* 64 1024))
+
+(defn- file-range-body
+  "A streamed body of `length` bytes of `file` from byte `start`. It reads the file
+   in chunks while the socket takes them, so a long recording is never in memory."
+  [^java.io.File file ^long start ^long length]
+  (reify
+    ring-protocols/StreamableResponseBody
+      (write-body-to-stream [_ _ output-stream]
+        (let [^java.io.OutputStream out
+              output-stream
+
+              buffer
+              (byte-array content-chunk-bytes)]
+
+          (try (with-open [raf (java.io.RandomAccessFile. file "r")]
+                 (.seek raf start)
+                 (loop [left length]
+                   (when (pos? left)
+                     (let [read (.read raf buffer 0 (int (min left (alength buffer))))]
+                       (when (pos? read) (.write out buffer 0 read) (recur (- left read)))))))
+               (finally (.close out)))))))
+
+(defn- byte-range
+  "The one byte range that the `Range` header `header` asks of a file of `size`
+   bytes, as `[first last]`, `:unsatisfiable`, or nil for the whole file. A header
+   that is not one valid `bytes` range is ignored, and several ranges get the whole
+   file: a media element asks for one range at a time."
+  [header ^long size]
+  (when-let [[_ from to] (and (string? header)
+                              (re-matches #"(?i)\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*" header))]
+    (let [from-text from
+          to-text to
+          from (when (seq from-text) (parse-long from-text))
+          to (when (seq to-text) (parse-long to-text))]
+
+      (cond
+        ;; a number too long for a long is not a range
+        (or (and (seq from-text) (nil? from)) (and (seq to-text) (nil? to))) nil
+        (and from to (< (long to) (long from))) nil
+        from
+        (if (>= (long from) size) :unsatisfiable [from (min (dec size) (long (or to (dec size))))])
+        to (if (or (zero? (long to)) (zero? size))
+             :unsatisfiable
+             [(max 0 (- size (long to))) (dec size)])
+        :else nil))))
+
+(defn- content-headers
+  [media-type]
+  {"Content-Type" media-type
+   "Accept-Ranges" "bytes"
+   "X-Content-Type-Options" "nosniff"
+   "Content-Security-Policy" "sandbox"
+   "Cache-Control" "private"})
+
+(defn- query-string-param
+  "The query param `k` when it is one string, else nil. A repeated param is refused."
+  [request k]
+  (let [v (get-in request [:query-params k])]
+    (when (string? v) v)))
+
+(defn- ticket-refusal
+  "The 401 answer when the ticket of `request` does not admit `sid` to `path`, or nil."
+  [sid path request]
+  (let [expires
+        (query-string-param request "expires")
+
+        ticket
+        (query-string-param request "ticket")]
+
+    (cond (not (and (string? path) (string? ticket) expires (re-matches #"\d{1,15}" expires)))
+          (http/error-response 401 :invalid-ticket "missing or invalid content ticket")
+          (not (util/constant-time=? (content-ticket sid path (parse-long expires)) ticket))
+          (http/error-response 401 :invalid-ticket "missing or invalid content ticket")
+          (< (long (parse-long expires)) (util/now-ms))
+          (http/error-response 401
+                               :ticket-expired
+                               "the content ticket expired; read the file preview again"))))
+
+(defn- read-content-handler
+  "GET /v1/sessions/:sid/fs/file/content?path=…&expires=…&ticket=… — the bytes of
+   one session-readable recording or clip, streamed from disk with `Range` support.
+
+   A media element fetches its own source and cannot send the bearer token, so the
+   signed ticket of the `media` preview is the authorization, on every gateway. The
+   read gates run again on each request, because access can change while a long
+   episode plays. Only a file whose first bytes are audio or video is served: the
+   route cannot become a download of any file."
+  [request]
+  (let [sid
+        (http/path-sid request)
+
+        path
+        (query-string-param request "path")]
+
+    ;; The ticket goes first: without one, a caller cannot tell a session that exists.
+    (or
+      (ticket-refusal sid path request)
+      (if-not (state/soul sid)
+        (http/session-404 (get-in request [:path-params :sid]))
+        (let [found
+              (session-readable-file sid path)
+
+              ^java.io.File target
+              (:file found)]
+
+          (cond (:error found) (:error found)
+                ;; the ticket names the resolved file, so a path must name it the same way
+                (not= path (.getPath target))
+                (http/error-response 401 :invalid-ticket "missing or invalid content ticket")
+                :else (try (if-let [media-type (playable-media-type (file-head target))]
+                             (let [size (.length target)
+                                   headers (content-headers media-type)
+                                   wanted (byte-range (get-in request [:headers "range"]) size)]
+
+                               (cond (= :unsatisfiable wanted)
+                                     {:status 416
+                                      :headers (assoc headers "Content-Range" (str "bytes */" size))
+                                      :body ""}
+                                     wanted
+                                     (let [[first-byte last-byte] wanted
+                                           length (inc (- (long last-byte) (long first-byte)))]
+
+                                       {:status 206
+                                        :headers (assoc headers
+                                                   "Content-Range"
+                                                   (str "bytes " first-byte "-" last-byte "/" size)
+                                                   "Content-Length" (str length))
+                                        :body (file-range-body target first-byte length)})
+                                     :else {:status 200
+                                            :headers (assoc headers "Content-Length" (str size))
+                                            :body (file-range-body target 0 size)}))
+                             (http/error-response 415
+                                                  :unsupported-media-type
+                                                  "that file is not audio or video"
+                                                  :path path))
+                           (catch java.io.IOException _
+                             (http/error-response 400
+                                                  :invalid-request "that file could not be read"
+                                                  :path path)))))))))
 
 (defn- workspace-handler
   [request]
@@ -378,4 +640,5 @@
    [:get "/v1/sessions/:sid/workspace"] workspace-handler
    [:patch "/v1/sessions/:sid/workspace/root"] change-root-handler
    [:post "/v1/sessions/:sid/fs/actions/open"] open-file-handler
-   [:get "/v1/sessions/:sid/fs/file"] read-file-handler})
+   [:get "/v1/sessions/:sid/fs/file"] read-file-handler
+   [:get "/v1/sessions/:sid/fs/file/content"] read-content-handler})

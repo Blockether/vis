@@ -1007,6 +1007,16 @@
       "operations": {
         "get": {
           "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/sessions/:sid/fs/file/content"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
           "response": "binary",
           "extension": "background"
         }
@@ -3979,6 +3989,47 @@
             "size_bytes": {
               "type": "integer",
               "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "Media",
+          "description": "A recording or a clip that a browser plays, typed by its first bytes. A player reads it from content_url, which streams the file and answers Range requests.",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "kind",
+            "media_type",
+            "size_bytes",
+            "content_url",
+            "expires_at"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "media"
+            },
+            "media_type": {
+              "type": "string",
+              "pattern": "^(audio|video)/[a-z0-9.+-]+$"
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "content_url": {
+              "type": "string",
+              "pattern": "^/v1/sessions/[^/?#]+/fs/file/content\\?",
+              "description": "The address of GET /v1/sessions/:sid/fs/file/content for this file, relative to the gateway origin. Its signed ticket authorizes the request without a bearer token, because a media element cannot send one. The ticket names this session and this file only."
+            },
+            "expires_at": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Epoch milliseconds after which the ticket in content_url is refused. Read the preview again for a new address."
             }
           }
         }

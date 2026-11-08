@@ -3496,7 +3496,7 @@
     (vis/notify! (or error "Link could not be opened") :level :warn :ttl-ms status-error-ttl-ms)))
 
 (defn- open-click-target!
-  ([{:keys [kind url session-id]}]
+  ([{:keys [kind url session-id user-written?]}]
    (if (and (= :url kind) (re-find #"(?i)^attachment:" (str url)))
      ;; Capture the clicked session before the worker runs: changing tabs must
      ;; not resolve the link against another session's attachments.
@@ -3505,6 +3505,16 @@
                         #(try (case kind
                                 :file
                                 (open-file-target! url)
+
+                                ;; A `file:///` URL that the user wrote names a file on this
+                                ;; machine, such as a recording outside the workspace. The
+                                ;; user chose it, so the cwd confinement of `open!` does not
+                                ;; apply. A file URL from the model stays confined.
+                                :url
+                                (report-open-result! (if-let [path (when user-written?
+                                                                     (opener/file-url-path url))]
+                                                       (opener/open-local! path)
+                                                       (opener/open! url)))
 
                                 ;; Inline transcript image: the PNG lives in the
                                 ;; system temp dir (outside the workspace), so the

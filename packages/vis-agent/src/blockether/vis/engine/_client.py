@@ -1662,6 +1662,23 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_session_fs_file_content(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> Response:
+        """GET /v1/sessions/:sid/fs/file/content — binary response.
+
+        Stream one recording or clip. Pass the path, expires and ticket of the
+        content_url that the media preview of get_session_fs_file gives.
+        """
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/fs/file/content",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response
+
     def put_session_group(
         self,
         sid: str,

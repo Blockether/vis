@@ -36,6 +36,7 @@ import livePrimitivesWire from '../../../../packages/vis-contract/resources/vis-
 import { createComposerPaste, type ComposerPaste } from '../lib/paste';
 import type {
   ContentBlock,
+  FileMedia,
   FileSuggestion,
   FileWindow,
   GatewayConn,
@@ -987,14 +988,25 @@ export const STORY_FILE_WINDOW: FileWindow = {
   size_bytes: 214118,
 };
 
+/** A long recording on the gateway machine. The player streams it and loads no bytes first. */
+export const STORY_FILE_MEDIA: FileMedia = {
+  kind: 'media',
+  path: '/Users/me/Podcasts/zero-to-demo-day/final/zero-to-demo-day.mp3',
+  media_type: 'audio/mpeg',
+  size_bytes: 148_204_544,
+  content_url: '/v1/sessions/session-story/fs/file/content?path=story.mp3&ticket=story',
+  expires_at: 4_102_444_800_000,
+};
+
 /** A preview reads one window and hands the editor a path; a story picks what it reads. */
-export function storyPreviewClient(answer: FileWindow | Error) {
+export function storyPreviewClient(answer: FileWindow | FileMedia | Error) {
   return {
     readPath: async () => {
       if (answer instanceof Error) throw answer;
       return answer;
     },
     openPath: async () => undefined,
+    gatewayUrl: (path: string) => `http://127.0.0.1:7777${path}`,
   } as unknown as GatewayClient;
 }
 

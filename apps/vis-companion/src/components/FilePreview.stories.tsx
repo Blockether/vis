@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 
-import { STORY_FILE_WINDOW, storyPreviewClient } from '../dev/story-data';
+import { STORY_FILE_MEDIA, STORY_FILE_WINDOW, storyPreviewClient } from '../dev/story-data';
 import { FilePreview } from './FilePreview';
 
 /**
@@ -25,3 +25,8 @@ type Story = StoryObj<typeof meta>;
 
 /** A press that carried a line: that line is marked, and the window is built around it. */
 export const MarkedLine: Story = { args: { line: STORY_FILE_WINDOW.line } };
+
+/** A recording that a message named by its file URL: the player of the app streams it. */
+export const Recording: Story = {
+  args: { client: storyPreviewClient(STORY_FILE_MEDIA), path: STORY_FILE_MEDIA.path },
+};

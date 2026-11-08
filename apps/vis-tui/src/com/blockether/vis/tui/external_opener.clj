@@ -113,6 +113,12 @@
 
     (try (java.net.URLDecoder/decode stripped "UTF-8") (catch Throwable _ stripped))))
 
+(defn file-url-path
+  "The decoded local path of the absolute file URL `s`, such as `file:///tmp/a%20b.mp3`,
+   or nil for any other string."
+  ^String [s]
+  (when (re-find #"(?i)^file:///" (str/trim (str s))) (file-url->path (str/trim (str s)))))
+
 (defn- strip-line-anchor
   "Drop a trailing `#Lline` anchor a file-link produced. Returns
    `[path line-or-nil]`."

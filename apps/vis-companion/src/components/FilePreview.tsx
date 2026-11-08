@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GatewayClient } from '../lib/gateway';
-import type { WorkspaceFile } from '../lib/types';
+import { mediaStreamSrc } from '../lib/media-stream';
+import type { FileMedia, WorkspaceFile } from '../lib/types';
 import { ArrowOutIcon } from './icons';
 import { ImageViewer } from './ImageViewer';
+import { MediaRecording, mediaMeta, RecordingPlayer } from './Media';
 import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
 
 /**
@@ -28,8 +30,9 @@ function decodeBase64(data: string): Uint8Array<ArrayBuffer> {
  * machine that actually holds the tree.
  *
  * One read answers every file, and its `kind` says what came back: a picture
- * opens in the image viewer (#432), and another binary file says that it has
- * no preview here. Other refusals — a path this session cannot read, a file that
+ * opens in the image viewer (#432), a recording or a video plays from a stream
+ * of the gateway (#449), and another binary file says that it has no preview
+ * here. Other refusals — a path this session cannot read, a file that
  * is gone — are shown in the gateway's own words rather than as an empty box.
  */
 export function FilePreview({
@@ -51,6 +54,8 @@ export function FilePreview({
   const [failure, setFailure] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
   const name = path.slice(path.lastIndexOf('/') + 1) || path;
+  /** The media preview was read again once for a new ticket; a second error is final. */
+  const isRenewed = useRef(false);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -59,6 +64,7 @@ export function FilePreview({
     setFile(null);
     setPicture(null);
     setFailure(null);
+    isRenewed.current = false;
     void client
       .readPath(sid, path, line, abort.signal)
       .then((answer) => {
@@ -86,6 +92,21 @@ export function FilePreview({
   const standAt = useCallback((element: HTMLDivElement | null) => {
     element?.scrollIntoView?.({ block: 'center' });
   }, []);
+
+  // The ticket in the stream address has an expiry. A player that seeks after it gets
+  // an error, so the sheet reads the preview again once for a new address. Another
+  // error is a real failure.
+  const mediaFailed = (media: FileMedia) => {
+    if (isRenewed.current || Date.now() < media.expires_at) {
+      setFailure(`Vis cannot play ${name}.`);
+      return;
+    }
+    isRenewed.current = true;
+    void client
+      .readPath(sid, path, line)
+      .then(setFile)
+      .catch((cause: unknown) => setFailure((cause as Error).message));
+  };
 
   const openThere = () => {
     setIsOpening(true);
@@ -121,6 +142,16 @@ export function FilePreview({
             <p className="flex items-center gap-2 p-3 text-dialog-hint">
               <Spinner /> Reading {name}…
             </p>
+          ) : file.kind === 'media' ? (
+            <div className="p-3 font-sans">
+              <MediaPreview
+                key={file.content_url}
+                file={file}
+                name={name}
+                src={mediaStreamSrc(client.gatewayUrl(file.content_url))}
+                onError={() => mediaFailed(file)}
+              />
+            </div>
           ) : file.kind !== 'text' ? (
             // A binary file, or a kind that a newer gateway sends and this Companion
             // does not know. The answer has come, so the sheet must not keep reading.
@@ -163,5 +194,46 @@ export function FilePreview({
         </div>
       </DialogFrame>
     </Modal>
+  );
+}
+
+/**
+ * A recording in the player of the app, or a video in the player of the platform. The
+ * element loads `src` by itself, so it streams the file with range requests and can seek
+ * without the whole file. A long recording never becomes one Blob in memory (#449).
+ */
+function MediaPreview({
+  file,
+  name,
+  src,
+  onError,
+}: {
+  file: FileMedia;
+  name: string;
+  src: string;
+  onError: () => void;
+}) {
+  const meta = mediaMeta({ filename: name, media_type: file.media_type, size: file.size_bytes });
+  if (file.media_type.startsWith('video/'))
+    return (
+      <figure className="min-w-0">
+        <video
+          src={src}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label={name}
+          className="max-h-[70vh] w-full bg-code"
+          onError={onError}
+        />
+        <figcaption className="mt-1 font-mono text-chip uppercase tracking-wider text-footer-muted">
+          {meta}
+        </figcaption>
+      </figure>
+    );
+  return (
+    <MediaRecording name={name} meta={meta}>
+      <RecordingPlayer src={src} onError={onError} />
+    </MediaRecording>
   );
 }

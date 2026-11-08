@@ -756,10 +756,12 @@
          (->ast text))))
 
 (def ^:private bare-url-re
-  "A bare http(s) URL that does not continue a word; group 1 is the URL. JavaScript `\\s`
-   also matches the Unicode spaces, so the class names them. The Companion uses the same
-   rule, and `vis-contract/fixtures/message-links.json` holds the cases of both clients."
-  #"(?i)(?:^|[^A-Za-z0-9_])(https?://[^\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff<>\"`]+)")
+  "A bare http(s) URL or `file:///` URL that does not continue a word; group 1 is the URL.
+   A file URL must name an absolute path, so `file://host/x` and `file:x` stay text.
+   JavaScript `\\s` also matches the Unicode spaces, so the class names them. The Companion
+   uses the same rule, and `vis-contract/fixtures/message-links.json` holds the cases of both
+   clients."
+  #"(?i)(?:^|[^A-Za-z0-9_])((?:https?://|file:///)[^\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff<>\"`]+)")
 
 (def ^:private url-trailing-punctuation #{\. \, \: \; \! \? \' \" \* \_ \~})
 
@@ -779,7 +781,7 @@
         url))))
 
 (defn url-spans
-  "Each bare http(s) URL of `text` as `{:start :end :url}`, in order. Trailing punctuation
+  "Each bare http(s) or `file:///` URL of `text` as `{:start :end :url}`, in order. Trailing punctuation
    and an unmatched closing bracket stay outside the URL. A scheme alone is no URL."
   [text]
   (let [^java.util.regex.Matcher m (re-matcher bare-url-re (str text))]
@@ -789,7 +791,7 @@
               url (trim-url (.group m 1))]
 
           (recur (cond-> out
-                   (re-matches #"(?i)https?://.+" url)
+                   (re-matches #"(?i)(?:https?://|file:///).+" url)
                    (conj {:start start :end (+ start (count url)) :url url}))))
         out))))
 
@@ -817,7 +819,7 @@
                    (conj [:a {:href url} [:span attrs url]]))))))))
 
 (defn linkify-urls
-  "Make each bare http(s) URL in Markdown tree `node` a link, so the TUI paints and opens
+  "Make each bare http(s) or `file:///` URL in Markdown tree `node` a link, so the TUI paints and opens
    it like a Markdown link. Code, links and images keep their text. Only the tree changes:
    the message text that the model gets and the session keeps stays the same."
   [node]

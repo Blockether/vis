@@ -1463,6 +1463,9 @@
                         ;; A browser that `vis-agent web` opened holds only a one-time
                         ;; launch code, which this route exchanges for the token.
                         (= "/v1/web/launches/redeem" uri)
+                        ;; A media element cannot send the token. The signed ticket
+                        ;; of the file preview authorizes it, and the handler checks it.
+                        (fs-api/content-ticket-request? request)
                         (some #(contains? (or (:open-uris %) #{}) uri) contribs))
               authed? (or (util/constant-time=? expected
                                                 (some-> (get-in request [:headers "authorization"])
@@ -1509,6 +1512,8 @@
       (if (or (contains? protocol-open-uris uri)
               (str/starts-with? uri "/docs")
               (str/starts-with? uri "/v1/hooks/")
+              ;; A media element cannot send the protocol headers either.
+              (fs-api/content-ticket-request? request)
               browser-uri?)
         (handler request)
         (let [v (protocol/gateway-verdict request)]

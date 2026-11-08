@@ -2,8 +2,10 @@
   "Bare URLs in a message that the user sends show as links and open on click (#446)."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [com.blockether.vis.tui.external-opener :as opener]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna SGR TerminalSize TextCharacter]
@@ -56,6 +58,39 @@
                              :underlined? (every? :underlined? cells)}]))))
          (finally (.stopScreen screen)))))
 
+(defn- press-painted-link
+  "Paint `message`, press its only link as the mouse does, and return what the openers got."
+  [message]
+  (let [term
+        (doto (TerminalScreen. (DefaultVirtualTerminal. (TerminalSize. 80 40))) (.startScreen))
+
+        opened
+        (promise)]
+
+    (try (.reset interactions/hit-map)
+         (.beginFrame interactions/hit-map)
+         (render/draw-chat-bubble! (.newTextGraphics term)
+                                   message
+                                   0 2
+                                   60 {:viewport-top 0 :viewport-h 40})
+         (.commitFrame interactions/hit-map)
+         (let [hit (first (for [row (range 40)
+                                col (range 80)
+                                :let [hit (.lookup interactions/hit-map col row)]
+                                :when (= :url (:kind hit))]
+
+                            hit))]
+           (with-redefs-fn {#'opener/open-local! (fn [path]
+                                                   (deliver opened [:local path])
+                                                   {:status :ok})
+                            #'opener/open! (fn [url]
+                                             (deliver opened [:url url])
+                                             {:status :ok})}
+             (fn []
+               ((deref #'screen/open-click-target!) hit)
+               (deref opened 2000 ::timeout))))
+         (finally (.stopScreen term)))))
+
 (defdescribe
   user-message-links-test
   (it "links the bare URLs of the shared cases, also in a windowed long message"
@@ -90,4 +125,20 @@
                    (painted-links {:role :assistant
                                    :text ""
                                    :prewrapped-lines (mapv :line entries)
-                                   :line-meta (mapv :meta entries)}))))))
+                                   :line-meta (mapv :meta entries)})))))
+  (it "opens a file URL that the user wrote as a local file, also outside the workspace"
+      (let [{:keys [prewrapped-lines line-meta]}
+            (virtual/project-message {:role :user :text "Play file:///tmp/my%20show.m4b now"} 60 {})
+
+            delivered
+            (#'render/delivered-message-entries "Play file:///tmp/b.mp3 now" 0 40 {})]
+
+        (expect
+          (= [:local "/tmp/my show.m4b"]
+             (press-painted-link
+               {:role :user :text "" :prewrapped-lines prewrapped-lines :line-meta line-meta})))
+        (expect (= [:local "/tmp/b.mp3"]
+                   (press-painted-link {:role :assistant
+                                        :text ""
+                                        :prewrapped-lines (mapv :line delivered)
+                                        :line-meta (mapv :meta delivered)}))))))

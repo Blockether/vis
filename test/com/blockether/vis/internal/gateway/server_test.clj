@@ -7757,6 +7757,172 @@
         (finally (.delete picture) (.delete archive) (.delete root) (.delete outside))))))
 
 (defdescribe
+  a-pressed-recording-streams-with-seek
+  (it
+    "a pressed recording streams with seek"
+    ;; Regression #449: a `file://` link to a 148 MB episode gave a binary preview,
+    ;; and the app had nothing to play. The preview names a recording as media with a
+    ;; signed address, and that address streams the bytes with `Range`, without the
+    ;; bearer token that a media element cannot send.
+    (let [sid
+          (random-uuid)
+
+          root
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-read-media"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          mp3
+          (byte-array (concat (map unchecked-byte [0x49 0x44 0x33 4 0 0 0 0 0 0])
+                              (map #(unchecked-byte (mod % 251)) (range 1990))))
+
+          episode
+          (io/file root "episode.mp3")
+
+          notes
+          (io/file root "notes.txt")
+
+          redefs
+          {#'state/soul (fn [id]
+                          (when (= sid id) {"id" (str id)}))
+           #'state/session-workspace-info (fn [id]
+                                            (when (= sid id) {"root" (.getPath root)}))
+           #'lp/env-for (fn [_]
+                          {:workspace {:root (.getPath root) :repo-root (.getPath root)}
+                           :security-policy {:jail-enabled true :process-jail {}}
+                           :security/filesystem-roots []})}
+
+          preview
+          (fn [path]
+            (with-redefs-fn redefs
+              #(wire/parse-json (:body (#'fs-api/read-file-handler
+                                        {:path-params {:sid (str sid)}
+                                         :query-params {"path" path}})))))
+
+          request
+          (fn [url headers]
+            (let [[uri query] (str/split url #"\?" 2)]
+              (ring-params/assoc-query-params
+                {:request-method :get :uri uri :query-string query :headers headers}
+                "UTF-8")))
+
+          fetch
+          (fn [url & {:as headers}]
+            (let [req
+                  (request url (or headers {}))
+
+                  response
+                  (with-redefs-fn redefs
+                    #(#'fs-api/read-content-handler
+                       (assoc req
+                         :path-params {:sid (second (re-find #"^/v1/sessions/([^/]+)/" url))})))
+
+                  out
+                  (java.io.ByteArrayOutputStream.)]
+
+              (when (satisfies? ring-protocols/StreamableResponseBody (:body response))
+                (ring-protocols/write-body-to-stream (:body response) response out))
+              (assoc response :bytes (.toByteArray out))))
+
+          signed
+          (fn [path expires]
+            (str "/v1/sessions/" sid
+                 "/fs/file/content?path=" (java.net.URLEncoder/encode (str path) "UTF-8")
+                 "&expires=" expires
+                 "&ticket=" (#'fs-api/content-ticket sid path expires)))]
+
+      (with-open [out (java.io.FileOutputStream. episode)]
+        (.write out ^bytes mp3))
+      (spit notes "plain text")
+      (try
+        (let [answered
+              (preview "episode.mp3")
+
+              url
+              (get answered "content_url")
+
+              path
+              (get answered "path")]
+
+          ;; a recording is media, typed by its bytes, with an address that plays it
+          (expect (= "media" (get answered "kind")))
+          (expect (= "audio/mpeg" (get answered "media_type")))
+          (expect (= (count mp3) (get answered "size_bytes")))
+          (expect (< (util/now-ms) (get answered "expires_at")))
+          (expect (holds-file-preview-contract? answered))
+          ;; one range is answered as 206 with exactly its bytes
+          (let [response
+                (fetch url "range" "bytes=0-99")
+
+                headers
+                (:headers response)]
+
+            (expect (= 206 (:status response)))
+            (expect (= (seq (take 100 mp3)) (seq (:bytes response))))
+            (expect (= "100" (get headers "Content-Length")))
+            (expect (= (str "bytes 0-99/" (count mp3)) (get headers "Content-Range")))
+            (expect (= "bytes" (get headers "Accept-Ranges")))
+            (expect (= "audio/mpeg" (get headers "Content-Type")))
+            (expect (= "nosniff" (get headers "X-Content-Type-Options")))
+            (expect (= "sandbox" (get headers "Content-Security-Policy")))
+            (expect (= "private" (get headers "Cache-Control"))))
+          ;; a seek to the end and a suffix range land on the same last bytes
+          (doseq [asked ["bytes=1900-" "bytes=-100"]]
+            (let [response (fetch url "range" asked)]
+              (expect (= 206 (:status response)))
+              (expect (= (seq (drop 1900 mp3)) (seq (:bytes response))))))
+          ;; no range, or several ranges, get the whole file
+          (doseq [headers [{} {"range" "bytes=0-1,5-9"}]]
+            (let [response (apply fetch url (mapcat identity headers))]
+              (expect (= 200 (:status response)))
+              (expect (= (seq mp3) (seq (:bytes response))))
+              (expect (= (str (count mp3)) (get-in response [:headers "Content-Length"])))))
+          ;; a range past the end is refused with the size
+          (let [response (fetch url "range" "bytes=5000-")]
+            (expect (= 416 (:status response)))
+            (expect (= (str "bytes */" (count mp3)) (get-in response [:headers "Content-Range"]))))
+          ;; the address needs its ticket, for this file, before it expires
+          (expect (= 401 (:status (fetch (str/replace url #"&ticket=[^&]*" "")))))
+          (expect (= 401 (:status (fetch (str/replace url #"ticket=" "ticket=x")))))
+          (expect (= 401
+                     (:status (fetch (str/replace url
+                                                  (re-pattern "path=[^&]*")
+                                                  (str "path="
+                                                       (java.net.URLEncoder/encode
+                                                         (.getPath (io/file (.getParent (io/file
+                                                                                          path))
+                                                                            "notes.txt"))
+                                                         "UTF-8")))))))
+          (let [response (fetch (signed path (- (util/now-ms) 1000)))]
+            (expect (= 401 (:status response)))
+            (expect (= "ticket-expired"
+                       (get-in (wire/parse-json (:body response)) ["error" "type"]))))
+          ;; a valid ticket for a file that is not audio or video serves nothing
+          (let [text-path (.getPath (io/file (.getParent (io/file path)) "notes.txt"))]
+            (expect (= 415 (:status (fetch (signed text-path (+ (util/now-ms) 60000)))))))
+          ;; a token-gated gateway lets the ticket through its token and protocol gates,
+          ;; and keeps the same route closed without a ticket
+          (with-server-state!
+            {:require-token? true :token "secret"}
+            (fn []
+              (let [authed
+                    ((rv 'wrap-auth) (constantly {:status 200}) "secret" [])
+
+                    gated
+                    ((rv 'wrap-protocol) authed [])]
+
+                (expect (= 200 (:status (gated (request url {})))))
+                (expect (= 401
+                           (:status (authed (request (str/replace url #"&ticket=[^&]*" "") {})))))
+                (expect (= 401
+                           (:status (authed (request (str "/v1/sessions/" sid "/fs/file?ticket=x")
+                                                     {})))))
+                (expect (= 426
+                           (:status (gated (request (str "/v1/sessions/" sid "/fs/file?ticket=x")
+                                                    {})))))))))
+        (finally (.delete episode) (.delete notes) (.delete root))))))
+
+(defdescribe
   session-readable-external-file-preview-test
   (it
     "session readable external file preview"

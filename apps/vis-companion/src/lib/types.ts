@@ -369,8 +369,9 @@ export interface FileSuggestion {
 }
 
 // The preview of one workspace file from GET /v1/sessions/:sid/fs/file. Its `kind`
-// says what it holds: a window of text around the pressed line, a picture, or a
-// binary file that has no preview. The gateway decides the kind from the file's
+// says what it holds: a window of text around the pressed line, a picture, a
+// recording or a video that streams from the gateway, or a binary file that has no
+// preview. The gateway decides the kind from the file's
 // first bytes, not from its name, and bounds each answer.
 interface WorkspaceFileBase {
   path: string;
@@ -395,11 +396,25 @@ export interface FilePicture extends WorkspaceFileBase {
   data: string;
 }
 
+/** A recording or a video. The player streams it from `content_url`, with seek (#449). */
+export interface FileMedia extends WorkspaceFileBase {
+  kind: 'media';
+  /** `audio/...` or `video/...`. */
+  media_type: string;
+  /**
+   * The stream path, relative to the gateway origin. It holds a signed ticket, because a
+   * media element cannot send the bearer header.
+   */
+  content_url: string;
+  /** When the ticket in `content_url` stops working, epoch ms. */
+  expires_at: number;
+}
+
 export interface FileWithoutPreview extends WorkspaceFileBase {
   kind: 'binary';
 }
 
-export type WorkspaceFile = FileWindow | FilePicture | FileWithoutPreview;
+export type WorkspaceFile = FileWindow | FilePicture | FileMedia | FileWithoutPreview;
 
 export interface Project {
   id: string;

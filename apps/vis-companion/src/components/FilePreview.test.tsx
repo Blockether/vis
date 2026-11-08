@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import { FilePreview } from './FilePreview';
@@ -106,4 +106,82 @@ it('stops reading when the gateway answers with a kind it does not know', async 
 
   await waitFor(() => expect(screen.getByText(/no preview for this kind of file/)).toBeVisible());
   expect(screen.queryByText(/Reading app\.tar/)).toBeNull();
+});
+
+const EPISODE = '/Users/me/Podcasts/final/episode.mp3';
+const STREAM = '/v1/sessions/session-1/fs/file/content?path=%2FUsers%2Fme%2FPodcasts%2Ffinal%2Fepisode.mp3&ticket=t1';
+
+function media(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: 'media',
+    path: EPISODE,
+    media_type: 'audio/mpeg',
+    size_bytes: 148_000_000,
+    content_url: STREAM,
+    expires_at: Date.now() + 60_000,
+    ...overrides,
+  };
+}
+
+function mediaGateway(readPath: ReturnType<typeof vi.fn>): GatewayClient {
+  return gateway({
+    readPath,
+    gatewayUrl: (path: string) => `http://studio.local:7777${path}`,
+  });
+}
+
+// #449: a 148 MB recording on the gateway machine had no preview, so it could not be played.
+it('plays a recording from the stream address of the gateway, without a download first', async () => {
+  const fetchSpy = vi.fn();
+  vi.stubGlobal('fetch', fetchSpy);
+  const createObjectURL = vi.fn();
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL }));
+  render(
+    <FilePreview client={mediaGateway(vi.fn().mockResolvedValue(media()))} sid="session-1" path={EPISODE} onClose={vi.fn()} />,
+  );
+
+  await screen.findByRole('button', { name: 'Play' });
+  const audio = document.querySelector('audio');
+  expect(audio).toHaveAttribute('src', `http://studio.local:7777${STREAM}`);
+  expect(screen.getByText('episode.mp3', { selector: 'figcaption span' })).toBeVisible();
+  expect(screen.getByText(/MP3 · 141(\.\d)?MB/i)).toBeVisible();
+  expect(fetchSpy).not.toHaveBeenCalled();
+  expect(createObjectURL).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
+
+it('plays a video in a video element from the stream address', async () => {
+  render(
+    <FilePreview
+      client={mediaGateway(vi.fn().mockResolvedValue(media({ media_type: 'video/mp4', path: '/tmp/demo.mp4' })))}
+      sid="session-1"
+      path="/tmp/demo.mp4"
+      onClose={vi.fn()}
+    />,
+  );
+
+  await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+  expect(document.querySelector('video')).toHaveAttribute('src', `http://studio.local:7777${STREAM}`);
+  expect(document.querySelector('audio')).toBeNull();
+});
+
+it('reads a new stream address once when the old one expired', async () => {
+  const fresh = `${STREAM.replace('t1', 't2')}`;
+  const readPath = vi
+    .fn()
+    .mockResolvedValueOnce(media({ expires_at: Date.now() - 1 }))
+    .mockResolvedValueOnce(media({ content_url: fresh, expires_at: Date.now() - 1 }));
+  render(<FilePreview client={mediaGateway(readPath)} sid="session-1" path={EPISODE} onClose={vi.fn()} />);
+
+  await screen.findByRole('button', { name: 'Play' });
+  fireEvent.error(document.querySelector('audio')!);
+  await waitFor(() =>
+    expect(document.querySelector('audio')).toHaveAttribute('src', `http://studio.local:7777${fresh}`),
+  );
+  expect(readPath).toHaveBeenCalledTimes(2);
+
+  // The new address fails too: the sheet says so and does not read again.
+  fireEvent.error(document.querySelector('audio')!);
+  await screen.findByText('Vis cannot play episode.mp3.');
+  expect(readPath).toHaveBeenCalledTimes(2);
 });

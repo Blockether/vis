@@ -3729,8 +3729,10 @@
                   :artifact artifact}))))
 
 (defn- paint-row-link-regions!
-  "Register the link and file spans of a bubble row and underline the hovered span."
-  [^TextGraphics g meta line viewport-top x y iw right-inset]
+  "Register the link and file spans of a bubble row and underline the hovered span.
+   A link in text that the user wrote carries `:user-written? true`: its press may open
+   a local file outside the workspace, which a link from the model may not."
+  [^TextGraphics g meta line viewport-top x y iw right-inset user?]
   (let [x
         (long x)
 
@@ -3784,7 +3786,9 @@
           (let [abs-col (+ (long x) (long col))]
             (.register
               interactions/hit-map
-              {:bounds {:row abs-row :col abs-col :width (long width)} :kind :url :url url})
+              (cond-> {:bounds {:row abs-row :col abs-col :width (long width)} :kind :url :url url}
+                (or user? (:user-text? meta))
+                (assoc :user-written? true)))
             ;; Hover affordance: when the pointer is over this
             ;; link span, brighten its already-underlined cells
             ;; to the link-chrome hover fg so the link lights up
@@ -3980,7 +3984,7 @@
         ;; MOVE/CLICK_DOWN mouse handler looks these up). `:col` is a
         ;; body-relative offset; markers are zero-width so `x` is the
         ;; first visible column of the body.
-        (paint-row-link-regions! g meta line viewport-top x y iw right-inset)
+        (paint-row-link-regions! g meta line viewport-top x y iw right-inset user?)
         ;; Left edge bar, painted in the inner padding column so it
         ;; steals no text width: the user block's own rule, and the
         ;; error card's `border-warn-edge` equivalent.
@@ -8914,7 +8918,8 @@
                        {:line (str user-input-marker text)
                         ;; The painter puts the text two columns after the rail.
                         :meta (when (seq hits)
-                                {:links (mapv (fn [{:keys [from to url]}]
+                                {:user-text? true
+                                 :links (mapv (fn [{:keys [from to url]}]
                                                 {:col (+ 2 (p/display-width (subs line 0 from)))
                                                  :width (p/display-width (subs line from to))
                                                  :url url})

@@ -1,5 +1,5 @@
 {
-  "description": "Bare http(s) URLs that the TUI and the Companion show as links in a message that the user sends (#446). Each case gives the message text and the URLs of its links, in order. The message text itself never changes.",
+  "description": "Bare http(s) URLs and bare file:/// URLs that the TUI and the Companion show as links in a message that the user sends (#446). A file URL must name an absolute path (three slashes). Each case gives the message text and the URLs of its links, in order. The message text itself never changes.",
   "cases": [
     {
       "name": "a URL at the start of the message",
@@ -104,6 +104,32 @@
       "name": "a message without a URL",
       "text": "Fix the failing test, please.",
       "links": []
+    },
+    {
+      "name": "a file URL to a local recording",
+      "text": "Plik: file:///Users/me/Podcasts/final/episode.mp3 Wersja M4B jest obok.",
+      "links": [
+        "file:///Users/me/Podcasts/final/episode.mp3"
+      ]
+    },
+    {
+      "name": "a file URL keeps its percent encoding and drops the full stop",
+      "text": "Listen to file:///tmp/my%20show.m4b.",
+      "links": [
+        "file:///tmp/my%20show.m4b"
+      ]
+    },
+    {
+      "name": "a file URL without an absolute path stays text",
+      "text": "Not file://host/share/a.mp3 and not file:relative.mp3",
+      "links": []
+    },
+    {
+      "name": "inline code keeps its file URL as text",
+      "text": "Run `open file:///tmp/a.mp3` then file:///tmp/b.mp3",
+      "links": [
+        "file:///tmp/b.mp3"
+      ]
     }
   ]
 }

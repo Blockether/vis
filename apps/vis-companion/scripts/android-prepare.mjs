@@ -506,6 +506,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeSpeechPlugin.class);
         registerPlugin(OAuthLoopbackPlugin.class);
         super.onCreate(savedInstanceState);
+        // After super: the bridge exists now. Media from an http gateway plays
+        // through the app origin; see MediaProxyClient.
+        bridge.setWebViewClient(new MediaProxyClient(bridge));
     }
 
     @Override
@@ -742,6 +745,327 @@ public class MainActivity extends BridgeActivity {
 mkdirSync(javaPackageDir, { recursive: true });
 if (!existsSync(mainActivityPath) || readFileSync(mainActivityPath, 'utf8') !== mainActivity) {
   writeFileSync(mainActivityPath, mainActivity);
+}
+/**
+ * 7. Media streams through the app origin (#449).
+ *
+ * The page origin is https://localhost, and a LAN gateway answers on plain http. The
+ * WebView lets fetch reach http, but it blocks an http audio or video element under an
+ * https page as mixed content, although Capacitor allows mixed content. So the app
+ * plays a gateway stream from https://localhost/_vis/media?src=<stream URL>, and this
+ * client reads the stream from the gateway and hands its bytes to the WebView. It copies
+ * the Range header and the status, so the player can seek. It never buffers the file.
+ *
+ * The proxy reads only a gateway file stream with a ticket. Any other source gets 400,
+ * so a page in the WebView cannot use the proxy to read other hosts.
+ */
+const mediaProxyClientPath = join(javaPackageDir, 'MediaProxyClient.java');
+const mediaProxyClient = `package ${appId};
+
+import android.net.Uri;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebView;
+import com.getcapacitor.Bridge;
+import com.getcapacitor.BridgeWebViewClient;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Pattern;
+
+// Stamped by scripts/android-prepare.mjs; edit that, not this file.
+public class MediaProxyClient extends BridgeWebViewClient {
+
+    private static final String PROXY_PATH = "/_vis/media";
+    private static final Pattern STREAM_PATH = Pattern.compile("^/v1/sessions/[^/]+/fs/file/content$");
+    private static final String[] COPIED_HEADERS = {
+        "Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control"
+    };
+    private static final int CONNECT_TIMEOUT_MS = 15000;
+    private static final int READ_TIMEOUT_MS = 60000;
+
+    private final Bridge bridge;
+
+    public MediaProxyClient(Bridge bridge) {
+        super(bridge);
+        this.bridge = bridge;
+    }
+
+    @Override
+    public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+        Uri url = request.getUrl();
+        if (!isProxy(url)) {
+            return super.shouldInterceptRequest(view, request);
+        }
+        if (!"GET".equalsIgnoreCase(request.getMethod())) {
+            return problem(405, "Method Not Allowed", "The media proxy reads only GET requests.");
+        }
+        String src = url.getQueryParameter("src");
+        Uri upstream = src == null ? null : Uri.parse(src);
+        if (!isGatewayStream(upstream)) {
+            return problem(400, "Bad Request", "The media proxy reads only a gateway file stream with a ticket.");
+        }
+        return stream(src, request.getRequestHeaders());
+    }
+
+    /** A request for the proxy path on the app origin itself. */
+    private boolean isProxy(Uri url) {
+        return url != null
+            && bridge.getScheme().equalsIgnoreCase(url.getScheme())
+            && bridge.getHost().equalsIgnoreCase(url.getHost())
+            && PROXY_PATH.equals(url.getPath());
+    }
+
+    /** An http(s) URL of GET /v1/sessions/:sid/fs/file/content with a ticket. */
+    static boolean isGatewayStream(Uri src) {
+        if (src == null || src.getHost() == null || src.getHost().isEmpty()) {
+            return false;
+        }
+        String scheme = src.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            return false;
+        }
+        String path = src.getPath();
+        if (path == null || !STREAM_PATH.matcher(path).matches()) {
+            return false;
+        }
+        String ticket = src.getQueryParameter("ticket");
+        return ticket != null && !ticket.trim().isEmpty();
+    }
+
+    private WebResourceResponse stream(String src, Map<String, String> requestHeaders) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(src).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            // The byte counts in Content-Length and Content-Range must name the bytes as sent.
+            connection.setRequestProperty("Accept-Encoding", "identity");
+            String range = header(requestHeaders, "Range");
+            if (range != null) {
+                connection.setRequestProperty("Range", range);
+            }
+            int status = connection.getResponseCode();
+            if (status < 100 || (status >= 300 && status < 400) || status > 599) {
+                // A WebResourceResponse cannot carry a redirect, and the proxy follows none.
+                connection.disconnect();
+                return problem(502, "Bad Gateway", "The gateway answered the media stream with " + status + ".");
+            }
+            InputStream body = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            if (body == null) {
+                body = new ByteArrayInputStream(new byte[0]);
+            }
+            Map<String, String> headers = new HashMap<>();
+            for (String name : COPIED_HEADERS) {
+                String value = connection.getHeaderField(name);
+                if (value != null) {
+                    headers.put(name, value);
+                }
+            }
+            String type = connection.getContentType();
+            String mime = type == null ? "application/octet-stream" : type.split(";")[0].trim();
+            // The WebView skips to the range start again, so a 206 body starts with a
+            // virtual prefix of that length; see RangeBodyStream.
+            long prefix = 0;
+            long length = status >= 400 ? -1 : connection.getContentLengthLong();
+            if (status == 206) {
+                long[] span = RangeBodyStream.contentRange(connection.getHeaderField("Content-Range"));
+                if (span == null) {
+                    connection.disconnect();
+                    return problem(502, "Bad Gateway", "The gateway answered 206 without a valid Content-Range.");
+                }
+                prefix = span[0];
+                length = span[1] - span[0] + 1;
+            }
+            HttpURLConnection owned = connection;
+            return new WebResourceResponse(mime, null, status, reason(connection, status), headers,
+                new RangeBodyStream(body, prefix, length, owned::disconnect));
+        } catch (IOException | RuntimeException failure) {
+            if (connection != null) {
+                connection.disconnect();
+            }
+            return problem(502, "Bad Gateway", "The media proxy cannot read the gateway stream.");
+        }
+    }
+
+    private static String header(Map<String, String> headers, String name) {
+        if (headers == null) {
+            return null;
+        }
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (name.equalsIgnoreCase(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    /** The constructor refuses an empty or non-ASCII reason phrase. */
+    private static String reason(HttpURLConnection connection, int status) {
+        String message = null;
+        try {
+            message = connection.getResponseMessage();
+        } catch (IOException ignored) {
+            // The status line is already read; a missing phrase gets a generic one.
+        }
+        if (message != null) {
+            message = message.trim();
+        }
+        if (message == null || message.isEmpty() || !StandardCharsets.US_ASCII.newEncoder().canEncode(message)) {
+            return status >= 400 ? "Error" : "OK";
+        }
+        return message;
+    }
+
+    private static WebResourceResponse problem(int status, String reason, String detail) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Cache-Control", "no-store");
+        return new WebResourceResponse("text/plain", "utf-8", status, reason, headers,
+            new ByteArrayInputStream(detail.getBytes(StandardCharsets.UTF_8)));
+    }
+
+}
+`;
+if (
+  !existsSync(mediaProxyClientPath) ||
+  readFileSync(mediaProxyClientPath, 'utf8') !== mediaProxyClient
+) {
+  writeFileSync(mediaProxyClientPath, mediaProxyClient);
+}
+/**
+ * The body of one media proxy answer (#449). The Android WebView applies the request
+ * Range again to an intercepted stream: it takes available() as the content size, then
+ * calls skip(first) until it reaches the range start. The gateway already answered 206
+ * with only the bytes from the range start, so the stream starts with a virtual prefix
+ * of that many bytes. skip() moves through the prefix without a network read.
+ */
+const rangeBodyStreamPath = join(javaPackageDir, 'RangeBodyStream.java');
+const rangeBodyStream = `package ${appId};
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
+
+// Stamped by scripts/android-prepare.mjs; edit that, not this file.
+/**
+ * One upstream answer as the WebView reads it. For a 206 answer the stream starts with
+ * a virtual prefix as long as the range start: the WebView skips it, because it applies
+ * the request Range to this stream again. A read inside the prefix fails, because
+ * the stream has no real bytes there. Closing the stream also releases the connection.
+ */
+final class RangeBodyStream extends InputStream {
+
+    private final InputStream body;
+    private final Closeable release;
+    private long prefixLeft;
+    /** The body bytes that remain, or -1 when the upstream did not say. */
+    private long bodyLeft;
+
+    RangeBodyStream(InputStream body, long prefix, long bodyLength, Closeable release) {
+        this.body = body;
+        this.release = release;
+        this.prefixLeft = Math.max(0, prefix);
+        this.bodyLeft = bodyLength;
+    }
+
+    /** The first and last byte of a Content-Range value like "bytes 5-9/10", or null. */
+    static long[] contentRange(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        if (!text.regionMatches(true, 0, "bytes ", 0, 6)) {
+            return null;
+        }
+        int dash = text.indexOf('-', 6);
+        int slash = text.indexOf('/', 6);
+        if (dash < 0 || slash < dash) {
+            return null;
+        }
+        try {
+            long first = Long.parseLong(text.substring(6, dash).trim());
+            long last = Long.parseLong(text.substring(dash + 1, slash).trim());
+            return first >= 0 && last >= first ? new long[] {first, last} : null;
+        } catch (NumberFormatException wrong) {
+            return null;
+        }
+    }
+
+    @Override
+    public int read() throws IOException {
+        byte[] one = new byte[1];
+        int count = read(one, 0, 1);
+        return count < 0 ? -1 : one[0] & 0xff;
+    }
+
+    @Override
+    public int read(byte[] buffer, int offset, int length) throws IOException {
+        if (prefixLeft > 0) {
+            throw new IOException("The media proxy got a read " + prefixLeft
+                + " bytes before the range start. The reader must skip to the range start first.");
+        }
+        int count = body.read(buffer, offset, length);
+        if (count > 0 && bodyLeft > 0) {
+            bodyLeft = Math.max(0, bodyLeft - count);
+        }
+        return count;
+    }
+
+    @Override
+    public long skip(long count) throws IOException {
+        if (count <= 0) {
+            return 0;
+        }
+        long skipped = Math.min(count, prefixLeft);
+        prefixLeft -= skipped;
+        if (skipped < count) {
+            long real = body.skip(count - skipped);
+            if (real > 0) {
+                skipped += real;
+                if (bodyLeft > 0) {
+                    bodyLeft = Math.max(0, bodyLeft - real);
+                }
+            }
+        }
+        return skipped;
+    }
+
+    /**
+     * The bytes that remain in this stream, prefix included. The WebView reads this
+     * value as the content size and checks the request Range against it. So it must be
+     * the full remaining size, not only the bytes in a network buffer. It never counts
+     * more bytes than the stream holds.
+     */
+    @Override
+    public int available() throws IOException {
+        long left = bodyLeft >= 0 ? bodyLeft : body.available();
+        return (int) Math.min(Integer.MAX_VALUE, prefixLeft + left);
+    }
+
+    @Override
+    public boolean markSupported() {
+        return false;
+    }
+
+    @Override
+    public void close() throws IOException {
+        try {
+            body.close();
+        } finally {
+            release.close();
+        }
+    }
+}
+`;
+if (!existsSync(rangeBodyStreamPath) || readFileSync(rangeBodyStreamPath, 'utf8') !== rangeBodyStream) {
+  writeFileSync(rangeBodyStreamPath, rangeBodyStream);
 }
 prepareAndroidOAuth(root, appId);
 const audioRoutePluginPath = join(javaPackageDir, 'AudioRoutePlugin.java');

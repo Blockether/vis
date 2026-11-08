@@ -94,7 +94,8 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { councilMarkdown } from '../lib/council-markdown';
 import { parseUserMessage, type UserMessagePart } from '../lib/paste';
-import { messageLinkParts } from '../lib/message-links';
+import { filePathOfUrl, messageLinkParts } from '../lib/message-links';
+import { useOpenPath } from '../lib/open-path';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import { untilScrollRests } from '../lib/reader-gesture';
@@ -483,9 +484,46 @@ function attachmentIdFromHref(href: string): string | null {
   return ATTACHMENT_HREF.exec(href)?.[1] ?? null;
 }
 
-/** Keep only a canonical attachment id beyond react-markdown's safe URL schemes. */
+/**
+ * Keep a canonical attachment id and a `file:///` URL beyond react-markdown's safe URL
+ * schemes. A file URL never becomes a real link: the `a` renderer opens it in the file
+ * preview of the app (#449).
+ */
 function markdownUrlTransform(url: string): string {
-  return attachmentIdFromHref(url) ? url : defaultUrlTransform(url);
+  return attachmentIdFromHref(url) || filePathOfUrl(url) ? url : defaultUrlTransform(url);
+}
+
+type OpenPath = (path: string, line?: number) => void;
+
+/**
+ * A `file:///` URL that the reader can press. It names a file on the gateway machine, so
+ * the press shows that file in the preview of the app, not in a browser (#449). It is an
+ * inline span, so `JustifiedProse` measures it as text. Without an opener it stays text.
+ */
+function fileUrlLink(path: string, label: ReactNode, openPath: OpenPath | null, key?: number) {
+  if (!openPath) return <span key={key}>{label}</span>;
+  const press = (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openPath(path);
+  };
+  return (
+    <span
+      key={key}
+      role="button"
+      tabIndex={0}
+      title={path}
+      className={`${MARKDOWN_LINK} cursor-pointer`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+      onClick={press}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') press(event);
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
 /** Messages parse as GitHub markdown; the parse cache serves a text parsed before. */
@@ -580,6 +618,7 @@ const MarkdownPiece = memo(function MarkdownPiece({
   // Tool and activity prose stays on the same compact scale as its tables and code.
   // Only transcript messages use the full-size reading column.
   const artifactLinks = useContext(ArtifactLinkContext);
+  const openPath = useOpenPath();
   const runningText = nested ? 'text-meta text-left' : PROSE;
   // A heading inside a tool result card is a STRUCTURAL divider — one file in a
   // multi-file `cat`, one occurrence in an index, one step in a batch — not a
@@ -621,6 +660,13 @@ const MarkdownPiece = memo(function MarkdownPiece({
             attachmentIdFromHref(href ?? '') ||
             (local ? artifactLinks?.byName.get(href) : undefined);
           if (attachmentId) return artifactButton(attachmentId, label, title, Boolean(local));
+          // An absolute path names a file on the gateway machine, like a file URL. The app
+          // uses hash routes, so no route starts with one slash; a web link to it would
+          // open the gateway origin and get 404 (#449).
+          const isAbsolutePath = href !== undefined && /^\/(?!\/)/.test(href);
+          const filePath = filePathOfUrl(isAbsolutePath ? `file://${href}` : (href ?? ''));
+          if (filePath) return fileUrlLink(filePath, label, openPath);
+          if (isAbsolutePath) return <span>{label}</span>;
           // Unknown local targets cannot be loaded as routes in this application.
           if (!href || local) return <span>{label}</span>;
           return (
@@ -4916,21 +4962,26 @@ function CouncilRequestBody({ children }: { children: string }) {
 
 /**
  * User text with each bare URL as a link that opens outside the app (#446). The parts are
- * plain `a` elements, so `JustifiedProse` still measures the line.
+ * plain `a` elements, so `JustifiedProse` still measures the line. A `file:///` URL opens
+ * the file preview of the app instead (#449).
  */
-function linkedText(text: string): ReactNode[] {
-  return messageLinkParts(text).map((part, index) =>
-    typeof part === 'string' ? (
-      part
-    ) : (
+function linkedText(text: string, openPath: OpenPath | null): ReactNode[] {
+  return messageLinkParts(text).map((part, index) => {
+    if (typeof part === 'string') return part;
+    // A file URL is never a browser link, also when its encoding does not decode.
+    if (/^file:/i.test(part.url)) {
+      const filePath = filePathOfUrl(part.url);
+      return filePath ? fileUrlLink(filePath, part.url, openPath, index) : part.url;
+    }
+    return (
       <a key={index} href={part.url} className={MARKDOWN_LINK} target="_blank" rel="noreferrer">
         {part.url}
       </a>
-    ),
-  );
+    );
+  });
 }
 
-function UserRequestText({ text }: { text: string }) {
+function UserRequestText({ text, openPath }: { text: string; openPath: OpenPath | null }) {
   // Keep authored breaks and literal spacing. Native justification keeps ordinary lines
   // aligned without collapsing their spaces.
   // Indentation, tabs and fences mark literal lines, which stay left-aligned.
@@ -4953,14 +5004,14 @@ function UserRequestText({ text }: { text: string }) {
     const prose = line && !literal && line.trim() === line && !/[\t\r]/.test(line);
     return prose && ordinarySpacing ? (
       <JustifiedProse key={index} className={`${PROSE} whitespace-normal break-words`}>
-        {linkedText(line)}
+        {linkedText(line, openPath)}
       </JustifiedProse>
     ) : (
       <p
         key={index}
         className={`min-h-[1lh] whitespace-pre-wrap break-words ${prose ? PROSE : 'text-left'}`}
       >
-        {literal ? line : linkedText(line)}
+        {literal ? line : linkedText(line, openPath)}
       </p>
     );
   });
@@ -4971,6 +5022,7 @@ function UserRequestText({ text }: { text: string }) {
  * bubble and a queued message that a running turn received paint them the same way.
  */
 function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
+  const openPath = useOpenPath();
   // Inline image chips must stay in their authored position within the text.
   const hasInlineImage = parts.some((part) => part.type === 'image');
   return (
@@ -4978,9 +5030,9 @@ function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
       {parts.map((part) =>
         part.type === 'text' ? (
           hasInlineImage || !part.text ? (
-            <span key={part.key}>{linkedText(part.text)}</span>
+            <span key={part.key}>{linkedText(part.text, openPath)}</span>
           ) : (
-            <UserRequestText key={part.key} text={part.text} />
+            <UserRequestText key={part.key} text={part.text} openPath={openPath} />
           )
         ) : part.type === 'image' ? (
           <span

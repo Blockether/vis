@@ -3628,6 +3628,15 @@ export class GatewayClient {
     );
   }
 
+  /**
+   * The absolute address of a path that the gateway gave relative to its origin, such as
+   * the `content_url` of a media preview. A media element loads it by itself and streams
+   * it with range requests, so its bytes never pass through `fetch` (#449).
+   */
+  gatewayUrl(path: string): string {
+    return `${this.base}${path.startsWith('/') ? '' : '/'}${path}`;
+  }
+
   // ── Sessions ────────────────────────────────────────────────────
   //
   // The list, one session's meta, its transcript and its queued backlog are each
