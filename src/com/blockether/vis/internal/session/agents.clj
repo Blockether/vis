@@ -653,9 +653,9 @@
                   ".")))))
 
 (defn task-ordinal
-  "The ordinal of task id `id`, such as 2 for a2, or nil for another value."
+  "The ordinal of task id `id`, such as 2 for a2 or A2, or nil for another value."
   [id]
-  (some->> (re-matches #"a([1-9][0-9]*)" (str id))
+  (some->> (re-matches #"[aA]([1-9][0-9]*)" (str id))
            second
            parse-long))
 
@@ -699,12 +699,20 @@
   (filterv #(= (str parent-id) (str (:parent_id %)))
     (ps/db-agent-list db (leader-id db parent-id))))
 
+(defn- child-ref
+  "Child reference `ref` without its session mark, and a task id in lower case: a2 for A2."
+  [ref]
+  (let [ref (str (header/unmark-session-id ref))]
+    (if-let [n (task-ordinal ref)]
+      (str "a" n)
+      ref)))
+
 (defn resolve-child
   "The session id that child reference `ref` names for session `actor-id`. A task id such as a2
-   names a child of the actor, or a sibling for a subagent. A marked session id loses its mark.
-   Another value, or a task id that no child has, answers unchanged."
+   or A2 names a child of the actor, or a sibling for a subagent. A marked session id loses its
+   mark. Another value, or a task id that no child has, answers as [[child-ref]]."
   [db actor-id ref]
-  (let [ref (str (header/unmark-session-id ref))]
+  (let [ref (child-ref ref)]
     (if (task-ordinal ref)
       (let [parent (or (:parent_id (info db (str actor-id))) actor-id)]
         (or (some #(when (= ref (:id %)) (str (:session_id %))) (siblings db parent)) ref))
@@ -714,7 +722,7 @@
   "Like [[resolve-child]], but a task id that no child has fails."
   [db actor-id ref]
   (let [id (resolve-child db actor-id ref)]
-    (when (and (task-ordinal id) (= id ref))
+    (when (task-ordinal id)
       (fail! :invalid-request
              (str "No subagent has task id " ref ". council.wait() shows the ids.")))
     id))
@@ -1390,7 +1398,7 @@
             ref
             (:after spec)
 
-            :when (not (or (known (str (header/unmark-session-id ref))) (some #{ref} earlier)))]
+            :when (not (or (known (child-ref ref)) (some #{(child-ref ref)} earlier)))]
 
       (fail! :invalid-request
              (str "Task "
@@ -2062,7 +2070,9 @@
           (grant-records env (:session_id opts) (:files opts))
 
           :timeline
-          (timeline (:db-info env) (:session-id env) (:session_id opts))
+          (timeline (:db-info env)
+                    (:session-id env)
+                    (resolve-child (:db-info env) (:session-id env) (:session_id opts)))
 
           (fail! :invalid-request (str "Unknown subagent operation " (name operation))))))))
 

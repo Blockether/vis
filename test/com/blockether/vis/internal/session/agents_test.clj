@@ -1752,6 +1752,48 @@
                                  status))
                        (expect (= status (:status (agents/info db child))) status))))))
 
+;; Child id arguments: a task id names a child in any letter case, as the session id does.
+(defdescribe
+  child-id-arguments-take-task-ids-test
+  (it
+    "names a child by a1, A1 or its session id in wait and cancel"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          first-child
+          (child! db leader {})
+
+          second-child
+          (child! db leader {})
+
+          env
+          {:db-info db :session-id leader}
+
+          waited
+          (fn [ref]
+            (let [record (first (:result (agents/wait-agents env [ref] {:timeout_secs 1})))]
+              [(get record "session_id") (get record "status")]))]
+
+      (agents/finish! db first-child "completed")
+      (agents/finish! db second-child "completed")
+      (expect (= [[first-child "completed"] [first-child "completed"] [first-child "completed"]
+                  [second-child "completed"]]
+                 (mapv waited ["a1" "A1" first-child "A2"])))
+      (expect (nil? (#'agents/check-after! env [{:task "Next" :after ["A1"]}])))
+      (expect (= first-child
+                 (get (agents/operation! env :timeline {:session_id "A1"}) "session_id")))
+      (with-redefs [lp/db-info (constantly db)]
+        (expect (= [second-child "completed"]
+                   (let [record (first (:result (agents/cancel-agent env "A2")))]
+                     [(get record "session_id") (get record "status")])))
+        (expect (= "No subagent has task id A9. council.wait() shows the ids."
+                   (try (agents/cancel-agent env "A9")
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (ex-message e)))))))))
+
 ;; Regression for #405: a human hold of a child's queue ends the wait with status held.
 (defdescribe wait-reports-a-held-child-test
              (it "reports held for a queued child whose queue a human holds"
