@@ -233,6 +233,10 @@
                    (on target #(session! target "Fresh work"))]
 
                (on target #(turn! target fresh "today" :success))
+               ;; Work of a minute ago: the restore must not share its millisecond.
+               (jdbc/execute! (:datasource target)
+                              ["UPDATE session_turn_soul SET created_at = ?"
+                               (- (System/currentTimeMillis) 60000)])
                (let [new-id (on target #(get (state/import-session! data {}) "id"))]
                  (expect (= [:done :interrupted :error :interrupted]
                             (mapv :status (ps/db-list-session-turns target new-id))))
