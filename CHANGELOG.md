@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.7] - 2026-11-08
+
 ### Added
 - Companion: a `file:///` link in a message, or a Markdown link to an absolute path, opens the file preview (#449). An audio or video file plays in the app player, and you can seek in it. The gateway streams the file from disk with `GET /v1/sessions/:sid/fs/file/content`, which answers Range requests. The preview gives the address of the stream with a signed ticket for this session and this file for 12 hours, because a media element cannot send the gateway token. Only an audio or video file that the session can read is served. On Android, the app sends the stream through its own origin, because the WebView blocks an `http://` recording on its `https://` page. Before, the link was plain text, and a recording larger than the 32 MB attachment limit could not play in the app.
 - TUI: a `file:///` link that you write in a message is a link. A click opens the file in the default app of the computer.
