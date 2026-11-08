@@ -3267,6 +3267,49 @@
                                          [(assoc-in diff
                                             ["children" 0 "children" 1 "is_selected"]
                                             "yes")]))))))))
+  ;; User report 2026-11-08: /review did not open. Its scope menu holds a Checkpoint
+  ;; submenu, and the engine refused a group inside a toolbar menu.
+  (it
+    "accepts a submenu in a diff toolbar menu, and refuses another node in it"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              diff
+              {"id" "diff"
+               "type" "diff"
+               "patch" ""
+               "children" [{"id" "scope"
+                            "type" "group"
+                            "direction" "column"
+                            "label" "All changes"
+                            "children" [{"id" "all" "type" "button" "label" "All changes"}
+                                        {"id" "checkpoints"
+                                         "type" "group"
+                                         "direction" "column"
+                                         "label" "Checkpoint"
+                                         "children" [{"id" "checkpoint-1"
+                                                      "type" "button"
+                                                      "label" "#1 baseline"}]}]}]}
+
+              view-id
+              (get (app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] [diff]))
+                   "view_id")]
+
+          (try (expect (= ["checkpoint-1"]
+                          (mapv #(get % "id")
+                                (-> (app-seam! sid {"op" "state" "view_id" view-id})
+                                    (get-in ["view" "nodes" 0 "children" 0 "children" 1
+                                             "children"])))))
+               (finally (hi/close-live! view-id)))
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(app-seam! sid
+                                       (assoc-in (shortcut-app sid [])
+                                         ["view" "nodes"]
+                                         [(assoc-in diff
+                                            ["children" 0 "children" 1 "children" 0]
+                                            {"id" "note" "type" "text" "text" "x"})]))))))))
   ;; Live apps D3: the owner hears an accepted selection.
   (it "pushes one select event with the selected row ids"
       (recorded

@@ -1180,16 +1180,18 @@
 
 (defn- diff-toolbar
   "The toolbar `children` of a diff: buttons, and groups of buttons that a
-   surface paints as one menu each. Anything else is refused by name."
+   surface paints as one menu each. A group in a menu is a submenu. Anything
+   else is refused by name."
   [fail! context children]
   (when-not (sequential? children) (fail! ":children must be a sequence of buttons and groups"))
-  (letfn [(button? [node] (= "button" (raw-type-name node)))]
+  (letfn [(command? [node]
+            (and (map? node)
+                 (or (= "button" (raw-type-name node))
+                     (and (group-node? node)
+                          (sequential? (:children node))
+                          (every? command? (:children node))))))]
     (mapv (fn [node]
-            (when-not (and (map? node)
-                           (or (button? node)
-                               (and (group-node? node)
-                                    (sequential? (:children node))
-                                    (every? #(and (map? %) (button? %)) (:children node)))))
+            (when-not (command? node)
               (fail! "a diff toolbar holds only buttons and groups of buttons"))
             (live-node fail! context node))
           children)))
