@@ -80,6 +80,14 @@ MOST_IMAGES = 8
 MOST_PICTURE_BYTES = _contracts.definition("view", "live_view")[
     "x-vis-max-picture-bytes"
 ]
+# Threads that one diff node holds: the view bound.
+MOST_THREADS = next(
+    variant["properties"]["threads"]["maxItems"]
+    for variant in _contracts.definition("view", "component")["oneOf"]
+    if variant["properties"]["type"].get("const") == "diff"
+)
+# The order of findings when the threads cannot hold them all.
+_LEVEL_RANK = {"error": 0, "warning": 1}
 # Decoded picture bytes that the image cache keeps, newest first.
 MOST_CACHED_PICTURE_BYTES = 2 * MOST_PICTURE_BYTES
 MOST_CACHED_IMAGES = 256
@@ -234,9 +242,11 @@ class ReviewApp:
         findings = self.all_findings(diffs)
         end = self.end or self.journal.last
         images = self.image_nodes(diffs)
-        notice = self._notice(_off_lines(findings, diffs))
+        patch, cut = _patch_of(diffs)
+        shown = {d.path for d in diffs if d.patch and d.path not in cut}
+        notice = self._notice(_off_lines(findings, shown))
         return [
-            self._diff(diffs, diffs_all, findings, end),
+            self._diff(patch, cut, shown, diffs, diffs_all, findings, end),
             *([notice] if notice else []),
             *([ui.group("images", *images, label="Changed images")] if images else []),
         ]
@@ -417,10 +427,23 @@ class ReviewApp:
             return self.against_ref or self.against
         return f"#{max(self.start, 0)}"
 
-    def _diff(self, diffs: list[FileDiff], diffs_all, findings, end: int) -> dict:
-        """The diff node of `diffs` with its toolbar and one thread for each finding on a line."""
-        patch, cut = _patch_of(diffs)
+    def _diff(
+        self,
+        patch: str,
+        cut: list[str],
+        shown: set[str],
+        diffs,
+        diffs_all,
+        findings,
+        end: int,
+    ) -> dict:
+        """The diff node of `patch` with its toolbar and one thread for each finding on a line."""
         newest = self.journal.entries[-1].at if self.journal.entries else 0
+        threads, left = _threads(findings, shown, int(newest * 1000) or 1)
+        notes = [
+            *(["Cut to fit: " + ", ".join(cut[:5])] if cut else []),
+            *([f"{left} more findings not shown"] if left else []),
+        ]
         return ui.diff(
             "diff",
             patch or "No change in this range.\n",
@@ -428,12 +451,8 @@ class ReviewApp:
             new_revision=f"#{end}"
             if self.end is not None and not self.against
             else "now",
-            label=("Cut to fit: " + ", ".join(cut[:5])) if cut else None,
-            threads=_threads(
-                findings,
-                {d.path for d in diffs if d.patch},
-                int(newest * 1000) or 1,
-            ),
+            label="; ".join(notes) or None,
+            threads=threads,
             children=self._toolbar(diffs_all, bool(diffs)),
         )
 
@@ -820,9 +839,8 @@ def _where(finding) -> str:
     return finding.path or "-"
 
 
-def _off_lines(findings, diffs: list[FileDiff]) -> list[str]:
-    """The findings that no diff line holds, one text each: the notice lists them."""
-    shown = {d.path for d in diffs if d.patch}
+def _off_lines(findings, shown: set[str]) -> list[str]:
+    """The findings that no shown diff line holds, one text each: the notice lists them."""
     return [
         f"{f.level} {f.check} {_where(f)}: {f.message[:500]}"
         for f in findings
@@ -831,16 +849,21 @@ def _off_lines(findings, diffs: list[FileDiff]) -> list[str]:
     ]
 
 
-def _threads(findings, paths, now: int) -> list[dict]:
-    """One thread for each finding on a line of a shown file, dated by the newest checkpoint.
+def _threads(findings, paths, now: int) -> tuple[list[dict], int]:
+    """One thread for each finding on a line of a shown file, dated by the newest checkpoint,
+    and the count of findings that the bound leaves out. Errors come first, then warnings.
 
     A date that stays the same keeps the diff node the same, so a paint keeps the
     comments a person is writing.
     """
+    on_lines = [
+        (n, finding)
+        for n, finding in enumerate(findings)
+        if finding.line >= 1 and finding.path in paths
+    ]
+    on_lines.sort(key=lambda pair: _LEVEL_RANK.get(pair[1].level, 2))
     threads = []
-    for n, finding in enumerate(findings):
-        if finding.line < 1 or finding.path not in paths:
-            continue
+    for n, finding in on_lines[:MOST_THREADS]:
         threads.append(
             {
                 "id": f"finding-{n}",
@@ -857,7 +880,7 @@ def _threads(findings, paths, now: int) -> list[dict]:
                 ],
             }
         )
-    return threads
+    return threads, max(0, len(on_lines) - MOST_THREADS)
 
 
 def _shown_nodes(view) -> dict[str, dict] | None:

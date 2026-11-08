@@ -3310,6 +3310,33 @@
                                          [(assoc-in diff
                                             ["children" 0 "children" 1 "children" 0]
                                             {"id" "note" "type" "text" "text" "x"})]))))))))
+  ;; User report 2026-11-08: a diff with too many threads was refused with the
+  ;; mismatch of each node type, starting with `status`, so no one saw the cause.
+  (it "names the broken rule of the node's own type when it refuses a node"
+      (let [sid
+            (str (random-uuid))
+
+            thread
+            (fn [n]
+              {"id" (str "t" n)
+               "anchor" {"path" "a.py" "side" "new" "line" 1}
+               "messages" [{"id" (str "t" n "-1")
+                            "author" {"kind" "extension" "name" "x"}
+                            "created_at" 1
+                            "body" "b"}]})
+
+            message
+            (try (app-seam!
+                   sid
+                   (assoc-in (shortcut-app sid [])
+                     ["view" "nodes"]
+                     [{"id" "diff" "type" "diff" "patch" "" "threads" (mapv thread (range 201))}]))
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+
+        (expect (str/includes? message "/threads"))
+        (expect (str/includes? message "maxItems"))
+        (expect (not (str/includes? message "status")))))
   ;; Live apps D3: the owner hears an accepted selection.
   (it "pushes one select event with the selected row ids"
       (recorded

@@ -722,7 +722,10 @@
 (defn live-node-error
   "nil when `node` is a valid normalized live node, otherwise a reason."
   [node]
-  (or (schema-error "component" node)
+  (or (if-let [type-name (some-> (:type node)
+                                 name)]
+        (component-error type-name node)
+        (schema-error "component" node))
       (scene-error node)
       (timeline-error node)
       (when-not (ordered-by-declared-column? node) "table order must name a declared column")

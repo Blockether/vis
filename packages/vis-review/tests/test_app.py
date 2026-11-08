@@ -540,3 +540,31 @@ def test_an_added_picture_shows_no_status_row(tmp_path, recorder):
     journal.checkpoint("block")
     app.refresh()
     assert recorder.ids() == ["diff", "images"]
+
+
+def test_many_findings_keep_the_view_valid(tmp_path, recorder):
+    # User report 2026-11-08: /review did not open. A crash log gave 1,890 findings,
+    # and a diff node holds at most 200 threads.
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 1  \n" * 250)
+    journal.checkpoint("block")
+    app.refresh()
+    diff = recorder.node("diff")
+    assert len(diff["threads"]) == 200
+    assert "50 more findings" in diff["label"]
+
+
+def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
+    tmp_path, recorder, monkeypatch
+):
+    # A thread on a file that the patch leaves out points at a line that no one can see.
+    import vis_review.app as review_app
+
+    monkeypatch.setattr(review_app, "MOST_PATCH_CHARS", 60)
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 2\n")
+    edit(root, "z.py", "z = 1  \n")
+    journal.checkpoint("block")
+    app.refresh()
+    assert not recorder.node("diff").get("threads")
+    assert "z.py:1" in recorder.node("notice")["detail"]
