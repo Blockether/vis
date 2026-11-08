@@ -195,7 +195,8 @@ export function AutomationsWorkspace({
           onNotice={setNotice}
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto" aria-busy={!list && !error}>
+        // Rules only between rows: the band and the column draw the rules at its edges.
+        <div className="min-h-0 flex-1 divide-y divide-dialog-edge overflow-y-auto" aria-busy={!list && !error}>
           {list?.automations.length === 0 && (
             <p className="py-4 text-center">
               <Text variant="description">No automations on this machine.</Text>
@@ -203,7 +204,7 @@ export function AutomationsWorkspace({
           )}
           {list?.automations.map((automation) => (
             // The row opens the details. Edit opens the form at once.
-            <div key={automation.id} className="flex items-center border-b border-dialog-edge pr-2">
+            <div key={automation.id} className="flex items-center pr-2">
               <ListRow
                 className="min-w-0 flex-1"
                 disabled={busy}

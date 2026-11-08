@@ -92,8 +92,9 @@ export function SettingsColumn({
   const fold = disclosure && !isWide ? disclosure : null;
   const body = (
     // Separate panels inside the column; the settings grid separates columns.
-    // No trailing rule above the dialog's bottom safe area.
-    <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain">
+    // Side by side, the last band also gets a rule, so it does not look open at the end.
+    // Stacked, the grid rule follows the column. No trailing rule above the bottom safe area.
+    <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain sm:[&>:last-child]:border-b sm:[&>:last-child]:border-dialog-edge">
       {children}
     </div>
   );
