@@ -62,6 +62,15 @@ export function foldGlobalAppView(view: LiveView, event: SseEvent): AppFold {
   return foldAppEvent(view, event);
 }
 
+/**
+ * The global apps that the list and its header button show: each live app whose
+ * program is connected. A closed, archived or disconnected app stays held, so an
+ * opened app keeps its picture, but the list leaves it out.
+ */
+export function listedGlobalApps(apps: readonly LiveView[]): LiveView[] {
+  return apps.filter((app) => appStateWord(app) === 'Live');
+}
+
 /** The state word of a global app. A stale picture waits for its program. */
 export function globalAppStateWord(view: Pick<LiveView, 'is_closed' | 'is_archived' | 'is_disconnected'>): string {
   const word = appStateWord(view);

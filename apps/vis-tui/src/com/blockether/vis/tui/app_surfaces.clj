@@ -8,7 +8,8 @@
    - `session`: the session apps picker opens the app in the side panel (`sidebar`)
      or over the chat area (`chat`). `off` keeps the app out of the picker."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.app :as app]))
+            [com.blockether.vis.contract.app :as app]
+            [com.blockether.vis.tui.app-model :as model]))
 
 (set! *warn-on-reflection* true)
 
@@ -63,11 +64,12 @@
 
 (defn global-apps
   "The global app views of `global-apps` (`{view-id {:view v}}`) that the global apps
-   picker lists, by title. A closed app is not listed."
+   picker lists, by title. Only a live app whose program is connected is listed: a
+   closed, archived or stale app is not."
   [global-apps]
   (->> (vals global-apps)
        (keep :view)
-       (filter open-view?)
+       (filter #(and (open-view? %) (= :live (model/status %))))
        by-title))
 
 (defn picker-views

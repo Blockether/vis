@@ -92,6 +92,16 @@
                    (app-surfaces/fleet-app-frame
                      {"type" "view.close" "kind" "live" "view_id" "g"})))
         (expect (nil? (app-surfaces/fleet-app-frame {"type" "session.status" "session_id" "s1"})))))
+  ;; User report: the global apps list showed apps whose program was not connected.
+  (describe "the global apps picker"
+            (it "lists only live apps whose program is connected"
+                (let [apps {"1" {:view (app "1" "Live" nil)}
+                            "2" {:view (app "2" "Done" nil :is-closed true)}
+                            "3" {:view (app "3" "Old" nil :is-archived true)}
+                            "4" {:view (app "4" "Lost" nil :is-stale true)}}]
+                  (expect (= ["1"] (mapv :id (app-surfaces/global-apps apps))))
+                  (expect (false? (keymap/verb-available? {:global-apps (dissoc apps "1")}
+                                                          {:show-when :has-global-apps}))))))
   (describe
     "the held global apps"
     (it "follow the list read, mark a patch gap for a full read"

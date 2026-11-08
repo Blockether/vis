@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAppSurfaceSetting } from '../lib/app-surfaces';
 import { newerAppView } from '../lib/app-view';
 import { onSettingChange, type GatewayClient } from '../lib/gateway';
-import { foldGlobalApps, globalAppStateWord } from '../lib/global-apps';
+import { foldGlobalApps, listedGlobalApps } from '../lib/global-apps';
 import type { LiveView } from '../lib/live-view';
 import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -112,8 +112,7 @@ export function GlobalApps({
           title="Global apps"
           empty="No program shows a global app."
           within="app"
-          apps={apps}
-          stateWord={globalAppStateWord}
+          apps={listedGlobalApps(apps)}
           onPick={pick}
           onClose={onListClose}
         />

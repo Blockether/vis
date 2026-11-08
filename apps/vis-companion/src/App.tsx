@@ -74,6 +74,7 @@ import { CommandSurface } from './components/CommandSurface';
 import { CommandProvider, CommandRegistry, useCommands, type CommandHandlers } from './lib/commands';
 import { AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
 import { GlobalApps, useGlobalApps } from './components/GlobalApps';
+import { listedGlobalApps } from './lib/global-apps';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -449,6 +450,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   );
   // The apps of the gateway that belong to no session. Only an SDK program opens one.
   const globalApps = useGlobalApps(client, subscriptions);
+  const listedApps = useMemo(() => listedGlobalApps(globalApps), [globalApps]);
   const [isGlobalAppsOpen, setGlobalAppsOpen] = useState(false);
   const openGlobalApps = useCallback(() => setGlobalAppsOpen(true), []);
   const closeGlobalApps = useCallback(() => setGlobalAppsOpen(false), []);
@@ -1418,7 +1420,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
             'show-sessions': sessionsMounted && openSearch,
             'switch-project': canSplit && toggleSidebar,
             settings: openSettings,
-            'global-apps': globalApps.length > 0 && openGlobalApps,
+            'global-apps': listedApps.length > 0 && openGlobalApps,
           }}
         />
         <CommandSurface />
@@ -1429,8 +1431,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
               onSearch={sessionsMounted ? openSearch : null}
               onAppSettings={openSettings}
               globalApps={
-                globalApps.length > 0
-                  ? { count: globalApps.length, isOpen: isGlobalAppsOpen, onOpen: openGlobalApps }
+                listedApps.length > 0
+                  ? { count: listedApps.length, isOpen: isGlobalAppsOpen, onOpen: openGlobalApps }
                   : undefined
               }
             />

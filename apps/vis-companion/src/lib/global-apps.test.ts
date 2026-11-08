@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { foldGlobalApps, foldGlobalAppView } from './global-apps';
+import { foldGlobalApps, foldGlobalAppView, listedGlobalApps } from './global-apps';
 import { liveViewFromWire, type LiveView } from './live-view';
 import type { SseEvent } from './types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT } from './view';
@@ -41,6 +41,20 @@ const patch = (id: string, firstSeq: number): SseEvent => ({
   patch: { seq: firstSeq, ops: [] },
 });
 const ready: SseEvent = { type: 'subscription.ready', scope: 'fleet', seq: 0 };
+
+// User report: the list showed closed apps and apps whose program was not connected.
+describe('the global apps list', () => {
+  it('shows only live apps whose program is connected', () => {
+    const apps = [
+      global('live'),
+      { ...global('closed'), is_closed: true },
+      { ...global('archived'), is_archived: true },
+      { ...global('lost'), is_disconnected: true },
+    ];
+    expect(listedGlobalApps(apps).map((one) => one.id)).toEqual(['live']);
+    expect(listedGlobalApps([])).toEqual([]);
+  });
+});
 
 describe('global apps on the fleet stream', () => {
   it('adds a global app that opens', () => {
