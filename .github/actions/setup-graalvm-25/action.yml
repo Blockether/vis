@@ -10,7 +10,8 @@ description: >-
 runs:
   using: composite
   steps:
-    - name: Install pinned GraalVM CE
+    - name: Resolve pinned GraalVM CE asset
+      id: pin
       shell: bash
       run: |
         set -euo pipefail
@@ -25,8 +26,6 @@ runs:
           exit 1
         fi
 
-        base="https://github.com/graalvm/graalvm-ce-builds/releases/download/${GRAAL_TAG}"
-
         # We consume THREE platforms: linux-x64, linux-aarch64 and macos-aarch64.
         # There is NO macos-x64 (Intel) community build, so that runner cannot be
         # used at all; Windows is not a supported target.
@@ -36,14 +35,42 @@ runs:
           macOS/ARM64)   slug="macos-aarch64"; sha="${GRAAL_SHA256_macos_aarch64}" ;;
           *) echo "No ${GRAAL_EDITION} ${GRAAL_VERSION} build for ${RUNNER_OS}/${RUNNER_ARCH}" >&2; exit 1 ;;
         esac
-        file="graalvm-community-jdk-${GRAAL_ASSET_VERSION}_${slug}_bin.tar.gz"
+
+        {
+          echo "tag=${GRAAL_TAG}"
+          echo "file=graalvm-community-jdk-${GRAAL_ASSET_VERSION}_${slug}_bin.tar.gz"
+          echo "sha=${sha}"
+          echo "vendor=${GRAAL_VENDOR_VERSION}"
+        } >> "${GITHUB_OUTPUT}"
+    # The release download path of github.com can fail for hours with HTTP 504.
+    # The cache keeps a verified archive, so most jobs do not download it.
+    - uses: actions/cache/restore@v6
+      id: archive-cache
+      with:
+        path: ${{ runner.temp }}/graalvm-archive
+        key: graalvm-${{ steps.pin.outputs.file }}-${{ steps.pin.outputs.sha }}
+    - name: Install pinned GraalVM CE
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GRAAL_TAG: ${{ steps.pin.outputs.tag }}
+        file: ${{ steps.pin.outputs.file }}
+        sha: ${{ steps.pin.outputs.sha }}
+        GRAAL_VENDOR_VERSION: ${{ steps.pin.outputs.vendor }}
+      run: |
+        set -euo pipefail
 
         dest="${RUNNER_TEMP}/graalvm"
         archive="${RUNNER_TEMP}/graalvm-archive"
         mkdir -p "${dest}"
 
-        echo "Downloading ${base}/${file}"
-        curl -fL --retry 3 --retry-delay 5 -o "${archive}" "${base}/${file}"
+        # The API download path stays available when the web path fails.
+        if [ ! -f "${archive}" ]; then
+          url="https://github.com/graalvm/graalvm-ce-builds/releases/download/${GRAAL_TAG}/${file}"
+          echo "Downloading ${url}"
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 -o "${archive}" "${url}" ||
+            gh release download "${GRAAL_TAG}" -R graalvm/graalvm-ce-builds -p "${file}" -O "${archive}" --clobber
+        fi
 
         # The pin carries the digest, so a tampered/rewritten release asset is a
         # hard failure rather than a silently different JDK.
@@ -88,3 +115,9 @@ runs:
         echo "${bin_dir}"                      >> "${GITHUB_PATH}"
 
         echo "✓ ${got} — ${graalvm_home}"
+    # Save at once after the digest check: a later failure in the job must not lose it.
+    - uses: actions/cache/save@v6
+      if: steps.archive-cache.outputs.cache-hit != 'true'
+      with:
+        path: ${{ runner.temp }}/graalvm-archive
+        key: graalvm-${{ steps.pin.outputs.file }}-${{ steps.pin.outputs.sha }}

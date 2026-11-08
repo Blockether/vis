@@ -843,9 +843,19 @@
       (let [partial
             (io/file (str archive ".part"))
 
-            {:keys [exit]}
-            (b/process {:command-args ["curl" "-fsSL" "--retry" "5" "--retry-all-errors"
-                                       "--retry-delay" "10" "-o" (str partial) url]})]
+            run
+            (fn [args]
+              (try (:exit (b/process {:command-args args})) (catch java.io.IOException _ 127)))
+
+            ;; The web download path of github.com can fail for hours with HTTP 504.
+            ;; The API path of `gh release download` stays available.
+            exit
+            (let [exit (run ["curl" "-fsSL" "--retry" "5" "--retry-all-errors" "--retry-delay" "10"
+                             "-o" (str partial) url])]
+              (if (zero? exit)
+                exit
+                (run ["gh" "release" "download" (str "v" version) "-R"
+                      "Blockether/vis-python-runtime" "-p" name "-O" (str partial) "--clobber"])))]
 
         (when-not (zero? exit)
           (throw (ex-info "Could not download the embedded CPython for this platform."

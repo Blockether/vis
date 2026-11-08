@@ -223,6 +223,8 @@ jobs:
           # The same build path stamps release, beta and unpublished experiments.
           VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
+          # build.clj falls back to `gh release download` for the embedded CPython.
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -509,6 +511,8 @@ jobs:
           # The same build path stamps release, beta and unpublished experiments.
           VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
+          # build.clj falls back to `gh release download` for the embedded CPython.
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
