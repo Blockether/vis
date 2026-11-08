@@ -24,7 +24,8 @@ Sounds are off by default.
 2. Find the **Sounds** section.
 3. Turn on **Sounds**.
 
-The next turn that finishes plays the finish sound of the **Classic** preset.
+The **Sound preset** row shows only while **Sounds** is on. The next turn that finishes plays the
+finish sound of the **Classic** preset.
 
 ## Which events play a sound
 

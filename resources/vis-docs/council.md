@@ -95,7 +95,7 @@ delivery. Existing messages remain saved.
 
 **Subagents** is under **Council** in Settings and is on by default. With it on, an agent can
 start managed helper agents for large independent parts of a task. The helpers work through
-Council, so subagents are off while Council is off. Settings then lock the **Subagents** row until
+Council, so subagents are off while Council is off. Settings then hide the **Subagents** row until
 you turn Council on again. Turning off Subagents blocks new helper agents, wakes and further steps.
 To turn off only subagents, use Settings or set `subagents: false` under `toggles`.
 

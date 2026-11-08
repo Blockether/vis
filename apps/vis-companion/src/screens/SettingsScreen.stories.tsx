@@ -149,7 +149,7 @@ export const Pairing: Story = {
   },
 };
 
-/** Subagents stand under Council and stay locked while Council is off. */
+/** Subagents stand under Council and show only while Council is on. */
 export const CouncilSubagents: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
@@ -158,8 +158,8 @@ export const CouncilSubagents: Story = {
     await expect(subagents).toBeEnabled();
     await expect(page.queryByText('Experimental')).toBeNull();
     await userEvent.click(page.getByRole('switch', { name: 'Council: on' }));
-    await waitFor(() => expect(page.getByRole('switch', { name: 'Subagents: on' })).toBeDisabled());
-    await expect(page.getByText('Turn on Council to change this.')).toBeVisible();
+    await waitFor(() => expect(page.queryByRole('switch', { name: /Subagents/ })).toBeNull());
+    await expect(page.queryByText(/to change this/)).toBeNull();
     await userEvent.click(page.getByRole('switch', { name: 'Council: off' }));
     await waitFor(() => expect(page.getByRole('switch', { name: 'Subagents: on' })).toBeEnabled());
   },

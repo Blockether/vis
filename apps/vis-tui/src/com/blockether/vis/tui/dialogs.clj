@@ -3731,6 +3731,17 @@
              (cons [row depth] (setting-tree (get row "children") (inc (long depth)))))
            rows)))
 
+(defn- shown-setting-tree
+  "Like `setting-tree`, but a boolean parent that is off shows no rows under it: they cannot
+   act until it is on."
+  ([rows] (shown-setting-tree rows 0))
+  ([rows depth]
+   (mapcat (fn [row]
+             (cons [row depth]
+                   (when-not (and (= "boolean" (get row "type")) (false? (get row "enabled")))
+                     (shown-setting-tree (get row "children") (inc (long depth))))))
+           rows)))
+
 (defn- merge-setting-row
   "Merge `row` into the catalog row with the same id, at any depth. The rows under it stay."
   [rows row]
@@ -3880,7 +3891,7 @@
                  (member (-> (catalog-setting-row setting)
                              (update :label member-label)
                              (assoc :depth (inc (long depth))))))
-               (setting-tree [row])))
+               (shown-setting-tree [row])))
 
         ;; The gateway gives a packaged skill a `skills_` id.
         skill?
@@ -3922,7 +3933,7 @@
                                                  (cond-> (catalog-setting-row row)
                                                    (pos? (long depth))
                                                    (assoc :depth depth)))
-                                               (setting-tree rows))))))
+                                               (shown-setting-tree rows))))))
                (or groups []))))
 
 (defn- settings-extension-matches
@@ -3979,27 +3990,10 @@
          (or (get row "scope") "scope")
          ".")))
 
-(defn- parent-off-notes
-  "Map each row under a boolean parent that is off, at any depth, to why it is locked. The
-   outermost parent that is off names the setting to turn on."
-  [rows]
-  (reduce (fn [notes row]
-            (merge notes
-                   (parent-off-notes (get row "children"))
-                   (when (and (= "boolean" (get row "type")) (false? (get row "enabled")))
-                     (into {}
-                           (map (fn [[kid _]]
-                                  [(get kid "id")
-                                   (str "Turn on " (get row "label") " to change this.")]))
-                           (setting-tree (get row "children"))))))
-          {}
-          rows))
-
 (defn- lock-overridden-rows
   "Lock each catalog row that another scope decides: a wider scope for an inherited
    extension row, or a more specific scope for the session Settings opened from. Its
-   description says where to change it instead. A row under a boolean parent that is off
-   is locked too."
+   description says where to change it instead."
   [groups rows]
   (let [toggles
         (mapcat #(get % "toggles") groups)
@@ -4008,11 +4002,9 @@
         (map first (setting-tree toggles))
 
         notes
-        (merge (parent-off-notes toggles)
-               (into {}
-                     (keep #(when-let [note (or (decided-note %) (override-note %))] [(get % "id")
-                                                                                      note]))
-                     catalog))
+        (into {}
+              (keep #(when-let [note (or (decided-note %) (override-note %))] [(get % "id") note]))
+              catalog)
 
         decided
         (into {}

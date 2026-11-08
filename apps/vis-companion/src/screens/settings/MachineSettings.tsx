@@ -490,28 +490,18 @@ export function lockNote(toggle: Toggle): string | null {
   return `Locked: ${where} ${effect} for this session. Change it in ${where}.`;
 }
 
-/** Why a row under a boolean parent that is off is locked. */
-export function parentOffNote(parent: Toggle): string {
-  return `Turn on ${parent.label} to change this.`;
-}
-
 /**
  * One setting row and the rows under it, at any depth. Each level stands one step in.
- * `render` also gets the outermost boolean parent that is off: its rows are locked.
+ * A boolean parent that is off shows no rows under it: they cannot act until it is on.
  */
-export function settingTree(
-  toggle: Toggle,
-  render: (toggle: Toggle, offParent?: Toggle) => ReactNode,
-  offParent?: Toggle,
-): ReactNode {
-  const children = toggle.children ?? [];
-  const childOffParent = offParent ?? (toggle.type === 'boolean' && toggle.enabled === false ? toggle : undefined);
+export function settingTree(toggle: Toggle, render: (toggle: Toggle) => ReactNode): ReactNode {
+  const children = toggle.type === 'boolean' && toggle.enabled === false ? [] : toggle.children ?? [];
   return (
     <Fragment key={toggle.id}>
-      {render(toggle, offParent)}
+      {render(toggle)}
       {children.length > 0 && (
         <div className="divide-y divide-dialog-edge ps-3 sm:ps-4">
-          {children.map((child) => settingTree(child, render, childOffParent))}
+          {children.map((child) => settingTree(child, render))}
         </div>
       )}
     </Fragment>
@@ -522,12 +512,10 @@ export function settingTree(
  * The same value row is used for gateway and scoped settings. Only scoped settings pass
  * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
  */
-export function SettingRow({ toggle, offParent, busy, head, error, onToggle, onPick, onInherit, onRemove, onOpenSettings }: {
+export function SettingRow({ toggle, busy, head, error, onToggle, onPick, onInherit, onRemove, onOpenSettings }: {
   toggle: Toggle;
   /** The gateway's refusal of this row's last write, for an editor that shows it in place. */
   error?: string | null;
-  /** The boolean parent that is off. Its rows are locked until it is on again. */
-  offParent?: Toggle;
   busy: boolean;
   /** Only on the row that names an extension: the label is its heading, with its scope beside it. */
   head?: SettingHead;
@@ -539,7 +527,7 @@ export function SettingRow({ toggle, offParent, busy, head, error, onToggle, onP
   /** Opens the settings that decide a read-only inherited row. */
   onOpenSettings?: (where: SettingDecidedIn) => void;
 }) {
-  const lock = lockNote(toggle) ?? (offParent ? parentOffNote(offParent) : null);
+  const lock = lockNote(toggle);
   const isSecret = toggle.editor === 'secret';
   // Only the target that holds the value can remove it.
   const isOwnSecret = isSecret
@@ -752,8 +740,8 @@ export function MachineSettings({
   const settingRow = (toggle: Toggle, head?: SettingHead) =>
     settingTree(
       toggle,
-      (row, offParent) => (
-        <SettingRow key={row.id} toggle={row} offParent={offParent} head={row === toggle ? head : undefined} busy={pending === row.id}
+      (row) => (
+        <SettingRow key={row.id} toggle={row} head={row === toggle ? head : undefined} busy={pending === row.id}
           error={rowErr?.id === row.id ? rowErr.message : null}
           onToggle={() => void flip(row)} onPick={(value) => pick(row, value)} onRemove={() => remove(row)} />
       ),

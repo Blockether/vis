@@ -144,10 +144,13 @@ it('shows the gateway refusal at the presets editor and keeps the form open', as
   expect(screen.getByRole('form', { name: 'New preset' })).toBeVisible();
 });
 
-it('locks the presets while the parent switch is off', async () => {
+it('hides the presets while the parent switch is off', async () => {
   vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue(settingsWith(false));
-  const picker = await open();
-  expect(picker).toBeDisabled();
-  expect(screen.getByRole('button', { name: /New preset/ })).toBeDisabled();
-  expect(screen.getByText('Turn on Sounds to change this.')).toBeVisible();
+  renderOpenBands(
+    <MachineSettings gateway={gateway} speechPrefs={DEFAULT_SPEECH_PREFS} onSpeechChange={async () => DEFAULT_SPEECH_PREFS} />,
+  );
+  await screen.findByRole('switch', { name: 'Sounds: off' });
+  expect(screen.queryByRole('combobox', { name: row.label })).toBeNull();
+  expect(screen.queryByRole('button', { name: /New preset/ })).toBeNull();
+  expect(screen.queryByText(/to change this/)).toBeNull();
 });

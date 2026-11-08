@@ -3814,7 +3814,7 @@
              (expect (= ["On" "Off" "Off"]
                         (mapv #(settings-option-value % {}) [council subagents drafts]))))
            (finally (reset! inventory original)))))
-  (it "locks the rows under a boolean parent that is off"
+  (it "hides the rows under a boolean parent that is off"
       (let [inventory
             (var-get #'dlg/settings-inventory)
 
@@ -3841,8 +3841,7 @@
               (some #(when (= "subagents" (:toggle-id %)) %) (#'dlg/registry-toggle-rows)))]
 
         (try (reset! inventory (catalog false))
-             (expect (= "Turn on Council to change this." (:locked (subagents))))
-             (expect (= "Subagents  [Locked]" (#'dlg/settings-option-label (subagents) {})))
+             (expect (nil? (subagents)))
              (reset! inventory (catalog true))
              (expect (nil? (:locked (subagents))))
              (finally (reset! inventory original)))))

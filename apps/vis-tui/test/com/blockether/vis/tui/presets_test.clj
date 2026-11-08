@@ -67,25 +67,25 @@
 
 (defdescribe
   presets-editor-test
-  (describe
-    "the settings list"
-    (it "names the active preset, not a count of fields"
-        (expect (= "My mix"
-                   (#'dlg/settings-option-value (#'dlg/catalog-setting-row catalog-row) {}))))
-    (it "locks the row while its parent switch is off"
-        (let [groups
-              [{"title" "Sounds"
-                "toggles" [{"id" "sounds"
-                            "type" "boolean"
-                            "label" "Sounds"
-                            "enabled" false
-                            "children" [catalog-row]}]}]
+  (describe "the settings list"
+            (it "names the active preset, not a count of fields"
+                (expect
+                  (= "My mix"
+                     (#'dlg/settings-option-value (#'dlg/catalog-setting-row catalog-row) {}))))
+            (it "hides the row while its parent switch is off"
+                (let [groups
+                      [{"title" "Sounds"
+                        "toggles" [{"id" "sounds"
+                                    "type" "boolean"
+                                    "label" "Sounds"
+                                    "enabled" false
+                                    "children" [catalog-row]}]}]
 
-              rows
-              (#'dlg/lock-overridden-rows groups (#'dlg/catalog-toggle-rows groups))]
+                      ids
+                      (map :toggle-id (#'dlg/catalog-toggle-rows groups))]
 
-          (expect (= "Turn on Sounds to change this."
-                     (:locked (first (filter #(= "sound_presets" (:toggle-id %)) rows))))))))
+                  (expect (some #{"sounds"} ids))
+                  (expect (not-any? #{"sound_presets"} ids)))))
   (describe
     "the editor"
     (it "shows the active preset, its slots and the actions on one screen"
