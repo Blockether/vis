@@ -341,7 +341,7 @@
     "or a cache in the timed path does not count. Run the result as its user does: a new process, their "
     "interpreter and directory, only the files that they get. Test also empty, repeated and boundary input. "
     "Remove a test that passes when the code returns nothing. Measure a stated target on the exact case; a miss "
-    "is a failure. When only your own tool measures a target, reach a clear margin, such as twice the target: "
+    "is a failure. When only your own tool measures a target, reach a clear margin over it: "
     "the real tool measures differently. Run the affected tests, format and lint, and read the diff. Read the task again and give "
     "evidence for each requirement. Report unrelated failures; do not fix them. Exit: EDIT on a failure, else "
     "FINISH.\n"
