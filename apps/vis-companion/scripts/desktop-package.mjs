@@ -98,7 +98,7 @@ export function pakeArgs({ distDir, version, target, icon = ICON, dev = false })
 export const RFD_DEPENDENCY = 'rfd = { version = "0.15", default-features = false, features = ["gtk3"] }';
 
 /** Vis's own commands in `native/desktop/artifact.rs`. */
-export const ARTIFACT_COMMANDS = ['open_xlsx', 'reveal_artifact', 'save_artifact_as'];
+export const ARTIFACT_COMMANDS = ['open_xlsx', 'reveal_artifact', 'save_artifact_as', 'open_remote_artifact'];
 
 /** The Pake line that creates the main window. */
 export const WINDOW_SETUP =

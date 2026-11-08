@@ -32,6 +32,7 @@ import { flattenSettings, replaceSetting } from './setting-tree';
 import { randomUuid } from './uuid';
 import type {
   ArchiveView,
+  AttachmentLink,
   AuthFlow,
   AuthVerdict,
   BandWindow,
@@ -5382,6 +5383,30 @@ export class GatewayClient {
   /** The same retained download, read directly without fetching its object URL. */
   attachmentBlob(sid: string, iterationId: string, index: number): Promise<Blob> {
     return this.attachmentSource(sid, iterationId, index).then((source) => source.blob);
+  }
+
+  /**
+   * A signed address of a `reference` attachment (#451) —
+   * `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link`. The file stays on the
+   * gateway machine, so its bytes never pass through `attachmentSource`: a PDF reader
+   * reads parts of it, and a download link or another app opens the address itself.
+   */
+  async attachmentLink(
+    sid: string,
+    iterationId: string,
+    index: number,
+    signal?: AbortSignal,
+  ): Promise<AttachmentLink> {
+    const link = await this.request<Partial<AttachmentLink>>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}/link`,
+      undefined,
+      signal,
+    );
+    if (typeof link?.content_url !== 'string' || typeof link.expires_at !== 'number') {
+      throw new GatewayError(0, 'attachment link: the gateway sent no address');
+    }
+    return { content_url: link.content_url, expires_at: link.expires_at };
   }
 
   /** Where ONE artifact is served from — its identity in every tier of cache. */

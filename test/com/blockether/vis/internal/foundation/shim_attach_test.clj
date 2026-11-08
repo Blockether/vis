@@ -436,6 +436,44 @@
                          (str (:stdout out)))))))
 
 (defdescribe
+  attach-office-container-test
+  ;; #451: a workbook is a ZIP archive. A browser saves `application/zip` as
+  ;; `name.xlsx.zip`, so the ZIP magic must not hide the Office type of the name.
+  (it
+    "names a ZIP-based Office file by its extension and keeps a plain archive a ZIP"
+    (let [root
+          (.getCanonicalPath (java.io.File. (temp-root)))
+
+          pk
+          (byte-array (concat (map unchecked-byte [0x50 0x4b 0x03 0x04]) (repeat 996 (byte 0))))
+
+          _
+          (doseq [n ["big.xlsx" "big.docx"]]
+            (with-open [out (java.io.FileOutputStream. (java.io.File. root ^String n))]
+              (.write out pk)))
+
+          out
+          (extension/with-context
+            {:env {:session-id (random-uuid) :workspace {:root root}}}
+            (binding [mpl-capture/*attachment-limit-bytes* 100]
+              (block (ctx-with-root root)
+                     (str "pk = b'PK\\x03\\x04' + bytes(20)\n"
+                          "print('MT', attach(pk, 'small.xlsx')['media_type'])\n"
+                          "print('MT', attach(pk, 'bundle.zip')['media_type'])\n"
+                          "print('MT', attach(" (pr-str (str root "/big.xlsx")) ")['media_type'])\n"
+                          "print('MT', attach(" (pr-str (str root "/big.docx")) ")['media_type'])\n"))))
+
+          so
+          (str (:stdout out))]
+
+      (expect (nil? (:error out)))
+      (expect (= ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  "application/zip"
+                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+                 (mapv second (re-seq #"MT (\S+)" so)))))))
+
+(defdescribe
   attach-discovery-test
   (it "discovers declared capabilities instead of the internal shim identity"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "internal-id"

@@ -1026,6 +1026,17 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "attachment_link"
+        }
+      },
+      "path": "/v1/sessions/:sid/iterations/:iid/attachments/:idx/link"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "put": {
           "request": "json",
           "response": "json"
@@ -3874,7 +3885,7 @@
     },
     "attachment_reference": {
       "type": "object",
-      "description": "Keys that an iteration attachment descriptor adds when attach() keeps a reference to a file on the gateway machine instead of its bytes. attach() does this for a file that is larger than the attachment limit. The session database keeps no byte of the file. GET /v1/sessions/:sid/iterations/:iid/attachments/:idx streams the file from disk and answers Range requests. A client plays a recording or a clip from the content_url of GET /v1/sessions/:sid/fs/file?path=<path>, because a media element cannot send the gateway token.",
+      "description": "Keys that an iteration attachment descriptor adds when attach() keeps a reference to a file on the gateway machine instead of its bytes. attach() does this for a file that is larger than the attachment limit. The session database keeps no byte of the file. GET /v1/sessions/:sid/iterations/:iid/attachments/:idx streams the file from disk and answers Range requests. A client plays a recording or a clip from the content_url of GET /v1/sessions/:sid/fs/file?path=<path>, because a media element cannot send the gateway token. A client opens any other file from the content_url of GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link, for example in a frame or as a download.",
       "required": [
         "storage",
         "path"
@@ -3892,6 +3903,27 @@
           "type": "integer",
           "minimum": 0,
           "description": "The size of the file in bytes when attach() recorded it."
+        }
+      }
+    },
+    "attachment_link": {
+      "type": "object",
+      "description": "The answer of GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link for an attachment that keeps a reference to a file on the gateway machine. A frame, a download link or another app cannot send the gateway token, so they open content_url. The route answers 409 attachment-not-reference for an attachment that has its bytes in the session database, 404 attachment-not-found for an unknown attachment and 404 attachment-file-missing when the file is gone.",
+      "additionalProperties": false,
+      "required": [
+        "content_url",
+        "expires_at"
+      ],
+      "properties": {
+        "content_url": {
+          "type": "string",
+          "pattern": "^/v1/sessions/[^/?#]+/iterations/[^/?#]+/attachments/[0-9]+\\?expires=[0-9]+&ticket=[A-Za-z0-9_-]+$",
+          "description": "The address of GET /v1/sessions/:sid/iterations/:iid/attachments/:idx for this attachment, relative to the gateway origin. Its expires and ticket query parameters authorize the request without a bearer token. The ticket names this session, this iteration and this index only. The route streams the file from disk and answers Range requests. Its Content-Disposition is inline. Add download=1 to the query to get attachment, so that a browser saves the file under its name. A wrong ticket gets 401 invalid-ticket, and a ticket after expires_at gets 401 ticket-expired."
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Epoch milliseconds after which the ticket in content_url is refused. Ask the link route again for a new address."
         }
       }
     },

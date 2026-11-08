@@ -8036,6 +8036,203 @@
         (finally (.delete episode) (.delete outside) (.delete root))))))
 
 (defdescribe
+  a-referenced-document-opens-from-a-signed-link
+  (it
+    "a referenced document opens from a signed link"
+    ;; Regression #451: a referenced PDF or spreadsheet showed only a card in the app.
+    ;; A frame, a download link or another app cannot send the bearer token, so the
+    ;; link route gives a signed address of the byte route. The ticket names one
+    ;; session, iteration and index, and opens only a reference.
+    (let [sid
+          (random-uuid)
+
+          iid
+          "00000000-0000-0000-0000-0000000004a1"
+
+          root
+          (.getCanonicalFile (.toFile (java.nio.file.Files/createTempDirectory
+                                        "vis-attachment-link"
+                                        (make-array java.nio.file.attribute.FileAttribute 0))))
+
+          pdf
+          (byte-array (concat (.getBytes "%PDF-1.4\n" "UTF-8")
+                              (map #(unchecked-byte (mod % 251)) (range 991))))
+
+          report
+          (io/file root "report ä.pdf")
+
+          rows
+          [{:id "0b0e7c6a-3d7c-4c39-9f4e-5b8f3a3b9a11"
+            :kind "file"
+            :media-type "application/pdf"
+            :filename (.getName report)
+            :audience "user"
+            :version 1
+            :size (count pdf)
+            :storage-uri (str "vis-ref://" (.getPath report))}
+           {:id "0b0e7c6a-3d7c-4c39-9f4e-5b8f3a3b9a12"
+            :kind "image"
+            :media-type "image/png"
+            :filename "small.png"
+            :audience "user"
+            :version 1
+            :size 3
+            :base64 "AAEC"}]
+
+          redefs
+          {#'state/iteration-attachments (constantly rows)
+           #'state/soul (fn [id]
+                          (when (= sid id) {"id" (str id)}))
+           #'state/session-workspace-info (fn [id]
+                                            (when (= sid id) {"root" (.getPath root)}))
+           #'lp/env-for (fn [_]
+                          {:workspace {:root (.getPath root) :repo-root (.getPath root)}
+                           :security-policy {:jail-enabled true :process-jail {}}
+                           :security/filesystem-roots []})}
+
+          link
+          (fn [idx]
+            (let [response (with-redefs-fn redefs
+                             #(#'turns-api/attachment-link-handler
+                                {:request-method :get
+                                 :headers {}
+                                 :path-params {:sid (str sid) :iid iid :idx (str idx)}}))]
+              (assoc response :json (wire/parse-json (:body response)))))
+
+          request
+          (fn [url headers]
+            (let [[uri query] (str/split url #"\?" 2)]
+              (ring-params/assoc-query-params
+                {:request-method :get :uri uri :query-string query :headers headers}
+                "UTF-8")))
+
+          fetch
+          (fn [url & {:as headers}]
+            (let [req
+                  (request url (or headers {}))
+
+                  [_ s i n]
+                  (re-find #"^/v1/sessions/([^/]+)/iterations/([^/]+)/attachments/(\d+)$"
+                           (:uri req))
+
+                  response
+                  (with-redefs-fn redefs
+                    #(#'turns-api/attachment-bytes-handler
+                       (assoc req :path-params {:sid s :iid i :idx n})))
+
+                  out
+                  (java.io.ByteArrayOutputStream.)]
+
+              (when (satisfies? ring-protocols/StreamableResponseBody (:body response))
+                (ring-protocols/write-body-to-stream (:body response) response out))
+              (assoc response :bytes (.toByteArray out))))
+
+          error-type
+          (fn [response]
+            (get-in (wire/parse-json (:body response)) ["error" "type"]))
+
+          signed
+          (fn [idx ticket-idx expires]
+            (str "/v1/sessions/" sid
+                 "/iterations/" iid
+                 "/attachments/" idx
+                 "?expires=" expires
+                 "&ticket=" (fs-api/attachment-ticket (str sid) iid ticket-idx expires)))]
+
+      (with-open [out (java.io.FileOutputStream. report)]
+        (.write out ^bytes pdf))
+      (try
+        (let [answered
+              (link 0)
+
+              url
+              (get-in answered [:json "content_url"])]
+
+          ;; the link answer is the contract that the app reads
+          (expect (= 200 (:status answered)))
+          (expect (document/valid-json? "gateway" "attachment_link" (:json answered)))
+          (expect (< (util/now-ms) (get-in answered [:json "expires_at"])))
+          ;; the signed address gives the whole file without a token, shown inline
+          (let [response (fetch url)]
+            (expect (= 200 (:status response)))
+            (expect (= (seq pdf) (seq (:bytes response))))
+            (expect (= "application/pdf" (get-in response [:headers "Content-Type"])))
+            (expect (= "inline; filename*=UTF-8''report%20%C3%A4.pdf"
+                       (get-in response [:headers "Content-Disposition"]))))
+          ;; one range is answered as 206 with exactly its bytes
+          (let [response (fetch url "range" "bytes=10-109")]
+            (expect (= 206 (:status response)))
+            (expect (= (seq (take 100 (drop 10 pdf))) (seq (:bytes response))))
+            (expect (= (str "bytes 10-109/" (count pdf))
+                       (get-in response [:headers "Content-Range"]))))
+          ;; download=1 asks the browser to save the file under its name
+          (expect (= "attachment; filename*=UTF-8''report%20%C3%A4.pdf"
+                     (get-in (fetch (str url "&download=1")) [:headers "Content-Disposition"])))
+          ;; the ticket holds for its own index, unchanged, before it expires
+          (expect (= 401 (:status (fetch (str/replace url #"ticket=" "ticket=x")))))
+          (expect (= 401 (:status (fetch (signed 0 1 (+ (util/now-ms) 60000))))))
+          (expect (= 401 (:status (fetch (str/replace url #"/attachments/0\?" "/attachments/1?")))))
+          (let [response (fetch (signed 0 0 (- (util/now-ms) 1000)))]
+            (expect (= 401 (:status response)))
+            (expect (= "ticket-expired" (error-type response))))
+          ;; a ticket never opens an inline attachment, which needs the token
+          (let [response (fetch (signed 1 1 (+ (util/now-ms) 60000)))]
+            (expect (= 401 (:status response)))
+            (expect (= "invalid-ticket" (error-type response))))
+          ;; a file preview ticket and an attachment ticket never stand for each other
+          (let [expires (+ (util/now-ms) 60000)]
+            (expect (= 401
+                       (:status (fetch
+                                  (str "/v1/sessions/" sid
+                                       "/iterations/" iid
+                                       "/attachments/0?expires=" expires
+                                       "&ticket="
+                                       (#'fs-api/content-ticket sid (.getPath report) expires))))))
+            (expect (= 401
+                       (:status
+                         (with-redefs-fn redefs
+                           #(#'fs-api/read-content-handler
+                              (assoc (request
+                                       (str "/v1/sessions/" sid
+                                            "/fs/file/content?path="
+                                            (java.net.URLEncoder/encode (.getPath report) "UTF-8")
+                                            "&expires=" expires
+                                            "&ticket="
+                                            (fs-api/attachment-ticket (str sid) iid 0 expires))
+                                       {})
+                                :path-params {:sid (str sid)})))))))
+          ;; a token-gated gateway lets a ticketed byte request through its token and
+          ;; protocol gates, and keeps the link route closed without the token
+          (with-server-state! {:require-token? true :token "secret"}
+                              (fn []
+                                (let [authed
+                                      ((rv 'wrap-auth) (constantly {:status 200}) "secret" [])
+
+                                      gated
+                                      ((rv 'wrap-protocol) authed [])]
+
+                                  (expect (= 200 (:status (gated (request url {})))))
+                                  (expect (= 401
+                                             (:status (authed (request
+                                                                (str "/v1/sessions/"
+                                                                     sid
+                                                                     "/iterations/"
+                                                                     iid
+                                                                     "/attachments/0/link?ticket=x")
+                                                                {}))))))))
+          ;; the link route answers only for a reference
+          (let [inline (link 1)]
+            (expect (= 409 (:status inline)))
+            (expect (= "attachment-not-reference" (get-in inline [:json "error" "type"]))))
+          (expect (= 404 (:status (link 5))))
+          ;; a file that went away gets no link
+          (.delete report)
+          (let [gone (link 0)]
+            (expect (= 404 (:status gone)))
+            (expect (= "attachment-file-missing" (get-in gone [:json "error" "type"])))))
+        (finally (.delete report) (.delete root))))))
+
+(defdescribe
   session-readable-external-file-preview-test
   (it
     "session readable external file preview"

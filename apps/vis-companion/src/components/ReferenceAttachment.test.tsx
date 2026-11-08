@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/attachment-reference.json';
 import { artifactsFromIndex, attachmentIsReference, referenceShape } from '../lib/artifacts';
@@ -7,15 +8,29 @@ import type { GatewayClient } from '../lib/gateway';
 import { OpenPathContext } from '../lib/open-path';
 import type { IterationAttachment, WorkspaceFile } from '../lib/types';
 import { AttachmentRail } from './ChatContent';
+import type { PdfReader } from './PdfArtifact';
+
+/** The props of each reader that opened, so a test can read the PDF the way pdf.js does. */
+const readers = vi.hoisted(() => [] as ComponentProps<typeof PdfReader>[]);
+vi.mock('./PdfArtifact', async (original) => ({
+  ...(await original<typeof import('./PdfArtifact')>()),
+  PdfReader: (props: ComponentProps<typeof PdfReader>) => {
+    readers.push(props);
+    return <div data-reader={props.name} />;
+  },
+}));
 
 const descriptors = fixture.cases.map((entry) => entry.descriptor as IterationAttachment);
 const [recording, document, picture] = descriptors;
 const CONTENT = '/v1/sessions/s1/fs/file/content?path=%2Fx&expires=9&ticket=t';
+const TICKET = `/v1/sessions/s1/iterations/${document.iteration_id}/attachments/${document.index}?expires=9&ticket=abc`;
 
 beforeEach(() => vi.stubGlobal('IntersectionObserver', undefined));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  readers.length = 0;
 });
 
 /** A client that counts each whole download and answers the file preview of a path. */
@@ -35,14 +50,19 @@ function gateway() {
           }
         : { path, kind: 'binary', size_bytes: 52428800 },
   );
+  const attachmentLink = vi.fn(async () => ({
+    content_url: TICKET,
+    expires_at: Date.now() + 3_600_000,
+  }));
   const client = {
     attachmentUrl,
     attachmentBlob,
+    attachmentLink,
     readPath,
     retainAttachment: () => () => {},
     gatewayUrl: (path: string) => `http://gateway.test${path}`,
   } as unknown as GatewayClient;
-  return { client, attachmentUrl, attachmentBlob, readPath };
+  return { client, attachmentUrl, attachmentBlob, attachmentLink, readPath };
 }
 
 // #450: the gateway and this app read the same descriptors, so both agree on a reference.
@@ -69,11 +89,12 @@ it('streams a recording and shows a card for a document, and never downloads eit
   expect(readPath).toHaveBeenCalledWith('s1', recording.path, undefined, expect.anything());
   expect(referenceShape(recording)).toBe('stream');
 
-  // The document is a card with its size and path. A press opens the file preview.
+  // The document is a card with its size and path. A press on the path opens the file
+  // preview.
   expect(referenceShape(document)).toBe('card');
   expect(view.container.textContent).toContain('50.0MB');
   expect(view.container.textContent).toContain('/Users/me/Documents/atlas.pdf');
-  fireEvent.click(view.getByRole('button', { name: 'Open atlas.pdf' }));
+  fireEvent.click(view.getByRole('button', { name: 'Preview /Users/me/Documents/atlas.pdf' }));
   expect(openPath).toHaveBeenCalledWith('/Users/me/Documents/atlas.pdf');
 
   // Only the attachment that the database keeps is downloaded, as before.
@@ -98,4 +119,51 @@ it('shows the card when the gateway cannot play the file of a reference', async 
 it('keeps the path of a reference in the artifacts sheet, and none for an inline one', () => {
   const rows = artifactsFromIndex(descriptors).reverse();
   expect(rows.map((row) => row.path)).toEqual([recording.path, document.path, undefined]);
+});
+
+// #451: a referenced PDF opens in the reader of the app. The reader reads parts of the
+// file from the signed address, with Range and without the token, and no part of the
+// app downloads the whole file.
+it('reads a referenced PDF in parts from its signed address', async () => {
+  const { client, attachmentLink, attachmentUrl, attachmentBlob } = gateway();
+  const fetcher = vi.fn(async () => new Response(new Uint8Array(4), { status: 206 }));
+  vi.stubGlobal('fetch', fetcher);
+  const view = render(<AttachmentRail client={client} sid="s1" attachments={[document]} />);
+
+  fireEvent.click(view.getByRole('button', { name: 'Open atlas.pdf' }));
+  await waitFor(() => expect(readers).not.toHaveLength(0));
+  const reader = readers.at(-1)!;
+  expect(reader.url).toBeUndefined();
+  expect(reader.range?.length).toBe(52428800);
+
+  await reader.range!.read(0, 4);
+  expect(attachmentLink).toHaveBeenCalledWith('s1', document.iteration_id, document.index);
+  expect(fetcher).toHaveBeenCalledWith(`http://gateway.test${TICKET}`, {
+    headers: { Range: 'bytes=0-3' },
+    cache: 'no-store',
+  });
+  expect(attachmentUrl).not.toHaveBeenCalled();
+  expect(attachmentBlob).not.toHaveBeenCalled();
+});
+
+it('downloads a referenced workbook in a browser from its signed address', async () => {
+  const { client, attachmentUrl, attachmentBlob } = gateway();
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  const workbook: IterationAttachment = {
+    ...document,
+    media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    filename: 'ledger.xlsx',
+    path: '/Users/me/Documents/ledger.xlsx',
+  };
+  const view = render(<AttachmentRail client={client} sid="s1" attachments={[workbook]} />);
+
+  fireEvent.click(view.getByRole('button', { name: 'Open ledger.xlsx' }));
+  await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+  const anchor = click.mock.contexts[0] as HTMLAnchorElement;
+  expect(anchor.href).toBe(`http://gateway.test${TICKET}&download=1`);
+  expect(anchor.download).toBe('ledger.xlsx');
+  await waitFor(() => expect(view.getByRole('status').textContent).toBe('Downloading ledger.xlsx.'));
+  expect(readers).toHaveLength(0);
+  expect(attachmentUrl).not.toHaveBeenCalled();
+  expect(attachmentBlob).not.toHaveBeenCalled();
 });

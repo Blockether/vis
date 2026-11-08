@@ -940,6 +940,21 @@ export interface IterationAttachment {
 }
 
 /**
+ * The answer of `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link` for a
+ * `reference` attachment (#451, contract `$defs/attachment_link`). A frame, a download
+ * link and another app cannot send the gateway token, so they open `content_url`.
+ */
+export interface AttachmentLink {
+  /**
+   * The bytes route of the attachment, relative to the gateway origin. Its signed ticket
+   * is the authorization. It answers Range requests; `download=1` makes it a download.
+   */
+  content_url: string;
+  /** When the ticket in `content_url` stops working, epoch ms. */
+  expires_at: number;
+}
+
+/**
  * One row of `GET /v1/sessions/:sid/artifacts` — the byte-free descriptor of
  * [[IterationAttachment]] plus the 1-based `turn` that produced it, counted
  * from the start of the session. The endpoint answers the WHOLE session, so a

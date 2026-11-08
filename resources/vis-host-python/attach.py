@@ -31,6 +31,16 @@ def __vis_install_attach__():
             return "image"
         return "doc" if __vis_is_doc(mt) else "file"
 
+    __vis_zip_formats = {
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".odt": "application/vnd.oasis.opendocument.text",
+        ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+        ".odp": "application/vnd.oasis.opendocument.presentation",
+        ".epub": "application/epub+zip",
+    }
+
     def __vis_guess_media_type(name, data):
         head = bytes(data[:16])
 
@@ -66,7 +76,10 @@ def __vis_install_attach__():
         if starts([0x25, 0x50, 0x44, 0x46]):
             return "application/pdf"
         if starts([0x50, 0x4B, 0x03, 0x04]) or starts([0x50, 0x4B, 0x05, 0x06]):
-            return "application/zip"
+            # An Office file and an EPUB are ZIP archives too. A browser saves
+            # application/zip as "name.xlsx.zip", so the extension names the format.
+            ext = _os.path.splitext(str(name or ""))[1].lower()
+            return __vis_zip_formats.get(ext, "application/zip")
         if starts([0x1F, 0x8B]):
             return "application/gzip"
         if starts([0x52, 0x49, 0x46, 0x46]) and head[8:12] == bytes(

@@ -9,7 +9,7 @@ import {
 } from 'react';
 
 import { EDGE_ZONE_PX } from '../lib/edge-back';
-import { openPdf, type PdfPages, type RenderedPage } from '../lib/pdf-annotate';
+import { openPdf, type PdfPages, type PdfRangeSource, type RenderedPage } from '../lib/pdf-annotate';
 import { FIT_SCALE, type Transform } from '../lib/zoom-pan';
 import { isKeyboardInputElement } from '../lib/viewport';
 import { useZoomPan, ZOOM_FRAME_CLASS, ZOOMED_CLASS } from '../lib/zoom-surface';
@@ -41,16 +41,23 @@ const SHARPEN_MS = 200;
 export const PdfReader = memo(function PdfReader({
   name,
   url,
+  range,
   chrome,
 }: {
   name: string;
-  url: string;
+  /** The address of the whole file, downloaded once. */
+  url?: string;
+  /**
+   * The parts of a file that is too large for one download (#451). It wins over `url`:
+   * only the parts that a page needs are read.
+   */
+  range?: PdfRangeSource;
   /** The band and the frame this page is read inside. */
   chrome: DocumentChrome;
 }) {
   const [page, setPage] = useState(1);
   const [raster, setRaster] = useState(rasterScale(FIT_SCALE));
-  const [source, setSource] = useState<ArrayBuffer | null>(null);
+  const [source, setSource] = useState<ArrayBuffer | PdfRangeSource | null>(null);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [status, setStatus] = useState('');
   // The document opened once per file, so a page turn only draws a page.
@@ -62,6 +69,11 @@ export const PdfReader = memo(function PdfReader({
   // Both hung off one effect keyed on the page, so every ‹ › fetched the whole
   // document again before it could draw a page that was already in memory.
   useEffect(() => {
+    if (range) {
+      setSource(range);
+      return;
+    }
+    if (!url) return;
     let live = true;
     void (async () => {
       try {
@@ -74,7 +86,7 @@ export const PdfReader = memo(function PdfReader({
     return () => {
       live = false;
     };
-  }, [url]);
+  }, [url, range]);
 
   useEffect(() => {
     if (!source) return;

@@ -330,15 +330,26 @@
    reader who comes back later reads the preview again for a new address."
   (* 12 60 60 1000))
 
-(def ^:private content-route #"^/v1/sessions/[^/]+/fs/file/content$")
+(def ^:private ticket-routes
+  "The routes that accept a ticket in place of the bearer token: the content of a
+   previewed file, and the bytes of an attachment that keeps a reference (#451)."
+  [#"^/v1/sessions/[^/]+/fs/file/content$"
+   #"^/v1/sessions/[^/]+/iterations/[^/]+/attachments/\d+$"])
 
 (defn content-ticket-request?
-  "True when `request` asks for file content with a ticket. The auth and protocol
-   gates let it through, because the handler checks the ticket itself."
+  "True when `request` asks for file content or for the bytes of a referenced
+   attachment with a ticket. The auth and protocol gates let it through, because
+   the handler checks the ticket itself."
   [request]
-  (boolean (and (re-matches content-route (str (:uri request)))
-                (let [ticket (get-in request [:query-params "ticket"])]
-                  (and (string? ticket) (not (str/blank? ticket)))))))
+  (let [uri (str (:uri request))]
+    (boolean (and (some #(re-matches % uri) ticket-routes)
+                  (let [ticket (get-in request [:query-params "ticket"])]
+                    (and (string? ticket) (not (str/blank? ticket))))))))
+
+(defn ticket-expiry
+  "The epoch milliseconds at which a ticket made now expires."
+  ^long []
+  (+ (util/now-ms) (long content-ticket-ttl-ms)))
 
 (defonce ^:private process-ticket-key
   ;; Realized on first use at run time, never in the native-image heap.
@@ -353,17 +364,38 @@
       (util/hmac-sha256 (util/utf8 token) (util/utf8 "vis fs content ticket v1"))
       @process-ticket-key)))
 
+(defn- signed-ticket
+  "The ticket of `fields`, one field on each line. Only the last field can hold a
+   line break, so no field can move into another."
+  ^String [& fields]
+  (util/base64url (util/hmac-sha256 (ticket-key) (util/utf8 (str/join "\n" fields)))))
+
 (defn- content-ticket
-  "The ticket for `sid`, the resolved `path` and `expires`. The path goes last, so
-   no field can move into another."
+  "The ticket for `sid`, the resolved `path` and `expires`."
   ^String [sid path expires]
-  (util/base64url (util/hmac-sha256 (ticket-key) (util/utf8 (str sid "\n" expires "\n" path)))))
+  (signed-ticket sid expires path))
+
+(defn attachment-ticket
+  "The ticket for attachment `idx` of iteration `iid` in `sid`, until `expires`.
+   Its first line is the word `attachment` and a content ticket starts with a
+   session id, so one kind of ticket can never stand for the other."
+  ^String [sid iid idx expires]
+  (signed-ticket "attachment" sid iid idx expires))
 
 (defn- url-encode
   ^String [s]
   (str/replace (java.net.URLEncoder/encode (str s) java.nio.charset.StandardCharsets/UTF_8)
                "+"
                "%20"))
+
+(defn content-disposition
+  "The `Content-Disposition` value that names `filename` in RFC 8187 form. A browser
+   shows the file `inline` when it can, or saves it when `download?` is true."
+  ^String [filename download?]
+  (str (if download? "attachment" "inline")
+       "; filename*=UTF-8''"
+       ;; RFC 8187 allows no `*` in the value; `URLEncoder` keeps it.
+       (str/replace (url-encode filename) "*" "%2A")))
 
 (defn- content-url
   "The relative address of the content of `path` for `sid`, with a ticket that
@@ -404,7 +436,7 @@
                                :media-type media-type
                                :size-bytes (alength picture)
                                :data (.encodeToString (java.util.Base64/getEncoder) picture)})))
-      (cond playable (let [expires (+ (util/now-ms) (long content-ticket-ttl-ms))]
+      (cond playable (let [expires (ticket-expiry)]
                        (http/json-response {:path path
                                             :kind "media"
                                             :media-type playable
@@ -551,23 +583,24 @@
   (let [v (get-in request [:query-params k])]
     (when (string? v) v)))
 
-(defn- ticket-refusal
-  "The 401 answer when the ticket of `request` does not admit `sid` to `path`, or nil."
-  [sid path request]
+(defn ticket-refusal
+  "The 401 answer when the ticket of `request` is not the one that `ticket-for`
+   makes from its `expires`, or nil. A nil `ticket-for` means that the request
+   names no target, so no ticket can admit it. `remedy` tells the reader how to
+   get a new address."
+  [request ticket-for remedy]
   (let [expires
         (query-string-param request "expires")
 
         ticket
         (query-string-param request "ticket")]
 
-    (cond (not (and (string? path) (string? ticket) expires (re-matches #"\d{1,15}" expires)))
+    (cond (not (and ticket-for (string? ticket) expires (re-matches #"\d{1,15}" expires)))
           (http/error-response 401 :invalid-ticket "missing or invalid content ticket")
-          (not (util/constant-time=? (content-ticket sid path (parse-long expires)) ticket))
+          (not (util/constant-time=? (ticket-for (parse-long expires)) ticket))
           (http/error-response 401 :invalid-ticket "missing or invalid content ticket")
           (< (long (parse-long expires)) (util/now-ms))
-          (http/error-response 401
-                               :ticket-expired
-                               "the content ticket expired; read the file preview again"))))
+          (http/error-response 401 :ticket-expired (str "the content ticket expired; " remedy)))))
 
 (defn- read-content-handler
   "GET /v1/sessions/:sid/fs/file/content?path=…&expires=…&ticket=… — the bytes of
@@ -586,7 +619,9 @@
         (query-string-param request "path")]
 
     ;; The ticket goes first: without one, a caller cannot tell a session that exists.
-    (or (ticket-refusal sid path request)
+    (or (ticket-refusal request
+                        (when (string? path) #(content-ticket sid path %))
+                        "read the file preview again")
         (if-not (state/soul sid)
           (http/session-404 (get-in request [:path-params :sid]))
           (let [found

@@ -1717,6 +1717,30 @@ class ExecutionLayer(ABC):
         )
         return response
 
+    def get_session_iteration_attachment_link(
+        self,
+        sid: str,
+        iid: str,
+        idx: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link — JSON response.
+
+        Get a signed content_url for an attachment that keeps a reference to a
+        file on the gateway machine. A frame, a download link or another app
+        opens that address without the gateway token.
+        """
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/iterations/:iid/attachments/:idx/link",
+            path={"sid": sid, "iid": iid, "idx": idx},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
     def put_session_iteration_attachment_agent_note(
         self,
         sid: str,

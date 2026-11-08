@@ -376,6 +376,78 @@
   (some-> (get-in request [:path-params :idx])
           parse-long))
 
+(defn- path-attachment
+  "The attachment row that `request` names by `:iid` and `:idx`, with that index,
+   or nil."
+  [request]
+  (let [idx (path-idx request)]
+    {:idx idx
+     :att (when (and idx (nat-int? idx))
+            (nth (state/user-iteration-attachments (path-iid request)) idx nil))}))
+
+(defn- reference-file
+  "The readable file of the reference `path` for `sid` as `{:file f}`, or
+   `{:error response}`. The read gate of the file preview runs on each call,
+   because access can change after `attach()` recorded the path."
+  [sid path]
+  (let [{:keys [file error]} (fs-api/session-readable-file sid path)]
+    (cond (nil? error) {:file file}
+          (= 404 (:status error))
+          {:error (http/error-response 404
+                                       :attachment-file-missing
+                                       "the referenced file is no longer on the gateway machine"
+                                       :path path)}
+          :else {:error error})))
+
+(defn- attachment-filename
+  "The name a browser shows or saves for attachment `att` that refers to `path`."
+  ^String [att path]
+  (or (not-empty (str (:filename att))) (.getName (java.io.File. (str path)))))
+
+(defn- reference-response
+  "The bytes of the file that the reference `att` names, streamed from disk with
+   `Range` support. `?download=1` asks a browser to save the file, else it shows
+   it when it can."
+  [request sid att path]
+  (let [{:keys [file error]} (reference-file sid path)]
+    (or error
+        (try (fs-api/file-content-response
+               request
+               file
+               {"Content-Type" (or (not-empty (str (:media-type att))) "application/octet-stream")
+                "Content-Disposition" (fs-api/content-disposition
+                                        (attachment-filename att path)
+                                        (= "1" (get-in request [:query-params "download"])))
+                "Cache-Control" "no-store"
+                "Content-Security-Policy" "sandbox"
+                "X-Content-Type-Options" "nosniff"})
+             (catch java.io.IOException _
+               (http/error-response 404
+                                    :attachment-file-missing "the referenced file could not be read"
+                                    :path path))))))
+
+(defn- attachment-ticket-for
+  "The function from `expires` to the attachment ticket of `request`, or nil when
+   the request names no session or index."
+  [request sid idx]
+  (when (and sid idx (nat-int? idx))
+    #(fs-api/attachment-ticket (str sid) (str (path-iid request)) idx %)))
+
+(defn- ticketed-attachment-response
+  "The answer to a request that carries a ticket of the link route in place of the
+   bearer token. The ticket goes first, so that a caller without one cannot tell
+   which attachments exist. A ticket opens only an attachment that keeps a
+   reference: an inline attachment needs the token."
+  [request sid]
+  (let [idx (path-idx request)]
+    (or (fs-api/ticket-refusal request
+                               (attachment-ticket-for request sid idx)
+                               "ask the attachment link route again")
+        (let [{:keys [att]} (path-attachment request)]
+          (if-let [reference (attachment-storage/reference-path (:storage-uri att))]
+            (reference-response request sid att reference)
+            (http/error-response 401 :invalid-ticket "missing or invalid content ticket"))))))
+
 (defn- attachment-bytes-handler
   "GET /v1/sessions/:sid/iterations/:iid/attachments/:idx — the raw bytes of ONE
    outbound artifact (a produced image or document) a tool call emitted
@@ -391,54 +463,71 @@
 
    A REFERENCE (#450) names a file on the gateway machine instead of stored bytes.
    It streams from disk with `Range` support, after the same read gate as the file
-   preview, on each request. The file can change or go away, so it is `no-store`."
+   preview, on each request. The file can change or go away, so it is `no-store`.
+   The signed `content_url` of the link route (#451) opens a reference without the
+   bearer token, because a frame, a download link or another app cannot send it."
+  [request]
+  (let [sid (http/path-sid request)]
+    (cond (fs-api/content-ticket-request? request) (ticketed-attachment-response request sid)
+          (nil? sid) (http/session-404 (get-in request [:path-params :sid]))
+          :else (let [{:keys [idx att]} (path-attachment request)
+                      reference (attachment-storage/reference-path (:storage-uri att))
+                      ^bytes bs (when-not reference
+                                  (some-> att
+                                          state/attachment-bytes))]
+
+                  (cond reference (reference-response request sid att reference)
+                        bs {:status 200
+                            :headers {"Content-Type" (or (not-empty (str (:media-type att)))
+                                                         "application/octet-stream")
+                                      "Content-Length" (str (alength bs))
+                                      "Cache-Control" "private, max-age=31536000, immutable"
+                                      ;; The web app shares this origin (`vis-agent web`) and keeps
+                                      ;; its saved gateway tokens there. An agent-made HTML or SVG
+                                      ;; file opened straight from this URL must not run script as
+                                      ;; that origin.
+                                      "Content-Security-Policy" "sandbox"
+                                      "X-Content-Type-Options" "nosniff"}
+                            :body (java.io.ByteArrayInputStream. bs)}
+                        :else (http/error-response 404
+                                                   :attachment-not-found "unknown attachment"
+                                                   :iteration_id (str (path-iid request))
+                                                   :index idx))))))
+
+(defn- attachment-link-handler
+  "GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link — a signed address
+   of the bytes of one attachment that keeps a reference (#451). A frame, a
+   download link or another app opens it without the bearer token. The ticket
+   names this session, iteration and index only, and expires like the media
+   address of the file preview. An inline attachment gets 409: the bytes route
+   with the token serves it."
   [request]
   (if-let [sid (http/path-sid request)]
-    (let [idx (path-idx request)
-          atts (state/user-iteration-attachments (path-iid request))
-          att (when (and idx (nat-int? idx)) (nth atts idx nil))
-          reference (attachment-storage/reference-path (:storage-uri att))
-          ^bytes bs (when-not reference
-                      (some-> att
-                              state/attachment-bytes))]
+    (let [{:keys [idx att]} (path-attachment request)
+          reference (attachment-storage/reference-path (:storage-uri att))]
 
-      (cond reference (let [{:keys [file error]} (fs-api/session-readable-file sid reference)]
-                        (if error
-                          (if (= 404 (:status error))
-                            (http/error-response
-                              404
-                              :attachment-file-missing
-                              "the referenced file is no longer on the gateway machine"
-                              :path reference)
-                            error)
-                          (try (fs-api/file-content-response
-                                 request
-                                 file
-                                 {"Content-Type" (or (not-empty (str (:media-type att)))
-                                                     "application/octet-stream")
-                                  "Cache-Control" "no-store"
-                                  "Content-Security-Policy" "sandbox"
-                                  "X-Content-Type-Options" "nosniff"})
-                               (catch java.io.IOException _
-                                 (http/error-response 404
-                                                      :attachment-file-missing
-                                                      "the referenced file could not be read"
-                                                      :path reference)))))
-            bs {:status 200
-                :headers {"Content-Type" (or (not-empty (str (:media-type att)))
-                                             "application/octet-stream")
-                          "Content-Length" (str (alength bs))
-                          "Cache-Control" "private, max-age=31536000, immutable"
-                          ;; The web app shares this origin (`vis-agent web`) and keeps its
-                          ;; saved gateway tokens there. An agent-made HTML or SVG file opened
-                          ;; straight from this URL must not run script as that origin.
-                          "Content-Security-Policy" "sandbox"
-                          "X-Content-Type-Options" "nosniff"}
-                :body (java.io.ByteArrayInputStream. bs)}
-            :else (http/error-response 404
-                                       :attachment-not-found "unknown attachment"
-                                       :iteration_id (str (path-iid request))
-                                       :index idx)))
+      (cond (nil? att) (http/error-response 404
+                                            :attachment-not-found "unknown attachment"
+                                            :iteration_id (str (path-iid request))
+                                            :index idx)
+            (not reference) (http/error-response
+                              409
+                              :attachment-not-reference
+                              "this attachment is stored inline; read it with the bearer token"
+                              :iteration_id (str (path-iid request))
+                              :index idx)
+            :else (or (:error (reference-file sid reference))
+                      (let [iid (str (path-iid request))
+                            expires (fs-api/ticket-expiry)]
+
+                        (http/json-response
+                          {:content-url (str "/v1/sessions/" sid
+                                             "/iterations/" iid
+                                             "/attachments/" idx
+                                             "?expires=" expires
+                                             "&ticket="
+                                             (fs-api/attachment-ticket (str sid) iid idx expires))
+                           :expires-at expires})))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- page-media-type?
@@ -524,6 +613,7 @@
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/sessions/:sid/iterations/:iid/attachments/:idx"] attachment-bytes-handler
+   [:get "/v1/sessions/:sid/iterations/:iid/attachments/:idx/link"] attachment-link-handler
    [:put "/v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note"]
    attachment-agent-note-handler
    [:post "/v1/sessions/:sid/attachments"] upload-attachment-handler
