@@ -1,4 +1,4 @@
-import { IconButton, Input, Select, Switch, Text } from '../../components/ui';
+import { Disclosure, IconButton, Input, Select, Switch, Text } from '../../components/ui';
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { FormLabel } from './SettingsLayout';
 import { PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
@@ -70,12 +70,15 @@ function defaultPythonName(path: string): string {
 function ListHeader({
   label,
   hint,
+  isGroup = false,
   onAdd,
   children,
 }: {
   label: string;
   /** One sentence under the legend, beside the add action. */
   hint?: string;
+  /** Names a list of cards, whose fields have their own labels: a group heading. */
+  isGroup?: boolean;
   /** Gets the pressed button, so a panel that it opens can hang from it. */
   onAdd: (anchor: HTMLElement) => void;
   children: ReactNode;
@@ -83,7 +86,7 @@ function ListHeader({
   return (
     <legend className="mb-1 flex w-full items-center justify-between gap-2 last:mb-0">
       <span className="min-w-0">
-        <Text variant="label" className="block truncate">
+        <Text variant={isGroup ? 'group' : 'label'} className="block truncate">
           {children}
         </Text>
         {hint && (
@@ -118,16 +121,44 @@ function AccessGroup({ setting, children }: { setting: Toggle; children: ReactNo
   );
 }
 
-/** One card of a repeated editor: a small `n / total` caption only when there are several. */
-function Entry({ index, count, children }: { index: number; count: number; children: ReactNode }) {
+/** The row count at the first render, lowered by each removal: a row at or past it was added here. */
+function useFirstCount(count: number) {
+  const [first, setFirst] = useState(count);
+  if (count < first) setFirst(count);
+  return Math.min(first, count);
+}
+
+/**
+ * One card of a repeated editor. It starts folded to one row that names it, with an
+ * `n / total` count when there are several; a card that the person adds starts open.
+ */
+function Entry({ index, count, summary, isAdded, children }: {
+  index: number;
+  count: number;
+  /** What the folded row shows, such as the folder and its access. */
+  summary: string;
+  isAdded: boolean;
+  children: ReactNode;
+}) {
+  const [isOpen, setOpen] = useState(isAdded);
+  const bodyId = useId();
   return (
-    <div className="space-y-1">
-      {count > 1 && (
-        <p aria-hidden className="font-mono text-meta font-bold text-dialog-hint">
-          {index + 1} / {count}
-        </p>
+    <div className="border border-dialog-edge">
+      <Disclosure
+        isOpen={isOpen}
+        aria-controls={isOpen ? bodyId : undefined}
+        className="px-3"
+        onClick={() => setOpen((open) => !open)}
+      >
+        {count > 1 && <span className="shrink-0 font-bold tabular-nums">{index + 1} / {count}</span>}
+        {count > 1 && ' '}
+        <span className="min-w-0 truncate">{summary}</span>
+      </Disclosure>
+      {isOpen && (
+        <div id={bodyId} className="space-y-2 border-t border-dialog-edge p-3">
+          {children}
+        </div>
       )}
-      <div className="space-y-2 border border-dialog-edge p-3">{children}</div>
     </div>
   );
 }
@@ -321,6 +352,7 @@ function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
     };
   }, [pickedAnchor]);
   const rows = Array.isArray(value) ? value : [];
+  const first = useFirstCount(rows.length);
   const update = (index: number, key: string, next: SettingValue) =>
     onChange(rows.map((row, i) => {
       if (i !== index) return row;
@@ -346,6 +378,7 @@ function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
     <fieldset ref={frame} disabled={disabled} className="min-w-0 space-y-3">
       <ListHeader
         label="Add workspace root"
+        isGroup
         onAdd={(anchor) =>
           machine ? pick('new', anchor) : onChange([...rows, { id: '', path: '', access: 'read-write' }])
         }
@@ -362,7 +395,13 @@ function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
         const access = String(row.access ?? 'read-write');
         const path = String(row.path ?? '');
         return (
-          <Entry key={index} index={index} count={rows.length}>
+          <Entry
+            key={index}
+            index={index}
+            count={rows.length}
+            summary={`${path || 'New folder'} · ${ROOT_ACCESS[enumValue(workspaceProperties.access, access)] ?? access}`}
+            isAdded={index >= first}
+          >
             <CardField
               label="Folder"
               removeLabel={`Remove root ${index + 1}`}
@@ -541,6 +580,7 @@ function NetworkRules({
   disabled: boolean;
 }) {
   const rows = Array.isArray(value) ? value : [];
+  const first = useFirstCount(rows.length);
   const update = (index: number, key: string, next: SettingValue) =>
     onChange(
       rows.map((entry, i) => (i === index ? { ...objectValue(entry), [key]: next } : entry)),
@@ -554,7 +594,13 @@ function NetworkRules({
         const row = objectValue(entry);
         const ruleAccess = enumValue(networkRuleProperties.access, String(row.access ?? 'read-write'));
         return (
-          <Entry key={index} index={index} count={rows.length}>
+          <Entry
+            key={index}
+            index={index}
+            count={rows.length}
+            summary={`${String(row.host ?? '') || 'New host'} · ${RULE_ACCESS[ruleAccess] ?? ruleAccess}`}
+            isAdded={index >= first}
+          >
             <CardField
               label="Host"
               removeLabel={`Remove host rule ${index + 1}`}

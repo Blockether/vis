@@ -11,7 +11,7 @@ afterEach(cleanup);
 function renderField(setting: Toggle, value: SettingValue) {
   const onChange = vi.fn();
   const onRawChange = vi.fn();
-  render(
+  const { container } = render(
     <SettingField
       setting={setting}
       value={value}
@@ -20,8 +20,30 @@ function renderField(setting: Toggle, value: SettingValue) {
       onRawChange={onRawChange}
     />,
   );
+  // Stored cards start folded; open each one, as a person does before an edit.
+  container.querySelectorAll('[data-disclosure-toggle]').forEach((card) => fireEvent.click(card));
   return { onChange, onRawChange };
 }
+
+// Regression: every stored card stood open, so a few roots or rules filled the screen.
+it('folds stored cards to one row each and opens a card that the person adds', () => {
+  const setting: Toggle = { id: 'network', label: 'Network', type: 'object', editor: 'network' };
+  const rules = [{ host: 'api.example.com', access: 'read-only' }, { host: '10.0.0.5', access: 'none' }];
+  const { rerender } = render(
+    <SettingField setting={setting} value={{ rules }} disabled={false} onChange={vi.fn()} onRawChange={vi.fn()} />,
+  );
+  expect(screen.getByRole('button', { name: '1 / 2 api.example.com · Read only', expanded: false })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '2 / 2 10.0.0.5 · Blocked', expanded: false })).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Rule host 1' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /^1 \/ 2/ }));
+  expect(screen.getByRole('textbox', { name: 'Rule host 1' })).toHaveValue('api.example.com');
+  rerender(
+    <SettingField setting={setting} value={{ rules: [...rules, { host: '', access: 'read-only' }] }}
+      disabled={false} onChange={vi.fn()} onRawChange={vi.fn()} />,
+  );
+  expect(screen.getByRole('textbox', { name: 'Rule host 3' })).toHaveValue('');
+  expect(screen.queryByRole('textbox', { name: 'Rule host 2' })).toBeNull();
+});
 
 it('removes a cleared optional workspace name instead of saving an empty string', () => {
   const { onChange } = renderField(
