@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.6] - 2026-11-08
+
 ### Changed
 - Agent: the core prompt tells the model to be concise. It writes only the prose and the code that a step needs. In a benchmark, the model spent about two thirds of its time on writing output tokens.
 - Agent: the core prompt tells the model to call the signatures that the prompt shows, without an `inspect.signature` probe first. It changes an existing file only with `patch`, never with `write_text` or `str.replace`. A check counts only when its expected result comes from outside the change, and the model runs the result as its user does and gives evidence for each requirement of the task. In a benchmark, 60 of 279 steps had a signature probe (110 probes in total), and five failed tasks had a check that compared the result with the model's own assumption.
