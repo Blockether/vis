@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Contract: each JSON Schema `$id` is now `https://vis.blockether.com/schema/<name>.json`, and the site serves the schema at that address (#453). Before, the ids named `contract.blockether.com`, `vis.dev` and `blockether.com/vis-contract`, which serve no schema. A cross-document `$ref` now names the file only.
+
+### Fixed
+- Review app: the review opens in a repository with many findings (#453). Before, one large log file gave 1890 diff threads, and the engine refused the view, because a diff takes at most 200. The review now shows errors first and tells how many findings it does not show. When the engine refuses a node, the error now names the broken rule of the node's own type, not each possible node type.
+
 ## [v0.5.7] - 2026-11-08
 
 ### Added

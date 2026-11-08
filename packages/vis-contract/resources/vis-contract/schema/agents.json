@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/agents.json",
+  "$id": "https://vis.blockether.com/schema/agents.json",
   "$ref": "#/$defs/agent",
   "x-vis-max-team-children": 128,
   "x-vis-max-active-children": 16,

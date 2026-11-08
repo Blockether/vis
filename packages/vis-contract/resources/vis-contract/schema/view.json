@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/view.json",
+  "$id": "https://vis.blockether.com/schema/view.json",
   "title": "View contract",
   "$defs": {
     "operator_action": {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/activity.json",
+  "$id": "https://vis.blockether.com/schema/activity.json",
   "title": "Activity contract",
   "$defs": {
     "presenter": {

@@ -127,6 +127,12 @@ await writeFile(
   }),
 );
 await cp(new URL('./web/style.css', import.meta.url), new URL('assets/catalog.css', dist));
+// Each contract schema `$id` is its public URL, so serve the schemas there.
+await cp(
+  new URL('../../packages/vis-contract/resources/vis-contract/schema/', import.meta.url),
+  new URL('schema/', dist),
+  { recursive: true },
+);
 await build({
   entryPoints: [fileURLToPath(new URL('./web/main.js', import.meta.url))],
   outfile: fileURLToPath(new URL('assets/app.js', dist)),

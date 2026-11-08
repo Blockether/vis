@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/common.json",
+  "$id": "https://vis.blockether.com/schema/common.json",
   "title": "Shared contract definitions",
   "description": "Shared scalar constraints referenced by Vis payload schemas.",
   "$defs": {

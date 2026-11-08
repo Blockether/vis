@@ -55,6 +55,7 @@ const paths = [
   '/extensions/llms.txt',
   '/extending.md',
   '/vis.webmanifest',
+  '/schema/view.json',
   '/favicon.ico',
   '/vis-icon.ico',
   '/vis-icon-16.png',

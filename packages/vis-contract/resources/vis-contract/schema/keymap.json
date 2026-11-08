@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/keymap.json",
+  "$id": "https://vis.blockether.com/schema/keymap.json",
   "title": "Key map contract",
   "description": "The C-x key map that the TUI and the Companion share. Press C-x, then a group key, then a verb key. Each client binds the verbs that it can run.",
   "x-vis-prefix": "C-x",

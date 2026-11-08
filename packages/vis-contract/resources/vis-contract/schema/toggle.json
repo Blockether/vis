@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/toggle.json",
+  "$id": "https://vis.blockether.com/schema/toggle.json",
   "title": "Feature-toggle contract",
   "description": "Feature-toggle contributions, and the boolean tokens and string values that settings accept.",
   "$defs": {

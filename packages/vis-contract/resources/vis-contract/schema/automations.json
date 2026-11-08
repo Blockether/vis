@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/automations.json",
+  "$id": "https://vis.blockether.com/schema/automations.json",
   "$ref": "#/$defs/automation",
   "$comment": "Automations start turns from schedules, manual runs and signed webhooks. All times are Unix milliseconds. The gateway shows a secret only once, when it creates or rotates the secret. The server checks UTF-8 budgets, cron syntax and time zones separately.",
   "x-vis-limits": {

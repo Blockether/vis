@@ -62,6 +62,7 @@ export async function verifyDeployment(hostname) {
         ['/extensions/llms.txt', '# Vis Extension Center'],
         ['/extending.md', '# Extending Vis'],
         ['/vis.webmanifest', '"icons"'],
+        ['/schema/view.json', '"title": "View contract"'],
       ]) {
         const response = await fetch(new URL(path, origin), {
           signal: AbortSignal.timeout(20000),

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/evals.json",
+  "$id": "https://vis.blockether.com/schema/evals.json",
   "$ref": "#/$defs/bench_report",
   "$comment": "Evaluation routes run the bundled SDK package blockether.vis.evals on the request data. They read no files and keep no state. Only the leaderboard route uses the network.",
   "$defs": {

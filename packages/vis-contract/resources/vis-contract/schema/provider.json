@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/provider.json",
+  "$id": "https://vis.blockether.com/schema/provider.json",
   "title": "Provider limits and model catalog contract",
   "description": "The portable provider vocabulary every SDK renders: the limits report with its rows, windows and sources, and the model catalog with price, billing, capabilities and the limits of each model's provider.",
   "$ref": "#/$defs/report",

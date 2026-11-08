@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/symbol.json",
+  "$id": "https://vis.blockether.com/schema/symbol.json",
   "title": "Inert Python extension symbol description",
   "$ref": "#/$defs/declaration",
   "$defs": {

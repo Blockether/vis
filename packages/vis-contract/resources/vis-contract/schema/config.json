@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://blockether.com/vis-contract/schema/config.json",
+  "$id": "https://vis.blockether.com/schema/config.json",
   "$defs": {
     "nonBlankString": {
       "type": "string",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://contract.blockether.com/vis/schema/gateway.json",
+  "$id": "https://vis.blockether.com/schema/gateway.json",
   "title": "Gateway contract",
   "$ref": "#/$defs/session",
   "x-vis-routes": [
@@ -3148,7 +3148,7 @@
       "type": "object",
       "properties": {
         "scope": {
-          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+          "$ref": "toggle.json#/$defs/scope"
         },
         "target_id": {
           "type": "string",
@@ -3212,13 +3212,13 @@
         "scopes": {
           "type": "array",
           "items": {
-            "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+            "$ref": "toggle.json#/$defs/scope"
           },
           "minItems": 1,
           "uniqueItems": true
         },
         "scope": {
-          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+          "$ref": "toggle.json#/$defs/scope"
         },
         "source": {
           "enum": [
@@ -3240,7 +3240,7 @@
           ],
           "properties": {
             "scope": {
-              "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+              "$ref": "toggle.json#/$defs/scope"
             },
             "target_id": {
               "type": "string"
@@ -3257,7 +3257,7 @@
           ],
           "properties": {
             "scope": {
-              "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+              "$ref": "toggle.json#/$defs/scope"
             },
             "enabled": {
               "type": "boolean"
@@ -3381,7 +3381,7 @@
       ],
       "properties": {
         "scope": {
-          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+          "$ref": "toggle.json#/$defs/scope"
         },
         "target_id": {
           "type": [
@@ -3565,7 +3565,7 @@
       ],
       "properties": {
         "scope": {
-          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+          "$ref": "toggle.json#/$defs/scope"
         },
         "target_id": {
           "type": "string",

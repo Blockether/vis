@@ -77,6 +77,17 @@ test('every generated document has canonical metadata, an accessible icon and a 
   expect(readdirSync('dist')).not.toContain('source.json');
 });
 
+test('every contract schema is served at its $id', () => {
+  const source = '../../packages/vis-contract/resources/vis-contract/schema/';
+  const names = readdirSync(source).filter((name) => name.endsWith('.json'));
+  expect(names.length).toBeGreaterThan(0);
+  for (const name of names) {
+    const schema = JSON.parse(readFileSync(source + name, 'utf8'));
+    expect(schema.$id).toBe(origin + '/schema/' + name);
+    expect(read('schema/' + name)).toBe(readFileSync(source + name, 'utf8'));
+  }
+});
+
 test.each([16, 32, 48, 180, 192, 512])(
   'site icon %i reuses the transparent Companion artwork',
   async (size) => {
