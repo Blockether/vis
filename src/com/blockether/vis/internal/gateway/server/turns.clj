@@ -6,6 +6,8 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
+            [com.blockether.vis.internal.gateway.server.fs :as fs-api]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
@@ -385,38 +387,58 @@
    it works the instant the iteration is stored and forever after (404 until the
    row lands — the client retries, as the trace re-fetch already does). An
    attachment is append-only + content-addressed by (iteration, index), so it is
-   safely `immutable`-cacheable."
+   safely `immutable`-cacheable.
+
+   A REFERENCE (#450) names a file on the gateway machine instead of stored bytes.
+   It streams from disk with `Range` support, after the same read gate as the file
+   preview, on each request. The file can change or go away, so it is `no-store`."
   [request]
-  (if (http/path-sid request)
-    (let [idx
-          (path-idx request)
+  (if-let [sid (http/path-sid request)]
+    (let [idx (path-idx request)
+          atts (state/user-iteration-attachments (path-iid request))
+          att (when (and idx (nat-int? idx)) (nth atts idx nil))
+          reference (attachment-storage/reference-path (:storage-uri att))
+          ^bytes bs (when-not reference
+                      (some-> att
+                              state/attachment-bytes))]
 
-          atts
-          (state/user-iteration-attachments (path-iid request))
-
-          att
-          (when (and idx (nat-int? idx)) (nth atts idx nil))
-
-          ^bytes bs
-          (some-> att
-                  state/attachment-bytes)]
-
-      (if bs
-        {:status 200
-         :headers {"Content-Type" (or (not-empty (str (:media-type att)))
-                                      "application/octet-stream")
-                   "Content-Length" (str (alength bs))
-                   "Cache-Control" "private, max-age=31536000, immutable"
-                   ;; The web app shares this origin (`vis-agent web`) and keeps its
-                   ;; saved gateway tokens there. An agent-made HTML or SVG file opened
-                   ;; straight from this URL must not run script as that origin.
-                   "Content-Security-Policy" "sandbox"
-                   "X-Content-Type-Options" "nosniff"}
-         :body (java.io.ByteArrayInputStream. bs)}
-        (http/error-response 404
-                             :attachment-not-found "unknown attachment"
-                             :iteration_id (str (path-iid request))
-                             :index idx)))
+      (cond reference (let [{:keys [file error]} (fs-api/session-readable-file sid reference)]
+                        (if error
+                          (if (= 404 (:status error))
+                            (http/error-response
+                              404
+                              :attachment-file-missing
+                              "the referenced file is no longer on the gateway machine"
+                              :path reference)
+                            error)
+                          (try (fs-api/file-content-response
+                                 request
+                                 file
+                                 {"Content-Type" (or (not-empty (str (:media-type att)))
+                                                     "application/octet-stream")
+                                  "Cache-Control" "no-store"
+                                  "Content-Security-Policy" "sandbox"
+                                  "X-Content-Type-Options" "nosniff"})
+                               (catch java.io.IOException _
+                                 (http/error-response 404
+                                                      :attachment-file-missing
+                                                      "the referenced file could not be read"
+                                                      :path reference)))))
+            bs {:status 200
+                :headers {"Content-Type" (or (not-empty (str (:media-type att)))
+                                             "application/octet-stream")
+                          "Content-Length" (str (alength bs))
+                          "Cache-Control" "private, max-age=31536000, immutable"
+                          ;; The web app shares this origin (`vis-agent web`) and keeps its
+                          ;; saved gateway tokens there. An agent-made HTML or SVG file opened
+                          ;; straight from this URL must not run script as that origin.
+                          "Content-Security-Policy" "sandbox"
+                          "X-Content-Type-Options" "nosniff"}
+                :body (java.io.ByteArrayInputStream. bs)}
+            :else (http/error-response 404
+                                       :attachment-not-found "unknown attachment"
+                                       :iteration_id (str (path-iid request))
+                                       :index idx)))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- page-media-type?

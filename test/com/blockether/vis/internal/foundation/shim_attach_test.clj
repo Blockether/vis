@@ -379,6 +379,63 @@
         (expect (re-find #"RAISED attach: no such file: .*nope\.json" (str (:stdout out)))))))
 
 (defdescribe
+  attach-reference-test
+  ;; #450: a file above the attachment limit stays on disk. attach() keeps a
+  ;; reference to its path, the row carries no bytes, and the read verbs say where
+  ;; the file is instead of loading it.
+  (it
+    "keeps a file above the limit as a reference to its path"
+    (let [root
+          (.getCanonicalPath (java.io.File. (temp-root)))
+
+          file
+          (java.io.File. root "talk.mp3")
+
+          _
+          (with-open [out (java.io.FileOutputStream. file)]
+            (.write out
+                    (byte-array (concat (map unchecked-byte [0x49 0x44 0x33 4 0 0 0 0 0 0])
+                                        (repeat 990 (unchecked-byte 7))))))
+
+          out
+          (extension/with-context
+            {:env {:session-id (random-uuid) :workspace {:root root}}}
+            (binding [mpl-capture/*attachment-limit-bytes* 100]
+              (block (ctx-with-root root)
+                     (str "d = attach("
+                          (pr-str (.getPath file))
+                          ")\n"
+                          "print('DESC', d['storage'], d['path'], d['size'], d['audience'],"
+                          " d['media_type'])\n"
+                          "try:\n" "    read_attachment('talk.mp3')\n"
+                          "except Exception as e:\n" "    print('READ', e)\n"
+                          "small = attach(b'abc', 'small.txt')\n"
+                          "print('SMALL', small.get('storage'))\n"))))
+
+          [reference small]
+          (:attachments out)
+
+          so
+          (str (:stdout out))]
+
+      (expect (nil? (:error out)))
+      (expect (str/includes? so (str "DESC reference " (.getPath file) " 1000 user audio/mpeg")))
+      (expect (= (str "vis-ref://" (.getPath file)) (:storage-uri reference)))
+      (expect (nil? (:base64 reference)))
+      (expect (= 1000 (:size reference)))
+      (expect (re-find #"READ read_attachment: \"talk.mp3\" is a reference to .*talk\.mp3" so))
+      (expect (str/includes? so "SMALL None"))
+      (expect (some? (:base64 small)))))
+  (it "refuses in-memory bytes above the limit, because no file can be referenced"
+      (let [out (binding [mpl-capture/*attachment-limit-bytes* 100]
+                  (block (ctx-with-root (temp-root))
+                         (str "try:\n" "    attach(b'a' * 200, 'big.bin')\n"
+                              "except Exception as e:\n" "    print('RAISED', e)\n")))]
+        (expect (empty? (:attachments out)))
+        (expect (re-find #"RAISED attach: payload 200 bytes exceeds the 100 bytes attachment limit"
+                         (str (:stdout out)))))))
+
+(defdescribe
   attach-discovery-test
   (it "discovers declared capabilities instead of the internal shim identity"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "internal-id"

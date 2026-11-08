@@ -56,6 +56,7 @@ import { parseSubtitles } from '../lib/subtitles';
 import { readArtifactText, TextFrame } from './TextArtifact';
 import { AlertIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
 import { ZipArchive } from './ZipArchive';
+import { ReferenceAttachment } from './ReferenceAttachment';
 import { Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 import { AppListRow, AppSurface, useSessionApps } from './AppAttachment';
 import type { LiveView as LiveViewModel } from '../lib/live-view';
@@ -408,11 +409,14 @@ function Thumb({
     (table || subtitles || isTextMedia(artifact.mediaType, artifact.name)) &&
     typeof artifact.size === 'number' &&
     artifact.size <= PREVIEW_LIMIT;
+  // A file that the session database does not keep is never downloaded for a
+  // thumbnail (#450): it wears the plate of its kind.
+  const reference = Boolean(artifact.path);
   const { url, blob, failed } = useArtifactSource(
     client,
     sid,
     artifact,
-    artifact.kind === 'image' || artifact.kind === 'video' || previewable,
+    !reference && (artifact.kind === 'image' || artifact.kind === 'video' || previewable),
   );
   // Markdown is parsed into what its lines ARE; anything else is text and stays
   // verbatim — the same split the reader makes on the same two files.
@@ -430,7 +434,7 @@ function Thumb({
       ? previewLines(head).map((text): PreviewLine => ({ kind: 'code', text }))
       : previewBlocks(head);
 
-  if (artifact.kind === 'image') {
+  if (artifact.kind === 'image' && !reference) {
     return (
       <span className={`block overflow-hidden bg-code ${box}`}>
         {url && !failed ? (
@@ -539,7 +543,7 @@ function Thumb({
     );
   }
 
-  if (artifact.kind === 'video') {
+  if (artifact.kind === 'video' && !reference) {
     // The frame is the clip's own first one (see `ClipVideo`), and the mark in
     // its corner says it plays. Until the bytes arrive, and when they never do,
     // the plate carries the mark alone.
@@ -855,7 +859,13 @@ function ArtifactDetail({
         artifactLinks.open(attachmentId);
       }
     : undefined;
-  const { url, blob, failed, shownIteration, shownIndex } = useArtifactSource(client, sid, artifact, true);
+  const reference = artifact.path;
+  const { url, blob, failed, shownIteration, shownIndex } = useArtifactSource(
+    client,
+    sid,
+    artifact,
+    !reference,
+  );
   // An HTML page's note belongs to the cut whose bytes are on screen.
   const saveNote = useCallback(
     (text: string) => {
@@ -865,6 +875,34 @@ function ArtifactDetail({
     },
     [client, sid, shownIteration, shownIndex],
   );
+
+  // A file that the session database does not keep streams or opens from the gateway
+  // machine, as its row in the transcript does (#450). Its bytes are never one Blob.
+  if (reference) {
+    return (
+      <DetailOverlay name={artifact.name} onClose={onClose}>
+        <div className="p-3">
+          <ReferenceAttachment
+            client={client}
+            sid={sid}
+            attachment={{
+              index: artifact.index,
+              iteration_id: artifact.iterationId,
+              attachment_id: artifact.attachmentId,
+              filename: artifact.name,
+              media_type: artifact.mediaType,
+              size: artifact.size,
+              storage: 'reference',
+              path: reference,
+              transcription: artifact.transcription,
+              transcription_status: artifact.transcriptionStatus,
+              transcription_segments: artifact.transcriptionSegments,
+            }}
+          />
+        </div>
+      </DetailOverlay>
+    );
+  }
 
   if (failed || !url || !blob) {
     return (

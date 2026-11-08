@@ -908,6 +908,15 @@ export interface IterationAttachment {
    */
   version?: number;
   size?: number;
+  /**
+   * `reference` when the file was larger than the attachment limit (#450). The session
+   * database keeps no bytes for it: it stays at `path` on the gateway machine, and a
+   * client streams it from there. An attachment that the database keeps has no
+   * `storage` key.
+   */
+  storage?: 'reference';
+  /** The absolute path of a `reference` attachment on the gateway machine. */
+  path?: string;
   /** {@link GatewayAttachment.transcription} for a PRODUCED recording. */
   transcription?: string;
   /** {@link GatewayAttachment.transcription_status} for a PRODUCED recording. */

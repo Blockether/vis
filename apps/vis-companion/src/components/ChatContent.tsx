@@ -70,11 +70,13 @@ import {
   attachmentIsImage,
   attachmentIsLive,
   attachmentIsPlayable,
+  attachmentIsReference,
   attachmentIsVideo,
   collapseAttachmentVersions,
   pageBySize,
   RAIL_PAGE,
 } from '../lib/artifacts';
+import { ReferenceAttachment } from './ReferenceAttachment';
 import { captionsFor, parseSubtitles, subtitleSegments } from '../lib/subtitles';
 import {
   BandLabel,
@@ -2501,7 +2503,7 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
 export const AttachmentRail = memo(function AttachmentRail({
   client,
   sid,
-  attachments,
+  attachments: given,
 }: {
   client: GatewayClient;
   sid: string;
@@ -2512,6 +2514,14 @@ export const AttachmentRail = memo(function AttachmentRail({
   // Keep each page small. Fetch playable artifacts only near the viewport,
   // so hidden media cannot delay a session switch on a slow connection.
   const [pages, setPages] = useState(1);
+  // A FILE THAT THE SESSION DATABASE DOES NOT KEEP is never downloaded (#450). It
+  // leaves the rail before anything below can ask for its bytes: a tile, a document
+  // reader, the captions of a recording and the share control of a recorded file all
+  // download the whole file. It streams or opens from the gateway instead.
+  const references = given.filter(attachmentIsReference);
+  const attachments = references.length
+    ? given.filter((entry) => !attachmentIsReference(entry))
+    : given;
   // ONE ROW PER ARTIFACT, NOT PER CUT.
   //
   // Regression, user report: commenting on a note and saving it turned one
@@ -2582,6 +2592,14 @@ export const AttachmentRail = memo(function AttachmentRail({
 
   return (
     <>
+      {references.map((attachment) => (
+        <ReferenceAttachment
+          key={`ref-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
+          client={client}
+          sid={sid}
+          attachment={attachment}
+        />
+      ))}
       {recordings.map((attachment) => (
         <AttachmentTile
           key={`rec-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}

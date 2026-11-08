@@ -3872,6 +3872,29 @@
         }
       }
     },
+    "attachment_reference": {
+      "type": "object",
+      "description": "Keys that an iteration attachment descriptor adds when attach() keeps a reference to a file on the gateway machine instead of its bytes. attach() does this for a file that is larger than the attachment limit. The session database keeps no byte of the file. GET /v1/sessions/:sid/iterations/:iid/attachments/:idx streams the file from disk and answers Range requests. A client plays a recording or a clip from the content_url of GET /v1/sessions/:sid/fs/file?path=<path>, because a media element cannot send the gateway token.",
+      "required": [
+        "storage",
+        "path"
+      ],
+      "properties": {
+        "storage": {
+          "const": "reference"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The absolute path of the file on the gateway machine."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The size of the file in bytes when attach() recorded it."
+        }
+      }
+    },
     "preview_image_bytes": {
       "type": "integer",
       "minimum": 0,

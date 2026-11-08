@@ -202,6 +202,27 @@ export function attachmentIsDoc(attachment: IterationAttachment): boolean {
 }
 
 /**
+ * A file that `attach` kept on the gateway machine instead of in the session database,
+ * because it was larger than the attachment limit (#450). Its bytes are only on disk, so
+ * the app never downloads them whole into a Blob or the attachment cache: a recording or
+ * a clip streams from the gateway with seek, and another file shows a card that opens
+ * the file preview.
+ */
+export function attachmentIsReference(attachment: Partial<IterationAttachment>): boolean {
+  return (
+    attachment.storage === 'reference' && typeof attachment.path === 'string' && attachment.path !== ''
+  );
+}
+
+/**
+ * How a reference shows: `stream` plays in a media element that reads the file from the
+ * gateway with Range requests, and `card` names the file and opens its preview on a press.
+ */
+export function referenceShape(attachment: IterationAttachment): 'stream' | 'card' {
+  return attachmentIsAudio(attachment) || attachmentIsVideo(attachment) ? 'stream' : 'card';
+}
+
+/**
  * The settled record of a live view — a run that SHOWED its work, sealed under
  * the media type the engine files it with. It is not a file the app can only
  * name: the picture the run ended on is in it, and its log is still readable a
@@ -321,6 +342,11 @@ export interface SessionArtifact {
    * always the head; the rest is the history behind it.
    */
   versions?: SessionArtifact[];
+  /**
+   * The path on the gateway machine of a file that the session database does not keep
+   * (`attachmentIsReference`). The sheet streams or opens it there and never downloads it.
+   */
+  path?: string;
 }
 
 /**
@@ -352,6 +378,7 @@ function toArtifact(
     transcription: attachment.transcription,
     transcriptionStatus: attachment.transcription_status,
     transcriptionSegments: attachment.transcription_segments,
+    path: attachmentIsReference(attachment) ? attachment.path : undefined,
   };
 }
 

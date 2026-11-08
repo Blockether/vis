@@ -1,5 +1,7 @@
 (ns com.blockether.vis.tui.artifact-inspector-test
-  (:require [clojure.set :as set]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.app-model :as app-model]
@@ -317,6 +319,59 @@
                (expect (= "<html>decision</html>"
                           (String. (Files/readAllBytes (.toPath file)) "UTF-8")))
                (finally (.delete file) (.delete (.getParentFile file))))))))
+
+;; #450: a reference names a file on the gateway machine that can be larger than memory.
+(defdescribe
+  reference-artifacts
+  (let [descriptor
+        (-> (slurp (io/resource "vis-contract/fixtures/attachment-reference.json"))
+            json/read-json
+            (get "cases")
+            first
+            (get "descriptor"))
+
+        row
+        (first (inspector/inspector-rows [] [] [descriptor]))]
+
+    (it "streams a reference to a file and never reads it whole"
+        (with-redefs [vis/gateway-iteration-attachment-bytes
+                      (fn [& _]
+                        (throw (ex-info "whole read" {})))
+
+                      vis/gateway-iteration-attachment-to-file!
+                      (fn [sid iid idx ^java.io.File target]
+                        (expect (= ["session-1" (get descriptor "iteration_id") 0] [sid iid idx]))
+                        (spit target "ID3")
+                        true)]
+
+          (let [file (inspector/materialize-artifact! "session-1" row)]
+            (try (expect (= "zero-to-demo-day.mp3" (.getName file)))
+                 (expect (= "ID3" (slurp file)))
+                 (finally (.delete file) (.delete (.getParentFile file)))))))
+    (it "leaves no folder when the gateway cannot stream the reference"
+        (with-redefs [vis/gateway-iteration-attachment-to-file! (constantly false)]
+          (expect (nil? (inspector/materialize-artifact!
+                          "session-1"
+                          row
+                          (.toFile (Files/createTempDirectory
+                                     "vis-ref"
+                                     (make-array java.nio.file.attribute.FileAttribute 0))))))))
+    (it "shows no thumbnail for a reference picture"
+        (with-redefs [vis/gateway-iteration-attachment-bytes (fn [& _]
+                                                               (throw (ex-info "thumbnail read"
+                                                                               {})))]
+          (expect (nil? ((inspector/thumbnail-loader "session-1")
+                          (assoc row
+                            :media-type "image/png"
+                            :filename "huge.png"))))))
+    (it "opens the path in place only when the gateway runs on this machine"
+        (let [file (java.io.File/createTempFile "vis-ref" ".mp3")]
+          (try (let [local (assoc row :path (.getPath file))]
+                 (expect (= (.getPath file) (inspector/reference-local-path local true)))
+                 (expect (nil? (inspector/reference-local-path local false)))
+                 (expect (nil? (inspector/reference-local-path row true)) "the file is not here")
+                 (expect (nil? (inspector/reference-local-path (dissoc local :storage) true))))
+               (finally (.delete file)))))))
 
 (def ^:private app-artifacts
   [{"filename" "review.app.json"

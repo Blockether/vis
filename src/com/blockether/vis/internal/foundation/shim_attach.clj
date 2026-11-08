@@ -24,9 +24,11 @@
    `:ext/sandbox-shims` entry autoloads `attach` into every sandbox."
   (:require [com.blockether.imaging :as imaging]
             [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.attachment.storage :as storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.view.core :as view]
+            [com.blockether.vis.internal.workspace.read-gate :as read-gate]
             [charred.api :as json]
             [clojure.string :as str]))
 
@@ -100,7 +102,12 @@
            :is-pending true
            :audience (attachments/attachment-audience att)}
     (:view-id att)
-    (assoc :view-id (:view-id att))))
+    (assoc :view-id (:view-id att))
+
+    (storage/reference-path (:storage-uri att))
+    (assoc :storage
+      "reference" :path
+      (storage/reference-path (:storage-uri att)))))
 
 (defn- pending-descriptors
   "Descriptors for everything the RUNNING block has attached so far, in call
@@ -177,6 +184,80 @@
           (mpl-capture/queue-reinspection! att))
         [(str (:id att)) (str (:filename att)) (str (:media-type att)) (long (or (:size att) 0))])))
 
+(defn- limit-label
+  "The attachment limit as people read it, for example `32 MiB`."
+  []
+  (let [limit
+        (long mpl-capture/*attachment-limit-bytes*)
+
+        mib
+        (* 1024 1024)]
+
+    (if (zero? (rem limit mib)) (str (quot limit mib) " MiB") (str limit " bytes"))))
+
+(defn- refuse-reference!
+  "Throw a clear error when `row` keeps a reference to a file instead of its bytes.
+   The bytes stay on disk, so `caller` cannot read them; the model opens the path."
+  [caller row]
+  (when (= "reference" (:storage row))
+    (throw (ex-info (str caller
+                         ": " (pr-str (str (:filename row)))
+                         " is a reference to " (:path row)
+                         " (" (long (or (:size row) 0))
+                         " bytes). The file is larger than the attachment limit, so Vis kept"
+                         " no copy of its bytes. Open the path itself.")
+                    {:type ::attachment-reference :path (:path row)}))))
+
+(defn- record-reference-call
+  "Body of `__vis_record_attachment_reference__`: record a file that is larger than
+   the attachment limit as a REFERENCE to its path on the gateway machine. No byte
+   of the file is read here or stored in the session database.
+
+   The path goes through the same read gate as the file preview and the media stream
+   of the gateway, so a block cannot reference a file that a client could not read.
+   A reference is for people: its audience is always `user`, and its bytes never go
+   into a model request."
+  [kind media-type path filename audience label]
+  (let [env
+        extension/*current-environment*
+
+        root
+        (read-gate/env-root env)]
+
+    (cond (str/blank? (str path)) (throw (ex-info "attach: missing path." {}))
+          (= "model" (str/lower-case (str audience)))
+          (throw (ex-info (str "attach: a file larger than " (limit-label)
+                               " is kept as a reference for people, so audience='model'"
+                               " cannot see it.")
+                          {}))
+          (nil? mpl-capture/*attachment-sink*)
+          (throw (ex-info "attach: call inside python_execution." {}))
+          (nil? root) (throw (ex-info "attach: the session has no workspace to read the file from."
+                                      {}))
+          :else (let [{:keys [^java.io.File file refusal]}
+                      (read-gate/readable-file env root (str path))]
+                  (when refusal
+                    (throw (ex-info (str "attach: "
+                                         (:message refusal)
+                                         (when-let [p (:path refusal)]
+                                           (str ": " p)))
+                                    {:type ::reference-refused :status (:status refusal)})))
+                  (let [absolute (.getPath file)
+                        media-type (or (not-empty (str media-type)) "application/octet-stream")
+                        recorded (mpl-capture/record-attachment!
+                                   (cond-> {:kind (or (not-empty (str kind)) "file")
+                                            :media-type media-type
+                                            :storage-uri (storage/reference-uri absolute)
+                                            :size (.length file)
+                                            :audience "user"}
+                                     (not (str/blank? (str filename)))
+                                     (assoc :filename (str filename))
+
+                                     (not (str/blank? (str label)))
+                                     (assoc :label (str/trim (str label)))))]
+
+                    (json/write-json-str (dissoc (pending-descriptor 0 recorded) :position)))))))
+
 (defn- record-attachment-call
   "Body of `__vis_record_attachment__`: validate the already-decided attachment
    fields, append the map to the active per-block artifact sink, and hand the
@@ -190,12 +271,11 @@
   [kind media-type b64 filename size audience label]
   (cond (str/blank? (str b64)) (throw (ex-info "attach: empty payload." {}))
         (str/blank? (str media-type)) (throw (ex-info "attach: missing media type" {}))
-        (> (long (or size 0)) mpl-capture/max-capture-bytes)
-        (throw (ex-info (str "attach: payload "
-                             (long (or size 0))
-                             " bytes exceeds the "
-                             (quot mpl-capture/max-capture-bytes (* 1024 1024))
-                             " MiB attachment limit")
+        (> (long (or size 0)) (long mpl-capture/*attachment-limit-bytes*))
+        (throw (ex-info (str "attach: payload " (long (or size 0))
+                             " bytes exceeds the " (limit-label)
+                             " attachment limit. Write the bytes to a file and attach its path:"
+                             " a larger file stays on disk as a reference.")
                         {}))
         (nil? mpl-capture/*attachment-sink*) (throw (ex-info "attach: call inside python_execution."
                                                              {}))
@@ -245,6 +325,9 @@
    observed-symbol hook and remain catchable host errors in Python."
   []
   {"__vis_record_attachment__" (attachment-tool 'attach :mutation record-attachment-call)
+   "__vis_record_attachment_reference__" (attachment-tool 'attach :mutation record-reference-call)
+   "__vis_attachment_limit__" (fn []
+                                (long mpl-capture/*attachment-limit-bytes*))
    "__vis_live_app__" (attachment-tool 'attach :mutation view/app-json!)
    "__vis_list_attachments__"
    (attachment-tool 'list_attachments :observation #(json/write-json-str (attachment-descriptors)))
@@ -259,7 +342,8 @@
      :observation
      (fn [target version]
        (let [id
-             (:id (locate-attachment "read_attachment" target version))
+             (:id (doto (locate-attachment "read_attachment" target version)
+                    (->> (refuse-reference! "read_attachment"))))
 
              attachment
              (or (pending-by-id id)
@@ -276,7 +360,8 @@
      :observation
      (fn [target version]
        (let [row
-             (locate-attachment "show_attachment" target version)
+             (doto (locate-attachment "show_attachment" target version)
+               (->> (refuse-reference! "show_attachment")))
 
              id
              (:id row)]
@@ -391,7 +476,8 @@
        (str
          "`attach` stores artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable "
          "attachments of the iteration. The database owns them, sniffs their media types and "
-         "keeps them across restarts. SAME DOCUMENT, SAME NAME: a revision goes back under its "
+         "keeps them across restarts. A file larger than 32 MiB stays on disk: the attachment "
+         "keeps a reference to its path, and people stream it from there. SAME DOCUMENT, SAME NAME: a revision goes back under its "
          "OWN filename as the next VERSION of that artifact. Never put `report_v2.png` beside "
          "`report.png`, because a new name is a different document. `list_attachments(name)` "
          "walks the versions.\n\n"

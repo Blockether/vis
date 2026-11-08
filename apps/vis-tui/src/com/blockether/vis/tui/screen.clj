@@ -3364,7 +3364,12 @@
   (vis/worker-future
     "vis-tui-open-produced-artifact"
     #(try
-       (let [row (artifact-inspector/artifact-row! session-id target)]
+       (let [row
+             (artifact-inspector/artifact-row! session-id target)
+
+             local-path
+             (artifact-inspector/reference-local-path row (vis/gateway-local?))]
+
          (cond (attachments/live-artifact? row)
                (do (vis/notify! "Loading recorded live view…" :ttl-ms 1500)
                    (if-let [bytes (vis/gateway-iteration-attachment-bytes session-id
@@ -3378,6 +3383,17 @@
                      (vis/notify! "Live view record unavailable. Click to retry."
                                   :level :warn
                                   :ttl-ms status-error-ttl-ms)))
+               ;; #450: a large file stays on the gateway machine. When the gateway runs
+               ;; here, open that file in place; a copy would double a large file on disk.
+               local-path (let [{:keys [status error]} (if (attachments/file-manager-artifact?
+                                                             (:media-type row)
+                                                             (:filename row))
+                                                         (opener/reveal-local! local-path)
+                                                         (opener/open-local! local-path))]
+                            (when-not (= :ok status)
+                              (vis/notify! (or error "Artifact could not be opened")
+                                           :level :warn
+                                           :ttl-ms status-error-ttl-ms)))
                ;; An archive has no viewer: keep it in the downloads folder and show it there.
                (attachments/file-manager-artifact? (:media-type row) (:filename row))
                (if-let [file (artifact-inspector/materialize-artifact!

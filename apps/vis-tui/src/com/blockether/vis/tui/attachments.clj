@@ -317,6 +317,13 @@
              str/trim
              str/lower-case)))
 
+(defn reference-artifact?
+  "True when artifact row `artifact` names a file on the gateway machine and not bytes in
+   the session database: its descriptor has `storage` reference (#450). The bytes route
+   streams such a file from disk, so a client never reads it whole into memory."
+  [artifact]
+  (= "reference" (:storage artifact)))
+
 (defn video-media-type?
   "True when `media-type` is one of [[video-media-types]]."
   [media-type]

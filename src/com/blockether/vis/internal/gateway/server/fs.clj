@@ -5,15 +5,14 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachment.core :as attachment]
-            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.workspace.read-gate :as read-gate]
             [ring.core.protocols :as ring-protocols]))
 
 ;; Filesystem browse — picking a workspace root
@@ -123,9 +122,10 @@
                                          :mkdir-failed "could not create that folder"
                                          :path (.getAbsolutePath made)))))))
 
-(defn- session-readable-file
+(defn session-readable-file
   "Resolve a file using the session's live filesystem roots and read gates. The same
-   resolver serves previews and editor opens, so neither can bypass draft or deny rules."
+   resolver serves previews, editor opens and attachment references, so none can
+   bypass draft or deny rules. Returns `{:file f}` or `{:error response}`."
   [sid requested]
   (let [root (get (state/session-workspace-info sid) "root")]
     (cond
@@ -136,43 +136,23 @@
       :else
       (try
         (let [env (lp/env-for sid)
-              ws (if-let [a (:workspace-atom env)]
-                   @a
-                   (:workspace env))
-              active-root (workspace/normalize-root (or (:root ws) (:workspace/root env)))]
+              active-root (read-gate/env-root env)]
 
           (if (or (nil? env) (nil? active-root) (not= active-root (workspace/normalize-root root)))
             {:error
              (http/error-response 409 :workspace-unavailable "Session workspace is unavailable.")}
-            (binding [workspace/*workspace-root* active-root
-                      workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
-
-              (let [^java.io.File target (workspace/resolve-file-path requested)
-                    path (.getPath target)
-                    refusal (or (when-let [reason (process-jail/deny-refusal env "file-read" path)]
-                                  {:reason reason})
-                                (when (extension/gate-hooked? :fs/access)
-                                  (extension/run-gate-hooks :fs/access
-                                                            env
-                                                            {:operation "file-read" :path path})))]
-
-                (cond refusal {:error (http/error-response 403
-                                                           :file-access-denied (:reason refusal)
-                                                           :path path)}
-                      (not (.isFile target))
-                      {:error (http/error-response 404 :not-a-file "no such file" :path path)}
-                      :else {:file target})))))
-        (catch clojure.lang.ExceptionInfo e
-          (let [type (:type (ex-data e))]
-            {:error
-             (case type
-               (:workspace/path-escape :workspace/path-denied)
-               (http/error-response 403 :file-access-denied (ex-message e))
-
-               (http/error-response 400 :invalid-request "that path could not be resolved"))}))
-        (catch java.io.IOException _
+            (let [{:keys [file refusal]} (read-gate/readable-file env active-root requested)]
+              (if refusal
+                {:error (apply http/error-response
+                          (:status refusal)
+                          (:type refusal)
+                          (:message refusal)
+                          (when-let [path (:path refusal)]
+                            [:path path]))}
+                {:file file}))))
+        (catch clojure.lang.ExceptionInfo _
           {:error (http/error-response 400 :invalid-request "that path could not be resolved")})
-        (catch java.nio.file.InvalidPathException _
+        (catch java.io.IOException _
           {:error (http/error-response 400 :invalid-request "that path could not be resolved")})))))
 
 (defn- open-file-handler
@@ -534,6 +514,37 @@
    "Content-Security-Policy" "sandbox"
    "Cache-Control" "private"})
 
+(defn file-content-response
+  "The streamed answer for `file` with `headers`: 206 for the one byte range that the
+   `Range` header of `request` asks, 416 for a range past the end, else 200 with the
+   whole file. The file is read in chunks while the socket takes them."
+  [request ^java.io.File file headers]
+  (let [size
+        (.length file)
+
+        wanted
+        (byte-range (get-in request [:headers "range"]) size)
+
+        headers
+        (assoc headers "Accept-Ranges" "bytes")]
+
+    (cond (= :unsatisfiable wanted)
+          {:status 416 :headers (assoc headers "Content-Range" (str "bytes */" size)) :body ""}
+          wanted (let [[first-byte last-byte]
+                       wanted
+
+                       length
+                       (inc (- (long last-byte) (long first-byte)))]
+
+                   {:status 206
+                    :headers (assoc headers
+                               "Content-Range" (str "bytes " first-byte "-" last-byte "/" size)
+                               "Content-Length" (str length))
+                    :body (file-range-body file first-byte length)})
+          :else {:status 200
+                 :headers (assoc headers "Content-Length" (str size))
+                 :body (file-range-body file 0 size)})))
+
 (defn- query-string-param
   "The query param `k` when it is one string, else nil. A repeated param is refused."
   [request k]
@@ -575,50 +586,29 @@
         (query-string-param request "path")]
 
     ;; The ticket goes first: without one, a caller cannot tell a session that exists.
-    (or
-      (ticket-refusal sid path request)
-      (if-not (state/soul sid)
-        (http/session-404 (get-in request [:path-params :sid]))
-        (let [found
-              (session-readable-file sid path)
+    (or (ticket-refusal sid path request)
+        (if-not (state/soul sid)
+          (http/session-404 (get-in request [:path-params :sid]))
+          (let [found
+                (session-readable-file sid path)
 
-              ^java.io.File target
-              (:file found)]
+                ^java.io.File target
+                (:file found)]
 
-          (cond (:error found) (:error found)
-                ;; the ticket names the resolved file, so a path must name it the same way
-                (not= path (.getPath target))
-                (http/error-response 401 :invalid-ticket "missing or invalid content ticket")
-                :else (try (if-let [media-type (playable-media-type (file-head target))]
-                             (let [size (.length target)
-                                   headers (content-headers media-type)
-                                   wanted (byte-range (get-in request [:headers "range"]) size)]
-
-                               (cond (= :unsatisfiable wanted)
-                                     {:status 416
-                                      :headers (assoc headers "Content-Range" (str "bytes */" size))
-                                      :body ""}
-                                     wanted
-                                     (let [[first-byte last-byte] wanted
-                                           length (inc (- (long last-byte) (long first-byte)))]
-
-                                       {:status 206
-                                        :headers (assoc headers
-                                                   "Content-Range"
-                                                   (str "bytes " first-byte "-" last-byte "/" size)
-                                                   "Content-Length" (str length))
-                                        :body (file-range-body target first-byte length)})
-                                     :else {:status 200
-                                            :headers (assoc headers "Content-Length" (str size))
-                                            :body (file-range-body target 0 size)}))
-                             (http/error-response 415
-                                                  :unsupported-media-type
-                                                  "that file is not audio or video"
-                                                  :path path))
-                           (catch java.io.IOException _
-                             (http/error-response 400
-                                                  :invalid-request "that file could not be read"
-                                                  :path path)))))))))
+            (cond (:error found) (:error found)
+                  ;; the ticket names the resolved file, so a path must name it the same way
+                  (not= path (.getPath target))
+                  (http/error-response 401 :invalid-ticket "missing or invalid content ticket")
+                  :else (try (if-let [media-type (playable-media-type (file-head target))]
+                               (file-content-response request target (content-headers media-type))
+                               (http/error-response 415
+                                                    :unsupported-media-type
+                                                    "that file is not audio or video"
+                                                    :path path))
+                             (catch java.io.IOException _
+                               (http/error-response 400
+                                                    :invalid-request "that file could not be read"
+                                                    :path path)))))))))
 
 (defn- workspace-handler
   [request]

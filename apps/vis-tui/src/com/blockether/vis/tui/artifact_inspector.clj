@@ -3,6 +3,7 @@
    artifacts remain separate lifecycles, but share one discoverable C-x i surface."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.app-model :as app-model]
+            [com.blockether.vis.tui.attachments :as attachments]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.paths :as paths]
@@ -118,6 +119,8 @@
                                   :app-status (some-> (get artifact "app_status")
                                                       keyword)
                                   :index (get artifact "index")
+                                  :storage (get artifact "storage")
+                                  :path (get artifact "path")
                                   :artifact artifact})})))
               {:seen #{} :rows []}
               newest))))
@@ -151,8 +154,12 @@
 (def ^:private block-h "Rows of one attachment in the table: its thumbnail and its text." 3)
 
 (defn- image-row?
+  "True for a picture that the table can show as a thumbnail. A reference to a file on
+   the gateway machine (#450) is too large to fetch for a thumbnail, so it shows its badge."
   [{:keys [media-type] :as row}]
-  (and (not (app-model/app-row? row)) (str/starts-with? (str media-type) "image/")))
+  (and (not (app-model/app-row? row))
+       (not (attachments/reference-artifact? row))
+       (str/starts-with? (str media-type) "image/")))
 
 (defn- kind-badge
   "The short type name that the thumbnail cell shows for a row without a picture."
@@ -179,7 +186,8 @@
                    [(kind-badge row) (size-label size)
                     (when (and (= source :produced) version) (str "v" version))
                     (when (and (= source :produced) version-count (> (long version-count) 1))
-                      (str version-count " versions"))]))])))
+                      (str version-count " versions"))]))
+       (when (attachments/reference-artifact? row) (str "On gateway: " (:path row)))])))
 
 (defn- table-lines
   "The painted lines of the attachment table. Each section has a heading and a ruled
@@ -934,7 +942,9 @@
       {:filename (get artifact "filename")
        :media-type (get artifact "media_type")
        :iteration-id (get artifact "iteration_id")
-       :index (get artifact "index")})))
+       :index (get artifact "index")
+       :storage (get artifact "storage")
+       :path (get artifact "path")})))
 
 (defn artifact-row!
   "The inspector row that `target` names: the row itself, or the row of an
@@ -942,6 +952,18 @@
    link names no artifact."
   [session-id target]
   (if (string? target) (artifact-link-row! session-id target) target))
+
+(defn reference-local-path
+  "The path of reference row `row` (#450) when this process can open the file in place:
+   the gateway runs on this machine (`local?`) and the file is still there. Else nil, and
+   the caller streams the bytes route to a local file."
+  [row local?]
+  (let [path (str (:path row))]
+    (when (and local?
+               (attachments/reference-artifact? row)
+               (not (str/blank? path))
+               (.isFile (File. path)))
+      path)))
 
 (defn saved-artifacts-dir
   "The folder that keeps artifacts a person saves from the TUI:
@@ -954,27 +976,36 @@
    basename in a new unique directory. Returns the local File or nil.
    `target` is an inspector row or an attachment://<uuid> link. Links resolve the
    exact version in this session's human-visible index, never a filesystem path.
-   Without `parent`, the directory is temporary; with it, the file stays there."
+   Without `parent`, the directory is temporary; with it, the file stays there.
+   A reference to a file on the gateway machine (#450) streams to disk in chunks and is
+   never held in memory whole."
   ([session-id target] (materialize-artifact! session-id target nil))
   ([session-id target ^File parent]
-   (let [{:keys [filename iteration-id index]} (artifact-row! session-id target)]
+   (let [{:keys [filename iteration-id index] :as row} (artifact-row! session-id target)]
      (when (and (not (str/blank? (str session-id)))
                 (not (str/blank? (str iteration-id)))
                 (number? index))
-       (when-let [^bytes bytes
-                  (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
-         (let [dir (doto (if parent
-                           (File. parent (str (random-uuid)))
-                           (File. (System/getProperty "java.io.tmpdir")
-                                  (str "vis-artifact-" (random-uuid))))
-                     (.mkdirs))
-               basename (let [name (.getName (File. (str filename)))]
-                          (if (str/blank? name) "artifact.bin" name))
-               target (File. dir basename)]
+       (let [file (fn []
+                    (let [dir (doto (if parent
+                                      (File. parent (str (random-uuid)))
+                                      (File. (System/getProperty "java.io.tmpdir")
+                                             (str "vis-artifact-" (random-uuid))))
+                                (.mkdirs))
+                          basename (let [name (.getName (File. (str filename)))]
+                                     (if (str/blank? name) "artifact.bin" name))]
 
-           (with-open [out (FileOutputStream. target)]
-             (.write out bytes))
-           target))))))
+                      (File. dir basename)))]
+         (if (attachments/reference-artifact? row)
+           (let [target (file)]
+             (if (vis/gateway-iteration-attachment-to-file! session-id iteration-id index target)
+               target
+               (do (.delete (.getParentFile target)) nil)))
+           (when-let [^bytes bytes
+                      (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
+             (let [target (file)]
+               (with-open [out (FileOutputStream. target)]
+                 (.write out bytes))
+               target))))))))
 
 (defonce ^:private thumbnails
   ;; [session-id iteration-id index], or [source path] for a local file -> a delay of the

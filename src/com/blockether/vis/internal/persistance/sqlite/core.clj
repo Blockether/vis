@@ -6209,19 +6209,23 @@
                   tree (set ids)
                   blobs (volatile! {})
                   payload! (fn [att]
-                             (let [^bytes data (or (:bytes att)
-                                                   (attachment-storage/resolve-bytes (:storage_uri
-                                                                                       att)))]
-                               (when-not data
-                                 (throw (ex-info "An attachment payload is not readable"
-                                                 {:type :session/snapshot-incomplete
-                                                  :attachment-id (:id att)})))
-                               (let [sha (util/sha256-hex data)]
-                                 (vswap! blobs assoc sha data)
-                                 (assoc att
-                                   :bytes nil
-                                   :storage_uri nil
-                                   :bytes_sha256 sha))))
+                             (if (attachment-storage/reference-path (:storage_uri att))
+                               ;; A reference names a file on this machine and has no
+                               ;; bytes to carry (#450): it travels as its path.
+                               att
+                               (let [^bytes data (or (:bytes att)
+                                                     (attachment-storage/resolve-bytes (:storage_uri
+                                                                                         att)))]
+                                 (when-not data
+                                   (throw (ex-info "An attachment payload is not readable"
+                                                   {:type :session/snapshot-incomplete
+                                                    :attachment-id (:id att)})))
+                                 (let [sha (util/sha256-hex data)]
+                                   (vswap! blobs assoc sha data)
+                                   (assoc att
+                                     :bytes nil
+                                     :storage_uri nil
+                                     :bytes_sha256 sha)))))
                   sessions (mapv #(snapshot-session tx-info % tree payload!) ids)]
 
               {:root-id root-s
@@ -6306,13 +6310,16 @@
           :attachments
           (fn [atts]
             (mapv (fn [a]
-                    (let [data (get blobs (:bytes_sha256 a))]
-                      (when-not data
-                        (throw (ex-info "The snapshot misses an attachment payload"
-                                        {:type :session/invalid-snapshot})))
-                      (-> (dissoc a :bytes_sha256)
-                          (assoc :bytes data
-                                 :storage_uri nil))))
+                    (if (and (nil? (:bytes_sha256 a))
+                             (attachment-storage/reference-path (:storage_uri a)))
+                      (dissoc a :bytes_sha256)
+                      (let [data (get blobs (:bytes_sha256 a))]
+                        (when-not data
+                          (throw (ex-info "The snapshot misses an attachment payload"
+                                          {:type :session/invalid-snapshot})))
+                        (-> (dissoc a :bytes_sha256)
+                            (assoc :bytes data
+                                   :storage_uri nil)))))
                   atts))))
 
 (defn- fit-snapshot-rows

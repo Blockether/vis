@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GatewayClient } from '../lib/gateway';
 import { mediaStreamSrc } from '../lib/media-stream';
-import type { FileMedia, WorkspaceFile } from '../lib/types';
+import type { FileMedia, TranscriptionSegment, WorkspaceFile } from '../lib/types';
 import { ArrowOutIcon } from './icons';
 import { ImageViewer } from './ImageViewer';
 import { MediaRecording, mediaMeta, RecordingPlayer } from './Media';
@@ -200,18 +200,26 @@ export function FilePreview({
 /**
  * A recording in the player of the app, or a video in the player of the platform. The
  * element loads `src` by itself, so it streams the file with range requests and can seek
- * without the whole file. A long recording never becomes one Blob in memory (#449).
+ * without the whole file. A long recording never becomes one Blob in memory (#449). An
+ * attachment that the session database does not keep plays here too (#450).
  */
-function MediaPreview({
+export function MediaPreview({
   file,
   name,
   src,
   onError,
+  transcription,
+  transcriptionSegments,
+  transcriptionStatus,
 }: {
   file: FileMedia;
   name: string;
   src: string;
   onError: () => void;
+  /** The words of a recording, when the gateway read them; see `MediaRecording`. */
+  transcription?: string;
+  transcriptionSegments?: TranscriptionSegment[];
+  transcriptionStatus?: string;
 }) {
   const meta = mediaMeta({ filename: name, media_type: file.media_type, size: file.size_bytes });
   if (file.media_type.startsWith('video/'))
@@ -232,7 +240,13 @@ function MediaPreview({
       </figure>
     );
   return (
-    <MediaRecording name={name} meta={meta}>
+    <MediaRecording
+      name={name}
+      meta={meta}
+      transcription={transcription}
+      transcriptionSegments={transcriptionSegments}
+      transcriptionStatus={transcriptionStatus}
+    >
       <RecordingPlayer src={src} onError={onError} />
     </MediaRecording>
   );

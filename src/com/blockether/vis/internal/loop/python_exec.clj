@@ -267,7 +267,14 @@
       (:tool-call-id a))
 
     (:view-id a)
-    (assoc :view-id (:view-id a))))
+    (assoc :view-id (:view-id a))
+
+    ;; A file larger than the attachment limit stays on disk: the model reads its
+    ;; path here and opens the file itself (#450).
+    (attachment-storage/reference-path (:storage-uri a))
+    (assoc :storage
+      "reference" :path
+      (attachment-storage/reference-path (:storage-uri a)))))
 
 (defn- envelope-with-settled-views
   "Fold the semantic live views a Python block ABANDONED onto its envelope.

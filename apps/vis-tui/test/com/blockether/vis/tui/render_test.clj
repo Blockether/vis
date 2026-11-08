@@ -5265,6 +5265,54 @@ h = 8"
                    (expect (= [["report.html" "iteration-1" 1] ["notes.txt" "iteration-2" 0]]
                               (mapv (juxt :filename :iteration-id :index) rows))))))
 
+;; #450: attach() keeps a file larger than the attachment limit on the gateway machine.
+;; The card names the file, its size and its path, and the inline case stays the same.
+(defdescribe
+  reference-attachment-card-test
+  (let [cases
+        (get (json/read-str (slurp (io/resource "vis-contract/fixtures/attachment-reference.json")))
+             "cases")
+
+        descriptors
+        (mapv #(get % "descriptor") cases)
+
+        rows
+        (@#'render/iteration-artifact-rows descriptors)]
+
+    (it "lists each reference with its gateway path and keeps the inline picture out"
+        (expect (= [["zero-to-demo-day.mp3" "reference"
+                     "/Users/me/Podcasts/final/zero-to-demo-day.mp3"]
+                    ["atlas.pdf" "reference" "/Users/me/Documents/atlas.pdf"]]
+                   (mapv (juxt :filename :storage :path) rows))))
+    (it "gives a reference picture a file row and no inline surface"
+        (let [picture (assoc (nth descriptors 2)
+                        "storage" "reference"
+                        "path" "/data/huge.png")]
+          (expect (= [["plot.png" "/data/huge.png"]]
+                     (mapv (juxt :filename :path) (@#'render/iteration-artifact-rows [picture]))))))
+    (it "paints the size and the gateway path on the card"
+        (let [entries
+              (format-iteration-entry-entries {:iteration-id "5f1b2c3d-1111-4222-8333-944455556666"
+                                               :attachments [(first descriptors)]
+                                               :forms [{:code "attach(path)"
+                                                        :svar-tool-call-id "call-1"
+                                                        :stdout ""
+                                                        :success? true
+                                                        :duration-ms 25}]}
+                                              120
+                                              1
+                                              {:session-id "session-1"
+                                               :session-turn-id "turn-1"
+                                               :detail-expansions
+                                               {:vis.channel-tui/expand-execution-details? true}})
+
+              label
+              (some #(get-in % [:meta :card-label]) entries)]
+
+          (expect (str/includes? (str label) "MP3 · 148 MB"))
+          (expect (str/includes? (str label)
+                                 "on gateway /Users/me/Podcasts/final/zero-to-demo-day.mp3"))))))
+
 ;; Regression, issue #167: the terminal received the upstream status on the
 ;; canonical error block, then dropped it while projecting that block to Markdown.
 (defdescribe

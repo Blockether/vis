@@ -317,6 +317,38 @@ def __vis_install_attach__():
                 print("[Attached: " + name + "] " + cap)
         return row
 
+    def __vis_attachment_limit():
+        lim = globals().get("__vis_attachment_limit__")
+        return int(lim()) if lim is not None else None
+
+    def __vis_attach_reference(path, head, size, name, kind, media_type, label, audience):
+        # The file stays where it is. The engine checks the path with the same
+        # read gate as the file preview of the gateway, stores the path and NO
+        # byte of the file, and every client streams it with Range requests.
+        mt = media_type or __vis_guess_media_type(name, head)
+        knd = kind or __vis_kind_for(mt)
+        cap = __vis_caption(label)
+        aud = __vis_audience(audience, mt)
+        if aud == "model":
+            raise ValueError(
+                "attach: " + name + " is larger than the attachment limit, so it is "
+                "kept as a reference for people; audience='model' cannot see it."
+            )
+        rec = globals().get("__vis_record_attachment_reference__")
+        if rec is None:
+            raise RuntimeError("attach: reference bridge not bound in this sandbox")
+        absolute = _os.path.abspath(path)
+        row = __vis_row(
+            __vis_decoded(rec(knd, mt, absolute, name, aud, cap), "attach")
+        )
+        print(
+            "[Attached: " + name + "] "
+            + __vis_human_bytes(size)
+            + " kept on disk as a reference: " + str(row.get("path") or absolute)
+            + ((" " + cap) if cap else "")
+        )
+        return row
+
     # A Pillow image is the OTHER in-memory picture a block can hand over
     # (when the sandbox has Pillow installed), so `attach(img, 'crop.png')` has
     # to work exactly like the matplotlib idiom instead of falling through to
@@ -510,13 +542,25 @@ def __vis_install_attach__():
             raise IsADirectoryError(
                 "attach: " + path + " is a directory - attach one file"
             )
+        name = str(filename or _os.path.basename(path) or "artifact")
         try:
             with open(path, "rb") as f:
-                data = f.read()
+                # A file larger than the attachment limit is never read whole: the
+                # gateway keeps a REFERENCE to it and every client streams it from
+                # disk. The first bytes are enough to name its media type.
+                size = _os.fstat(f.fileno()).st_size
+                limit = __vis_attachment_limit()
+                if limit is not None and size > limit:
+                    head = f.read(256)
+                else:
+                    data = f.read()
         except FileNotFoundError:
             raise FileNotFoundError("attach: no such file: " + path) from None
-        name = filename or _os.path.basename(path) or "artifact"
-        return __vis_attach_data(data, str(name), kind, media_type, label, audience)
+        if limit is not None and size > limit:
+            return __vis_attach_reference(
+                path, head, size, name, kind, media_type, label, audience
+            )
+        return __vis_attach_data(data, name, kind, media_type, label, audience)
 
     def __vis_attachment_rows():
         lst = globals().get("__vis_list_attachments__")
@@ -625,8 +669,14 @@ def __vis_install_attach__():
             "filename, path/file/src -> source, title/caption/description/alt -> "
             "label, mime/mime_type/content_type -> media_type and type -> kind. Naming "
             "one idea twice, the main name and an alias in the same call, is refused."
+            "\n\nA FILE larger than 32 MiB is not copied: Vis keeps a REFERENCE to its "
+            "path, stores no byte of it, and people stream it from disk. A reference "
+            "is for people only, so it refuses audience='model', and read_attachment "
+            "and show_attachment refuse it with its path; open the path itself. "
+            "In-memory bytes larger than 32 MiB are refused: write them to a file first."
             "\n\nRaw result: the DESCRIPTOR dict of that artifact, with id, filename, "
-            "version, media_type, kind, size and audience. Every read "
+            "version, media_type, kind, size and audience. A reference also has "
+            "storage='reference' and path. Every read "
             "verb here takes it as its target, also in this same block."
             "\n\nAPPS: attach(ui.app(title, *nodes)) opens an app, after "
             "`from blockether.vis.extension import ui`. An app is a live view that "

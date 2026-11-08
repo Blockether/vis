@@ -19,7 +19,7 @@
             [com.blockether.vis.tui.tty :as tty]
             [com.blockether.vis.tui.util :as util]
             [taoensso.telemere :as tel])
-  (:import (java.io BufferedReader File InputStream InputStreamReader)
+  (:import (java.io BufferedReader File FileOutputStream InputStream InputStreamReader)
            (java.lang ProcessHandle)
            (java.net URI URLEncoder)
            (java.nio.charset StandardCharsets)))
@@ -1167,6 +1167,39 @@
         (gw-send! entry "GET" path {:as :bytes})]
 
     (when (< (long (:status response)) 400) (:body response))))
+
+(defn iteration-attachment-to-file!
+  "Stream ONE attachment of iteration `iid`, at 0-based `idx`, into the local file
+   `target` in 64 KiB chunks. Returns true when the file is complete, false when the
+   gateway answers 4xx or 5xx. Use it for a reference attachment (#450): the gateway
+   streams that file from its disk, and it can be larger than the memory of this process.
+   A failed copy deletes `target`, so a partial file never looks complete."
+  [sid iid idx ^File target]
+  (let [entry
+        (target!)
+
+        _
+        (ensure-client! entry)
+
+        path
+        (str "/v1/sessions/" (enc sid) "/iterations/" (enc iid) "/attachments/" idx)
+
+        response
+        (gw-send! entry "GET" path {:as :stream})]
+
+    (with-open [^InputStream in (:body response)]
+      (if (< (long (:status response)) 400)
+        (try (with-open [out (FileOutputStream. target)]
+               (io/copy in out :buffer-size 65536))
+             true
+             (catch Throwable t (.delete target) (throw t)))
+        false))))
+
+(defn local-gateway?
+  "True when the gateway runs on this machine: `vis-agent tui` started it on loopback.
+   A path that the gateway reports then names a file that this process can open."
+  []
+  (boolean (:local? @target*)))
 
 (defn set-session-model!
   "PATCH the session's model pref in the daemon. Writes the returned pref
@@ -2588,6 +2621,10 @@
 (def gateway-input-views input-views)
 
 (def gateway-iteration-attachment-bytes iteration-attachment-bytes)
+
+(def gateway-iteration-attachment-to-file! iteration-attachment-to-file!)
+
+(def gateway-local? local-gateway?)
 
 (def gateway-list-projects list-projects)
 

@@ -182,6 +182,12 @@
     f))
 
 (def ^:const max-capture-bytes
-  "Per-attachment byte limit (32 MiB). Explicit attach rejects larger payloads
-   before reading them into memory or storing them in the session database."
+  "Per-attachment byte limit (32 MiB). Explicit attach does not read a larger file
+   into memory or store it in the session database: it keeps a reference to the
+   file on the gateway machine (#450). Larger in-memory bytes are refused."
   (* 32 1024 1024))
+
+(def ^:dynamic *attachment-limit-bytes*
+  "The limit that `attach` applies, [[max-capture-bytes]] unless a test binds a
+   smaller one around a block."
+  max-capture-bytes)

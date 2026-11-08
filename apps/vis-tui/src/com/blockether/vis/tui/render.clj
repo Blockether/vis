@@ -6187,7 +6187,11 @@
     (assoc :view-id (get artifact "view_id"))
 
     (get artifact "owner")
-    (assoc :owner (wire/->engine (get artifact "owner")))))
+    (assoc :owner (wire/->engine (get artifact "owner")))
+
+    ;; #450: a file larger than the attachment limit stays on the gateway machine.
+    (= "reference" (get artifact "storage"))
+    (merge {:storage "reference" :path (str (get artifact "path"))})))
 
 (def ^:private app-preview-lines "Most lines that an app shows in its turn." 6)
 
@@ -6232,7 +6236,8 @@
 
 (defn- iteration-artifact-rows
   "Durable document rows from a step's gateway attachment descriptors. Pictures, videos and
-   tables have their own surfaces."
+   tables have their own surfaces. A reference to a file on the gateway machine (#450) has
+   no inline surface, so it always gets a row: the TUI never decodes such a file inline."
   [attachments]
   (->> attachments
        (keep (fn [artifact]
@@ -6242,9 +6247,10 @@
                      media-type
                      (str (or (get artifact "media_type") "application/octet-stream"))]
 
-                 (when-not (or (#{"image" "table"} kind)
-                               (str/starts-with? media-type "image/")
-                               (str/starts-with? media-type "video/"))
+                 (when (or (= "reference" (get artifact "storage"))
+                           (not (or (#{"image" "table"} kind)
+                                    (str/starts-with? media-type "image/")
+                                    (str/starts-with? media-type "video/"))))
                    (artifact-row artifact)))))
        vec))
 
@@ -6462,12 +6468,14 @@
       (-> receipts
           (conj {:line ""})
           (into (attachment-card-entries
-                  (mapv (fn [{:keys [filename media-type size] :as artifact}]
+                  (mapv (fn [{:keys [filename media-type size path] :as artifact}]
                           {:name filename
                            :label (str/join " · "
                                             (remove str/blank?
                                               [(attachment-type-label media-type filename)
-                                               (when (number? size) (fmt/format-bytes size " "))]))
+                                               (when (number? size) (fmt/format-bytes size " "))
+                                               (when (attach/reference-artifact? artifact)
+                                                 (str "on gateway " path))]))
                            :bytes (when (number? size) size)
                            :preview (:preview artifact)
                            :target {:artifact artifact :session-id session-id}})

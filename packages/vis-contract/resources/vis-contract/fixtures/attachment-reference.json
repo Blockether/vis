@@ -1,0 +1,54 @@
+{
+  "description": "Iteration attachment descriptors that a client reads. A descriptor with storage reference names a file on the gateway machine that attach() did not copy into the session database (#450). Each descriptor is valid against the gateway contract attachment_reference when its storage is reference.",
+  "cases": [
+    {
+      "name": "a recording larger than the attachment limit",
+      "descriptor": {
+        "index": 0,
+        "attachment_id": "0b0e7c6a-3d7c-4c39-9f4e-5b8f3a3b9a10",
+        "iteration_id": "5f1b2c3d-1111-4222-8333-944455556666",
+        "tool_call_id": "call-1",
+        "kind": "file",
+        "media_type": "audio/mpeg",
+        "filename": "zero-to-demo-day.mp3",
+        "version": 1,
+        "audience": "user",
+        "size": 155671105,
+        "storage": "reference",
+        "path": "/Users/me/Podcasts/final/zero-to-demo-day.mp3"
+      }
+    },
+    {
+      "name": "a document larger than the attachment limit",
+      "descriptor": {
+        "index": 1,
+        "attachment_id": "8a6f1d2e-7b3c-4d5e-8f90-a1b2c3d4e5f6",
+        "iteration_id": "5f1b2c3d-1111-4222-8333-944455556666",
+        "tool_call_id": "call-1",
+        "kind": "doc",
+        "media_type": "application/pdf",
+        "filename": "atlas.pdf",
+        "version": 1,
+        "audience": "user",
+        "size": 52428800,
+        "storage": "reference",
+        "path": "/Users/me/Documents/atlas.pdf"
+      }
+    },
+    {
+      "name": "an attachment that the database keeps has no storage key",
+      "descriptor": {
+        "index": 2,
+        "attachment_id": "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5",
+        "iteration_id": "5f1b2c3d-1111-4222-8333-944455556666",
+        "tool_call_id": "call-1",
+        "kind": "image",
+        "media_type": "image/png",
+        "filename": "plot.png",
+        "version": 1,
+        "audience": "both",
+        "size": 20480
+      }
+    }
+  ]
+}

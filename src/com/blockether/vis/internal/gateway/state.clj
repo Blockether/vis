@@ -2054,53 +2054,63 @@
    indexes, so the gallery a person scrolls stays the one the agent meant them
    to review AND index N names the same artifact on both sides."
   [iteration-id rows]
-  (into []
-        (map-indexed
-          (fn [idx
-               {:keys [id tool-call-id kind media-type filename size audience version transcription
-                       transcription-segments transcription-status view-id owner]}]
-            (cond-> {:index idx
-                     :iteration_id (str iteration-id)
-                     :tool_call_id tool-call-id
-                     :kind (or kind "image")
-                     :media_type (str (or media-type "application/octet-stream"))
-                     :filename filename
-                     ;; VERSION: re-attaching a filename is the next cut of THAT
-                     ;; artifact, so a client groups the gallery by name and
-                     ;; shows the newest version with its history behind it.
-                     :version (long (or version 1))
-                     :audience (attachments/normalize-audience audience)
-                     :size (long (or size 0))}
-              id
-              (assoc :attachment_id (str id))
+  (into
+    []
+    (map-indexed
+      (fn [idx
+           {:keys [id tool-call-id kind media-type filename size audience version transcription
+                   transcription-segments transcription-status view-id owner storage-uri]}]
+        (cond-> {:index idx
+                 :iteration_id (str iteration-id)
+                 :tool_call_id tool-call-id
+                 :kind (or kind "image")
+                 :media_type (str (or media-type "application/octet-stream"))
+                 :filename filename
+                 ;; VERSION: re-attaching a filename is the next cut of THAT
+                 ;; artifact, so a client groups the gallery by name and
+                 ;; shows the newest version with its history behind it.
+                 :version (long (or version 1))
+                 :audience (attachments/normalize-audience audience)
+                 :size (long (or size 0))}
+          id
+          (assoc :attachment_id (str id))
 
-              view-id
-              (assoc :view_id (str view-id))
+          view-id
+          (assoc :view_id (str view-id))
 
-              owner
-              (assoc :owner (wire/->wire owner))
+          owner
+          (assoc :owner (wire/->wire owner))
 
-              ;; TRANSCRIPTION: a recording's own words, transcribed on the way
-              ;; in. It rides the DESCRIPTOR rather than the bytes so a client
-              ;; can offer "Transcription" under the player without fetching a
-              ;; single audio byte.
-              (not-empty (str transcription))
-              (assoc :transcription (str transcription))
+          ;; REFERENCE: a file larger than the attachment limit stays on the
+          ;; gateway machine, and the database keeps only its path (#450). The
+          ;; byte route streams it from disk; a media element plays it from the
+          ;; content_url of the file preview of that path.
+          (attachment-storage/reference-path storage-uri)
+          (assoc :storage
+            "reference" :path
+            (attachment-storage/reference-path storage-uri))
 
-              ;; …and WHY there are none when there are none, so a client can paint
-              ;; "transcribing…" under the player instead of a band that reads the
-              ;; same as a recording nobody ever spoke into
-              ;; ([[com.blockether.vis.internal.attachment.audio-transcribe/statuses]]).
-              (not-empty (str transcription-status))
-              (assoc :transcription_status (str transcription-status))
+          ;; TRANSCRIPTION: a recording's own words, transcribed on the way
+          ;; in. It rides the DESCRIPTOR rather than the bytes so a client
+          ;; can offer "Transcription" under the player without fetching a
+          ;; single audio byte.
+          (not-empty (str transcription))
+          (assoc :transcription (str transcription))
 
-              ;; …and WHERE each line of those words is spoken, in seconds. The
-              ;; transcript alone cannot be FOLLOWED: a player needs to know which
-              ;; sentence is sounding to highlight it, and where to seek when the
-              ;; reader taps one.
-              (seq transcription-segments)
-              (assoc :transcription_segments (wire/->wire (vec transcription-segments))))))
-        rows))
+          ;; …and WHY there are none when there are none, so a client can paint
+          ;; "transcribing…" under the player instead of a band that reads the
+          ;; same as a recording nobody ever spoke into
+          ;; ([[com.blockether.vis.internal.attachment.audio-transcribe/statuses]]).
+          (not-empty (str transcription-status))
+          (assoc :transcription_status (str transcription-status))
+
+          ;; …and WHERE each line of those words is spoken, in seconds. The
+          ;; transcript alone cannot be FOLLOWED: a player needs to know which
+          ;; sentence is sounding to highlight it, and where to seek when the
+          ;; reader taps one.
+          (seq transcription-segments)
+          (assoc :transcription_segments (wire/->wire (vec transcription-segments))))))
+    rows))
 
 (defn- live-attachment-descriptors
   "[[attachment-descriptors]] for the artifacts iteration `iteration-id`

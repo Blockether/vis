@@ -7923,6 +7923,119 @@
         (finally (.delete episode) (.delete notes) (.delete root))))))
 
 (defdescribe
+  a-referenced-attachment-streams-from-disk
+  (it
+    "a referenced attachment streams from disk"
+    ;; #450: attach() keeps a file above the attachment limit as a REFERENCE, with no
+    ;; bytes in the session database. Its descriptor names the path, and the byte
+    ;; route streams the file from disk with Range, after the read gate.
+    (let [sid
+          (random-uuid)
+
+          iid
+          "00000000-0000-0000-0000-0000000004a0"
+
+          root
+          (.getCanonicalFile (.toFile (java.nio.file.Files/createTempDirectory
+                                        "vis-attachment-reference"
+                                        (make-array java.nio.file.attribute.FileAttribute 0))))
+
+          mp3
+          (byte-array (concat (map unchecked-byte [0x49 0x44 0x33 4 0 0 0 0 0 0])
+                              (map #(unchecked-byte (mod % 251)) (range 990))))
+
+          episode
+          (io/file root "episode.mp3")
+
+          outside
+          (ungranted-test-file)
+
+          row
+          (fn [^java.io.File file]
+            {:id "0b0e7c6a-3d7c-4c39-9f4e-5b8f3a3b9a10"
+             :kind "file"
+             :media-type "audio/mpeg"
+             :filename (.getName file)
+             :audience "user"
+             :version 1
+             :size (count mp3)
+             :storage-uri (str "vis-ref://" (.getPath file))})
+
+          fetch
+          (fn [rows headers]
+            (with-redefs-fn {#'state/iteration-attachments (constantly rows)
+                             #'state/soul (fn [id]
+                                            (when (= sid id) {"id" (str id)}))
+                             #'state/session-workspace-info (fn [id]
+                                                              (when (= sid id)
+                                                                {"root" (.getPath root)}))
+                             #'lp/env-for (fn [_]
+                                            {:workspace {:root (.getPath root)
+                                                         :repo-root (.getPath root)}
+                                             :security-policy {:jail-enabled true :process-jail {}}
+                                             :security/filesystem-roots []})}
+              #(let [response
+                     (#'turns-api/attachment-bytes-handler
+                      {:request-method :get
+                       :headers headers
+                       :path-params {:sid (str sid) :iid iid :idx "0"}}) out
+                     (java.io.ByteArrayOutputStream.)] (when (satisfies?
+                                                               ring-protocols/StreamableResponseBody
+                                                               (:body response))
+                                                         (ring-protocols/write-body-to-stream
+                                                           (:body response)
+                                                           response
+                                                           out)) (assoc response
+                                                                   :bytes (.toByteArray out)))))]
+
+      (with-open [out (java.io.FileOutputStream. episode)]
+        (.write out ^bytes mp3))
+      (with-open [out (java.io.FileOutputStream. outside)]
+        (.write out ^bytes mp3))
+      (try
+        ;; the descriptor names the file, and clients read it as the contract
+        (let [[descriptor]
+              (with-redefs-fn {#'state/iteration-attachments (constantly [(row episode)])}
+                #((ns-resolve 'com.blockether.vis.internal.gateway.state
+                              'live-attachment-descriptors)
+                    iid))
+
+              wired
+              (wire/parse-json (wire/json-str descriptor))]
+
+          (expect (= "reference" (get wired "storage")))
+          (expect (= (.getPath episode) (get wired "path")))
+          (expect (= (count mp3) (get wired "size")))
+          (expect (document/valid-json? "gateway" "attachment_reference" wired))
+          (expect (not
+                    (document/valid-json? "gateway" "attachment_reference" (dissoc wired "path")))))
+        ;; one range is answered as 206 with exactly its bytes, and never cached
+        (let [response
+              (fetch [(row episode)] {"range" "bytes=10-109"})
+
+              headers
+              (:headers response)]
+
+          (expect (= 206 (:status response)))
+          (expect (= (seq (take 100 (drop 10 mp3))) (seq (:bytes response))))
+          (expect (= (str "bytes 10-109/" (count mp3)) (get headers "Content-Range")))
+          (expect (= "audio/mpeg" (get headers "Content-Type")))
+          (expect (= "no-store" (get headers "Cache-Control"))))
+        ;; no range gets the whole file
+        (let [response (fetch [(row episode)] {})]
+          (expect (= 200 (:status response)))
+          (expect (= (seq mp3) (seq (:bytes response)))))
+        ;; the read gate runs again at request time
+        (expect (= 403 (:status (fetch [(row outside)] {}))))
+        ;; a file that went away is a clear 404
+        (.delete episode)
+        (let [response (fetch [(row episode)] {})]
+          (expect (= 404 (:status response)))
+          (expect (= "attachment-file-missing"
+                     (get-in (wire/parse-json (:body response)) ["error" "type"]))))
+        (finally (.delete episode) (.delete outside) (.delete root))))))
+
+(defdescribe
   session-readable-external-file-preview-test
   (it
     "session readable external file preview"

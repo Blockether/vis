@@ -36,6 +36,27 @@
            (java.nio.file.attribute FileAttribute)
            (java.util Base64 UUID)))
 
+;; Reference: a file that stays on the gateway machine (#450)
+
+(def reference-scheme
+  "The scheme of a `storage_uri` that names a file on the gateway machine. `attach`
+   records one for a file that is larger than the attachment limit: the database
+   keeps the path and no byte of the file. No backend owns this scheme, so the read
+   side never loads a reference into memory. A client streams it from disk."
+  "vis-ref")
+
+(defn reference-uri
+  "The `storage_uri` of the file at the absolute path `path`."
+  [path]
+  (str reference-scheme "://" path))
+
+(defn reference-path
+  "The absolute path that the reference `storage-uri` names, or nil for any other value."
+  [storage-uri]
+  (let [prefix (str reference-scheme "://")]
+    (when (and (string? storage-uri) (str/starts-with? storage-uri prefix))
+      (not-empty (subs storage-uri (count prefix))))))
+
 ;; Backend registry (mirrors internal.workspace's backend registry)
 
 (defonce ^:private backends (atom {}))
@@ -67,6 +88,9 @@
                       {:type :storage/invalid-backend :backend backend})))
     (when-not (util/non-blank-string? scheme)
       (throw (ex-info "Storage backend scheme must be a non-blank string"
+                      {:type :storage/invalid-backend :backend-id id :scheme scheme})))
+    (when (= reference-scheme scheme)
+      (throw (ex-info (str "Storage backend cannot own the " reference-scheme " scheme")
                       {:type :storage/invalid-backend :backend-id id :scheme scheme})))
     (doseq [k [:storage/put-fn :storage/get-fn]]
       (when-not (ifn? (get backend k))
@@ -224,7 +248,8 @@
 (defn resolve-bytes
   "Fetch the raw bytes for an external `storage-uri` by dispatching on its
    scheme to the owning backend's `:storage/get-fn`. nil when no backend owns
-   the scheme, or the GET fails / returns nil."
+   the scheme, or the GET fails / returns nil. A [[reference-uri]] has no owner,
+   so it is always nil: a file on the gateway machine is streamed, never loaded."
   ^bytes [storage-uri]
   (when-let [b (backend-for-scheme (scheme-of storage-uri))]
     (try ((:storage/get-fn b) storage-uri) (catch Throwable _ nil))))
