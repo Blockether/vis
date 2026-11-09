@@ -36,6 +36,8 @@
     (.remove env "VIS_WEB_DIR")
     ;; A macOS desktop test must never copy its fake app into the real /Applications.
     (.put env "VIS_APPLICATIONS_DIR" "")
+    ;; A signed-in gh on the real PATH must not reach GitHub from a fixture.
+    (.put env "VIS_NO_GH" "1")
     (.redirectErrorStream pb true)
     (doseq [[k v] env-extra]
       (.put env (str k) (str v)))
@@ -637,6 +639,56 @@
           (expect (zero? exit) output)
           (expect (str/includes? urls "/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz")
                   urls))))
+  ;; Corporate networks can block github.com release downloads that gh still reaches.
+  (it
+    "downloads through a signed-in gh and falls back to curl when gh cannot"
+    (doseq [[mode via-gh?] [["ok" true] ["signed-out" false] ["download-fails" false]]]
+      (with-native-install-fixture
+        {:checksums :valid
+         :extra-env {"VIS_NO_GH" "" "VIS_TEST_GH" mode}
+         :prepare!
+         (fn [_env tools]
+           (write-executable!
+             (io/file tools "gh")
+             (str
+               "#!/usr/bin/env bash\n"
+               "printf 'gh %s\\n' \"$*\" >> \"$VIS_TEST_URLS.gh\"\n" "case \"$1 $2\" in\n"
+               "  'auth token') [[ $VIS_TEST_GH != signed-out ]] || exit 1; echo token ;;\n"
+               "  'release view')\n"
+               "    if [[ $* == *tagName* ]]; then echo v9.9.9; else\n"
+               "      printf '%s\\n' vis-agent-linux-x64.tar.gz vis-tui-linux-x64.tar.gz SHA256SUMS; fi ;;\n"
+               "  'release download')\n" "    [[ $VIS_TEST_GH != download-fails ]] || exit 1\n"
+               "    pattern=''; dest=''\n"
+               "    while (( $# )); do case $1 in --pattern) pattern=$2; shift;; --output) dest=$2; shift;; esac; shift; done\n"
+               "    case $pattern in\n"
+               "      vis-agent-linux-x64.tar.gz) cp \"$VIS_TEST_ARCHIVE\" \"$dest\" ;;\n"
+               "      vis-tui-linux-x64.tar.gz) cp \"$VIS_TEST_TUI_ARCHIVE\" \"$dest\" ;;\n"
+               "      SHA256SUMS) cp \"$VIS_TEST_SUMS\" \"$dest\" ;;\n"
+               "      *) exit 1 ;;\n" "    esac ;;\n"
+               "  *) echo \"unexpected gh $*\" >&2; exit 1 ;;\n" "esac\n")))}
+        (fn [{:keys [exit output launcher env urls]}]
+          (let [log (io/file (str (get env "VIS_TEST_URLS") ".gh"))
+                gh-calls (if (.exists log) (slurp log) "")]
+
+            (expect (zero? exit) output)
+            (expect (str/includes?
+                      (:output (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env))
+                      "new-runtime"))
+            (if via-gh?
+              (do (expect (= "" urls) urls)
+                  (doseq [asset ["vis-agent-linux-x64.tar.gz" "vis-tui-linux-x64.tar.gz"
+                                 "SHA256SUMS"]]
+                    (expect
+                      (str/includes?
+                        gh-calls
+                        (str "release download v9.9.9 --repo github.com/Blockether/vis --pattern "
+                             asset))
+                      gh-calls)))
+              (expect (str/includes? urls "/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz")
+                      urls))
+            (when (= mode "signed-out") (expect (not (str/includes? gh-calls "release ")) gh-calls))
+            (when (= mode "download-fails")
+              (expect (str/includes? output "retrying with curl") output)))))))
   (it "installs the release web app beside the native runtime and serves it without Node"
       (with-native-install-fixture
         {:installed? true :web? true :stale-web? true}
@@ -2421,7 +2473,14 @@
             (expect (str/includes? calls (str "beta-" (apply str (repeat 40 "a")))) calls)))))
   (it
     "rejects missing or malformed installer beta selections"
-    (let [body (re-find #"(?ms)^vis_beta_tag\(\) \{.*?^\}\n" (slurp "bin/vis-agent"))]
+    (let [launcher
+          (slurp "bin/vis-agent")
+
+          body
+          (apply str
+            (for [fn-name ["vis_gh_ready" "vis_gh_release_ref" "vis_github_get" "vis_beta_tag"]]
+              (re-find (re-pattern (str "(?ms)^" fn-name "\\(\\) \\{.*?^\\}\\n")) launcher)))]
+
       (doseq [[value curl-exit valid?] [[(str "beta-" (apply str (repeat 40 "a"))) "0" true]
                                         ["" "0" false] ["v1.2.3" "0" false]
                                         [(str "beta-" (apply str (repeat 39 "a"))) "0" false]
@@ -2486,6 +2545,10 @@
            (spit (io/file dir "list.sh")
                  (str switch-prelude
                       (launcher-function launcher "vis_installed_build")
+                      (launcher-function launcher "vis_gh_ready")
+                      (launcher-function launcher "vis_gh_release_ref")
+                      (launcher-function launcher "vis_github_get")
+                      (launcher-function launcher "vis_github_api")
                       (launcher-function launcher "vis_release_tags")
                       (launcher-function launcher "vis_switch_list")
                       (launcher-function launcher "vis_switch_mark")

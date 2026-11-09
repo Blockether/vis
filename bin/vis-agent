@@ -847,11 +847,62 @@ sync_wrapper_from_source() {
   fi
 }
 
+# Corporate networks often block or break github.com release downloads, while a
+# signed-in GitHub CLI reaches the API with its own proxy, trust and token. Use gh
+# when it is installed and signed in; curl stays the fallback. VIS_NO_GH=1 uses curl.
+vis_gh_ready() {
+  if [[ -z "${vis_gh_state:-}" ]]; then
+    vis_gh_state=0
+    if [[ "${VIS_NO_GH:-}" != 1 ]] && command -v gh >/dev/null 2>&1 \
+       && gh auth token --hostname github.com >/dev/null 2>&1; then
+      vis_gh_state=1
+    fi
+  fi
+  (( vis_gh_state ))
+}
+
+# Split a github.com release URL of this repository into vis_gh_tag and vis_gh_asset.
+vis_gh_release_ref() {
+  local rest="${1#https://github.com/$vis_repo_slug/releases/}"
+  [[ "$rest" != "$1" ]] || return 1
+  case "$rest" in
+    download/?*/?*) rest="${rest#download/}"; vis_gh_tag="${rest%%/*}"; vis_gh_asset="${rest#*/}" ;;
+    tag/?*) vis_gh_tag="${rest#tag/}"; vis_gh_asset="" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Download a release asset URL to a file, or to stdout when the file is empty.
+# The remaining arguments are the curl options of the fallback.
+vis_github_get() {
+  local url="$1" out="$2" body
+  shift 2
+  if vis_gh_ready && vis_gh_release_ref "$url"; then
+    if [[ -z "$out" ]]; then
+      if body="$(gh release download "$vis_gh_tag" --repo "github.com/$vis_repo_slug" --pattern "$vis_gh_asset" --output -)"; then
+        printf '%s' "$body"
+        return 0
+      fi
+    elif gh release download "$vis_gh_tag" --repo "github.com/$vis_repo_slug" --pattern "$vis_gh_asset" \
+         --output "$out" --clobber; then
+      return 0
+    fi
+    warn "gh could not download $url; retrying with curl"
+  fi
+  if [[ -n "$out" ]]; then curl "$@" "$url" -o "$out"; else curl "$@" "$url"; fi
+}
+
+# Read a GitHub REST API path, for example repos/OWNER/REPO/releases/latest.
+vis_github_api() {
+  if vis_gh_ready && gh api --hostname github.com "$1"; then return 0; fi
+  curl -fsSL "https://api.github.com/$1"
+}
+
 # The beta publication gate records its newest complete immutable release here.
 # GitHub's release listing order does not identify the newest published beta.
 vis_beta_tag() {
   local context="${1:-update}" tag
-  tag="$(curl -fsSL "https://github.com/$vis_repo_slug/releases/download/installer/native-beta")" || \
+  tag="$(vis_github_get "https://github.com/$vis_repo_slug/releases/download/installer/native-beta" "" -fsSL)" || \
     die "$context: could not read the published native beta selection"
   [[ "$tag" =~ ^beta-[0-9a-f]{40}$ ]] || \
     die "$context: invalid published native beta selection"
@@ -862,7 +913,12 @@ vis_beta_tag() {
 # unauthenticated requests per hour for each address, and clients behind a shared
 # NAT, proxy or CI egress can use them all before an update runs (#309).
 vis_latest_release_tag() {
-  local url="https://github.com/$vis_repo_slug/releases/latest" location
+  local url="https://github.com/$vis_repo_slug/releases/latest" location tag
+  if vis_gh_ready && tag="$(gh release view --repo "github.com/$vis_repo_slug" --json tagName --jq .tagName)" \
+     && [[ -n "$tag" ]]; then
+    printf '%s\n' "$tag"
+    return 0
+  fi
   location="$(curl --silent --head --output /dev/null --write-out '%{redirect_url}' \
     --connect-timeout 10 "$url" 2>/dev/null)" || location=""
   [[ "$location" == */releases/tag/?* ]] || \
@@ -874,7 +930,21 @@ vis_latest_release_tag() {
 # Return 0 when the release publishes the asset and 1 when GitHub answers 404.
 # Any other answer stops with its real cause, never as a missing asset.
 vis_release_asset() {
-  local url="$1" context="$2" status
+  local url="$1" context="$2" status names
+  if vis_gh_ready && vis_gh_release_ref "$url"; then
+    # One API call lists the assets of a tag; later checks of that tag reuse it.
+    if [[ "${vis_gh_listed_tag:-}" == "$vis_gh_tag" ]] \
+       || names="$(gh release view "$vis_gh_tag" --repo "github.com/$vis_repo_slug" --json assets --jq '.assets[].name' 2>&1)"; then
+      if [[ "${vis_gh_listed_tag:-}" != "$vis_gh_tag" ]]; then
+        vis_gh_listed_tag="$vis_gh_tag" vis_gh_listed_assets="$names"
+      fi
+      [[ -z "$vis_gh_asset" ]] && return 0
+      grep -Fxq -- "$vis_gh_asset" <<<"$vis_gh_listed_assets"
+      return
+    fi
+    [[ "$names" != *"release not found"* ]] || return 1
+    warn "gh could not check $url; retrying with curl"
+  fi
   status="$(curl --silent --head --output /dev/null --write-out '%{http_code}' \
     --connect-timeout 10 "$url" 2>/dev/null)" || true
   case "$status" in
@@ -1009,6 +1079,7 @@ update_native() {
   local components="${4:-$vis_default_components}" want_tui=0 want_web=0 tui_check=""
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
+  if vis_gh_ready; then say "downloading through the GitHub CLI (gh); VIS_NO_GH=1 uses curl"; fi
   local asset dl release_url archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
   local native_version native_commit native_track _native_metadata release_tag tui_library
   asset="$(vis_platform_asset)"
@@ -1118,7 +1189,7 @@ update_native() {
   sums_dl="$release_url/SHA256SUMS"
   if vis_release_asset "$sums_dl" update; then
     say "downloading $sums_dl"
-    curl -fsSL "$sums_dl" -o "$sums" || die "update: could not download $sums_dl" "Installation unchanged."
+    vis_github_get "$sums_dl" "$sums" -fsSL || die "update: could not download $sums_dl" "Installation unchanged."
     checked="$sums"
   elif (( pinned_beta )); then
     die "update: $target publishes no SHA256SUMS, so its downloads cannot be verified" \
@@ -1127,18 +1198,18 @@ update_native() {
     warn "$target publishes no SHA256SUMS, so its downloads cannot be verified"
   fi
   say "downloading $dl"
-  curl -fSL "$dl" -o "$archive" || exit 1
+  vis_github_get "$dl" "$archive" -fSL || exit 1
   vis_verify_asset "$checked" "$asset" "$archive"
   tar -xzf "$archive" -C "$unpack" || exit 1
   if (( want_tui )); then
     say "downloading $tui_dl"
-    curl -fSL "$tui_dl" -o "$tui_archive" || exit 1
+    vis_github_get "$tui_dl" "$tui_archive" -fSL || exit 1
     vis_verify_asset "$checked" "$tui_asset" "$tui_archive"
     tar -xzf "$tui_archive" -C "$tui_unpack" || exit 1
   fi
   if [[ -n "$web_dl" ]]; then
     say "downloading $web_dl"
-    curl -fSL "$web_dl" -o "$web_archive" || exit 1
+    vis_github_get "$web_dl" "$web_archive" -fSL || exit 1
     vis_verify_asset "$checked" vis-web.tar.gz "$web_archive"
     tar -xzf "$web_archive" -C "$web_unpack" || exit 1
   fi
@@ -1417,7 +1488,7 @@ vis_installed_build() {
 # `list` reports what is installed instead of failing on a network it does not need.
 vis_release_tags() {
   local json
-  json="$(curl -fsSL "https://api.github.com/repos/$vis_repo_slug/releases?per_page=20" 2>/dev/null)" || return 0
+  json="$(vis_github_api "repos/$vis_repo_slug/releases?per_page=20" 2>/dev/null)" || return 0
   printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\(.*\)"$/\1/'
 }
 
@@ -1435,7 +1506,7 @@ vis_switch_list() {
   printf '  %-18s %s\n' release "newest complete stable native release"
   printf '  %-18s %s\n' beta "newest published native beta from green main CI"
   printf '  %-18s %s\n' dev "newest main source, always run on the JVM"
-  beta="$(curl -fsSL "https://github.com/$vis_repo_slug/releases/download/installer/native-beta" 2>/dev/null || true)"
+  beta="$(vis_github_get "https://github.com/$vis_repo_slug/releases/download/installer/native-beta" "" -fsSL 2>/dev/null || true)"
   beta="${beta//[[:space:]]/}"
   [[ -z "$beta" ]] || printf '\n  beta is %s today\n' "$beta"
   tags="$(vis_release_tags)"
@@ -1594,7 +1665,7 @@ vis_install_desktop() (
   fi
   if [[ "$source" == https://* ]]; then
     say "downloading $source"
-    curl -fSL "$source" -o "$payload" || die "desktop: download failed; retry vis-agent desktop"
+    vis_github_get "$source" "$payload" -fSL || die "desktop: download failed; retry vis-agent desktop"
   else
     cp "$source" "$payload" || die "desktop: could not stage the source-built app"
   fi
@@ -1639,13 +1710,13 @@ vis_fetch_desktop() (
     say "checking the newest published beta desktop"
     tag="$(vis_beta_tag desktop)" || exit 1
     release="$tag"
-    api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$tag"
+    api="repos/$vis_repo_slug/releases/tags/$tag"
   else
     say "checking the latest stable desktop release"
     release="the latest release"
-    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
+    api="repos/$vis_repo_slug/releases/latest"
   fi
-  if ! json="$(curl -fsSL "$api")"; then
+  if ! json="$(vis_github_api "$api")"; then
     note="$(vis_github_rate_limit_note)"
     die "desktop: could not check $release; cached app unchanged" ${note:+"$note"} \
       "Retry later, or run vis-agent desktop without --update to use a cached app."
@@ -2000,7 +2071,7 @@ vis_install_native_web() {
   url="https://github.com/$vis_repo_slug/releases/download/$tag/vis-web.tar.gz"
   say "downloading the web app for $tag"
   # curl names the reason: a release without the asset answers 404.
-  if ! curl -fsSL --connect-timeout 10 "$url" -o "$staging/vis-web.tar.gz"; then
+  if ! vis_github_get "$url" "$staging/vis-web.tar.gz" -fsSL --connect-timeout 10; then
     warn "web: could not download the web app published for $tag"
   elif ! tar -xzf "$staging/vis-web.tar.gz" -C "$staging" 2>/dev/null || [[ ! -f "$staging/vis-web/index.html" ]]; then
     warn "web: the web app published for $tag has no index.html"
