@@ -1376,6 +1376,12 @@
     (str alias "/" sym)
     (str sym)))
 
+(defn- tool-op-keywords
+  "Each operation name that an op hook can give for tool `sym` of `ext`: the
+   operation name `alias/sym` and the name that `python_execution` calls."
+  [ext sym]
+  (distinct [(keyword (tool-call-name ext sym)) (keyword (str (symbol-binding ext sym)))]))
+
 (defn- tool-start-label
   "One-line human label for the PRIMARY argument of a tool call, so Activity can
    adapt the evidence to the channel width instead of inheriting a premature visual
@@ -1853,9 +1859,9 @@
    the `hooks` that the operation resolved when it was invoked."
   ([op-kw env args] (run-op-before-hooks op-kw env args (environment-op-hooks op-kw env)))
   ([op-kw env args hooks]
-   (reduce (fn [as {:keys [phase owner] hook-fn :fn}]
+   (reduce (fn [as {:keys [phase owner] hook-fn :fn :as hook}]
              (if (= :before phase)
-               (try (let [r (hook-fn env op-kw as)]
+               (try (let [r (hook-fn env (or (:op hook) op-kw) as)]
                       (if (sequential? r) (vec r) as))
                     (catch Throwable e
                       (log-hook! :warn
@@ -1876,9 +1882,9 @@
   ([op-kw env args result]
    (run-op-after-hooks op-kw env args result (environment-op-hooks op-kw env)))
   ([op-kw env args result hooks]
-   (reduce (fn [res {:keys [phase owner] hook-fn :fn}]
+   (reduce (fn [res {:keys [phase owner] hook-fn :fn :as hook}]
              (if (= :after phase)
-               (try (let [r (hook-fn env op-kw args res)]
+               (try (let [r (hook-fn env (or (:op hook) op-kw) args res)]
                       (if (tool-result? r) r res))
                     (catch Throwable e
                       (log-hook! :warn
@@ -1912,9 +1918,9 @@
 
     (if (empty? arounds)
       (base args)
-      ((reduce (fn [nxt {hook-fn :fn}]
+      ((reduce (fn [nxt {hook-fn :fn :as hook}]
                  (fn [as]
-                   (hook-fn env op-kw as nxt)))
+                   (hook-fn env (or (:op hook) op-kw) as nxt)))
                base
                arounds)
         args))))
@@ -2137,9 +2143,10 @@
               (if (:ext.symbol/inject-env? sym-entry) (into [call-env] call-args) call-args)
 
               ;; One resolution serves every phase of this call. The :after hooks
-              ;; run once, below, after the symbol's own after-fn.
+              ;; run once, below, after the symbol's own after-fn. A hook can name
+              ;; the tool by its operation name or by its Python name.
               hooks
-              (vec (environment-op-hooks op-kw call-env))
+              (vec (mapcat #(environment-op-hooks % call-env) (tool-op-keywords ext sym)))
 
               call-args
               (run-op-before-hooks op-kw call-env call-args hooks)

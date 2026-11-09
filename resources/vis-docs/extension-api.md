@@ -1116,8 +1116,9 @@ vis.OpHook(ops, fn, phase="before")
 ```
 
 `ops` names operations such as `"patch"`, `"shell"` or `"python_execution"`.
-A hook also works on a tool of another extension. Write the extension alias, a
-slash and the tool name, for example `"clj/repl_start"` for `clj.repl_start`.
+A hook also works on a tool of another extension. Write the name that
+`python_execution` calls, for example `"clj.repl_start"`. The hook then receives
+that name as `call["op"]`.
 For such a tool, `args` holds the positional arguments, then one dict with the
 keyword arguments. The call `clj.repl_start("app", aliases=["dev"])` gives
 `["app", {"aliases": ["dev"]}]`.
@@ -1204,7 +1205,7 @@ vis.register_extension(
     vis.Extension(
         name="repl-env",
         description="Start each project REPL with the dev AWS profile.",
-        op_hooks=[vis.OpHook(["clj/repl_start"], repl_env)],
+        op_hooks=[vis.OpHook(["clj.repl_start"], repl_env)],
     )
 )
 ```
@@ -1234,7 +1235,7 @@ def before(call):
 
 vis.register_extension(vis.Extension(
     name="repl-gate", description="Ask before a REPL start.",
-    op_hooks=[vis.OpHook(["clj/repl_start"], before)]))
+    op_hooks=[vis.OpHook(["clj.repl_start"], before)]))
 ```
 
 When the person cancels or the dialog times out, `answer` is false, and this

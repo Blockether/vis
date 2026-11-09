@@ -4066,6 +4066,71 @@ vis.register_extension(vis.Extension(
                                     (json/read-json (:stdout result) :key-fn identity)))))
                  (finally (ep/dispose-python-context! ctx))))))))
 
+(def ^:private python-name-tool-py
+  "import blockether.vis.extension as vis
+
+class Tools:
+    def repl_start(self, cwd: str = '') -> dict:
+        'Start a REPL.'
+        return {'started': True}
+
+def flat() -> dict:
+    'Run a flat tool.'
+    return {'flat': True}
+
+vis.register_extension(vis.Extension(
+    name='ns-tool', description='Namespace fixture.', alias='nst',
+    symbols=[vis.Symbol(Tools(), name='nst'), vis.Symbol(flat)]))
+")
+
+(defn- hooked-ops
+  "Run `nst.repl_start()` and `flat()` under a before hook on `ops`. Return the
+   refusal message, or the printed results when no hook ran."
+  [ops]
+  (let
+    [hook-py
+     (str
+       "import blockether.vis.extension as vis
+
+def before(call):
+    return vis.block('hooked ' + call['op'])
+
+vis.register_extension(vis.Extension(name='name-hook', description='Name fixture.',
+    op_hooks=[vis.OpHook("
+       (pr-str ops)
+       ", before)]))
+")]
+    (with-fresh-loaded {"ns_tool.py" python-name-tool-py "name_hook.py" hook-py}
+                       (fn [_ {:keys [ext-dir store]}]
+                         (let [exts (mapv registered ["ns-tool" "name-hook"])
+                               ctx (:python-context
+                                     (ep/create-python-context {} nil {:worker? true} nil))
+                               env {:python-context ctx
+                                    :db-info store
+                                    :cwd (str ext-dir)
+                                    :extensions (atom exts)
+                                    :active-extensions (atom exts)}]
+
+                           (try (loop-env/sync-active-extension-symbols! env exts)
+                                (let [result (#'python-exec/run-python-code
+                                              ctx
+                                              "print(nst.repl_start()); print(flat())"
+                                              :env
+                                              env)]
+                                  (or (get-in result [:error :message]) (:stdout result)))
+                                (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe
+  op-hook-python-name-test
+  ;; Issue #459: a hook on `clj.repl_start`, the name that the model and the
+  ;; extension code call, never ran.
+  (it "runs a hook that names an extension tool as python_execution calls it"
+      (expect (= "hooked nst.repl_start" (hooked-ops ["nst.repl_start"])))
+      (expect (= "hooked flat" (hooked-ops ["flat"])))
+      (expect (= "hooked nst/nst.repl_start" (hooked-ops ["nst/nst.repl_start"])))
+      (expect (= "{'started': True, 'op': 'nst_nst.repl_start'}\n{'flat': True, 'op': 'nst_flat'}\n"
+                 (hooked-ops ["nst.other"])))))
+
 (defdescribe
   code-quality-recipe-test
   (it
