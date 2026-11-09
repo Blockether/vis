@@ -4512,10 +4512,11 @@
       (presets/preset-label (get setting "editor_options")
                             (presets/active (get setting "editor_options") toggle-value))
       (let [n (count toggle-value)]
-        (str n
-             (if (= :array toggle-type)
-               (if (= 1 n) " entry" " entries")
-               (if (= 1 n) " field" " fields")))))
+        (when (pos? n)
+          (str n
+               (if (= :array toggle-type)
+                 (if (= 1 n) " entry" " entries")
+                 (if (= 1 n) " field" " fields"))))))
 
     :registry-toggle
     (let [spec
