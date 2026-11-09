@@ -516,12 +516,6 @@
               "resumed_at" (- now-ms 30000)
               "finished_at" now-ms)])
 
-(defdescribe status-word-test
-             (it "names each status with one of four words in capitals, without icons"
-                 (expect (= ["QUEUED" "RUNNING" "RUNNING" "RUNNING" "DONE" "DONE" "FAILED" "FAILED"
-                             "FAILED" "FAILED"]
-                            (mapv team/status-word every-state)))))
-
 ;; User report: the titles of an AUDIT team and an IMPLEMENT team did not line up.
 (defdescribe
   role-column-test

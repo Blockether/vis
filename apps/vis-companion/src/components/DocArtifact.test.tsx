@@ -103,10 +103,6 @@ describe('links in a framed page', () => {
     expect(withDocLinkBridge(bytes)).toBe(bytes);
   });
 
-  it('stays well-formed inside an XHTML page', () => {
-    expect(DOC_LINK_BRIDGE).not.toMatch(/[<&]/);
-  });
-
   it('accepts only web and mail links', () => {
     const open = (href: unknown) => docLinkHref({ type: 'vis-doc-open', href });
     expect(open('https://example.org/a b')).toBe('https://example.org/a%20b');

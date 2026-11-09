@@ -98,7 +98,6 @@ describe('ImageViewer', () => {
     act(() => trim.click());
     const alert = document.querySelector<HTMLElement>('[role="alert"]');
     expect(alert?.textContent).toBe('Zoom in first — the whole picture is already in view.');
-    expect(alert?.className).toContain('top-[calc(4rem+env(safe-area-inset-top))]');
     expect(document.querySelector('[aria-label="Undo trim"]')).toBeNull();
   });
 

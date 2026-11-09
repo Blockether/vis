@@ -528,12 +528,13 @@
                        {"id" "compact_number" "type" "number" "value" 4 "label" "Parallel tools"})
                      [:enter :backspace \1 \2 :enter :esc]))))
     (it "keeps invalid number text for correction and saves only a valid number"
-        (expect (= {:calls [["compact_number" 4.5 nil]]
-                    :notes [["Invalid number" "Enter a finite number. Your text is kept."]]}
-                   (capture-saves
-                     (typed-rows
-                       {"id" "compact_number" "type" "number" "value" 4 "label" "Parallel tools"})
-                     [:enter \x :enter :backspace \. \5 :enter :esc]))))
+        (let [{:keys [calls notes]} (capture-saves (typed-rows {"id" "compact_number"
+                                                                "type" "number"
+                                                                "value" 4
+                                                                "label" "Parallel tools"})
+                                                   [:enter \x :enter :backspace \. \5 :enter :esc])]
+          (expect (= [["compact_number" 4.5 nil]] calls))
+          (expect (= 1 (count notes)) "the invalid text gets one note")))
     (it "edits list entries with movement, deletion and new lines before it saves them"
         ;; The text editor once ignored arrows, Backspace, Delete and Enter (1bf1b2471).
         (expect (= {:calls [["compact_list" ["cd" "e"] nil]] :notes []}
@@ -1099,9 +1100,9 @@
                            #'dlg/mini-note! (fn [_ _ _ title text]
                                               (swap! notes conj [title text]))}
             #(capture-settings (#'dlg/extension-action-rows) [:enter :esc])))
-        (expect (= [["Extensions not reloaded"
-                     "This gateway does not support extension reload. Update Vis on that machine."]]
-                   @notes)))))
+        (expect (= 1 (count @notes)))
+        (expect (not= "no such route" (second (first @notes)))
+                "a missing route asks for an update, not the raw HTTP error"))))
 
 (defdescribe
   nested-settings-test

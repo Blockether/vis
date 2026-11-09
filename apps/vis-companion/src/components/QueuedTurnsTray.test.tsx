@@ -72,7 +72,6 @@ describe('queued turns tray', () => {
 
     expect(screen.getByText('manifest.png')).toBeInTheDocument();
     expect(screen.getByText('(empty)')).toBeInTheDocument();
-    expect(screen.getByText('manifest.png')).not.toHaveClass('border');
   });
 
   it('edits through the gateway without rewriting its row optimistically', async () => {

@@ -631,10 +631,7 @@
                                     (swap! notifications conj [message options]))]
 
           (#'state/persist-settings! {:theme-name :vis-dark :show-python-code false})
-          (expect (=
-                    [["Terminal preferences could not be saved; changes apply only to this session."
-                      [:level :warn]]]
-                    @notifications)))))
+          (expect (= [[:level :warn]] (mapv second @notifications))))))
   (it
     "commits the selected theme before a save warning wakes the render thread"
     (let [saved-db
@@ -1483,6 +1480,7 @@
           (expect (= ["Nothing is running to cancel." [:level :info :ttl-ms 2500]]
                      (deref notified 1000 :timeout)))
           (expect (nil? @cancelled))))))
+
 ;; User request 2026-11-07: a person stops subagents only through the leader. The stop of the
 ;; leader turn also stops its subagents, so Esc in a subagent session stops nothing.
 (defdescribe

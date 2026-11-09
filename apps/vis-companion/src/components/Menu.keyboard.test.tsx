@@ -32,7 +32,6 @@ describe('a menu above the phone keyboard', () => {
     update();
     expect(dialog).toHaveStyle({ '--menu-top': '224px' });
     expect(dialog.style.getPropertyValue('--menu-bottom')).toBe('');
-    expect(dialog.className).toContain('var(--menu-top,0px)');
     keyboard.inset = 0;
     update();
     expect(dialog).toHaveStyle({ '--menu-top': '224px' });

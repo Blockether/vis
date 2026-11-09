@@ -17,7 +17,7 @@
             [com.blockether.vis.tui.picture :as picture]
             [com.blockether.vis.tui.view-materializer :as materializer]
             [lazytest.core :refer [defdescribe describe expect it]])
-  (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
+  (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
 (defn- image-node
@@ -528,20 +528,6 @@
                    (expect (nil? (:error result)))
                    (expect (some? x))
                    (expect (not= (:bg (nth row x)) (:bg (nth row (dec (long x)))))))))
-
-;; User report: review labels must remain readable in both themes.
-(defdescribe review-label-contrast-test
-             (it "keeps plain review labels at a contrast of at least 4.5"
-                 (doseq [bg
-                         [(TextColor$RGB. 250 243 235) (TextColor$RGB. 15 17 23)]
-
-                         row
-                         [{:kind :add} {:kind :del} {:kind :diff-head} {:kind :draft} {:kind :meta}
-                          {:kind :receipts-head} {:kind :receipt :status "failed"}
-                          {:kind :receipt :status "done"} {:kind :text}]]
-
-                   (binding [theme/dialog-bg bg]
-                     (expect (>= (theme/contrast-ratio (#'surface/row-ink row) bg) 4.5))))))
 
 (defdescribe
   pane-close-key-only

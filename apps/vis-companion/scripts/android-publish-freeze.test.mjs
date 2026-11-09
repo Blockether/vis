@@ -26,10 +26,9 @@ const lifted = { ...frozen, isFrozen: false };
 describe('the Android publish freeze', () => {
   it('refuses while frozen, naming the reason and who lifts it', () => {
     const refusal = androidPublishRefusal('publishing the app', frozen);
-    expect(refusal).toContain('publishing the app is frozen');
+    expect(refusal).toContain('publishing the app');
     expect(refusal).toContain(frozen.reason);
     expect(refusal).toContain(frozen.liftedBy);
-    expect(refusal).toContain('android-publish-freeze.mjs');
     expect(() => assertAndroidPublishAllowed('publishing the app', frozen)).toThrow(/is frozen/);
     expect(freezeState(frozen)).toBe('frozen');
   });

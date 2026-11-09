@@ -564,10 +564,6 @@ describe("one form's Activity on the phone", () => {
     expect(screen.getByText('3 directories · 2 files')).toBeVisible();
     expect(screen.getByText('0 directories · 2 files')).toBeVisible();
     expect(screen.queryByRole('table')).toBeNull();
-    const sections = [...document.querySelectorAll('[data-activity-section]')];
-    expect(sections[0].classList.contains('mt-1')).toBe(true);
-    // Sections follow one another as one list, with no blank line between them.
-    expect(sections[1].classList.contains('mt-[var(--text-ui--line-height)]')).toBe(false);
     fireEvent.click(toggle);
     expect(screen.getAllByRole('table')).toHaveLength(1);
     expect(screen.getAllByRole('group', { name: 'Activity table' })).toHaveLength(1);

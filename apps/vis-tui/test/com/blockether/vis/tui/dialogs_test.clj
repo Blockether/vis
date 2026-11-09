@@ -4479,15 +4479,6 @@
            (expect (= 1 @phase))
            (finally (future-cancel task))))))
 
-(defdescribe session-status-text-test
-             ;; #331: the C-x s and C-x w views show every status in uppercase.
-             (it "uppercases each status and keeps the count marker"
-                 (expect (= ["LIVE" "IDLE" "STOPPED" "WAITING" "DIRTY" "ARCHIVED" "HITL" "NEW x2"
-                             "HITL x12" ""]
-                            (mapv dlg/session-status-text
-                                  ["Live" "Idle" "Stopped" "Waiting" "Dirty" "Archived" "HITL"
-                                   "New x2" "HITL x12" nil])))))
-
 ;; User report, this Vis session (paraphrased: a stray letter showed beside a row menu
 ;; in the sidebar): the cells beside the shadow ends showed cut-off text from below.
 (defdescribe

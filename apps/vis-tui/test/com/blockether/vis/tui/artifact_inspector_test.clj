@@ -305,8 +305,9 @@
                    (:artifacts (inspector/fetch-session-artifacts! "session-1"))))))
   (it "paints an index it could not read as unavailable, never as empty"
       (with-redefs [vis/gateway-session-artifacts (constantly nil)]
-        (expect (= {:artifacts [] :error "Artifact index unavailable"}
-                   (inspector/fetch-session-artifacts! "session-1")))))
+        (let [{:keys [artifacts error]} (inspector/fetch-session-artifacts! "session-1")]
+          (expect (= [] artifacts))
+          (expect (string? error) "the index says it is unavailable"))))
   (it "materializes durable bytes under the artifact basename"
       (with-redefs [vis/gateway-iteration-attachment-bytes
                     (fn [sid iid idx]

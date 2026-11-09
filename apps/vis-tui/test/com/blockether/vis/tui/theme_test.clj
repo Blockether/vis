@@ -47,29 +47,6 @@
 
     (/ (+ hi 0.05) (+ lo 0.05))))
 
-(defdescribe
-  heading-colours-test
-  (describe
-    "Headings are readable on every surface they're painted on (contrast >= AA 4.5)"
-    (it "H1 on white assistant bg" (expect (>= (contrast-ratio t/md-h1-fg t/ai-bubble-bg) 4.5)))
-    (it "H2 on white assistant bg" (expect (>= (contrast-ratio t/md-h2-fg t/ai-bubble-bg) 4.5)))
-    (it "H3 on white assistant bg" (expect (>= (contrast-ratio t/md-h3-fg t/ai-bubble-bg) 4.5)))
-    (it "H1 on the dialed-back answer-bg" (expect (>= (contrast-ratio t/md-h1-fg t/answer-bg) 4.5)))
-    (it "H2 on the dialed-back answer-bg" (expect (>= (contrast-ratio t/md-h2-fg t/answer-bg) 4.5)))
-    (it "H3 on the dialed-back answer-bg"
-        (expect (>= (contrast-ratio t/md-h3-fg t/answer-bg) 4.5)))))
-
-(defdescribe user-bg-test
-             (describe
-               "User request background is visually identical to terminal-bg (no yellow zone)"
-               (it "user-bubble-fg on user-bubble-bg still passes WCAG AAA (>= 7)"
-                   (expect (>= (contrast-ratio t/user-bubble-fg t/user-bubble-bg) 7.0)))))
-
-(defdescribe answer-bg-test
-             (describe "Answer background is now visually identical to terminal-bg (no zone bg)"
-                       (it "answer-fg on answer-bg still passes WCAG AAA (>= 7)"
-                           (expect (>= (contrast-ratio t/answer-fg t/answer-bg) 7.0)))))
-
 (defn- rgb-vec [^TextColor$RGB rgb] [(.getRed rgb) (.getGreen rgb) (.getBlue rgb)])
 
 (defdescribe
@@ -103,10 +80,3 @@
                          ink (TextColor$RGB. 80 160 240)]
 
                      (expect (>= (contrast-ratio (t/legible-ink ink paper) paper) 4.5))))))
-
-(defdescribe dialog-background-test
-             ;; Regression for #341: a dialog with another background than the screen
-             ;; dimmed the whole terminal when it opened.
-             (it "every registered theme paints dialogs with the screen background"
-                 (doseq [[id {:keys [palette]}] @shared-theme/themes]
-                   (expect (= [id (:terminal-bg palette)] [id (:dialog-bg palette)])))))

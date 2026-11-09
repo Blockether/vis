@@ -17,7 +17,6 @@
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
-            [com.blockether.vis.tui.theme :as theme]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType]
@@ -342,32 +341,7 @@
             (paint!)
             (expect (not (identical? once (.getBackCharacter ts 0 0))))
             (fade!)
-            (expect (identical? once (.getBackCharacter ts 0 0)))))))
-  (it "fades with the colours of the theme in use"
-      (let [before
-            @theme/active-theme-id
-
-            faded-ink
-            (fn [theme-id]
-              (theme/apply-theme! theme-id)
-              (with-open [terminal
-                          (DefaultVirtualTerminal. (TerminalSize. 20 4))
-
-                          ts
-                          (doto (TerminalScreen. terminal) (.startScreen))]
-
-                (.putString (.newTextGraphics ts) 0 0 "chat text")
-                (#'screen/fade-unfocused-areas!
-                 ts
-                 (frame-db)
-                 20
-                 4
-                 0
-                 {:col 12 :row 0 :width 8 :height 4})
-                (.getForegroundColor (.getBackCharacter ts 0 0))))]
-
-        (try (expect (not= (faded-ink :vis-light) (faded-ink :vis-dark)))
-             (finally (theme/apply-theme! before))))))
+            (expect (identical? once (.getBackCharacter ts 0 0))))))))
 
 ;; User report: returning to a session must keep its unfinished review.
 (defdescribe

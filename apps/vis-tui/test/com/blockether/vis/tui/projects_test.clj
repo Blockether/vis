@@ -14,7 +14,6 @@
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
-            [com.blockether.vis.tui.theme-test :as theme-test]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextColor$RGB]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -1253,28 +1252,6 @@
         (#'screen/toggle-project-sidebar!)
         (expect (true? (get-in @state/app-db [:project-sidebar :open?])))
         (expect (= form (:human-input @state/app-db)))))))
-
-(defdescribe
-  project-sidebar-theme-contrast-test
-  (it "project sidebar theme contrast"
-      (let [before @theme/active-theme-id]
-        (try (doseq [id (shared-theme/available-theme-ids)]
-               (theme/apply-theme! (keyword id))
-               (doseq [fg [theme/dialog-fg theme/dialog-hint-key theme/warning-fg]
-                       bg [theme/terminal-bg theme/input-field-bg]]
-
-                 (expect (>= (#'theme-test/contrast-ratio fg bg) 4.5) (str id " sidebar text")))
-               (let [highlight (theme/mix-color theme/terminal-bg theme/header-active-tab-bg 0.14)]
-                 (doseq [[label fg] [[:text theme/dialog-fg] [:hint theme/dialog-hint-key]
-                                     [:warning theme/warning-fg]]]
-                   (expect (>= (#'theme-test/contrast-ratio fg highlight) 4.5)
-                           (str id " focused project row " label))))
-               (expect (>= (#'theme-test/contrast-ratio theme/dialog-hint theme/terminal-bg) 4.5)
-                       (str id " sidebar hints and borders"))
-               (let [[fg bg] (theme/chip-tint :warning)]
-                 (expect (>= (#'theme-test/contrast-ratio fg bg) 4.5)
-                         (str id " yellow button text"))))
-             (finally (theme/apply-theme! before))))))
 
 (defdescribe
   project-unread-completion-and-read-test

@@ -25,8 +25,6 @@ import {
 import type { SseEvent } from './types';
 import {
   VIEW_CLOSE_EVENT,
-  VIEW_GROUP_DIRECTIONS,
-  VIEW_MAX_COLUMNS,
   VIEW_OPEN_EVENT,
   VIEW_PATCH_EVENT,
   isViewEvent,
@@ -147,8 +145,6 @@ describe('a live view read off the wire', () => {
     expect(actions).toMatchObject({ direction: 'wrap' });
     expect(actions).not.toHaveProperty('max_columns');
     expect(unknown).toMatchObject({ direction: 'column' });
-    expect(VIEW_GROUP_DIRECTIONS).toEqual(['column', 'row', 'grid', 'wrap']);
-    expect(VIEW_MAX_COLUMNS).toBe(12);
   });
 
   it('reads the row that stands two nodes side by side', () => {

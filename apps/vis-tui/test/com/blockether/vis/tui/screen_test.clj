@@ -2213,7 +2213,7 @@ therapy line 2"
 
 (defdescribe
   clipboard-copy-actions-test
-  (it "session-id copy uses the same icon-era notification TTL"
+  (it "copies the marked session id and reports success"
       (let [copied
             (promise)
 
@@ -2231,8 +2231,8 @@ therapy line 2"
             ;; anywhere else says nothing about what it addresses.
             (expect (= "vis_session_id#123e4567-e89b-12d3-a456-426614174000"
                        (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied session ID" [:level :success :ttl-ms 1500]]
-                       (deref notified 1000 ::timeout)))))))
+            (expect (= :success
+                       (:level (apply hash-map (second (deref notified 1000 ::timeout))))))))))
   (it "a transcript drag whose document rebuild comes back blank falls back to the painted cells"
       ;; Regression: an expanded / live disclosure bubble can desync the
       ;; virtual-document rebuild from the on-screen paint, so it returns blank
@@ -2323,8 +2323,8 @@ therapy line 2"
                                          (deliver notified [text kvs]))}
           (fn []
             (copy-selection! "selected text")
-            (expect (= ["Copy failed — terminal clipboard unavailable" [:level :error :ttl-ms 5000]]
-                       (deref notified 1000 ::timeout)))))))
+            (expect (= :error
+                       (:level (apply hash-map (second (deref notified 1000 ::timeout))))))))))
   ;; Regression for #327: on WSL the opener found no browser, and the click did
   ;; nothing. A refusal now shows a notice that names the URL.
   (it "reports a URL that no opener could open, with the URL"

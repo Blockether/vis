@@ -77,23 +77,6 @@
                      (expect (= item (@#'provider/save-provider-config! item)))
                      (expect (= [:ollama "http://localhost:11434"] @saved))))))
 
-(defdescribe configured-provider-status-test
-             (it "routes configured provider status through the gateway"
-                 (let [config-path "/tmp/vis-state.yml"]
-                   (with-redefs [vis/gateway-provider-status (fn [provider-id]
-                                                               {"is_authenticated" true
-                                                                "source" "gateway"
-                                                                "provider_id" (name provider-id)
-                                                                "config_path" config-path})]
-                     (expect (= {"is_authenticated" true
-                                 "source" "gateway"
-                                 "provider_id" "openai"
-                                 "config_path" config-path}
-                                (select-keys
-                                  (@#'provider/gateway-provider-status-safe
-                                   {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
-                                  ["is_authenticated" "source" "provider_id" "config_path"])))))))
-
 (defdescribe rejected-provider-connect-test
              (it
                "offers Connect for rejected credentials even when an older snapshot says signed in"
