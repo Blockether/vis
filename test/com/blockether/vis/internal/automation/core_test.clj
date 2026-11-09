@@ -257,3 +257,101 @@
                                    "updated_at")))
                    (automation/rotate-secret! db id "webhook" now)
                    (expect (= (+ now 2) (:updated_at (ps/db-automation-get db id)))))))))
+
+(defn- declared
+  "One automation that an extension declares, as the extension loader gives it."
+  [k & {:as changes}]
+  (merge {:key k
+          :name k
+          :doc "Upload the sessions to the data lake."
+          :triggers [{"kind" "every" "seconds" 3600}]
+          :session "temporary"
+          :push true
+          :enabled true
+          :run (fn [_ _])}
+         changes))
+
+(defn- ext
+  [extension-name & automations]
+  {:ext/name extension-name :ext/automations (vec automations)})
+
+(defn- owned [db] (filterv #(get % "owner") (automation/list-all db now)))
+
+(defdescribe
+  owned-automation-test
+  (it "stores a declared automation once in the contract shape"
+      (with-db (fn [db]
+                 (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] now)
+                 (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] (+ now 1))
+                 (let [[row & more] (owned db)]
+                   (expect (nil? more))
+                   (expect (valid-wire? "automation" row))
+                   (expect (= {"extension" "iceberg" "key" "sync" "root" "/p"} (get row "owner")))
+                   (expect (= {"mode" "temporary" "root" "/p"} (get row "target")))
+                   (expect (= "Upload the sessions to the data lake." (get row "prompt")))))))
+  (it "gives an automation that no extension owns a null owner"
+      (with-db (fn [db]
+                 (let [created (automation/create! db input now)]
+                   (expect (contains? created "owner"))
+                   (expect (nil? (get created "owner")))))))
+  (it "keeps one row when two loads store the same automation at the same time"
+      (with-db (fn [db]
+                 (let [start
+                       (promise)
+
+                       loads
+                       (doall (for [_ (range 4)]
+                                (future @start
+                                        (automation/sync-extensions! db
+                                                                     "/p"
+                                                                     [(ext "iceberg"
+                                                                           (declared "sync"))]
+                                                                     now))))]
+
+                   (deliver start true)
+                   (run! deref loads)
+                   (expect (= 1 (count (owned db))))))))
+  (it "keeps a paused automation paused when the extension loads again"
+      (with-db (fn [db]
+                 (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] now)
+                 (let [id (get (first (owned db)) "id")]
+                   (automation/update! db id {"enabled" false} (+ now 1))
+                   (automation/sync-extensions! db
+                                                "/p"
+                                                [(ext "iceberg" (declared "sync" :doc "New text."))]
+                                                (+ now 2))
+                   (let [row (first (owned db))]
+                     (expect (= id (get row "id")))
+                     (expect (false? (get row "enabled")))
+                     (expect (= "New text." (get row "prompt"))))))))
+  (it "deletes a key that a successful load no longer declares, and nothing else"
+      (with-db (fn [db]
+                 (automation/sync-extensions! db
+                                              "/p"
+                                              [(ext "iceberg" (declared "sync") (declared "prune"))
+                                               (ext "other" (declared "sync"))]
+                                              now)
+                 (automation/sync-extensions! db "/q" [(ext "iceberg" (declared "prune"))] now)
+                 ;; "other" failed to load in this pass, so it is absent and keeps its row.
+                 (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] (+ now 1))
+                 (expect
+                   (= #{["iceberg" "sync" "/p"] ["other" "sync" "/p"] ["iceberg" "prune" "/q"]}
+                      (set (map #(vals (select-keys (get % "owner") ["extension" "key" "root"]))
+                                (owned db))))))))
+  (it "refuses a change other than pause with 409 and allows pause and delete"
+      (with-db
+        (fn [db]
+          (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] now)
+          (let [id
+                (get (first (owned db)) "id")
+
+                refused
+                (failure #(automation/update! db id {"prompt" "Other."} (+ now 1)))]
+
+            (expect (= 409 (:status refused)))
+            (expect (= :extension-owned (:code refused)))
+            (expect (re-find #"iceberg" (:message refused)))
+            (expect (false? (get (automation/update! db id {"enabled" false} (+ now 2)) "enabled")))
+            (expect (true? (get (automation/delete! db id) "is_deleted")))
+            (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] (+ now 3))
+            (expect (= 1 (count (owned db)))))))))

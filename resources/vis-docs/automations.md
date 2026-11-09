@@ -15,6 +15,8 @@ notification or at an address that you choose. You do not need to turn automatio
   address that you choose.
 - **You want to test, pause or remove an automation.** [Manage your
   automations](#manage-automations) in the TUI or the app.
+- **Your extension must do work on a schedule, without a model.** Declare an [automation in the
+  extension](#automations-from-extensions).
 - **Your own program must create and control automations.** Read [Automations
   API](automations-api.md).
 
@@ -32,7 +34,9 @@ Automations support these features:
 - **Schedules.** Cron expressions with time zones, fixed intervals and one-time runs.
 - **Webhooks.** Runs from GitHub, GitLab, Standard Webhooks senders and your own scripts. Vis checks
   the signature, filters the events and can put payload values in the prompt.
-- **Targets.** An existing session, a new session for each run or a temporary session.
+- **Targets.** An existing session, a new session for each run, a temporary session or one session
+  that Vis keeps for all runs.
+- **Extensions.** An extension can declare an automation that calls its own Python function.
 - **Delivery.** Phone notifications and signed callbacks. `[SILENT]` reports only changes.
 - **Control.** Manual runs, pause and resume, secrets and the last 200 runs of each automation.
 - **Access.** The app, the TUI and the [Automations API](automations-api.md).
@@ -79,6 +83,7 @@ One gateway works on at most 4 runs at the same time.
 | `session` | Adds a turn to the session in `session_id` | A running log or a task that needs earlier context |
 | `new` | Creates a session for each run and keeps it. `root` sets the project folder and `group_id` the sidebar group | Results that you want to read and continue later |
 | `temporary` | Creates a session for the run and deletes it after the run. The run keeps the answer | Checks that need no history |
+| `persistent` | Creates a session at the first run and keeps it for the next runs. If you delete that session, the next run creates a new one. `root` sets the project folder | A task that needs earlier context, without a session ID |
 
 A run cannot ask you questions. If a run asks for input, it fails with the error `The run asked for
 input. An automation cannot answer questions.` If the target session no longer exists, the run
@@ -88,8 +93,8 @@ fails with `The target session does not exist.`
 
 Vis records the status and the answer of each run. You find the result in these places:
 
-- **The session.** With the `session` and `new` targets, the answer stays in the session as a
-  normal turn.
+- **The session.** With the `session`, `new` and `persistent` targets, the answer stays in the
+  session as a normal turn.
 - **Runs.** The [automation views](#manage-automations) show the last 200 runs of each automation.
   Your program reads them with the [Automations API](automations-api.md#read-runs).
 - **A notification.** Push is on by default. The Vis app on your phone shows a notification for
@@ -160,9 +165,44 @@ shows its triggers, next run, target, delivery, webhook address and recent runs.
 the same actions. The **+** of the band and **Edit** open the steps from [Create an
 automation](#create-an-automation).
 
+An automation from an extension shows the name of the extension and its key. It has no **Edit**.
+[Automations from extensions](#automations-from-extensions) tells why.
+
 **Run now** starts a manual run at once. **Pause** stops the triggers until you select **Resume**.
 **Replace webhook secret** and **Replace callback secret** create a new secret. The old secret
 stops working at once, so update the other service right after the change.
+
+## Automations from extensions
+
+An extension can declare an automation. A run of this automation calls a Python function of the
+extension and does not call a model. The run sends no provider request and uses no tokens. Use it
+for work that code can do alone, for example a sync or a cleanup every hour. [Extension
+API](extension-api.md#automations) tells how to declare one.
+
+Vis adds the automation when the extension loads. The gateway also loads the extensions in the
+background after it starts, so the automation is ready without a step from you.
+
+The extension owns the definition. The app and the TUI show **From extension** with the name of
+the extension and the key of the automation. You can run, pause, resume and delete the automation,
+but you cannot edit it. To change it, change the extension.
+
+- **Pause** stays when the extension loads again.
+- **Delete** removes the automation and its runs. The automation comes back when the extension
+  loads again. To stop its runs, pause it.
+- When the extension no longer declares the automation, Vis deletes it at the next load. When the
+  extension does not load, for example because of an error, Vis keeps the automation and its runs.
+
+The task of the automation is the description of its function. A run uses the target of the
+declaration: a `temporary` session or a `persistent` session in the project folder. The result of
+the function sets the result of the run:
+
+| The function | The run |
+|---|---|
+| Returns `None` | Completes without an answer, as with `[SILENT]`. Vis sends no notification. |
+| Returns text or `vis.ok(...)` | Completes. The text is the answer. |
+| Returns `vis.err(...)` or raises an error | Fails. The text of the error is the error of the run. |
+| Asks a question or shows a form | Fails at once. An automation cannot answer questions. |
+| Works for more than 30 minutes | Fails. The next run in the queue starts. |
 
 ## Receive callbacks
 
@@ -320,6 +360,7 @@ Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub
 | Webhook timestamp window | 300 seconds |
 | One payload value in a prompt | 4000 bytes |
 | Callback attempts | 6, each with a 10-second timeout |
+| One run of an extension automation | 30 minutes |
 
 ## See also
 
@@ -327,3 +368,4 @@ Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub
 - [Running a gateway](gateway-service.md) — keep a gateway online, so that schedules and webhooks
   work.
 - [Python SDK](python-sdk.md) — install the SDK and run agents from your own code.
+- [Extension API](extension-api.md#automations) — declare an automation in an extension.

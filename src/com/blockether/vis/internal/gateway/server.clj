@@ -37,7 +37,9 @@
     [com.blockether.vis.internal.gateway.server.council :as council-api]
     [com.blockether.vis.internal.gateway.server.automations :as automations-api]
     [com.blockether.vis.internal.gateway.server.evals :as evals-api]
+    [com.blockether.vis.internal.automation.core :as automation]
     [com.blockether.vis.internal.automation.runner :as automation-runner]
+    [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.gateway.server.decisions :as decisions-api]
     [com.blockether.vis.internal.gateway.server.devices :as devices-api]
     [com.blockether.vis.internal.gateway.server.fs :as fs-api]
@@ -300,10 +302,18 @@
 (defn- prepare-known-projects!
   "Prepare the catalog of each project that the person added or opened before (#396).
    A session there then reuses that catalog and does not wait for its first load.
-   One failed project never stops the others. A session load goes first (#407)."
+   The roots of extension automations load too, so their extensions declare them
+   again without a session (#456). One failed project never stops the others. A
+   session load goes first (#407)."
   []
   (doseq [root
-          (keep #(get % "workspace_root") (state/list-projects))
+          (distinct (concat (keep #(get % "workspace_root") (state/list-projects))
+                            (try (automation/owned-roots (lp/db-info))
+                                 (catch Throwable t
+                                   (tel/log! {:level :warn
+                                              :id ::owned-automation-roots-failed
+                                              :data {:error (ex-message t)}})
+                                   nil))))
 
           :when (.isDirectory (java.io.File. ^String root))]
 

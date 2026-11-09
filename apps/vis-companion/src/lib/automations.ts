@@ -30,6 +30,14 @@ export interface AutomationTarget {
   group_id?: string;
 }
 
+/** The extension that declares an automation: `automations.json#/$defs/automation_owner`. */
+export interface AutomationOwner {
+  extension: string;
+  key: string;
+  /** The project root of a project extension. Empty for a global extension. */
+  root: string;
+}
+
 /** One run as the gateway reports it: `automations.json#/$defs/run`. Times are epoch ms. */
 export interface AutomationRun {
   id: string;
@@ -68,6 +76,8 @@ export interface Automation {
   next_run_at: number | null;
   webhook: { path: string } | null;
   secrets: { webhook: boolean; callback: boolean };
+  /** Null for an automation that a person made. The extension owns the definition of the others. */
+  owner: AutomationOwner | null;
   last_run: AutomationRun | null;
 }
 
@@ -163,6 +173,8 @@ export function targetLabel(target: AutomationTarget): string {
       return `New session for each run${root}`;
     case 'temporary':
       return `Temporary session for each run${root}, deleted after the run`;
+    case 'persistent':
+      return `One session for all runs${root}, kept after each run`;
     default:
       return wordLabel(target.mode);
   }
@@ -197,6 +209,7 @@ export function runMillis(run: AutomationRun): number {
 export function automationSummary(automation: Automation, now: number = Date.now()): string {
   return [
     automation.enabled ? null : 'Paused',
+    automation.owner ? `Extension ${automation.owner.extension}` : null,
     automation.triggers.map((trigger) => triggerLabel(trigger, now)).join(', '),
     automation.enabled && automation.next_run_at
       ? `Next ${timeLabel(automation.next_run_at, now)}`
@@ -278,21 +291,26 @@ const TARGET_LABELS: Record<string, string> = {
   new: 'New session for each run',
   temporary: 'Temporary session for each run',
   session: 'One existing session',
+  persistent: 'One session for all runs',
 };
 
 const TARGET_HINTS: Record<string, string> = {
   new: 'The session stays in your list.',
   temporary: 'Vis deletes it and keeps the answer.',
   session: 'Each run adds a turn to it.',
+  persistent: 'Vis starts it at the first run and keeps it.',
 };
 
-export const TARGET_OPTIONS = [DEFS.new_target, DEFS.temporary_target, DEFS.session_target].map(
-  ({ properties }) => ({
-    value: properties.mode.const,
-    label: TARGET_LABELS[properties.mode.const] ?? wordLabel(properties.mode.const),
-    hint: TARGET_HINTS[properties.mode.const] ?? '',
-  }),
-);
+export const TARGET_OPTIONS = [
+  DEFS.new_target,
+  DEFS.temporary_target,
+  DEFS.persistent_target,
+  DEFS.session_target,
+].map(({ properties }) => ({
+  value: properties.mode.const,
+  label: TARGET_LABELS[properties.mode.const] ?? wordLabel(properties.mode.const),
+  hint: TARGET_HINTS[properties.mode.const] ?? '',
+}));
 
 /** `prompt` sends the prompt as the answer without a model: `deliver_only`. */
 export const ANSWER_OPTIONS = [

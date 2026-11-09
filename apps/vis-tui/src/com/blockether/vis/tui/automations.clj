@@ -98,6 +98,9 @@
     "temporary"
     "a temporary session for each run"
 
+    "persistent"
+    "one session that Vis keeps for all runs"
+
     "unknown"))
 
 (defn- delivery-label
@@ -113,6 +116,8 @@
 
 (defn- state-label [automation] (if (get automation "enabled") "On" "Paused"))
 
+(defn- owner-extension [automation] (get-in automation ["owner" "extension"]))
+
 (defn rows
   "List items for the automations, with the state and the next run as the hint."
   [automations]
@@ -121,6 +126,8 @@
            :hint (str/join " · "
                            (remove nil?
                              [(state-label automation)
+                              (some->> (owner-extension automation)
+                                       (str "extension "))
                               (some->> (get automation "next_run_at")
                                        time-label
                                        (str "next "))]))
@@ -158,6 +165,12 @@
   (let [last-run (get automation "last_run")]
     (str "- State: "
          (state-label automation)
+         (when-let [extension (owner-extension automation)]
+           (str "\n- From extension: `"
+                extension
+                "`, key `"
+                (get-in automation ["owner" "key"])
+                "`. The extension owns the definition."))
          "\n- Triggers: "
          (str/join ", " (map trigger-label (get automation "triggers")))
          "\n- Target: "
@@ -272,7 +285,11 @@
         :delete
         (when (dlg/confirm-dialog! screen
                                    (str "Delete " automation-name "?")
-                                   "Vis deletes the automation and its run history.")
+                                   (str "Vis deletes the automation and its run history."
+                                        (when-let [extension (owner-extension automation)]
+                                          (str " The automation comes back when the extension "
+                                               extension
+                                               " loads again."))))
           (report! (delete! id) (str "Deleted " automation-name)))
 
         nil))))

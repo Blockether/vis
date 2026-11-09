@@ -7937,6 +7937,54 @@
                         (fn [tx]
                           (execute! tx {:delete-from :automation :where [:= :id id]}))))))
 
+(defn db-automation-upsert-owned!
+  [db {:keys [owner_extension owner_key owner_root definition] :as row}]
+  (let [owner-where [:and [:= :owner_extension owner_extension] [:= :owner_key owner_key]
+                     [:= :owner_root owner_root]]]
+    (sqlite-write-tx!
+      db
+      (fn [tx]
+        (let [existing (automation-row
+                         (query-one! tx {:select [:*] :from [:automation] :where owner-where}))
+              ;; Pause belongs to the person: a later declaration never changes it.
+              definition (cond-> definition
+                           existing
+                           (assoc "enabled" (:enabled existing)))]
+
+          (cond (nil? existing) (execute! tx
+                                          {:insert-into :automation
+                                           :values [(-> row
+                                                        (select-keys [:id :name :enabled :created_at
+                                                                      :updated_at :owner_extension
+                                                                      :owner_key :owner_root])
+                                                        (update :enabled #(if % 1 0))
+                                                        (assoc :definition (->json definition)))]
+                                           ;; A concurrent load inserted the same owner first: keep its row.
+                                           :on-conflict [:owner_extension :owner_key :owner_root]
+                                           :do-nothing true})
+                (not= [(:name existing) (:definition existing)] [(:name row) definition])
+                (execute! tx
+                          {:update :automation
+                           :set {:name (:name row)
+                                 :definition (->json definition)
+                                 :updated_at (max (long (:updated_at row))
+                                                  (inc (long (:updated_at existing))))}
+                           :where [:= :id (:id existing)]}))
+          (automation-row (query-one! tx
+                                      {:select [:*] :from [:automation] :where owner-where})))))))
+
+(defn db-automation-delete-owned!
+  [db extension root keep-keys]
+  (update-count (sqlite-write-tx! db
+                                  (fn [tx]
+                                    (execute! tx
+                                              {:delete-from :automation
+                                               :where (cond-> [:and [:= :owner_extension extension]
+                                                               [:= :owner_root root]]
+                                                        (seq keep-keys)
+                                                        (conj [:not-in :owner_key
+                                                               (vec keep-keys)]))})))))
+
 (defn- run-row [row] (when row (update row :is_silent #(= 1 (long %)))))
 
 (defn- run-values

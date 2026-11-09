@@ -27,6 +27,7 @@ need](#choose-what-you-need) compares the options.
 | --- | --- | --- |
 | Let the agent call Python code or an external service | A tool, declared with `vis.Symbol` | [Your first extension](#your-first-extension) |
 | Add a command a person types, such as `/hello` | `vis.SlashCommand` | [Slash commands](extension-api.md#slash-commands) |
+| Run your Python code on a schedule, without a model | `vis.Automation` | [Automations](extension-api.md#automations) |
 | Explain when to use an extension's tools | The extension's short `prompt` | [Prompts and discovery](extension-api.md#prompts-and-discovery) |
 | Describe a reusable, multi-step procedure | A skill (`SKILL.md`), with no Python extension | [Skills](skills.md) |
 | Check calls before they run or inspect results afterward | `vis.OpHook` | [Op hooks](extension-api.md#op-hooks) |

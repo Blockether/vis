@@ -122,6 +122,8 @@ that you set and these fields:
 - `webhook` has the `path` of the webhook address, or is `None`.
 - `secrets` tells whether a `webhook` secret and a `callback` secret exist. It never contains a secret.
 - `last_run` is the newest run, or `None`.
+- `owner` names the extension that declares the automation, or is `None`. It has `extension`, `key`
+  and `root`. The `root` is the project folder, or an empty text for a global extension.
 
 </div>
 
@@ -139,6 +141,8 @@ that you set and these fields:
 - `webhook` has the `path` of the webhook address, or is `null`.
 - `secrets` tells whether a `webhook` secret and a `callback` secret exist. It never contains a secret.
 - `last_run` is the newest run, or `null`.
+- `owner` names the extension that declares the automation, or is `null`. It has `extension`, `key`
+  and `root`. The `root` is the project folder, or an empty text for a global extension.
 
 </div>
 
@@ -215,6 +219,10 @@ client.patch_automation(
 The body changes only the fields that it names. Vis replaces `triggers`, `target` and `delivery` as a
 whole, so send the full new value. The answer is the changed automation.
 
+For an automation with an `owner`, the body can change only `enabled`. Any other field raises
+`GatewayError` with the status `409` and the code `extension-owned`. To change the automation,
+change the extension.
+
 </div>
 
 <div data-variant="http">
@@ -227,6 +235,9 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID" \
 Send `{"enabled": true}` to resume. The body changes only the fields that it names. Vis replaces
 `triggers`, `target` and `delivery` as a whole, so send the full new value. The answer is the
 changed automation.
+
+For an automation with an `owner`, the body can change only `enabled`. Any other field gets the
+status `409` and the type `extension-owned`. To change the automation, change the extension.
 
 </div>
 
@@ -319,7 +330,8 @@ deleted = client.delete_automation(automation_id)
 print(deleted["is_deleted"])
 ```
 
-Vis deletes the automation and its runs.
+Vis deletes the automation and its runs. An automation with an `owner` comes back when its
+extension loads again. To stop its runs, pause it.
 
 </div>
 
@@ -329,7 +341,8 @@ Vis deletes the automation and its runs.
 vis_api -X DELETE "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID"
 ```
 
-Vis deletes the automation and its runs. The answer has `id` and `is_deleted`.
+Vis deletes the automation and its runs. The answer has `id` and `is_deleted`. An automation with
+an `owner` comes back when its extension loads again. To stop its runs, pause it.
 
 </div>
 
@@ -366,6 +379,7 @@ An error answer has this body:
 | `401` | `unauthorized` | The token is missing or not correct. |
 | `404` | `not-found` | The automation or the run does not exist. |
 | `409` | `automation-limit` | The gateway already has 256 automations. |
+| `409` | `extension-owned` | An extension owns the automation. You can change only `enabled`. |
 | `426` | `incompatible_protocol` | The `x-vis-protocol` header is missing or not supported. |
 
 </div>
@@ -429,5 +443,6 @@ curl -X POST "https://gateway.example.com/v1/hooks/$AUTOMATION_ID" \
 ## See also
 
 - [Automations](automations.md) — triggers, targets, callbacks and webhook signatures.
+- [Extension API](extension-api.md#automations) — declare an automation in an extension.
 - [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
 - [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.

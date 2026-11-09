@@ -12,6 +12,7 @@
   (:require [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
+            [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as automation-runner]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -20,13 +21,30 @@
             [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.python.test-runner :as test-runner]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.model :as smodel]
-            [com.blockether.vis.internal.view.core :as view]))
+            [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.view.core :as view]
+            [taoensso.telemere :as tel]))
+
+(defn- sync-extension-automations!
+  "Store the automations that a successful extension load declares."
+  [{:keys [project-root extensions]}]
+  (try (automation/sync-extensions! (lp/db-info) project-root extensions (util/now-ms))
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::extension-automations-sync-failed
+                    :data {:root project-root :error (ex-message t)}}))))
+
+(defn- may-ask?
+  "The ask gate: a managed subagent and an extension automation run never ask."
+  [sid]
+  (and (not (automation-runner/refuse-ask! sid)) (gateway-view/person-may-answer? sid)))
 
 (defonce ^:private installed
   (delay
@@ -37,18 +55,25 @@
     (agents/install-runtime! state/agent-runtime)
     ;; Automations start turns through the gateway and alert through Push. Their
     ;; own alert replaces the ordinary turn alert.
-    (automation-runner/install-runtime! {:submit! #'state/submit-turn-sync!
-                                         :create-session! #'state/create-session!
-                                         :delete-session! #'state/close-session!
-                                         :session? (fn [sid]
-                                                     (some? (lp/by-id sid)))
-                                         :notify! #'push/notify-automation-run!})
+    (automation-runner/install-runtime!
+      {:submit! #'state/submit-turn-sync!
+       :create-session! #'state/create-session!
+       :delete-session! #'state/close-session!
+       :session? (fn [sid]
+                   (some? (lp/by-id sid)))
+       :find-session (fn [external-id]
+                       (persistance/db-find-session-by-external (lp/db-info) :api external-id))
+       :run-extension! #'state/submit-turn-sync!
+       :notify! #'push/notify-automation-run!})
+    ;; A successful extension load stores the automations that the extension declares.
+    (python-extensions/add-change-listener! ::extension-automations #'sync-extension-automations!)
     (push/set-quiet-filter! #'automation-runner/quiet-turn?)
     ;; A live View a human stops after its block returned has no collector left;
     ;; the gateway owns the database, so it files the late artifact.
     (view/set-late-artifact-filer! #'state/append-iteration-attachment!)
-    ;; A managed subagent never asks the person: its leader answers for it.
-    (view/set-ask-gate! #'gateway-view/person-may-answer?)
+    ;; A managed subagent never asks the person: its leader answers for it. Nobody
+    ;; answers in the session of an extension automation run either.
+    (view/set-ask-gate! #'may-ask?)
     ;; Provider and default-model changes rebuild the shared router and reseed
     ;; every cached session environment, not only `/reload`.
     (providers/set-router-rebuild-hook! #'loop-env/reload-router!)

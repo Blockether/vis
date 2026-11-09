@@ -528,6 +528,20 @@
        (optional-field? x :slash/availability-fn ifn?)
        (optional-field? x :slash/subcommands #(vector-of? non-blank-string? %))))
 
+(defn- automation-entry?
+  "True when `x` is one automation that an extension declares: a key from the
+   contract `automation_owner` pattern, a non-blank doc and a run fn. The
+   automation store validates the triggers."
+  [x]
+  (and (map? x)
+       (string? (:key x))
+       (some? (re-matches #"[a-z0-9][a-z0-9._-]{0,63}" (:key x)))
+       (non-blank-string? (:name x))
+       (non-blank-string? (:doc x))
+       (vector? (:triggers x))
+       (contains? #{"temporary" "persistent"} (:session x))
+       (ifn? (:run x))))
+
 (defn- keybinding?
   "True when `x` is one valid TUI key binding: the gateway `keybinding` shape
    without its `extension` key, which the catalog adds. A `:run` binding also
@@ -677,6 +691,9 @@
        (optional-field? x :ext/attachment-storage #(vector-of? map? %))
        (optional-field? x :ext/channel-contributions channel-contributions?)
        (optional-field? x :ext/slash-commands #(vector-of? slash? %))
+       (optional-field? x
+                        :ext/automations
+                        #(and (vector-of? automation-entry? %) (apply distinct? nil (map :key %))))
        (optional-field? x :ext/keybindings #(vector-of? keybinding? %))
        (optional-field? x :ext/sandbox-shims #(vector-of? sandbox-shim? %))
        (optional-field? x :ext/engine engine?)

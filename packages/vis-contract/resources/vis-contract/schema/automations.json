@@ -16,7 +16,8 @@
     "webhook_skew_seconds": 300,
     "webhook_value_bytes": 4000,
     "callback_attempts": 6,
-    "callback_timeout_ms": 10000
+    "callback_timeout_ms": 10000,
+    "extension_run_timeout_ms": 1800000
   },
   "$defs": {
     "automation_id": {
@@ -242,6 +243,24 @@
       "additionalProperties": false,
       "description": "Start a new session for each run and keep it."
     },
+    "persistent_target": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "const": "persistent"
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false,
+      "description": "Run in one session that Vis starts at the first run and keeps for the next runs. When that session is gone, the next run starts a new one."
+    },
     "temporary_target": {
       "type": "object",
       "properties": {
@@ -270,8 +289,44 @@
         },
         {
           "$ref": "#/$defs/temporary_target"
+        },
+        {
+          "$ref": "#/$defs/persistent_target"
         }
       ]
+    },
+    "extension_automation_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "description": "The stable key of an automation in its extension."
+    },
+    "automation_owner": {
+      "type": "object",
+      "properties": {
+        "extension": {
+          "allOf": [
+            {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          ],
+          "maxLength": 128
+        },
+        "key": {
+          "$ref": "#/$defs/extension_automation_key"
+        },
+        "root": {
+          "type": "string",
+          "maxLength": 4096,
+          "description": "The project root of a project extension. Empty for a global extension."
+        }
+      },
+      "required": [
+        "extension",
+        "key",
+        "root"
+      ],
+      "additionalProperties": false,
+      "description": "The extension that declares this automation. A run calls the run callback of the extension and no model. The extension owns the definition: a client can only pause, resume, run or delete it. The extension, the key and the root identify one automation."
     },
     "run_event_type": {
       "enum": [
@@ -687,6 +742,16 @@
         "secrets": {
           "$ref": "#/$defs/secrets_state"
         },
+        "owner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/automation_owner"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "last_run": {
           "anyOf": [
             {
@@ -713,6 +778,7 @@
         "next_run_at",
         "webhook",
         "secrets",
+        "owner",
         "last_run"
       ],
       "additionalProperties": false

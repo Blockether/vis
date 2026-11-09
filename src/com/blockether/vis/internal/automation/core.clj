@@ -8,7 +8,8 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.automation.cron :as cron]
             [com.blockether.vis.internal.persistance.core :as ps]
-            [com.blockether.vis.internal.util :as util])
+            [com.blockether.vis.internal.util :as util]
+            [taoensso.telemere :as tel])
   (:import (java.net URI URISyntaxException)
            (java.util Base64 UUID)
            (java.util.concurrent LinkedBlockingQueue TimeUnit)))
@@ -204,12 +205,18 @@
    "error" (:error run)
    "is_silent" (boolean (:is_silent run))})
 
+(defn owner
+  "The `automation_owner` of an automation that an extension declares, else nil."
+  [{:keys [owner_extension owner_key owner_root]}]
+  (when owner_extension {"extension" owner_extension "key" owner_key "root" (or owner_root "")}))
+
 (defn ->wire
   "The contract shape of one stored automation. Secrets never appear."
   [{:keys [id definition created_at updated_at webhook_secret callback_secret] :as row} last-run
    now]
   (merge definition
          {"id" id
+          "owner" (owner row)
           "created_at" created_at
           "updated_at" updated_at
           "next_run_at" (next-run-at row now)
@@ -273,6 +280,16 @@
   (let [row
         (or (ps/db-automation-get db id) (not-found! "Automation" id))
 
+        _
+        (when-let [{:strs [extension key]} (owner row)]
+          (when (seq (dissoc patch "enabled"))
+            (throw (ex-info (str "The extension \""
+                                 extension
+                                 "\" owns the automation \""
+                                 key
+                                 "\". Change it in the extension. Here you can only pause it.")
+                            {:status 409 :code :extension-owned}))))
+
         definition
         (validate (merge (:definition row) patch) now)]
 
@@ -284,6 +301,61 @@
                              :updated_at (touched-at row now)))
     (wake-scheduler!)
     (describe db id now)))
+
+(defn- owned-definition
+  "The stored definition of one automation that an extension declares. The doc is
+   the prompt, so a person sees what the automation does."
+  [{:keys [name doc triggers session push enabled]} root]
+  {"name" name
+   "enabled" (boolean enabled)
+   "triggers" triggers
+   "prompt" doc
+   "target" (cond-> {"mode" session}
+              (seq root)
+              (assoc "root" root))
+   "delivery" {"push" (boolean push) "callback" nil}
+   "model" nil
+   "deliver_only" false})
+
+(defn- sync-owned!
+  [db extension root declared now]
+  (let [declared (vec declared)]
+    (doseq [automation declared]
+      (try (let [definition (validate (owned-definition automation root) now)
+                 stored (ps/db-automation-upsert-owned! db
+                                                        {:id (str (UUID/randomUUID))
+                                                         :name (get definition "name")
+                                                         :enabled (get definition "enabled")
+                                                         :definition definition
+                                                         :created_at now
+                                                         :updated_at now
+                                                         :owner_extension extension
+                                                         :owner_key (:key automation)
+                                                         :owner_root root})]
+
+             stored)
+           (catch clojure.lang.ExceptionInfo e
+             (tel/log! {:level :warn
+                        :id ::owned-automation-invalid
+                        :data
+                        {:extension extension :key (:key automation) :error (ex-message e)}}))))
+    ;; Only a successful load reaches here, so a key that is not declared now is gone.
+    (ps/db-automation-delete-owned! db extension root (mapv :key declared))))
+
+(defn sync-extensions!
+  "Store the automations that the loaded `extensions` of one scope declare. `root` is
+   the project root, or nil for the global extensions. An extension that is absent
+   or did not load keeps its automations, so a failed load never deletes run history."
+  [db root extensions now]
+  (let [root (or root "")]
+    (doseq [ext extensions]
+      (sync-owned! db (:ext/name ext) root (:ext/automations ext) now))
+    (wake-scheduler!)))
+
+(defn owned-roots
+  "The project roots of the stored automations that project extensions own."
+  [db]
+  (into (sorted-set) (keep #(not-empty (:owner_root %))) (ps/db-automation-list db)))
 
 (defn delete!
   [db id]

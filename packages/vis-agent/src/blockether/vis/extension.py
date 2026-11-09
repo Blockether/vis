@@ -1282,6 +1282,8 @@ class Extension:
         prompt: Instructions as text or a host callback.
         slash_commands: `SlashCommand` declarations.
         keybindings: `Keybinding` declarations: TUI keys after C-x.
+        automations: `Automation` declarations: scheduled runs that call a
+            function of the extension and no model. Keys are unique.
         op_hooks: `OpHook` declarations for host lifecycle operations.
         ctx: Optional host context callback.
         providers: `Provider` declarations.
@@ -1313,6 +1315,7 @@ class Extension:
     prompt: str | Callable[..., Any] | None = None
     slash_commands: Sequence[SlashCommand] = ()
     keybindings: Sequence[Keybinding] = ()
+    automations: Sequence[Automation] = ()
     op_hooks: Sequence[OpHook] = ()
     ctx: Callable[..., Any] | None = None
     providers: Sequence[Provider] = ()
@@ -1348,6 +1351,7 @@ class Extension:
             ("symbols", Symbol),
             ("slash_commands", SlashCommand),
             ("keybindings", Keybinding),
+            ("automations", Automation),
             ("op_hooks", OpHook),
             ("providers", Provider),
             ("network_filters", NetworkFilter),
@@ -1377,12 +1381,18 @@ class Extension:
                     "vis.Extension env entries must be environment variable names"
                 )
         object.__setattr__(self, "env", tuple(self.env))
+        keys = [automation.key for automation in self.automations]
+        if repeated := sorted({key for key in keys if keys.count(key) > 1}):
+            raise ValueError(
+                f"vis.Extension automations repeat the key {repeated[0]!r}"
+            )
 
     def _spec(self):
         children = {
             "symbols",
             "slash_commands",
             "keybindings",
+            "automations",
             "op_hooks",
             "providers",
             "network_filters",
@@ -3016,6 +3026,136 @@ class SlashCommand:
             "doc": self.doc,
             "usage": self.usage,
             "saveable": self.saveable,
+        }
+
+
+def _automation_rules():
+    from blockether.vis import _contracts
+
+    source = _contracts.schema("automations")
+    defs = source["$defs"]
+    kinds = [
+        defs[ref["$ref"].rsplit("/", 1)[1]]["properties"]["kind"]["const"]
+        for ref in defs["trigger"]["oneOf"]
+    ]
+    sessions = [
+        defs[name]["properties"]["mode"]["const"]
+        for name in ("temporary_target", "persistent_target")
+    ]
+    return {
+        "key": defs["extension_automation_key"]["pattern"],
+        "kinds": [kind for kind in kinds if kind != "webhook"],
+        "sessions": sessions,
+        "triggers": source["x-vis-limits"]["triggers"],
+        "name": defs["name"]["maxLength"],
+        "doc": defs["prompt"]["maxLength"],
+    }
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Automation:
+    """A scheduled run that calls a function of the extension and no model.
+
+    Args:
+        key: The stable key of the automation in its extension, such as
+            `iceberg-sync`. Lower case letters, digits, `.`, `_` and `-`, at most
+            64 characters. The extension, the key and the project root identify one
+            automation, so its run history stays when the extension loads again.
+        run: The function that a run calls. It receives a dict with `automation`
+            (`id`, `name`, `key`), `run` (`id`, `trigger_kind`, `request`),
+            `session_id`, `workspace_root` and `project_root`. It returns None for
+            a silent run, a text, `vis.ok(...)` or `vis.err(...)`. An exception
+            fails the run.
+        triggers: One to eight `cron`, `every` or `once` triggers, as the
+            automations contract gives them.
+        name: The name that clients show. The default is `key`.
+        doc: What the run does. Clients show it as the task. The default is the
+            docstring of `run`. It must not be blank.
+        session: `temporary` starts a new session for each run and deletes it
+            after the run. `persistent` keeps one session for all runs.
+        push: Send a push notification when a run completes.
+        enabled: The state at the first load. Later loads keep the state that a
+            person set, for example a pause.
+
+    Raises:
+        ValueError: A field breaks these rules.
+    """
+
+    key: str
+    run: Callable[..., Any]
+    triggers: Sequence[Mapping[str, Any]]
+    name: str | None = None
+    doc: str | None = None
+    session: str = "temporary"
+    push: bool = True
+    enabled: bool = True
+
+    def __post_init__(self):
+        from blockether.vis import _contracts
+
+        rules = _automation_rules()
+        if not isinstance(self.key, str) or not re.fullmatch(rules["key"], self.key):
+            raise ValueError(
+                f"vis.Automation key must match {rules['key']}, such as 'daily-sync'"
+            )
+        if not callable(self.run):
+            raise ValueError(f"vis.Automation {self.key}: run must be callable")
+        name = self.key if self.name is None else self.name
+        if not isinstance(name, str) or not name.strip() or len(name) > rules["name"]:
+            raise ValueError(
+                f"vis.Automation {self.key}: name must be nonblank text of at most "
+                f"{rules['name']} characters"
+            )
+        doc = inspect.getdoc(self.run) if self.doc is None else self.doc
+        if not isinstance(doc, str) or not doc.strip() or len(doc) > rules["doc"]:
+            raise ValueError(
+                f"vis.Automation {self.key}: give doc=<text> or a docstring on run, "
+                f"nonblank and at most {rules['doc']} characters"
+            )
+        if self.session not in rules["sessions"]:
+            raise ValueError(
+                f"vis.Automation {self.key}: session must be one of "
+                + ", ".join(rules["sessions"])
+            )
+        for field_name in ("push", "enabled"):
+            if not isinstance(getattr(self, field_name), bool):
+                raise ValueError(
+                    f"vis.Automation {self.key}: {field_name} must be a bool"
+                )
+        triggers = self.triggers
+        if (
+            not isinstance(triggers, (list, tuple))
+            or not 1 <= len(triggers) <= rules["triggers"]
+        ):
+            raise ValueError(
+                f"vis.Automation {self.key}: give 1 to {rules['triggers']} triggers"
+            )
+        for trigger in triggers:
+            kind = trigger.get("kind") if isinstance(trigger, Mapping) else None
+            if kind not in rules["kinds"]:
+                raise ValueError(
+                    f"vis.Automation {self.key}: a trigger kind must be one of "
+                    + ", ".join(rules["kinds"])
+                )
+            found = _contracts.problems("automations", f"{kind}_trigger", dict(trigger))
+            if found:
+                raise ValueError(
+                    f"vis.Automation {self.key}: {kind} trigger: " + " ".join(found)
+                )
+        object.__setattr__(self, "triggers", tuple(dict(t) for t in triggers))
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "doc", doc)
+
+    def _spec(self):
+        return {
+            "key": self.key,
+            "name": self.name,
+            "doc": self.doc,
+            "triggers": [dict(trigger) for trigger in self.triggers],
+            "run": self.run,
+            "session": self.session,
+            "push": self.push,
+            "enabled": self.enabled,
         }
 
 

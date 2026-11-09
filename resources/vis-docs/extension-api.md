@@ -112,6 +112,7 @@ of the corresponding SDK declarations and are stored as tuples, not mutable regi
 | `prompt: str` or callable | `None` | Model instructions. A callable receives the env dict each turn and returns text or `None` |
 | `activation` | `None` | Optional `(env) -> bool`. `False` hides the extension for that turn |
 | `slash_commands` | `()` | `vis.SlashCommand` declarations for user commands |
+| `automations` | `()` | `vis.Automation` declarations for scheduled runs without a model (see [automations](#automations)) |
 | `keybindings` | `()` | `vis.Keybinding` declarations for terminal keys (see [key bindings](#key-bindings)) |
 | `op_hooks` | `()` | `vis.OpHook` guards or observers |
 | `network_filters` | `()` | `vis.NetworkFilter` request/response policy (see [network filters](jail.md#project-network-filters)) |
@@ -960,6 +961,70 @@ want to run again, such as a goal. The terminal then keeps the full command in i
 prompt history, so **↑** recalls it. The default is `False`. Vis does not save
 control commands, such as `/reload`, unless their definition sets the flag. The
 built-in `/goal` command is saveable.
+
+## Automations
+
+```python
+vis.Automation(key, run, triggers, name=None, doc=None, session="temporary", push=True, enabled=True)
+```
+
+An automation calls `run` on a schedule. A run calls no model, sends no provider request and uses
+no tokens. Declare automations in `vis.Extension(automations=[...])`. Vis adds each one to the
+[automations](automations.md#automations-from-extensions) of the gateway when the extension loads.
+
+```python
+def sync(ctx):
+    """Send the new session exports to the Iceberg table."""
+    exported = upload(vis.sessions.export())
+    return f"Sent {exported} sessions." if exported else None
+
+
+vis.Extension(
+    name="iceberg",
+    description="Iceberg export.",
+    automations=[
+        vis.Automation(
+            key="iceberg-sync",
+            run=sync,
+            triggers=[{"kind": "every", "seconds": 3600}],
+            session="persistent",
+        )
+    ],
+)
+```
+
+- `key` identifies the automation in the extension. It has 1 to 64 characters: lowercase letters,
+  digits, `.`, `_` and `-`. It starts with a letter or a digit. Each key is unique in one extension.
+- `triggers` holds 1 to 8 triggers of the kinds `cron`, `every` and `once`. [Triggers](automations.md#triggers)
+  describes them. An extension automation cannot have a `webhook` trigger.
+- `name` shows in lists and notifications. The default is `key`.
+- `doc` is the task that the app shows. The default is the docstring of `run`. It must not be empty.
+- `session` is `"temporary"` or `"persistent"`. A `temporary` run gets a new session that Vis
+  deletes after the run. A `persistent` run uses one session that Vis keeps for all runs. Each
+  session works in the project folder of the extension.
+- `push` sends a phone notification for each run that is not silent.
+- `enabled` applies only when Vis adds the automation for the first time. Later loads keep the
+  pause state that a person set.
+
+`run(ctx)` receives `{"automation", "run", "session_id", "workspace_root", "project_root"}`.
+`automation` has `id`, `name` and `key`. `run` has `id`, `trigger_kind` and `request`. Vis calls
+`run` in the session of the run, as it does for a slash command, so `vis.session`, `vis.tools`,
+`vis.sessions` and `vis.run(...)` work. To ask a model, call `vis.run(...)` in `run`.
+
+The return value sets the result of the run:
+
+- `None` completes the run without an answer and without a notification, as `[SILENT]` does.
+- A text, or `vis.ok(title, body=None)`, completes the run. The text, or the body or the title, is
+  the answer.
+- `vis.err(...)` or an exception fails the run with that text as its error.
+
+A run cannot ask a person. A question or a form fails the run at once. A run that works for more
+than 30 minutes fails. Each run adds one turn without a model to its session, so a `persistent`
+session shows the history of the runs.
+
+The extension owns the definition. A person can only run, pause, resume or delete the automation.
+When the extension no longer declares a key, Vis deletes that automation at the next load. A
+deleted automation comes back at the next load while the extension declares it.
 
 ## Key bindings
 

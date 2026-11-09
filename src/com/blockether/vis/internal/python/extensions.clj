@@ -2118,6 +2118,33 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
       (py-result->slash ext-name res))))
 
+(defn- automation-adapter
+  "The `:run` fn of one `vis.Automation(...)` entry. The runner calls it in the
+   session of the run with `env` and the run payload. The Python callable receives
+   that payload with `workspace_root` and `project_root`, and its raw return comes
+   back: None, a text, `vis.ok(...)` or `vis.err(...)`."
+  [ext-name ctx pyfn]
+  (fn [env payload]
+    (let [{:strs [workspace_root project_root]} (slim-env env ctx)]
+      (call-py-ext ext-name
+                   env
+                   ctx
+                   pyfn
+                   [(assoc payload
+                      "workspace_root" workspace_root
+                      "project_root" project_root)]))))
+
+(defn- ->automation-spec
+  [ext-name ctx spec]
+  {:key (str (get spec "key"))
+   :name (str (or (get spec "name") (get spec "key")))
+   :doc (str (get spec "doc"))
+   :triggers (vec (get spec "triggers"))
+   :session (if (= "persistent" (get spec "session")) "persistent" "temporary")
+   :push (not (false? (get spec "push")))
+   :enabled (not (false? (get spec "enabled")))
+   :run (automation-adapter ext-name ctx (get spec "run"))})
+
 (defn- keybinding-adapter
   "`:run-fn` for one `vis.Keybinding(run=...)` entry. The gateway calls it inside the
    session's extension context with `{:key :group :channel}`. The Python callable
@@ -2802,6 +2829,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         slashes
         (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
 
+        automations
+        (mapv #(->automation-spec ext-name ctx %) (get reg "automations"))
+
         keybindings
         (mapv (fn [binding]
                 (cond-> (into {}
@@ -2879,6 +2909,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
       (seq slashes)
       (assoc :ext/slash-commands slashes)
+
+      (seq automations)
+      (assoc :ext/automations automations)
 
       (seq keybindings)
       (assoc :ext/keybindings keybindings)

@@ -1041,8 +1041,14 @@ CREATE TABLE automation (
   webhook_secret TEXT,
   callback_secret TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  -- An extension that declares the automation owns it. The extension, its key and its
+  -- project root identify the row; the root is empty for a global extension.
+  owner_extension TEXT,
+  owner_key TEXT,
+  owner_root TEXT
 );
+CREATE UNIQUE INDEX idx_automation_owner ON automation(owner_extension, owner_key, owner_root);
 
 -- One row claims one trigger occurrence at most once. A queued or running row of a
 -- stopped gateway becomes unknown and never runs again. The process ID and its start

@@ -2284,6 +2284,7 @@ export const STORY_AUTOMATIONS: Automation[] = [
     next_run_at: 1780124400000,
     webhook: null,
     secrets: { webhook: false, callback: false },
+    owner: null,
     last_run: STORY_AUTOMATION_RUN,
   },
   {
@@ -2301,6 +2302,7 @@ export const STORY_AUTOMATIONS: Automation[] = [
     next_run_at: null,
     webhook: { path: '/v1/hooks/auto-review' },
     secrets: { webhook: true, callback: false },
+    owner: null,
     last_run: {
       ...STORY_AUTOMATION_RUN,
       id: 'run-review-1',
@@ -2313,6 +2315,24 @@ export const STORY_AUTOMATIONS: Automation[] = [
       answer: null,
       error: 'The target session does not exist.',
     },
+  },
+  {
+    id: 'auto-iceberg',
+    name: 'Iceberg sync',
+    enabled: true,
+    triggers: [{ kind: 'every', seconds: 3_600 }],
+    prompt: 'Send the new session exports to the Iceberg table.',
+    target: { mode: 'persistent', root: '/workspace/vis' },
+    delivery: { push: true, callback: null },
+    model: null,
+    deliver_only: false,
+    created_at: 1779900000000,
+    updated_at: 1779900000000,
+    next_run_at: 1780041600000,
+    webhook: null,
+    secrets: { webhook: false, callback: false },
+    owner: { extension: 'iceberg', key: 'iceberg-sync', root: '/workspace/vis' },
+    last_run: null,
   },
 ];
 
@@ -2357,6 +2377,7 @@ export function storyAutomationsClient({
           ? { path: `/v1/hooks/${id}` }
           : null,
         secrets: { webhook: false, callback: false },
+        owner: null,
         last_run: null,
       };
       automations = [...automations, automation];

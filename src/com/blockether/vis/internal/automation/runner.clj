@@ -44,6 +44,10 @@
    - `:create-session!` [opts] answers the wire map of a new session.
    - `:delete-session!` [sid] deletes a session.
    - `:session?` [sid] is true when the session exists.
+   - `:find-session` [external-id] answers the id of the session with that external
+     id, or nil. A persistent target finds its session with it.
+   - `:run-extension!` [sid opts] blocks until the no-model turn of an extension
+     automation ends; answers the terminal result like `:submit!`.
    - `:notify!` [alert] sends one phone alert."
   [fns]
   (reset! runtime fns))
@@ -97,6 +101,19 @@
                                         (if (pos? n)
                                           (assoc sessions (str sid) n)
                                           (dissoc sessions (str sid)))))))))
+
+(defonce ^:private extension-runs
+  ;; Session id -> {:asked? bool} while an extension automation runs in that session.
+  (atom {}))
+
+(defn refuse-ask!
+  "True when session `sid` runs an extension automation. Nobody can answer there, so
+   the ask gate refuses the request and the run fails."
+  [sid]
+  (let [sid (str sid)]
+    (boolean (when (contains? @extension-runs sid)
+               (swap! extension-runs assoc-in [sid :asked?] true)
+               true))))
 
 ;; Push quieting
 
@@ -307,20 +324,64 @@
     (get target "group_id")
     (assoc :group-id (get target "group_id"))))
 
-(defn- run-turn!
-  "Start the turn of one running run and answer the final run attributes."
-  [definition run sid]
-  (let [model
-        (get definition "model")
+(defn- extension-request
+  "The turn request of one extension automation run."
+  [row run]
+  (str "Automation \""
+       (get-in row [:definition "name"])
+       "\" ran the callback \""
+       (:owner_key row)
+       "\" of the extension \""
+       (:owner_extension row)
+       "\" (trigger: "
+       (:trigger_kind run)
+       ", run "
+       (:id run)
+       ")."))
 
-        result
+(defn- submit-run!
+  "Start the turn of one run and answer its terminal result. The turn of an
+   automation that an extension owns calls its callback and makes no model request."
+  [row run sid]
+  (let [definition (:definition row)]
+    (if-let [owner (automation/owner row)]
+      (let [sid (str sid)]
+        (swap! extension-runs assoc sid {:asked? false})
+        (try (let [result (call :run-extension!
+                                sid
+                                {:request (extension-request row run)
+                                 :idempotency-key (str "automation-" (:id run))
+                                 :engine-opts
+                                 {:automation-run
+                                  {:extension (get owner "extension")
+                                   :key (get owner "key")
+                                   :timeout-ms (automation/limit :extension_run_timeout_ms)
+                                   :payload {"automation" {"id" (:id row)
+                                                           "name" (get definition "name")
+                                                           "key" (get owner "key")}
+                                             "run" {"id" (:id run)
+                                                    "trigger_kind" (:trigger_kind run)
+                                                    "request" (:request run)}
+                                             "session_id" sid}}}})]
+               (if (get-in @extension-runs [sid :asked?])
+                 (assoc result
+                   "error" "The automation asked for input. An automation cannot answer questions.")
+                 result))
+             (finally (swap! extension-runs dissoc sid))))
+      (let [model (get definition "model")]
         (call :submit!
               sid
               (cond-> {:request (request-text definition run)
                        :display-request (:request run)
                        :idempotency-key (str "automation-" (:id run))}
                 model
-                (merge {:provider (get model "provider") :model (get model "model")})))
+                (merge {:provider (get model "provider") :model (get model "model")})))))))
+
+(defn- run-turn!
+  "Start the turn of one running run and answer the final run attributes."
+  [row run sid]
+  (let [result
+        (submit-run! row run sid)
 
         answer
         (answer-text result)
@@ -339,6 +400,23 @@
      :error error
      :is_silent (boolean
                   (and (= "completed" status) answer (str/starts-with? answer "[SILENT]")))}))
+
+(defn- persistent-session!
+  "The session of a persistent target: the session that an earlier run of this
+   automation started, or a new one when that session is gone."
+  [row target]
+  (let [external-id
+        (str "automation:" (:id row))
+
+        found
+        (some-> (call :find-session external-id)
+                str)]
+
+    (if (and found (call :session? found))
+      found
+      (str (get (call :create-session!
+                      (assoc (session-opts (:definition row) target) :external-id external-id))
+                "id")))))
 
 (defn- execute!
   "Run one queued run to its end, then deliver it."
@@ -376,15 +454,20 @@
                 (finish! db run-id {:status "failed" :error "The target session does not exist."})
                 (get definition "deliver_only")
                 (finish! db run-id {:status "completed" :answer (:request run)})
-                :else (let [sid (if (= "session" mode)
+                :else (let [sid (case mode
+                                  "session"
                                   (get target "session_id")
+
+                                  "persistent"
+                                  (persistent-session! row target)
+
                                   (str (get (call :create-session! (session-opts definition target))
                                             "id")))]
                         (reset! session sid)
                         (ps/db-automation-update-run! db run-id ["running"] {:session_id sid})
                         (finish! db
                                  run-id
-                                 (cond-> (with-run-session sid #(run-turn! definition run sid))
+                                 (cond-> (with-run-session sid #(run-turn! row run sid))
                                    (= "temporary" mode)
                                    (assoc :session_id nil)))))
               (catch Throwable t

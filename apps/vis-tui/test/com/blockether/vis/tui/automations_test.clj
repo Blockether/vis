@@ -36,23 +36,46 @@
    "secrets" {"webhook" false "callback" false}
    "last_run" nil})
 
+(def ^:private owned-automation
+  {"id" "a-3"
+   "name" "Iceberg sync"
+   "enabled" true
+   "triggers" [{"kind" "every" "seconds" 3600}]
+   "prompt" "Send the session export to Iceberg."
+   "target" {"mode" "persistent" "root" "/work/iceberg"}
+   "delivery" {"push" true "callback" nil}
+   "model" nil
+   "deliver_only" false
+   "next_run_at" nil
+   "webhook" nil
+   "secrets" {"webhook" false "callback" false}
+   "owner" {"extension" "iceberg" "key" "iceberg-sync" "root" "/work/iceberg"}
+   "last_run" nil})
+
 (defn- response [status body] {:status status :body (wire/json-str body)})
 
-(defdescribe presentation-test
-             (describe "actions"
-                       (it "offers secrets only for a webhook trigger or a callback"
-                           (expect (= [:details :run :toggle :runs :webhook-secret :callback-secret
-                                       :delete]
-                                      (mapv :id (automations/actions webhook-automation))))
-                           (expect (= [:details :run :toggle :runs :delete]
-                                      (mapv :id (automations/actions plain-automation))))))
-             (describe "runs-markdown"
-                       (it "puts one run on each table row and escapes pipes"
-                           (let [md (automations/runs-markdown [{"created_at" 1767250800000
-                                                                 "trigger" "manual"
-                                                                 "status" "completed"
-                                                                 "answer" "a | b\nc"}])]
-                             (expect (str/includes? md "| manual | completed | a \\| b c |"))))))
+(defdescribe
+  presentation-test
+  (describe "actions"
+            (it "offers secrets only for a webhook trigger or a callback"
+                (expect (= [:details :run :toggle :runs :webhook-secret :callback-secret :delete]
+                           (mapv :id (automations/actions webhook-automation))))
+                (expect (= [:details :run :toggle :runs :delete]
+                           (mapv :id (automations/actions plain-automation))))))
+  (describe "an automation that an extension owns"
+            (it "names the extension, the key and the kept session"
+                (let [md (automations/detail-markdown owned-automation)]
+                  (expect (str/includes? md "- From extension: `iceberg`, key `iceberg-sync`"))
+                  (expect (str/includes? md "- Target: one session that Vis keeps for all runs"))
+                  (expect (= "On · extension iceberg"
+                             (:hint (first (automations/rows [owned-automation]))))))))
+  (describe "runs-markdown"
+            (it "puts one run on each table row and escapes pipes"
+                (let [md (automations/runs-markdown [{"created_at" 1767250800000
+                                                      "trigger" "manual"
+                                                      "status" "completed"
+                                                      "answer" "a | b\nc"}])]
+                  (expect (str/includes? md "| manual | completed | a \\| b c |"))))))
 
 (defdescribe gateway-test
              (it "reads the automations and reports the gateway error message"
@@ -82,7 +105,10 @@
         (atom [])
 
         lists
-        (atom 0)]
+        (atom 0)
+
+        confirms
+        (atom [])]
 
     (with-redefs [vis/request!
                   (fn [method path opts]
@@ -108,7 +134,9 @@
                     (some #(when (= action (:id %)) %) items))
 
                   dlg/confirm-dialog!
-                  (constantly true)
+                  (fn [_ _ text]
+                    (swap! confirms conj text)
+                    true)
 
                   dlg/markdown-viewer-dialog!
                   (fn [_ title md]
@@ -118,7 +146,7 @@
                   (constantly true)]
 
       (automations/show! nil))
-    {:calls @calls :notices @notices :viewed @viewed}))
+    {:calls @calls :notices @notices :viewed @viewed :confirms @confirms}))
 
 (defdescribe
   view-test
@@ -138,6 +166,11 @@
   (it "deletes an automation after the confirmation"
       (let [{:keys [calls]} (view-run plain-automation :delete)]
         (expect (some #{[:delete "/v1/automations/a-2" nil]} calls))))
+  (it "tells before a delete that the extension adds the automation again"
+      (let [{:keys [calls confirms]} (view-run owned-automation :delete)]
+        (expect (str/includes? (first confirms)
+                               "comes back when the extension iceberg loads again"))
+        (expect (some #{[:delete "/v1/automations/a-3" nil]} calls))))
   (it "shows the runs of an automation"
       (let [{:keys [calls viewed]} (view-run plain-automation :runs)]
         (expect (some #{[:get "/v1/automations/runs?automation_id=a-2&limit=20" nil]} calls))

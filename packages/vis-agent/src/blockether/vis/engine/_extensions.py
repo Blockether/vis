@@ -96,6 +96,7 @@ class ClientExtensions:
                     "network_filters",
                     "slash_commands",
                     "keybindings",
+                    "automations",
                     "settings",
                     "grants",
                 )

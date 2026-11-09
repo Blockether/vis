@@ -16,6 +16,7 @@ import {
   everyLabel,
   localInput,
   stepProblem,
+  targetLabel,
   type Automation,
   type AutomationDraft,
   type FilterDraft,
@@ -51,6 +52,16 @@ function expectContract(value: object, def: { properties: object; required?: str
   expect(Object.keys(value).filter((key) => !(key in def.properties))).toEqual([]);
   expect((def.required ?? []).filter((key) => !(key in value))).toEqual([]);
 }
+
+describe('automation of an extension', () => {
+  it('reads the owner and the kept session of the contract', () => {
+    const owned = STORY_AUTOMATIONS.find((automation) => automation.owner)!;
+    for (const automation of STORY_AUTOMATIONS) expectContract(automation, schema.$defs.automation);
+    expectContract(owned.owner!, schema.$defs.automation_owner);
+    expectContract(owned.target, schema.$defs.persistent_target);
+    expect(targetLabel({ mode: 'persistent' })).toBe('One session for all runs, kept after each run');
+  });
+});
 
 describe('automation form', () => {
   it('saves nothing while the form keeps the saved values', () => {
@@ -320,7 +331,12 @@ describe('automation form', () => {
       'Skipped',
       'Unknown',
     ]);
-    expect(TARGET_OPTIONS.map((option) => option.value)).toEqual(['new', 'temporary', 'session']);
+    expect(TARGET_OPTIONS.map((option) => option.value)).toEqual([
+      'new',
+      'temporary',
+      'persistent',
+      'session',
+    ]);
     expect(NAME_MAX).toBe(schema.$defs.name.maxLength);
     expect(TRIGGERS_MAX).toBe(schema['x-vis-limits'].triggers);
   });

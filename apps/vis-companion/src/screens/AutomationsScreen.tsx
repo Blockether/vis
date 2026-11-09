@@ -18,7 +18,7 @@ import {
   type AutomationSecret,
   type AutomationSecretKind,
 } from '../lib/automations';
-import { Banner, Button, CopyChip, IconButton, ListRow, Text } from '../components/ui';
+import { Banner, Button, ConfirmRow, CopyChip, IconButton, ListRow, Text } from '../components/ui';
 import {
   AutomationsIcon,
   ChevronIcon,
@@ -191,6 +191,7 @@ export function AutomationsWorkspace({
           run={run}
           onBack={() => open(null)}
           onEdit={() => edit(selected.id)}
+          onDelete={() => remove(selected)}
           onChanged={refresh}
           onNotice={setNotice}
         />
@@ -220,14 +221,17 @@ export function AutomationsWorkspace({
                   </span>
                 </span>
               </ListRow>
-              <IconButton
-                label={`Edit ${automation.name}`}
-                title="Edit"
-                disabled={busy}
-                onClick={() => edit(automation.id)}
-              >
-                <PencilIcon />
-              </IconButton>
+              {/* The extension owns the definition, so the row has no Edit. */}
+              {!automation.owner && (
+                <IconButton
+                  label={`Edit ${automation.name}`}
+                  title="Edit"
+                  disabled={busy}
+                  onClick={() => edit(automation.id)}
+                >
+                  <PencilIcon />
+                </IconButton>
+              )}
             </div>
           ))}
           {!list && error && (
@@ -271,6 +275,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function modelLabel(automation: Automation): string {
+  if (automation.owner) return 'None. The run calls the extension.';
   if (automation.deliver_only) return 'None. The run sends the prompt as the answer.';
   if (!automation.model) return 'Machine default';
   return [automation.model.provider, automation.model.model].filter(Boolean).join(' · ');
@@ -285,6 +290,7 @@ function AutomationDetail({
   run,
   onBack,
   onEdit,
+  onDelete,
   onChanged,
   onNotice,
 }: {
@@ -296,9 +302,13 @@ function AutomationDetail({
   run: (action: () => Promise<void>) => Promise<void>;
   onBack: () => void;
   onEdit: () => void;
+  /** Only an automation of an extension deletes here; the others delete from their form. */
+  onDelete: () => void;
   onChanged: () => void;
   onNotice: (text: string) => void;
 }) {
+  const owner = automation.owner;
+  const [isDeleteAsked, setIsDeleteAsked] = useState(false);
   const [runs, setRuns] = useState<AutomationRun[] | null>(null);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [replacing, setReplacing] = useState<AutomationSecretKind | null>(null);
@@ -363,9 +373,11 @@ function AutomationDetail({
             >
               <FastIcon />
             </IconButton>
-            <IconButton label="Edit" disabled={busy} onClick={onEdit}>
-              <PencilIcon />
-            </IconButton>
+            {!owner && (
+              <IconButton label="Edit" disabled={busy} onClick={onEdit}>
+                <PencilIcon />
+              </IconButton>
+            )}
             <IconButton
               label={automation.enabled ? 'Pause' : 'Resume'}
               disabled={busy}
@@ -413,6 +425,11 @@ function AutomationDetail({
           </div>
         )}
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 font-mono text-ui">
+          {owner && (
+            <Fact label="Owner">
+              From extension {owner.extension} · key {owner.key}
+            </Fact>
+          )}
           <Fact label="Triggers">
             {automation.triggers.map((trigger) => triggerLabel(trigger)).join(', ')}
           </Fact>
@@ -452,8 +469,14 @@ function AutomationDetail({
             ))}
           </div>
         )}
+        {owner && (
+          <p className="font-mono text-meta text-dialog-hint">
+            The extension owns this automation. You can pause, resume, run or delete it. To change it,
+            change the extension.
+          </p>
+        )}
         <section className="space-y-2">
-          <h3 className="font-mono text-ui font-bold text-white">Prompt</h3>
+          <h3 className="font-mono text-ui font-bold text-white">{owner ? 'Task' : 'Prompt'}</h3>
           <pre className="whitespace-pre-wrap break-words font-mono text-body text-white">
             {automation.prompt}
           </pre>
@@ -493,6 +516,30 @@ function AutomationDetail({
             </ul>
           )}
         </section>
+        {owner &&
+          (isDeleteAsked ? (
+            <div className="border-x border-err-edge">
+              <ConfirmRow
+                question={`Delete ${automation.name}?`}
+                cost={`The automation comes back when the extension ${owner.extension} loads again. Pause it to stop its runs.`}
+                keepLabel="Keep automation"
+                confirmLabel={busy ? 'Deleting...' : 'Delete'}
+                isBusy={busy}
+                onKeep={() => setIsDeleteAsked(false)}
+                onConfirm={onDelete}
+              />
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="danger"
+              className="w-full"
+              disabled={busy}
+              onClick={() => setIsDeleteAsked(true)}
+            >
+              Delete automation
+            </Button>
+          ))}
       </div>
     </div>
   );

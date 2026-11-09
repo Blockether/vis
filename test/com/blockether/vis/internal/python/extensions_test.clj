@@ -1430,6 +1430,67 @@
                ;; Like a tool, the callback ran in the session's trusted worker.
                (expect (some? (:context (get @@#'pyx/session-contexts [ctx "slashroot"]))))
                (finally (ep/dispose-python-context! ctx)))))))
+  ;; #456: an extension automation calls its Python callback in the session's worker,
+  ;; with the run payload and the session root, and the turn makes no model request.
+  (it
+    "runs the callback of a declared automation in the session and maps its result"
+    (with-loaded
+      {"autoext.py"
+       "import blockether.vis.extension as vis\ndef sync(ctx):\n    \"\"\"Upload the sessions.\"\"\"\n    if ctx['run']['trigger_kind'] == 'cron':\n        return vis.err('The lake is down.')\n    return ctx['automation']['key'] + ' ' + ctx['session_id'] + ' ' + str(vis.workspace_root())\nvis.register_extension(vis.Extension(name='autoext', description='autoext', automations=[vis.Automation(key='sync', run=sync, triggers=[{'kind': 'every', 'seconds': 3600}], session='persistent')]))"}
+      (fn [_ {:keys [store]}]
+        (let [root
+              (.getCanonicalPath ^java.io.File (temp-dir))
+
+              ws
+              (ps/db-workspace-insert! store
+                                       {:repo-id "autoext" :repo-root root :root root :fork-ms 0})
+
+              sid
+              (ps/db-store-session! store {:channel :api :workspace-id (:id ws) :title "autoext"})
+
+              ctx
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              ext
+              (registered "autoext")
+
+              env
+              {:python-context ctx
+               :db-info store
+               :session-id sid
+               :channel :api
+               :extensions (atom [ext])
+               :active-extensions (atom [])
+               :workspace-atom (atom ws)
+               :ctx-atom (ctx-loop/make-ctx-atom sid)
+               :turn-state-atom (ctx-loop/make-turn-state-atom)}
+
+              run!
+              (fn [trigger]
+                (turn/run-turn! env
+                                "Automation ran"
+                                {:automation-run
+                                 {:extension "autoext"
+                                  :key "sync"
+                                  :timeout-ms 60000
+                                  :payload {"automation" {"id" "a-1" "name" "sync" "key" "sync"}
+                                            "run" {"id" "r-1" "trigger_kind" trigger "request" nil}
+                                            "session_id" (str sid)}}}))]
+
+          (try (expect (= [{:key "sync"
+                            :name "sync"
+                            :doc "Upload the sessions."
+                            :triggers [{"kind" "every" "seconds" 3600}]
+                            :session "persistent"
+                            :push true
+                            :enabled true}]
+                          (mapv #(dissoc % :run) (:ext/automations ext))))
+               (let [answered (run! "manual")]
+                 (expect (= :success (:status answered)) (pr-str answered))
+                 (expect (= (str "sync " sid " " root) (get-in answered [:answer 0 "markdown"]))))
+               (let [failed (run! "cron")]
+                 (expect (= [:error "The lake is down."] ((juxt :status :error) failed))))
+               (finally (ep/dispose-python-context! ctx)))))))
   ;; User report 2026-11-02: `/apps` opened live apps, but the transcript showed no app
   ;; row. Only the Artifacts sheet listed them, because the slash step stored no row.
   (it

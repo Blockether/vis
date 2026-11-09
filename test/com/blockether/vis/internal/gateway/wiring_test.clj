@@ -2,7 +2,6 @@
   (:require [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.provider.service :as providers]
@@ -27,7 +26,7 @@
                  (slot #'council/runtime-waker)))
       (expect (= state/agent-runtime (slot #'agents/runtime)))
       (expect (identical? #'state/append-iteration-attachment! (slot #'view/late-artifact-filer)))
-      (expect (identical? #'gateway-view/person-may-answer? (slot #'view/ask-gate)))
+      (expect (identical? #'wiring/may-ask? (slot #'view/ask-gate)))
       (expect (= {:net-probe-report #'python-extensions/net-probe-report
                   :close-session-contexts! #'python-extensions/close-session-contexts!}
                  (slot #'python-env/extension-hooks)))

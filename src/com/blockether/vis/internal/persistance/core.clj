@@ -252,6 +252,12 @@
   (db-automation-get [db-info id])
   (db-automation-put! [db-info row])
   (db-automation-delete! [db-info id])
+  (db-automation-upsert-owned! [db-info row]
+    "Insert or update the automation of `row`'s owner. An update keeps `id`, `enabled` and
+     `created_at`, and writes only when the name or the definition changed.")
+  (db-automation-delete-owned! [db-info extension root keep-keys]
+    "Delete the automations of `extension` in `root` whose key is not in `keep-keys`.
+     Answer the deleted count.")
   (db-automation-claim-run! [db-info row]
     "Insert a run unless its trigger key exists. Answer the inserted row or nil.")
   (db-automation-run [db-info id]

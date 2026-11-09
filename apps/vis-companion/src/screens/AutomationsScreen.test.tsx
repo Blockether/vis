@@ -70,6 +70,35 @@ describe('Automations workspace', () => {
     expect(screen.queryByText('Morning summary')).toBeNull();
   });
 
+  it('lets you pause, run and delete an automation of an extension, but not edit it', async () => {
+    const client = await openAutomation('Iceberg sync');
+    const remove = vi.spyOn(client, 'deleteAutomation');
+    const update = vi.spyOn(client, 'updateAutomation');
+    expect(screen.getByText('From extension iceberg · key iceberg-sync')).toBeVisible();
+    expect(screen.getByText('One session for all runs in /workspace/vis, kept after each run')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    click('Pause');
+    expect(await screen.findByText('Automation paused.')).toBeVisible();
+    expect(update).toHaveBeenCalledWith('auto-iceberg', { enabled: false });
+    click('Delete automation');
+    expect(
+      screen.getByText(/The automation comes back when the extension iceberg loads again\./),
+    ).toBeVisible();
+    click('Keep automation');
+    expect(remove).not.toHaveBeenCalled();
+    click('Delete automation');
+    click('Delete');
+    expect(await screen.findByText('Automation deleted.')).toBeVisible();
+    expect(remove).toHaveBeenCalledWith('auto-iceberg');
+  });
+
+  it('shows no Edit on the list row of an automation of an extension', async () => {
+    renderBand();
+    expect(await screen.findByText('Iceberg sync')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit Morning summary' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Edit Iceberg sync' })).toBeNull();
+  });
+
   it('keeps a failed request visible and loads the list again on retry', async () => {
     const client = storyAutomationsClient();
     // The band reads the list first to show itself; the workspace read fails.

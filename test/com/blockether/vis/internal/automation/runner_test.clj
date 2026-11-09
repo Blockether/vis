@@ -605,3 +605,124 @@
                                                     :path "/tmp/vis-automation-test/vis.db"})))
                        (runner/stop!))
                      (finally (ps/db-dispose-connection! db))))))
+
+(defn- with-owned-runner
+  "Run `f` with a store that holds one automation of extension `iceberg` and a
+   fake runtime. `run-extension!` answers the turn result of the callback."
+  [run-extension! session f]
+  (let [db
+        (ps/db-create-connection! :memory)
+
+        calls
+        (atom [])
+
+        sessions
+        (atom #{})]
+
+    (runner/install-runtime!
+      {:submit! (fn [sid opts]
+                  (swap! calls conj [:submit sid opts])
+                  {"status" "done"})
+       :run-extension! (fn [sid opts]
+                         (swap! calls conj [:extension sid opts])
+                         (run-extension! sid opts))
+       :create-session! (fn [opts]
+                          (let [sid (str "s-" (count (swap! calls conj [:create opts])))]
+                            (swap! sessions conj sid)
+                            {"id" sid}))
+       :delete-session! (fn [sid]
+                          (swap! calls conj [:delete sid])
+                          (swap! sessions disj sid))
+       :session? (fn [sid]
+                   (contains? @sessions sid))
+       :find-session (fn [external-id]
+                       ;; The newest session created with this external id.
+                       (some->> @calls
+                                (keep-indexed (fn [i [kind opts]]
+                                                (when (and (= :create kind)
+                                                           (= external-id (:external-id opts)))
+                                                  (str "s-" (inc i)))))
+                                last))
+       :notify! (fn [alert]
+                  (swap! calls conj [:notify alert]))})
+    (try (automation/sync-extensions! db
+                                      "/p"
+                                      [{:ext/name "iceberg"
+                                        :ext/automations [{:key "sync"
+                                                           :name "Sync"
+                                                           :doc "Upload the sessions."
+                                                           :triggers [{"kind" "every"
+                                                                       "seconds" 3600}]
+                                                           :session session
+                                                           :push true
+                                                           :enabled true
+                                                           :run (fn [_ _])}]}]
+                                      (System/currentTimeMillis))
+         (f db (get (first (automation/list-all db (System/currentTimeMillis))) "id") calls)
+         (finally (ps/db-dispose-connection! db)))))
+
+(defdescribe
+  extension-run-test
+  (it
+    "calls the extension callback, never the model, and maps each outcome"
+    (doseq [[result expected]
+            [[{"status" "completed"
+               "turn_id" "t-1"
+               "content" [{"type" "prose" "markdown" "[SILENT]"}]}
+              {:status "completed" :is_silent true}]
+             [{"status" "completed"
+               "turn_id" "t-2"
+               "content" [{"type" "prose" "markdown" "Uploaded 3 sessions."}]}
+              {:status "completed" :is_silent false :answer "Uploaded 3 sessions."}]
+             [{"status" "failed"
+               "turn_id" "t-3"
+               "error" "The lake is down."
+               "content" [{"type" "error"
+                           "code" "automation_failed"
+                           "message" "The lake is down."
+                           "retryable" false}]} {:status "failed" :error "The lake is down."}]]]
+      (with-owned-runner
+        (constantly result)
+        "temporary"
+        (fn [db id calls]
+          (let [run (settled db (get (runner/run-now! db id) "id"))
+                [_ sid opts] (first (calls-of calls :extension))
+                payload (get-in opts [:engine-opts :automation-run])]
+
+            (expect (empty? (calls-of calls :submit)))
+            (expect (= expected (select-keys run (keys expected))))
+            (expect (= {:extension "iceberg" :key "sync"} (select-keys payload [:extension :key])))
+            (expect (= (automation/limit :extension_run_timeout_ms) (:timeout-ms payload)))
+            (expect (= {"id" id "name" "Sync" "key" "sync"}
+                       (get-in payload [:payload "automation"])))
+            (expect (= sid (get-in payload [:payload "session_id"])))
+            (expect (= [[:delete sid]] (calls-of calls :delete))))))))
+  (it "fails the run when the callback asks the person"
+      (with-owned-runner (fn [sid _]
+                           (expect (runner/refuse-ask! sid))
+                           {"status" "completed" "content" []})
+                         "temporary"
+                         (fn [db id _]
+                           (let [run (settled db (get (runner/run-now! db id) "id"))]
+                             (expect (= "failed" (:status run)))
+                             (expect (re-find #"asked for input" (:error run)))
+                             (expect (not (runner/refuse-ask! "s-other")))))))
+  (it "runs a persistent target in one session and starts a new one when it is gone"
+      (with-owned-runner (constantly {"status" "completed" "content" []})
+                         "persistent"
+                         (fn [db id calls]
+                           (let [first-run
+                                 (settled db (get (runner/run-now! db id) "id"))
+
+                                 second-run
+                                 (settled db (get (runner/run-now! db id) "id"))]
+
+                             (expect (= (:session_id first-run) (:session_id second-run)))
+                             (expect (= 1 (count (calls-of calls :create))))
+                             (expect (= (str "automation:" id)
+                                        (:external-id (second (first (calls-of calls :create))))))
+                             (expect (empty? (calls-of calls :delete)))
+                             ((get @@#'runner/runtime :delete-session!) (:session_id first-run))
+                             (let [third-run (settled db (get (runner/run-now! db id) "id"))]
+                               (expect (not= (:session_id first-run) (:session_id third-run)))
+                               (expect (= 2 (count (calls-of calls :create))))))))))

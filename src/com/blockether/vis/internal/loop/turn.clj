@@ -215,6 +215,132 @@
        :slash slash-result
        :prior-outcome :complete})))
 
+(defn- automation-outcome
+  "The answer or the error of the value that an extension automation callback
+   returns: None and a blank text are silent, a text is the answer, `vis.ok(...)`
+   answers its body or title and `vis.err(...)` fails with its body or title."
+  [res]
+  (let [text (fn [v]
+               (when (string? v) (not-empty (str/trim v))))]
+    (cond (nil? res) {:answer "[SILENT]"}
+          (string? res) {:answer (or (text res) "[SILENT]")}
+          (and (map? res) (= "slash_result" (get res "marker")))
+          (let [message (or (text (get res "body")) (text (get res "title")))]
+            (if (= "error" (get res "status"))
+              {:error (or message "The automation callback failed.")}
+              {:answer (or message "[SILENT]")}))
+          :else {:answer (pr-str res)})))
+
+(defn- call-automation!
+  "Call the callback of automation `key` of `extension` in the session environment
+   and answer its outcome. A missing callback, a throw and a timeout are errors."
+  [env {:keys [extension key payload timeout-ms]}]
+  (if-let [run-fn (some->> (some-> (:extensions env)
+                                   deref)
+                           (some #(when (= extension (:ext/name %)) %))
+                           :ext/automations
+                           (some #(when (= key (:key %)) %))
+                           :run)]
+    (let [task (future (extension/with-context {:env env} (run-fn env payload)))]
+      (try (let [res (deref task (long timeout-ms) ::timeout)]
+             (if (= ::timeout res)
+               (do (future-cancel task)
+                   {:error (str "The automation callback did not end in "
+                                (quot (long timeout-ms) 1000)
+                                " seconds.")})
+               (automation-outcome res)))
+           (catch java.util.concurrent.ExecutionException e
+             (let [cause (or (ex-cause e) e)]
+               {:error (or (ex-message cause) (str cause))}))
+           (catch Throwable t {:error (or (ex-message t) (str t))})))
+    {:error (str "The extension \""
+                 extension
+                 "\" does not declare the automation \""
+                 key
+                 "\" in this session.")}))
+
+(defn- run-automation-turn!
+  "Persist the turn of one extension automation run. The extension callback runs
+   instead of the model, so the turn makes no provider request. The turn fails
+   when the callback fails."
+  [env user-request automation-run loop-opts]
+  (let [db-info
+        (:db-info env)
+
+        on-chunk
+        (or (:on-chunk loop-opts) (get-in loop-opts [:hooks :on-chunk]))
+
+        _
+        (when (fn? on-chunk)
+          (try (on-chunk {:phase :slash
+                          :iteration 1
+                          :slash (str (:extension automation-run) "/" (:key automation-run))})
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::automation-progress-emit-failed
+                            :data {:error (ex-message t)}}))))
+
+        t0
+        (System/currentTimeMillis)
+
+        {:keys [answer error]}
+        (call-automation! env automation-run)
+
+        duration-ms
+        (- (System/currentTimeMillis) t0)
+
+        turn-id
+        (persistance/db-store-session-turn! db-info (turn-store-opts env user-request loop-opts))
+
+        turn-pos
+        (or (transcript/session-turn-position env turn-id) 1)
+
+        error-block
+        (when error (content/error "automation_failed" error false))
+
+        turn-content
+        (if error-block [error-block] [(content/prose answer)])
+
+        ctx-snapshot
+        (when-let [ca (:ctx-atom env)]
+          (let [clean (compaction/durable-context-snapshot env @ca)]
+            (reset! ca clean)
+            clean))]
+
+    (try (persistance/db-store-iteration!
+           db-info
+           {:session-turn-id turn-id
+            :code user-request
+            :forms [{:scope (str "t" turn-pos "/i1/f1") :tag :user-slash :src user-request}]
+            :duration-ms duration-ms
+            :llm-full-duration-ms 0
+            :thinking ""
+            :answer (or answer error)
+            :llm-messages []
+            :llm-returned-empty-code? false})
+         (catch Throwable t
+           (tel/log!
+             {:level :warn :id ::automation-iter-persist-failed :data {:error (ex-message t)}})))
+    (transcript/persist-turn-outcome! db-info
+                                      turn-id
+                                      (cond-> {:content turn-content
+                                               :iteration-count 1
+                                               :duration-ms duration-ms
+                                               :status (if error :error :success)
+                                               :prior-outcome (if error :error :complete)
+                                               :ctx ctx-snapshot}
+                                        error-block
+                                        (assoc :error error-block))
+                                      (get-in loop-opts [:hooks :claim-terminal!]))
+    (cond-> {:session-turn-id turn-id
+             :answer turn-content
+             :iteration-count 1
+             :duration-ms duration-ms
+             :status (if error :error :success)
+             :prior-outcome (if error :error :complete)}
+      error
+      (assoc :error error))))
+
 (defn- store-transcripts!
   "Fill in the words for every recording this turn was written down WITHOUT.
 
@@ -753,7 +879,10 @@
         ;; so the user knows. Remote providers are not network-checked here.
         env
         (let [{:keys [router demoted]}
-              (health-gated-router (:router env) :turn)
+              ;; An automation run calls no provider, so it probes none.
+              (if (:automation-run loop-opts)
+                {:router (:router env)}
+                (health-gated-router (:router env) :turn))
 
               env'
               (assoc env :router router)]
@@ -779,8 +908,11 @@
         (atom [])
 
         ;; A resumed parked turn already passed its slash, template and shell dispatch.
+        automation-run
+        (:automation-run loop-opts)
+
         slash-result
-        (when-not resume
+        (when-not (or resume automation-run)
           (binding [mpl-capture/*attachment-sink* slash-attachments]
             (extension/with-context
               {:env env}
@@ -791,7 +923,8 @@
                                 :data {:user-request user-request :error (ex-message t)}})
                      {:handled? false})))))]
 
-    (cond resume
+    (cond automation-run (run-automation-turn! env user-request automation-run loop-opts)
+          resume
           ;; It continues with the request text that its turn row stores.
           (run-normal-turn! env
                             (or (:user-request (persistance/db-read-session-turn (:db-info env)
@@ -967,7 +1100,8 @@
   [env messages opts]
   (let [{:keys [spec provider model max-context-tokens system-prompt debug? hooks cancel-token
                 eval-timeout-ms reasoning-default reasoning-effort preferred-reasoning-effort
-                routing extra-body session-turn-id request-kind council-entry-id resume]
+                routing extra-body session-turn-id request-kind council-entry-id resume
+                automation-run]
          :or {debug? false}}
         opts]
     (when-not (:db-info env)
@@ -1198,6 +1332,8 @@
        :council-entry-id council-entry-id
        ;; A gateway restart continues a parked turn: its row already exists.
        :resume resume
+       ;; An extension automation run calls its callback instead of the model.
+       :automation-run automation-run
        :spec spec
        :max-context-tokens max-context-tokens
        :system-prompt system-prompt
@@ -1220,7 +1356,7 @@
   [{:keys [environment user-request spec max-context-tokens system-prompt hooks cancel-atom
            cancel-token reasoning-default reasoning-effort preferred-reasoning-effort routing
            extra-body turn-features workspace-overrides session-turn-id request-kind
-           council-entry-id resume]}]
+           council-entry-id resume automation-run]}]
   (let [iteration-result
         (run-turn! environment
                    user-request
@@ -1240,6 +1376,9 @@
 
                      resume
                      (assoc :resume resume)
+
+                     automation-run
+                     (assoc :automation-run automation-run)
 
                      routing
                      (assoc :routing routing)
