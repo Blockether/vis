@@ -161,6 +161,13 @@
         (tab-state db tab))
       (get-in db [:session-drafts sid])))
 
+(defn- unsent-work?
+  "True when a session's local view holds unsent text, attachments or queued sends."
+  [local]
+  (boolean (or (not (str/blank? (input/input->text (:input local))))
+               (seq (:attachments local))
+               (seq (:pending-sends local)))))
+
 (defn session-status
   "The app's gateway-backed status precedence, with the TUI's local unsent draft."
   [session current? dirty? group-archived?]
@@ -258,9 +265,7 @@
                   (let [sid (str (get session "id"))
                         local (session-local db sid)
                         draft (input/input->text (:input local))
-                        dirty? (or (not (str/blank? draft))
-                                   (seq (:attachments local))
-                                   (seq (:pending-sends local)))
+                        dirty? (unsent-work? local)
                         title (or (not-empty (some-> (get session "title")
                                                      str/trim))
                                   (when dirty?
@@ -403,52 +408,47 @@
                      [(str (get project "id")) project])
                    (:items sidebar)))
 
-        title
-        (fn [session]
-          (or (not-empty (some-> (get session "title")
-                                 str/trim))
-              "Untitled session"))
+        groups
+        (into {}
+              (map (fn [group]
+                     [(str (get group "id")) group]))
+              (mapcat val (:groups sidebar)))
 
+        active-id
+        (some-> (get-in db [:session :id])
+                str)
+
+        ;; Each hit is one line, as the C-x s s picker paints it.
         hits
-        (mapcat
-          (fn [{:keys [session match]}]
-            (let [sid
-                  (str (get session "id"))
+        (map (fn [{:keys [session]}]
+               (let [sid
+                     (str (get session "id"))
 
-                  pid
-                  (str (get session "project_id"))
+                     pid
+                     (str (get session "project_id"))
 
-                  project
-                  (get projects pid {"id" pid "name" "Other sessions"})
+                     project
+                     (get projects pid {"id" pid "name" "Other sessions"})
 
-                  snippet
-                  (or (:request-snippet match) (:reply-snippet match))
+                     local
+                     (session-local db sid)
 
-                  place
-                  (cond (:in-title? match) "title"
-                        (:in-request? match) "request"
-                        (:in-reply? match) "reply"
-                        (:in-thinking? match) "thinking"
-                        :else "match")]
+                     row
+                     (dlg/navigator-session-row active-id
+                                                groups
+                                                (if (unsent-work? local) {sid local} {})
+                                                session)]
 
-              (cond-> [{:kind :project-session
-                        :project project
-                        :session session
-                        :label (str (project-label project) " / " (title session))
-                        :favorite? (some? (get session "favorite_rank"))
-                        :status (session-status session
-                                                (= sid (str (get-in db [:session :id])))
-                                                false
-                                                false)
-                        :turns (long (or (get session "turn_count") 0))
-                        :modified-at (or (get session "modified_at") (get session "created_at"))
-                        :action [:session sid]}]
-                (seq snippet)
-                (conj {:kind :project-state
-                       :project project
-                       :label (str "↳ " place ": " (str/replace snippet #"\s+" " "))
-                       :action [:noop]}))))
-          rows)
+                 {:kind :project-session
+                  :project project
+                  :session session
+                  :label (:title row)
+                  :favorite? (:favorite? row)
+                  :navigator (assoc row
+                               :show-project? (not= 1 (count projects))
+                               :show-group? (contains? groups (:session-group-id row)))
+                  :action [:session sid]}))
+             rows)
 
         total
         (count matches)
@@ -467,7 +467,9 @@
         (when error [{:kind :project-state :label (str "Search failed · " error)}])
         (when (and (not loading?) (not error) (zero? total) (not (str/blank? text)))
           [{:kind :project-state :label "No saved sessions match"}]))
-      (map-indexed #(assoc %2 :index (inc (long %1))))
+      (map-indexed #(assoc %2
+                      :index (inc (long %1))
+                      :search? true))
       vec)))
 
 (defn- build-sidebar-entries
@@ -644,7 +646,7 @@
   "The screen row of the first sidebar row: under the search field while one is
    open, else right under the header divider."
   ^long [db]
-  (if (get-in db [:project-sidebar :search]) 4 3))
+  (if (get-in db [:project-sidebar :search]) 5 3))
 
 (defn- list-capacity
   "How many one-line rows fit between the list top and the footer divider."
@@ -1168,13 +1170,16 @@
         (.register interactions/hit-map
                    {:kind :project-search-field
                     :bounds {:col (long left) :row 3 :width (long width) :height 1}})
-        (dlg/draw-text-input-field! g
-                                    (long left)
-                                    3
-                                    (long width)
-                                    (str (:text field))
-                                    (long (or (:cursor field) 0))
-                                    "Type to search saved session")))))
+        (let [cursor (dlg/draw-text-input-field! g
+                                                 (inc (long left))
+                                                 3
+                                                 (- (long width) 4)
+                                                 (str (:text field))
+                                                 (long (or (:cursor field) 0))
+                                                 "Type to search saved session")]
+          (p/set-colors! g t/dialog-hint t/dialog-bg)
+          (p/put-str! g (long left) 4 (str "├" (p/horiz-line (- (long width) 2)) "┤"))
+          cursor)))))
 
 (def ^:private footer-commands
   "The footer's sidebar commands in priority order; a narrow rail drops them from
@@ -1256,9 +1261,13 @@
 
 (defn- row-indent
   "The columns before a row's text: projects at the edge, sections one step in,
-   groups under their section and sessions as list items under them."
+   groups under their section and sessions as list items under them. Search rows
+   start at the query's column."
   ^long [entry]
-  (case (:kind entry)
+  (case (if (:search? entry) :search (:kind entry))
+    :search
+    0
+
     :project-select
     0
 
@@ -1401,6 +1410,20 @@
                 lead)
         (paint-parts! g parts parts-col row)))))
 
+(defn- paint-hit-row!
+  "Paint one search hit as the C-x s s picker paints a session, at the query's column."
+  [g entry _sidebar {:keys [left width row focused?]}]
+  (let [left
+        (long left)
+
+        width
+        (long width)]
+
+    (p/clear-styles! g)
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc left) row (max 0 (- width 2)) 1)
+    (dlg/draw-navigator-session! g (+ left 2) row (max 1 (- width 4)) (:navigator entry) focused?)))
+
 (defn paint!
   "Use the main view's three-row header, bordered container and inset footer.
    Each project, section, group and session takes one row.
@@ -1454,7 +1477,7 @@
           (.register interactions/hit-map
                      (assoc entry
                        :bounds {:col (inc left) :row row :width (max 0 (- width 2)) :height 1}))
-          (paint-row!
+          ((if (:navigator entry) paint-hit-row! paint-row!)
             g
             entry
             sidebar

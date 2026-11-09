@@ -4097,9 +4097,14 @@
                       ;; Every hit arrives WITH its row, in the gateway's order.
                       {:sessions [{"id" "b9"
                                    "project_id" "b"
+                                   "project_name" "Companion"
                                    "archived_at" "yesterday"
                                    "title" "Archived reply"}
-                                  {"id" "a5" "project_id" "a" "group_id" "g" "title" "Grouped"}]
+                                  {"id" "a5"
+                                   "project_id" "a"
+                                   "project_name" "Vis"
+                                   "group_id" "g"
+                                   "title" "Grouped"}]
                        :matches matches})]
 
         (let [press! (fn [key]
@@ -4116,15 +4121,53 @@
           (expect (= [[:search "q" {:limit 200 :archived :include}]] @calls))
           (let [entries (projects/sidebar-entries @state/app-db)]
             (expect (= ["b9" "a5"] (mapv #(get-in % [:session "id"]) (filter :session entries))))
-            (expect (= ["Companion / Archived reply" "Vis / Grouped"]
-                       (mapv :label (filter :session entries))))
-            (expect (some #(str/includes? (:label %) "reply: answer found") entries))
-            (expect (some #(str/includes? (:label %) "request: request found") entries)))
+            (expect (= ["Archived reply" "Grouped"] (mapv :label (filter :session entries))))
+            (expect (= ["Companion" "Vis"]
+                       (mapv #(get-in % [:navigator :group]) (filter :session entries)))))
           (press! :esc)
           (expect (nil? (get-in @state/app-db [:project-sidebar :search])))
           (expect (= (select-keys original [:pages :expanded :group-folds :index])
                      (select-keys (:project-sidebar @state/app-db)
                                   [:pages :expanded :group-folds :index]))))))))
+
+(defdescribe
+  project-search-rows-match-session-picker-test
+  ;; User report: sidebar search rows sat four columns right of the query and used
+  ;; another layout than the C-x s s picker.
+  (it
+    "paints each hit as the picker does, at the column of the query"
+    (let [db
+          (assoc-in (fixture-db)
+            [:project-sidebar :search]
+            {:text "deploy"
+             :cursor 6
+             :matches [{:id "a5"}]
+             :rows [{:session {"id" "a5"
+                               "project_id" "a"
+                               "project_name" "Vis"
+                               "title" "Deploy fix"
+                               "modified_at" 1000}
+                     :match {:id "a5" :in-request? true :request-snippet "deploy now"}}]})
+
+          lines
+          (str/split-lines (cap/frame-text
+                             (cap/capture!
+                               {:cols 160
+                                :rows 18
+                                :paint! (fn [{:keys [screen]}]
+                                          (projects/paint! (.newTextGraphics screen) db 160 18))})))
+
+          query
+          (first (filter #(str/includes? % "> deploy") lines))
+
+          hit
+          (first (filter #(str/includes? % "Deploy fix") lines))]
+
+      (expect (str/includes? hit "/ IDLE / Deploy fix | Project: Vis"))
+      (let [lead (fn [line]
+                   (count (re-find #"^.*?│ *" line)))]
+        (expect (= (lead query) (lead hit))))
+      (expect (not-any? #(str/includes? % "deploy now") lines)))))
 
 (defdescribe
   project-search-stale-requests-pagination-and-recovery-test

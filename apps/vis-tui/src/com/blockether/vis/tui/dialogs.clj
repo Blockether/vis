@@ -7413,7 +7413,7 @@
 
     (or line (when (pos? n) (str n " unsent attachment" (when (not= 1 n) "s"))))))
 
-(defn- navigator-session-row
+(defn navigator-session-row
   "Normalize a session row with explicit project and group names.
    Group metadata never determines the status or timestamp ink. `drafts` maps a
    session id to this terminal's unsent composer work, as the sidebar shows it."
@@ -8223,7 +8223,7 @@
   "Columns the title keeps before the project and group give up theirs."
   16)
 
-(defn- draw-navigator-session!
+(defn draw-navigator-session!
   "Paint one session as one line: date, status and title, then ` | ` and the project
    and group. `:show-project? false` or `:show-group? false` drops that part, and the
    separator goes with the last part. The title gives up columns first, so the location
