@@ -179,22 +179,21 @@
         (expect (str/includes? (:title disabled) "Disabled"))
         (expect (not-any? :action (:filtered disabled)))))))
 
-(defdescribe
-  open-row-test
-  ;; User report 2026-11-03: a row opened a timeline sheet first, not the session of its agent.
-  (it "opens the session of a chosen row with no dialog between"
-      (with-redefs [team/choose-team!
-                    (fn [& _]
-                      {:agent-id "child"})
+(defdescribe open-row-test
+             ;; User report 2026-11-03: a row opened a timeline sheet first, not the session of its agent.
+             (it "opens the session of a chosen row with no dialog between"
+                 (with-redefs [team/choose-team!
+                               (fn [& _]
+                                 {:agent-id "child"})
 
-                    dlg/select-dialog!
-                    (fn [& _]
-                      (throw (ex-info "No dialog may open" {})))]
+                               dlg/select-dialog!
+                               (fn [& _]
+                                 (throw (ex-info "No dialog may open" {})))]
 
-        (expect (= "child" (team/show! nil "leader" nil))))
-      (with-redefs [team/choose-team! (fn [& _]
-                                        {:action :parent :session-id "parent"})]
-        (expect (= "parent" (team/show! nil "leader" "parent"))))))
+                   (expect (= "child" (team/show! nil "leader" nil))))
+                 (with-redefs [team/choose-team! (fn [& _]
+                                                   {:action :parent :session-id "parent"})]
+                   (expect (= "parent" (team/show! nil "leader" "parent"))))))
 
 (defdescribe
   rendered-team-states-and-terminal-parity-test
@@ -710,6 +709,71 @@
                                   "Agents   1m 04s   ")))
       (with-redefs [team/summary (constantly {:agents []})]
         (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
+
+(defdescribe
+  leader-row-test
+  ;; User report 2026-11-09: the team table had no leader row; the Companion shows one first.
+  (it
+    "puts the leader of an ended turn first in the transcript card"
+    (let [start
+          (- now-ms 200000)
+
+          messages
+          (@#'chat/turns->messages
+           [{"turn_id" "turn-1"
+             "request" "go"
+             "status" "completed"
+             "created_at" start
+             "duration_ms" 200000
+             "content" [{"type" "prose" "markdown" "**Shipped** the fix\n\nMore text"}]
+             "iterations" [{"id" "i1"
+                            "position" 1
+                            "forms" [{"code" "council.run([task])" "duration_ms" 50000}
+                                     {"code" "print(1)" "duration_ms" 9000}]}
+                           {"id" "i2"
+                            "position" 2
+                            "forms" [{"code" "await council . wait (ids)" "duration_ms" 10000}]}]
+             "agents" [(agent-row 1 "completed" "title" "Read docs" "finished_at" now-ms)]}])]
+
+      (with-redefs [team/summary (constantly nil)]
+        (let [card (some :agent-team-card (team/decorate-messages messages "leader"))
+              text (team/table-text (:rows card) 120 now-ms)
+              leader (first (filter #(str/includes? % "LEADER") text))]
+
+          (expect (= ["LEADER" "s1"]
+                     [(:role (first (:rows card))) (:session-id (second (:rows card)))])
+                  "The leader row comes first")
+          (expect (nil? (:session-id (first (:rows card)))) "The leader row opens nothing")
+          (expect (some? leader))
+          (expect (str/includes? leader "waited 1m 00s of 3m 20s"))
+          (expect (str/includes? leader "Shipped the fix"))
+          (expect (not (str/includes? leader "**")))
+          (expect (re-find #"DONE +│ +3m 20s" leader))
+          (expect (< (.indexOf ^java.util.List text leader)
+                     (.indexOf ^java.util.List text
+                               (first (filter #(str/includes? % "Read docs") text)))))))))
+  (it "puts the running leader first in the dock and counts only agents"
+      (with-redefs [team/summary (constantly {:agents every-state})]
+        (team/toggle-dock! "leader")
+        (try (let [leader {:start (- now-ms 90000)
+                           :steps [{:assistant-prose "Waiting for the _parser_ fix"
+                                    :forms [{:code "council.run([a])" :duration-ms 20000}
+                                            {:code "council.wait()"
+                                             :started-at-ms (- now-ms 10000)}]}]}
+                   text (team/dock-text "leader" "turn-1" 120 now-ms leader)
+                   row (nth text 4)]
+
+               (expect (str/includes? row "LEADER"))
+               (expect (str/includes? row "waited 30s of 1m 30s"))
+               (expect (str/includes? row "Waiting for the parser fix"))
+               (expect (re-find #"RUNNING +│ +1m 30s" row))
+               (expect (str/includes? (first text) "3 RUNNING") "The summary counts agents only")
+               (expect (str/includes? (nth text 5) "Map the gateway routes"))
+               (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1))
+                       "Digit 1 still opens agent 1")
+               (expect (= (inc (team/dock-height "leader" "turn-1" 120))
+                          (team/dock-height "leader" "turn-1" 120 leader))))
+             (finally (team/toggle-dock! "leader"))))))
 
 (defdescribe
   dock-keys-test

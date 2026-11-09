@@ -3257,6 +3257,31 @@
 
             (hydrate turn)))))))
 
+(defn- with-legacy-duration
+  "Give an ended `turn` that stored `duration_ms` 0 the time from its start to the end of its
+   newest step. Before 2026-11-10 the engine stored no turn time, so these old rows have 0."
+  [turn iterations]
+  (let [start
+        (some-> (:created-at turn)
+                inst-ms)
+
+        end
+        (some->> iterations
+                 (keep :finished-at)
+                 seq
+                 (map inst-ms)
+                 (reduce max))]
+
+    (if (and start
+             end
+             (< (long start) (long end))
+             (zero? (long (or (:duration-ms turn) 0)))
+             (not (contains? in-flight-turn-statuses
+                             (some-> (:status turn)
+                                     name))))
+      (assoc turn :duration-ms (- (long end) (long start)))
+      turn)))
+
 (defn- transcript-turn
   "Hydrate one persisted turn in the canonical remote-channel shape and attach
    the canonical TUI/CLI bubble-footer strings."
@@ -3267,6 +3292,9 @@
                (tel/log! :warn
                          ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
                []))
+
+        turn
+        (with-legacy-duration turn all-iterations)
 
         window-start
         (if iteration-limit (max 0 (- (count all-iterations) (max 1 (long iteration-limit)))) 0)

@@ -270,7 +270,10 @@
    cancelled turn becomes `:parked` with `:park-clean? false`. A parked result
    writes no outcome: the turn stays running until a later process resumes it."
   [env user-request loop-opts]
-  (let [resume
+  (let [started-ns
+        (System/nanoTime)
+
+        resume
         (:resume loop-opts)
 
         park-requested?
@@ -436,7 +439,9 @@
                                             session-turn-id
                                             (cond-> {:content turn-content
                                                      :iteration-count (:iteration-count result)
-                                                     :duration-ms (:duration-ms result)
+                                                     ;; The iteration loop gives no turn time.
+                                                     :duration-ms
+                                                     (quot (- (System/nanoTime) started-ns) 1000000)
                                                      :status (or (:status result) :success)
                                                      :tokens (:tokens result)
                                                      :cost turn-cost

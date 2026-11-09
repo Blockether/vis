@@ -3790,6 +3790,11 @@
   [db]
   (when (:loading? db) (:gateway-turn-id db)))
 
+(defn- running-leader
+  "The running leader turn for the first row of the agent dock: its start and its live steps."
+  [db]
+  (when (:loading? db) {:start (:turn-start-ms db) :steps (get-in db [:progress :iterations])}))
+
 (defn- composer-geometry
   "One geometry contract for the prompt, attachment rail, and echo boundary."
   [db cols rows]
@@ -3821,7 +3826,10 @@
         (dec rail-top)
 
         dock-h
-        (agent-team/dock-height (get-in db [:session :id]) (running-turn-id db) cols)
+        (agent-team/dock-height (get-in db [:session :id])
+                                (running-turn-id db)
+                                cols
+                                (running-leader db))
 
         dock-top
         (- echo-row dock-h)]
@@ -4026,7 +4034,12 @@
 (defn- paint-agent-dock!
   "Paint the agent dock of the session at `dock-top`, above the echo row."
   [g db dock-top cols]
-  (agent-team/draw-dock! g (get-in db [:session :id]) (running-turn-id db) dock-top cols))
+  (agent-team/draw-dock! g
+                         (get-in db [:session :id])
+                         (running-turn-id db)
+                         dock-top
+                         cols
+                         (running-leader db)))
 
 (defn- session-band-anchor
   "`state/band-anchor` with the painter that puts the agent dock directly above a band."

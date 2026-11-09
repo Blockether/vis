@@ -253,6 +253,8 @@ export interface Span {
 export interface LeaderLane extends Span {
   waits: readonly Span[];
   note?: string;
+  /** The ended turn failed or stopped: an error, an interrupt or a cancel. */
+  isFailed?: boolean;
 }
 
 // The newest line of a leader: the answer once its turn ended, else the prose of its newest step.
@@ -269,6 +271,21 @@ function leaderNote(iterations: readonly TranscriptIteration[], isEnded: boolean
 // agent ends, asks or writes, so the time of such a block is the time that the leader waited.
 const WAITS_FOR_AGENTS = /\bcouncil\s*\.\s*(?:run|wait)\s*\(/;
 
+// The start of each form of a step. A live form carries its own start. A stored form does not:
+// the forms of a step ran one after another and ended when the step was written, at its `created_at`.
+function formStarts(iteration: TranscriptIteration): (number | undefined)[] {
+  const forms = iteration.forms ?? [];
+  const written = typeof iteration.created_at === 'number' ? iteration.created_at : undefined;
+  let end = written;
+  const starts: (number | undefined)[] = new Array(forms.length);
+  for (let index = forms.length - 1; index >= 0; index -= 1) {
+    const { started_at_ms: at, duration_ms: duration } = forms[index];
+    end = end != null && typeof duration === 'number' ? end - duration : undefined;
+    starts[index] = typeof at === 'number' ? at : end;
+  }
+  return starts;
+}
+
 /**
  * The leader lane of a turn from its steps. A step that runs or waits for agents is a wait from
  * its start for its duration; a running step of a live turn waits to now. A step that the client
@@ -283,20 +300,36 @@ export function leaderLane(
   // A turn row or a story may carry no step list at all.
   const iterations = given ?? [];
   const waits: Span[] = [];
-  for (const form of iterations.flatMap((iteration) => iteration.forms ?? [])) {
-    const at = form.started_at_ms;
-    if (typeof at !== 'number' || !WAITS_FOR_AGENTS.test(form.code ?? '')) continue;
-    if (typeof form.duration_ms === 'number') waits.push({ start: at, end: at + form.duration_ms });
-    else if (end == null) waits.push({ start: at });
+  for (const iteration of iterations) {
+    const starts = formStarts(iteration);
+    (iteration.forms ?? []).forEach((form, index) => {
+      const at = starts[index];
+      // A live form gives its `code`; a stored form gives its `src`.
+      if (at === undefined || !WAITS_FOR_AGENTS.test(form.code ?? form.src ?? '')) return;
+      if (typeof form.duration_ms === 'number') waits.push({ start: at, end: at + form.duration_ms });
+      else if (end == null) waits.push({ start: at });
+    });
   }
   return { start, end: end ?? undefined, waits: waits.sort((a, b) => a.start - b.start), note: leaderNote(iterations, end != null) };
 }
 
-/** The leader lane of a stored turn. Undefined when the turn gives no start or no end. */
+// The stored states of a leader turn that did not end well.
+const FAILED_TURN = new Set(['error', 'failed', 'interrupted', 'cancelled']);
+
+/**
+ * The leader lane of a stored turn. Undefined when the turn gives no start or no end. A stored step
+ * has no answer: the answer of the turn is its first prose block, and it is the note of the leader.
+ */
 export function storedLeaderLane(turn: TranscriptTurn): LeaderLane | undefined {
   const start = turn.created_at;
   const end = turn.completed_at ?? (start != null && turn.duration_ms != null ? start + turn.duration_ms : undefined);
-  return end == null ? undefined : leaderLane(start, end, turn.iterations);
+  const lane = end == null ? undefined : leaderLane(start, end, turn.iterations);
+  if (!lane) return undefined;
+  const answer = turn.content?.find((block) => block.type === 'prose' && block.markdown?.trim())?.markdown;
+  const firstLine = answer?.trim().split('\n', 1)[0];
+  const note = (firstLine && councilLine(firstLine)) || lane.note;
+  const isFailed = FAILED_TURN.has(turn.status ?? '') || turn.prior_outcome === 'cancelled';
+  return { ...lane, note, ...(isFailed ? { isFailed } : {}) };
 }
 
 /**
@@ -392,6 +425,19 @@ export const LEADER_ROLE = 'leader';
 export const LEADER_INK = 'text-role-leader';
 const LEADER_WAIT_WIDTH = 'waited 59m 59s of 59m 59s'.length;
 
+/** The status word of a leader with its ink: running while its turn runs, then done, or failed after an error or a stop. */
+export function leaderStatus(leader: LeaderLane): { text: string; ink: string } {
+  return agentStatus({ status: leader.end == null ? 'running' : leader.isFailed ? 'failed' : 'completed' } as Subagent);
+}
+
+// The time of a leader in ms, and the part of it in which it waited for its agents.
+function leaderTimes(leader: LeaderLane, now: number): { waited: number; total: number } {
+  const waited = leaderParts(leader, now).reduce((sum, part) => sum + (part.isWaiting ? part.end - part.start : 0), 0);
+  return { waited, total: Math.max(0, (leader.end ?? now) - leader.start) };
+}
+
+const leaderWait = ({ waited, total }: { waited: number; total: number }) => `waited ${formatAgentTime(waited)} of ${formatAgentTime(total)}`;
+
 // The bar ink of each status word.
 const BAR_INK: Record<string, string> = {
   running: 'bg-accent-ink',
@@ -424,12 +470,13 @@ const TIME_RULES = `${CELL_RULE} before:absolute before:-inset-y-1 before:-left-
 const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
 // The widths of the columns, in `ch` of the monospace font. ROLE is the same for every team. TITLE
-// fits the team: its heading is the least width, and the bold title gets one more `ch`.
-function columnWidths(rows: readonly Subagent[]): CSSProperties {
+// fits the team: its heading is the least width, and the bold title gets one more `ch`. The leader
+// line `waited 59m 59s of 59m 59s` keeps one width while its clock ticks.
+function columnWidths(rows: readonly Subagent[], leader?: LeaderLane): CSSProperties {
   const widest = (least: string, words: string[]) => Math.max(least.length, ...words.map((word) => word.length));
   return {
-    '--role': `${ROLE_WIDTH}ch`,
-    '--title': `${widest('title', rows.map((agent) => agentLabel(agent, rows))) + 1}ch`,
+    '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ROLE_WIDTH)}ch`,
+    '--title': `${Math.max(widest('title', rows.map((agent) => agentLabel(agent, rows))) + 1, leader ? LEADER_WAIT_WIDTH : 0)}ch`,
   } as CSSProperties;
 }
 
@@ -495,9 +542,29 @@ function AgentTable(props: TableProps) {
   return useWide() ? <WideAgentTable {...props} /> : <PhoneAgentTable {...props} />;
 }
 
-function PhoneAgentTable({ rows, now, onSelect }: TableProps) {
+// The leader row on a phone, in the shape of an agent row. It opens nothing: the leader is this session.
+function PhoneLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
+  const times = leaderTimes(leader, now);
+  const status = leaderStatus(leader);
   return (
-    <ul className="divide-y divide-dialog-edge/40" style={columnWidths(rows)}>
+    <li className={PHONE_ROW} data-leader-row data-hover-note-frame>
+      <span className={`order-1 font-bold uppercase ${LEADER_INK}`}>{LEADER_ROLE}</span>
+      <span className="order-2 min-w-0 text-dialog-hint [overflow-wrap:anywhere]">{leaderWait(times)}</span>
+      {leader.note && (
+        <HoverNote className="order-4 col-span-2 min-w-0" note={leader.note}>
+          <span className="line-clamp-2 text-dialog-hint [overflow-wrap:anywhere]">{leader.note}</span>
+        </HoverNote>
+      )}
+      <span className={`order-3 whitespace-nowrap text-right uppercase ${status.ink}`}>{status.text}</span>
+      <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums">{formatAgentTime(times.total)}</span>
+    </li>
+  );
+}
+
+function PhoneAgentTable({ rows, now, onSelect, leader }: TableProps) {
+  return (
+    <ul className="divide-y divide-dialog-edge/40" style={columnWidths(rows, leader)}>
+      {leader && <PhoneLeaderRow leader={leader} now={now} />}
       {rows.map((agent) => {
         const role = agentRole(agent);
         const status = agentStatus(agent);
@@ -531,8 +598,9 @@ function WideAgentTable(props: TableProps) {
   const { rows, now, onSelect, isTimeline = false, leader } = props;
   if (isTimeline && hasTimeline(rows, leader)) return <TeamChart {...props} />;
   return (
-    <div style={columnWidths(rows)}>
+    <div style={columnWidths(rows, leader)}>
       <ul>
+        {leader && <WideLeaderRow leader={leader} now={now} />}
         {rows.map((agent) => {
           const role = agentRole(agent);
           const status = agentStatus(agent);
@@ -564,6 +632,23 @@ function WideAgentTable(props: TableProps) {
   );
 }
 
+// The leader row on a wide screen, in the columns of an agent row: the time that it waited for its
+// agents, its newest line, its time and its status. It opens nothing: the leader is this session.
+function WideLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
+  const times = leaderTimes(leader, now);
+  return (
+    <li className={`py-1 ${WIDE_ROW}`} data-leader-row data-hover-note-frame>
+      <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
+      <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE}`}>{leaderWait(times)}</span>
+      <HoverNote className={`min-w-0 ${CELL_RULE}`} note={leader.note}>
+        <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
+      </HoverNote>
+      <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${CELL_RULE}`}>{formatAgentTime(times.total)}</span>
+      <StatusWord status={leaderStatus(leader)} />
+    </li>
+  );
+}
+
 // The chart of a team on a wide screen: the time axis, the lane of the leader, then one lane for
 // each agent in spawn order, on one scale. A lane shows only its key; the legend under the rule
 // gives each key its role and title. An agent lane opens the sheet of its agent.
@@ -574,16 +659,11 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
   const share = shareOf(span);
   const bars = agentBars(rows, now, leader);
   const parts = leader ? leaderParts(leader, now) : [];
-  const waited = parts.reduce((sum, part) => sum + (part.isWaiting ? part.end - part.start : 0), 0);
-  const leaderTime = leader ? (leader.end ?? now) - leader.start : 0;
+  const times = leader ? leaderTimes(leader, now) : { waited: 0, total: 0 };
   const keys = rows.map((_, index) => agentKey(index));
-  const titles = columnWidths(rows) as Record<string, string>;
   const widths = {
-    ...titles,
-    // The leader line `waited 59m 59s of 59m 59s` keeps one width while its clock ticks.
-    '--title': leader ? `max(${titles['--title']}, ${LEADER_WAIT_WIDTH}ch)` : titles['--title'],
+    ...columnWidths(rows, leader),
     '--key': `${Math.max(2, ...keys.map((key) => key.length))}ch`,
-    '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ROLE_WIDTH)}ch`,
   } as CSSProperties;
   return (
     <div style={widths} className="pb-1" data-team-chart>
@@ -603,8 +683,8 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
                   <LanePart key={part.start} bar={{ start: share(part.start), end: share(part.end), isWaiting: part.isWaiting }} ink="bg-white" />
                 ))}
               </span>
-              <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>{formatAgentTime(leaderTime)}</span>
-              <StatusWord status={agentStatus({ status: leader.end == null ? 'running' : 'completed' } as Subagent)} />
+              <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>{formatAgentTime(times.total)}</span>
+              <StatusWord status={leaderStatus(leader)} />
             </li>
           )}
           {rows.map((agent, index) => {
@@ -642,7 +722,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           <li className={LEGEND_ROW} data-hover-note-frame>
             <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
             <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
-            <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE}`}>{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
+            <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE}`}>{leaderWait(times)}</span>
             <HoverNote className="min-w-0" note={leader.note}>
               <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>
@@ -673,14 +753,14 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
 export interface TeamProps {
   agents: readonly Subagent[];
   onOpen: (sid: string) => void;
-  /** The leader turn of the team, for the first lane of its chart. */
+  /** The leader turn of the team, for the first row of its table and the first lane of its chart. */
   leader?: LeaderLane;
 }
 
 /**
- * The subagents of one turn as a table in a frame: the team line with the counts by role and
- * by status, then one row for each agent in spawn order. A row opens the session of its
- * agent. The dock shows the table without the frame. A subagent never asks a person: its
+ * The subagents of one turn as a table in a frame: the team line with the counts of the agents
+ * by status, then the row of the leader, then one row for each agent in spawn order. An agent
+ * row opens the session of its agent; the leader row opens nothing. The dock shows the table without the frame. A subagent never asks a person: its
  * leader answers it, so a row has no question and no control for one.
  */
 export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', isTimeline }: TeamProps & {

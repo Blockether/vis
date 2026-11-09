@@ -5,7 +5,8 @@ import type { GatewayClient } from '../lib/gateway';
 import teamFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/team-updated.json';
 import { SessionEventsContext } from '../lib/session-events';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { SseEvent, Subagent } from '../lib/types';
+import type { SseEvent, Subagent, TranscriptTurn } from '../lib/types';
+import { AgentDock } from './AgentDock';
 import {
   TurnAgents,
   agentLabel,
@@ -16,6 +17,7 @@ import {
   agentsByTurn,
   leaderLane,
   leaderParts,
+  storedLeaderLane,
   axisMarks,
   dockTeams,
   formatAgentTime,
@@ -332,6 +334,79 @@ describe('teams', () => {
     expect(dockTeams(agents, 'leader', 'turn-3').map((team) => team[0].team_id)).toEqual(['turn-3', 'turn-2']);
     expect(dockTeams(agents, 'leader').map((team) => team[0].team_id)).toEqual(['turn-2']);
     expect(dockTeams([], 'leader', 'turn-3')).toEqual([]);
+  });
+});
+
+// User report 2026-11-09: a stored team card showed its agents and no leader. Each team table
+// starts with the leader row; it opens nothing, and the team counts stay agent counts.
+describe('leader row', () => {
+  const wide = (isWide: boolean) => vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: isWide && query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
+  }));
+  const turn = (status: string) => ({
+    turn_id: 'turn-1', status, created_at: T0 - 10_000, duration_ms: 30_000,
+    iterations: [{ forms: [{ code: 'council.run([task])', started_at_ms: T0, duration_ms: 12_000 }], answer: '**Both** reviews pass.' }],
+  }) as unknown as TranscriptTurn;
+  const team = [
+    { ...child, title: 'Companion review', role: 'verify', status: 'completed' as const, finished_at: T0 + 9_000 },
+    { ...child, session_id: 'tui', title: 'TUI review', role: 'verify', status: 'completed' as const, finished_at: T0 + 15_000 },
+  ];
+  const tableRows = () => [...document.querySelectorAll('[data-leader-row], [data-agent-row]')].map((row) => row.textContent);
+
+  it.each([true, false])('puts the leader of a stored turn first, with its wait, answer, time and status (wide: %s)', (isWide) => {
+    wide(isWide);
+    render(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('done'))} />);
+    const rows = tableRows();
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatch(/^leaderwaited 12s of 30s(Both reviews pass\.done30s|Both reviews pass\.30sdone)$/);
+    expect(rows[1]).toMatch(/^verifyCompanion review/);
+    expect(screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]')).toHaveTextContent(/2 done$/);
+    expect(document.querySelector('[data-leader-row]')?.closest('button')).toBeNull();
+  });
+
+  // Verifier report 2026-11-09: on a real stored turn the leader row said `waited 0s` and showed no
+  // answer. A stored form has `src`, no `code` and no start; a stored step has no `answer`, and the
+  // answer is the prose of the turn. Fields from `GET /v1/sessions/<id>/transcript`.
+  it('reads the waits and the answer of a stored turn in the shape that the gateway sends', () => {
+    wide(true);
+    const stored = {
+      turn_id: '4cc04bcd', status: 'done', created_at: 1794213400187, duration_ms: 12414,
+      content: [{ id: 'p1', type: 'prose', markdown: 'Both subagents finished, and each replied with the text it was given:\n\n- **Echo one** (research, `a1`): **one**' }],
+      iterations: [
+        { created_at: 1794213407814, duration_ms: 3239, forms: [{ duration_ms: 3239, src: 'w = await memo.wake()\nr = await council.run([\n    {"task": "Reply"},\n])' }] },
+        { created_at: 1794213410289, duration_ms: 36, assistant_prose: "Both are still running. I'll wait for them to finish.",
+          forms: [{ duration_ms: 36, src: 'res = await council.wait(session_ids=ids)' }] },
+        { created_at: 1794213412601, duration_ms: 0, code: '' },
+      ],
+    } as unknown as TranscriptTurn;
+    const leader = storedLeaderLane(stored);
+    expect(leader?.waits).toEqual([
+      { start: 1794213407814 - 3239, end: 1794213407814 },
+      { start: 1794213410289 - 36, end: 1794213410289 },
+    ]);
+    render(<TurnAgents {...props} agents={team} leader={leader} />);
+    expect(tableRows()[0]).toBe('leaderwaited 3s of 12sBoth subagents finished, and each replied with the text it was given:12sdone');
+  });
+
+  it('marks the leader of a stored turn that ended in an error or a stop as failed', () => {
+    wide(true);
+    render(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('interrupted'))} />);
+    expect(document.querySelector('[data-leader-row]')).toHaveTextContent(/30sfailed$/);
+  });
+
+  it('puts the running leader first only in the dock team of the running turn', () => {
+    wide(true);
+    vi.useFakeTimers({ now: T0 + 5_000 });
+    const leader = leaderLane(T0 - 10_000, undefined, [{ assistant_prose: 'I wait for the reviews.' }]);
+    render(<AgentDock sid="leader" runningTurnId="turn-1" onOpen={vi.fn()} leader={leader}
+      agents={[child, { ...child, session_id: 'old', team_id: 'turn-0' }]} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    expect(tableRows()).toEqual([
+      'leaderwaited 0s of 15sI wait for the reviews.15srunning',
+      expect.stringMatching(/^agent#1/),
+      expect.stringMatching(/^agent#1/),
+    ]);
+    expect(screen.getByRole('button', { expanded: true })).toHaveAccessibleName(/2 running$/);
   });
 });
 

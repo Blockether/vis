@@ -352,6 +352,83 @@
        (mapv (fn [[n agent]]
                (team-row n agent)))))
 
+(defn- leader? [row] (= "leader" (:role-key row)))
+
+(def ^:private leader-label-sample
+  "The widest title cell of a leader row, so the title column does not change while it counts."
+  "waited 59m 59s of 59m 59s")
+
+(defn- label-sample [row] (if (leader? row) leader-label-sample (:label row)))
+
+(def ^:private waits-for-agents
+  "A leader step that waits for its agents: `council.run` and `council.wait` return only when an
+   agent ends, asks or writes. The same rule as the Companion leader lane."
+  #"\bcouncil\s*\.\s*(?:run|wait)\s*\(")
+
+(defn- first-line [text] (some #(when-not (str/blank? %) %) (str/split-lines (str text))))
+
+(defn- leader-note
+  "The newest line of a leader: the first line of its answer once its turn ended, else the prose
+   of its newest step, without Markdown markers."
+  [steps answer ended?]
+  (let [text (if ended?
+               (first-line answer)
+               (some #(not-empty (str/trim (str (:assistant-prose %)))) (rseq (vec steps))))]
+    (when (seq text) (not-empty (markdown-line text)))))
+
+(defn leader-row
+  "The first row of a team table: the leader turn `leader`, `{:start :end :failed? :steps
+   :answer}` in epoch ms. `:end` is nil while the turn runs. `:steps` are trace entries, and a
+   form that calls `council.run(` or `council.wait(` is time that the leader waited. Nil without
+   a start. The row opens nothing."
+  [{:keys [start end failed? steps answer]}]
+  (when (number? start)
+    (let [ended?
+          (number? end)
+
+          forms
+          (filter #(re-find waits-for-agents (str (:code %))) (mapcat :forms steps))
+
+          word
+          (cond (not ended?) "RUNNING"
+                failed? "FAILED"
+                :else "DONE")]
+
+      {:n 0
+       :role "LEADER"
+       :role-key "leader"
+       :label "waited"
+       :status word
+       :tone (tone word)
+       :now (leader-note steps answer ended?)
+       :active? (not ended?)
+       :start (long start)
+       :end (when ended? (long end))
+       :waited-ms (reduce +
+                          0
+                          (keep #(some-> (:duration-ms %)
+                                         long)
+                                forms))
+       ;; A wait that still runs counts to now.
+       :wait-starts (when-not ended?
+                      (vec (keep #(when (and (nil? (:duration-ms %)) (number? (:started-at-ms %)))
+                                    (long (:started-at-ms %)))
+                                 forms)))})))
+
+(defn message-leader
+  "The leader value of the ended turn of assistant message `message`, or nil without a start
+   time or a duration. An error turn or a stopped turn failed."
+  [{:keys [timestamp duration-ms traces text status content]}]
+  (let [start (cond (instance? java.util.Date timestamp) (.getTime ^java.util.Date timestamp)
+                    (number? timestamp) (long timestamp))]
+    (when (and start (number? duration-ms))
+      {:start start
+       :end (+ (long start) (long duration-ms))
+       :failed? (boolean (or (contains? #{:failed :cancelled :error} status)
+                             (some #(= "error" (get % "type")) content)))
+       :steps traces
+       :answer text})))
+
 (defn duration-text
   "`12s`, `3m 04s` or `1h 02m`, or nil for a negative or unknown span."
   [ms]
@@ -369,6 +446,20 @@
         end (duration-text (- (long end) (long start)))
         (and active? (not= "QUEUED" status)) (duration-text (- (long now-ms) (long start)))))
 
+(defn row-label
+  "The title cell of `row` at `now-ms`. The leader row writes the time that it waited for its
+   agents out of its own time, such as `waited 1m 10s of 3m 20s`."
+  [{:keys [label waited-ms wait-starts start end] :as row} now-ms]
+  (if (leader? row)
+    (let [total
+          (max 0 (- (long (or end now-ms)) (long start)))
+
+          waited
+          (reduce + (long waited-ms) (map #(max 0 (- (long now-ms) (long %))) wait-starts))]
+
+      (str "waited " (duration-text (min total waited)) " of " (duration-text total)))
+    label))
+
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 
 (defn- role-width
@@ -381,7 +472,7 @@
    is the same for every team."
   [rows]
   {:role (role-width)
-   :label (min (long title-width) (long (widest (map :label rows))))
+   :label (min (long title-width) (long (widest (map label-sample rows))))
    :status (widest (map :status rows))})
 
 (defn- pad
@@ -443,7 +534,7 @@
           (conj [0 (:role row) :role])
 
           true
-          (conj [label-col (p/ellipsize (:label row) label-w) :label]
+          (conj [label-col (p/ellipsize (row-label row now-ms) label-w) :label]
                 [status-col (:status row) :status]))
 
         time-part
@@ -495,6 +586,10 @@
 
     "verify"
     t/code-syntax-keyword-fg
+
+    ;; The leader is the Vis agent of the session, so it takes the ink of Vis, as in the Companion.
+    "leader"
+    t/ai-role-fg
 
     t/dialog-hint))
 
@@ -579,7 +674,7 @@
         {:key :role :w (max (role-width) (count (:role table-heads)))}
 
         label
-        (update (fixed :label (map :label rows)) :w min (long title-width))
+        (update (fixed :label (map label-sample rows)) :w min (long title-width))
 
         status
         (fixed :status (map :status rows))
@@ -669,6 +764,9 @@
     (case column-key
       :time
       (or (row-time row now-ms) "")
+
+      :label
+      (str (row-label row now-ms))
 
       (str (get row column-key)))))
 
@@ -761,10 +859,16 @@
       (register-row! (:row line) (+ (long viewport-top) (long row)) left width))))
 
 (defn card
-  "The team block data of team `team-id` from `agents`, or nil when the team has no agent."
-  [team-id agents]
-  (let [rows (team-rows team-id agents)]
-    (when (seq rows) {:team-id team-id :rows rows :columns (row-columns rows)})))
+  "The team block data of team `team-id` from `agents`, or nil when the team has no agent. The
+   row of the leader turn `leader` (see `leader-row`) comes first."
+  ([team-id agents] (card team-id agents nil))
+  ([team-id agents leader]
+   (when-let [rows (seq (team-rows team-id agents))]
+     (let [rows (into (if-let [row (leader-row leader)]
+                        [row]
+                        [])
+                      rows)]
+       {:team-id team-id :rows rows :columns (row-columns rows)}))))
 
 (defn card-entries
   "Transcript rows of a team table at `width` cells: `{:line :meta}` maps. A blank row stands
@@ -882,7 +986,7 @@
          (if (empty? last-index)
            messages
            (reduce-kv (fn [out team-id i]
-                        (if-let [team-card (card team-id agents)]
+                        (if-let [team-card (card team-id agents (message-leader (nth out i)))]
                           (assoc out i (decorate (nth out i) team-card))
                           out))
                       (vec messages)
@@ -1087,64 +1191,87 @@
         (swap! dock-offsets assoc sid new)
         (not= old new)))))
 
+(defn- with-leader-line
+  "Table `lines` with the row of `leader` right after the head: top border, titles and rule."
+  [lines leader]
+  (let [lines (vec lines)]
+    (-> (subvec lines 0 3)
+        (conj {:kind :row :row leader})
+        (into (subvec lines 3)))))
+
 (defn dock-lines
   "The dock of `sid` above the prompt at `cols` columns: `{:line :columns}` maps, one for each
    screen row. A docked team shows one summary line. After `toggle-dock!`, the agent table
-   follows it. One blank line ends the dock, so it never touches the row below. Empty without
-   a docked team."
-  [sid running-turn cols]
-  (let [agents
-        (:agents (summary sid))
+   follows it. The row of the running turn `leader` (see `leader-row`) stands first in the table
+   of its team and does not scroll. One blank line ends the dock, so it never touches the row
+   below. Empty without a docked team."
+  ([sid running-turn cols] (dock-lines sid running-turn cols nil))
+  ([sid running-turn cols leader]
+   (let [agents
+         (:agents (summary sid))
 
-        docked
-        (dock-team-ids agents running-turn)]
+         docked
+         (dock-team-ids agents running-turn)]
 
-    (if (empty? docked)
-      []
-      (let [rows
-            (dock-rows sid running-turn)
+     (if (empty? docked)
+       []
+       (let [rows
+             (dock-rows sid running-turn)
 
-            expanded?
-            (dock-expanded? sid)
+             ;; Only the team of the running turn is the team of this leader turn.
+             leader
+             (when (contains? docked running-turn) (leader-row leader))
 
-            team
-            (filterv #(contains? docked (get % "team_id")) agents)
+             expanded?
+             (dock-expanded? sid)
 
-            head
-            {:line {:kind :summary
-                    :counts (count-parts rows)
-                    :strip (mapv :tone rows)
-                    :expanded? expanded?
-                    :span (team-span team)
-                    :active? (boolean (some active? team))}}]
+             team
+             (filterv #(contains? docked (get % "team_id")) agents)
 
-        (-> [head]
-            (cond->
-              expanded?
-              (into (let [columns (table-columns rows (dock-width cols))]
-                      (map (fn [line]
-                             {:line line :columns columns})))
-                    (table-lines rows dock-max-rows (get @dock-offsets (str sid)))))
-            (conj {:line {:kind :gap}}))))))
+             head
+             {:line {:kind :summary
+                     :counts (count-parts rows)
+                     :strip (mapv :tone rows)
+                     :expanded? expanded?
+                     :span (team-span team)
+                     :active? (boolean (some active? team))}}
+
+             table
+             (table-lines rows dock-max-rows (get @dock-offsets (str sid)))]
+
+         (-> [head]
+             (cond->
+               expanded?
+               (into (let [columns (table-columns (cond->> rows
+                                                    leader
+                                                    (cons leader))
+                                                  (dock-width cols))]
+                       (map (fn [line]
+                              {:line line :columns columns})))
+                     (cond-> table
+                       leader
+                       (with-leader-line leader))))
+             (conj {:line {:kind :gap}})))))))
 
 (defn dock-height
   "Rows that the dock of `sid` takes above the prompt, 0 without a docked team."
-  ^long [sid running-turn cols]
-  (count (dock-lines sid running-turn cols)))
+  (^long [sid running-turn cols] (dock-height sid running-turn cols nil))
+  (^long [sid running-turn cols leader] (count (dock-lines sid running-turn cols leader))))
 
 (defn dock-text
   "Plain dock lines of `sid`, as the painter shows them."
-  [sid running-turn cols now-ms]
-  (mapv (fn [{:keys [line columns]}]
-          (case (:kind line)
-            :summary
-            (segments-text (summary-segments line (dock-width cols) now-ms))
+  ([sid running-turn cols now-ms] (dock-text sid running-turn cols now-ms nil))
+  ([sid running-turn cols now-ms leader]
+   (mapv (fn [{:keys [line columns]}]
+           (case (:kind line)
+             :summary
+             (segments-text (summary-segments line (dock-width cols) now-ms))
 
-            :gap
-            ""
+             :gap
+             ""
 
-            (segments-text (table-segments line columns now-ms))))
-        (dock-lines sid running-turn cols)))
+             (segments-text (table-segments line columns now-ms))))
+         (dock-lines sid running-turn cols leader))))
 
 (defn- paint-summary-line!
   "Paint the dock summary line at screen row `y` from column `left` across `width` cells."
@@ -1175,43 +1302,45 @@
   (p/clear-styles! g))
 
 (defn draw-dock!
-  "Paint the dock table of `sid` at screen row `top` across `cols` columns."
-  [^TextGraphics g sid running-turn top cols]
-  (let [width
-        (dock-width cols)
+  "Paint the dock table of `sid` at screen row `top` across `cols` columns. `leader` is the
+   running turn, as `dock-lines` takes it."
+  ([g sid running-turn top cols] (draw-dock! g sid running-turn top cols nil))
+  ([^TextGraphics g sid running-turn top cols leader]
+   (let [width
+         (dock-width cols)
 
-        now
-        (System/currentTimeMillis)]
+         now
+         (System/currentTimeMillis)]
 
-    (doseq [[i {:keys [line columns]}]
-            (map-indexed vector (dock-lines sid running-turn cols))
+     (doseq [[i {:keys [line columns]}]
+             (map-indexed vector (dock-lines sid running-turn cols leader))
 
-            :let [y
-                  (+ (long top) (long i))]]
+             :let [y
+                   (+ (long top) (long i))]]
 
-      (p/set-colors! g t/code-block-fg t/terminal-bg)
-      (p/fill-rect! g 0 y (max 1 (long cols)) 1)
-      (case (:kind line)
-        :summary
-        (do (paint-summary-line! g 2 y width line now)
-            ;; A click on the summary line shows or hides the agent table, like C-x b a.
-            (.register interactions/hit-map
-                       {:bounds {:row y :col 0 :width (max 1 (long cols))}
-                        :kind :agent-dock-toggle
-                        :text (str sid)
-                        :dock (str sid)}))
+       (p/set-colors! g t/code-block-fg t/terminal-bg)
+       (p/fill-rect! g 0 y (max 1 (long cols)) 1)
+       (case (:kind line)
+         :summary
+         (do (paint-summary-line! g 2 y width line now)
+             ;; A click on the summary line shows or hides the agent table, like C-x b a.
+             (.register interactions/hit-map
+                        {:bounds {:row y :col 0 :width (max 1 (long cols))}
+                         :kind :agent-dock-toggle
+                         :text (str sid)
+                         :dock (str sid)}))
 
-        :gap
-        nil
+         :gap
+         nil
 
-        (paint-table-line! g 2 y width line columns now t/terminal-bg))
-      ;; Each dock line takes the wheel, so the wheel scrolls the agent table, not the transcript.
-      (cond (#{:summary :gap} (:kind line)) nil
-            (:session-id (:row line)) (register-row! (:row line) y 0 (max 1 (long cols)) (str sid))
-            :else (.register interactions/hit-map
-                             {:bounds {:row y :col 0 :width (max 1 (long cols))}
-                              :kind :agent-dock
-                              :dock (str sid)})))))
+         (paint-table-line! g 2 y width line columns now t/terminal-bg))
+       ;; Each dock line takes the wheel, so the wheel scrolls the agent table, not the transcript.
+       (cond (#{:summary :gap} (:kind line)) nil
+             (:session-id (:row line)) (register-row! (:row line) y 0 (max 1 (long cols)) (str sid))
+             :else (.register interactions/hit-map
+                              {:bounds {:row y :col 0 :width (max 1 (long cols))}
+                               :kind :agent-dock
+                               :dock (str sid)}))))))
 
 ;; ── Child traffic ───────────────────────────────────────────────────────────
 

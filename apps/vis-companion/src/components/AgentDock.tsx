@@ -11,7 +11,7 @@ import { ChevronIcon, MARK_NUDGE } from './icons';
  * one of its agents still works after its turn ended; then it stands in that turn of the
  * transcript.
  */
-export function AgentDock({ agents, sid, runningTurnId, ...team }: Omit<TeamProps, 'agents'> & {
+export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<TeamProps, 'agents'> & {
   agents: readonly Subagent[];
   sid: string;
   runningTurnId?: string | null;
@@ -28,7 +28,9 @@ export function AgentDock({ agents, sid, runningTurnId, ...team }: Omit<TeamProp
     'agent-team': teams.length > 0 && (() => setOpen(true)),
   });
   if (teams.length === 0) return null;
-  const toggle = isWide && teams.some((members) => hasTimeline(members, team.leader)) ? (
+  // The leader of the running turn heads only the team of that turn, not an older team that still works.
+  const leaderOf = (members: readonly Subagent[]) => (members[0].team_id === runningTurnId ? leader : undefined);
+  const toggle = isWide && teams.some((members) => hasTimeline(members, leaderOf(members))) ? (
     <TimelineToggle
       isOn={open && isTimeline}
       onToggle={() => {
@@ -61,7 +63,7 @@ export function AgentDock({ agents, sid, runningTurnId, ...team }: Omit<TeamProp
       </div>
       <div id={body} hidden={!open} className="max-h-[40dvh] space-y-2 overflow-y-auto border-t border-dialog-edge px-3 sm:px-0">
         {teams.map((members) => (
-          <TurnAgents key={members[0].team_id} agents={members} placement="dock" isTimeline={isTimeline} {...team} />
+          <TurnAgents key={members[0].team_id} agents={members} placement="dock" isTimeline={isTimeline} leader={leaderOf(members)} {...team} />
         ))}
       </div>
     </section>

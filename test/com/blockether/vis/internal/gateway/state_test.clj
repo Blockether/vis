@@ -947,6 +947,32 @@
                      (expect (nil? (get turn "meta_summary")))
                      (expect (nil? (get turn "meta_fallback_note")))))))
 
+;; User report: a stored team card showed its leader with 0 s. Turns before the engine fix
+;; stored `duration_ms` 0; their steps still give the time from the start to the newest step end.
+(defdescribe
+  transcript-legacy-duration-test
+  (it "gives an ended turn that stored no time the span to the end of its newest step"
+      (with-redefs [persistance/db-list-session-turns
+                    (fn [_ _]
+                      [{:id "ended" :status :done :duration-ms 0 :created-at (java.util.Date. 1000)}
+                       {:id "timed" :status :done :duration-ms 7 :created-at (java.util.Date. 1000)}
+                       {:id "live"
+                        :status :running
+                        :duration-ms 0
+                        :created-at (java.util.Date. 1000)}])
+
+                    persistance/db-list-session-turns-iterations
+                    (fn [_ ids & _]
+                      (zipmap (map str ids)
+                              (repeat [{:finished-at (java.util.Date. 61000)}
+                                       {:finished-at (java.util.Date. 91000)}])))]
+
+        (let [by-id
+              (into {} (map (juxt #(get % "turn_id") identity)) (state/transcript :session-1))]
+          (expect (= 90000 (get-in by-id ["ended" "duration_ms"])))
+          (expect (= 7 (get-in by-id ["timed" "duration_ms"])))
+          (expect (= 0 (get-in by-id ["live" "duration_ms"])))))))
+
 (defdescribe form-result-error-wire-test
              (it "a form error always surfaces on the wire"
                  (let [[type _ payload]
