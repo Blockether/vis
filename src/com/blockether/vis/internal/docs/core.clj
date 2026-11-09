@@ -523,9 +523,11 @@
       (esc (:title site))
       "\" aria-label=\""
       (esc (:title site))
-      "\">"
+      "\"><img class=\"logo\" src=\""
+      (asset mode "logo.png")
+      "\" alt=\"\"><span class=\"wordmark\">"
       (esc (:title site))
-      "</a>"
+      "</span></a>"
       (when (and (= mode :static) (:public? site-data))
         ;; Lucide grid-2x2, the mark the catalog header also uses; the written-out
         ;; label stays in the sidebar.

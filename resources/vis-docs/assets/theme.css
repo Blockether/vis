@@ -116,6 +116,7 @@ a:hover {
   font-size: var(--text-heading);
   letter-spacing: -0.02em;
   color: var(--fg);
+  text-decoration: none;
 }
 .top .brand .dot {
   width: 0.85rem;
@@ -656,11 +657,19 @@ button.primary:hover {
 .token.decorator {
   color: #1e5ab4;
 }
-/* brand logo */
+/* brand logo: the Companion app bar mark and wordmark */
 .top .brand .logo {
-  height: 1.7rem;
+  height: 2rem;
   width: auto;
   display: block;
+  /* The ink sits about 1px under the centre of the image. */
+  transform: translateY(-1px);
+}
+.top .brand .wordmark {
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 #ffc420;
 }
 /* footer Blockether mark */
 .foot {
