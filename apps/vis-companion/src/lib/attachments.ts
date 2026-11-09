@@ -115,6 +115,27 @@ export interface AttachmentLimits {
   mediaTypes?: string[];
 }
 
+/**
+ * The gateway's copy of a sent attachment, back in the composer. Some rows hold
+ * the whole data URL and some only its payload; the composer needs the data URL.
+ */
+export function pendingFromGateway(attachment: GatewayAttachment): PendingAttachment {
+  const base64 = attachment.base64.startsWith('data:')
+    ? attachment.base64
+    : `data:${attachment.media_type};base64,${attachment.base64}`;
+  const payload = base64.slice(base64.indexOf(',') + 1);
+  const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+  return {
+    id: randomUuid(),
+    filename: attachment.filename,
+    media_type: attachment.media_type,
+    base64,
+    previewUrl: base64,
+    size: attachment.size ?? Math.floor((payload.length * 3) / 4) - padding,
+    ...(attachment.reference ? { reference: attachment.reference } : {}),
+  };
+}
+
 function base64AsBlob(base64: string, mimeType: string): Blob {
   const payload = base64.startsWith('data:') ? base64.slice(base64.indexOf(',') + 1) : base64;
   const binary = atob(payload);

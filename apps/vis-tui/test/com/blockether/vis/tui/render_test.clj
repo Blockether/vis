@@ -2799,7 +2799,7 @@
 
               queued-idx
               (first (keep-indexed (fn [i l]
-                                     (when (str/includes? (str l) "Queued") i))
+                                     (when (str/includes? (str l) "QUEUED") i))
                                    lines))]
 
           (expect (some? spinner-idx))
@@ -9201,7 +9201,7 @@ h = 8"
             (payload {:iterations [{:activity :provider-call}]} pending {})
 
             [hdr-line hdr-meta]
-            (row-with d "Queued")
+            (row-with d "QUEUED")
 
             [first-line first-meta]
             (row-with d "first queued message")
@@ -9218,7 +9218,7 @@ h = 8"
         (expect (= {:session-id "s1" :label "Send all now" :chord "C-x q s"}
                    (:queue-send-all hdr-meta)))
         ;; The header counts the queue, as the Companion header does.
-        (expect (str/includes? hdr-line "Queued · 4"))
+        (expect (str/includes? hdr-line "QUEUED · 4"))
         ;; Plain ordinals: the button is painted from meta, never an arrow in the text.
         (expect (str/includes? first-line "1. first queued message"))
         (expect (not (str/includes? first-line "→")))
@@ -9251,7 +9251,7 @@ h = 8"
                        {})
 
               [_ hdr-meta]
-              (row-with d "Queued")
+              (row-with d "QUEUED")
 
               [cmd-line cmd-meta]
               (row-with d "/help")]
@@ -9269,12 +9269,12 @@ h = 8"
                        {})
 
               [hdr-line hdr-meta]
-              (row-with d "Queued")
+              (row-with d "QUEUED")
 
               [_ first-meta]
               (row-with d "first queued message")]
 
-          (expect (str/includes? hdr-line "Queued · 2"))
+          (expect (str/includes? hdr-line "QUEUED · 2"))
           (expect (nil? (:queue-send-all hdr-meta)))
           (expect (= "Send it now" (:label (:queue-send first-meta))))))
     (it "paints no control while the queue is held, because no turn runs"
@@ -9282,12 +9282,12 @@ h = 8"
               (payload {:iterations []} pending {:queue-paused {:reason "turn_failed"}})
 
               [hdr-line hdr-meta]
-              (row-with d "Queued")
+              (row-with d "QUEUED")
 
               [first-line first-meta]
               (row-with d "first queued message")]
 
-          (expect (str/includes? hdr-line "Queued · 4 · paused"))
+          (expect (str/includes? hdr-line "QUEUED · 4 · paused"))
           (expect (nil? (:queue-send-all hdr-meta)))
           (expect (str/includes? first-line "1. first queued message"))
           (expect (not (str/includes? first-line "→")))

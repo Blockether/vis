@@ -205,7 +205,7 @@
                      frame (first (:frames capture))
                      row-text (fn [cells]
                                 (apply str (map :ch cells)))
-                     selected (first (filter #(str/includes? (row-text %) "┃") frame))
+                     selected (first (filter #(str/includes? (row-text %) "2. second") frame))
                      other (first (filter #(str/includes? (row-text %) "1. first") frame))
                      text-cells (remove #(str/blank? (:ch %)) selected)]
 
@@ -213,7 +213,7 @@
                  (expect (str/includes? (row-text selected) "2. second") (str theme-id))
                  (expect (>= (contrast (:bg (first selected)) (:bg (first other))) 3.0)
                          (str theme-id " selected row vs other row"))
-                 (expect (= #{"┃" "2" "." "s" "e" "c" "o" "n" "d"} (set (map :ch text-cells)))
+                 (expect (= #{"2" "." "s" "e" "c" "o" "n" "d"} (set (map :ch text-cells)))
                          (str theme-id))
                  (doseq [{:keys [ch fg bg]} text-cells]
                    (expect (>= (contrast fg bg) 4.5) (str theme-id " selected queue text: " ch)))))

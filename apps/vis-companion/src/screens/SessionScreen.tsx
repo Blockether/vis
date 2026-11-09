@@ -92,6 +92,7 @@ import {
   editedAttachment,
   isVideoMediaType,
   pickDocumentAttachments,
+  pendingFromGateway,
   pickMediaAttachments,
   rejectionNotice,
   type AttachmentLimits,
@@ -1337,7 +1338,11 @@ export function SessionScreen({
     [setPrompt, setAttachments],
   );
 
-  const restoreCancelledQueued = useCallback((turnId: string | undefined, request: string) => {
+  const restoreCancelledQueued = useCallback((
+    turnId: string | undefined,
+    request: string,
+    images: PendingAttachment[] = [],
+  ) => {
     if (!turnId) return;
     const done = restoredQueueRef.current;
     if (done.has(turnId)) return;
@@ -1352,7 +1357,8 @@ export function SessionScreen({
     const authored = authoredQueueRef.current.get(turnId);
     authoredQueueRef.current.delete(turnId);
     const text = (authored?.request || request || '').trim();
-    if (text || authored?.attachments.length) restoreComposerImages(text, authored?.attachments ?? []);
+    const attachments = authored?.attachments ?? images;
+    if (text || attachments.length) restoreComposerImages(text, attachments);
     if (authored?.pastes.size) {
       setPastes((current) => {
         const next = new Map(current);
@@ -1361,6 +1367,22 @@ export function SessionScreen({
       });
     }
   }, [restoreComposerImages]);
+  // The pencil on a queued row: the row leaves the queue and comes back into the
+  // composer whole, so the person can change it or add a picture and send it again.
+  // The gateway holds the bytes of a row that another device queued. Nothing leaves
+  // the queue before they arrive, and nothing enters the composer before it leaves.
+  const editQueued = useCallback(
+    async (item: QueuedTurn) => {
+      const images =
+        authoredQueueRef.current.has(item.turnId) || !item.attachments.length
+          ? []
+          : (await client.fetchTurnAttachments(sid, item.turnId)).map(pendingFromGateway);
+      await client.deleteQueuedTurn(sid, item.turnId);
+      restoreCancelledQueued(item.turnId, item.request, images);
+      requestAnimationFrame(() => composerRef.current?.focus());
+    },
+    [client, sid, restoreCancelledQueued],
+  );
   // The bytes are kept on the CLIENT, not in this screen: leaving the session
   // unmounts `SessionScreen`, and a running turn whose images lived only in screen
   // state came back text-only until the persisted row landed on top.
@@ -5958,6 +5980,7 @@ export function SessionScreen({
                 queued={queued}
                 paused={queuePaused}
                 running={running}
+                onEdit={editQueued}
                 onError={setError}
               />
 

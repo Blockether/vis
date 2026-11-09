@@ -4,7 +4,8 @@ import type { GatewayClient } from '../lib/gateway';
 import { isCommandRequest } from '../lib/gateway';
 import { useCommands } from '../lib/commands';
 import type { QueuedTurn, QueuePausedInfo } from '../lib/types';
-import { Button, CloseButton, TextButton } from './ui';
+import { PencilIcon } from './icons';
+import { Button, CloseButton, IconButton } from './ui';
 
 type QueuedTurnsTrayProps = {
   client: GatewayClient;
@@ -16,6 +17,8 @@ type QueuedTurnsTrayProps = {
    * the Send now buttons stay hidden: an unmarked row waits for the turn end as before.
    */
   running: boolean;
+  /** Take the row out of the queue and put it back in the composer, images included. */
+  onEdit: (item: QueuedTurn) => Promise<void>;
   onError: (message: string) => void;
 };
 
@@ -25,8 +28,8 @@ function canSendNow(item: QueuedTurn): boolean {
 }
 
 /**
- * Gateway-owned queued turns, including edit, remove, Send now (send into the running
- * turn at its next step) and paused-queue recovery.
+ * Gateway-owned queued turns, including edit in the composer, remove, Send now (send into
+ * the running turn at its next step) and paused-queue recovery.
  */
 export function QueuedTurnsTray({
   client,
@@ -34,15 +37,12 @@ export function QueuedTurnsTray({
   queued,
   paused,
   running,
+  onEdit,
   onError,
 }: QueuedTurnsTrayProps) {
   // The gateway is the one writer of the queue. A mutation marks the row busy,
   // but never hides or rewrites it before the daemon confirms its own truth.
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [editing, setEditing] = useState<{
-    turnId: string;
-    text: string;
-  } | null>(null);
   const [resuming, setResuming] = useState(false);
   const [sendingAll, setSendingAll] = useState(false);
   const markable = running ? queued.filter(canSendNow) : [];
@@ -103,8 +103,7 @@ export function QueuedTurnsTray({
       {queued.length > 0 && (
         <div className="mb-1.5 overflow-clip rounded-none border border-dialog-edge bg-panel">
           <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-meta font-bold text-dialog-title-foreground">
-            <span aria-hidden="true">┌</span>
-            Queued · {queued.length}
+            QUEUED · {queued.length}
             {/* Primary brings its own ink pair; the page ink vanishes on the dark band. */}
             {/* User decision: one markable row has its own button, so this one starts at two. */}
             {markable.length > 1 && (
@@ -130,7 +129,6 @@ export function QueuedTurnsTray({
           >
             <div role="list">
               {queued.map((item, index) => {
-                const isEditing = editing?.turnId === item.turnId;
                 const isBusy = busyIds.has(item.turnId);
                 const isMarked = item.deliver === 'next_iteration';
                 const sendNow = running && canSendNow(item);
@@ -143,52 +141,26 @@ export function QueuedTurnsTray({
                     <span className="shrink-0 font-mono text-ui font-bold text-accent-ink">
                       #{index + 1}
                     </span>
-                    {isEditing ? (
-                      <input
-                        // eslint-disable-next-line jsx-a11y/no-autofocus
-                        autoFocus
-                        value={editing.text}
-                        onChange={(event) =>
-                          setEditing({
-                            turnId: item.turnId,
-                            text: event.target.value,
-                          })
-                        }
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault();
-                            const text = editing.text.trim();
-                            if (text && text !== item.request) {
-                              markBusy(item.turnId, true);
-                              void client
-                                .updateQueuedTurn(sid, item.turnId, text)
-                                .catch(report)
-                                .finally(() => markBusy(item.turnId, false));
-                            }
-                            setEditing(null);
-                          } else if (event.key === 'Escape') {
-                            event.preventDefault();
-                            setEditing(null);
-                          }
-                        }}
-                        onBlur={() => setEditing(null)}
-                        className="min-w-0 flex-1 border border-accent bg-input px-1 py-0.5 font-mono text-ui text-dialog-foreground outline-none"
-                        aria-label={`Edit queued message ${index + 1}`}
-                      />
-                    ) : (
-                      <TextButton
-                        disabled={isBusy}
-                        onClick={() => setEditing({ turnId: item.turnId, text: item.request })}
-                        className="flex flex-1 items-center gap-1"
-                        title="Tap to edit"
-                      >
-                        <span className="min-w-0 flex-1 truncate">
-                          {item.preview ||
-                            item.attachments.map((attachment) => attachment.filename).join(', ') ||
-                            '(empty)'}
-                        </span>
-                      </TextButton>
-                    )}
+                    <span className="min-w-0 flex-1 truncate px-1 font-mono text-ui text-dialog-foreground">
+                      {item.preview ||
+                        item.attachments.map((attachment) => attachment.filename).join(', ') ||
+                        '(empty)'}
+                    </span>
+                    {/* User decision: edit in the composer, where a picture can join the text. */}
+                    <IconButton
+                      label={`Edit queued message ${index + 1}`}
+                      title="Edit in the composer"
+                      variant="quiet"
+                      disabled={isBusy}
+                      onClick={() => {
+                        markBusy(item.turnId, true);
+                        void onEdit(item)
+                          .catch(report)
+                          .finally(() => markBusy(item.turnId, false));
+                      }}
+                    >
+                      <PencilIcon className="size-3.5" />
+                    </IconButton>
                     {isMarked && (
                       <span className="shrink-0 font-mono text-meta text-accent-ink">next iter</span>
                     )}
@@ -224,7 +196,6 @@ export function QueuedTurnsTray({
                       className="-mr-2"
                       disabled={isBusy}
                       onClick={() => {
-                        setEditing((current) => (current?.turnId === item.turnId ? null : current));
                         markBusy(item.turnId, true);
                         void client
                           .deleteQueuedTurn(sid, item.turnId)

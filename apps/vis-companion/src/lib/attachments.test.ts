@@ -25,6 +25,7 @@ import {
   attachmentsFromFiles,
   candidateMediaType,
   dragCarriesFiles,
+  pendingFromGateway,
   pickDocumentAttachments,
   rejectionNotice,
 } from './attachments';
@@ -371,5 +372,24 @@ describe('diagnostics attachments', () => {
     const result = await attachmentsFromFiles([new File(['log bytes'], name)]);
     expect(result.rejected).toEqual([]);
     expect(result.attachments[0]).toMatchObject({ filename: name, media_type: media });
+  });
+});
+
+// A queued row pulled back to the composer gets its bytes from the gateway, which
+// may store only the payload. The composer chip shows nothing without a data URL.
+describe('a gateway attachment back in the composer', () => {
+  it('becomes a data URL and keeps its composer marker', () => {
+    const pending = pendingFromGateway({
+      filename: 'shot.png',
+      media_type: 'image/png',
+      base64: 'iVBORw0KGgo=',
+      reference: '[IMAGE #1]',
+    });
+    expect(pending).toMatchObject({
+      base64: 'data:image/png;base64,iVBORw0KGgo=',
+      previewUrl: 'data:image/png;base64,iVBORw0KGgo=',
+      reference: '[IMAGE #1]',
+      size: 8,
+    });
   });
 });

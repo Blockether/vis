@@ -13,6 +13,7 @@ const meta = {
     queued: STORY_QUEUED_TURNS,
     paused: STORY_QUEUE_PAUSED,
     running: true,
+    onEdit: () => Promise.resolve(),
     onError: () => {},
   },
   render: (args) => (

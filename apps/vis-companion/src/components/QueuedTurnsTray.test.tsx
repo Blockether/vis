@@ -28,6 +28,8 @@ function gateway(methods: Partial<GatewayClient> = {}): GatewayClient {
   } as unknown as GatewayClient;
 }
 
+const noEdit = () => Promise.resolve();
+
 const second: QueuedTurn = {
   turnId: 'turn-3',
   request: 'Summarize the failed checks',
@@ -42,6 +44,7 @@ describe('queued turns tray', () => {
       <QueuedTurnsTray
         client={gateway()}
         sid="session-1"
+        onEdit={noEdit}
         queued={[{ ...queued[0], request: preview, preview }]}
         paused={null}
         running={false}
@@ -49,10 +52,8 @@ describe('queued turns tray', () => {
       />,
     );
 
-    expect(screen.getByTitle('Tap to edit')).toHaveTextContent(preview);
+    expect(screen.getByText(preview)).toBeVisible();
     expect(screen.queryByText('manifest.png')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTitle('Tap to edit'));
-    expect(screen.getByLabelText('Edit queued message 1')).toHaveValue(preview);
   });
 
   it('keeps attachment-only and empty messages identifiable', () => {
@@ -60,6 +61,7 @@ describe('queued turns tray', () => {
       <QueuedTurnsTray
         client={gateway()}
         sid="session-1"
+        onEdit={noEdit}
         queued={[
           { ...queued[0], request: '', preview: '' },
           { turnId: 'empty', request: '', preview: '', attachments: [] },
@@ -74,35 +76,29 @@ describe('queued turns tray', () => {
     expect(screen.getByText('(empty)')).toBeInTheDocument();
   });
 
-  it('edits through the gateway without rewriting its row optimistically', async () => {
-    const client = gateway();
+  // User request: a pencil takes the row back to the composer, where a picture can join it.
+  it('hands a row to the composer and keeps it when that fails', async () => {
+    const onEdit = vi.fn().mockRejectedValue(new Error('queue changed first'));
+    const onError = vi.fn();
     render(
       <QueuedTurnsTray
-        client={client}
+        client={gateway()}
         sid="session-1"
         queued={queued}
         paused={null}
         running={false}
-        onError={() => {}}
+        onEdit={onEdit}
+        onError={onError}
       />,
     );
 
-    fireEvent.click(screen.getByTitle('Tap to edit'));
-    const input = screen.getByLabelText('Edit queued message 1');
-    fireEvent.change(input, {
-      target: { value: 'Inspect the signed release manifest' },
-    });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    await waitFor(() =>
-      expect(client.updateQueuedTurn).toHaveBeenCalledWith(
-        'session-1',
-        'turn-2',
-        'Inspect the signed release manifest',
-      ),
-    );
+    const pencil = screen.getByRole('button', { name: 'Edit queued message 1' });
+    fireEvent.click(pencil);
+    expect(onEdit).toHaveBeenCalledWith(queued[0]);
+    expect(pencil).toBeDisabled();
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('queue changed first'));
+    expect(pencil).toBeEnabled();
     expect(screen.getByText('Inspect the release manifest')).toBeVisible();
-    expect(screen.queryByText('manifest.png')).not.toBeInTheDocument();
   });
 
   it('owns removal and paused-queue recovery, including failures', async () => {
@@ -115,6 +111,7 @@ describe('queued turns tray', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={queued}
         paused={{ held: 2, reason: 'turn_failed' }}
         running={false}
@@ -140,6 +137,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={[queued[0], second]}
         paused={null}
         running
@@ -168,6 +166,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={[queued[0], { ...second, deliver: 'next_iteration' }]}
         paused={null}
         running
@@ -190,6 +189,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={[queued[0], second]}
         paused={null}
         running
@@ -207,6 +207,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={[
           { ...queued[0], deliver: 'next_iteration' },
           { ...second, deliver: 'next_iteration' },
@@ -225,6 +226,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={[queued[0], second]}
         paused={null}
         running={false}
@@ -238,6 +240,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={[
           { ...second, turnId: 'cmd-1', request: '/compact', preview: '/compact' },
           { ...second, turnId: 'cmd-2', request: '!git status', preview: '!git status' },
@@ -254,6 +257,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={client}
         sid="session-1"
+        onEdit={noEdit}
         queued={[{ ...second, turnId: 'cmd-1', request: '/compact', preview: '/compact' }, second]}
         paused={null}
         running
@@ -277,6 +281,7 @@ describe('send now', () => {
       <QueuedTurnsTray
         client={gateway()}
         sid="session-1"
+        onEdit={noEdit}
         queued={[queued[0]]}
         paused={null}
         running

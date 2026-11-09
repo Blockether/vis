@@ -2405,12 +2405,8 @@
                                             (p/set-colors! g t/header-active-tab-accent bg-color)
                                             (p/fill-rect! g fbx y fill-iw 1)
                                             (p/styled g [p/ITALIC] (p/put-str! g x y raw)))
-      ;; ── Queued section header — a top-left corner glyph `┌` plus a
-      ;; bold accent label ("Queued · N") on the regular bubble
-      ;; bg. The rail runs down the WHOLE queue block (header,
-      ;; items, and the spacer rows between them) so the section
-      ;; reads as one bracketed group, like a "You" bubble's
-      ;; left edge.
+      ;; ── Queued section header — the bold accent label ("QUEUED · N")
+      ;; on the regular bubble bg. User decision: no left rail.
       (str/starts-with? line queue-hdr-marker)
       (let [raw (subs line 1)]
         ;; User decision: no dark band. The header sits on the row's own
@@ -2418,18 +2414,11 @@
         (p/set-bg! g bg-color)
         (p/fill-rect! g fbx y fill-iw 1)
         (p/set-colors! g t/header-active-tab-accent bg-color)
-        (p/styled g [p/BOLD] (p/put-str! g x y (str "┌ " raw)))
+        (p/styled g [p/BOLD] (p/put-str! g x y raw))
         ;; `Send all now  C-x k` at the right edge while a turn runs, two or more
         ;; rows are markable and one is still unmarked (`queued-progress-entries`).
         (when-let [send-all (:queue-send-all meta)]
-          (draw-queue-send-all! g
-                                send-all
-                                x
-                                y
-                                iw
-                                (+ 2 (long (p/display-width raw)))
-                                bg-color
-                                viewport-top))))))
+          (draw-queue-send-all! g send-all x y iw (p/display-width raw) bg-color viewport-top))))))
 
 (def ^:private queue-row-markers
   #{queue-border-marker queue-item-marker step-digest-marker user-input-hdr-marker
@@ -2454,13 +2443,11 @@
         (long y)]
 
     (cond
-      ;; ── Queued message row — left rail `│`, then the ordinal
-      ;; ("1. ") in the accent gutter, then the single-line
-      ;; preview (already right-clipped with an ellipsis so it
-      ;; never wraps) in dim italic. Everything sits on the
-      ;; regular bubble bg — NO gray band — visually bracketed by
-      ;; the rail. `:queue-gutter` in meta is the ordinal column
-      ;; width (0 for the spacer rows, which paint the rail only).
+      ;; ── Queued message row — the ordinal ("1. ") in the accent
+      ;; gutter, then the single-line preview (already right-clipped
+      ;; with an ellipsis so it never wraps) in dim italic. Everything
+      ;; sits on the regular bubble bg — NO gray band and no left rail.
+      ;; `:queue-gutter` in meta is the ordinal column width.
       (str/starts-with? line queue-item-marker)
       (let [raw
             (subs line 1)
@@ -2502,19 +2489,15 @@
 
         (p/set-bg! g bg-color)
         (p/fill-rect! g fbx y fill-iw 1)
-        ;; Rail glyph at col x, ordinal two cols in (past the
-        ;; rail + its trailing space) — both accent, bold.
+        ;; Ordinal at col x — accent, bold.
         (p/set-colors! g (ink t/header-active-tab-accent) bg-color)
-        (p/styled g
-                  [p/BOLD]
-                  (p/put-str! g x y (if selected? "┃" "│"))
-                  (when (pos? gutter-n) (p/put-str! g (+ (long x) 2) y ord)))
+        (p/styled g [p/BOLD] (when (pos? gutter-n) (p/put-str! g x y ord)))
         ;; Preview — dim italic, after the ordinal.
         (p/set-colors! g (ink t/dialog-hint) bg-color)
         (p/styled g
                   (if selected? [p/ITALIC p/BOLD] [p/ITALIC])
                   (p/paint-styled-line! g
-                                        (+ (long x) 2 gutter-n)
+                                        (+ (long x) gutter-n)
                                         y
                                         body
                                         (ink t/dialog-hint)
@@ -2523,19 +2506,17 @@
                                         (if selected? bg-color t/code-block-bg)))
         (when (not= body msg)
           (p/set-colors! g (ink t/header-active-tab-accent) bg-color)
-          (p/put-str! g (+ (long x) 2 gutter-n (long (p/display-width body))) y suffix))
+          (p/put-str! g (+ (long x) gutter-n (long (p/display-width body))) y suffix))
         ;; `Send it now  C-x N` ends the row while a turn runs. The preview
         ;; already left room for it.
         (when-let [send (:queue-send meta)]
           (draw-queue-send-button! g send x y iw bg-color viewport-top)))
-      ;; ── Queue bottom border — a square corner `└` at the rail
-      ;; column, then a horizontal rule filling the rest of the
-      ;; width. Caps the left rail and separates the queued items
-      ;; from the edit hint below.
+      ;; ── Queue bottom border — a horizontal rule over the whole
+      ;; width. It separates the queued items from the edit hint below.
       (str/starts-with? line queue-border-marker)
       (do (p/set-colors! g t/header-active-tab-accent bg-color)
           (p/fill-rect! g fbx y fill-iw 1)
-          (p/put-str! g x y (str "└" (repeat-str "─" (max 0 (dec (long iw)))))))
+          (p/put-str! g x y (repeat-str "─" (max 0 (long iw)))))
       ;; A step digest stays on transcript paper; only its state colors it.
       (str/starts-with? line step-digest-marker)
       (let [raw
@@ -10799,16 +10780,12 @@
         (:session-id send-opts)]
 
     (when (seq queued)
-      (let [;; Every queue row carries a leading rail glyph `│` (painted by
-            ;; the marker painters) so the whole block reads as ONE bracketed
-            ;; group — the same left-bar affordance a "You" bubble uses.
-            ;;
-            ;; Header row: "Queued · N" in bold accent on the row's own paper. While a turn
+      (let [;; Header row: "QUEUED · N" in bold accent on the row's own paper. While a turn
             ;; runs, two or more rows are markable and one is still unmarked, the painter adds
             ;; `Send all now  C-x k` at the right edge as the `:queue-send-all-now` hit region.
             hdr-line
             (str queue-hdr-marker
-                 "Queued · "
+                 "QUEUED · "
                  (count queued)
                  (when paused-info
                    (if (:is-breaker-open paused-info) " · provider unhealthy" " · paused")))
@@ -10826,10 +10803,6 @@
               {:queue-send-all {:session-id session-id
                                 :label queue-send-all-label
                                 :chord (keymap/label-for :queue-send-all-now)}})
-
-            ;; Rail + its trailing space eat 2 cols before any content.
-            rail-w
-            2
 
             ;; Ordinals count in SEND ORDER, top to bottom: #1 is the item that
             ;; fires NEXT (oldest, first in the vec, rendered at the top), then
@@ -10876,7 +10849,6 @@
                     avail
                     (max 1
                          (- (long content-w)
-                            (long rail-w)
                             (long gutter-n)
                             (long (count (or suffix "")))
                             (long button-w)))
@@ -10915,8 +10887,7 @@
             item-lines
             (vec (map-indexed item-line queued))
 
-            ;; Bottom border closes the block and caps the left rail, sitting
-            ;; between the queued items and the edit hint.
+            ;; Bottom border closes the block, between the queued items and the edit hint.
             border
             {:line queue-border-marker :meta nil}
 
