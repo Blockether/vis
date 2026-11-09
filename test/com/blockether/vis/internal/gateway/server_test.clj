@@ -2843,47 +2843,50 @@
               ;; A turn running in a SIBLING process is exactly the case a
               ;; reconnecting client cannot resolve from its own stream; the registry
               ;; mirrors it (`ingest-mirrored-event!`), so the ready frame can state it.
-              (state/append-event! sid-live "test.seed" {:n 1})
-              (state/ingest-mirrored-event!
-                sid-live
-                true
-                {"type" "turn.started" "turn_id" "t-live" "session_id" sid-live})
-              (let [body
-                    (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil)
+              (try
+                (state/append-event! sid-live "test.seed" {:n 1})
+                (state/ingest-mirrored-event!
+                  sid-live
+                  true
+                  {"type" "turn.started" "turn_id" "t-live" "session_id" sid-live})
+                (let [body
+                      (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil)
 
-                    fut
-                    (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+                      fut
+                      (future (try (write-body body {} baos) (catch Throwable _ nil)))]
 
-                (expect (wait-until #(= 2
-                                        (count (re-seq #"\"type\":\"subscription\.ready\""
-                                                       (String. (.toByteArray baos) "UTF-8"))))))
-                (future-cancel fut)
-                (let [s
-                      (String. (.toByteArray baos) "UTF-8")
+                  (expect (wait-until #(= 2
+                                          (count (re-seq #"\"type\":\"subscription\.ready\""
+                                                         (String. (.toByteArray baos) "UTF-8"))))))
+                  (future-cancel fut)
+                  (let [s
+                        (String. (.toByteArray baos) "UTF-8")
 
-                      ;; Keyed by the session each frame is ABOUT. Matching the whole
-                      ;; body would pass even with the two verdicts swapped, since one
-                      ;; `true` and one `false` are on the wire either way.
-                      ready
-                      (into {}
-                            (keep (fn [line]
-                                    (when (re-find #"subscription\.ready" line)
-                                      (when-let [sid (second (re-find
-                                                               #"\"session_id\"\s*:\s*\"([^\"]+)\""
-                                                               line))]
-                                        [sid line]))))
-                            (re-seq #"data:.*" s))]
+                        ;; Keyed by the session each frame is ABOUT. Matching the whole
+                        ;; body would pass even with the two verdicts swapped, since one
+                        ;; `true` and one `false` are on the wire either way.
+                        ready
+                        (into {}
+                              (keep (fn [line]
+                                      (when (re-find #"subscription\.ready" line)
+                                        (when-let [sid (second
+                                                         (re-find
+                                                           #"\"session_id\"\s*:\s*\"([^\"]+)\""
+                                                           line))]
+                                          [sid line]))))
+                              (re-seq #"data:.*" s))]
 
-                  (expect (= #{sid-live sid-idle} (set (keys ready))))
-                  ;; the live session's frame names the turn the daemon holds
-                  (expect (re-find #"\"current_turn_id\"\s*:\s*\"t-live\"" (get ready sid-live)))
-                  (expect (re-find #"\"is_live\"\s*:\s*true" (get ready sid-live)))
-                  ;; the idle session's frame is an explicit negative, not a silence
-                  ;; Without this a client cannot distinguish "no turn" from "old
-                  ;; daemon that never shipped the field" — and must probe blindly.
-                  (expect (re-find #"\"is_live\"\s*:\s*false" (get ready sid-idle)))
-                  (expect (nil? (re-find #"\"current_turn_id\"\s*:\s*\""
-                                         (get ready sid-idle)))))))))))))
+                    (expect (= #{sid-live sid-idle} (set (keys ready))))
+                    ;; the live session's frame names the turn the daemon holds
+                    (expect (re-find #"\"current_turn_id\"\s*:\s*\"t-live\"" (get ready sid-live)))
+                    (expect (re-find #"\"is_live\"\s*:\s*true" (get ready sid-live)))
+                    ;; the idle session's frame is an explicit negative, not a silence
+                    ;; Without this a client cannot distinguish "no turn" from "old
+                    ;; daemon that never shipped the field" — and must probe blindly.
+                    (expect (re-find #"\"is_live\"\s*:\s*false" (get ready sid-idle)))
+                    (expect (nil? (re-find #"\"current_turn_id\"\s*:\s*\"" (get ready sid-idle))))))
+                ;; A mirrored turn left in the registry counts as running for later tests.
+                (finally (swap! @#'state/registry dissoc sid-live))))))))))
 
 ;; Regression, issue reported in session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25:
 ;; a phone joining iteration 420 learned that position only after replaying the
@@ -2912,40 +2915,44 @@
                   baos
                   (java.io.ByteArrayOutputStream.)]
 
-              (state/append-event! sid "test.seed" {:n 1})
-              (state/append-event! sid "iteration.completed" {:turn-id "t-old" :iteration 900})
-              (state/ingest-mirrored-event! sid
-                                            true
-                                            {"type" "turn.started"
-                                             "turn_id" "t-live"
-                                             "request" "keep working"
-                                             "session_id" sid})
-              (state/ingest-mirrored-event!
-                sid
-                true
-                {"type" "iteration.completed" "turn_id" "t-live" "iteration" 420 "session_id" sid})
-              (let [body
-                    (multi-sse-body [[sid 0]] false nil)
+              (try (state/append-event! sid "test.seed" {:n 1})
+                   (state/append-event! sid "iteration.completed" {:turn-id "t-old" :iteration 900})
+                   (state/ingest-mirrored-event! sid
+                                                 true
+                                                 {"type" "turn.started"
+                                                  "turn_id" "t-live"
+                                                  "request" "keep working"
+                                                  "session_id" sid})
+                   (state/ingest-mirrored-event! sid
+                                                 true
+                                                 {"type" "iteration.completed"
+                                                  "turn_id" "t-live"
+                                                  "iteration" 420
+                                                  "session_id" sid})
+                   (let [body
+                         (multi-sse-body [[sid 0]] false nil)
 
-                    fut
-                    (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+                         fut
+                         (future (try (write-body body {} baos) (catch Throwable _ nil)))]
 
-                (expect (wait-until #(re-find #"iteration.completed"
-                                              (String. (.toByteArray baos) "UTF-8"))))
-                (future-cancel fut)
-                (let [wire
-                      (String. (.toByteArray baos) "UTF-8")
+                     (expect (wait-until #(re-find #"iteration.completed"
+                                                   (String. (.toByteArray baos) "UTF-8"))))
+                     (future-cancel fut)
+                     (let [wire
+                           (String. (.toByteArray baos) "UTF-8")
 
-                      ready-at
-                      (.indexOf wire "subscription.ready")
+                           ready-at
+                           (.indexOf wire "subscription.ready")
 
-                      replay-at
-                      (.indexOf wire "turn.started")]
+                           replay-at
+                           (.indexOf wire "turn.started")]
 
-                  (expect (<= 0 ready-at))
-                  (expect (< ready-at replay-at))
-                  (expect (re-find #"\"latest_iteration\"\s*:\s*420"
-                                   (subs wire ready-at replay-at))))))))))))
+                       (expect (<= 0 ready-at))
+                       (expect (< ready-at replay-at))
+                       (expect (re-find #"\"latest_iteration\"\s*:\s*420"
+                                        (subs wire ready-at replay-at)))))
+                   ;; A mirrored turn left in the registry counts as running for later tests.
+                   (finally (swap! @#'state/registry dissoc sid))))))))))
 
 ;; ── Resource rid rides the QUERY STRING, not a path segment (issue #14) ──
 ;; A resource id can embed an absolute path — an nREPL id is `nrepl:/Users/…/ws`.

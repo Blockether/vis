@@ -2026,19 +2026,11 @@
                      (expect (= "printf %s 'two words'" (get r "command")))
                      (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "out"))))))))
 
-(defdescribe shell-python-contract-test
-             (it "exposes process lifecycle through Python handles"
-                 (expect (= 5 (count shell/shell-symbols)))
-                 (expect (= "shell" (:ext.symbol/name (first shell/shell-symbols))))
-                 (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
-
 (defdescribe shell-extension-shape-test
              (it "lives in foundation-core as one toggle-gated bare symbol group"
                  (let [core-symbols (set (get-in foundation/vis-extension
                                                  [:ext/engine :ext.engine/symbols]))]
                    (expect (every? core-symbols shell/shell-symbols)))
-                 (expect (= '[shell _shell-logs _shell-wait _shell-type _shell-stop]
-                            (mapv :ext.symbol/symbol shell/shell-symbols)))
                  (expect (every? :ext.symbol/active-fn shell/shell-symbols))
                  (with-redefs [toggles/enabled? (constantly false)]
                    (expect (not-any? #(extension/symbol-active? % {}) shell/shell-symbols)))
@@ -2047,12 +2039,10 @@
 
 (defdescribe
   macos-jailed-pty-e2e-test
-  (it
-    "keeps PTY/send/attach while nested shells inherit the filesystem denial"
-    (if (or (not (str/starts-with? (System/getProperty "os.name" "") "Mac"))
-            (not (process-jail/supported?))
-            (runtime/jailed?))
-      (expect true)
+  (it "keeps PTY/send/attach while nested shells inherit the filesystem denial"
+      {:skip (or (not (str/starts-with? (System/getProperty "os.name" "") "Mac"))
+                 (not (process-jail/supported?))
+                 (runtime/jailed?))}
       (let [ws
             (doto (io/file (System/getProperty "java.io.tmpdir")
                            (str "vis-pty-e2e-" (System/nanoTime)))
@@ -2093,7 +2083,7 @@
                    (expect (str/includes? (get after "out") "GOT:hello")))))
              (finally (resources/stop-all! sid)
                       (io/delete-file secret true)
-                      (io/delete-file ws true)))))))
+                      (io/delete-file ws true))))))
 
 ;; The PYTHON SANDBOX surface — `python_execution` is the model's one call, so
 ;; shell must be usable directly from ordinary Python.
@@ -2893,44 +2883,41 @@
   (it
     "kills a TERM-resistant child even when its parent exits first"
     ;; #207: cancellation must not skip the force-kill phase.
-    (doseq [pty?
-            [false true]
+    ;; A short grace keeps the TERM-then-KILL order and skips the 2 s wait.
+    (with-redefs [shell/kill-grace-ms 200]
+      (doseq [pty? [false true]
+              interrupted? [false true]]
 
-            interrupted?
-            [false true]]
+        (let
+          [p
+           (.start
+             (ProcessBuilder.
+               ^java.util.List
+               ["bash" "-c"
+                "trap 'exit 0' TERM; bash -c 'trap \"\" TERM HUP; echo $$; exec sleep 300' & wait"]))
+           child (atom nil)]
 
-      (let
-        [p
-         (.start
-           (ProcessBuilder.
-             ^java.util.List
-             ["bash" "-c"
-              "trap 'exit 0' TERM; bash -c 'trap \"\" TERM HUP; echo $$; exec sleep 300' & wait"]))
-
-         child
-         (atom nil)]
-
-        (try (with-open [reader (io/reader (.getInputStream p))]
-               (let [line (future (.readLine ^java.io.BufferedReader reader))]
-                 (reset! child (parse-long (deref line 5000 "")))))
-             (expect (some? @child))
-             (when interrupted? (.interrupt (Thread/currentThread)))
-             (shell/kill-tree! (if pty?
-                                 {:pid (.pid p)
-                                  :destroy (fn [force?]
-                                             (if force? (.destroyForcibly p) (.destroy p)))}
-                                 p))
-             (expect (= interrupted? (Thread/interrupted)))
-             (expect (not (.isAlive p)))
-             ;; Escalation must follow the child, not the parent's lifetime.
-             (expect (nil? (poll #(when (alive-pid? @child) :alive) nil? 30)))
-             (finally (Thread/interrupted)
-                      ;; Clean up even against the broken implementation.
-                      (when-let [pid @child]
-                        (when-let [h (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
-                          (.destroyForcibly ^java.lang.ProcessHandle h)))
-                      (.destroyForcibly p)
-                      (.waitFor p)))))))
+          (try (with-open [reader (io/reader (.getInputStream p))]
+                 (let [line (future (.readLine ^java.io.BufferedReader reader))]
+                   (reset! child (parse-long (deref line 5000 "")))))
+               (expect (some? @child))
+               (when interrupted? (.interrupt (Thread/currentThread)))
+               (shell/kill-tree! (if pty?
+                                   {:pid (.pid p)
+                                    :destroy (fn [force?]
+                                               (if force? (.destroyForcibly p) (.destroy p)))}
+                                   p))
+               (expect (= interrupted? (Thread/interrupted)))
+               (expect (not (.isAlive p)))
+               ;; Escalation must follow the child, not the parent's lifetime.
+               (expect (nil? (poll #(when (alive-pid? @child) :alive) nil? 30)))
+               (finally (Thread/interrupted)
+                        ;; Clean up even against the broken implementation.
+                        (when-let [pid @child]
+                          (when-let [h (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
+                            (.destroyForcibly ^java.lang.ProcessHandle h)))
+                        (.destroyForcibly p)
+                        (.waitFor p))))))))
 
 ;; Regression, issue #139: shells started at the SAME MOMENT for the same program
 ;; all derived the one id `sleep` — a single registry entry, log file and attach

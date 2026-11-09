@@ -837,7 +837,11 @@
 
 (defonce ^:private team-gens (atom {}))
 
-(def ^:private ^:const signal-tick-ms "The longest park of a wait without a signal." 5000)
+(def ^:private signal-tick-ms "The longest park of a wait without a signal." 5000)
+
+(def ^:private answer-grace-ms
+  "How long a wait keeps an ended child open for its answer or for the end of the team."
+  5000)
 
 (defn- signal-gen [k] (get @team-gens k 0))
 
@@ -1201,7 +1205,7 @@
                       (when-let [t (get @ended (:session_id rec))]
                         (or (not= "completed" (:status rec))
                             (:answer rec)
-                            (> (long now) (+ (long t) 5000)))))
+                            (> (long now) (+ (long t) (long answer-grace-ms))))))
                     recs)
               (some (fn [row]
                       (let [sid
@@ -1241,7 +1245,7 @@
             (vreset! last-rows rows)
             (when (and done? (nil? @done-at)) (vreset! done-at now))
             (if (or (some #(contains? #{"asking" "held"} (:status %)) recs)
-                    (and done? (or answered? (> now (+ (long @done-at) 5000))))
+                    (and done? (or answered? (> now (+ (long @done-at) (long answer-grace-ms)))))
                     (event? now rows recs))
               (reduced recs)
               recs)))
@@ -1258,10 +1262,14 @@
             (cond (reduced? v) @v
                   (>= (util/now-ms) deadline) v
                   :else
-                  ;; A grace of 5 s for an answer or an end needs a finer tick than a signal gives.
-                  (do
-                    (park! [team] gens (if (or @done-at (seq @ended)) 1000 signal-tick-ms) deadline)
-                    (recur)))))
+                  ;; The answer grace needs a finer tick than a signal gives.
+                  (do (park! [team]
+                             gens
+                             (if (or @done-at (seq @ended))
+                               (min 1000 (long answer-grace-ms))
+                               signal-tick-ms)
+                             deadline)
+                      (recur)))))
 
         now
         (util/now-ms)

@@ -711,6 +711,10 @@
          ::cleanup (::cleanup policy))
        (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
+(def ^:private kill-grace-ms
+  "How long `kill-tree!` waits after TERM before KILL, and after KILL for the exit."
+  2000)
+
 (defn kill-tree!
   "Destroy an OWNED process and its reachable descendants: TERM, then KILL after
    a 2s grace, then wait up to 2s for exit and reap the owned Process. Used by
@@ -736,7 +740,7 @@
                                     (.isAlive d))
                                   descendants)))
                await-exit! (fn []
-                             (let [deadline (+ (System/nanoTime) 2000000000)]
+                             (let [deadline (+ (System/nanoTime) (* (long kill-grace-ms) 1000000))]
                                (loop []
 
                                  (when (and (alive?) (< (System/nanoTime) deadline))

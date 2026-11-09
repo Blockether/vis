@@ -20,11 +20,16 @@
             [com.blockether.vis.internal.sandbox.jail :as pj]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [around-each defdescribe describe expect it]]))
 
 (wiring/install!)
 
 (h/use-mem-store! {"subagents" true})
+
+(def ^:private fast-waits
+  "Short team waits for a describe. In production the signal tick and the answer grace are 5 s
+   each, and a test that reaches one of them waits that long."
+  (around-each [f] (with-redefs-fn {#'agents/signal-tick-ms 200 #'agents/answer-grace-ms 300} f)))
 
 (defdescribe
   schema-owned-agent-bounds-test
@@ -413,6 +418,7 @@
 ;; parent could not add iterations, so the only option was a new child without the context.
 (defdescribe
   subagent-budget-test
+  {:context [fast-waits]}
   (it
     "warns the child near the end of its budget"
     (let [db
@@ -1755,6 +1761,7 @@
 ;; Child id arguments: a task id names a child in any letter case, as the session id does.
 (defdescribe
   child-id-arguments-take-task-ids-test
+  {:context [fast-waits]}
   (it
     "names a child by a1, A1 or its session id in wait and cancel"
     (let [db
@@ -1821,6 +1828,7 @@
 ;; and iteration counts. A wait now returns at the first event with a progress digest.
 (defdescribe
   event-wait-test
+  {:context [fast-waits]}
   (let [now
         #(java.util.Date.)
 
@@ -1884,7 +1892,7 @@
                     (System/currentTimeMillis)
 
                     ender
-                    (future (Thread/sleep 1500)
+                    (future (Thread/sleep 300)
                             (agents/finish! db done "completed")
                             (swap! live disj done))
 
@@ -1944,7 +1952,7 @@
                             (when (= 7 id) {:entry_id 7 :content "tokenize drops tabs"}))]
 
               (let [publisher
-                    (future (Thread/sleep 1500)
+                    (future (Thread/sleep 300)
                             (swap! steps conj
                               {:position 1 :council-publications [{:entry_id 7}] :created-at (now)})
                             (agents/claim-iteration! {:db-info db :session-id busy}))
@@ -2415,6 +2423,7 @@
 ;; the person. The child keeps waiting for the reply of the next leader turn.
 (defdescribe
   child-question-waits-for-person-test
+  {:context [fast-waits]}
   (it
     "keeps the question open while the parent waits for the person"
     (let [db
@@ -2457,7 +2466,7 @@
               ;; The leader turn ends suspended: no turn runs, but the person decides.
               (reset! suspended? true)
               (reset! live #{})
-              (expect (= ::waiting (deref asked 2500 ::waiting))
+              (expect (= ::waiting (deref asked 1000 ::waiting))
                       "The child waits while the parent asks the person")
               ;; The person answers; the next leader turn replies to the child.
               (reset! suspended? false)
@@ -2468,7 +2477,7 @@
               (asking-record env child)
               ;; The person cancels the next leader turn instead of an answer.
               (reset! live #{})
-              ;; A stopped parent sends no signal; the 5 s tick of the question sees it.
+              ;; A stopped parent sends no signal; the tick of the question sees it.
               (expect (nil? (deref asked 8000 ::timeout))
                       "A parent that neither runs nor waits for the person ends the wait"))
             (reset! live #{leader})
