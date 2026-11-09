@@ -1413,13 +1413,12 @@
           (expect (= :token @cancelled))
           (expect (= true (deref gateway-started 1000 :timeout)))
           (expect (true? (:cancelling? @state/app-db)))
-          (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]] @notified))
+          (expect (nil? @notified))
           (finally (deliver release-gateway true)
                    ;; Release CI caught this callback notifying the NEXT test after
                    ;; with-redefs had ended. Join the exact task; cancel I/O is not FIFO.
                    (await-enqueue! @cancel-task)))
-        (expect (= ["Cancellation accepted. You can send again." [:level :info :ttl-ms 2500]]
-                   @notified))
+        (expect (nil? @notified))
         (expect (false? (:cancelling? @state/app-db)))))))
 
 ;; Regression, issue: session e8c9dbc9-388d-43a4-8264-9dd5adec4449 - the human pressed
@@ -1429,33 +1428,44 @@
 ;; no way to tell a swallowed cancel from an idle session.
 (defdescribe
   cancel-detached-turn-test
-  (it "cancels the turn the DAEMON is running when this tab paints none"
-      (let [cancelled
-            (promise)
+  (it
+    "cancels the turn the DAEMON is running when this tab paints none"
+    (let [cancelled
+          (promise)
 
-            notified
-            (promise)]
+          notified
+          (promise)
 
-        (with-redefs [vis/gateway-list-turns
-                      (fn [sid]
-                        (expect (= "s1" sid))
-                        [{"turn_id" "gw-old" "status" "completed"}
-                         {"turn_id" "gw-live" "status" "running"}])
+          cancel-task
+          (atom nil)
 
-                      vis/gateway-cancel-turn!
-                      (fn [sid tid]
-                        (deliver cancelled [sid tid])
-                        {:status "cancelling"})
+          submit-cancel
+          @#'state/gateway-cancel-io!]
 
-                      vis/notify!
-                      (fn [text & kvs]
-                        (deliver notified [text kvs]))]
+      (with-redefs [vis/gateway-list-turns
+                    (fn [sid]
+                      (expect (= "s1" sid))
+                      [{"turn_id" "gw-old" "status" "completed"}
+                       {"turn_id" "gw-live" "status" "running"}])
 
-          (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
-          (state/dispatch [:cancel-turn])
-          (expect (= ["s1" "gw-live"] (deref cancelled 1000 :timeout)))
-          (expect (= ["Cancelling the turn this session is running..." [:level :info :ttl-ms 2500]]
-                     (deref notified 1000 :timeout))))))
+                    state/gateway-cancel-io!
+                    (fn [f]
+                      (reset! cancel-task (submit-cancel f)))
+
+                    vis/gateway-cancel-turn!
+                    (fn [sid tid]
+                      (deliver cancelled [sid tid])
+                      {:status "cancelling"})
+
+                    vis/notify!
+                    (fn [text & kvs]
+                      (deliver notified [text kvs]))]
+
+        (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
+        (state/dispatch [:cancel-turn])
+        (expect (= ["s1" "gw-live"] (deref cancelled 1000 :timeout)))
+        (await-enqueue! @cancel-task)
+        (expect (not (realized? notified))))))
   (it "answers an idle session out loud instead of swallowing the cancel"
       (let [cancelled
             (atom nil)
@@ -1608,85 +1618,87 @@
                      (state/dispatch [:cancel-turn])
                      (expect (= ["s1" "gw-turn-1"] (deref cancelled-gateway 1000 :timeout)))))))
 
-(defdescribe
-  cancel-auto-fires-on-late-bind-test
-  ;; REGRESSION: Esc can beat the submit POST, receive `no-running-turn`, and
-  ;; clear locally. An immediate identical resend then races the OLD POST's
-  ;; delayed turn.started. Correlate starts by client id so the old ghost is
-  ;; cancelled, never rebound as the new visible turn.
-  (it
-    "quick cancel plus identical resend cancels only the delayed old start"
-    (let [cancelled-gateway
-          (promise)
+(defdescribe cancel-auto-fires-on-late-bind-test
+             ;; REGRESSION: Esc can beat the submit POST, receive `no-running-turn`, and
+             ;; clear locally. An immediate identical resend then races the OLD POST's
+             ;; delayed turn.started. Correlate starts by client id so the old ghost is
+             ;; cancelled, never rebound as the new visible turn.
+             (it
+               "quick cancel plus identical resend cancels only the delayed old start"
+               (let [cancelled-gateway
+                     (promise)
 
-          terminal-cleared
-          (promise)
+                     cancel-task
+                     (atom nil)
 
-          send-message-fn
-          (:fn (get @@#'state/event-registry :send-message))]
+                     submit-cancel
+                     @#'state/gateway-cancel-io!
 
-      (with-redefs [vis/cancel!
-                    (fn [_]
-                      nil)
+                     send-message-fn
+                     (:fn (get @@#'state/event-registry :send-message))]
 
-                    vis/notify!
-                    (fn [text & _]
-                      (when (= "Turn is no longer running; cleared local cancelling state." text)
-                        (deliver terminal-cleared true)))
+                 (with-redefs [vis/cancel!
+                               (fn [_]
+                                 nil)
 
-                    vis/gateway-cancel-current-turn!
-                    (fn [_ _]
-                      {:error :no-running-turn})
+                               state/gateway-cancel-io!
+                               (fn [f]
+                                 (reset! cancel-task (submit-cancel f)))
 
-                    vis/gateway-cancel-turn!
-                    (fn [sid tid]
-                      (deliver cancelled-gateway [sid tid])
-                      {:status "cancelling"})]
+                               vis/gateway-cancel-current-turn!
+                               (fn [_ _]
+                                 {:error :no-running-turn})
 
-        (reset! state/app-db {:session {:id "s1"}
-                              :active-tab-id "s1"
-                              :render-version 0
-                              :workspace {"root" "."}
-                              :messages []
-                              :input-history []
-                              :pastes {}
-                              :paste-counter 0
-                              :loading? true
-                              :cancel-token :old-token
-                              :cancelling? false
-                              :live-turn-client-id "cid-old"
-                              :gateway-turn-id nil
-                              :turn-start-ms 10})
-        ;; Esc won before the old POST registered. The terminal-looking gateway
-        ;; response clears the visible turn, but its exact identity survives.
-        (state/dispatch [:cancel-turn])
-        (expect (= true (deref terminal-cleared 1000 :timeout)))
-        (expect (false? (:loading? @state/app-db)))
-        (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
-        ;; The user immediately sends the exact same text again. The normal send
-        ;; path must preserve the old marker while assigning a fresh identity.
-        (let [{resent-db :db}
-              (send-message-fn @state/app-db [:send-message "same text" nil])
+                               vis/gateway-cancel-turn!
+                               (fn [sid tid]
+                                 (deliver cancelled-gateway [sid tid])
+                                 {:status "cancelling"})]
 
-              new-client-id
-              (:live-turn-client-id resent-db)]
+                   (reset! state/app-db {:session {:id "s1"}
+                                         :active-tab-id "s1"
+                                         :render-version 0
+                                         :workspace {"root" "."}
+                                         :messages []
+                                         :input-history []
+                                         :pastes {}
+                                         :paste-counter 0
+                                         :loading? true
+                                         :cancel-token :old-token
+                                         :cancelling? false
+                                         :live-turn-client-id "cid-old"
+                                         :gateway-turn-id nil
+                                         :turn-start-ms 10})
+                   ;; Esc won before the old POST registered. The terminal-looking gateway
+                   ;; response clears the visible turn, but its exact identity survives.
+                   (state/dispatch [:cancel-turn])
+                   (await-enqueue! @cancel-task)
+                   (expect (false? (:loading? @state/app-db)))
+                   (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
+                   ;; The user immediately sends the exact same text again. The normal send
+                   ;; path must preserve the old marker while assigning a fresh identity.
+                   (let [{resent-db :db}
+                         (send-message-fn @state/app-db [:send-message "same text" nil])
 
-          (reset! state/app-db resent-db)
-          (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
-          (expect (not= "cid-old" new-client-id))
-          ;; The old POST starts late. Cancel that gateway turn, but do not bind
-          ;; its id or clock onto the new optimistic request.
-          (state/dispatch [:sync-turn-clock nil
-                           {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
-          (expect (= ["s1" "gw-old"] (deref cancelled-gateway 1000 :timeout)))
-          (expect (nil? (:gateway-turn-id @state/app-db)))
-          (expect (true? (:loading? @state/app-db)))
-          (expect (nil? (:cancel-awaiting-client-id @state/app-db)))
-          ;; Once the queued resend starts, only its matching id may bind.
-          (state/dispatch [:sync-turn-clock nil
-                           {:turn-id "gw-new" :client-id new-client-id :started-at-ms 456}])
-          (expect (= "gw-new" (:gateway-turn-id @state/app-db)))
-          (expect (= 456 (:turn-start-ms @state/app-db))))))))
+                         new-client-id
+                         (:live-turn-client-id resent-db)]
+
+                     (reset! state/app-db resent-db)
+                     (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
+                     (expect (not= "cid-old" new-client-id))
+                     ;; The old POST starts late. Cancel that gateway turn, but do not bind
+                     ;; its id or clock onto the new optimistic request.
+                     (state/dispatch [:sync-turn-clock nil
+                                      {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
+                     (expect (= ["s1" "gw-old"] (deref cancelled-gateway 1000 :timeout)))
+                     (expect (nil? (:gateway-turn-id @state/app-db)))
+                     (expect (true? (:loading? @state/app-db)))
+                     (expect (nil? (:cancel-awaiting-client-id @state/app-db)))
+                     ;; Once the queued resend starts, only its matching id may bind.
+                     (state/dispatch
+                       [:sync-turn-clock nil
+                        {:turn-id "gw-new" :client-id new-client-id :started-at-ms 456}])
+                     (expect (= "gw-new" (:gateway-turn-id @state/app-db)))
+                     (expect (= 456 (:turn-start-ms @state/app-db))))))))
 
 (defdescribe
   cancel-turn-stale-gateway-test
@@ -1701,8 +1713,11 @@
           notified
           (atom nil)
 
-          terminal-cleared
-          (promise)]
+          cancel-task
+          (atom nil)
+
+          submit-cancel
+          @#'state/gateway-cancel-io!]
 
       (with-redefs [vis/cancel!
                     (fn [token]
@@ -1713,11 +1728,13 @@
                       (reset! cancelled-gateway [sid tid])
                       {:error :not-running :status "interrupted"})
 
+                    state/gateway-cancel-io!
+                    (fn [f]
+                      (reset! cancel-task (submit-cancel f)))
+
                     vis/notify!
                     (fn [text & kvs]
-                      (reset! notified [text kvs])
-                      (when (= "Turn is no longer running; cleared local cancelling state." text)
-                        (deliver terminal-cleared true)))]
+                      (reset! notified [text kvs]))]
 
         (reset! state/app-db {:session {:id "s1"}
                               :loading? true
@@ -1728,7 +1745,7 @@
                               :turn-start-ms 10
                               :render-version 0})
         (state/dispatch [:cancel-turn])
-        (expect (= true (deref terminal-cleared 1000 :timeout)))
+        (await-enqueue! @cancel-task)
         (let [db @state/app-db]
           (expect (= :token @cancelled))
           (expect (= ["s1" "turn-1"] @cancelled-gateway))
@@ -1738,9 +1755,7 @@
           (expect (nil? (:gateway-turn-id db)))
           (expect (nil? (:progress db)))
           (expect (nil? (:turn-start-ms db)))
-          (expect (= ["Turn is no longer running; cleared local cancelling state."
-                      [:level :info :ttl-ms 2500]]
-                     @notified)))))))
+          (expect (nil? @notified)))))))
 
 (defdescribe
   cancel-gateway-confirmation-test
@@ -1823,9 +1838,7 @@
                  (:fx local-result)))
       (expect (false? (:loading? (:db ack-result))))
       (expect (false? (:cancelling? (:db ack-result))))
-      (expect (= [[:notify "Cancellation accepted. You can send again." :info 2500]
-                  [:dispatch [:restore-pending-to-input :main]]]
-                 (:fx ack-result))))))
+      (expect (= [[:dispatch [:restore-pending-to-input :main]]] (:fx ack-result))))))
 
 (defdescribe cancel-settles-once-test
              ;; REGRESSION: a cancel settles in two halves — the LOCAL attach worker's

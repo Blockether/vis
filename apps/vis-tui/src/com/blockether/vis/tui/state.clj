@@ -6681,7 +6681,8 @@
   ;; call, no message, nothing — so a human could press cancel for ten minutes and
   ;; never send one request nor hear one word back. A cancel that was ASKED FOR must
   ;; never vanish: when this tab has nothing of its own to stop, ask the gateway what
-  ;; the session is really running, cancel that turn BY ITS OWN ID, and say either way.
+  ;; the session is really running and cancel that turn BY ITS OWN ID. A cancel that
+  ;; stops nothing says so; a cancel that works shows only in the transcript.
   (fn [db _]
     (cond
       ;; A person stops a subagent only through its leader: that stop also stops the children.
@@ -6693,47 +6694,43 @@
                              {:db db
                               :fx [[:notify "Nothing to cancel — no session is open." :info
                                     cancel-notification-ttl-ms]]})
-      :else
-      (let [sid
-            (get-in db [:session :id])
+      :else (let [sid
+                  (get-in db [:session :id])
 
-            tid
-            (:gateway-turn-id db)
+                  tid
+                  (:gateway-turn-id db)
 
-            cancel-client-id
-            (when-not tid (:live-turn-client-id db))
+                  cancel-client-id
+                  (when-not tid (:live-turn-client-id db))
 
-            token
-            (:cancel-token db)
+                  token
+                  (:cancel-token db)
 
-            already-cancelling?
-            (:cancelling? db)
+                  already-cancelling?
+                  (:cancelling? db)
 
-            cancel-key
-            (when-not already-cancelling? (System/currentTimeMillis))
+                  cancel-key
+                  (when-not already-cancelling? (System/currentTimeMillis))
 
-            db'
-            (if already-cancelling?
-              (cond-> (clear-active-turn-state (park-live-trace db))
-                cancel-client-id
-                (assoc :cancel-awaiting-client-id cancel-client-id))
-              (cond-> (assoc db
-                        :cancelling? true
-                        :cancelling-at-ms cancel-key)
-                cancel-client-id
-                (assoc :cancel-awaiting-client-id cancel-client-id)))]
+                  db'
+                  (if already-cancelling?
+                    (cond-> (clear-active-turn-state (park-live-trace db))
+                      cancel-client-id
+                      (assoc :cancel-awaiting-client-id cancel-client-id))
+                    (cond-> (assoc db
+                              :cancelling? true
+                              :cancelling-at-ms cancel-key)
+                      cancel-client-id
+                      (assoc :cancel-awaiting-client-id cancel-client-id)))]
 
-        ;; Esc must never wait for gateway discovery, HTTP, or the daemon's durable
-        ;; cancel stamp. Commit the visible state first, synchronously fire the LOCAL
-        ;; token next, and send the server cancel on its own daemon thread. The old
-        ;; inline HTTP call could block the Lanterna input loop for its full 30s timeout,
-        ;; delaying the local interrupt and making the TUI look disconnected.
-        {:db db'
-         :fx [[:cancel-local-turn token]
-              [:notify
-               (if already-cancelling? "Turn force-cancelled locally." "Cancelling current turn...")
-               (if already-cancelling? :warn :info) cancel-notification-ttl-ms]
-              [:gateway-cancel-active sid tid cancel-key (:live-turn-client-id db)]]}))))
+              ;; Esc must never wait for gateway discovery, HTTP, or the daemon's durable
+              ;; cancel stamp. Commit the visible state first, synchronously fire the LOCAL
+              ;; token next, and send the server cancel on its own daemon thread. The old
+              ;; inline HTTP call could block the Lanterna input loop for its full 30s timeout,
+              ;; delaying the local interrupt and making the TUI look disconnected.
+              {:db db'
+               :fx [[:cancel-local-turn token]
+                    [:gateway-cancel-active sid tid cancel-key (:live-turn-client-id db)]]}))))
 
 (defn- settle-cancelled-turn
   "Settle a cancel confirmed by the daemon ACK (or given up on by the self-heal)
@@ -6795,11 +6792,7 @@
                            (or accepted? terminal?))
                     (let [workspace-id (current-tab-id db)]
                       {:db (settle-cancelled-turn db)
-                       :fx (cond-> [[:notify
-                                     (if terminal?
-                                       "Turn is no longer running; cleared local cancelling state."
-                                       "Cancellation accepted. You can send again.") :info
-                                     cancel-notification-ttl-ms]]
+                       :fx (cond-> []
                              (some :mine? (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})
                     {:db db}))))
@@ -8094,8 +8087,8 @@
   ;; cancel THAT id. Never a blind `cancel-current`: the session is shared and the
   ;; tid-less route would stop whatever another channel is doing (see
   ;; `gateway-cancel-turn-or-current!`). One cheap listing on the cancel lane, never on
-  ;; the Lanterna input thread, and every outcome ends in a notification — an unheard
-  ;; cancel is the defect this exists to close.
+  ;; the Lanterna input thread. A cancel that stops nothing ends in a notification — an
+  ;; unheard cancel is the defect this exists to close.
   (fn [sid]
     (when sid
       (gateway-cancel-io!
@@ -8113,11 +8106,12 @@
                 (cond (= ::unreachable turns)
                       ["Cancel could not reach the gateway - nothing was stopped." :warn]
                       live (do (gateway-cancel-turn-or-current! sid (str (get live "turn_id")) nil)
-                               ["Cancelling the turn this session is running..." :info])
+                               nil)
                       :else ["Nothing is running to cancel." :info])]
 
-            (try (vis/notify! text :level level :ttl-ms cancel-notification-ttl-ms)
-                 (catch Throwable _ nil))))))))
+            (when text
+              (try (vis/notify! text :level level :ttl-ms cancel-notification-ttl-ms)
+                   (catch Throwable _ nil)))))))))
 
 (reg-fx :drain-idle-queue
         ;; Kick a server-side queued backlog into motion for an IDLE session on
