@@ -6064,17 +6064,43 @@
               fx (fn [db source]
                    (:fx (external-fn db [:external-input :append "read me the plan" nil source])))]
 
-          (expect (= [[:dispatch [:send-message "read me the plan" :main]]
-                      [:dispatch [:reset-input]]]
+          (expect (= [[:dispatch [:send-message "read me the plan" :main {:reset-input? true}]]]
                      (fx armed :voice/input)))
           ;; A busy tab queues it, exactly like Enter does.
-          (expect (= [[:dispatch [:enqueue-message "read me the plan" :main]]
-                      [:dispatch [:reset-input]]]
+          (expect (= [[:dispatch [:enqueue-message "read me the plan" :main {:reset-input? true}]]]
                      (fx (assoc armed :loading? true) :voice/input)))
           ;; Text from anything but the microphone still waits for a human Enter, and
           ;; so does every tab that was never armed.
           (expect (nil? (fx armed :agent/hook)))
-          (expect (nil? (fx (assoc armed :voice-conversation? false) :voice/input)))))))
+          (expect (nil? (fx (assoc armed :voice-conversation? false) :voice/input)))))
+    ;; Regression: the voice thread queued the heard words and then cleared the editor in a
+    ;; second event. An Esc between the two made the queue refuse the words, and the clear
+    ;; then deleted them.
+    (it "keeps the heard words when a cancel starts before the queued send lands"
+        (let [{db :db fx :fx} ((ev :external-input)
+                                {:active-tab-id :main
+                                 :tabs [{:id :main :active? true}]
+                                 :session {:id "s1"}
+                                 :input (input/empty-input)
+                                 :loading? true
+                                 :voice-conversation? true
+                                 :render-version 0}
+                                [:external-input :append "read me the plan" nil :voice/input])]
+          (reset! state/app-db (assoc db :cancelling? true))
+          (doseq [[_ event] fx]
+            (state/dispatch event))
+          (expect (= "read me the plan" (input/input->text (:input @state/app-db))))
+          (expect (empty? (:pending-sends @state/app-db)))
+          ;; With no cancel, the queue takes the words and the editor clears.
+          (with-redefs [vis/notify! (fn [& _])
+                        state/gateway-queue-io! (fn [_]
+                                                  nil)]
+
+            (reset! state/app-db db)
+            (doseq [[_ event] fx]
+              (state/dispatch event)))
+          (expect (= "" (input/input->text (:input @state/app-db))))
+          (expect (= ["read me the plan"] (mapv :text (:pending-sends @state/app-db))))))))
 
 (defdescribe
   explicit-attachment-lifecycle-test

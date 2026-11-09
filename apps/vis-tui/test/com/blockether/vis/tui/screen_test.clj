@@ -1543,7 +1543,7 @@
 
 (defdescribe
   submit-input-test
-  (it "dispatches send before reset so paste placeholders can expand"
+  (it "dispatches one send that clears the editor after it reads the pastes"
       (let [events
             (atom [])
 
@@ -1562,7 +1562,8 @@ therapy line 2"
           (submit-input! {:session {:id "c1"} :loading? false :active-tab-id :tab-a} input-state)
           ;; The submitting tab is pinned into the event so a tab
           ;; switch between Enter and the reduce cannot reroute it.
-          (expect (= [[:send-message (str "context " token) :tab-a] [:reset-input]] @events)))))
+          (expect (= [[:send-message (str "context " token) :tab-a {:reset-input? true}]]
+                     @events)))))
   (it "queues Enter on the startup tab before a gateway session exists"
       (let [events
             (atom [])
@@ -1577,7 +1578,8 @@ therapy line 2"
                           :active-tab-id :tab-1
                           :tabs [{:id :tab-1 :build-id "startup"}]}
                          input-state)
-          (expect (= [[:enqueue-message "queued before ready" :tab-1] [:reset-input]] @events))))))
+          (expect (= [[:enqueue-message "queued before ready" :tab-1 {:reset-input? true}]]
+                     @events))))))
 
 ;; User request: a subagent session takes no input in the TUI and the Companion. Its leader
 ;; gives it work.

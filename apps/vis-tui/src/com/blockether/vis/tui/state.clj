@@ -3983,8 +3983,7 @@
                     (assoc :fx
                       [[:dispatch
                         [(if (:loading? db') :enqueue-message :send-message)
-                         (input/input->text (:input db')) active-id]]
-                       [:dispatch [:reset-input]]])))))
+                         (input/input->text (:input db')) active-id {:reset-input? true}]]])))))
 
 (reg-event-db
   :channel-status-set
@@ -5173,6 +5172,14 @@
       nil :attachments
       [])))
 
+(defn- with-input-reset
+  "`fx` plus the editor reset when `opts` has `:reset-input?`. Only the event that
+   takes a submission clears the editor: a refused submission keeps its text."
+  [fx opts]
+  (cond-> (vec fx)
+    (:reset-input? opts)
+    (conj [:dispatch [:reset-input]])))
+
 (defn- enqueue-message-result
   [db workspace-id text & [opts]]
   (let [workspace-id
@@ -5215,9 +5222,12 @@
       ;; cancel, auto-drained/sent it. The submit path keeps the text in the editor
       ;; instead, so the user re-sends it cleanly once the cancel settles.
       (:cancelling? source-db) {:db db}
-      ;; The same keypress, not a second message. SAY so: the caller already cleared
-      ;; the editor, so a silent drop is indistinguishable from a swallowed message.
-      dup? {:db db :fx [[:notify "Already queued — duplicate keypress ignored" :info 1200]]}
+      ;; The same keypress, not a second message. SAY so: the editor clears, so a
+      ;; silent drop is indistinguishable from a swallowed message.
+      dup? {:db db
+            :fx (with-input-reset [[:notify "Already queued — duplicate keypress ignored" :info
+                                    1200]]
+                                  opts)}
       :else
       (let [preview-text
             (input/collapse-paste-placeholders text pastes)
@@ -5275,12 +5285,13 @@
                                        (fn [q]
                                          (conj (vec (or q [])) entry)))
                                (remember-input text))))
-         :fx (cond-> [[:notify
-                       (if session
-                         "Queued — will send after current turn"
-                         "Queued — will send when session is ready") :info 1500]]
-               gw-fx
-               (into gw-fx))}))))
+         :fx (with-input-reset (cond-> [[:notify
+                                         (if session
+                                           "Queued — will send after current turn"
+                                           "Queued — will send when session is ready") :info 1500]]
+                                 gw-fx
+                                 (into gw-fx))
+                               opts)}))))
 
 (reg-event-fx
   :send-message
@@ -5293,7 +5304,8 @@
   ;;      a short read-now directive for the AGENT; the model picks
   ;;      the right tool (`cat`, `z/symbols`, etc.) itself.
   ;;
-  ;; `opts` `{:is-bare true}` sends `text` without the draft pastes and attachments.
+  ;; `opts` `{:is-bare true}` sends `text` without the draft pastes and attachments;
+  ;; `{:reset-input? true}` clears the editor once the text is taken.
   (fn [db [_ text workspace-id opts]]
     (let [workspace-id
           (or workspace-id (current-tab-id db))
@@ -5395,9 +5407,10 @@
                ;; `user_request` column. Without the split,
                ;; reopening a session re-rendered the verbose attachment
                ;; directive in the user bubble.
-               :fx [[:session-turn workspace-id (:session source-db) agent-text token
-                     reasoning-level extra-body turn-features workspace client-turn-id preview-text
-                     attachments]]})))))
+               :fx (with-input-reset [[:session-turn workspace-id (:session source-db) agent-text
+                                       token reasoning-level extra-body turn-features workspace
+                                       client-turn-id preview-text attachments]]
+                                     opts)})))))
 
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.

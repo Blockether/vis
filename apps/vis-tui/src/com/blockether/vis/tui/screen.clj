@@ -517,9 +517,9 @@
         ;; (NO :reset-input) for a resend once the cancel settles, rather than
         ;; parking it in the queue behind the turn being torn down.
         (:cancelling? db) nil
-        (or building? (:loading? db)) (do (state/dispatch [:enqueue-message text wid])
-                                          (state/dispatch [:reset-input]))
-        :else (do (state/dispatch [:send-message text wid]) (state/dispatch [:reset-input]))))))
+        (or building? (:loading? db)) (state/dispatch [:enqueue-message text wid
+                                                       {:reset-input? true}])
+        :else (state/dispatch [:send-message text wid {:reset-input? true}])))))
 
 (defn- run-keybinding-fn!
   "Run the extension function of the C-x run binding `kb` in the gateway, off the
