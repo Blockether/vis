@@ -265,12 +265,16 @@ function LineMark({
   );
 }
 
-/** A state as a mark and a word, at caption size. Only a failure colours its word. */
+/**
+ * A state as a mark and a word, at caption size. Only a failure colours its word.
+ * The WORD gives the baseline: an inline-flex takes its first item's, and the mark's
+ * is the bottom of its icon, which lifted the word 3px above a table row's text.
+ */
 function ToneWord({ tone, word = TONE_WORD[tone] }: { tone: LiveTone; word?: string }) {
   return (
     <span className="inline-flex items-start gap-1.5 font-mono text-meta text-dialog-hint">
       <LineMark tone={tone} />
-      <span className={tone === 'error' ? 'text-err' : ''}>{word}</span>
+      <span className={`self-baseline ${tone === 'error' ? 'text-err' : ''}`}>{word}</span>
     </span>
   );
 }
@@ -1029,7 +1033,7 @@ function widerSteps(was: number[], now: number[]): number[] {
 /** The row's name, the first cell. The other cells stand in their own columns. */
 function RowName({ row }: { row: LiveRow }) {
   return (
-    <span className="block min-w-0 flex-1 [overflow-wrap:anywhere]">
+    <span className="block min-w-0 flex-1 self-baseline [overflow-wrap:anywhere]">
       <InlineMarkdown>{row.cells[0] ?? ''}</InlineMarkdown>
     </span>
   );
@@ -1070,7 +1074,9 @@ const LiveTableRow = memo(function LiveTableRow({
       className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer focus-within:bg-hover' : ''}`}
       onClick={isSelectable ? () => onSelect?.(nodeId, [row.id]) : undefined}
     >
-      <td className="p-0 align-middle">
+      {/* Every cell stands on the row's baseline, the name's first line. A centred name
+          sat 1px under the other cells in the taller touch band. */}
+      <td className="p-0 align-baseline">
         {/* A ROW IS A BAND, NOT A TOUCH CELL. The regular row stands 48px tall so a
             thumb can land anywhere on it; on a desk that turned twenty variants into a
             column of boxes taller than the run's own header. The compact band is 36px
