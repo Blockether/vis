@@ -102,6 +102,7 @@
           "id": "refresh",
           "type": "button",
           "label": "Refresh results",
+          "action": "activate",
           "is_disabled": false,
           "clicks": 0
         },
@@ -109,6 +110,7 @@
           "id": "disabled",
           "type": "button",
           "label": "Unavailable action",
+          "action": "activate",
           "is_disabled": true,
           "clicks": 0
         },

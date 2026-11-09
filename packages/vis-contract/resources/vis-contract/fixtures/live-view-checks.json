@@ -1,0 +1,5620 @@
+{
+  "description": "The live view check of every host. The engine (com.blockether.vis.contract.view/live-view-faults) and the Python SDK (blockether.vis._contracts.live_view_faults) must give the same answer for each declared view here. class ok accepts the view; class view refuses the whole view with the lines in text; class node shows each node of cards as an error card with the fault text of the same position in text. dropped holds one note for each shortcut that names a broken node. JSON has no NaN: nan_at is the path where a test puts NaN before it checks the view. patches holds raw patches: com.blockether.vis.contract.view/live-patch-lines and blockether.vis._contracts.live_patch_lines must give the lines in expect before a host applies an op. applies holds a declared view and patch ops that every host applies (the engine materializer and vis.testing.LiveRecorder): expect holds the refusal text, or the value at a path of the patched wire view. owner, when given, names the extension that owns the view; without it the owner is the agent.",
+  "derived_defaults": [
+    "an input without a type is plaintext",
+    "an input takes its name from its id and its id from its name",
+    "an input takes its label from its id",
+    "a link with a target that has a scheme has target_kind url"
+  ],
+  "cases": [
+    {
+      "name": "every node type is valid",
+      "view": {
+        "title": "Every type",
+        "nodes": [
+          {
+            "id": "section-break",
+            "type": "divider"
+          },
+          {
+            "id": "h1",
+            "type": "heading",
+            "text": "Heading level 1",
+            "level": 1
+          },
+          {
+            "id": "h2",
+            "type": "heading",
+            "text": "Heading level 2",
+            "level": 2
+          },
+          {
+            "id": "h3",
+            "type": "heading",
+            "text": "Heading level 3",
+            "level": 3
+          },
+          {
+            "id": "h4",
+            "type": "heading",
+            "text": "Heading level 4",
+            "level": 4
+          },
+          {
+            "id": "h5",
+            "type": "heading",
+            "text": "Heading level 5",
+            "level": 5
+          },
+          {
+            "id": "h6",
+            "type": "heading",
+            "text": "Heading level 6",
+            "level": 6
+          },
+          {
+            "id": "prose",
+            "type": "paragraph",
+            "text": "A paragraph with **emphasis**, `code` and a [documentation link](https://gateway.example.com/docs)."
+          },
+          {
+            "id": "code",
+            "type": "code",
+            "label": "Example code",
+            "language": "python",
+            "text": "def greet(name):\n    return f\"Hello, {name}\"\n\n# <button> is literal text\n"
+          },
+          {
+            "id": "spinners",
+            "type": "group",
+            "direction": "row",
+            "children": [
+              {
+                "id": "braille",
+                "type": "spinner",
+                "text": "Braille spinner",
+                "variant": "braille",
+                "is_active": true
+              },
+              {
+                "id": "dots",
+                "type": "spinner",
+                "text": "Dots spinner",
+                "variant": "dots",
+                "is_active": true
+              },
+              {
+                "id": "line",
+                "type": "spinner",
+                "text": "Line spinner",
+                "variant": "line",
+                "is_active": true
+              },
+              {
+                "id": "pulse",
+                "type": "spinner",
+                "text": "Pulse spinner",
+                "variant": "pulse",
+                "is_active": true
+              }
+            ]
+          },
+          {
+            "id": "actions",
+            "type": "group",
+            "direction": "row",
+            "children": [
+              {
+                "id": "refresh",
+                "type": "button",
+                "label": "Refresh results",
+                "action": "activate",
+                "is_disabled": false
+              },
+              {
+                "id": "disabled",
+                "type": "button",
+                "label": "Unavailable action",
+                "action": "activate",
+                "is_disabled": true
+              },
+              {
+                "id": "target",
+                "name": "target",
+                "type": "plaintext",
+                "label": "Target",
+                "is_required": false,
+                "value": "db-2"
+              },
+              {
+                "id": "token",
+                "name": "token",
+                "type": "password",
+                "label": "Token",
+                "is_required": false
+              },
+              {
+                "id": "notes",
+                "name": "notes",
+                "type": "multiline",
+                "label": "Notes",
+                "is_required": false,
+                "value": "Ship after the checks pass."
+              },
+              {
+                "id": "region",
+                "name": "region",
+                "type": "select",
+                "label": "Region",
+                "is_required": false,
+                "options": [
+                  {
+                    "value": "eu",
+                    "label": "EU"
+                  },
+                  {
+                    "value": "us",
+                    "label": "US"
+                  }
+                ],
+                "value": "eu"
+              },
+              {
+                "id": "tags",
+                "name": "tags",
+                "type": "multiselect",
+                "label": "Tags",
+                "is_required": false,
+                "options": [
+                  {
+                    "value": "api",
+                    "label": "API"
+                  },
+                  {
+                    "value": "web",
+                    "label": "Web"
+                  }
+                ],
+                "value": [
+                  "api"
+                ]
+              },
+              {
+                "id": "notify",
+                "name": "notify",
+                "type": "checkbox",
+                "label": "Notify",
+                "is_required": false,
+                "value": true
+              },
+              {
+                "id": "risk",
+                "name": "risk",
+                "type": "range",
+                "label": "Risk",
+                "is_required": false,
+                "min": 0,
+                "max": 10,
+                "step": 1,
+                "value": 3
+              },
+              {
+                "id": "pin",
+                "name": "pin",
+                "type": "otp",
+                "label": "Code",
+                "is_required": false,
+                "min_length": 6,
+                "max_length": 6
+              },
+              {
+                "id": "apply",
+                "type": "button",
+                "label": "Apply",
+                "action": "submit",
+                "is_disabled": false
+              }
+            ]
+          },
+          {
+            "id": "plans",
+            "type": "group",
+            "direction": "row",
+            "label": "Plans",
+            "children": [
+              {
+                "id": "plan-small",
+                "type": "card",
+                "title": "Small",
+                "text": "Two hosts, one region",
+                "meta": "2 vCPU",
+                "tone": "ok",
+                "is_selectable": true
+              },
+              {
+                "id": "plan-large",
+                "type": "card",
+                "title": "Large",
+                "text": "Six hosts, three regions",
+                "meta": "8 vCPU"
+              }
+            ]
+          },
+          {
+            "id": "details",
+            "type": "group",
+            "direction": "column",
+            "label": "Details",
+            "is_collapsible": true,
+            "default_expanded": false,
+            "children": [
+              {
+                "id": "inside",
+                "type": "paragraph",
+                "text": "Details stay available after completion."
+              },
+              {
+                "id": "a",
+                "type": "log",
+                "label": "Build A logs",
+                "window_lines": 2000,
+                "lines": [
+                  "A started",
+                  "A finished"
+                ]
+              },
+              {
+                "id": "b",
+                "type": "log",
+                "label": "Build B logs",
+                "window_lines": 2000,
+                "lines": [
+                  "B started"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "now",
+            "type": "status",
+            "text": "Waiting for the next job",
+            "tone": "running"
+          },
+          {
+            "id": "progress",
+            "type": "progress",
+            "label": "Progress",
+            "done": 2,
+            "total": 3
+          },
+          {
+            "id": "stats",
+            "type": "stat",
+            "label": "Counts",
+            "stats": [
+              {
+                "id": "ok",
+                "label": "Passed",
+                "value_text": "2",
+                "tone": "ok"
+              }
+            ]
+          },
+          {
+            "id": "steps",
+            "type": "steps",
+            "label": "Steps",
+            "steps": [
+              {
+                "id": "test",
+                "label": "Run tests",
+                "tone": "ok"
+              }
+            ]
+          },
+          {
+            "id": "timeline",
+            "type": "timeline",
+            "label": "Timeline",
+            "lanes": [
+              {
+                "id": "build",
+                "label": "Build",
+                "tone": "ok",
+                "start": 1767225600000,
+                "end": 1767225680000
+              },
+              {
+                "id": "test",
+                "label": "Run tests",
+                "tone": "running",
+                "detail": "12 of 40",
+                "start": 1767225620000
+              }
+            ]
+          },
+          {
+            "id": "table",
+            "type": "table",
+            "columns": [
+              {
+                "id": "job",
+                "label": "Job",
+                "align": "left"
+              }
+            ],
+            "rows": [
+              {
+                "id": "test",
+                "cells": [
+                  "Tests passed"
+                ],
+                "tone": "ok"
+              }
+            ],
+            "max_rows": 100,
+            "order": "insertion",
+            "is_selectable": true,
+            "selected_ids": []
+          },
+          {
+            "id": "links",
+            "type": "link",
+            "links": [
+              {
+                "id": "docs",
+                "label": "Documentation",
+                "target": "https://gateway.example.com/docs",
+                "target_kind": "url"
+              }
+            ]
+          },
+          {
+            "id": "change",
+            "type": "diff",
+            "label": "Proposed change",
+            "patch": "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1,3 +1,3 @@\n x = 1\n-y = 2\n+y = 3\n z = 4\n",
+            "old_revision": "abc1234",
+            "new_revision": "def5678",
+            "threads": [
+              {
+                "id": "line-2",
+                "anchor": {
+                  "path": "src/a.py",
+                  "side": "new",
+                  "line": 2
+                },
+                "messages": [
+                  {
+                    "id": "m-1",
+                    "author": {
+                      "kind": "human",
+                      "name": "Ann"
+                    },
+                    "body": "Why does y change to 3?",
+                    "created_at": 1787037267000
+                  },
+                  {
+                    "id": "m-2",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "body": "The spec asks for 3.",
+                    "created_at": 1787037268000
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "scene",
+            "type": "scene",
+            "label": "Scene",
+            "width": 16,
+            "height": 9,
+            "background": "#0b0e14",
+            "fov": 40,
+            "is_wrapping": true,
+            "tick_ms": 100,
+            "meshes": [
+              {
+                "id": "shard",
+                "vertices": [
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    -0.8,
+                    -0.6,
+                    0.3
+                  ],
+                  [
+                    0.8,
+                    -0.6,
+                    0.3
+                  ],
+                  [
+                    0,
+                    -0.4,
+                    -0.9
+                  ]
+                ],
+                "faces": [
+                  [
+                    0,
+                    1,
+                    2
+                  ],
+                  [
+                    0,
+                    3,
+                    1
+                  ],
+                  [
+                    0,
+                    2,
+                    3
+                  ],
+                  [
+                    1,
+                    3,
+                    2
+                  ]
+                ]
+              }
+            ],
+            "objects": [
+              {
+                "id": "rock",
+                "mesh": "icosahedron",
+                "x": 4,
+                "y": 5,
+                "z": 0,
+                "rx": 20,
+                "ry": 30,
+                "rz": 0,
+                "scale": 1.5,
+                "color": "#c8a26b",
+                "is_emissive": false
+              },
+              {
+                "id": "ship",
+                "mesh": "cone",
+                "x": 9,
+                "y": 4,
+                "z": 0,
+                "rx": 0,
+                "ry": 0,
+                "rz": -90,
+                "scale": 0.8,
+                "color": "#7fd4ff",
+                "is_emissive": false
+              },
+              {
+                "id": "shot",
+                "mesh": "sphere",
+                "x": 12,
+                "y": 4,
+                "z": 0,
+                "rx": 0,
+                "ry": 0,
+                "rz": 0,
+                "scale": 0.2,
+                "color": "#ffe66b",
+                "is_emissive": true
+              },
+              {
+                "id": "shard-1",
+                "mesh": "shard",
+                "x": 13,
+                "y": 7,
+                "z": 0,
+                "rx": 45,
+                "ry": 10,
+                "rz": 0,
+                "scale": 1,
+                "color": "#b48ead",
+                "is_emissive": false
+              }
+            ]
+          },
+          {
+            "id": "general",
+            "type": "thread",
+            "label": "General discussion",
+            "messages": [
+              {
+                "id": "m-3",
+                "author": {
+                  "kind": "extension",
+                  "name": "review"
+                },
+                "body": "The review is ready.",
+                "created_at": 1787037269000
+              }
+            ],
+            "draft": "Thanks, this looks good."
+          },
+          {
+            "id": "logo-change",
+            "type": "image",
+            "label": "Logo",
+            "alt": "The logo, blue before and green after",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGPQW+AMRAwQCgAdlgRF60sGbAAAAABJRU5ErkJggg==",
+            "width": 2,
+            "height": 2,
+            "before": {
+              "media_type": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGOQz38NRAwQCgAmGgXlnPpP5QAAAABJRU5ErkJggg==",
+              "width": 2,
+              "height": 2
+            }
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "an input takes its type, name and label from its id",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "q"
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "an input with only a name takes its id and label from the name",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "name": "n"
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "a group child without an id is a fault of the group",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "g",
+            "type": "group",
+            "children": [
+              {
+                "type": "paragraph",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "g"
+        ],
+        "text": [
+          "node g /children/0 - the node needs an id (id)"
+        ]
+      }
+    },
+    {
+      "name": "a group child that is no map is a fault of the group",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "g",
+            "type": "group",
+            "children": [
+              "x"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "g"
+        ],
+        "text": [
+          "node g /children/0 - the child is not a map (node)"
+        ]
+      }
+    },
+    {
+      "name": "a progress value that is not finite is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "p",
+            "type": "progress",
+            "value": 0.5
+          }
+        ]
+      },
+      "nan_at": [
+        "nodes",
+        1,
+        "value"
+      ],
+      "expect": {
+        "class": "node",
+        "cards": [
+          "p"
+        ],
+        "text": [
+          "node p /value - the number is not finite (finite)"
+        ]
+      }
+    },
+    {
+      "name": "a toolbar menu that holds a status is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "children": [
+              {
+                "id": "m",
+                "type": "group",
+                "children": [
+                  {
+                    "id": "s",
+                    "type": "status",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /children/0 - a toolbar menu holds only buttons and groups of buttons (toolbar)"
+        ]
+      }
+    },
+    {
+      "name": "max_columns on a group that is not a grid is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "g",
+            "type": "group",
+            "direction": "row",
+            "max_columns": 2,
+            "children": [
+              {
+                "id": "c",
+                "type": "paragraph",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "g"
+        ],
+        "text": [
+          "node g /max_columns - only a grid group takes max_columns (grid)"
+        ]
+      }
+    },
+    {
+      "name": "a declaration does not write clicks",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "b",
+            "type": "button",
+            "label": "B",
+            "clicks": 0
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "b"
+        ],
+        "text": [
+          "node b /clicks - only the host writes this property (readOnly)"
+        ]
+      }
+    },
+    {
+      "name": "a declaration does not write total_lines",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "l",
+            "type": "log",
+            "lines": [],
+            "total_lines": 0
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "l"
+        ],
+        "text": [
+          "node l /total_lines - only the host writes this property (readOnly)"
+        ]
+      }
+    },
+    {
+      "name": "a heading level that is text is not converted",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "h",
+            "type": "heading",
+            "text": "x",
+            "level": "3"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "h"
+        ],
+        "text": [
+          "node h /level - expected integer, got string (type)"
+        ]
+      }
+    },
+    {
+      "name": "a status detail that is a number is not converted",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "s",
+            "type": "status",
+            "text": "x",
+            "detail": 42
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "s"
+        ],
+        "text": [
+          "node s /detail - expected string, got integer (type)"
+        ]
+      }
+    },
+    {
+      "name": "a paragraph text that is a number is not converted",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "t",
+            "type": "paragraph",
+            "text": 7
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "t"
+        ],
+        "text": [
+          "node t /text - expected string, got integer (type)"
+        ]
+      }
+    },
+    {
+      "name": "an unknown node type does not show the type",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "u",
+            "type": "blink"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "u"
+        ],
+        "text": [
+          "node u /type - unknown node type (type)"
+        ]
+      }
+    },
+    {
+      "name": "a number over the maximum does not show the value",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "h",
+            "type": "heading",
+            "text": "x",
+            "level": 9
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "h"
+        ],
+        "text": [
+          "node h /level - the number is greater than the maximum 6 (maximum)"
+        ]
+      }
+    },
+    {
+      "name": "a value outside an enum names the allowed values",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "s",
+            "type": "status",
+            "text": "x",
+            "tone": "blue"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "s"
+        ],
+        "text": [
+          "node s /tone - the value is not one of error, idle, ok, running, warn (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a failed oneOf is one line",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "p",
+            "type": "progress",
+            "value": "half"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "p"
+        ],
+        "text": [
+          "node p /value - the value matches none of the allowed forms (oneOf)"
+        ]
+      }
+    },
+    {
+      "name": "a long unknown key is clipped",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "k",
+            "type": "paragraph",
+            "text": "x",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": 1
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "k"
+        ],
+        "text": [
+          "node k / - unknown property \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" (additionalProperties)"
+        ]
+      }
+    },
+    {
+      "name": "an error line keeps its reason when the node id is a secret word",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "token",
+            "type": "paragraph",
+            "text": "x",
+            "zz": 1
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "token"
+        ],
+        "text": [
+          "node token / - unknown property \"zz\" (additionalProperties)"
+        ]
+      }
+    },
+    {
+      "name": "a lane that ends before it starts is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "tl",
+            "type": "timeline",
+            "lanes": [
+              {
+                "id": "build",
+                "label": "Build",
+                "tone": "ok",
+                "start": 2000,
+                "end": 1999
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "tl"
+        ],
+        "text": [
+          "node tl /lanes/0 - the lane ends before it starts (lane)"
+        ]
+      }
+    },
+    {
+      "name": "two lanes with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "tl",
+            "type": "timeline",
+            "lanes": [
+              {
+                "id": "build",
+                "label": "Build",
+                "tone": "ok",
+                "start": 2000
+              },
+              {
+                "id": "build",
+                "label": "Build",
+                "tone": "ok",
+                "start": 2000
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "tl"
+        ],
+        "text": [
+          "node tl /lanes - two items have the id \"build\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "log line_tones need one tone for each line",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "l",
+            "type": "log",
+            "lines": [
+              "a",
+              "b"
+            ],
+            "line_tones": [
+              "ok"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "l"
+        ],
+        "text": [
+          "node l /line_tones - give one tone or null for each line (line_tones)"
+        ]
+      }
+    },
+    {
+      "name": "a diff thread needs an anchor",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {
+                "id": "t1",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /threads/0 - a diff thread needs an anchor (anchor)"
+        ]
+      }
+    },
+    {
+      "name": "two diff threads with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {
+                "id": "t1",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": []
+              },
+              {
+                "id": "t1",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /threads - two items have the id \"t1\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "a table ordered by an unknown column is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "t",
+            "type": "table",
+            "columns": [
+              {
+                "id": "a",
+                "label": "A"
+              }
+            ],
+            "order": {
+              "by": "b"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "t"
+        ],
+        "text": [
+          "node t /order - the order names no column of the table (order)"
+        ]
+      }
+    },
+    {
+      "name": "picture bytes that do not match the media type are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "i",
+            "type": "image",
+            "alt": "x",
+            "media_type": "image/png",
+            "data": "aGVsbG8=",
+            "width": 2,
+            "height": 2
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "i"
+        ],
+        "text": [
+          "node i / - data is not image/png data (picture)"
+        ]
+      }
+    },
+    {
+      "name": "a select value outside its options is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "r",
+            "type": "select",
+            "options": [
+              {
+                "value": "eu",
+                "label": "EU"
+              }
+            ],
+            "value": "us"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "r"
+        ],
+        "text": [
+          "node r /value - the value is outside the domain of the input (input)"
+        ]
+      }
+    },
+    {
+      "name": "a range with min over max is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "r",
+            "type": "range",
+            "min": 10,
+            "max": 1
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "r"
+        ],
+        "text": [
+          "node r /min - min is not less than max (input)"
+        ]
+      }
+    },
+    {
+      "name": "a shortcut that names a broken node is dropped",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "b",
+            "type": "button",
+            "label": "B",
+            "clicks": 0
+          }
+        ],
+        "shortcuts": [
+          {
+            "key": "r",
+            "node_id": "b",
+            "label": "Run"
+          }
+        ],
+        "placement": "attachment",
+        "key": "checks"
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "b"
+        ],
+        "text": [
+          "node b /clicks - only the host writes this property (readOnly)"
+        ],
+        "dropped": [
+          "/shortcuts/0 - the shortcut is dropped, because node b has a fault (shortcut)"
+        ]
+      }
+    },
+    {
+      "name": "a view without a title is a view fault",
+      "view": {
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/ - missing required property \"title\" (required)"
+        ]
+      }
+    },
+    {
+      "name": "a blank title is a view fault",
+      "view": {
+        "title": " ",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/title - the string is blank (pattern)"
+        ]
+      }
+    },
+    {
+      "name": "a view without nodes is a view fault",
+      "view": {
+        "title": "Checks",
+        "nodes": []
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/nodes - the array has 0 items, the minimum is 1 (minItems)"
+        ]
+      }
+    },
+    {
+      "name": "a top node without an id is a view fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/nodes/0 - the node needs an id (id)"
+        ]
+      }
+    },
+    {
+      "name": "a top group without an id is a view fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "type": "group",
+            "children": [
+              {
+                "id": "c",
+                "type": "paragraph",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/nodes/0 - a group needs an id, because a patch names a group by its id. Write vis.ui.group(\"actions\", ...) (id)"
+        ]
+      }
+    },
+    {
+      "name": "a top node that is no map is a view fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          "x"
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/nodes/0 - the node is not a map (node)"
+        ]
+      }
+    },
+    {
+      "name": "two nodes with one id are a view fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/nodes - two nodes have the id \"a\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "too many nodes are a view fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "n0",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n1",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n2",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n3",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n4",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n5",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n6",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n7",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n8",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n9",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n10",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n11",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n12",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n13",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n14",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n15",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n16",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n17",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n18",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n19",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n20",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n21",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n22",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n23",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n24",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n25",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n26",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n27",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n28",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n29",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n30",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n31",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n32",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n33",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n34",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n35",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n36",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n37",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n38",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n39",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n40",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n41",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n42",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n43",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n44",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n45",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n46",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n47",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n48",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n49",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n50",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n51",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n52",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n53",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n54",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n55",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n56",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n57",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n58",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n59",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n60",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n61",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n62",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n63",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "n64",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/nodes - the view has 65 nodes, the maximum is 64. Put a collection in a table, because rows do not count as nodes (x-vis-max-nodes)"
+        ]
+      }
+    },
+    {
+      "name": "a shortcut on a view that is not an app is a view fault",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "go",
+            "type": "button",
+            "label": "Go"
+          }
+        ],
+        "shortcuts": [
+          {
+            "key": "g",
+            "node_id": "go",
+            "label": "Go"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/shortcuts - only an app (placement attachment) takes shortcuts (shortcut)"
+        ]
+      }
+    },
+    {
+      "name": "a shortcut to a node that is not in the view is a view fault",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "go",
+            "type": "button",
+            "label": "Go"
+          }
+        ],
+        "shortcuts": [
+          {
+            "key": "g",
+            "node_id": "gone",
+            "label": "Go"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/shortcuts/0 - the node that node_id names is not in the view (shortcut)"
+        ]
+      }
+    },
+    {
+      "name": "a shortcut to a node that a person cannot press shows only that rule, also with an action",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "s",
+            "type": "status",
+            "text": "x",
+            "tone": "idle"
+          }
+        ],
+        "shortcuts": [
+          {
+            "key": "g",
+            "node_id": "s",
+            "label": "Go",
+            "action": "go"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/shortcuts/0 - the node that node_id names is not a button or a selectable card (shortcut)"
+        ]
+      }
+    },
+    {
+      "name": "a shortcut to a node that a person cannot press is a view fault",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "s",
+            "type": "status",
+            "text": "x",
+            "tone": "idle"
+          }
+        ],
+        "shortcuts": [
+          {
+            "key": "g",
+            "node_id": "s",
+            "label": "Go"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/shortcuts/0 - the node that node_id names is not a button or a selectable card (shortcut)"
+        ]
+      }
+    },
+    {
+      "name": "two shortcuts with one key are a view fault",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "go",
+            "type": "button",
+            "label": "Go"
+          },
+          {
+            "id": "no",
+            "type": "button",
+            "label": "No"
+          }
+        ],
+        "shortcuts": [
+          {
+            "key": "g",
+            "node_id": "go",
+            "label": "Go"
+          },
+          {
+            "key": "g",
+            "node_id": "no",
+            "label": "No"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/shortcuts/1 - an earlier shortcut has the same key (unique)"
+        ]
+      }
+    },
+    {
+      "name": "a shortcut to a toolbar button of a diff is valid",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "children": [
+              {
+                "id": "ok",
+                "type": "button",
+                "label": "Approve"
+              }
+            ]
+          }
+        ],
+        "shortcuts": [
+          {
+            "key": "a",
+            "node_id": "ok",
+            "label": "Approve"
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "a node type that is a number is a node fault",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "u",
+            "type": 5
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "u"
+        ],
+        "text": [
+          "node u /type - unknown node type (type)"
+        ]
+      }
+    },
+    {
+      "name": "a node type that is a boolean is a node fault",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "u",
+            "type": true
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "u"
+        ],
+        "text": [
+          "node u /type - unknown node type (type)"
+        ]
+      }
+    },
+    {
+      "name": "a node type that is a list is a node fault",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "u",
+            "type": [
+              "image"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "u"
+        ],
+        "text": [
+          "node u /type - unknown node type (type)"
+        ]
+      }
+    },
+    {
+      "name": "a node type that is a map is a node fault",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "u",
+            "type": {
+              "x": 1
+            }
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "u"
+        ],
+        "text": [
+          "node u /type - unknown node type (type)"
+        ]
+      }
+    },
+    {
+      "name": "a node type that is a fraction is a node fault",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "u",
+            "type": 1.5
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "u"
+        ],
+        "text": [
+          "node u /type - unknown node type (type)"
+        ]
+      }
+    },
+    {
+      "name": "a key in kebab case is an unknown property",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "b",
+            "type": "button",
+            "label": "Go",
+            "is-disabled": true
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "b"
+        ],
+        "text": [
+          "node b / - unknown property \"is-disabled\" (additionalProperties)"
+        ]
+      }
+    },
+    {
+      "name": "a toolbar button of a diff does not write clicks",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "children": [
+              {
+                "id": "ok",
+                "type": "button",
+                "label": "Approve",
+                "clicks": 2
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /children/0/clicks - only the host writes this property (readOnly)"
+        ]
+      }
+    },
+    {
+      "name": "an unknown view key is a view fault",
+      "view": {
+        "title": "T",
+        "bogus": 1,
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/ - unknown property \"bogus\" (additionalProperties)"
+        ]
+      }
+    },
+    {
+      "name": "a declaration does not write the view id",
+      "view": {
+        "title": "T",
+        "id": "v1",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/id - only the host writes this property (readOnly)"
+        ]
+      }
+    },
+    {
+      "name": "a long node id is cut at a whole character",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+            "type": "heading",
+            "text": "x",
+            "level": 9
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        ],
+        "text": [
+          "node 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀 /level - the number is greater than the maximum 6 (maximum)"
+        ]
+      }
+    },
+    {
+      "name": "a number that is not finite in a view key refuses the whole view",
+      "view": {
+        "title": "Checks",
+        "timeout_ms": 1000,
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "nan_at": [
+        "timeout_ms"
+      ],
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/ - a live view holds only JSON data (json)"
+        ]
+      }
+    },
+    {
+      "name": "a node with more faults than one schema report holds gives every fault, and the text shows five",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "k",
+            "type": "button",
+            "label": "Go",
+            "k00": 1,
+            "k01": 1,
+            "k02": 1,
+            "k03": 1,
+            "k04": 1,
+            "k05": 1,
+            "k06": 1,
+            "k07": 1,
+            "k08": 1,
+            "k09": 1,
+            "k10": 1,
+            "k11": 1
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "k"
+        ],
+        "text": [
+          "node k / - unknown property \"k00\" (additionalProperties); / - unknown property \"k01\" (additionalProperties); / - unknown property \"k02\" (additionalProperties); / - unknown property \"k03\" (additionalProperties); / - unknown property \"k04\" (additionalProperties); and 7 more"
+        ]
+      }
+    },
+    {
+      "name": "a table with more rows than its max_rows is an error card",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              },
+              {
+                "id": "b",
+                "cells": [
+                  "B"
+                ]
+              }
+            ],
+            "max_rows": 1
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "t"
+        ],
+        "text": [
+          "node t /rows - the table has 2 rows, its max_rows is 1 (max_rows)"
+        ]
+      }
+    },
+    {
+      "name": "two options with one value are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "s",
+            "type": "select",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              },
+              {
+                "value": "a",
+                "label": "B"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "s"
+        ],
+        "text": [
+          "node s /options - two options have the same value (unique)"
+        ]
+      }
+    },
+    {
+      "name": "a secret input with a default is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "pw",
+            "type": "password",
+            "default": "hunter2"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "pw"
+        ],
+        "text": [
+          "node pw /default - a secret input takes no default (secret)"
+        ]
+      }
+    },
+    {
+      "name": "a live input with a validate list is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "q",
+            "type": "plaintext",
+            "validate": [
+              "required"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "q"
+        ],
+        "text": [
+          "node q /validate - a live input takes no validate list. Give validate= to the input of the SDK; the extension runs it (input)"
+        ]
+      }
+    },
+    {
+      "name": "two stats with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "st",
+            "type": "stat",
+            "stats": [
+              {
+                "id": "cpu",
+                "label": "CPU",
+                "value_text": "1"
+              },
+              {
+                "id": "cpu",
+                "label": "CPU 2",
+                "value_text": "2"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "st"
+        ],
+        "text": [
+          "node st /stats - two items have the id \"cpu\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "two steps with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "sp",
+            "type": "steps",
+            "steps": [
+              {
+                "id": "a",
+                "label": "One"
+              },
+              {
+                "id": "a",
+                "label": "Two"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "sp"
+        ],
+        "text": [
+          "node sp /steps - two items have the id \"a\" (unique)"
+        ]
+      }
+    }
+  ],
+  "patches": [
+    {
+      "name": "a set value of the wrong type is refused",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "set",
+            "node_id": "b",
+            "label": 7
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0/label - expected string, got integer (type)"
+      ]
+    },
+    {
+      "name": "an appended item of the wrong type is refused",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "append",
+            "node_id": "s",
+            "stats": [
+              {
+                "id": "x",
+                "label": "L",
+                "value_text": 5
+              }
+            ]
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0/stats/0/value_text - expected string, got integer (type)"
+      ]
+    },
+    {
+      "name": "a text for a boolean is not converted",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "set",
+            "node_id": "b",
+            "is_disabled": "true"
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0/is_disabled - expected boolean, got string (type)"
+      ]
+    },
+    {
+      "name": "an unknown op names the allowed ops",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "blink",
+            "node_id": "b"
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0/op - the value is not one of set, append, remove, clear, replace, set-value, add-node, remove-node, thread, submission, shortcuts, agent-note, log (enum)"
+      ]
+    },
+    {
+      "name": "an op that is no map is refused",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          7
+        ]
+      },
+      "expect": [
+        "/ops/0 - expected object, got integer (type)"
+      ]
+    },
+    {
+      "name": "an op key that its op does not take is refused",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "set",
+            "node_id": "b",
+            "bogus": 1
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0 - unknown property \"bogus\" (additionalProperties)"
+      ]
+    },
+    {
+      "name": "a blank text is refused",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "set",
+            "node_id": "b",
+            "label": "   "
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0/label - the string is blank (pattern)"
+      ]
+    },
+    {
+      "name": "a tone outside the enum names the allowed tones",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "set",
+            "node_id": "b",
+            "tone": "loud"
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0/tone - the value is not one of error, idle, ok, running, warn (enum)"
+      ]
+    },
+    {
+      "name": "a replace needs its rows",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "replace",
+            "node_id": "t"
+          }
+        ]
+      },
+      "expect": [
+        "/ops/0 - missing required property \"rows\" (required)"
+      ]
+    },
+    {
+      "name": "a patch needs an op",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": []
+      },
+      "expect": [
+        "/ops - the array has 0 items, the minimum is 1 (minItems)"
+      ]
+    },
+    {
+      "name": "the node of an add-node op is left to the node check",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "add-node",
+            "node_spec": {
+              "id": "n",
+              "type": "heading",
+              "text": "x",
+              "level": 9
+            }
+          }
+        ]
+      },
+      "expect": []
+    },
+    {
+      "name": "a valid patch has no fault",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "set",
+            "node_id": "b",
+            "label": "OK"
+          },
+          {
+            "op": "log",
+            "level": "info",
+            "message": "done"
+          }
+        ]
+      },
+      "expect": []
+    }
+  ],
+  "applies": [
+    {
+      "name": "a clear on a heading is refused, because a heading holds nothing to clear",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "h",
+            "type": "heading",
+            "text": "Title",
+            "level": 2
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "clear",
+          "node_id": "h"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node h /op - the clear op does not apply to a node of type heading (op_target)"
+      }
+    },
+    {
+      "name": "a clear on a paragraph is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "Text"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "clear",
+          "node_id": "p"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node p /op - the clear op does not apply to a node of type paragraph (op_target)"
+      }
+    },
+    {
+      "name": "an append on a paragraph is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "Text"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "p",
+          "lines": [
+            "x"
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node p /op - the append op does not apply to a node of type paragraph (op_target)"
+      }
+    },
+    {
+      "name": "an append on a status is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "run",
+            "type": "status",
+            "text": "queued",
+            "tone": "idle"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "run",
+          "lines": [
+            "x"
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node run /op - the append op does not apply to a node of type status (op_target)"
+      }
+    },
+    {
+      "name": "an append of stats to a log is refused, not dropped",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "lg",
+            "type": "log",
+            "lines": [
+              "one"
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "lg",
+          "stats": [
+            {
+              "id": "x",
+              "label": "X",
+              "value_text": "1"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node lg /stats - the append op on a node of type log does not take this property (op_key)"
+      }
+    },
+    {
+      "name": "a set of a key that the node type does not set is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "run",
+            "type": "status",
+            "text": "queued",
+            "tone": "idle"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "run",
+          "value": 0.5
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node run /value - the set op on a node of type status does not take this property (op_key)"
+      }
+    },
+    {
+      "name": "a set on a divider is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "divider"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "d",
+          "label": "L"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /op - the set op does not apply to a node of type divider (op_target)"
+      }
+    },
+    {
+      "name": "a set-value on a paragraph is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "Text"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set-value",
+          "node_id": "p",
+          "value": "x"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node p /op - the set-value op does not apply to a node of type paragraph (op_target)"
+      }
+    },
+    {
+      "name": "an append over the item bound of the schema is refused with the node check",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "st",
+            "type": "stat",
+            "stats": [
+              {
+                "id": "s0",
+                "label": "S0",
+                "value_text": "0"
+              },
+              {
+                "id": "s1",
+                "label": "S1",
+                "value_text": "1"
+              },
+              {
+                "id": "s2",
+                "label": "S2",
+                "value_text": "2"
+              },
+              {
+                "id": "s3",
+                "label": "S3",
+                "value_text": "3"
+              },
+              {
+                "id": "s4",
+                "label": "S4",
+                "value_text": "4"
+              },
+              {
+                "id": "s5",
+                "label": "S5",
+                "value_text": "5"
+              },
+              {
+                "id": "s6",
+                "label": "S6",
+                "value_text": "6"
+              },
+              {
+                "id": "s7",
+                "label": "S7",
+                "value_text": "7"
+              },
+              {
+                "id": "s8",
+                "label": "S8",
+                "value_text": "8"
+              },
+              {
+                "id": "s9",
+                "label": "S9",
+                "value_text": "9"
+              },
+              {
+                "id": "s10",
+                "label": "S10",
+                "value_text": "10"
+              },
+              {
+                "id": "s11",
+                "label": "S11",
+                "value_text": "11"
+              },
+              {
+                "id": "s12",
+                "label": "S12",
+                "value_text": "12"
+              },
+              {
+                "id": "s13",
+                "label": "S13",
+                "value_text": "13"
+              },
+              {
+                "id": "s14",
+                "label": "S14",
+                "value_text": "14"
+              },
+              {
+                "id": "s15",
+                "label": "S15",
+                "value_text": "15"
+              },
+              {
+                "id": "s16",
+                "label": "S16",
+                "value_text": "16"
+              },
+              {
+                "id": "s17",
+                "label": "S17",
+                "value_text": "17"
+              },
+              {
+                "id": "s18",
+                "label": "S18",
+                "value_text": "18"
+              },
+              {
+                "id": "s19",
+                "label": "S19",
+                "value_text": "19"
+              },
+              {
+                "id": "s20",
+                "label": "S20",
+                "value_text": "20"
+              },
+              {
+                "id": "s21",
+                "label": "S21",
+                "value_text": "21"
+              },
+              {
+                "id": "s22",
+                "label": "S22",
+                "value_text": "22"
+              },
+              {
+                "id": "s23",
+                "label": "S23",
+                "value_text": "23"
+              },
+              {
+                "id": "s24",
+                "label": "S24",
+                "value_text": "24"
+              },
+              {
+                "id": "s25",
+                "label": "S25",
+                "value_text": "25"
+              },
+              {
+                "id": "s26",
+                "label": "S26",
+                "value_text": "26"
+              },
+              {
+                "id": "s27",
+                "label": "S27",
+                "value_text": "27"
+              },
+              {
+                "id": "s28",
+                "label": "S28",
+                "value_text": "28"
+              },
+              {
+                "id": "s29",
+                "label": "S29",
+                "value_text": "29"
+              },
+              {
+                "id": "s30",
+                "label": "S30",
+                "value_text": "30"
+              },
+              {
+                "id": "s31",
+                "label": "S31",
+                "value_text": "31"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "st",
+          "stats": [
+            {
+              "id": "s32",
+              "label": "S32",
+              "value_text": "32"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node st /stats - the array has 33 items, the maximum is 32 (maxItems)"
+      }
+    },
+    {
+      "name": "an append over the max_rows of the table is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "t",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node t /rows - the table has 2 rows, its max_rows is 1 (max_rows)"
+      }
+    },
+    {
+      "name": "an append that changes a row in place keeps the table in its max_rows",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "t",
+          "rows": [
+            {
+              "id": "a",
+              "cells": [
+                "A2"
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "rows",
+          0,
+          "cells",
+          0
+        ],
+        "value": "A2"
+      }
+    },
+    {
+      "name": "an add-node with an id that the view has is refused with the view check",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "Text"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "p",
+            "type": "paragraph",
+            "text": "Again"
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: view /nodes - two nodes have the id \"p\" (unique)"
+      }
+    },
+    {
+      "name": "an appended lane without a tone is an idle lane",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "tl",
+            "type": "timeline",
+            "lanes": [
+              {
+                "id": "a",
+                "label": "Build",
+                "tone": "ok",
+                "start": 0,
+                "end": 5
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "tl",
+          "lanes": [
+            {
+              "id": "b",
+              "label": "Test",
+              "start": 6
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "lanes",
+          1,
+          "tone"
+        ],
+        "value": "idle"
+      }
+    },
+    {
+      "name": "a set of lanes without a tone gives idle lanes",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "tl",
+            "type": "timeline",
+            "lanes": [
+              {
+                "id": "a",
+                "label": "Build",
+                "tone": "ok",
+                "start": 0,
+                "end": 5
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "tl",
+          "lanes": [
+            {
+              "id": "c",
+              "label": "Lint",
+              "start": 1
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "lanes",
+          0,
+          "tone"
+        ],
+        "value": "idle"
+      }
+    },
+    {
+      "name": "an appended lane that ends before it starts is refused with the node check",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "tl",
+            "type": "timeline",
+            "lanes": [
+              {
+                "id": "a",
+                "label": "Build",
+                "tone": "ok",
+                "start": 0,
+                "end": 5
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "tl",
+          "lanes": [
+            {
+              "id": "b",
+              "label": "Test",
+              "start": 9,
+              "end": 2
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node tl /lanes/1 - the lane ends before it starts (lane)"
+      }
+    },
+    {
+      "name": "a set-value outside the domain of an input is refused with the node check",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "pick",
+            "type": "select",
+            "label": "Pick",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set-value",
+          "node_id": "pick",
+          "value": "z"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node pick /value - the value is outside the domain of the input (input)"
+      }
+    },
+    {
+      "name": "an add-node after a node that the view does not have is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "n",
+            "type": "paragraph",
+            "text": "y"
+          },
+          "after": "zz"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node n /after - the view has no node zz to put this node after (after)"
+      }
+    },
+    {
+      "name": "a set on a node that the view does not have is refused with the ids of the view",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "zz",
+          "text": "y"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node zz /node_id - the view has no such node; it has p (node_id)"
+      }
+    },
+    {
+      "name": "an added checkbox without a default takes false",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "c",
+            "type": "checkbox"
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          1,
+          "default"
+        ],
+        "value": false
+      }
+    },
+    {
+      "name": "an added range without a default takes its min",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "r",
+            "type": "range",
+            "min": 3,
+            "max": 9
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          1,
+          "default"
+        ],
+        "value": 3
+      }
+    },
+    {
+      "name": "an added select with two options of one value is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "s",
+            "type": "select",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              },
+              {
+                "value": "a",
+                "label": "B"
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node s /options - two options have the same value (unique)"
+      }
+    },
+    {
+      "name": "a thread op adds a thread to a diff and drops a blank draft",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": " t1 ",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "draft": "  "
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "0",
+          "threads"
+        ],
+        "value": [
+          {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a thread op replaces the diff thread with the same id",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {
+                "id": "t1",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": []
+              },
+              {
+                "id": "t2",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "is_resolved": true
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "0",
+          "threads"
+        ],
+        "value": [
+          {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "is_resolved": true
+          },
+          {
+            "id": "t2",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "a diff thread without an anchor is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t1",
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /threads/0 - a diff thread needs an anchor (anchor)"
+      }
+    },
+    {
+      "name": "a thread over the message limit is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {"id": "m0", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m1", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m2", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m3", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m4", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m5", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m6", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m7", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m8", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m9", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m10", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m11", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m12", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m13", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m14", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m15", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m16", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m17", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m18", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m19", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m20", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m21", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m22", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m23", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m24", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m25", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m26", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m27", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m28", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m29", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m30", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m31", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m32", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m33", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m34", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m35", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m36", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m37", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m38", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m39", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m40", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m41", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m42", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m43", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m44", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m45", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m46", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m47", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m48", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m49", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m50", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m51", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m52", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m53", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m54", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m55", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m56", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m57", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m58", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m59", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m60", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m61", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m62", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m63", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m64", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m65", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m66", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m67", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m68", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m69", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m70", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m71", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m72", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m73", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m74", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m75", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m76", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m77", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m78", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m79", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m80", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m81", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m82", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m83", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m84", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m85", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m86", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m87", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m88", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m89", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m90", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m91", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m92", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m93", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m94", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m95", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m96", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m97", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m98", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m99", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m100", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m101", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m102", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m103", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m104", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m105", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m106", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m107", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m108", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m109", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m110", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m111", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m112", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m113", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m114", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m115", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m116", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m117", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m118", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m119", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m120", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m121", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m122", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m123", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m124", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m125", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m126", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m127", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m128", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m129", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m130", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m131", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m132", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m133", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m134", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m135", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m136", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m137", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m138", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m139", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m140", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m141", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m142", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m143", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m144", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m145", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m146", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m147", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m148", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m149", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m150", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m151", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m152", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m153", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m154", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m155", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m156", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m157", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m158", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m159", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m160", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m161", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m162", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m163", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m164", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m165", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m166", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m167", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m168", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m169", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m170", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m171", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m172", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m173", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m174", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m175", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m176", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m177", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m178", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m179", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m180", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m181", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m182", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m183", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m184", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m185", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m186", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m187", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m188", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m189", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m190", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m191", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m192", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m193", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m194", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m195", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m196", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m197", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m198", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m199", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5},
+              {"id": "m200", "author": {"kind": "agent"}, "body": "Hi", "created_at": 5}
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: /ops/0/thread/messages - the array has 201 items, the maximum is 200 (maxItems)"
+      }
+    },
+    {
+      "name": "a diff over the thread limit is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {"id": "t0", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t1", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t2", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t3", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t4", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t5", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t6", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t7", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t8", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t9", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t10", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t11", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t12", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t13", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t14", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t15", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t16", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t17", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t18", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t19", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t20", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t21", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t22", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t23", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t24", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t25", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t26", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t27", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t28", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t29", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t30", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t31", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t32", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t33", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t34", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t35", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t36", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t37", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t38", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t39", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t40", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t41", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t42", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t43", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t44", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t45", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t46", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t47", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t48", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t49", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t50", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t51", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t52", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t53", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t54", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t55", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t56", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t57", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t58", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t59", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t60", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t61", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t62", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t63", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t64", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t65", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t66", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t67", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t68", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t69", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t70", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t71", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t72", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t73", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t74", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t75", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t76", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t77", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t78", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t79", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t80", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t81", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t82", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t83", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t84", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t85", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t86", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t87", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t88", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t89", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t90", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t91", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t92", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t93", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t94", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t95", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t96", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t97", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t98", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t99", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t100", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t101", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t102", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t103", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t104", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t105", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t106", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t107", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t108", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t109", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t110", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t111", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t112", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t113", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t114", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t115", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t116", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t117", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t118", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t119", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t120", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t121", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t122", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t123", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t124", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t125", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t126", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t127", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t128", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t129", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t130", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t131", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t132", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t133", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t134", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t135", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t136", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t137", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t138", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t139", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t140", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t141", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t142", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t143", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t144", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t145", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t146", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t147", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t148", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t149", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t150", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t151", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t152", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t153", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t154", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t155", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t156", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t157", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t158", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t159", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t160", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t161", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t162", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t163", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t164", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t165", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t166", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t167", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t168", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t169", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t170", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t171", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t172", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t173", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t174", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t175", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t176", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t177", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t178", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t179", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t180", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t181", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t182", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t183", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t184", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t185", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t186", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t187", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t188", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t189", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t190", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t191", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t192", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t193", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t194", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t195", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t196", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t197", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t198", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []},
+              {"id": "t199", "anchor": {"path": "a.py", "side": "new", "line": 1}, "messages": []}
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t200",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /threads - the array has 201 items, the maximum is 200 (maxItems)"
+      }
+    },
+    {
+      "name": "a remove op drops diff threads by id",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {
+                "id": "t1",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": []
+              },
+              {
+                "id": "t2",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "node_id": "d",
+          "item_ids": [
+            "t1",
+            "t9"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "0",
+          "threads"
+        ],
+        "value": [
+          {
+            "id": "t2",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "a thread node takes only its own thread",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "draft": "old"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "t",
+          "thread": {
+            "id": "x",
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node t /thread/id - a thread node takes only the thread that has its own id (thread)"
+      }
+    },
+    {
+      "name": "an owner thread op on a thread node replaces its messages and keeps the saved draft",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "draft": "old"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "t",
+          "thread": {
+            "id": "t",
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "0"
+        ],
+        "value": {
+          "id": "t",
+          "type": "thread",
+          "messages": [
+            {
+              "id": "m1",
+              "author": {
+                "kind": "agent"
+              },
+              "body": "Hi",
+              "created_at": 5
+            }
+          ],
+          "draft": "old"
+        }
+      }
+    },
+    {
+      "name": "a remove-node of the only node of a group is refused with the check of the group",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "g",
+            "type": "group",
+            "direction": "row",
+            "children": [
+              {
+                "id": "p",
+                "type": "paragraph",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove-node",
+          "node_id": "p"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node g /children - the array has 0 items, the minimum is 1 (minItems)"
+      }
+    },
+    {
+      "name": "an op that breaks a node refuses the patch, also when a later op fixes the node",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "st",
+            "type": "stat",
+            "stats": [
+              {
+                "id": "s0",
+                "label": "S0",
+                "value_text": "0"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "st",
+          "stats": [
+            {"id": "x0", "label": "X", "value_text": "1"},
+            {"id": "x1", "label": "X", "value_text": "1"},
+            {"id": "x2", "label": "X", "value_text": "1"},
+            {"id": "x3", "label": "X", "value_text": "1"},
+            {"id": "x4", "label": "X", "value_text": "1"},
+            {"id": "x5", "label": "X", "value_text": "1"},
+            {"id": "x6", "label": "X", "value_text": "1"},
+            {"id": "x7", "label": "X", "value_text": "1"},
+            {"id": "x8", "label": "X", "value_text": "1"},
+            {"id": "x9", "label": "X", "value_text": "1"},
+            {"id": "x10", "label": "X", "value_text": "1"},
+            {"id": "x11", "label": "X", "value_text": "1"},
+            {"id": "x12", "label": "X", "value_text": "1"},
+            {"id": "x13", "label": "X", "value_text": "1"},
+            {"id": "x14", "label": "X", "value_text": "1"},
+            {"id": "x15", "label": "X", "value_text": "1"},
+            {"id": "x16", "label": "X", "value_text": "1"},
+            {"id": "x17", "label": "X", "value_text": "1"},
+            {"id": "x18", "label": "X", "value_text": "1"},
+            {"id": "x19", "label": "X", "value_text": "1"},
+            {"id": "x20", "label": "X", "value_text": "1"},
+            {"id": "x21", "label": "X", "value_text": "1"},
+            {"id": "x22", "label": "X", "value_text": "1"},
+            {"id": "x23", "label": "X", "value_text": "1"},
+            {"id": "x24", "label": "X", "value_text": "1"},
+            {"id": "x25", "label": "X", "value_text": "1"},
+            {"id": "x26", "label": "X", "value_text": "1"},
+            {"id": "x27", "label": "X", "value_text": "1"},
+            {"id": "x28", "label": "X", "value_text": "1"},
+            {"id": "x29", "label": "X", "value_text": "1"},
+            {"id": "x30", "label": "X", "value_text": "1"},
+            {"id": "x31", "label": "X", "value_text": "1"},
+            {"id": "x32", "label": "X", "value_text": "1"},
+            {"id": "x33", "label": "X", "value_text": "1"},
+            {"id": "x34", "label": "X", "value_text": "1"},
+            {"id": "x35", "label": "X", "value_text": "1"},
+            {"id": "x36", "label": "X", "value_text": "1"},
+            {"id": "x37", "label": "X", "value_text": "1"},
+            {"id": "x38", "label": "X", "value_text": "1"},
+            {"id": "x39", "label": "X", "value_text": "1"}
+          ]
+        },
+        {
+          "op": "clear",
+          "node_id": "st"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node st /stats - the array has 41 items, the maximum is 32 (maxItems)"
+      }
+    },
+    {
+      "name": "the first node that an op breaks refuses the patch, with one text",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t0",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          },
+          {
+            "id": "t1",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          },
+          {
+            "id": "t2",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          },
+          {
+            "id": "t3",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          },
+          {
+            "id": "t4",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          },
+          {
+            "id": "t5",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          },
+          {
+            "id": "t6",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "t0",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "append",
+          "node_id": "t1",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "append",
+          "node_id": "t2",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "append",
+          "node_id": "t3",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "append",
+          "node_id": "t4",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "append",
+          "node_id": "t5",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "append",
+          "node_id": "t6",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node t0 /rows - the table has 2 rows, its max_rows is 1 (max_rows)"
+      }
+    },
+    {
+      "name": "the first fault refuses the patch before a later op that names a missing node",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t0",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "t0",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "set",
+          "node_id": "zz",
+          "text": "y"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node t0 /rows - the table has 2 rows, its max_rows is 1 (max_rows)"
+      }
+    },
+    {
+      "name": "the first node fault refuses the patch before a later repeated id",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t0",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          },
+          {
+            "id": "t1",
+            "type": "table",
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "id": "a",
+                "cells": [
+                  "A"
+                ]
+              }
+            ],
+            "max_rows": 1
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "t0",
+          "rows": [
+            {
+              "id": "b",
+              "cells": [
+                "B"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "t1",
+            "type": "paragraph",
+            "text": "x"
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node t0 /rows - the table has 2 rows, its max_rows is 1 (max_rows)"
+      }
+    },
+    {
+      "name": "an owner thread op keeps the posted messages and the saved draft that the host stored",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "draft": "saved"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "t",
+          "thread": {
+            "id": "t",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "edited",
+                "created_at": 5
+              },
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "New",
+                "created_at": 5
+              }
+            ],
+            "draft": "owner"
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes"
+        ],
+        "value": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              },
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "New",
+                "created_at": 5
+              }
+            ],
+            "draft": "saved"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an owner thread op does not write a draft",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "t",
+          "thread": {
+            "id": "t",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "draft": "owner"
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes"
+        ],
+        "value": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a message in an opened view gets the owner as its author",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "human"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "t",
+          "label": "T"
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes"
+        ],
+        "value": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ],
+            "label": "T"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a clear of a styled log drops its tones, so a later append without a tone lands",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "lg",
+            "type": "log",
+            "lines": [
+              "a",
+              "b"
+            ],
+            "line_tones": [
+              "error",
+              "ok"
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "clear",
+          "node_id": "lg"
+        },
+        {
+          "op": "append",
+          "node_id": "lg",
+          "lines": [
+            "c"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes"
+        ],
+        "value": [
+          {
+            "id": "lg",
+            "type": "log",
+            "lines": [
+              "c"
+            ],
+            "window_lines": 2000,
+            "total_lines": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "a remove-node of a node that the view does not have changes nothing",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove-node",
+          "node_id": "zz"
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes"
+        ],
+        "value": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a set-value of null drops the value key",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "i",
+            "type": "plaintext",
+            "label": "L",
+            "value": "v"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set-value",
+          "node_id": "i",
+          "value": null
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes"
+        ],
+        "value": [
+          {
+            "id": "i",
+            "name": "i",
+            "type": "plaintext",
+            "label": "L",
+            "is_required": false,
+            "is_secret": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "an extension owner is the author of each message in an opened diff and in a thread op",
+      "owner": "notes",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {
+                "id": "t1",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": [
+                  {
+                    "id": "m0",
+                    "author": {
+                      "kind": "human"
+                    },
+                    "body": "Hi",
+                    "created_at": 5
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t2",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "New",
+                "created_at": 5
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "0",
+          "threads"
+        ],
+        "value": [
+          {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "extension",
+                  "name": "notes"
+                },
+                "body": "Hi",
+                "created_at": 5
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "extension",
+                  "name": "notes"
+                },
+                "body": "New",
+                "created_at": 5
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "an extension owner is the author of each message of a thread op on a thread node",
+      "owner": "notes",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "t",
+          "thread": {
+            "id": "t",
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "agent"
+                },
+                "body": "New",
+                "created_at": 5
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes"
+        ],
+        "value": [
+          {
+            "id": "t",
+            "type": "thread",
+            "messages": [
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "extension",
+                  "name": "notes"
+                },
+                "body": "New",
+                "created_at": 5
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "an add-node that puts a paragraph in the toolbar of a diff is refused with the check of the diff",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "children": [
+              {
+                "id": "b0",
+                "type": "button",
+                "label": "B"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "after": "b0",
+          "node_spec": {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /children/1/type - the value is not one of button, group (enum)"
+      }
+    },
+    {
+      "name": "an add-node over the toolbar bound of a diff is refused with the check of the diff",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "children": [
+              {
+                "id": "b0",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b1",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b2",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b3",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b4",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b5",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b6",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b7",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b8",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b9",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b10",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b11",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b12",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b13",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b14",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b15",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b16",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b17",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b18",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b19",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b20",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b21",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b22",
+                "type": "button",
+                "label": "B"
+              },
+              {
+                "id": "b23",
+                "type": "button",
+                "label": "B"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "after": "b0",
+          "node_spec": {
+            "id": "b99",
+            "type": "button",
+            "label": "B"
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /children - the array has 25 items, the maximum is 24 (maxItems)"
+      }
+    },
+    {
+      "name": "an extension owner is the author of each message in a diff that an add-node adds",
+      "owner": "notes",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "h",
+            "type": "heading",
+            "text": "Title",
+            "level": 2
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {
+                "id": "t1",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "line": 1
+                },
+                "messages": [
+                  {
+                    "id": "m0",
+                    "author": {
+                      "kind": "human",
+                      "name": "Ann"
+                    },
+                    "body": "Hi",
+                    "created_at": 5
+                  },
+                  {
+                    "id": "m1",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "body": "Yes",
+                    "created_at": 6
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "1",
+          "threads"
+        ],
+        "value": [
+          {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "line": 1
+            },
+            "messages": [
+              {
+                "id": "m0",
+                "author": {
+                  "kind": "extension",
+                  "name": "notes"
+                },
+                "body": "Hi",
+                "created_at": 5
+              },
+              {
+                "id": "m1",
+                "author": {
+                  "kind": "extension",
+                  "name": "notes"
+                },
+                "body": "Yes",
+                "created_at": 6
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

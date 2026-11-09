@@ -114,24 +114,216 @@
   ([document-name definition value]
    (skjema/explain (compiled-schema document-name definition) (wire/->wire value))))
 
-(def ^:private most-shown-errors 5)
+(def ^:private error-messages
+  "The one message table of schema and live view faults, `x-vis-error-messages` of the
+   common schema. Every SDK renders it too."
+  (delay (get (schema-document "common") "x-vis-error-messages")))
+
+(defn message-table "The message table of `common.json`." [] @error-messages)
+
+(defn clip-name
+  "`text` cut to `most_name_chars` code points, so a cut never splits a character."
+  [text]
+  (let [text
+        (str text)
+
+        most
+        (long (get @error-messages "most_name_chars"))]
+
+    (if (> (.codePointCount text 0 (count text)) most)
+      (subs text 0 (.offsetByCodePoints text 0 (int most)))
+      text)))
+
+(defn number-text
+  "A schema number as text: an integral number without a fraction."
+  [n]
+  (if (and (number? n)
+           (not (integer? n))
+           (== (double n) (Math/rint (double n)))
+           (< (Math/abs (double n)) 1e15))
+    (str (long n))
+    (str n)))
+
+(defn- value-text
+  [v]
+  (cond (nil? v) "null"
+        (string? v) v
+        (number? v) (number-text v)
+        :else (str v)))
+
+(defn json-type
+  "The JSON type name of a decoded value."
+  [v]
+  (cond (nil? v) "null"
+        (boolean? v) "boolean"
+        (integer? v) "integer"
+        (number? v) "number"
+        (string? v) "string"
+        (sequential? v) "array"
+        :else "object"))
+
+(defn render
+  "Template `template` with each `{name}` replaced by `(get values name)`."
+  [template values]
+  (str/replace template
+               #"\{([a-z_]+)\}"
+               (fn [[_ k]]
+                 (str (get values k)))))
+
+(defn rule-line
+  "One fault line `{path} - {message} ({rule})` of the message table."
+  [path message rule]
+  (render (get @error-messages "line")
+          {"path" (if (str/blank? (str path)) "/" path) "message" message "rule" rule}))
+
+(defn named-line
+  "The line of hand rule `rule-name` of the message table at `path`."
+  ([path rule-name] (named-line path rule-name {}))
+  ([path rule-name values]
+   (let [[template rule] (get-in @error-messages ["rules" rule-name])]
+     (rule-line path
+                (render template
+                        (update-vals values #(if (string? %) (clip-name %) (value-text %))))
+                rule))))
+
+(defn rule-text
+  "The message of hand rule `rule-name` of the message table, without a path: the
+   reason of a patch refusal that names its node itself."
+  [rule-name values]
+  (render (first (get-in @error-messages ["rules" rule-name])) (update-vals values value-text)))
+
+(defn- pointer-get
+  [value pointer]
+  (reduce (fn [v part]
+            (let [part (-> part
+                           (str/replace "~1" "/")
+                           (str/replace "~0" "~"))]
+              (cond (map? v) (get v part)
+                    (sequential? v) (nth v (parse-long part) nil)
+                    :else nil)))
+          value
+          (rest (str/split (str pointer) #"/" -1))))
+
+(defn- error-lines
+  [value prefix {:keys [instanceLocation keyword params]}]
+  (let [table
+        (get @error-messages "keywords")
+
+        instance
+        (pointer-get value instanceLocation)
+
+        line
+        #(rule-line (str prefix instanceLocation) % keyword)]
+
+    (case keyword
+      "required"
+      [(line (render (get table keyword) {"property" (clip-name (:missingProperty params))}))]
+
+      "additionalProperties"
+      [(line (render (get table keyword) {"property" (clip-name (:additionalProperty params))}))]
+
+      "pattern"
+      [(line (if (= (:pattern params) (get @error-messages "blank_pattern"))
+               (get @error-messages "blank")
+               (get table keyword)))]
+
+      (let [limit
+            (some-> (:limit params)
+                    value-text)
+
+            allowed
+            (cond (contains? params :allowedValues)
+                  (str/join ", " (map value-text (:allowedValues params)))
+                  (contains? params :allowedValue) (value-text (:allowedValue params)))
+
+            expected
+            (let [t (:type params)]
+              (if (sequential? t) (str/join " or " t) t))
+
+            n
+            (cond (string? instance) (.codePointCount ^String instance 0 (count instance))
+                  (sequential? instance) (count instance))
+
+            template
+            (or (get table keyword) (get @error-messages "default"))]
+
+        [(line (render template
+                       {"limit" limit
+                        "allowed" allowed
+                        "expected" expected
+                        "actual" (json-type instance)
+                        "count" n
+                        "rule" keyword
+                        "format" (:format params)}))]))))
+
+(defn explain-lines
+  "The sorted, distinct fault lines of `explanation` for `value` (JSON data). A failed
+   `oneOf` gives the faults of the one branch whose discriminator `const` holds. Without
+   one such branch, it is one line and the faults of its branches are left out. A line never holds a
+   value that a person wrote, only names and limits of the schema. `prefix` goes in front of
+   each path, for a value that is a part of a larger one."
+  ([explanation value] (explain-lines explanation value ""))
+  ([explanation value prefix]
+   (let [errors
+         (vec (:errors explanation))
+
+         dropped
+         (reduce
+           (fn [dropped {:keys [keyword keywordLocation] :as one}]
+             (if (or (not= "oneOf" keyword) (contains? dropped one))
+               dropped
+               (let [prefix
+                     (str keywordLocation "/")
+
+                     by-branch
+                     (group-by #(first (str/split (subs (:keywordLocation %) (count prefix)) #"/"))
+                               (filter #(and (not (contains? dropped %))
+                                             (str/starts-with? (str (:keywordLocation %)) prefix))
+                                       errors))
+
+                     ;; A branch whose discriminator const holds is the form the value chose.
+                     chosen
+                     (remove (fn [[branch faults]]
+                               (some
+                                 #(and (= "const" (:keyword %))
+                                       (re-matches
+                                         (re-pattern
+                                           (str "\\Q" prefix branch "\\E/properties/[^/]+/const"))
+                                         (:keywordLocation %)))
+                                 faults))
+                       by-branch)]
+
+                 (if (= 1 (count chosen))
+                   (into (conj dropped one) (mapcat val (dissoc by-branch (key (first chosen)))))
+                   (into dropped (mapcat val by-branch))))))
+           #{}
+           (sort-by #(count (str (:keywordLocation %))) errors))]
+
+     (->> errors
+          (remove dropped)
+          (mapcat #(error-lines value prefix %))
+          distinct
+          sort
+          vec))))
+
+(defn joined-lines
+  "At most `most_shown` of `lines`, joined with `; `, then `and N more`."
+  [lines]
+  (let [most
+        (long (get @error-messages "most_shown"))
+
+        left
+        (- (count lines) most)]
+
+    (str (str/join "; " (take most lines))
+         (when (pos? left) (str "; " (render (get @error-messages "more") {"count" left}))))))
 
 (defn explain-text
-  "One short line for each JSON Schema error of `explanation`, joined with `; `, or nil
-   when it has no errors. A line names the instance path, the broken rule and its keyword,
-   never a schema URL. It shows at most five errors and counts the others."
-  [explanation]
-  (when-let [errors (seq (:errors explanation))]
-    (let [lines (map (fn [{:keys [instanceLocation keyword error message]}]
-                       (str (if (str/blank? (str instanceLocation)) "/" instanceLocation)
-                            ": "
-                            (or error message)
-                            (when keyword (str " (" keyword ")"))))
-                     errors)
-          left (- (count errors) most-shown-errors)]
-
-      (str (str/join "; " (take most-shown-errors lines))
-           (when (pos? left) (str "; and " left " more"))))))
+  "The fault lines of `explanation` for `value`, joined, or nil when it has none."
+  ([explanation] (explain-text explanation nil))
+  ([explanation value]
+   (when (seq (:errors explanation))
+     (joined-lines (explain-lines explanation (wire/->wire value))))))
 
 (defn valid?
   "True when `value` satisfies the document root or named JSON Schema definition."

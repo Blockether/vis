@@ -901,10 +901,29 @@
                            [{:id "build" :label "Build" :tone :error :start t0 :end (+ t0 1000)}
                             {:id "new" :label "New" :tone :idle :start t0}])))))
     (it "refuses a lane that ends before it starts"
-        (expect (= "a lane ends before it starts"
+        (expect (= "node timeline /lanes/2 - the lane ends before it starts (lane)"
                    (try (append [{:id "bad" :label "Bad" :tone :ok :start (+ t0 10) :end t0}])
                         nil
                         (catch clojure.lang.ExceptionInfo e (:reason (ex-data e)))))))))
+
+(defdescribe
+  handed-fault-test
+  (it "takes a patch that makes a fault from the engine smaller"
+      ;; The engine owns a fault that it hands over. A patch that removes one of 40
+      ;; stats (the limit is 32) changes only the count of the fault, so it is no new fault.
+      (let [stats
+            (mapv #(hash-map :id (str "s" %) :label "L" :value-text "1" :tone :ok) (range 40))
+
+            view
+            (assoc (fixture) :nodes [{:id "st" :type :stat :label "Counts" :stats stats}])
+
+            patched
+            (materializer/apply-patch view
+                                      {:view-id (:id view)
+                                       :seq (inc (long (:seq view)))
+                                       :ops [{:op :remove :node-id "st" :item-ids ["s0"]}]})]
+
+        (expect (= 39 (count (:stats (first (:nodes patched)))))))))
 
 (defdescribe timeline-geometry-test
              (let [[ended running]

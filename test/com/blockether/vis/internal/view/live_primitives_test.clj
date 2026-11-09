@@ -95,9 +95,8 @@
                    {:type :spinner :id "x" :text "Wait" :variant "unknown"}
                    {:type :button :id "x" :label "Go" :clicks 10}
                    {:type :log :id "x" :default-expanded "yes"} {:type :code :id "x" :text 4}]]
-        (expect (try (engine/normalize-live-view {:title "Invalid" :nodes [bad]})
-                     false
-                     (catch clojure.lang.ExceptionInfo _ true))))
+        (expect
+          (try (engine/normalize-live-node bad) false (catch clojure.lang.ExceptionInfo _ true))))
       (expect (empty? (:text (engine/normalize-live-node {:id "empty" :type "code" :text ""})))))
   (it "keeps a declared button variant and names the allowed variants for a typo"
       ;; Issue #430: a button had no hierarchy, and a misspelled variant vanished silently.
@@ -110,8 +109,8 @@
                            {:id "drop" :type "button" :label "Drop" :variant "danger"})
                          nil
                          (catch clojure.lang.ExceptionInfo e (ex-message e)))]
-        (expect (str/includes? (str message) "destructive, primary, secondary"))
-        (expect (str/includes? (str message) "\"danger\"")))))
+        (expect (str/includes? (str message) "primary, secondary, destructive (enum)"))
+        (expect (str/includes? (str message) "/variant")))))
 
 (defdescribe
   live-primitives-lifecycle-test
@@ -390,6 +389,44 @@
 
 (defdescribe
   divider-contract-test
+  ;; #453: a stored view from before the button `action` default was dropped as unreadable.
+  (it "reads a stored view whose button has no action, with the schema default"
+      (let [view
+            (materializer/materialize (engine/normalize-live-view
+                                        {:title "Old"
+                                         :nodes [{:id "go" :type "button" :label "Go"}]}))
+
+            stored
+            (update (wire/->wire view)
+                    "nodes"
+                    (fn [nodes]
+                      (mapv #(dissoc % "action") nodes)))]
+
+        (expect (= :activate
+                   (some-> (engine/live-view<-wire stored)
+                           :nodes
+                           first
+                           :action)))))
+  ;; #453: one stored node that broke a node rule dropped the whole frame.
+  (it "reads a stored node that breaks its own rules as its error card and keeps the rest"
+      (let [view
+            (materializer/materialize (engine/normalize-live-view
+                                        {:title "Old"
+                                         :nodes [{:id "p" :type "paragraph" :text "x"}
+                                                 {:id "st" :type "stat" :stats []}]}))
+
+            stored
+            (assoc-in (wire/->wire view)
+              ["nodes" 1 "stats"]
+              (mapv #(hash-map "id" (str "s" %) "label" "L" "value_text" "1") (range 40)))
+
+            read
+            (engine/live-view<-wire stored)]
+
+        (expect (= ["p" "st"] (mapv :id (:nodes read))))
+        (expect (= "x" (:text (first (:nodes read)))))
+        (expect (= [:status "node st /stats - the array has 40 items, the maximum is 32 (maxItems)"]
+                   ((juxt :type :text) (second (:nodes read)))))))
   (it "divider contract"
       (let [divider
             (engine/normalize-live-node {:id "section-break" :type "divider"})
@@ -439,15 +476,9 @@
         (expect (nil? (refusal {:id "tl" :type "timeline" :lanes [(assoc lane :end 2000)]})))
         (expect (str/includes? (str (refusal
                                       {:id "tl" :type "timeline" :lanes [(assoc lane :end 1999)]}))
-                               "a lane ends before it starts"))
+                               "node tl /lanes/0 - the lane ends before it starts (lane)"))
         (expect (str/includes? (str (refusal {:id "tl" :type "timeline" :lanes [lane lane]}))
-                               "timeline lane id repeats: build"))
-        (expect (str/includes? (str (try (engine/normalize-live-op {:op "append"
-                                                                    :node-id "tl"
-                                                                    :lanes [(assoc lane :end 1)]})
-                                         nil
-                                         (catch clojure.lang.ExceptionInfo e (ex-message e))))
-                               "a lane ends before it starts"))))
+                               "two items have the id \"build\""))))
   (it "refuses a timeline with more lanes than the contract allows"
       (let [bound
             (long (:max-lanes spec/lane-defaults))

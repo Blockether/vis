@@ -103,7 +103,7 @@ PICTURES = json.loads((FIXTURES / "app-pictures.json").read_text())
 # The words of each refused rule, as `read_picture` (and the engine) gives them.
 REASONS = {
     # The schema enum refuses it first where a view is checked as a whole.
-    "media-type": "needs a media type|oneOf rule",
+    "media-type": "needs a media type|not one of",
     "magic": "is not image/",
     "base64": "base64",
     "size-unreadable": "does not give its size",
@@ -130,12 +130,12 @@ def test_a_fixture_picture_is_refused_by_its_rule(case):
     # The test recorder and a `before` mapping refuse it too (audit M6).
     node = {"id": "p", "type": "image", "alt": "A picture", **case["picture"]}
     recorder = vis._LiveRecorder(object())
-    with pytest.raises(RuntimeError, match=REASONS[case["rule"]]):
+    with pytest.raises((RuntimeError, AssertionError), match=REASONS[case["rule"]]):
         recorder.host_live(json.dumps({"op": "open", "view": vis.ui.app("P", node)}))
     with pytest.raises(ValueError, match=REASONS[case["rule"]]):
         vis.ui.image("p", png(1, 1), alt="New", before=case["picture"])
     good = vis.ui.image("p", png(1, 1), alt="New")
-    with pytest.raises(RuntimeError, match=REASONS[case["rule"]]):
+    with pytest.raises((RuntimeError, AssertionError), match=REASONS[case["rule"]]):
         recorder.host_live(
             json.dumps(
                 {
@@ -172,7 +172,7 @@ def test_the_pictures_of_one_view_stay_under_the_view_bound():
         node = vis.ui.image(f"p{n}", picture, alt="A picture")
         recorder._patch_ops([{"op": "add-node", "node_spec": node}])
     over = vis.ui.image("last", picture, alt="A picture")
-    with pytest.raises(RuntimeError, match="the most is"):
+    with pytest.raises(RuntimeError, match="the maximum is .*x-vis-max-picture-bytes"):
         recorder._patch_ops([{"op": "add-node", "node_spec": over}])
     # Review audit (goal 4b41c770): the refused picture stayed in the view.
     ids = [node.get("id") for node in recorder._view["nodes"]]

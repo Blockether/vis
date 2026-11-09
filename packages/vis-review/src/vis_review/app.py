@@ -80,12 +80,6 @@ MOST_IMAGES = 8
 MOST_PICTURE_BYTES = _contracts.definition("view", "live_view")[
     "x-vis-max-picture-bytes"
 ]
-# Threads that one diff node holds: the view bound.
-MOST_THREADS = next(
-    variant["properties"]["threads"]["maxItems"]
-    for variant in _contracts.definition("view", "component")["oneOf"]
-    if variant["properties"]["type"].get("const") == "diff"
-)
 # The order of findings when the threads cannot hold them all.
 _LEVEL_RANK = {"error": 0, "warning": 1}
 # Decoded picture bytes that the image cache keeps, newest first.
@@ -442,7 +436,11 @@ class ReviewApp:
         threads, left = _threads(findings, shown, int(newest * 1000) or 1)
         notes = [
             *(["Cut to fit: " + ", ".join(cut[:5])] if cut else []),
-            *([f"{left} more findings not shown"] if left else []),
+            *(
+                [f"{left} more finding{'' if left == 1 else 's'} not shown"]
+                if left
+                else []
+            ),
         ]
         return ui.diff(
             "diff",
@@ -862,8 +860,9 @@ def _threads(findings, paths, now: int) -> tuple[list[dict], int]:
         if finding.line >= 1 and finding.path in paths
     ]
     on_lines.sort(key=lambda pair: _LEVEL_RANK.get(pair[1].level, 2))
+    kept, left = vis.ui.fit(on_lines, "diff", "threads")
     threads = []
-    for n, finding in on_lines[:MOST_THREADS]:
+    for n, finding in kept:
         threads.append(
             {
                 "id": f"finding-{n}",
@@ -880,7 +879,7 @@ def _threads(findings, paths, now: int) -> tuple[list[dict], int]:
                 ],
             }
         )
-    return threads, max(0, len(on_lines) - MOST_THREADS)
+    return threads, left
 
 
 def _shown_nodes(view) -> dict[str, dict] | None:

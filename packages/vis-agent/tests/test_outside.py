@@ -760,15 +760,20 @@ def test_a_live_table_declares_the_groups_its_rows_hang_under():
     [
         ("", [vis.ui.status("now", "waiting")]),
         ("Deploy", []),
-        ("Deploy", [{"id": "now", "type": "sparkline"}]),
         ("Deploy", [vis.ui.status("now", "waiting"), vis.ui.status("now", "again")]),
         ("Deploy", [vis.ui.status("", "waiting")]),
     ],
 )
 def test_a_live_view_names_what_is_wrong_with_it(view):
-    with pytest.raises(_outside.Refused) as raised:
+    with pytest.raises(RuntimeError, match="Invalid live view: .") as raised:
         vis.live(*view)
-    assert str(raised.value)
+    assert "https://" not in str(raised.value)
+
+
+def test_a_node_of_an_unknown_type_opens_as_an_error_card():
+    with vis.live("Deploy", [{"id": "now", "type": "sparkline"}]) as view:
+        card = view.state()["nodes"][0]
+    assert (card["id"], card["type"], card["tone"]) == ("now", "status", "error")
 
 
 @pytest.mark.parametrize("op", ["patch", "state", "close"])

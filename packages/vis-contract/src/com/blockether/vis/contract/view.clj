@@ -1,7 +1,6 @@
 (ns com.blockether.vis.contract.view
   "View vocabulary and JSON Schema validation."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]))
 
@@ -336,6 +335,34 @@
   "Allowed keys for a live node."
   (reduce into #{} (map property-keys (vals (dissoc live-nodes group-type-name)))))
 
+(def live-node-type-keys
+  "Wire live component name to the keys that its own schema variant allows."
+  (into {}
+        (map (fn [[type-name shape]]
+               [type-name (property-keys shape)]))
+        live-nodes))
+
+(defn- required-defaults
+  "The schema default of each required key of `shape`, by engine key."
+  [shape]
+  (into {}
+        (keep (fn [k]
+                (let [rule (get-in shape ["properties" k])]
+                  (when (contains? rule "default") [(wire/engine-key k) (get rule "default")]))))
+        (get shape "required")))
+
+(def live-node-defaults
+  "Wire live component name to the schema default of each required key. The schema is
+   the one owner of these defaults: every host fills them from here."
+  (into {}
+        (map (fn [[type-name shape]]
+               [type-name (required-defaults shape)]))
+        live-nodes))
+
+(def live-item-defaults
+  "Collection key to the schema default of each required key of one item."
+  {:steps (required-defaults (definition "step")) :lanes (required-defaults (definition "lane"))})
+
 (def live-view-keys
   "Every key a live view may carry, engine stamps included."
   (schema-keys "live_view"))
@@ -443,15 +470,97 @@
 
 (defn- schema-error
   [definition value]
-  (some-> (document/explain-text (document/explain "view" definition value))
-          (str/replace "_" "-")))
+  (document/explain-text (document/explain "view" definition value) value))
+
+(def ^:private most-schema-errors
+  "How many errors one skjema report holds. A report of this size may have left
+   errors out."
+  10)
+
+(defn- part-lines
+  "The fault lines of wire value `value` against the schema `shape` at `pointer` in
+   `$defs`, with `prefix` in front of each path. skjema stops at ten errors, so a full
+   report of an array checks the keywords of the array, then each item on its own: the
+   Python SDK, which has every error, gives the same lines."
+  [pointer shape value prefix]
+  (let [explanation (document/explain "view" pointer value)]
+    (if (and (>= (count (:errors explanation)) most-schema-errors)
+             (sequential? value)
+             (map? (get shape "items")))
+      (let [n (count value)
+            item (get shape "items")
+            item-shape (if-let [ref (get item "$ref")]
+                         (definition (subs ref (count "#/$defs/")))
+                         item)]
+
+        (concat (document/explain-lines
+                  {:errors (cond-> []
+                             (and (get shape "maxItems") (> n (long (get shape "maxItems"))))
+                             (conj {:instanceLocation ""
+                                    :keyword "maxItems"
+                                    :params {:limit (get shape "maxItems")}})
+
+                             (and (get shape "minItems") (< n (long (get shape "minItems"))))
+                             (conj {:instanceLocation ""
+                                    :keyword "minItems"
+                                    :params {:limit (get shape "minItems")}}))}
+                  value
+                  prefix)
+                (apply concat
+                  (map-indexed
+                    (fn [i v]
+                      (part-lines (str pointer "/items") item-shape v (str prefix "/" i)))
+                    value))))
+      (document/explain-lines explanation value prefix))))
+
+(defn- variant-lines
+  "The schema fault lines of wire node `node` against `component` variant `index`. A
+   report that skjema cut at ten errors is made again from its parts: the unknown and
+   missing keys from the schema data, then each property on its own."
+  [index node]
+  (let [pointer
+        (str "component/oneOf/" index)
+
+        explanation
+        (document/explain "view" pointer node)]
+
+    (if (and (>= (count (:errors explanation)) most-schema-errors) (map? node))
+      (let [shape
+            (get-in (definition "component") ["oneOf" index])
+
+            properties
+            (get shape "properties")]
+
+        (concat
+          (document/explain-lines {:errors (concat (for [k
+                                                         (keys node)
+
+                                                         :when (not (contains? properties k))]
+
+                                                     {:instanceLocation ""
+                                                      :keyword "additionalProperties"
+                                                      :params {:additionalProperty k}})
+                                                   (for [k
+                                                         (get shape "required")
+
+                                                         :when (not (contains? node k))]
+
+                                                     {:instanceLocation ""
+                                                      :keyword "required"
+                                                      :params {:missingProperty k}}))}
+                                  node)
+          (mapcat (fn [[k v]]
+                    (when (contains? properties k)
+                      (part-lines (str pointer "/properties/" k) (get properties k) v (str "/" k))))
+                  node)))
+      (document/explain-lines explanation node))))
 
 (defn- component-error
   "The schema error of `value` against the one `component` variant `type-name`."
   [type-name value]
   (if-let [index (get component-index type-name)]
     (schema-error (str "component/oneOf/" index) value)
-    (str "unknown component type " (pr-str type-name))))
+    "unknown component type"))
 
 (defn- one-identity? [{:keys [id name]}] (= id name))
 
@@ -637,32 +746,6 @@
         "values must be present only for a submitted answer")
       (when (and (seq fields) (:is-submitted answer)) (values-error fields (:values answer)))))
 
-(defn- sorted-order?
-  [x]
-  (and (map? x)
-       (non-blank-string? (:by x))
-       (or (nil? (:dir x)) (contains? (set (vals live-sort-dirs)) (:dir x)))))
-
-(defn- ordered-by-declared-column?
-  [{:keys [type columns order]}]
-  (or (not= :table type)
-      (not (map? order))
-      (and (sorted-order? order) (contains? (set (map :id columns)) (:by order)))))
-
-(defn- selection-belongs-to-table?
-  [{:keys [type rows is-selectable selected-ids] :as node}]
-  (if (= :table type)
-    (and (or (not (contains? node :selected-ids)) (true? is-selectable))
-         (every? (set (map :id rows)) selected-ids))
-    (and (or (= :card type) (not (contains? node :is-selectable)))
-         (not (contains? node :selected-ids)))))
-
-(defn- repeated-id
-  [items]
-  (some (fn [[id n]]
-          (when (> (long n) 1) id))
-        (frequencies (map :id items))))
-
 (defn scene-merge
   "Scene `objects` with `changes` merged in by id. A change keeps every key it
    leaves out, so a moved object sends only its new place. A new id starts from
@@ -684,51 +767,13 @@
                    [(vec objects) start]
                    changes))))
 
-(defn- scene-error
-  "nil unless a scene repeats an id, shadows a built-in mesh, lets a face name a
-   missing vertex or lets an object name an unknown mesh."
-  [{:keys [type meshes objects]}]
-  (when (= :scene type)
-    (let [known (into (set (keys scene-meshes)) (map :id) meshes)]
-      (or (some->> (repeated-id meshes)
-                   (str "scene mesh id repeats: "))
-          (some->> (repeated-id objects)
-                   (str "scene object id repeats: "))
-          (some (fn [{:keys [id]}]
-                  (when (contains? scene-meshes id)
-                    (str "scene mesh " id " shadows a built-in mesh")))
-                meshes)
-          (some (fn [{:keys [id vertices faces]}]
-                  (when-not (every? #(< (long %) (count vertices)) (flatten faces))
-                    (str "scene mesh " id " has a face that names a missing vertex")))
-                meshes)
-          (some (fn [{:keys [id mesh]}]
-                  (when-not (contains? known mesh)
-                    (str "scene object " id " names an unknown mesh " (pr-str mesh))))
-                objects)))))
-
-(defn- timeline-error
-  "nil unless a timeline repeats a lane id or has a lane that ends before it starts."
-  [{:keys [type lanes]}]
-  (when (= :timeline type)
-    (or (some->> (repeated-id lanes)
-                 (str "timeline lane id repeats: "))
-        (when (some (fn [{:keys [start end]}]
-                      (and end (< (long end) (long start))))
-                    lanes)
-          "a lane ends before it starts"))))
+(declare live-node-lines wire-data)
 
 (defn live-node-error
   "nil when `node` is a valid normalized live node, otherwise a reason."
   [node]
-  (or (if-let [type-name (some-> (:type node)
-                                 name)]
-        (component-error type-name node)
-        (schema-error "component" node))
-      (scene-error node)
-      (timeline-error node)
-      (when-not (ordered-by-declared-column? node) "table order must name a declared column")
-      (when-not (selection-belongs-to-table? node) "selection must belong to a selectable table")))
+  (let [lines (live-node-lines (wire-data node) false)]
+    (when (seq lines) (document/joined-lines lines))))
 
 ;; Pictures: the bytes behind an image node
 
@@ -898,9 +943,7 @@
 
 (defn- view-picture-bytes
   [nodes]
-  (transduce (comp (filter #(= "image"
-                               (some-> (:type %)
-                                       name)))
+  (transduce (comp (filter #(contains? #{"image" :image} (:type %)))
                    (map #(+ (picture-byte-count (:data %))
                             (picture-byte-count (get-in % [:before :data])))))
              +
@@ -922,31 +965,793 @@
       (str "the pictures of this view hold " total
            " bytes; the most is " (:view-bytes picture-bounds)))))
 
-(defn live-view-error
-  "nil when `view` is a valid normalized live view, otherwise a reason."
+;; Live view checks: the one check of every host. The Python SDK runs the same
+;; algorithm (`blockether.vis._contracts.live_view_faults`), and the shared cases in
+;; `vis-contract/fixtures/live-view-checks.json` hold both to the same answer. The
+;; check reads wire data. The schema owns the shape and the defaults of each node;
+;; this code holds only the rules that JSON Schema cannot say.
+
+(defn wire-data
+  "`value` as JSON-shaped wire data: snake_case string keys and string enum values.
+   Unlike [[wire/->wire]] it keeps a non-finite number, so the check can refuse it."
+  [value]
+  (cond (map? value) (into {}
+                           (map (fn [[k v]]
+                                  [(wire/wire-key k) (wire-data v)]))
+                           value)
+        (and (coll? value) (not (map? value))) (mapv wire-data value)
+        (keyword? value) (name value)
+        (symbol? value) (str value)
+        (uuid? value) (str value)
+        (ratio? value) (double value)
+        :else value))
+
+(defn- variant
+  [type-name]
+  (when (string? type-name)
+    (when-let [index (get component-index type-name)]
+      [index (get (get (definition "component") "oneOf") index)])))
+
+(defn- ref-definition
+  [shape]
+  (some->> (get-in shape ["items" "$ref"])
+           (re-matches #"#/\$defs/(.+)")
+           second
+           definition))
+
+(defn- filled-defaults
+  "`m` with the schema default of each required key of `shape` that it leaves out,
+   then with each key that `x-vis-fill` fills: `true` takes the schema default, a
+   property name takes the value of that property."
+  [m shape]
+  (let [properties
+        (get shape "properties")
+
+        m
+        (reduce (fn [m k]
+                  (let [rule (get properties k)]
+                    (if (and (not (contains? m k)) (contains? rule "default"))
+                      (assoc m k (get rule "default"))
+                      m)))
+                m
+                (get shape "required"))]
+
+    (reduce (fn [m [k rule]]
+              (let [fill (get rule "x-vis-fill")]
+                (cond (or (nil? fill) (contains? m k)) m
+                      (true? fill) (assoc m k (get rule "default"))
+                      (contains? m fill) (assoc m k (get m fill))
+                      :else m)))
+            m
+            (sort-by key properties))))
+
+(defn fill-live-node
+  "Live wire node `node` with the defaults that every host fills: a null key is an
+   absent key, a node without a type is a `plaintext` input, an input takes its name
+   and label from its id, a link with a scheme is a `url` link, and each required key
+   with a schema `default` takes it. The children of a group are filled too."
+  [node]
+  (if-not (map? node)
+    node
+    (let [node
+          (into {} (remove (comp nil? val)) node)
+
+          node
+          (cond-> node
+            (not (contains? node "type"))
+            (assoc "type" "plaintext"))
+
+          [_ shape]
+          (variant (get node "type"))
+
+          input?
+          (contains? (get shape "properties") "is_secret")
+
+          node
+          (cond-> node
+            input?
+            (-> (dissoc "is_secret")
+                (as-> n
+                  (cond-> n
+                    (and (not (contains? n "id")) (contains? n "name"))
+                    (assoc "id" (get n "name"))))
+                (as-> n
+                  (cond-> n
+                    (and (not (contains? n "name")) (contains? n "id"))
+                    (assoc "name" (get n "id"))
+
+                    (and (not (contains? n "label")) (contains? n "id"))
+                    (assoc "label" (get n "id"))))))
+
+          node
+          (if shape (filled-defaults node shape) node)
+
+          node
+          (reduce-kv (fn [n k rule]
+                       (let [items
+                             (get n k)
+
+                             item-shape
+                             (ref-definition rule)]
+
+                         (if (and item-shape (sequential? items))
+                           (assoc n
+                             k (mapv #(cond-> % (map? %) (filled-defaults item-shape)
+                                        (and (= "links" k)
+                                             (map? %)
+                                             (not (contains? % "target_kind"))
+                                             (string? (get % "target"))
+                                             (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:"
+                                                      (get % "target"))) (assoc "target_kind"
+                                                                           "url"))
+                                     items))
+                           n)))
+                     node
+                     (or (get shape "properties") {}))]
+
+      (cond-> node
+        (sequential? (get node "children"))
+        (update "children" #(mapv fill-live-node %))))))
+
+(defn- non-finite-paths
+  [value path]
+  (cond (map? value) (mapcat (fn [[k v]]
+                               (non-finite-paths v (str path "/" k)))
+                             value)
+        (sequential? value) (mapcat (fn [i v]
+                                      (non-finite-paths v (str path "/" i)))
+                                    (range)
+                                    value)
+        (and (double? value) (or (Double/isNaN value) (Double/isInfinite value))) [path]
+        (and (float? value) (or (Float/isNaN value) (Float/isInfinite value))) [path]
+        :else []))
+
+(defn- child-path?
+  "True for a fault inside a group child: the child is checked on its own. Only the
+   rule that the group puts on the type of a child stays with the group."
+  [line]
+  (boolean (re-find #"^/children/\d+[/ ]" line)))
+
+(defn- repeated
+  [ids]
+  (first (sort (keep (fn [[id n]]
+                       (when (> (long n) 1) id))
+                     (frequencies (keep #(some-> %
+                                                 str)
+                                        ids))))))
+
+(defn- engine-field
+  [node]
+  (-> (wire/->engine node)
+      (update :type keyword)))
+
+(defn- input-lines
+  "The input rules of filled node `node`. A default or a value is held to the domain
+   only when the bounds of a range make a domain."
+  [node]
+  (let [field
+        (engine-field node)
+
+        kind
+        (:type field)
+
+        checked
+        (cond-> field
+          (= :range kind)
+          (->> (merge range-defaults)))
+
+        range-lines
+        (when (= :range kind)
+          (if-not (ascending-bounds? checked)
+            [(document/named-line "/min" "range_order")]
+            (when-not (positive-step? checked) [(document/named-line "/step" "range_step")])))]
+
+    (concat (when (and (contains? secret-types kind) (some? (:value field)))
+              [(document/named-line "/value" "secret_value")])
+            (when (and (contains? secret-types kind) (contains? field :default))
+              [(document/named-line "/default" "secret_default")])
+            (when (contains? node "validate") [(document/named-line "/validate" "live_validate")])
+            (when (and (sequential? (get node "options"))
+                       (repeated (map #(when (map? %) (get % "value")) (get node "options"))))
+              [(document/named-line "/options" "repeated_option")])
+            (when (not= (:id field) (:name field)) [(document/named-line "/name" "id_name")])
+            (when-not (ordered-lengths? field) [(document/named-line "/min_length" "length_order")])
+            range-lines
+            (when (and (empty? range-lines)
+                       (contains? field :default)
+                       (not (contains? secret-types kind))
+                       (not (default-in-domain? checked)))
+              [(document/named-line "/default" "default_domain")])
+            (when (and (empty? range-lines)
+                       (contains? field :value)
+                       (not (contains? secret-types kind))
+                       (not (value-in-domain? checked (:value field))))
+              [(document/named-line "/value" "value_domain")]))))
+
+(defn- toolbar-command?
+  [node]
+  (and (map? node)
+       (or (= "button" (get node "type"))
+           (and (= "group" (get node "type"))
+                (sequential? (get node "children"))
+                (every? toolbar-command? (get node "children"))))))
+
+(defn- toolbar-stamp-lines
+  "A `read_only` line for each key that only the host writes on a node of diff
+   toolbar `children` at JSON pointer `path`, a menu child too. The diff node check
+   does not see them, because a toolbar button is no node of the view."
+  [children path]
+  (when (sequential? children)
+    (mapcat (fn [i child]
+              (when (map? child)
+                (let [at (str path "/" i)]
+                  (concat (for [[k rule] (sort-by key
+                                                  (get (second (variant (get child "type")))
+                                                       "properties"))
+                                :when (and (get rule "readOnly") (contains? child k))]
+
+                            (document/named-line (str at "/" k) "read_only"))
+                          (toolbar-stamp-lines (get child "children") (str at "/children"))))))
+            (range)
+            children)))
+
+(defn- hand-lines
+  "The rules of filled node `node` that JSON Schema cannot say. Each one is a case
+   of `live-view-checks.json`."
+  [node decl?]
+  (let [kind
+        (get node "type")
+
+        [_ shape]
+        (variant kind)
+
+        line
+        document/named-line]
+
+    (concat
+      (when decl?
+        (for [[k rule]
+              (sort-by key (get shape "properties"))
+
+              :when (and (get rule "readOnly") (contains? node k))]
+
+          (line (str "/" k) "read_only")))
+      (when (contains? (get shape "properties") "is_required") (input-lines node))
+      (case kind
+        "log"
+        (let [tones (get node "line_tones")]
+          (when (and (sequential? tones) (not= (count tones) (count (get node "lines"))))
+            [(line "/line_tones" "line_tones")]))
+
+        "group"
+        (when (and (contains? node "max_columns") (not= "grid" (get node "direction")))
+          [(line "/max_columns" "grid_columns")])
+
+        "diff"
+        (concat (when decl? (toolbar-stamp-lines (get node "children") "/children"))
+                (keep-indexed (fn [i child]
+                                (when (and (map? child)
+                                           (= "group" (get child "type"))
+                                           (not (toolbar-command? child)))
+                                  (line (str "/children/" i) "toolbar_menu")))
+                              (get node "children"))
+                (keep-indexed (fn [i thread]
+                                (when (and (map? thread) (not (contains? thread "anchor")))
+                                  (line (str "/threads/" i) "thread_anchor")))
+                              (get node "threads"))
+                (some->> (repeated (map #(get % "id") (get node "threads")))
+                         (array-map "id")
+                         (line "/threads" "repeated_item_id")
+                         vector))
+
+        ("stat" "steps")
+        (let [k (if (= "stat" kind) "stats" "steps")]
+          (some->> (when (sequential? (get node k))
+                     (repeated (map #(when (map? %) (get % "id")) (get node k))))
+                   (array-map "id")
+                   (line (str "/" k) "repeated_item_id")
+                   vector))
+
+        "timeline"
+        (concat (some->> (repeated (map #(get % "id") (get node "lanes")))
+                         (array-map "id")
+                         (line "/lanes" "repeated_item_id")
+                         vector)
+                (keep-indexed
+                  (fn [i {:strs [start end]}]
+                    (when (and (number? end) (number? start) (< (double end) (double start)))
+                      (line (str "/lanes/" i) "lane_order")))
+                  (get node "lanes")))
+
+        "table"
+        (let [order
+              (get node "order")
+
+              columns
+              (set (map #(get % "id") (get node "columns")))
+
+              rows
+              (set (map #(get % "id") (get node "rows")))]
+
+          (concat (when (and (map? order) (not (contains? columns (get order "by"))))
+                    [(line "/order" "table_order")])
+                  (let [most
+                        (get node "max_rows")
+
+                        held
+                        (get node "rows")]
+
+                    (when (and (number? most) (sequential? held) (> (count held) (long most)))
+                      [(line "/rows" "table_rows" {"count" (count held) "limit" most})]))
+                  (when (contains? node "selected_ids")
+                    (cond (not (true? (get node "is_selectable"))) [(line "/selected_ids"
+                                                                          "not_selectable")]
+                          (not-every? rows (get node "selected_ids")) [(line "/selected_ids"
+                                                                             "table_selection")]))))
+
+        "scene"
+        (let [meshes
+              (get node "meshes")
+
+              objects
+              (get node "objects")
+
+              known
+              (into (set (keys scene-meshes)) (map #(get % "id")) meshes)]
+
+          (concat (some->> (repeated (map #(get % "id") meshes))
+                           (array-map "id")
+                           (line "/meshes" "repeated_item_id")
+                           vector)
+                  (some->> (repeated (map #(get % "id") objects))
+                           (array-map "id")
+                           (line "/objects" "repeated_item_id")
+                           vector)
+                  (keep-indexed (fn [i {:strs [id vertices faces]}]
+                                  (cond (contains? scene-meshes id) (line (str "/meshes/" i)
+                                                                          "mesh_shadow")
+                                        (not-every? #(< (long %) (count vertices)) (flatten faces))
+                                        (line (str "/meshes/" i) "face_vertex")))
+                                meshes)
+                  (keep-indexed (fn [i {:strs [mesh]}]
+                                  (when-not (contains? known mesh)
+                                    (line (str "/objects/" i) "unknown_mesh")))
+                                objects)))
+
+        "image"
+        (for [[path raw]
+              [["/" node] ["/before" (get node "before")]]
+
+              :when (and (map? raw) (contains? raw "data"))
+              :let [reason
+                    (:error (read-picture (wire/->engine raw)))]
+              :when reason]
+
+          (line path "picture" {"reason" reason}))
+
+        nil))))
+
+(defn live-node-lines
+  "The sorted fault lines of wire node `node` after [[fill-live-node]], or an empty
+   vector. A line names the path in the node, the broken rule and its keyword, never a
+   value. With `decl?`, a key that only the host writes is a fault. The faults of a
+   group child belong to the child, which the caller checks on its own."
+  [node decl?]
+  (let [node
+        (fill-live-node node)
+
+        kind
+        (get node "type")]
+
+    (cond (not (map? node)) [(document/named-line "/" "node_not_map")]
+          (nil? (variant kind)) [(document/named-line "/type" "unknown_type")]
+          :else (let [bad (non-finite-paths node "")]
+                  (if (seq bad)
+                    (vec (sort (distinct (map #(document/named-line % "not_finite") bad))))
+                    (let [[index] (variant kind)
+                          group? (= "group" kind)
+                          schema (cond->> (vec (sort (distinct (variant-lines index node))))
+                                   group?
+                                   (remove child-path?))
+                          ;; A group child is checked on its own, so it needs a map and an id.
+                          schema
+                          (concat
+                            schema
+                            (when group?
+                              (keep-indexed
+                                (fn [i child]
+                                  (cond (not (map? child)) (document/named-line (str "/children/" i)
+                                                                                "child_not_map")
+                                        (not (non-blank-string? (get child "id")))
+                                        (document/named-line (str "/children/" i)
+                                                             (if (= "group" (get child "type"))
+                                                               "group_needs_id"
+                                                               "node_needs_id"))))
+                                (when (sequential? (get node "children")) (get node "children")))))
+                          lines (if (seq schema) schema (hand-lines node decl?))]
+
+                      (vec (sort (distinct lines)))))))))
+
+(def view-refusal-prefix
+  "The head of the refusal of a live view in every host."
+  "Invalid live view: ")
+
+(def patch-refusal-prefix
+  "The head of the refusal of a live-view patch in every host."
+  "Invalid live-view patch: ")
+
+(defn node-fault-text
+  "`node <id> <lines>` of node `id`, at most five lines."
+  [id lines]
+  (document/render (get (document/message-table) "node")
+                   {"id" (let [id (str id)]
+                           (document/clip-name id))
+                    "lines" (document/joined-lines lines)}))
+
+(defn view-fault-text
+  "`view <lines>` of the view faults `lines`."
+  [lines]
+  (document/render (get (document/message-table) "view") {"lines" (document/joined-lines lines)}))
+
+(defn live-node-fault
+  "The fault text of one wire node, or nil when it is valid."
+  [node decl?]
+  (let [lines (live-node-lines node decl?)]
+    (when (seq lines) (node-fault-text (when (map? node) (get node "id")) lines))))
+
+(defn error-card
+  "The node that a host shows in place of node `id` with fault `text`."
+  [id text]
+  {"id" id "type" "status" "tone" "error" "text" text})
+
+(def ^:private view-stamps
+  {"id" "view" "channel_ids" ["app"] "timeout_ms" 0 "seq" 0 "created_at" 1})
+
+(defn- wire-tree
+  [nodes]
+  (mapcat (fn [node]
+            (when (map? node)
+              (cons node (when (= "group" (get node "type")) (wire-tree (get node "children"))))))
+          (when (sequential? nodes) nodes)))
+
+(defn- command-tree
+  "Each map node of wire `nodes`, also each child of a group or of a diff toolbar:
+   the nodes that a shortcut can press."
+  [nodes]
+  (mapcat (fn [node]
+            (when (map? node) (cons node (command-tree (get node "children")))))
+          (when (sequential? nodes) nodes)))
+
+(defn- pressable?
+  [node]
+  (or (= "button" (get node "type"))
+      (and (= "card" (get node "type")) (true? (get node "is_selectable")))))
+
+(defn- shortcut-lines
+  "The view faults of the shortcuts of wire view `view` with filled `nodes`: only an
+   app takes shortcuts, a key is bound once, and a `node_id` names a button or a
+   selectable card of the view. The schema holds the shape of each shortcut."
+  [view nodes]
+  (let [shortcuts (get view "shortcuts")]
+    (when (sequential? shortcuts)
+      (if (not= "attachment" (get view "placement"))
+        [(document/named-line "/shortcuts" "shortcut_needs_app")]
+        (let [by-id (into {} (map (juxt #(get % "id") identity)) (command-tree nodes))]
+          (concat (->> shortcuts
+                       (map-indexed vector)
+                       (reduce (fn [[seen lines] [i shortcut]]
+                                 (let [k (when (and (map? shortcut) (contains? shortcut "key"))
+                                           (str (get shortcut "key")))]
+                                   (cond (contains? seen k) [seen
+                                                             (conj lines
+                                                                   (document/named-line
+                                                                     (str "/shortcuts/" i)
+                                                                     "repeated_shortcut_key"))]
+                                         (some? k) [(conj seen k) lines]
+                                         :else [seen lines])))
+                               [#{} []])
+                       second)
+                  (keep-indexed (fn [i shortcut]
+                                  (let [id (when (map? shortcut) (get shortcut "node_id"))
+                                        node (get by-id id)]
+
+                                    (cond (not (string? id)) nil
+                                          (nil? node) (document/named-line (str "/shortcuts/" i)
+                                                                           "shortcut_target")
+                                          (not (pressable? node)) (document/named-line
+                                                                    (str "/shortcuts/" i)
+                                                                    "shortcut_not_pressable"))))
+                                shortcuts)))))))
+
+(defn- view-with-nodes
+  "Wire view `view` with one channel list and its nodes filled, as the checks read it."
   [view]
-  (or (schema-error "live_view" view)
-      (let [nodes
-            (live-tree (:nodes view))
+  (cond-> view
+    (and (contains? view "channel_id") (not (contains? view "channel_ids")))
+    (-> (assoc "channel_ids" [(get view "channel_id")])
+        (dissoc "channel_id"))
 
-            ids
-            (map :id nodes)]
+    (sequential? (get view "nodes"))
+    (update "nodes" #(mapv fill-live-node %))))
 
-        (or (some live-node-error nodes)
-            (cond (> (count nodes) (long (:max-nodes view-defaults)))
-                  (str "live view has "
-                       (count nodes)
-                       " nodes; the maximum is "
-                       (:max-nodes view-defaults)
-                       ". Put a collection in a table: rows do not count as nodes.")
-                  (not= (count ids) (count (set ids))) "live node ids must be unique")
-            (picture-budget-error view)
-            (app/shortcuts-error view)))))
+(defn live-view-lines
+  "The sorted view fault lines of live wire view `view`, which refuse the whole view:
+   not a map, a view key that the schema refuses, a top node that is no map or has no
+   id, a shortcut rule, two nodes with one id, too many nodes or too many picture
+   bytes. A host checks a patched view with it, after each op had its node check."
+  [view decl?]
+  (if-not (map? view)
+    [(document/named-line "/" "view_not_map")]
+    (let [view
+          (view-with-nodes view)
+
+          nodes
+          (get view "nodes")
+
+          stamped
+          (merge view-stamps
+                 (dissoc view "nodes")
+                 {"nodes" (if (sequential? nodes)
+                            (mapv (fn [_]
+                                    {"id" "node" "type" "divider"})
+                                  nodes)
+                            nodes)})
+
+          schema
+          (if (seq (non-finite-paths stamped ""))
+            [(document/named-line "/" "view_not_json")]
+            (mapv #(str/replace-first % #"^/nodes/\d+ .*" "")
+                  (document/explain-lines (document/explain-json "view" "live_view" stamped)
+                                          stamped)))
+
+          shortcuts
+          (shortcut-lines view nodes)
+
+          ;; A shortcut rule names the problem of its path; the oneOf line says less.
+          covered
+          (set (map #(first (str/split % #" - " 2)) shortcuts))
+
+          schema
+          (vec (remove #(or (str/blank? %)
+                            (and (str/ends-with? % "(oneOf)")
+                                 (covered (first (str/split % #" - " 2)))))
+                 schema))
+
+          tops
+          (when (sequential? nodes)
+            (keep-indexed
+              (fn [i node]
+                (cond (not (map? node)) (document/named-line (str "/nodes/" i) "node_not_map")
+                      (not (non-blank-string? (get node "id")))
+                      (document/named-line
+                        (str "/nodes/" i)
+                        (if (= "group" (get node "type")) "group_needs_id" "node_needs_id"))))
+              nodes))
+
+          tree
+          (wire-tree nodes)
+
+          most
+          (long (:max-nodes view-defaults))
+
+          picture-total
+          (long (view-picture-bytes (map wire/->engine tree)))
+
+          lines
+          (vec
+            (sort
+              (distinct
+                (concat schema
+                        tops
+                        (when decl?
+                          (for [[k rule]
+                                (sort-by key (get (definition "live_view") "properties"))
+
+                                :when (and (get rule "readOnly") (contains? view k))]
+
+                            (document/named-line (str "/" k) "read_only")))
+                        shortcuts
+                        (some->> (repeated (keep #(get % "id") tree))
+                                 (array-map "id")
+                                 (document/named-line "/nodes" "repeated_node_id")
+                                 vector)
+                        (when (> (count tree) most)
+                          [(document/named-line "/nodes"
+                                                "too_many_nodes"
+                                                {"count" (count tree) "limit" most})])
+                        (when (> picture-total (long (:view-bytes picture-bounds)))
+                          [(document/named-line "/nodes"
+                                                "picture_budget"
+                                                {"count" picture-total
+                                                 "limit" (:view-bytes picture-bounds)})])))))]
+
+      lines)))
+
+(defn- fault-key
+  "The path and the rule of fault line `line`, without the counts of its message."
+  [line]
+  [(first (str/split line #" - " 2)) (second (re-find #"\(([^()]*)\)$" line))])
+
+(defn live-patched-lines
+  "The fault lines of `after` whose path and rule `before` did not have: a patch is
+   refused only for a fault that it adds, not for one that it makes smaller or larger.
+   `lines-of` is [[live-view-lines]] or a node check."
+  [lines-of before after]
+  (let [had (if (some? before) (set (map fault-key (lines-of before))) #{})]
+    (vec (remove (comp had fault-key) (lines-of after)))))
+
+(defn live-view-faults
+  "Check live wire view `view` as every host does. Answers `{:view lines :nodes
+   {id text} :dropped notes}`. A line of [[live-view-lines]] refuses the whole view.
+   Else each node that breaks its own rules maps its id to its fault text, and a host
+   shows it as an error card. A shortcut that names such a node is dropped, with one
+   note each."
+  [view decl?]
+  (let [lines (live-view-lines view decl?)]
+    (if (seq lines)
+      {:view lines :nodes {} :dropped []}
+      (let [view (view-with-nodes view)
+            nodes (get view "nodes")
+            found (volatile! (array-map))
+            broken-ids (volatile! #{})
+            walk (fn walk [node]
+                   (let [node-lines (live-node-lines node decl?)]
+                     (if (seq node-lines)
+                       (do (vswap! found
+                                   assoc
+                                   (get node "id")
+                                   (node-fault-text (get node "id") node-lines))
+                           (vswap! broken-ids into (keep #(get % "id")) (wire-tree [node])))
+                       (when (= "group" (get node "type"))
+                         (run! walk (filter map? (get node "children")))))))]
+
+        (run! walk nodes)
+        {:view []
+         :nodes @found
+         :dropped (vec (for [[i shortcut] (map-indexed vector (get view "shortcuts"))
+                             :when (and (map? shortcut)
+                                        (contains? @broken-ids (get shortcut "node_id")))]
+
+                         {:key (get shortcut "key")
+                          :node-id (get shortcut "node_id")
+                          :note (document/named-line (str "/shortcuts/" i)
+                                                     "shortcut_dropped"
+                                                     {"id" (str (get shortcut "node_id"))})}))}))))
+
+(defn live-view-error
+  "nil when normalized live view `view` passes [[live-view-faults]], otherwise the
+   view fault text, or the fault text of its first broken node."
+  [view]
+  (let [{lines :view nodes :nodes} (live-view-faults (wire-data view) false)]
+    (cond (seq lines) (view-fault-text lines)
+          (seq nodes) (val (first (sort-by key nodes))))))
+
+(defn live-shortcuts-error
+  "nil when the shortcuts of normalized live view `view` pass the shared shortcut
+   rules of [[live-view-faults]], otherwise the view fault text."
+  [view]
+  (let [wire (wire-data view)]
+    (when-let [lines (seq (shortcut-lines wire (get wire "nodes")))]
+      (view-fault-text lines))))
+
+(def ^:private live-op-index
+  "Wire op name to its position in the `live_op` union."
+  (into {}
+        (map-indexed (fn [index shape]
+                       [(get-in shape ["properties" "op" "const"]) index]))
+        (get (definition "live_op") "oneOf")))
+
+(defn- live-op-lines
+  "The fault lines of wire patch op `op` at `path`. An op is checked against the one
+   `live_op` variant that its `op` names, as a node is checked against its own
+   `component` variant: a report against the whole union stops before the faults of
+   the chosen form. The node of an `add-node` op is left to the node check after the
+   op, which names the node. Each case is in `live-view-checks.json`."
+  [path op]
+  (if-let [index (when (map? op) (get live-op-index (get op "op")))]
+    (document/explain-lines
+      (update (document/explain "view" (str "live_op/oneOf/" index) op)
+              :errors
+              (partial remove #(str/starts-with? (str (:instanceLocation %)) "/node_spec")))
+      op
+      path)
+    (let [table (get (document/message-table) "keywords")]
+      (if (map? op)
+        [(document/rule-line (str path "/op")
+                             (document/render (get table "enum")
+                                              {"allowed"
+                                               (str/join ", " (keys (sort-by val live-op-index)))})
+                             "enum")]
+        [(document/rule-line path
+                             (document/render (get table "type")
+                                              {"expected" "object"
+                                               "actual" (document/json-type op)})
+                             "type")]))))
+
+(defn- filled-op
+  "Wire op `op` with the schema default of each required item key that an item leaves
+   out, as the host keeps the item. A lane without a `tone` is an `idle` lane."
+  [op]
+  (reduce-kv (fn [op kind defaults]
+               (let [k
+                     (name kind)
+
+                     items
+                     (get op k)]
+
+                 (if (sequential? items)
+                   (assoc op
+                     k (mapv #(if (map? %) (merge (update-keys defaults wire/wire-key) %) %) items))
+                   op)))
+             op
+             (if (map? op) live-item-defaults {})))
+
+(defn live-patch-lines
+  "The sorted fault lines of live patch `patch`, which every host gives before it applies
+   an op. The patch keys and the op list are checked with a stand-in op, and each op on
+   its own, so a fault of one op never hides the faults of the patch. An item gets its
+   schema defaults first."
+  [patch]
+  (let [patch
+        (wire-data patch)
+
+        ops
+        (get patch "ops")
+
+        shell
+        (cond-> patch
+          (and (sequential? ops) (seq ops))
+          (assoc "ops" [{"op" "clear" "node_id" "p"}]))]
+
+    (->> (when (sequential? ops)
+           (map-indexed (fn [i op]
+                          (live-op-lines (str "/ops/" i) (filled-op op)))
+                        ops))
+         (apply concat (document/explain-lines (document/explain "view" "live_patch" shell) shell))
+         distinct
+         sort
+         vec)))
+
+(def ^:private patch-targets
+  "Op name to wire node type to the op keys that type takes, from `x-vis-patch-targets`."
+  (dissoc (get (definition "live_op") "x-vis-patch-targets") "description"))
+
+(defn live-op-target-lines
+  "The sorted fault lines of wire op `op` on a node of wire type `node-type`: the op
+   does not apply to that type, or a key of the op that the type does not take. Every
+   host checks this before it applies a node op. An op without a target table has no lines.
+   A thread op on a thread node must name the id `node-id` of that node."
+  [node-type node-id op]
+  (let [op
+        (wire-data op)
+
+        op-name
+        (get op "op")
+
+        table
+        (get patch-targets op-name)
+
+        values
+        {"op" op-name "type" node-type}]
+
+    (cond (nil? table) []
+          (not (contains? table node-type)) [(document/named-line "/op" "op_target" values)]
+          :else (let [taken (set (get table node-type))]
+                  (cond-> (->> (keys op)
+                               (remove #{"op" "node_id"})
+                               (remove taken)
+                               sort
+                               (mapv #(document/named-line (str "/" %) "op_key" values)))
+                    (and (= ["thread" "thread"] [op-name node-type])
+                         (not= node-id (get-in op ["thread" "id"])))
+                    (conj (document/named-line "/thread/id" "own_thread")))))))
 
 (defn live-patch-error
   "nil when `patch` has a valid live patch shape, otherwise a reason."
   [patch]
-  (schema-error "live_patch" patch))
+  (some-> (seq (live-patch-lines patch))
+          vec
+          document/joined-lines))
 
 (defn live-result-error
   "nil when `result` is a valid live result, otherwise a reason."

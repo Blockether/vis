@@ -4658,7 +4658,7 @@ def _ui_group(*children, direction="column", **spec):
 
 
 def _ui_card(node_id, title, **spec):
-    """A titled card with optional ``text``, ``tone`` and ``meta`` lines.
+    """A titled card with optional ``text``, ``tone`` and one ``meta`` line.
 
     With ``is_selectable=True`` the human can activate it like a button, and
     ``view[node_id].clicks`` counts the activations. ``reveals="key"`` names
@@ -5054,7 +5054,7 @@ class Card(_Node):
             title=title,
             text=text,
             tone=tone,
-            meta=None if meta is None else [str(line) for line in meta],
+            meta=meta,
             is_selectable=is_selectable,
         )
 
@@ -5177,12 +5177,9 @@ LogTone: TypeAlias = Literal["idle", "running", "ok", "warn", "error"]
 
 def _log_text(text):
     """Make terminal controls visible without interpreting or deleting log text."""
-    return "".join(
-        f"\\u{ord(char):04x}"
-        if (ord(char) < 32 and char not in "\t\n") or 127 <= ord(char) <= 159
-        else char
-        for char in str(text)
-    )
+    from blockether.vis import _contracts
+
+    return _contracts.log_text(text)
 
 
 class Log(_Node):
@@ -5485,6 +5482,7 @@ class LiveView:
 
     def _live(self, envelope, listener=None):
         """Cross one envelope to the host and answer the decoded reply."""
+        _check_sent(envelope)
         door = self._door or _host.live
         text = self._json.dumps(envelope)
         return self._json.loads(
@@ -6537,6 +6535,29 @@ def _merge_append(earlier, op):
     return True
 
 
+def _check_sent(envelope):
+    """Check a live view before it opens.
+
+    A fault of the whole view raises, as Vis refuses that view. Vis shows a node
+    with a fault as an error card and keeps the rest, so the send goes on and the
+    extension log gets one warning for each such node. Vis refuses a patch that
+    breaks a node itself.
+    """
+    from blockether.vis import _contracts
+
+    if envelope.get("op") != "open":
+        return
+    faults = _contracts.live_view_faults(envelope.get("view"))
+    if faults.view:
+        # Vis raises VisToolError, a RuntimeError, for the same view.
+        raise RuntimeError(_contracts.VIEW_REFUSAL + faults.view_text())
+    # `log` writes the extension log of Vis; the `logging` module does not.
+    for text in faults.nodes.values():
+        log("warn", f"vis live view: {text}")
+    for one in faults.dropped:
+        log("warn", f"vis live view: {one.note}")
+
+
 def live(title, nodes, placement=None, key=None, on_event=None, **options):
     """Open a live view and answer the handle that drives it.
 
@@ -6577,11 +6598,60 @@ def live(title, nodes, placement=None, key=None, on_event=None, **options):
 
 # -- Extension live-view test harness -----------------------------------------
 
-# The refusal of a live group without an id, in the recorder and the outside host.
-_LIVE_GROUP_NEEDS_ID = (
-    "a live view group needs an id, because patches and after= name it: "
-    "write vis.ui.group('actions', ...) or vis.ui.wrap('actions', ...)"
-)
+
+class _DeliveringLock:
+    """A reentrant lock that calls `on_free` each time its owner frees it fully.
+
+    The recorder gives listener events there, outside its lock: a listener can take
+    the app's own lock, which a producer thread holds while it waits for this lock.
+    """
+
+    def __init__(self, on_free):
+        import threading
+
+        self._lock = threading.RLock()
+        self._depth = 0
+        self._on_free = on_free
+
+    def acquire(self, blocking=True, timeout=-1):
+        if self._lock.acquire(blocking, timeout):
+            self._depth += 1
+            return True
+        return False
+
+    __enter__ = acquire
+
+    def release(self):
+        self._depth -= 1
+        is_free = self._depth == 0
+        self._lock.release()
+        if is_free:
+            self._on_free()
+
+    def __exit__(self, kind, error, traceback):
+        try:
+            self.release()
+        except Exception as listener_error:
+            if error is None:
+                raise
+            # The error of the `with` body goes on; the listener error is a note on it.
+            error.add_note(f"a live listener also failed: {listener_error!r}")
+        return False
+
+    def locked(self):
+        return self._depth > 0
+
+    def _is_owned(self):
+        return self._lock._is_owned()  # type: ignore[attr-defined]
+
+    def _release_save(self):
+        depth, self._depth = self._depth, 0
+        return depth, self._lock._release_save()  # type: ignore[attr-defined]
+
+    def _acquire_restore(self, saved):
+        depth, inner = saved
+        self._lock._acquire_restore(inner)  # type: ignore[attr-defined]
+        self._depth = depth
 
 
 class _LiveRecorder:
@@ -6590,22 +6660,31 @@ class _LiveRecorder:
     ``live`` records only envelopes emitted by the extension. ``host_live`` and
     the ``select``/``close`` helpers simulate surface or human actions against the
     same materialized view without publishing fixture data into a Vis session.
+
+    The recorder is strict: it checks each opened view and each patched view with
+    the check that Vis uses. A fault of the whole view, or a patch that breaks a
+    node, raises RuntimeError, as Vis does. A node fault in an opened view, which
+    Vis shows as an error card, raises AssertionError, so a test fails there. ``view_json()`` gives the current view
+    as JSON for ``python -m blockether.vis.live_check``. ``extension`` names the
+    extension that owns the view: Vis writes it as the author of each message of the
+    owner. Without it the author is the agent, as in Vis.
     """
 
-    _COLLECTION = {
-        "stat": "stats",
-        "steps": "steps",
-        "timeline": "lanes",
-        "table": "rows",
-        "link": "links",
-        "scene": "objects",
-    }
+    # How long a submit waits for the owner to judge its inputs, as in Vis.
+    _validate_wait_s = 5.0
 
-    def __init__(self, inner, view_id="test-live-view"):
+    def __init__(self, inner, view_id="test-live-view", extension=None):
         import threading
 
-        self._condition = threading.Condition()
+        from blockether.vis import _contracts
+
+        # Listener events wait in the outbox of the thread that made them until that
+        # thread frees the lock, so each event reaches the listener on its own thread.
+        self._outbox = threading.local()
+        self._condition = threading.Condition(_DeliveringLock(self._deliver))  # type: ignore[arg-type]
         self._inner = inner
+        # Vis writes the owner extension, or the agent, on each message of the owner.
+        self._author = _contracts.owner_author(extension)
         self.said = []
         self.view_id = str(view_id)
         self._view = None
@@ -6630,6 +6709,28 @@ class _LiveRecorder:
             yield node
             yield from _LiveRecorder._nodes(node.get("children"))
 
+    @staticmethod
+    def _check_faults(view, *, is_patch):
+        """Raise as Vis for a view fault or a patch fault; fail the test for a node fault."""
+        from blockether.vis import _contracts
+
+        faults = _contracts.live_view_faults(view, is_declaration=not is_patch)
+        if faults.view or (is_patch and faults.nodes):
+            # Vis raises VisToolError, a RuntimeError, so the recorder does too.
+            prefix = _contracts.PATCH_REFUSAL if is_patch else _contracts.VIEW_REFUSAL
+            raise RuntimeError(prefix + "; ".join(faults.lines()))
+        if faults.nodes:
+            raise AssertionError(
+                "Vis shows these nodes as error cards:\n"
+                + "\n".join(faults.nodes.values())
+            )
+
+    def view_json(self):
+        """The current view as JSON text, for example to save it for `live_check`."""
+        import json
+
+        return json.dumps(self._open_view(), indent=2, sort_keys=True)
+
     def _open_view(self):
         """Return the materialized view; a test must open one first."""
         if self._view is None:
@@ -6644,70 +6745,36 @@ class _LiveRecorder:
             if node.get("id") == node_id
         )
 
-    @staticmethod
-    def _upsert(old, incoming):
-        positions = {item["id"]: index for index, item in enumerate(old)}
-        result = _LiveRecorder._copy(old)
-        for item in incoming:
-            item = _LiveRecorder._copy(item)
-            if item["id"] in positions:
-                at = positions[item["id"]]
-                result[at] = item
-            else:
-                positions[item["id"]] = len(result)
-                result.append(item)
-        return result
-
     def _materialize(self, view):
+        from blockether.vis import _contracts
+
         view = self._copy(view)
+        # The schema owns the defaults; the recorder adds only what the host writes.
+        view["nodes"] = [_contracts.fill_live_node(n) for n in view.get("nodes") or []]
         for node in self._nodes(view.get("nodes")):
+            _contracts.stamp_live_threads(node, int(time.time() * 1000), self._author)
             kind = node.get("type")
             if kind == "log":
                 node["lines"] = [_log_text(line) for line in node.get("lines", [])]
-                node.setdefault("window_lines", 2000)
                 node["total_lines"] = len(node["lines"])
             elif kind == "image":
                 self._check_image(node)
-            elif kind == "heading":
-                node.setdefault("level", 2)
-            elif kind == "spinner":
-                node.setdefault("text", "Working")
-                node.setdefault("variant", "braille")
-                node.setdefault("is_active", True)
             elif kind == "button":
-                from blockether.vis import _contracts
-
                 complaint = _contracts.button_variant_error(node.get("variant"))
                 if complaint:
                     # Vis raises VisToolError, a RuntimeError, so the recorder does too.
-                    raise RuntimeError(f"button {node.get('id')}: {complaint}")
+                    raise RuntimeError(f"button {node.get('id')} - {complaint}")
                 node["clicks"] = 0
-                node.setdefault("is_disabled", False)
             elif kind == "card" and node.get("is_selectable"):
                 node["clicks"] = 0
             elif kind in _INPUT_TYPES:
-                node.setdefault("id", node.get("name"))
-                node.setdefault("name", node["id"])
-                node.setdefault("label", node["id"])
-                node.setdefault("is_required", False)
                 node["is_secret"] = kind in ("password", "otp")
-            elif kind == "table":
-                node.setdefault("rows", [])
-                node.setdefault("max_rows", 5000)
-                node.setdefault("order", "insertion")
             elif kind == "scene":
-                from blockether.vis import _contracts
-
                 complaint = _contracts.scene_node(node)
                 if complaint:
                     raise AssertionError(complaint)
-            elif kind in self._COLLECTION:
-                items = node.setdefault(self._COLLECTION[kind], [])
-                if kind == "timeline":
-                    self._check_lanes(node)
-                if kind == "link":
-                    for item in items:
-                        item.setdefault("target_kind", "url")
+            elif kind == "timeline":
+                self._check_lanes(node)
         return view
 
     @staticmethod
@@ -6742,148 +6809,6 @@ class _LiveRecorder:
             node["lanes"] = _contracts.checked_lanes(node.get("lanes") or [])
         except ValueError as error:
             raise RuntimeError(f"timeline {node.get('id')}: {error}") from None
-
-    def _parent(self, node_id):
-        def find(nodes):
-            for index, node in enumerate(nodes or []):
-                if node.get("id") == node_id:
-                    return nodes, index
-                found = find(node.get("children"))
-                if found is not None:
-                    return found
-            return None
-
-        return find(self._open_view().get("nodes"))
-
-    def _apply(self, op):
-        action = op["op"]
-        if action == "add-node":
-            node = self._materialize({"nodes": [op["node_spec"]]})["nodes"][0]
-            found = (
-                self._parent(op.get("after")) if op.get("after") is not None else None
-            )
-            view = self._open_view()
-            siblings, at = (
-                (view["nodes"], len(view["nodes"])) if found is None else found
-            )
-            siblings.insert(at + (1 if found is not None else 0), node)
-            return
-        if action == "shortcuts":
-            view = self._open_view()
-            if op.get("shortcuts"):
-                view["shortcuts"] = self._copy(op["shortcuts"])
-            else:
-                view.pop("shortcuts", None)
-            return
-        if action == "log":
-            from blockether.vis import _contracts
-
-            found = _contracts.problems("view", "live_op", op)
-            if found:
-                raise RuntimeError("log op: " + " ".join(found))
-            try:
-                _contracts.append_log(
-                    self._open_view(), op, at=int(time.time() * 1000), source="app"
-                )
-            except ValueError as error:
-                raise RuntimeError(str(error)) from None
-            return
-        if action == "agent-note":
-            view = self._open_view()
-            if op["text"].strip():
-                view["agent_note"] = op["text"].strip()
-            else:
-                view.pop("agent_note", None)
-            return
-        if action == "remove-node":
-            found = self._parent(op["node_id"])
-            if found is None:
-                raise AssertionError(f"no test live node {op['node_id']!r}")
-            found[0].pop(found[1])
-            return
-
-        node = self.node(op["node_id"])
-        if node["type"] == "divider":
-            raise AssertionError("a divider has no mutable state")
-        if action == "set":
-            node.update(
-                {k: self._copy(v) for k, v in op.items() if k not in ("op", "node_id")}
-            )
-            # `live/apply-set`: a blank detail CLEARS it, like a declaration
-            # that leaves the key out.
-            if "detail" in op and not str(op["detail"]).strip():
-                node.pop("detail", None)
-            if node["type"] == "timeline":
-                self._check_lanes(node)
-        elif action == "set-value":
-            if op.get("value") is None:
-                node.pop("value", None)
-            else:
-                node["value"] = self._copy(op["value"])
-        elif action == "clear":
-            key = "lines" if node["type"] == "log" else self._COLLECTION[node["type"]]
-            node[key] = []
-            if node["type"] == "log":
-                # `live/apply-clear`: a cleared log starts its RECORD over too.
-                node["total_lines"] = 0
-                node.pop("line_tones", None)
-        elif action == "remove":
-            key = self._COLLECTION[node["type"]]
-            removed = set(op.get("item_ids") or [])
-            node[key] = [item for item in node[key] if item.get("id") not in removed]
-        elif action == "append" and node["type"] == "log":
-            lines = [_log_text(line) for line in op.get("lines", [])]
-            if "tone" in op or "line_tones" in node:
-                tones = node.get("line_tones", [None] * len(node["lines"]))
-                node["line_tones"] = (tones + [op.get("tone")] * len(lines))[
-                    -node["window_lines"] :
-                ]
-            node["total_lines"] += len(lines)
-            node["lines"] = (node["lines"] + lines)[-node["window_lines"] :]
-        elif action == "replace":
-            if node["type"] != "table":
-                raise AssertionError(f"a {node['type']} node has no rows to replace")
-            from blockether.vis import _contracts
-
-            rows = _contracts.live_items("rows", self._copy(op.get("rows") or []))
-            node["rows"] = self._upsert([], rows)
-        elif action == "append" and node["type"] == "scene":
-            from blockether.vis import _contracts
-
-            node["meshes"] = self._upsert(node["meshes"], op.get("meshes") or [])
-            node["objects"] = _contracts.scene_objects(
-                node["objects"], self._copy(op.get("objects") or [])
-            )
-            complaint = _contracts.scene_error(node)
-            if complaint:
-                raise AssertionError(complaint)
-        elif action == "append":
-            key = self._COLLECTION[node["type"]]
-            incoming = self._copy(op.get(key) or [])
-            from blockether.vis import _contracts
-
-            incoming = _contracts.live_items(key, incoming)
-            node[key] = self._upsert(node[key], incoming)
-            if node["type"] == "timeline":
-                self._check_lanes(node)
-            if "groups" in op:
-                # `live/apply-append`: a group already declared KEEPS the keys the
-                # new declaration leaves out, so re-toning a head does not drop
-                # the label it was named with.
-                known = {group["id"]: group for group in node.get("groups", [])}
-                node["groups"] = self._upsert(
-                    node.get("groups", []),
-                    [
-                        {**known.get(group["id"], {}), **group}
-                        for group in self._copy(op["groups"])
-                    ],
-                )
-        else:
-            raise AssertionError(f"unsupported test live op: {op!r}")
-        if action in ("clear", "remove", "replace") and "selected_ids" in node:
-            # `live/prune-selected`: a selection names only rows that still exist.
-            kept = {row["id"] for row in node.get("rows") or []}
-            node["selected_ids"] = [i for i in node["selected_ids"] if i in kept]
 
     def picture(self):
         """Return the terminal, layout-free picture surfaces and the model read."""
@@ -6924,7 +6849,7 @@ class _LiveRecorder:
                     timeout=envelope["timeout_ms"] / 1000,
                 )
             answer = self._dispatch_live(envelope)
-            if envelope.get("op") in {"patch", "close"}:
+            if envelope.get("op") in {"patch", "close", "validated"}:
                 self._condition.notify_all()
             return answer
 
@@ -6933,11 +6858,7 @@ class _LiveRecorder:
 
         action = envelope.get("op")
         if action == "open":
-            for node in self._nodes(envelope["view"].get("nodes")):
-                # The engine refuses a live group without an id, so a test must too.
-                # Vis raises VisToolError, a RuntimeError, so the recorder does too.
-                if node.get("type") == "group" and not node.get("id"):
-                    raise RuntimeError(_LIVE_GROUP_NEEDS_ID)
+            self._check_faults(envelope.get("view"), is_patch=False)
             self._view = self._materialize(envelope["view"])
             self._check_pictures()
             self._declared = set(envelope.get("validators") or [])
@@ -6954,13 +6875,28 @@ class _LiveRecorder:
         elif self._result is not None:
             answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
         elif action == "patch":
-            import copy
+            from blockether.vis import _contracts
 
+            refusal = _contracts.live_patch_refusal(
+                envelope.get("patch"), self.view_id, self._seq
+            )
+            if refusal:
+                raise RuntimeError(refusal)
             # As the host does: a refused patch leaves the view as it was.
-            before = copy.deepcopy(self._view)
+            candidate = self._copy(self._open_view())
             try:
-                for op in (envelope.get("patch") or {}).get("ops") or []:
-                    self._apply(op)
+                _contracts.apply_live_ops(
+                    candidate,
+                    envelope["patch"]["ops"],
+                    kept=lambda spec: self._materialize({"nodes": [spec]})["nodes"][0],
+                    at=int(time.time() * 1000),
+                    author=self._author,
+                )
+            except ValueError as error:
+                # Vis raises VisToolError, a RuntimeError, so the recorder does too.
+                raise RuntimeError(str(error)) from None
+            before, self._view = self._view, candidate
+            try:
                 self._check_pictures()
             except Exception:
                 self._view = before
@@ -7071,7 +7007,7 @@ class _LiveRecorder:
                 )
             )
             self._event("activate", node_id)
-            return answer
+        return answer
 
     def press_shortcut(self, key):
         """Simulate a press of app shortcut `key`, as a surface sends it.
@@ -7109,7 +7045,7 @@ class _LiveRecorder:
             }
             self._events.append(event)
             if self._listener is not None:
-                self._listener(self._copy(event))
+                self._queue(self._listener, self._copy(event))
             self._condition.notify_all()
             return {"is_accepted": True, "key": key, "shortcut": bound["action"]}
 
@@ -7129,19 +7065,60 @@ class _LiveRecorder:
         }
         placement = (self._view or {}).get("placement", "inline")
         if self._listener is not None and placement != "inline":
-            self._listener(self._copy(question))
-        errors = self._verdicts.pop(request_id)
+            # The owner hears the question outside the recorder lock, as the host
+            # pushes it: the listener can take the app's own lock, which a producer
+            # thread holds while it waits for this lock. Then the submit waits for
+            # the answer as long as the host waits.
+            self._queue(self._listener, self._copy(question))
+            saved = self._condition._release_save()  # type: ignore[attr-defined]
+            try:
+                self._deliver()
+            finally:
+                self._condition._acquire_restore(saved)  # type: ignore[attr-defined]
+            self._condition.wait_for(
+                lambda: self._verdicts.get(request_id) is not None,
+                timeout=self._validate_wait_s,
+            )
+        errors = self._verdicts.pop(request_id, None)
         if errors is None:
             return {node_id: "The app did not answer. Try again."}
         return {k: v for k, v in errors.items() if k in judged and isinstance(v, str)}
 
     def _event(self, kind, node_id, **payload):
-        self._cursor += 1
-        event = {"type": kind, "node_id": str(node_id), "seq": self._cursor, **payload}
-        self._events.append(event)
-        placement = (self._view or {}).get("placement", "inline")
-        if self._listener is not None and placement != "inline":
-            self._listener(self._copy(event))
+        with self._condition:
+            self._cursor += 1
+            event = {
+                "type": kind,
+                "node_id": str(node_id),
+                "seq": self._cursor,
+                **payload,
+            }
+            self._events.append(event)
+            placement = (self._view or {}).get("placement", "inline")
+            if self._listener is not None and placement != "inline":
+                self._queue(self._listener, self._copy(event))
+
+    def _queue(self, listener, event):
+        """Keep `event` for `listener` in the outbox of this thread."""
+        items = getattr(self._outbox, "items", None)
+        if items is None:
+            items = self._outbox.items = []
+        items.append((listener, event))
+
+    def _deliver(self):
+        """Give the events that this thread queued to the listener. The lock calls it
+        on the thread that frees it, so another thread's events wait for that thread."""
+        sent = getattr(self._outbox, "items", None) or []
+        self._outbox.items = []
+        # Every queued event arrives; the first listener error is raised after them.
+        first = None
+        for listener, event in sent:
+            try:
+                listener(event)
+            except Exception as error:  # noqa: BLE001 - raised again below
+                first = first or error
+        if first is not None:
+            raise first
 
     def _patch_ops(self, ops):
         import json
@@ -7384,12 +7361,25 @@ def _assert_catalog(
         check_type(tool.returns, tool.name + ".returns")
 
 
+def _testing_bounds(node_type):
+    """Yield `(field, keyword, limit)` for each schema bound of `node_type`.
+
+    The keyword is `maxItems` for a list and `maxLength` for text. A test can give
+    `limit + 1` items for each field and check that the view still passes the
+    recorder. Raises ValueError for a node type that Vis does not know.
+    """
+    from blockether.vis import _contracts
+
+    yield from (tuple(bound) for bound in _contracts.bounds(node_type))
+
+
 class _Testing:
     """Reusable helpers for extension tests. No fixture reaches the real live host."""
 
     LiveRecorder = _LiveRecorder
     assert_tree = staticmethod(_assert_tree)
     assert_catalog = staticmethod(_assert_catalog)
+    bounds = staticmethod(_testing_bounds)
 
 
 testing = _Testing()
@@ -7932,6 +7922,31 @@ def _shortcut_list(shortcuts):
     return checked
 
 
+def _ui_bound(node_type: str, field: str) -> int:
+    """The most items (`maxItems`) or characters (`maxLength`) that Vis takes in `field`.
+
+    The value comes from the view schema, so it changes with Vis. For example
+    `vis.ui.bound("diff", "threads")` is 200. Raises ValueError for a node type or
+    a field that has no bound.
+    """
+    from blockether.vis import _contracts
+
+    for bound in _contracts.bounds(node_type):
+        if bound.field == field:
+            return bound.limit
+    raise ValueError(f"a {node_type} node has no bound on {field!r}")
+
+
+def _ui_fit(items: Sequence[Any], node_type: str, field: str) -> tuple[list[Any], int]:
+    """`(kept, left)`: the first `vis.ui.bound(node_type, field)` items, and how many stay out.
+
+    Tell the person what stays out, for example in a label: `f"{left} more not shown"`.
+    """
+    limit = _ui_bound(node_type, field)
+    kept = list(items)
+    return kept[:limit], max(0, len(kept) - limit)
+
+
 class _UI:
     """Components for live views and forms.
 
@@ -7991,6 +8006,10 @@ class _UI:
     scene = staticmethod(_ui_scene)
     scene_object = staticmethod(_ui_scene_object)
     scene_mesh = staticmethod(_ui_scene_mesh)
+
+    # Bounds
+    bound = staticmethod(_ui_bound)
+    fit = staticmethod(_ui_fit)
 
 
 ui = _UI()

@@ -289,12 +289,14 @@ def test_button_variant_is_kept_and_a_typo_names_the_variants():
         vis.ui.button("drop", "Drop", variant="danger")
 
 
-def test_outside_refuses_an_unknown_button_variant():
+def test_outside_shows_an_unknown_button_variant_as_an_error_card():
     # #430: outside Vis a raw button with a typo variant was accepted.
     button = {"id": "drop", "type": "button", "label": "Drop", "variant": "danger"}
     view = {"title": "Rows", "nodes": [button]}
-    with pytest.raises(RuntimeError, match=r"primary, secondary, destructive"):
-        _outside.live(json.dumps({"op": "open", "view": view}))
+    opened = json.loads(_outside.live(json.dumps({"op": "open", "view": view})))
+    card = opened["view"]["nodes"][0]
+    assert (card["id"], card["type"], card["tone"]) == ("drop", "status", "error")
+    assert "primary, secondary, destructive (enum)" in card["text"]
 
 
 def test_recorder_refuses_a_live_group_without_an_id(monkeypatch):
@@ -302,7 +304,7 @@ def test_recorder_refuses_a_live_group_without_an_id(monkeypatch):
     # Vis raises VisToolError, a RuntimeError, so the recorder must raise one too.
     monkeypatch.setattr(vis, "_host", vis.testing.LiveRecorder(vis._host))
     with pytest.raises(
-        RuntimeError, match=r"group needs an id.*vis\.ui\.group\('actions'"
+        RuntimeError, match=r'group needs an id.*vis\.ui\.group\("actions"'
     ):
         with vis.live(
             "Chats", [vis.ui.wrap(vis.ui.button("save", "Save"))], flush_ms=0
@@ -314,7 +316,7 @@ def test_outside_refuses_a_live_group_without_an_id_with_the_fix():
     # #428: outside Vis the refusal named no fix for an unnamed group.
     view = {"title": "Chats", "nodes": [vis.ui.wrap(vis.ui.button("save", "Save"))]}
     with pytest.raises(
-        RuntimeError, match=r"group needs an id.*vis\.ui\.group\('actions'"
+        RuntimeError, match=r'group needs an id.*vis\.ui\.group\("actions"'
     ):
         _outside.live(json.dumps({"op": "open", "view": view}))
 
@@ -366,13 +368,15 @@ def test_outside_refused_patch_leaves_state_unchanged():
         {"id": "x", "type": "code", "text": "literal", "language": 4},
     ],
 )
-def test_outside_refuses_invalid_primitive_declarations(monkeypatch, invalid):
+def test_outside_shows_invalid_primitive_declarations_as_error_cards(
+    monkeypatch, invalid
+):
     monkeypatch.setattr(vis, "_host", _outside.host)
-    with pytest.raises(_outside.Refused):
-        with vis.live(
-            "Invalid", [vis.ui.disclosure("section", "Section", invalid)], flush_ms=0
-        ):
-            pass
+    with vis.live(
+        "Invalid", [vis.ui.disclosure("section", "Section", invalid)], flush_ms=0
+    ) as view:
+        card = view.state()["nodes"][0]["children"][0]
+    assert (card["id"], card["type"], card["tone"]) == ("x", "status", "error")
 
 
 @pytest.mark.parametrize("host_kind", ["outside", "recorder"])
@@ -453,7 +457,7 @@ def test_divider_is_static_and_retained(monkeypatch, host_kind):
     [{"label": "Section"}, {"text": "---"}, {"tone": "idle"}, {"style": "dashed"}],
 )
 def test_outside_divider_rejects_content_and_style(extra):
-    with pytest.raises(_outside.Refused):
+    opened = json.loads(
         _outside.live(
             json.dumps(
                 {
@@ -465,6 +469,10 @@ def test_outside_divider_rejects_content_and_style(extra):
                 }
             )
         )
+    )
+    card = opened["view"]["nodes"][0]
+    assert (card["type"], card["tone"]) == ("status", "error")
+    assert "additionalProperties" in card["text"]
 
 
 @pytest.mark.parametrize("host_kind", ["outside", "recorder"])
@@ -474,7 +482,8 @@ def test_divider_refuses_mutation(host_kind):
         if host_kind == "outside"
         else vis.testing.LiveRecorder(vis._host).host_live
     )
-    refused = _outside.Refused if host_kind == "outside" else AssertionError
+    # Vis raises VisToolError, a RuntimeError, so the recorder does too.
+    refused = _outside.Refused if host_kind == "outside" else RuntimeError
     divider = {"id": "break", "type": "divider"}
     opened = json.loads(
         host(
@@ -572,7 +581,7 @@ def test_stat_and_step_updates_carry_the_label_the_schema_requires(
         vis.ui.steps("plan", steps=[{"id": "build", "label": "Build"}]),
     ]
     with vis.live("Counts", nodes, flush_ms=0) as view:
-        with pytest.raises((ValueError, _outside.Refused), match="label"):
+        with pytest.raises(RuntimeError, match="label"):
             view["counts"]._op("append", stats=[{"id": "ok", "value_text": "1"}])
         view["counts"].set("ok", "2", "Passed")
         view["plan"].set("build", "Build", tone="ok")
@@ -593,9 +602,7 @@ def _form_nodes():
             vis.ui.button("apply", "Apply", action="submit"),
             label="Target",
         ),
-        vis.ui.card(
-            "plan-small", "Small", text="2 CPU", meta=["$5"], is_selectable=True
-        ),
+        vis.ui.card("plan-small", "Small", text="2 CPU", meta="$5", is_selectable=True),
     ]
 
 
@@ -703,10 +710,10 @@ def test_timeline_builder_makes_a_contract_node_and_refuses_bad_lanes():
                 {"id": "a", "label": "A", "start": 1},
                 {"id": "a", "label": "B", "start": 2},
             ],
-            "timeline lane id repeats: a",
+            'two items have the id "a"',
         ),
-        ([{"id": "a", "label": "A", "start": 1.5}], "epoch milliseconds"),
-        ([{"id": "a", "label": "A", "start": True}], "epoch milliseconds"),
+        ([{"id": "a", "label": "A", "start": 1.5}], "expected integer, got number"),
+        ([{"id": "a", "label": "A", "start": True}], "expected integer, got boolean"),
         ([{"id": "a", "start": 1}], "label is missing"),
         ("a", "list of maps"),
     ):
@@ -778,11 +785,16 @@ def test_timeline_hosts_refuse_what_the_engine_refuses(monkeypatch, host_kind):
         with pytest.raises(RuntimeError, match="ends before it starts"):
             jobs._op("set", lanes=[late])
             view.flush()
-    with pytest.raises(RuntimeError, match="ends before it starts"):
-        with vis.live(
-            "Jobs", [{"id": "j", "type": "timeline", "lanes": [late]}], flush_ms=0
-        ):
-            pass
+    # An opened view shows the node as an error card; the recorder fails on it.
+    bad = [{"id": "j", "type": "timeline", "lanes": [late]}]
+    if host_kind == "recorder":
+        with pytest.raises(AssertionError, match="ends before it starts"):
+            vis.live("Jobs", bad, flush_ms=0)
+    else:
+        with vis.live("Jobs", bad, flush_ms=0) as view:
+            card = view.state()["nodes"][0]
+        assert card["type"] == "status"
+        assert "ends before it starts" in card["text"]
 
 
 LOG_CASES = json.loads(

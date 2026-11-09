@@ -3,7 +3,8 @@
 This module implements the Host protocol. Local operations run locally, and prompts use
 the terminal. Session-bound operations refuse without an engine. `VIS_OUTSIDE_ANSWERS`
 primes prompt values. With `VIS_OUTSIDE_NONINTERACTIVE=1`, prompts return
-`undeliverable` instead of blocking.
+`undeliverable` instead of blocking. `VIS_OUTSIDE_EXTENSION` names the extension that
+owns the live views, the author of the owner's messages.
 """
 
 from __future__ import annotations
@@ -708,7 +709,6 @@ _SECRET = {
     for kind, branch in _FIELD_SCHEMAS.items()
     if branch["properties"]["is_secret"]["const"]
 }
-_GROUP_DIRECTIONS = _contracts.definition("view", "group_direction")["enum"]
 _RANGE = _FIELD_SCHEMAS["range"]["properties"]
 _OTP = _FIELD_SCHEMAS["otp"]["properties"]["max_length"]
 
@@ -1015,193 +1015,99 @@ def _check_request(request):
 # Outside Vis nobody is watching a pane, so a view becomes a TRANSCRIPT on
 # stderr: the title once, a line per push, the verdict at the end. The nodes are
 # held here too, because `state` must answer what the view really carries — the
-# same mechanical rules the engine applies (`set` merges its keys onto the node,
-# `append` upserts an item by its id and concatenates log lines, `clear` empties,
-# `remove` drops ids), so an extension polling its own view reads the truth
-# either side of the boundary.
-_LIVE_NODE_SCHEMAS = {
-    branch["properties"]["type"]["const"]: branch["properties"]
-    for branch in _contracts.definition("view", "component")["oneOf"]
-}
-_LIVE_NODE_TYPES = tuple(kind for kind in _LIVE_NODE_SCHEMAS if kind != _GROUP)
-_LIVE_OPS = tuple(
-    branch["properties"]["op"]["const"]
-    for branch in _contracts.definition("view", "live_op")["oneOf"]
-)
-_TONES = _contracts.definition("view", "tone")["enum"]
-_SPINNER_VARIANTS = tuple(
-    branch["const"]
-    for branch in _contracts.definition("view", "spinner_variant")["oneOf"]
-)
-_MAX_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
-_AGENT_NOTE_MAX = _contracts.definition("view", "live_view")["properties"][
-    "agent_note"
-]["maxLength"]
+# same rules as the engine, from the shared `_contracts.apply_live_ops`, so an
+# extension polling its own view reads the truth either side of the boundary.
 _LIVE_REASONS = _contracts.definition("view", "settlement_reason")["enum"]
 _LIVE_HANDLE_OPS = ("patch", "state", "events", "close")
-_LIVE_ITEMS = {
-    "stat": "stats",
-    "steps": "steps",
-    "timeline": "lanes",
-    "table": "rows",
-    "link": "links",
-    "log": "lines",
-    "scene": "objects",
-}
 _LIVE_VIEWS = {}
 
 
-def _live_check_node(node, seen, *, is_declaration=True):
-    if not isinstance(node, dict):
-        return f"every node must be a map, got {node!r}"
-    kind = node.get("type")
-    if kind == "divider" and set(node) != {"id", "type"}:
-        return "a divider has only id and type"
-    is_group = kind == _GROUP
-    if is_group:
-        # Layout is the FORM's own vocabulary: a view arranges its nodes with the
-        # same row and column a question does, and the group paints nothing itself.
-        direction = node.get("direction")
-        if direction is not None and direction not in _GROUP_DIRECTIONS:
-            ways = ", ".join(_GROUP_DIRECTIONS)
-            return f"a {_GROUP} runs one of {ways}, got {direction!r}"
-        children = node.get("children")
-        if not isinstance(children, (list, tuple)) or not children:
-            return f"a {_GROUP} must arrange at least one node"
-    elif kind not in _LIVE_NODE_TYPES:
-        types = ", ".join(_LIVE_NODE_TYPES)
-        return f"a node is one of {types}, got {kind!r}"
-    if kind in _FIELDS:
-        # An input is addressed by its id, and its answer is keyed by the same name.
-        node.setdefault("id", node.get("name"))
-        node.setdefault("name", node.get("id"))
-        node.setdefault("label", node.get("id"))
-        node.setdefault("is_required", False)
-        node["is_secret"] = kind in _SECRET
-        if node["is_secret"] and node.get("value") is not None:
-            return f"a {kind} input has no value: only the host holds its handle"
-    node_id = node.get("id")
-    if not isinstance(node_id, str) or not node_id.strip():
-        if is_group:
-            from .extension import _LIVE_GROUP_NEEDS_ID
-
-            return _LIVE_GROUP_NEEDS_ID
-        return f"a {kind} node needs an id"
-    if node_id in seen:
-        return f"two nodes answer to {node_id!r}"
-    seen.add(node_id)
-    if is_group:
-        for child in node["children"]:
-            complaint = _live_check_node(child, seen, is_declaration=is_declaration)
-            if complaint:
-                return complaint
-    if kind == "log":
-        from .extension import _log_text
-
-        node["lines"] = [_log_text(line) for line in node.get("lines", [])]
-        node.setdefault("total_lines", len(node["lines"]))
-        tones = node.get("line_tones")
-        if tones is not None and (
-            not isinstance(tones, list)
-            or len(tones) != len(node["lines"])
-            or any(tone is not None and tone not in _TONES for tone in tones)
-        ):
-            return "line_tones must have one known tone or null per line"
-    if kind == "heading":
-        node.setdefault("level", 2)
-    if kind == "spinner":
-        node.setdefault("text", "Working")
-        node.setdefault("variant", "braille")
-        node.setdefault("is_active", True)
-    if kind in ("paragraph", "heading", "spinner"):
-        if not isinstance(node.get("text"), str) or not node["text"].strip():
-            return f"a {kind} needs nonblank text"
-    if kind == "heading" and (
-        type(node.get("level")) is not int or not 1 <= node["level"] <= 6
-    ):
-        return "a heading level is an integer from 1 to 6"
-    if kind == "code":
-        if not isinstance(node.get("text"), str):
-            return "a code block needs literal text"
-        language = node.get("language")
-        if language is None:
-            node.pop("language", None)
-        elif not isinstance(language, str) or not language.strip():
-            return "a code language must be nonblank text"
-    if kind == "spinner" and node.get("variant") not in _SPINNER_VARIANTS:
-        return "unknown spinner variant"
-    if kind == "scene":
-        complaint = _contracts.scene_node(node)
-        if complaint:
-            return complaint
-    if kind == "timeline":
-        try:
-            node["lanes"] = _contracts.checked_lanes(node.get("lanes") or [])
-        except ValueError as error:
-            return str(error)
-    if kind == "button":
-        if not isinstance(node.get("label"), str) or not node["label"].strip():
-            return "a button needs a label"
-        if is_declaration and "clicks" in node:
-            return "button clicks are stamped by the engine"
-        complaint = _contracts.button_variant_error(node.get("variant"))
-        if complaint:
-            return complaint
-        node.setdefault("clicks", 0)
-        node.setdefault("is_disabled", False)
-        if type(node["clicks"]) is not int or node["clicks"] < 0:
-            return "button clicks must be a nonnegative integer"
-    if kind == "card":
-        if not isinstance(node.get("title"), str) or not node["title"].strip():
-            return "a card needs a title"
-        if is_declaration and "clicks" in node:
-            return "card clicks are stamped by the engine"
-        if node.get("is_selectable"):
-            node.setdefault("clicks", 0)
-    for flag in (
-        "default_expanded",
-        "is_collapsible",
-        "is_active",
-        "is_disabled",
-        "is_selectable",
-    ):
-        if flag in node and type(node[flag]) is not bool:
-            return f"{flag} must be boolean"
-    return None
+def _live_author():
+    """The author that Vis writes on a message of the owner. `VIS_OUTSIDE_EXTENSION`
+    names the extension that owns the views; without it the owner is the agent."""
+    return _contracts.owner_author(os.environ.get("VIS_OUTSIDE_EXTENSION"))
 
 
-def _check_view(view):
-    if not isinstance(view, dict):
-        return "a live view is a map of title and nodes"
-    title = view.get("title")
-    if not isinstance(title, str) or not title.strip():
-        return "a live view needs a title"
-    nodes = view.get("nodes")
-    if not isinstance(nodes, (list, tuple)) or not nodes:
-        return "a live view needs at least one node"
-    seen = set()
-    for node in nodes:
-        complaint = _live_check_node(node, seen)
-        if complaint:
-            return complaint
-    # The bound counts the TREE: a row holding twenty nodes is twenty nodes.
-    if len(seen) > _MAX_NODES:
-        return (
-            f"live view has {len(seen)} nodes; the maximum is {_MAX_NODES}. "
-            "Put a collection in a table: rows do not count as nodes."
-        )
-    return None
+def _live_node_kept(node):
+    """`node` as this host keeps it: the schema defaults, the keys that the host
+    writes, and log text made visible."""
+    node = _contracts.fill_live_node(node)
+    for one in _contracts._wire_tree([node]):
+        _contracts.stamp_live_threads(one, int(time.time() * 1000), _live_author())
+        kind = one.get("type")
+        found = _contracts.component_variant(kind)
+        properties = found[1]["properties"] if found else {}
+        if "is_secret" in properties:
+            one["is_secret"] = properties["is_secret"]["const"]
+        if kind == "log":
+            one["lines"] = [
+                _contracts.log_text(line) for line in one.get("lines") or []
+            ]
+            one.setdefault("total_lines", len(one["lines"]))
+        if kind == "scene" and isinstance(one.get("objects"), list):
+            try:
+                one["objects"] = _contracts.scene_objects([], one["objects"])
+            except (AttributeError, TypeError, ValueError):
+                pass  # The check shows this node as an error card.
+        # The host counts the clicks of a button and a selectable card.
+        if kind == "button" or (kind == "card" and one.get("is_selectable")):
+            one.setdefault("clicks", 0)
+    return node
 
 
-def _live_ids(nodes):
-    # Every id in the tree: a node added anywhere may not shadow one already here.
-    seen = set()
-    for node in nodes or []:
-        node_id = node.get("id")
-        if node_id is not None:
-            seen.add(node_id)
-        seen |= _live_ids(node.get("children"))
-    return seen
+def _live_cards(view, faults):
+    """Show each node of `faults` as an error card, as the engine does, and log it."""
+    if not faults:
+        return
+
+    def swap(nodes):
+        for index, node in enumerate(nodes):
+            node_id = node.get("id")
+            if node_id in faults:
+                nodes[index] = _contracts.error_card(node_id, faults[node_id])
+            elif isinstance(node.get("children"), list):
+                swap(node["children"])
+
+    swap(view["nodes"])
+    for node_id, text in faults.items():
+        _live_fault(view, node_id, text)
+
+
+def _live_fault(view, node_id, text):
+    """Tell the fault of one node on stderr and in the app log; answer its error card."""
+    print(f"! {text}", file=sys.stderr)
+    if view.get("placement") == "attachment":
+        entry = {"level": "error", "message": text}
+        _contracts.append_log(view, entry, at=int(time.time() * 1000), source="host")
+    return _contracts.error_card(node_id, text)
+
+
+def _live_checked(view):
+    """The opened view as this host keeps it; Refused for a fault of the whole view.
+
+    As the engine: an opened view shows a node with a fault as an error card and
+    drops each shortcut that names it.
+    """
+    faults = _contracts.live_view_faults(view)
+    if faults.view:
+        raise Refused(_contracts.VIEW_REFUSAL + "; ".join(faults.lines()))
+    view = json.loads(json.dumps(view))
+    view["nodes"] = [_live_node_kept(node) for node in view["nodes"]]
+    if faults.dropped:
+        names = {one.node_id for one in faults.dropped}
+        kept = [
+            one
+            for one in view.get("shortcuts") or []
+            if one.get("node_id") not in names
+        ]
+        if kept:
+            view["shortcuts"] = kept
+        else:
+            view.pop("shortcuts", None)
+        for one in faults.dropped:
+            print(f"! {one.note}", file=sys.stderr)
+    _live_cards(view, faults.nodes)
+    return view
 
 
 def _live_leaves(nodes):
@@ -1216,225 +1122,25 @@ def _live_leaves(nodes):
     return leaves
 
 
-def _live_find(nodes, node_id):
-    # The list a node lives in and its index there, ANYWHERE in the tree: an op
-    # names a node by id and never says which row is holding it.
-    for index, node in enumerate(nodes or []):
-        if node.get("id") == node_id:
-            return nodes, index
-        children = node.get("children")
-        if isinstance(children, list):
-            found = _live_find(children, node_id)
-            if found is not None:
-                return found
-    return None
-
-
-def _live_upsert(held, incoming, *, is_merged=False):
-    # An item keeps the position it was first given: a row that updates in place
-    # is what makes a table readable while it fills. The host replaces an item;
-    # only a group declaration merges onto the one before it.
-    merged = list(held or [])
-    for item in incoming or []:
-        item_id = item.get("id") if isinstance(item, dict) else None
-        at = None
-        if item_id is not None:
-            at = next(
-                (i for i, one in enumerate(merged) if one.get("id") == item_id), None
-            )
-        if at is None:
-            merged.append(item)
-        else:
-            merged[at] = {**merged[at], **item} if is_merged else item
-    return merged
-
-
-def _live_bound(node):
-    # The record outside is as long as the contract lets a surface hold: a log
-    # keeps its window, a table its rows, so a day-long loop cannot grow this
-    # process without a bound.
-    if node.get("type") == "log":
-        window = int(
-            node.get("window_lines")
-            or _LIVE_NODE_SCHEMAS["log"]["window_lines"]["default"]
-        )
-        node["lines"] = list(node.get("lines") or [])[-window:]
-        if "line_tones" in node:
-            node["line_tones"] = node["line_tones"][-window:]
-    elif node.get("type") == "table":
-        rows = int(
-            node.get("max_rows") or _LIVE_NODE_SCHEMAS["table"]["max_rows"]["default"]
-        )
-        node["rows"] = list(node.get("rows") or [])[-rows:]
-    return node
-
-
-def _live_items_key(node, name):
-    key = _LIVE_ITEMS.get(node.get("type"))
-    if key is None:
-        kind = node.get("type")
-        raise Refused(f"a {kind} node holds no items, so it takes no {name}")
-    return key
-
-
-def _live_apply(view, op):
-    """Fold one op into `view` and answer the line the transcript owes it."""
-    name = op.get("op") if isinstance(op, dict) else None
-    if name not in _LIVE_OPS:
-        names = ", ".join(_LIVE_OPS)
-        raise Refused(f"a live op is one of {names}, got {name!r}")
+def _live_said(op, written):
+    """The line that the transcript owes op `op`, which wrote `written`."""
+    name = op.get("op")
     if name == "shortcuts":
         # No person presses a key outside Vis: the list only replaces the old one.
-        shortcuts = op.get("shortcuts")
-        if not isinstance(shortcuts, list):
-            raise Refused("a shortcuts op carries a list of shortcuts")
-        if shortcuts:
-            view["shortcuts"] = json.loads(json.dumps(shortcuts))
-        else:
-            view.pop("shortcuts", None)
-        return f"shortcuts: {len(shortcuts)}"
+        return f"shortcuts: {len(op.get('shortcuts') or [])}"
     if name == "log":
         # Outside Vis the transcript is the Log panel: each entry gets one line.
-        try:
-            entry = _contracts.append_log(
-                view, op, at=int(time.time() * 1000), source="app"
-            )
-        except ValueError as error:
-            raise Refused(str(error)) from None
-        return f"log {entry['level']}: {entry['message']}"
+        return f"log {written['level']}: {written['message']}"
     if name == "agent-note":
         # Outside Vis no model reads the note: the transcript shows it instead.
-        text = op.get("text")
-        if not isinstance(text, str):
-            raise Refused("an agent-note op carries text")
-        if len(text) > _AGENT_NOTE_MAX:
-            raise Refused(f"an agent note holds at most {_AGENT_NOTE_MAX} characters")
-        if text.strip():
-            view["agent_note"] = text.strip()
-            return f"agent note: {view['agent_note']}"
-        view.pop("agent_note", None)
-        return "agent note: removed"
-    if name == "add-node":
-        spec = op.get("node_spec")
-        complaint = _live_check_node(spec, _live_ids(view["nodes"]))
-        if complaint:
-            raise Refused(complaint)
-        assert isinstance(spec, dict)  # _live_check_node refuses any other spec.
-        found = _live_find(view["nodes"], op.get("after"))
-        # A new node joins the row that holds the node it named, not the top of
-        # the view: `after` is a sibling, so the arrangement stays the one declared.
-        siblings, at = (
-            (view["nodes"], len(view["nodes"]))
-            if found is None
-            else (found[0], found[1] + 1)
-        )
-        siblings.insert(at, json.loads(json.dumps(spec)))
-        return "+ {}".format(spec.get("label") or spec.get("id"))
-    found = _live_find(view["nodes"], op.get("node_id"))
-    if found is None:
-        raise Refused("no node {!r} in this view".format(op.get("node_id")))
-    siblings, index = found
-    node = dict(siblings[index])
-    if name == "remove-node":
-        # A group leaves with its children: nothing outlives the row it stood in.
-        siblings.pop(index)
-        return "- {}".format(node.get("label") or node.get("id"))
-    if node["type"] == "divider":
-        raise Refused("a divider has no mutable state")
-    if name == "set":
-        node.update({k: v for k, v in op.items() if k not in ("op", "node_id")})
-        # `live/apply-set`: a blank detail CLEARS it, like a declaration that
-        # leaves the key out.
-        if "detail" in op and not str(op["detail"]).strip():
-            node.pop("detail", None)
-        complaint = _live_check_node(node, set(), is_declaration=False)
-        if complaint:
-            raise Refused(complaint)
-    elif name == "append":
-        key = _live_items_key(node, "lines to append")
-        payload = list(op.get(key) or [])
-        if "tone" in op and (key != "lines" or op["tone"] not in _TONES):
-            raise Refused("only log appends accept a known tone")
-        if key == "lines":
-            from .extension import _log_text
-
-            payload = [_log_text(line) for line in payload]
-            op = {**op, "lines": payload}
-            if "tone" in op or "line_tones" in node:
-                node["line_tones"] = node.get(
-                    "line_tones", [None] * len(node.get(key, []))
-                ) + [op.get("tone")] * len(payload)
-            node["total_lines"] = node.get("total_lines", len(node.get(key, []))) + len(
-                payload
-            )
-            node[key] = list(node.get(key) or []) + payload
-        elif key == "objects":
-            # A scene object change merges onto the object: a tick sends only
-            # what moved, and a new object starts from the schema defaults.
-            try:
-                node["meshes"] = _live_upsert(node.get("meshes"), op.get("meshes"))
-                node[key] = _contracts.scene_objects(node.get(key) or [], payload)
-            except ValueError as error:
-                raise Refused(str(error)) from None
-            complaint = _contracts.scene_error(node)
-            if complaint:
-                raise Refused(complaint)
-        else:
-            try:
-                payload = _contracts.live_items(key, payload)
-            except ValueError as error:
-                raise Refused(str(error)) from None
-            node[key] = _live_upsert(node.get(key), payload)
-            if key == "lanes":
-                try:
-                    node[key] = _contracts.checked_lanes(node[key])
-                except ValueError as error:
-                    raise Refused(str(error)) from None
-        if "groups" in op:
-            # A table upserts its group DECLARATIONS in the same append that
-            # carries the rows hanging under them, and a second declaration
-            # merges onto the first: re-toning a head keeps its label.
-            node["groups"] = _live_upsert(
-                node.get("groups"), op["groups"], is_merged=True
-            )
-    elif name == "set-value":
-        if node.get("type") not in _FIELDS:
-            raise Refused("set-value needs an input node")
-        if node.get("is_secret"):
-            raise Refused("a secret input has no value")
-        if op.get("value") is None:
-            node.pop("value", None)
-        else:
-            node["value"] = op["value"]
-    elif name == "clear":
-        node[_live_items_key(node, "clear")] = []
-        if node.get("type") == "log":
-            node["total_lines"] = 0
-            node.pop("line_tones", None)
-    elif name == "remove":
-        key = _live_items_key(node, "item_ids")
-        dropped = set(op.get("item_ids") or [])
-        node[key] = [i for i in (node.get(key) or []) if i.get("id") not in dropped]
-    elif name == "replace":
-        if node.get("type") != "table":
-            raise Refused(f"a {node.get('type')} node has no rows to replace")
-        try:
-            rows = _contracts.live_items("rows", list(op.get("rows") or []))
-        except ValueError as error:
-            raise Refused(str(error)) from None
-        node["rows"] = _live_upsert([], rows)
-    node = _live_bound(node)
-    if name in ("clear", "remove", "replace"):
-        _live_prune_selected(node)
-    siblings[index] = node
-    return _live_line(name, op, node)
-
-
-def _live_prune_selected(node):
-    # `live/prune-selected`: a selection names only rows that still exist.
-    if node.get("type") == "table" and "selected_ids" in node:
-        kept = {row.get("id") for row in node.get("rows") or []}
-        node["selected_ids"] = [i for i in node["selected_ids"] if i in kept]
+        text = op["text"].strip()
+        return f"agent note: {text}" if text else "agent note: removed"
+    if name in ("add-node", "remove-node"):
+        if written is None:
+            return None
+        sign = "+" if name == "add-node" else "-"
+        return "{} {}".format(sign, written.get("label") or written.get("id"))
+    return _live_line(name, op, written)
 
 
 def _live_line(name, op, node):
@@ -1447,9 +1153,9 @@ def _live_line(name, op, node):
     if name == "remove":
         return "{}: -{}".format(label, len(op.get("item_ids") or []))
     if name == "append" and kind == "log":
-        return "\n".join(str(line) for line in (op.get("lines") or []))
+        return "\n".join(_contracts.log_text(line) for line in op.get("lines") or [])
     if name == "append":
-        key = _LIVE_ITEMS[kind]
+        key = _contracts.live_collection(kind)
         counted = [
             f"+{len(op[held] or [])} {held}"
             for held in (key, "groups", "meshes")
@@ -1524,19 +1230,16 @@ def live(envelope_json, listener=None):
     op = str(envelope.get("op") or "open")
     if op == "open":
         view = envelope.get("view")
-        complaint = _check_view(view)
-        if complaint:
-            raise Refused(complaint)
-        assert isinstance(view, dict)  # _check_view refuses any other view.
+        kept = _live_checked(view)
         view_id = str(uuid.uuid4())
-        held = {"view_id": view_id, "view": json.loads(json.dumps(view)), "seq": 0}
+        held = {"view_id": view_id, "view": kept, "seq": 0}
         held["condition"] = threading.Condition()
         held["view"]["seq"] = 0
         held["view"]["id"] = view_id
         _LIVE_VIEWS[view_id] = held
-        print("\n== {} ==".format(view.get("title")), file=sys.stderr)
-        if view.get("description"):
-            print(textwrap.fill(str(view["description"]), 78), file=sys.stderr)
+        print("\n== {} ==".format(kept.get("title")), file=sys.stderr)
+        if kept.get("description"):
+            print(textwrap.fill(str(kept["description"]), 78), file=sys.stderr)
         return json.dumps({"view_id": view_id, "is_open": True, "view": held["view"]})
     if op not in _LIVE_HANDLE_OPS:
         ops = ", ".join(("open", *_LIVE_HANDLE_OPS))
@@ -1579,11 +1282,27 @@ def _live_handle(held, envelope, op, view_id):
             {"view_id": view_id, "is_open": True, "cursor": after, "events": []}
         )
     if op == "patch":
-        ops = (envelope.get("patch") or {}).get("ops") or []
+        refusal = _contracts.live_patch_refusal(
+            envelope.get("patch"), view_id, held["seq"]
+        )
+        if refusal:
+            raise Refused(refusal)
+        ops = envelope["patch"]["ops"]
         candidate = deepcopy(held["view"])
-        lines = [_live_apply(candidate, one) for one in ops]
+        try:
+            written = _contracts.apply_live_ops(
+                candidate,
+                ops,
+                kept=_live_node_kept,
+                at=int(time.time() * 1000),
+                author=_live_author(),
+            )
+        except ValueError as error:
+            raise Refused(str(error)) from None
         held["view"] = candidate
-        _live_say(lines)
+        _live_say(
+            [_live_said(one, wrote) for one, wrote in zip(ops, written, strict=True)]
+        )
         held["seq"] += 1
         held["view"]["seq"] = held["seq"]
         return json.dumps({"view_id": view_id, "is_open": True, "seq": held["seq"]})

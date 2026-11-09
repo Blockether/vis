@@ -24,13 +24,14 @@
    AUTHORED as markdown and a rendered one re-read. What a budget left behind is
    named, never guessed.
 
-   Nothing here evicts the RECORD. Bounds on keyed collections are REFUSALS
-   (`spec/item-bounds`) naming the bound and the node, a log's `:window-lines`
-   is only how much a surface holds hot, and the model's own budget always says
-   how many lines it left behind."
+   Nothing here evicts the RECORD. Bounds on keyed collections are REFUSALS of the
+   shared node check (`vis-contract`) naming the bound and the node, a log's
+   `:window-lines` is only how much a surface holds hot, and the model's own budget
+   always says how many lines it left behind."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
             [com.blockether.vis.contract.app :as app]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.view :as spec]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
@@ -68,66 +69,18 @@
 (defn- invalid-patch!
   "Refuse a patch the way the parser refuses a request: one line naming what to
    fix, thrown where the extension wrote it."
-  [node-id message]
-  (throw (ex-info (str "Invalid live-view patch" (when node-id (str " for node " node-id))
-                       ": " message)
-                  {:type :vis/view-invalid-patch :node-id node-id :reason message})))
+  [message]
+  (throw (ex-info (str spec/patch-refusal-prefix message)
+                  {:type :vis/view-invalid-patch :reason message})))
 
 (defn- app-rule
   "Run one app rule of [[com.blockether.vis.contract.app]]. A rule that refuses
    refuses the patch with its own reason."
-  [node-id f]
-  (try (f)
-       (catch clojure.lang.ExceptionInfo e
-         (if (= :app/invalid (:type (ex-data e)))
-           (invalid-patch! (or (:node-id (ex-data e)) node-id) (:reason (ex-data e)))
-           (throw e)))))
-
-(def ^:private settable-keys
-  "Which keys a `set` may carry, per mutable node type, beyond `:label`.
-   A `progress` has no text and a `status` has no value: crossing them is refused
-   with both named. Dividers have no mutable state."
-  {:status #{:text :detail :tone}
-   :paragraph #{:text}
-   :heading #{:text :level}
-   :code #{:text :language}
-   :spinner #{:text :variant :is-active}
-   :button #{:is-disabled :clicks}
-   :card #{:title :text :tone :meta :is-selectable :clicks}
-   :progress #{:value :done :total}
-   :stat #{:stats}
-   :steps #{:steps}
-   :timeline #{:lanes}
-   :log #{:window-lines}
-   :table #{:order :max-rows :selected-ids}
-   :link #{:links}
-   :diff #{:patch :old-revision :new-revision}
-   :scene #{:background :fov :is-wrapping :tick-ms}})
-
-(def ^:private appendable-key
-  "The key an `append` carries, per node type — the one axis a `log` and a
-   `table` differ on, and the reason appending rows to a log is a refusal
-   rather than a silent no-op."
-  {:stat :stats
-   :steps :steps
-   :timeline :lanes
-   :log :lines
-   :table :rows
-   :link :links
-   :scene :objects})
-
-(def ^:private append-extra-keys
-  "Keys an `append` may carry BESIDE the node's own collection. A table upserts
-   its group DECLARATIONS here, so the head and the rows that hang under it
-   arrive in one patch instead of racing each other."
-  {:table #{:groups} :scene #{:meshes}})
-
-(def ^:private patch-item-caps
-  "How many items ONE patch may carry into a node. Not a cap on the node: it
-   keeps a single operation from parking the publishing thread on the journal
-   writer, and its refusal says to split."
-  {:log {:key :lines :max (:max-patch-lines spec/log-defaults)}
-   :table {:key :rows :max (:max-patch-rows spec/table-defaults)}})
+  [f]
+  (try
+    (f)
+    (catch clojure.lang.ExceptionInfo e
+      (if (= :app/invalid (:type (ex-data e))) (invalid-patch! (:reason (ex-data e))) (throw e)))))
 
 (defn- node-tree
   "Every node of the view depth first, the children of a layout group included.
@@ -178,39 +131,6 @@
   [view node-id]
   (when-let [found (path-in (:nodes view) node-id)]
     (into [:nodes] found)))
-
-(defn- item-bound
-  "How many items this node may HOLD: a table declares its own `:max-rows`
-   inside the type's ceiling, every other keyed type takes the type's."
-  [node]
-  (let [{:keys [max]} (spec/item-bounds (:type node))]
-    (long (or (:max-rows node) max 0))))
-
-(defn- checked-count!
-  "`items` when the node may hold them all, else a refusal naming the bound, the
-   node and the home for unbounded volume."
-  [node items]
-  (let [bound (long (item-bound node))]
-    (when (> (count items) bound)
-      (invalid-patch! (:id node)
-                      (str "a " (name (:type node))
-                           " node holds at most " bound
-                           " items and this would hold " (count items)
-                           ". Nothing is trimmed: an unbounded stream belongs in a `log` node, "
-                           "whose record keeps every line.")))
-    items))
-
-(defn- checked-groups
-  "`groups` once a table still declares no more of them than the contract allows.
-   Groups are heads, not volume: a producer minting one per row has confused the
-   two, and the refusal says so where it was written."
-  [node groups]
-  (let [bound (long (:max-groups spec/table-defaults))]
-    (when (> (count groups) bound)
-      (invalid-patch! (:id node)
-                      (str "a table declares at most " bound
-                           " groups and this would declare " (count groups))))
-    groups))
 
 (defn- upsert
   "`incoming` merged into `existing` BY ID: an id already present is REPLACED IN
@@ -302,112 +222,62 @@
   (update (record-view view) :nodes #(mapv windowed-node %)))
 
 (defn- checked-node
-  "`node` once it still satisfies the declared contract, else the reason it does
-   not — an engine bug surfaces here instead of as a torn pane three
-   namespaces away."
+  "`node` once it passes the one node check of every host, else a refusal with its
+   fault text, as the recorder of the SDK gives it (`live-view-checks.json`)."
   [node]
-  (if-let [reason (spec/live-node-error node)]
-    (invalid-patch! (:id node) reason)
+  (if-some [text (spec/live-node-fault (spec/wire-data node) false)]
+    (invalid-patch! text)
     node))
 
-(defn- apply-set
-  "A node with its own state replaced. Keys foreign to the node's type are
-   refused BY NAME rather than merged into a shape no surface can paint."
+(defn- checked-op!
+  "Refuse `op` when the shared patch target table says that it does not apply to
+   `node`, or that `node` does not take one of its keys."
   [node op]
-  (when (= :divider (:type node)) (invalid-patch! (:id node) "a divider has no state to set"))
-  (let [allowed
-        (conj (get settable-keys (:type node) #{}) :label)
+  (when-some [lines (seq (spec/live-op-target-lines (name (:type node)) (:id node) op))]
+    (invalid-patch! (spec/node-fault-text (:id node) lines))))
 
-        given
-        (disj (set (keys op)) :op :node-id)
-
-        foreign
-        (sort (map name (remove allowed given)))]
-
-    (when (seq foreign)
-      (invalid-patch! (:id node)
-                      (str "a " (name (:type node))
-                           " node has no " (str/join ", " foreign)
-                           " to set; it sets " (str/join ", " (sort (map name allowed))))))
-    (when (contains? given :selected-ids)
-      (when-not (true? (:is-selectable node))
-        (invalid-patch! (:id node) "this table is not selectable"))
-      (let [row-ids (set (map :id (:rows node)))]
-        (when-let [missing (first (remove row-ids (:selected-ids op)))]
-          (invalid-patch! (:id node) (str "there is no row " missing " to select")))))
-    (let [merged (cond-> (merge node (select-keys op (vec given)))
-                   ;; A blank `:detail` REMOVES it — the same "no detail" a declaration
-                   ;; states by leaving the key out, so a status can drop the second
-                   ;; line it was carrying instead of refusing the patch.
-                   (and (contains? given :detail) (str/blank? (:detail op)))
-                   (dissoc :detail))]
-      (checked-node
-        (reduce (fn [node k]
-                  (if (contains? given k) (assoc node k (checked-count! node (get op k))) node))
-                merged
-                [:stats :lanes])))))
+(defn- apply-set
+  "A node with its own state replaced. The target table allows each key, and the node
+   check after the op holds the result to the schema."
+  [node op]
+  (let [given (disj (set (keys op)) :op :node-id)]
+    (cond-> (merge node (select-keys op (vec given)))
+      ;; A blank `:detail` REMOVES it — the same "no detail" a declaration
+      ;; states by leaving the key out, so a status can drop the second
+      ;; line it was carrying instead of refusing the patch.
+      (and (contains? given :detail) (str/blank? (:detail op)))
+      (dissoc :detail))))
 
 (defn- apply-append
   "A node with items added. A `log` grows its window and its record; a keyed
-   node upserts by id and is bounded by refusal. A scene merges its objects."
+   node upserts by id, and the node check holds it to its bound. A scene merges
+   its objects."
   [node op]
-  (let [k
-        (get appendable-key (:type node))
+  (let [given (disj (set (keys op)) :op :node-id :tone)]
+    (if (= :log (:type node))
+      (let [items (:lines op)
+            all (into (:lines node) items)
+            styled? (or (contains? node :line-tones) (contains? op :tone))
+            tones (when styled?
+                    (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
+                          (repeat (count items) (:tone op))))]
 
-        extra
-        (get append-extra-keys (:type node) #{})
+        (trim-log-window (cond-> (assoc node
+                                   :lines all
+                                   :total-lines (+ (long (:total-lines node)) (count items)))
+                           styled?
+                           (assoc :line-tones tones))))
+      (reduce (fn [node k]
+                (case k
+                  :groups
+                  (assoc node :groups (merge-by-id (or (:groups node) []) (:groups op)))
 
-        given
-        (disj (set (keys op)) :op :node-id)
+                  :objects
+                  (update node :objects spec/scene-merge (:objects op))
 
-        wrong
-        (sort
-          (map name
-               (reduce disj (if (= :log (:type node)) (disj given k :tone) (disj given k)) extra)))]
-
-    (when (nil? k)
-      (invalid-patch! (:id node) (str "a " (name (:type node)) " node has nothing to append to")))
-    (when (seq wrong)
-      (invalid-patch!
-        (:id node)
-        (str "a " (name (:type node)) " node appends " (name k) ", not " (str/join ", " wrong))))
-    (let [items (get op k)]
-      (when-let [{:keys [max]} (get patch-item-caps (:type node))]
-        (when (> (count items) (long max))
-          (invalid-patch! (:id node)
-                          (str "one patch carries at most "
-                               max
-                               " "
-                               (name k)
-                               " and this one carries "
-                               (count items)
-                               "; split it"))))
-      (cond (= :scene (:type node))
-            (checked-node (cond-> node
-                            (contains? given :meshes)
-                            (update :meshes upsert (:meshes op))
-
-                            (contains? given :objects)
-                            (update :objects #(checked-count! node (spec/scene-merge % items)))))
-            (= :log (:type node))
-            (let [all (into (:lines node) items)
-                  styled? (or (contains? node :line-tones) (contains? op :tone))
-                  tones (when styled?
-                          (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
-                                (repeat (count items) (:tone op))))]
-
-              (trim-log-window (cond-> (assoc node
-                                         :lines all
-                                         :total-lines (+ (long (:total-lines node)) (count items)))
-                                 styled?
-                                 (assoc :line-tones tones))))
-            :else (cond-> node
-                    (contains? given k)
-                    (update k #(checked-count! node (upsert % items)))
-
-                    (contains? given :groups)
-                    (assoc :groups
-                      (checked-groups node (merge-by-id (or (:groups node) []) (:groups op)))))))))
+                  (update node k #(upsert (or % []) (get op k)))))
+              node
+              (sort given)))))
 
 (defn- prune-selected
   "Drop selected ids whose rows no longer exist, without adding selection metadata to a
@@ -419,18 +289,14 @@
     node))
 
 (defn- apply-remove
-  "A node without the named items. A node with no keyed collection has nothing
-   to remove and says so. Removing table rows also prunes transient selection,
-   and a diff drops the named threads."
+  "A node without the named items. Removing table rows also prunes transient
+   selection, and a diff drops the named threads."
   [node op]
   (if (= :diff (:type node))
-    (app-rule (:id node) #(app/remove-threads node (:item-ids op)))
-    (let [{:keys [key]} (spec/item-bounds (:type node))]
-      (when (nil? key)
-        (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds no removable items")))
-      (cond-> (update node key without-ids (:item-ids op))
-        (= :table (:type node))
-        prune-selected))))
+    (app/remove-threads node (:item-ids op))
+    (cond-> (update node (:key (spec/item-bounds (:type node))) without-ids (:item-ids op))
+      (= :table (:type node))
+      prune-selected)))
 
 (defn- apply-clear
   "A node emptied. Clearing a log empties the WINDOW and starts its RECORD over: the
@@ -444,23 +310,16 @@
                :total-lines 0)
         (dissoc :line-tones))
 
-    (let [{:keys [key]} (spec/item-bounds (:type node))]
-      (when (nil? key)
-        (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds nothing to clear")))
-      (cond-> (assoc node key [])
-        (= :table (:type node))
-        prune-selected))))
+    (cond-> (assoc node (:key (spec/item-bounds (:type node))) [])
+      (= :table (:type node))
+      prune-selected)))
 
 (defn- apply-replace
   "A table whose rows are exactly the op's `:rows`, in their order. Selection is
    pruned in the same step, so a row that comes back stays selected and a row that
-   is gone does not. Only a table has rows to replace."
+   is gone does not."
   [node op]
-  (when-not (= :table (:type node))
-    (invalid-patch!
-      (:id node)
-      (str "a " (name (:type node)) " node has no rows to replace; only a table has")))
-  (prune-selected (assoc node :rows (checked-count! node (upsert [] (:rows op))))))
+  (prune-selected (assoc node :rows (upsert [] (:rows op)))))
 
 (defn- insert-after
   "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
@@ -473,41 +332,30 @@
   [nodes idx]
   (into (into [] (subvec nodes 0 (long idx))) (subvec nodes (inc (long idx)))))
 
+(defn- checked-group
+  "`view` once the layout group that holds the node at `path` passes the node check
+   of every host. A node at the top has no group."
+  [view path]
+  (when (< 2 (count path)) (checked-node (get-in view (pop (pop path)))))
+  view)
+
 (defn- apply-add-node
   "The view with one more node — the shape changing while it runs, because a
    scan that discovers a seventh device should not have to have declared it.
    `:after` names the node the newcomer stands next to WHEREVER that node is, so
    a node added after one inside a layout group joins that group; a group added
-   this way lands with everything inside it."
+   this way lands with everything inside it. The view check of [[apply-patch]]
+   refuses a repeated id and too many nodes."
   [view {:keys [node-spec after]}]
-  (let [node
-        (windowed-node (stamped (checked-node node-spec)))
-
-        max-nodes
-        (long (:max-nodes spec/view-defaults))
-
-        taken
-        (set (node-ids view))
-
-        minted
-        (mapv :id (node-tree [node]))]
-
-    (doseq [id minted]
-      (when (taken id)
-        (invalid-patch! id "a node with this id is already in the view; an id is an address")))
-    (when (> (+ (count (node-ids view)) (count minted)) max-nodes)
-      (invalid-patch! (:id node)
-                      (str "the view would have "
-                           (+ (count (node-ids view)) (count minted))
-                           " nodes; the maximum is "
-                           max-nodes
-                           ". Put a collection in a table: rows do not count as nodes.")))
+  (let [node (windowed-node (stamped (checked-node node-spec)))]
     (if-let [path (when after
                     (or (node-path view after)
                         (invalid-patch!
-                          (:id node)
-                          (str "cannot place it after " after ": the view has no such node"))))]
-      (update-in view (pop path) insert-after (peek path) node)
+                          (spec/node-fault-text
+                            (:id node)
+                            [(document/named-line "/after" "missing_after" {"after" after})]))))]
+      (-> (update-in view (pop path) insert-after (peek path) node)
+          (checked-group path))
       (update view :nodes conj node))))
 
 (defn- apply-remove-node
@@ -517,34 +365,29 @@
    node that is gone is a lost patch and refuses."
   [view {:keys [node-id]}]
   (if-let [path (node-path view node-id)]
-    (update-in view (pop path) drop-at (peek path))
+    (-> (update-in view (pop path) drop-at (peek path))
+        (checked-group path))
     view))
 
 (defn- apply-set-value
-  "An input with its new `:value`, or without one when the value is nil. The
-   value must fit the input domain; a secret input never takes a value here."
+  "An input with its new `:value`, or without one when the value is nil. The node
+   check after the op holds the value to the input domain and refuses a value on a
+   secret input."
   [node {:keys [value]}]
-  (cond (not (contains? spec/field-types
-                        (some-> (:type node)
-                                name)))
-        (invalid-patch! (:id node) "only an input component takes a value")
-        (:is-secret node) (invalid-patch! (:id node) "a secret input never takes a value")
-        (nil? value) (dissoc node :value)
-        (spec/value-in-domain? node value) (assoc node :value value)
-        :else (invalid-patch! (:id node) "the value is outside the input domain")))
+  (if (nil? value) (dissoc node :value) (assoc node :value value)))
 
 (def ^:private view-appliers
   "The operations that change the view itself, not one of its nodes."
   {:add-node apply-add-node
    :remove-node apply-remove-node
    :submission (fn [view op]
-                 (app-rule nil #(app/upsert-submission view (:submission op))))
+                 (app-rule #(app/upsert-submission view (:submission op))))
    :shortcuts (fn [view op]
-                (app-rule nil #(app/set-shortcuts view (:shortcuts op))))
+                (app-rule #(app/set-shortcuts view (:shortcuts op))))
    :agent-note (fn [view op]
-                 (app-rule nil #(app/set-agent-note view (:text op))))
+                 (app-rule #(app/set-agent-note view (:text op))))
    :log (fn [view op]
-          (app-rule nil #(app/append-log view op)))})
+          (app-rule #(app/append-log view op)))})
 
 (def ^:private node-appliers
   "The operations on one node, each answering the node after it."
@@ -555,7 +398,7 @@
             (apply-clear node))
    :replace apply-replace
    :thread (fn [node op]
-             (app-rule (:id node) #(app/upsert-thread node (:thread op))))
+             (app/upsert-thread node (:thread op)))
    :set-value apply-set-value})
 
 (defn- apply-node-op
@@ -564,15 +407,23 @@
   [view op]
   (let [path
         (or (node-path view (:node-id op))
-            (invalid-patch! (:node-id op)
-                            (str "the view has no such node; it has "
-                                 (str/join ", " (node-ids view)))))
+            (invalid-patch! (spec/node-fault-text (:node-id op)
+                                                  [(document/named-line
+                                                     "/node_id"
+                                                     "missing_node"
+                                                     {"ids" (str/join ", " (node-ids view))})])))
 
         apply-node
         (or (get node-appliers (:op op))
-            (throw (IllegalArgumentException. (str "No matching clause: " (:op op)))))]
+            (throw (IllegalArgumentException. (str "No matching clause: " (:op op)))))
 
-    (assoc-in view path (apply-node (get-in view path) op))))
+        node
+        (get-in view path)]
+
+    ;; The shared target table first, then one node check after each op, so a
+    ;; patch is held to the same rules as a declaration.
+    (checked-op! node op)
+    (assoc-in view path (checked-node (apply-node node op)))))
 
 (defn- apply-op
   "The view after ONE operation."
@@ -591,16 +442,18 @@
    twice, which is what lets a surface treat a gap as `re-read the snapshot`."
   [view patch]
   (when-let [reason (spec/live-patch-error patch)]
-    (invalid-patch! nil reason))
+    (invalid-patch! reason))
   (when-not (= (:view-id patch) (:id view))
-    (invalid-patch! nil (str "this patch names view " (:view-id patch) ", not " (:id view))))
+    (invalid-patch! (document/rule-text "patch_view"
+                                        {"patch_view" (:view-id patch) "view" (:id view)})))
   (when-not (> (long (:seq patch)) (long (:seq view)))
-    (invalid-patch! nil
-                    (str "patch seq " (:seq patch) " does not advance the view's " (:seq view))))
-  ;; Checked after every op: a removed node or button takes its shortcut along
-  ;; only when the same patch replaces the shortcuts.
+    (invalid-patch! (document/rule-text "patch_seq" {"seq" (:seq patch) "view_seq" (:seq view)})))
+  ;; The view check runs after every op: a removed node or button takes its
+  ;; shortcut along only when the same patch replaces the shortcuts, and a node
+  ;; added with an id that is already in the view is refused here.
   (let [patched (reduce apply-op view (:ops patch))]
-    (app-rule nil #(app/check-shortcuts patched))
+    (when-some [lines (seq (spec/live-view-lines (spec/wire-data patched) false))]
+      (invalid-patch! (spec/view-fault-text lines)))
     (assoc patched :seq (:seq patch))))
 
 ;; The model's surface
@@ -635,7 +488,7 @@
   "Refuse a view the engine may not paint: one line naming what to fix, thrown
    where the view was declared."
   [message]
-  (throw (ex-info (str "Invalid live view: " message)
+  (throw (ex-info (str spec/view-refusal-prefix message)
                   {:type :vis/view-invalid-live-view :reason message})))
 
 (def ^:private tone?

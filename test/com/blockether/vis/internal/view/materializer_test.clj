@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.contract.view :as hs]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -161,7 +162,7 @@
                         v
                         {:view-id "v" :seq 1 :ops [{:op :append :node-id "log" :lines ["one"]}]}))]
 
-        (expect (str/includes? why "does not advance"))
+        (expect (str/includes? why "must be greater than the view seq"))
         (expect (= ["one"] (:lines (node v "log"))))))
   (it "refuses a patch addressed to another view"
       (expect (str/includes? (refusal #(live/apply-patch (view (log-node))
@@ -180,18 +181,21 @@
                                    {:op :append :node-id "log" :lines ["lost"]}
                                    {:op :append :node-id "gone" :lines ["lost"]})))
         (expect (= ["kept"] (:lines (node before "log"))))))
-  (it "refuses a set carrying a key the node type has not got, naming what it does set"
+  (it "refuses a set carrying a key the node type has not got"
       (let [why (refusal #(patched (view {:id "run" :type :status :text "queued" :tone :idle})
                                    {:op :set :node-id "run" :value 0.5}))]
-        (expect (str/includes? why "status node has no value to set"))
-        (expect (str/includes? why "text"))))
+        (expect (= (str "node run /value - the set op on a node of type status does not take"
+                        " this property (op_key)")
+                   why))))
   (it "refuses appending rows to a log and lines to a table, naming both"
       (let [v (view (log-node) (table-node :insertion))]
+        (expect
+          (str/includes?
+            (refusal #(patched v {:op :append :node-id "log" :rows [(row "a" "A" "1")]}))
+            "node log /rows - the append op on a node of type log does not take this property"))
         (expect (str/includes?
-                  (refusal #(patched v {:op :append :node-id "log" :rows [(row "a" "A" "1")]}))
-                  "appends lines, not rows"))
-        (expect (str/includes? (refusal #(patched v {:op :append :node-id "t" :lines ["x"]}))
-                               "appends rows, not lines"))))
+                  (refusal #(patched v {:op :append :node-id "t" :lines ["x"]}))
+                  "node t /lines - the append op on a node of type table does not take"))))
   (it "treats removing an absent row and clearing an empty table as no-ops that still advance seq"
       (let [v (-> (view (table-node :insertion))
                   (patched {:op :remove :node-id "t" :item-ids ["never-there"]})
@@ -211,7 +215,7 @@
                                            {:op :add-node
                                             :node-spec
                                             {:id "extra" :type :status :text "again" :tone :idle}}))
-                               "already in the view"))))
+                               "view /nodes - two nodes have the id \"extra\" (unique)"))))
   (it "drops a node idempotently but refuses a WRITE to one that is gone"
       (let [v (-> (view (log-node) (table-node :insertion))
                   (patched {:op :remove-node :node-id "t"})
@@ -220,6 +224,10 @@
         (expect (str/includes? (refusal
                                  #(patched v {:op :append :node-id "t" :rows [(row "a" "A" "1")]}))
                                "no such node"))))
+  (it "keeps the reason of a missing node refusal when Vis hides secret text"
+      ;; #453: `for node token: <reason>` read as a secret, so Vis hid the reason.
+      (let [why (refusal #(patched (view (log-node)) {:op :append :node-id "token" :lines ["x"]}))]
+        (expect (str/includes? (util/redact-secret-text why) "the view has no such node"))))
   (it "clears a status' detail with a blank one, the way a declaration leaves it out"
       ;; Issue #255: a `set` carrying detail "" refused the whole patch, so a
       ;; poller with nothing to add this round could not take the line away.
@@ -268,20 +276,18 @@
       (expect (str/includes? (refusal
                                #(patched cut {:op :append :node-id "t" :rows [(row "b" "B" "2")]}))
                              "no such node"))))
-  (it
-    "refuses a table past its bound with the bound, the node and the log named — and trims nothing"
-    (let [v
-          (patched
-            (view (table-node :insertion))
-            {:op :append :node-id "t" :rows (mapv #(row (str %) (str "row " %) (str %)) (range 8))})
+  (it "refuses a table past its bound with the bound and the node named — and trims nothing"
+      (let [v
+            (patched (view (table-node :insertion))
+                     {:op :append
+                      :node-id "t"
+                      :rows (mapv #(row (str %) (str "row " %) (str %)) (range 8))})
 
-          why
-          (refusal #(patched v {:op :append :node-id "t" :rows [(row "9" "one too many" "9")]}))]
+            why
+            (refusal #(patched v {:op :append :node-id "t" :rows [(row "9" "one too many" "9")]}))]
 
-      (expect (str/includes? why "at most 8 items"))
-      (expect (str/includes? why "`log`"))
-      (expect (str/includes? why "t"))
-      (expect (= 8 (count (:rows (node v "t")))))))
+        (expect (= "node t /rows - the table has 9 rows, its max_rows is 8 (max_rows)" why))
+        (expect (= 8 (count (:rows (node v "t")))))))
   (it "refuses a patch over the contract line limit"
       (let [why (refusal #(patched (view (log-node 100000))
                                    {:op :append
@@ -356,13 +362,15 @@
       (expect (= ["a" "b"] (:selected-ids (node selected "t"))))
       (expect (= ["b"] (:selected-ids (node removed "t"))))
       (expect (= [] (:selected-ids (node cleared "t"))))
-      (expect (str/includes? (refusal #(patched (view selectable)
-                                                {:op :set :node-id "t" :selected-ids ["missing"]}))
-                             "no row missing"))
-      (expect (str/includes? (refusal #(patched (view (assoc (table-node :insertion)
-                                                        :rows [(row "a" "A" "1")]))
-                                                {:op :set :node-id "t" :selected-ids ["a"]}))
-                             "not selectable")))))
+      (expect (str/includes?
+                (refusal #(patched (view selectable)
+                                   {:op :set :node-id "t" :selected-ids ["missing"]}))
+                "node t /selected_ids - a selected id names no row of the table (selection)"))
+      (expect
+        (str/includes?
+          (refusal #(patched (view (assoc (table-node :insertion) :rows [(row "a" "A" "1")]))
+                             {:op :set :node-id "t" :selected-ids ["a"]}))
+          "node t /selected_ids - only a selectable table or card takes this property (selection)")))))
 
 ;; Regression, issue #428: a table refreshed with clear and upsert lost the person's
 ;; selection, because clear prunes it before the new rows arrive.
@@ -390,14 +398,14 @@
   (it "refuses a node that is not a table and a row set over the table's bound"
       (expect (str/includes? (refusal #(patched (view (log-node))
                                                 {:op :replace :node-id "log" :rows []}))
-                             "no rows to replace"))
+                             "the replace op does not apply to a node of type log"))
       (expect (str/includes? (refusal #(patched (view (table-node :insertion))
                                                 {:op :replace
                                                  :node-id "t"
                                                  :rows (mapv (fn [i]
                                                                (row (str i) "x" "1"))
                                                              (range 9))}))
-                             "at most 8"))))
+                             "the table has 9 rows, its max_rows is 8 (max_rows)"))))
 
 ;; A table is the one node whose shape the human keeps reading while it moves,
 ;; so the same script is asserted row by row under each declared order.
@@ -998,9 +1006,9 @@
                                                        {:op :append
                                                         :node-id "tl"
                                                         :lanes [(lane "extra" "Extra" :idle 0)]})))
-                               (str "holds at most " bound)))
+                               (str "the maximum is " bound " (maxItems)")))
         (expect (str/includes? (str (refusal #(patched v {:op :set :node-id "tl" :lanes more})))
-                               (str "holds at most " bound))))))
+                               (str "the maximum is " bound " (maxItems)"))))))
 
 (defdescribe
   timeline-markdown-test

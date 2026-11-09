@@ -24,10 +24,13 @@ def test_live_recorder_isolates_extension_output_from_surface_actions():
                                 "id": "jobs",
                                 "type": "table",
                                 "label": "Jobs",
-                                "columns": ["Job"],
+                                "columns": [{"id": "job", "label": "Job"}],
                                 "is_selectable": True,
                                 "selected_ids": ["linux"],
-                                "rows": [{"id": "linux", "cells": ["Linux"]}],
+                                "rows": [
+                                    {"id": "linux", "cells": ["Linux"]},
+                                    {"id": "macos", "cells": ["macOS"]},
+                                ],
                             }
                         ],
                     },

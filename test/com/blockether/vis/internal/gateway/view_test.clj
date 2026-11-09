@@ -28,7 +28,7 @@
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as hi-spec]
-            [lazytest.core :refer [defdescribe expect it throws?]]
+            [lazytest.core :refer [defdescribe expect it]]
             [reitit.ring :as ring]
             [ring.adapter.jetty9 :as jetty])
   (:import [java.net URLEncoder]
@@ -1362,14 +1362,15 @@
                                        "is_accepted"))))
                  (expect (= 1 (clicks [1 :clicks])))
                  (expect (= 1 (clicks [0 :children 0 :clicks])))
-                 (expect (throws? Exception
-                                  #(hi/open-live!
-                                     {:title "Bad"
-                                      :session-id sid
-                                      :nodes [{:id "d2"
-                                               :type "diff"
-                                               :patch app-patch
-                                               :children [{:id "s" :type "status" :text "no"}]}]})))
+                 (let [bad (hi/open-live! {:title "Bad"
+                                           :session-id sid
+                                           :nodes [{:id "d2"
+                                                    :type "diff"
+                                                    :patch app-patch
+                                                    :children
+                                                    [{:id "s" :type "status" :text "no"}]}]})]
+                   (try (expect (= [:status :error] ((juxt :type :tone) (first (:nodes bad)))))
+                        (finally (hi/close-live! (:id bad)))))
                  (finally (hi/close-live! id))))))))
 
 (defn- app-op!

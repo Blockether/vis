@@ -22,6 +22,8 @@ The view appears in the terminal or Companion app and can be stopped at any time
   [app](#apps). They save drafts and send them when they are ready.
 - **You need to know why your app failed or what it did.** Write to the
   [app log](#write-to-the-app-log).
+- **Vis shows an error card in place of a node.** [Stay inside the limits](#stay-inside-the-limits)
+  and [test the view](#testing-a-view) at its limits.
 - **People must act in an app with single keys.** Add [shortcuts](#add-shortcuts-to-an-app).
 - **Your program must show a moving 3D world, such as a game.** Draw a [scene](#draw-a-3d-scene).
 - **The model must know what people do in an app or an HTML page.** Give it a
@@ -1091,6 +1093,73 @@ with that best score.
 - A program reads apps with `live_views(placement="attachment")` and `live_view(view_id)`, as
   [Sessions API](sessions-api.md#watch-live-views) shows.
 
+## Stay inside the limits
+
+Vis checks each view with the schema of its node types. A field has a limit, for example a `diff`
+node holds at most 200 threads. Read a limit from the schema, not from this page:
+
+- `vis.ui.bound(node_type, field)` returns the most items or characters of a field, for example
+  `vis.ui.bound("diff", "threads")` returns 200. An unknown type or field raises `ValueError`.
+- `vis.ui.fit(items, node_type, field)` returns `(kept, left)`: the items that fit and the number
+  of items that stay out. Tell the person about the items that stay out.
+
+```python
+threads, left = vis.ui.fit(all_threads, "diff", "threads")
+label = f"{left} more not shown" if left else None
+```
+
+When one node breaks a rule, Vis shows an error card in its place and keeps the other nodes:
+
+- The card text names the node, the field and the rule, for example
+  `node diff /threads - the array has 201 items, the maximum is 200 (maxItems)`. The text never
+  holds the value of the field. It shows at most five problems, then a count of more problems.
+- A value of the wrong type breaks a rule. Vis does not convert it, so a heading `level` of `"3"`
+  gives an error card. A key in kebab case, for example `is-disabled`, is an unknown key.
+- An app gets one `error` entry for each card in its [app log](#write-to-the-app-log). The Vis log
+  gets one warning for each card, also for a view that is not an app.
+- When your extension opens the view, the SDK writes one `warn` line for each card with
+  `vis.log`. In Vis, the line goes to the extension log. Outside Vis, it goes to stderr.
+- Vis drops a shortcut that names a node with an error card. Vis and the SDK each write one
+  warning for each dropped shortcut. The other shortcuts work.
+- An input also breaks a rule in these cases. Two options of a `select` or a `multiselect` have
+  the same value. A secret input (`password`, `otp`) has a `default`. The node has a `validate`
+  list. Give `validate=` to the input of the SDK: the SDK keeps the function, and your extension
+  runs it.
+
+Vis refuses the whole view when the view itself is wrong. The SDK checks the view before it
+sends it and raises `RuntimeError` with the same text. The view is wrong in these cases:
+
+- It has no title or a blank title.
+- It has no nodes.
+- A view key breaks the schema. For example, the key is unknown, or only Vis writes it (`id`,
+  `seq`). Or its value has the wrong type, or `placement` is not in the list.
+- The view holds a number that is not finite, for example `NaN`, in a view key.
+- A top node is not a map or has no id.
+- Two nodes have one id.
+- It has more nodes than the schema allows.
+- Its pictures hold more bytes than the schema allows.
+- It has `shortcuts` but it is not an app (its `placement` is not `attachment`).
+- Two shortcuts have one key, or a shortcut names no node or a node that a person cannot press.
+
+A group child that is not a map or has no id gives an error card on its group.
+
+Vis refuses the whole patch in these cases:
+
+- An op breaks the schema.
+- An op does not apply to the type of its node, or the node type does not take a key of the op.
+  For example, a `clear` on a `heading` or a `set` of `text` on a `divider`.
+- An op names a node that the view does not have. A `remove-node` of a node that is not there
+  is not refused: it changes nothing.
+- An `add-node` names an `after` node that the view does not have.
+- A node breaks its rules after an op. Vis checks the node that the op changed. For an `add-node`
+  or a `remove-node`, it also checks the group that holds the node. Vis refuses a `remove-node` of
+  the only node of a group. The first problem refuses the patch, also when a later op
+  would fix it.
+- The view breaks a view rule after the last op, for example an `add-node` gives two nodes one
+  id.
+
+The view stays as it was, and the SDK raises `RuntimeError`. A patch never makes an error card.
+
 ## Testing a view
 
 Outside Vis, a live view writes its transcript to stderr and maintains the
@@ -1113,6 +1182,28 @@ result = recorder.close(reason="interrupted")
 
 `recorder.ops()` returns the recorded operations for comparison with expected
 output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
+
+Vis writes the owner of a view as the author of each message that the owner sends. Give
+`LiveRecorder(vis._host, extension="notes")` to record the author `{"kind": "extension",
+"name": "notes"}`. Outside Vis, `VIS_OUTSIDE_EXTENSION` does the same. Without a name, the
+author is the agent.
+
+The recorder checks each view and each patch with the same rules as Vis. A test fails when Vis
+would show an error card. To test a view at its limits, give one item more than each limit:
+
+```python
+for field, keyword, limit in vis.testing.bounds("diff"):
+    print(field, keyword, limit)  # for example: threads maxItems 200
+```
+
+To check a saved view without Vis, write `recorder.view_json()` to a file and run this command.
+It prints one line for the faults of the view and one line for each node with an error card.
+The exit code is 0 for a valid view and 1 for a view with a problem. It is 2 when the input is
+empty or is not JSON:
+
+```bash
+python -m blockether.vis.live_check view.json
+```
 
 ## See also
 

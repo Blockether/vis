@@ -430,6 +430,65 @@ def test_a_submit_without_an_owner_answer_is_refused():
     }
 
 
+def test_a_submit_asks_the_owner_outside_the_recorder_lock():
+    # The listener takes the app lock, as `Runner.dispatch` does, while a producer
+    # holds that lock and patches: a question under the recorder lock hung both.
+    recorder = vis._LiveRecorder(object())
+    recorder.host_live(
+        json.dumps(
+            {
+                "op": "open",
+                "validators": ["port"],
+                "view": vis._live_validators(dict(port_app()))[0],
+            }
+        )
+    )
+    app_lock = threading.Lock()
+    entered = threading.Event()
+
+    def listener(event):
+        if event["type"] == "validate":
+            with app_lock:
+                recorder.host_live(
+                    json.dumps(
+                        {
+                            "op": "validated",
+                            "request_id": event["request_id"],
+                            "errors": {"port": "must be digits"},
+                        }
+                    )
+                )
+
+    def producer():
+        with app_lock:
+            entered.set()
+            time.sleep(0.2)
+            patch = {"ops": [{"op": "set", "node_id": "port", "label": "Port 2"}]}
+            recorder.host_live(json.dumps({"op": "patch", "patch": patch}))
+
+    recorder._listener = listener
+    thread = threading.Thread(target=producer, daemon=True)
+    thread.start()
+    entered.wait(5)
+    answers = []
+    submitter = threading.Thread(
+        target=lambda: answers.append(recorder.submit("send", {"port": "x"})),
+        daemon=True,
+    )
+    submitter.start()
+    submitter.join(5)
+    thread.join(5)
+    assert not submitter.is_alive() and not thread.is_alive(), "the recorder deadlocked"
+    assert answers == [
+        {
+            "is_accepted": False,
+            "reason": "invalid",
+            "errors": {"port": "must be digits"},
+        }
+    ]
+    assert recorder.node("port")["label"] == "Port 2"
+
+
 def test_attach_refuses_on_event_for_a_file():
     with pytest.raises(TypeError, match="only for an app"):
         vis.attach(b"data", "a.txt", on_event=print)

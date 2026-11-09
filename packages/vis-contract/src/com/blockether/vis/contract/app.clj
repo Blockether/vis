@@ -175,46 +175,46 @@
   [node thread-id]
   (some #(when (= thread-id (:id %)) %) (threads node)))
 
-(defn- checked-thread
+(defn owner-thread
+  "Thread `thread` of an owner's thread op on node `node` as it lands: a message that
+   the host stored keeps the stored copy, found by id, and the saved draft of the human
+   stays. An owner never writes a draft."
   [node thread]
-  (when-not (and (map? thread) (string? (:id thread)) (not (str/blank? (:id thread))))
-    (refuse! (:id node) "a thread needs an id"))
-  (when (> (count (:messages thread)) (long (:messages bounds)))
-    (refuse! (:id node) (str "a thread holds at most " (:messages bounds) " messages")))
-  (when (and (some? (:draft thread)) (blank-text? (:draft thread)))
-    (refuse! (:id node) "a saved draft is never blank"))
-  (when (and (= :diff (:type node)) (not (map? (:anchor thread))))
-    (refuse! (:id node) "a diff thread needs an anchor"))
-  (update thread :messages #(vec (or % []))))
+  (let [before
+        (find-thread node (:id thread))
+
+        posted
+        (into {} (map (juxt :id identity)) (:messages before))]
+
+    (cond-> (-> thread
+                (update :messages
+                        (fn [messages]
+                          (mapv #(get posted (:id %) %) messages)))
+                (dissoc :draft))
+      (:draft before)
+      (assoc :draft (:draft before)))))
 
 (defn upsert-thread
-  "Node `node` with `thread` in place. A diff replaces the thread with the same
-   id or adds it. A thread node takes the messages, draft, anchor and resolution."
+  "Diff or thread node `node` with `thread` in place. A diff replaces the thread
+   with the same id or adds it. A thread node takes the messages, draft, anchor and
+   resolution. The patch target table and the node check of the host own the rules."
   [node thread]
-  (let [thread (checked-thread node thread)]
-    (case (:type node)
-      :diff
+  (let [thread (cond-> thread
+                 (map? thread)
+                 (update :messages #(vec (or % []))))]
+    (if (= :thread (:type node))
+      (merge (dissoc node :anchor :draft :is-resolved)
+             (select-keys thread [:anchor :messages :draft :is-resolved]))
       (let [all (vec (:threads node))
             at (first (keep-indexed (fn [i t]
                                       (when (= (:id t) (:id thread)) i))
                                     all))]
 
-        (when (and (nil? at) (>= (count all) (long (:threads bounds))))
-          (refuse! (:id node) (str "a diff holds at most " (:threads bounds) " threads")))
-        (assoc node :threads (if at (assoc all at thread) (conj all thread))))
-
-      :thread
-      (do (when-not (= (:id node) (:id thread))
-            (refuse! (:id node) "a thread node takes only its own thread"))
-          (merge (dissoc node :anchor :draft :is-resolved)
-                 (select-keys thread [:anchor :messages :draft :is-resolved])))
-
-      (refuse! (:id node) "only a diff or a thread node holds threads"))))
+        (assoc node :threads (if at (assoc all at thread) (conj all thread)))))))
 
 (defn remove-threads
   "Diff node `node` without the threads in `thread-ids`. A missing id changes nothing."
   [node thread-ids]
-  (when-not (= :diff (:type node)) (refuse! (:id node) "only a diff removes threads"))
   (let [gone (set thread-ids)]
     (update node :threads #(into [] (remove (comp gone :id)) %))))
 
@@ -357,15 +357,6 @@
 
 (def ^:private char-key-pattern (re-pattern (get-in key-definition ["oneOf" 0 "pattern"])))
 
-(def shortcut-bounds
-  "How many shortcuts an app holds, and the longest label and action id."
-  {:shortcuts (get-in (definition "live_view") ["properties" "shortcuts" "maxItems"])
-   :label (get-in (definition "shortcut") ["properties" "label" "maxLength"])
-   :action (get-in (definition "shortcut") ["properties" "action" "maxLength"])})
-
-(def ^:private shortcut-fields
-  (set (map #(keyword (str/replace % "_" "-")) (keys (get (definition "shortcut") "properties")))))
-
 (def shortcut-key-text
   "The valid shortcut keys, as one sentence part that a refusal can quote."
   (str "one printable ASCII character from ! to ~ (case-sensitive) or one of "
@@ -376,95 +367,15 @@
   [k]
   (and (string? k) (or (some? (re-matches char-key-pattern k)) (contains? named-key? k))))
 
-(defn- bounded-text?
-  [text limit]
-  (and (string? text) (not (str/blank? text)) (<= (count text) (long limit))))
-
-(defn- pressable?
-  "True when a surface can press node `node` like a click."
-  [node]
-  (or (= :button (:type node)) (and (= :card (:type node)) (true? (:is-selectable node)))))
-
-(defn- node-index
-  [nodes]
-  (into {}
-        (mapcat (fn [node]
-                  (cons [(:id node) node] (node-index (:children node)))))
-        nodes))
-
-(defn- shortcut-error
-  [nodes-by-id {k :key :keys [label action node-id] :as shortcut}]
-  (let [named (if (shortcut-key? k) (str "shortcut " k) "a shortcut")]
-    (cond
-      (not (map? shortcut)) "each shortcut must be a map"
-      (seq (remove shortcut-fields (keys shortcut)))
-      (str named
-           " has unknown keys "
-           (str/join ", " (sort (map name (remove shortcut-fields (keys shortcut)))))
-           " — use key, label, action or node_id")
-      (not (shortcut-key? k)) (str "shortcut key " (pr-str k)
-                                   " is not valid — use " shortcut-key-text)
-      (= (some? action) (some? node-id)) (str named " needs exactly one of action and node_id")
-      (and (some? action) (not (bounded-text? action (:action shortcut-bounds))))
-      (str named
-           " action must be non-blank text of at most "
-           (:action shortcut-bounds)
-           " characters")
-      (and (some? label) (not (bounded-text? label (:label shortcut-bounds))))
-      (str named " label must be non-blank text of at most " (:label shortcut-bounds) " characters")
-      (and (some? node-id) (not (and (string? node-id) (not (str/blank? node-id)))))
-      (str named " node_id must be non-blank text")
-      (nil? nodes-by-id) nil
-      (and (some? node-id) (not (contains? nodes-by-id node-id)))
-      (str named " presses node " node-id ", which the app does not have")
-      (and (some? node-id) (not (pressable? (get nodes-by-id node-id))))
-      (str named " presses node " node-id ", which is no button or selectable card"))))
-
-(defn shortcut-shape-error
-  "nil when `shortcut` has a valid shape, otherwise the reason. Whether its
-   `node_id` exists is the answer of [[shortcuts-error]]."
-  [shortcut]
-  (shortcut-error nil shortcut))
-
-(defn shortcuts-error
-  "nil when the shortcuts of `view` are valid, otherwise the reason. Only an app
-   takes shortcuts, each key is bound once, and a `node_id` shortcut presses a
-   button or a selectable card of the app."
-  [view]
-  (let [shortcuts (:shortcuts view)]
-    (cond (not (contains? view :shortcuts)) nil
-          (not (app? view)) "only an app (placement attachment) takes shortcuts"
-          (not (sequential? shortcuts)) "shortcuts must be a list"
-          (> (count shortcuts) (long (:shortcuts shortcut-bounds)))
-          (str "an app holds at most " (:shortcuts shortcut-bounds) " shortcuts")
-          :else (let [nodes-by-id (node-index (:nodes view))]
-                  (or (some #(shortcut-error nodes-by-id %) shortcuts)
-                      (when-let [twice (seq (for [[k n] (frequencies (map :key shortcuts))
-                                                  :when (> (long n) 1)]
-
-                                              k))]
-                        (str "shortcut keys must be unique — "
-                             (str/join ", " (sort twice))
-                             " is bound more than once")))))))
-
 (defn- refuse-view!
   [reason]
   (throw (ex-info (str "app: " reason) {:type :app/invalid :reason reason})))
 
-(defn check-shortcuts
-  "`view` when its shortcuts are valid. Otherwise refuses with the reason."
-  [view]
-  (if-let [why (shortcuts-error view)]
-    (refuse-view! why)
-    view))
-
 (defn set-shortcuts
   "App `view` with `shortcuts` in place of its old list. An empty list removes
-   every shortcut."
+   every shortcut. The shared check of the patched view owns their rules."
   [view shortcuts]
-  (when-not (app? view) (refuse-view! "only an app (placement attachment) takes shortcuts"))
-  (check-shortcuts
-    (if (seq shortcuts) (assoc view :shortcuts (vec shortcuts)) (dissoc view :shortcuts))))
+  (if (seq shortcuts) (assoc view :shortcuts (vec shortcuts)) (dissoc view :shortcuts)))
 
 (defn find-shortcut
   "The shortcut of `view` that binds key `k`, or nil."

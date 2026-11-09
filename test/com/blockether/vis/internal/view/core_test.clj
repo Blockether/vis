@@ -1149,15 +1149,15 @@
         (expect (str/includes?
                   (message
                     {"type" "group" "direction" "row" "max_columns" 2 "children" [{"name" "a"}]})
-                  "only applies to a group with direction \"grid\""))
+                  "/max_columns - only a grid group takes max_columns (grid)"))
         (expect (str/includes?
                   (message
                     {"type" "group" "direction" "grid" "max_columns" 13 "children" [{"name" "a"}]})
-                  "from 1 to 12"))
+                  "/max_columns - the number is greater than the maximum 12 (maximum)"))
         (expect (str/includes?
                   (message
                     {"type" "group" "direction" "grid" "max_columns" 1.5 "children" [{"name" "a"}]})
-                  "whole number"))))
+                  "/max_columns - expected integer, got number (type)"))))
   (it "refuses a direction that is not a flexbox direction"
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields (hi/spec<-json {"type" "group"
@@ -1320,7 +1320,7 @@
       (let [request (hi/normalize-request {:title "t" :nodes [{:id "a"}]})]
         (expect (nil? (hs/request-error request)))
         (expect (str/includes? (refusal #(#'hi/checked-request (dissoc request :submit-label)))
-                               "submit-label"))
+                               "missing required property \"submit_label\""))
         (expect (= :vis/view-invalid-request
                    (refusal-type #(#'hi/checked-request (assoc request :channel-ids [])))))))
   (it "checks every answer on its way out, whatever settled it"
@@ -1496,7 +1496,8 @@
   (it "accepts a view holding one node of every kind"
       (expect (nil? (hs/live-view-error (live-view)))))
   (it "refuses a node type nobody can paint, rather than minting the keyword"
-      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :type] :marquee)))))
+      (expect (str/includes? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :type] :marquee))
+                             "/type - unknown node type (type)")))
   (it "refuses two nodes sharing one id, because an id is the address a patch names"
       (expect (some? (hs/live-view-error (live-view
                                            {:id "state" :type :status :text "b" :tone :ok})))))
@@ -1595,11 +1596,13 @@
                                            :seq 1
                                            :ops [{:op :set :node-id "state" :direction :row}]}))))
   (it
-    "refuses an `add-node` whose node is itself illegal, so a view cannot grow a shape it would have refused at declaration"
-    (expect (some? (hs/live-patch-error {:view-id "view-1"
-                                         :seq 1
-                                         :ops [{:op :add-node
-                                                :node-spec {:id "x" :type :marquee}}]})))))
+    "leaves the node of an `add-node` to the node check, which refuses a shape that a declaration would refuse"
+    (expect (nil? (hs/live-patch-error {:view-id "view-1"
+                                        :seq 1
+                                        :ops [{:op :add-node
+                                               :node-spec {:id "x" :type :marquee}}]})))
+    (expect (= "node x /type - unknown node type (type)"
+               (hs/live-node-fault (hs/wire-data {:id "x" :type :marquee}) false)))))
 
 (def ^:private done-picture
   "The one finished picture the verdict specs speak about."
@@ -1887,7 +1890,7 @@
                                                                               "type" "button"
                                                                               "label" "Save"}]}))))]
                     (expect (some? refused))
-                    (expect (str/includes? (str refused) "vis.ui.group('actions', ...)"))))))
+                    (expect (str/includes? (str refused) "vis.ui.group(\"actions\", ...)"))))))
   (it
     "keeps every ACCEPTED patch on disk, in the order the engine accepted them"
     (recorded
@@ -3084,6 +3087,20 @@
            "nodes" [{"id" "go" "type" "button" "label" "Go"}]
            "shortcuts" shortcuts}})
 
+(defn- opened-view
+  "Open an app with `nodes` in session `sid`, and give the view as its state shows it."
+  [sid nodes]
+  (let [view-id (get (app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] nodes))
+                     "view_id")]
+    (try (get (app-seam! sid {"op" "state" "view_id" view-id}) "view")
+         (finally (hi/close-live! view-id)))))
+
+(defn- error-status?
+  "True when the top node `id` of `view` is an error status in place of a broken node."
+  [view id]
+  (some #(and (= id (get % "id")) (= "status" (get % "type")) (= "error" (get % "tone")))
+        (get view "nodes")))
+
 (defdescribe
   app-shortcut-test
   ;; Live apps C1: an app declares keyboard shortcuts; an action shortcut sends
@@ -3167,7 +3184,7 @@
             (finally (hi/close-live! view-id)))))))
   ;; User report 2026-11-08: a gallery card opened its app, but no surface showed it.
   ;; The surfaces read `reveals` from the view to show the app after a press.
-  (it "keeps the reveals key of a card and a button for the surfaces, and refuses a blank one"
+  (it "keeps the reveals key of a card and a button for the surfaces, and marks a blank one"
       (recorded
         (fn []
           (let [sid
@@ -3187,51 +3204,45 @@
                                   (get-in (app-seam! sid {"op" "state" "view_id" view-id})
                                           ["view" "nodes"]))))
                  (finally (hi/close-live! view-id)))
-            (expect (throws? clojure.lang.ExceptionInfo
-                             #(app-seam! sid
-                                         (assoc-in (shortcut-app sid [])
-                                           ["view" "nodes"]
-                                           [(assoc (first nodes) "reveals" " ")]))))))))
+            (expect (error-status? (opened-view sid [(assoc (first nodes) "reveals" " ")])
+                                   "card"))))))
   ;; User report 2026-11-09: the review toolbar showed word buttons where T3 Code shows
   ;; pictures. The surfaces read `icon` from the toolbar commands of a diff.
-  (it
-    "keeps the icon of a diff toolbar command for the surfaces, and refuses an unknown one"
-    (recorded
-      (fn []
-        (let [sid
-              (str (random-uuid))
+  (it "keeps the icon of a diff toolbar command for the surfaces, and marks an unknown one"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
 
-              diff
-              {"id" "diff"
-               "type" "diff"
-               "patch" ""
-               "children" [{"id" "refresh" "type" "button" "label" "Refresh" "icon" "refresh"}
-                           {"id" "more"
-                            "type" "group"
-                            "direction" "column"
-                            "label" "More actions"
-                            "icon" "more"
-                            "children" [{"id" "run" "type" "button" "label" "Run"}]}]}
+                diff
+                {"id" "diff"
+                 "type" "diff"
+                 "patch" ""
+                 "children" [{"id" "refresh" "type" "button" "label" "Refresh" "icon" "refresh"}
+                             {"id" "more"
+                              "type" "group"
+                              "direction" "column"
+                              "label" "More actions"
+                              "icon" "more"
+                              "children" [{"id" "run" "type" "button" "label" "Run"}]}]}
 
-              view-id
-              (get (app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] [diff]))
-                   "view_id")]
+                view-id
+                (get (app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] [diff]))
+                     "view_id")]
 
-          (try (expect (= {"refresh" "refresh" "more" "more"}
-                          (into {}
-                                (map (juxt #(get % "id") #(get % "icon")))
-                                (-> (app-seam! sid {"op" "state" "view_id" view-id})
-                                    (get-in ["view" "nodes" 0 "children"])))))
-               (finally (hi/close-live! view-id)))
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(app-seam! sid
-                                       (assoc-in (shortcut-app sid [])
-                                         ["view" "nodes"]
-                                         [(assoc-in diff ["children" 0 "icon"] "rocket")]))))))))
+            (try (expect (= {"refresh" "refresh" "more" "more"}
+                            (into {}
+                                  (map (juxt #(get % "id") #(get % "icon")))
+                                  (-> (app-seam! sid {"op" "state" "view_id" view-id})
+                                      (get-in ["view" "nodes" 0 "children"])))))
+                 (finally (hi/close-live! view-id)))
+            (expect (error-status? (opened-view sid
+                                                [(assoc-in diff ["children" 0 "icon"] "rocket")])
+                                   "diff"))))))
   ;; User report 2026-11-09: the review scope menu showed the current scope as a dead
   ;; row, where T3 Code marks the choice that holds. The surfaces read `is_selected`.
   (it
-    "keeps the chosen button of a diff toolbar menu for the surfaces, and refuses a word"
+    "keeps the chosen button of a diff toolbar menu for the surfaces, and marks a word"
     (recorded
       (fn []
         (let [sid
@@ -3260,17 +3271,14 @@
                                 (-> (app-seam! sid {"op" "state" "view_id" view-id})
                                     (get-in ["view" "nodes" 0 "children" 0 "children"])))))
                (finally (hi/close-live! view-id)))
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(app-seam! sid
-                                       (assoc-in (shortcut-app sid [])
-                                         ["view" "nodes"]
-                                         [(assoc-in diff
-                                            ["children" 0 "children" 1 "is_selected"]
-                                            "yes")]))))))))
+          (expect (error-status?
+                    (opened-view sid
+                                 [(assoc-in diff ["children" 0 "children" 1 "is_selected"] "yes")])
+                    "diff"))))))
   ;; User report 2026-11-08: /review did not open. Its scope menu holds a Checkpoint
   ;; submenu, and the engine refused a group inside a toolbar menu.
   (it
-    "accepts a submenu in a diff toolbar menu, and refuses another node in it"
+    "accepts a submenu in a diff toolbar menu, and marks another node in it"
     (recorded
       (fn []
         (let [sid
@@ -3303,41 +3311,85 @@
                                     (get-in ["view" "nodes" 0 "children" 0 "children" 1
                                              "children"])))))
                (finally (hi/close-live! view-id)))
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(app-seam! sid
-                                       (assoc-in (shortcut-app sid [])
-                                         ["view" "nodes"]
-                                         [(assoc-in diff
-                                            ["children" 0 "children" 1 "children" 0]
-                                            {"id" "note" "type" "text" "text" "x"})]))))))))
+          (expect (error-status? (opened-view sid
+                                              [(assoc-in diff
+                                                 ["children" 0 "children" 1 "children" 0]
+                                                 {"id" "note" "type" "text" "text" "x"})])
+                                 "diff"))))))
   ;; User report 2026-11-08: a diff with too many threads was refused with the
   ;; mismatch of each node type, starting with `status`, so no one saw the cause.
-  (it "names the broken rule of the node's own type in one short line when it refuses a node"
-      (let [sid
-            (str (random-uuid))
+  ;; Then one broken node refused the whole view, so the app did not open at all.
+  (it "opens the view with an error status in place of a broken node, and logs why"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
 
-            thread
-            (fn [n]
-              {"id" (str "t" n)
-               "anchor" {"path" "a.py" "side" "new" "line" 1}
-               "messages" [{"id" (str "t" n "-1")
-                            "author" {"kind" "extension" "name" "x"}
-                            "created_at" 1
-                            "body" "b"}]})
+                thread
+                (fn [n]
+                  {"id" (str "t" n)
+                   "anchor" {"path" "a.py" "side" "new" "line" 1}
+                   "messages" [{"id" (str "t" n "-1")
+                                "author" {"kind" "extension" "name" "x"}
+                                "created_at" 1
+                                "body" "b"}]})
 
-            message
-            (try (app-seam!
-                   sid
-                   (assoc-in (shortcut-app sid [])
-                     ["view" "nodes"]
-                     [{"id" "diff" "type" "diff" "patch" "" "threads" (mapv thread (range 201))}]))
-                 nil
-                 (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+                view
+                (opened-view
+                  sid
+                  [{"id" "note" "type" "paragraph" "text" "Hello"}
+                   {"id" "diff" "type" "diff" "patch" "" "threads" (mapv thread (range 201))}])
 
-        (expect (str/includes? message
-                               "/threads: the array has 201 items, the maximum is 200 (maxItems)"))
-        (expect (not (str/includes? message "status")))
-        (expect (not (str/includes? message "https://")))))
+                why
+                "node diff /threads - the array has 201 items, the maximum is 200 (maxItems)"]
+
+            (expect (= [["note" "paragraph" "Hello"] ["diff" "status" why]]
+                       (mapv (juxt #(get % "id") #(get % "type") #(get % "text"))
+                             (get view "nodes"))))
+            (expect (error-status? view "diff"))
+            (expect (not (str/includes? why "https://")))
+            (expect (= [["error" why]]
+                       (mapv (juxt #(get % "level") #(get % "message")) (get view "log"))))))))
+  ;; A broken node of a view that is not an app left no trace in any log.
+  (it "writes one warning for each broken node, also in a view that is not an app"
+      (recorded
+        (fn []
+          (let [{view :value signals :signals}
+                (tel/with-signals (hi/open-live! (live-spec {:id "ok" :type :paragraph :text "Hi"}
+                                                            {:id "bad" :type "blink"})))
+
+                warnings
+                (filterv #(and (= :warn (:level %)) (= ::hi/live-node-fault (:id %))) signals)]
+
+            (try (expect (= [["bad" "node bad /type - unknown node type (type)"]]
+                            (mapv (juxt (comp :node-id :data) #(force (:msg_ %))) warnings)))
+                 (finally (hi/close-live! (:id view))))))))
+  ;; A card of a node whose id is a secret word lost its reason to the redactor.
+  (it "keeps the reason of an error card when the node id is a secret word"
+      (recorded (fn []
+                  (let [view
+                        (opened-view (str (random-uuid))
+                                     [{"id" "token" "type" "paragraph" "text" "x" "zz" 1}])
+
+                        why
+                        "node token / - unknown property \"zz\" (additionalProperties)"]
+
+                    (expect (= why (get-in view ["nodes" 0 "text"])))
+                    (expect (= [why] (mapv #(get % "message") (get view "log"))))))))
+  (it "refuses the whole view for a fault of the view, not of one node"
+      (recorded
+        (fn []
+          (let [sid (str (random-uuid))]
+            (expect (str/includes? (live-refusal #(app-seam!
+                                                    sid
+                                                    (assoc-in (shortcut-app sid [])
+                                                      ["view" "nodes"]
+                                                      [{"id" "a" "type" "paragraph" "text" "x"}
+                                                       {"id" "a" "type" "paragraph" "text" "y"}])))
+                                   "two nodes have the id \"a\""))
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(app-seam! sid
+                                         (update (shortcut-app sid []) "view" dissoc "title"))))))))
   ;; Live apps D3: the owner hears an accepted selection.
   (it "pushes one select event with the selected row ids"
       (recorded
@@ -3380,7 +3432,7 @@
 
         (expect (str/includes?
                   reason
-                  "live view has 65 nodes; the maximum is 64. Put a collection in a table")
+                  "the view has 65 nodes, the maximum is 64. Put a collection in a table")
                 reason)))
   (it
     "refuses a key that is not valid and lists the valid keys"
@@ -3436,11 +3488,14 @@
                 view-id
                 (get (app-seam! sid (shortcut-app sid [{"key" "g" "node_id" "go"}])) "view_id")]
 
-            (try (expect (some? (live-refusal #(app-seam! sid
-                                                          {"op" "patch"
-                                                           "view_id" view-id
-                                                           "patch" {"ops" [{"op" "remove-node"
-                                                                            "node_id" "go"}]}}))))
+            (try (expect
+                   (str/includes?
+                     (live-refusal #(app-seam! sid
+                                               {"op" "patch"
+                                                "view_id" view-id
+                                                "patch" {"ops" [{"op" "remove-node"
+                                                                 "node_id" "go"}]}}))
+                     "/shortcuts/0 - the node that node_id names is not in the view (shortcut)"))
                  (finally (hi/close-live! view-id))))))))
 
 (defn- note-app
@@ -3565,11 +3620,13 @@
                (let [log (log! (vec (repeat 205 {"op" "log" "level" "debug" "message" "tick"})))]
                  (expect (= 200 (count log)))
                  (expect (= [7 206] [(get (first log) "seq") (get (peek log) "seq")])))
-               (doseq [[op reason] [[{"op" "log" "level" "loud" "message" "x"} "needs :level"]
-                                    [{"op" "log" "level" "info"} "needs :message text"]
-                                    [{"op" "log" "level" "info" "message" 7} "needs :message text"]
+               (doseq [[op reason] [[{"op" "log" "level" "loud" "message" "x"}
+                                     "/ops/0/level - the value is not one of"]
+                                    [{"op" "log" "level" "info"} "(required)"]
+                                    [{"op" "log" "level" "info" "message" 7}
+                                     "/ops/0/message - expected string, got integer (type)"]
                                     [{"op" "log" "level" "info" "message" "x" "detail" 7}
-                                     "needs :detail text"]]]
+                                     "/ops/0/detail - expected string, got integer (type)"]]]
                  (expect (str/includes? (str (live-refusal #(app-seam! sid
                                                                        {"op" "patch"
                                                                         "view_id" view-id
@@ -3728,19 +3785,17 @@
                    (expect (not (str/includes? (live/->markdown (hi/live-view view-id) {}) png))
                            "the document holds no bytes either"))
                  (finally (hi/close-live! view-id)))))))
-  (it "refuses bytes that are not base64, not of their media type or too large"
+  (it "shows an error status in place of bytes that are not base64, not of their type or too large"
       (doseq [[data why] [[(fixture-data "jpeg") "is not image/png data"] ["!!" "base64"]
                           [(get-in (some #(when (= "too many pixels" (get % "name")) %)
                                          (get @fixture-pictures "refused"))
                                    ["picture" "data"]) "pixels"]]]
-        (expect (str/includes? (str (live-refusal #(hi/open-live! (live-spec {:id "shot"
-                                                                              :type "image"
-                                                                              :alt "Shot"
-                                                                              :media-type
-                                                                              "image/png"
-                                                                              :data data}))))
-                               why)
-                why)))
+        (watching (live-spec
+                    {:id "shot" :type "image" :alt "Shot" :media-type "image/png" :data data})
+                  (fn [view]
+                    (let [shot (first (:nodes view))]
+                      (expect (= [:status :error] [(:type shot) (:tone shot)]) why)
+                      (expect (str/includes? (str (:text shot)) why) why))))))
   (it "refuses an added image that passes the picture bound of the view"
       (recorded
         (fn []
@@ -3763,7 +3818,7 @@
                                                                             [{:op :add-node
                                                                               :node-spec
                                                                               (image "two")}])))
-                                        "the pictures of this view hold"))
+                                        "/nodes - the pictures hold"))
                  (expect (= ["one"] (mapv :id (:nodes (hi/live-view view-id))))
                          "the view keeps its old nodes")
                  (finally (hi/close-live! view-id))))))))

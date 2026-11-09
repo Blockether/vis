@@ -5,6 +5,7 @@ import subprocess
 import time
 from types import SimpleNamespace
 
+import blockether.vis.extension as vis
 from vis_lang_interface.tree import walked
 
 from vis_review.ai import AiFinding, AiReview
@@ -545,13 +546,16 @@ def test_an_added_picture_shows_no_status_row(tmp_path, recorder):
 def test_many_findings_keep_the_view_valid(tmp_path, recorder):
     # User report 2026-11-08: /review did not open. A crash log gave 1,890 findings,
     # and a diff node holds at most 200 threads.
+    limit = next(
+        limit for field, _, limit in vis.testing.bounds("diff") if field == "threads"
+    )
     root, journal, app = setup(tmp_path, recorder)
-    edit(root, "a.py", "a = 1  \n" * 250)
+    edit(root, "a.py", "a = 1  \n" * (limit + 1))
     journal.checkpoint("block")
     app.refresh()
     diff = recorder.node("diff")
-    assert len(diff["threads"]) == 200
-    assert "50 more findings" in diff["label"]
+    assert len(diff["threads"]) == limit
+    assert "1 more finding not shown" in diff["label"]
 
 
 def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(

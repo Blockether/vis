@@ -631,6 +631,7 @@
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "tone": {
+          "default": "idle",
           "$ref": "#/$defs/tone"
         },
         "detail": {
@@ -667,6 +668,7 @@
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "tone": {
+          "default": "idle",
           "$ref": "#/$defs/tone"
         },
         "detail": {
@@ -1045,6 +1047,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "tone": {
+              "default": "idle",
               "$ref": "#/$defs/tone"
             },
             "detail": {
@@ -1111,6 +1114,7 @@
               "const": "stat"
             },
             "stats": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/$defs/stat"
@@ -1139,6 +1143,7 @@
               "const": "steps"
             },
             "steps": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/$defs/step"
@@ -1167,6 +1172,7 @@
               "const": "timeline"
             },
             "lanes": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/$defs/lane"
@@ -1195,6 +1201,7 @@
               "const": "log"
             },
             "lines": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
@@ -1224,6 +1231,7 @@
               "default": 2000
             },
             "total_lines": {
+              "readOnly": true,
               "type": "integer",
               "minimum": 0
             },
@@ -1259,6 +1267,7 @@
               "minItems": 1
             },
             "rows": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/$defs/row"
@@ -1281,6 +1290,7 @@
               "default": 5000
             },
             "order": {
+              "default": "insertion",
               "oneOf": [
                 {
                   "$ref": "#/$defs/table_order"
@@ -1337,6 +1347,7 @@
               "const": "link"
             },
             "links": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/$defs/link"
@@ -1411,6 +1422,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "direction": {
+              "default": "column",
               "$ref": "#/$defs/group_direction"
             },
             "max_columns": {
@@ -1482,6 +1494,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "level": {
+              "default": 2,
               "type": "integer",
               "minimum": 1,
               "maximum": 6
@@ -1534,12 +1547,15 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "text": {
+              "default": "Working",
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "variant": {
+              "default": "braille",
               "$ref": "#/$defs/spinner_variant"
             },
             "is_active": {
+              "default": true,
               "type": "boolean"
             }
           },
@@ -1580,6 +1596,7 @@
               "default": "secondary"
             },
             "is_disabled": {
+              "default": false,
               "type": "boolean"
             },
             "is_selected": {
@@ -1593,6 +1610,7 @@
               "$ref": "#/$defs/command_icon"
             },
             "clicks": {
+              "readOnly": true,
               "type": "integer",
               "minimum": 0
             }
@@ -1601,6 +1619,7 @@
             "id",
             "type",
             "label",
+            "action",
             "is_disabled"
           ]
         },
@@ -1783,6 +1802,7 @@
               "description": "How long a surface eases an object to its new place. 0 jumps."
             },
             "meshes": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/$defs/scene_mesh"
@@ -1791,6 +1811,7 @@
               "maxItems": 32
             },
             "objects": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/$defs/scene_object"
@@ -1870,13 +1891,17 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
               "const": false,
               "readOnly": true
             },
-            "default": {},
+            "default": {
+              "default": false,
+              "x-vis-fill": true
+            },
             "validate": {
               "type": "array",
               "items": {},
@@ -1917,6 +1942,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
@@ -1972,6 +1998,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
@@ -2040,6 +2067,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
@@ -2101,6 +2129,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
@@ -2156,6 +2185,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
@@ -2211,13 +2241,16 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
               "const": false,
               "readOnly": true
             },
-            "default": {},
+            "default": {
+              "x-vis-fill": "min"
+            },
             "validate": {
               "type": "array",
               "items": {},
@@ -2273,6 +2306,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "is_required": {
+              "default": false,
               "type": "boolean"
             },
             "is_secret": {
@@ -2685,6 +2719,82 @@
       "x-vis-max-picture-bytes": 8388608
     },
     "live_op": {
+      "x-vis-patch-targets": {
+        "description": "The node types that each node op takes, and the op keys that each node type takes in that op. The first key of an append is the collection of the node. Every host refuses an op outside this table with the op_target or op_key rule, before it applies the op.",
+        "set": {
+          "status": ["detail", "label", "text", "tone"],
+          "progress": ["done", "label", "total", "value"],
+          "stat": ["label", "stats"],
+          "steps": ["label", "steps"],
+          "timeline": ["label", "lanes"],
+          "log": ["label"],
+          "table": ["label", "selected_ids"],
+          "link": ["label", "links"],
+          "card": ["clicks", "is_selectable", "label", "meta", "text", "title", "tone"],
+          "group": ["label"],
+          "paragraph": ["label", "text"],
+          "heading": ["label", "level", "text"],
+          "code": ["label", "language", "text"],
+          "spinner": ["is_active", "label", "text", "variant"],
+          "button": ["clicks", "is_disabled", "label"],
+          "diff": ["label", "new_revision", "old_revision", "patch"],
+          "image": ["label"],
+          "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
+          "thread": ["label"],
+          "checkbox": ["label"],
+          "multiline": ["label"],
+          "multiselect": ["label"],
+          "otp": ["label"],
+          "password": ["label"],
+          "plaintext": ["label"],
+          "range": ["label"],
+          "select": ["label"]
+        },
+        "append": {
+          "log": ["lines", "tone"],
+          "stat": ["stats"],
+          "steps": ["steps"],
+          "timeline": ["lanes"],
+          "table": ["rows", "groups"],
+          "link": ["links"],
+          "scene": ["objects", "meshes"]
+        },
+        "remove": {
+          "stat": ["item_ids"],
+          "steps": ["item_ids"],
+          "timeline": ["item_ids"],
+          "table": ["item_ids"],
+          "link": ["item_ids"],
+          "scene": ["item_ids"],
+          "diff": ["item_ids"]
+        },
+        "clear": {
+          "log": [],
+          "stat": [],
+          "steps": [],
+          "timeline": [],
+          "table": [],
+          "link": [],
+          "scene": []
+        },
+        "replace": {
+          "table": ["rows"]
+        },
+        "set-value": {
+          "checkbox": ["value"],
+          "multiline": ["value"],
+          "multiselect": ["value"],
+          "otp": ["value"],
+          "password": ["value"],
+          "plaintext": ["value"],
+          "range": ["value"],
+          "select": ["value"]
+        },
+        "thread": {
+          "diff": ["thread"],
+          "thread": ["thread"]
+        }
+      },
       "oneOf": [
         {
           "type": "object",

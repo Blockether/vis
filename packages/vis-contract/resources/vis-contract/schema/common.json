@@ -3,6 +3,231 @@
   "$id": "https://vis.blockether.com/schema/common.json",
   "title": "Shared contract definitions",
   "description": "Shared scalar constraints referenced by Vis payload schemas.",
+  "x-vis-error-messages": {
+    "description": "The one message table of schema and live view faults. The engine and every SDK render each fault line from it. A line holds only names and limits of the schema, never a value that a person wrote.",
+    "most_shown": 5,
+    "most_name_chars": 64,
+    "line": "{path} - {message} ({rule})",
+    "node": "node {id} {lines}",
+    "view": "view {lines}",
+    "more": "and {count} more",
+    "keywords": {
+      "required": "missing required property \"{property}\"",
+      "additionalProperties": "unknown property \"{property}\"",
+      "type": "expected {expected}, got {actual}",
+      "enum": "the value is not one of {allowed}",
+      "const": "the value is not {allowed}",
+      "minimum": "the number is less than the minimum {limit}",
+      "maximum": "the number is greater than the maximum {limit}",
+      "exclusiveMinimum": "the number must be greater than {limit}",
+      "exclusiveMaximum": "the number must be less than {limit}",
+      "minItems": "the array has {count} items, the minimum is {limit}",
+      "maxItems": "the array has {count} items, the maximum is {limit}",
+      "minLength": "the string has {count} characters, the minimum is {limit}",
+      "maxLength": "the string has {count} characters, the maximum is {limit}",
+      "pattern": "the string does not match the pattern of the schema",
+      "oneOf": "the value matches none of the allowed forms",
+      "uniqueItems": "the array holds an item two times",
+      "format": "the string is not a valid {limit}"
+    },
+    "blank_pattern": "\\S",
+    "blank": "the string is blank",
+    "default": "the value breaks the {rule} rule",
+    "rules": {
+      "view_not_map": [
+        "a live view is a map of title and nodes",
+        "view"
+      ],
+      "view_not_json": [
+        "a live view holds only JSON data",
+        "json"
+      ],
+      "node_not_map": [
+        "the node is not a map",
+        "node"
+      ],
+      "child_not_map": [
+        "the child is not a map",
+        "node"
+      ],
+      "node_needs_id": [
+        "the node needs an id",
+        "id"
+      ],
+      "group_needs_id": [
+        "a group needs an id, because a patch names a group by its id. Write vis.ui.group(\"actions\", ...)",
+        "id"
+      ],
+      "repeated_node_id": [
+        "two nodes have the id \"{id}\"",
+        "unique"
+      ],
+      "too_many_nodes": [
+        "the view has {count} nodes, the maximum is {limit}. Put a collection in a table, because rows do not count as nodes",
+        "x-vis-max-nodes"
+      ],
+      "picture_budget": [
+        "the pictures hold {count} bytes, the maximum is {limit}",
+        "x-vis-max-picture-bytes"
+      ],
+      "unknown_type": [
+        "unknown node type",
+        "type"
+      ],
+      "not_finite": [
+        "the number is not finite",
+        "finite"
+      ],
+      "read_only": [
+        "only the host writes this property",
+        "readOnly"
+      ],
+      "secret_value": [
+        "only the host holds the value of a secret input",
+        "secret"
+      ],
+      "secret_default": [
+        "a secret input takes no default",
+        "secret"
+      ],
+      "live_validate": [
+        "a live input takes no validate list. Give validate= to the input of the SDK; the extension runs it",
+        "input"
+      ],
+      "repeated_option": [
+        "two options have the same value",
+        "unique"
+      ],
+      "line_tones": [
+        "give one tone or null for each line",
+        "line_tones"
+      ],
+      "grid_columns": [
+        "only a grid group takes max_columns",
+        "grid"
+      ],
+      "toolbar_menu": [
+        "a toolbar menu holds only buttons and groups of buttons",
+        "toolbar"
+      ],
+      "thread_anchor": [
+        "a diff thread needs an anchor",
+        "anchor"
+      ],
+      "repeated_item_id": [
+        "two items have the id \"{id}\"",
+        "unique"
+      ],
+      "lane_order": [
+        "the lane ends before it starts",
+        "lane"
+      ],
+      "table_order": [
+        "the order names no column of the table",
+        "order"
+      ],
+      "table_selection": [
+        "a selected id names no row of the table",
+        "selection"
+      ],
+      "not_selectable": [
+        "only a selectable table or card takes this property",
+        "selection"
+      ],
+      "mesh_shadow": [
+        "the mesh has the name of a built-in mesh",
+        "mesh"
+      ],
+      "face_vertex": [
+        "a face names a missing vertex",
+        "mesh"
+      ],
+      "unknown_mesh": [
+        "the object names an unknown mesh",
+        "mesh"
+      ],
+      "picture": [
+        "{reason}",
+        "picture"
+      ],
+      "id_name": [
+        "the id and the name of an input differ",
+        "input"
+      ],
+      "length_order": [
+        "min_length is greater than max_length",
+        "input"
+      ],
+      "range_order": [
+        "min is not less than max",
+        "input"
+      ],
+      "range_step": [
+        "the step is not positive or does not fit between min and max",
+        "input"
+      ],
+      "default_domain": [
+        "the default is outside the domain of the input",
+        "input"
+      ],
+      "value_domain": [
+        "the value is outside the domain of the input",
+        "input"
+      ],
+      "shortcut_dropped": [
+        "the shortcut is dropped, because node {id} has a fault",
+        "shortcut"
+      ],
+      "shortcut_needs_app": [
+        "only an app (placement attachment) takes shortcuts",
+        "shortcut"
+      ],
+      "repeated_shortcut_key": [
+        "an earlier shortcut has the same key",
+        "unique"
+      ],
+      "shortcut_target": [
+        "the node that node_id names is not in the view",
+        "shortcut"
+      ],
+      "shortcut_not_pressable": [
+        "the node that node_id names is not a button or a selectable card",
+        "shortcut"
+      ],
+      "table_rows": [
+        "the table has {count} rows, its max_rows is {limit}",
+        "max_rows"
+      ],
+      "op_target": [
+        "the {op} op does not apply to a node of type {type}",
+        "op_target"
+      ],
+      "op_key": [
+        "the {op} op on a node of type {type} does not take this property",
+        "op_key"
+      ],
+      "missing_node": [
+        "the view has no such node; it has {ids}",
+        "node_id"
+      ],
+      "missing_after": [
+        "the view has no node {after} to put this node after",
+        "after"
+      ],
+      "own_thread": [
+        "a thread node takes only the thread that has its own id",
+        "thread"
+      ],
+      "patch_view": [
+        "this patch names view {patch_view}, not {view}",
+        "view_id"
+      ],
+      "patch_seq": [
+        "the patch has seq {seq}, but it must be greater than the view seq {view_seq}",
+        "seq"
+      ]
+    }
+  },
   "$defs": {
     "non_blank_string": {
       "type": "string",

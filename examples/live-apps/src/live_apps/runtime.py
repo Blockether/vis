@@ -722,10 +722,15 @@ class Runner:
         return thread
 
     def stop(self):
-        """Stop the tick loop, when one runs."""
+        """Stop the tick loop, when one runs, and wait until its last tick ends, so
+        no tick changes the state after this call. A tick that stops its own loop
+        does not wait for itself. A tick that hangs in a send is left after 5 s."""
         stop = getattr(self, "_stop", None)
         if stop is not None:
             stop.set()
+        ticker = getattr(self, "_ticker", None)
+        if ticker is not None and ticker is not threading.current_thread():
+            ticker.join(5)
 
     def close(self, **ending):
         """Close the app; its record stays readable."""
