@@ -514,11 +514,9 @@
       (cond
         ;; Cancel in flight: the user pressed Esc to STOP this turn, so a new
         ;; submission is a fresh intent — not queue fodder. Keep it in the editor
-        ;; (NO :reset-input) and tell them to resend once the cancel settles,
-        ;; rather than parking it in the queue behind the turn being torn down.
-        (:cancelling? db) (vis/notify! "Cancelling current turn — press Enter again once it stops"
-                                       :level :warn
-                                       :ttl-ms 2500)
+        ;; (NO :reset-input) for a resend once the cancel settles, rather than
+        ;; parking it in the queue behind the turn being torn down.
+        (:cancelling? db) nil
         (or building? (:loading? db)) (do (state/dispatch [:enqueue-message text wid])
                                           (state/dispatch [:reset-input]))
         :else (do (state/dispatch [:send-message text wid]) (state/dispatch [:reset-input]))))))
@@ -565,10 +563,7 @@
     (cond (:run kb) (run-keybinding-fn! db kb)
           (str/blank? text) nil
           (nil? (:session db)) (vis/notify! "The session is not ready yet" :level :warn)
-          (:cancelling? db) (vis/notify!
-                              "Cancelling current turn — press the key again once it stops"
-                              :level :warn
-                              :ttl-ms 2500)
+          (:cancelling? db) nil
           (:loading? db) (state/dispatch [:enqueue-message text wid {:is-bare true}])
           :else (state/dispatch [:send-message text wid {:is-bare true}]))))
 

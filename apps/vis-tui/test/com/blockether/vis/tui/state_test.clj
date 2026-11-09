@@ -1466,68 +1466,77 @@
         (expect (= ["s1" "gw-live"] (deref cancelled 1000 :timeout)))
         (await-enqueue! @cancel-task)
         (expect (not (realized? notified))))))
-  (it "answers an idle session out loud instead of swallowing the cancel"
-      (let [cancelled
-            (atom nil)
+  (it
+    "stops nothing and shows no notification for an idle session"
+    (let [cancelled
+          (atom nil)
 
-            notified
-            (promise)]
+          notified
+          (promise)
 
-        (with-redefs [vis/gateway-list-turns
-                      (fn [_]
-                        [{"turn_id" "gw-old" "status" "completed"}])
+          cancel-task
+          (atom nil)
 
-                      vis/gateway-cancel-turn!
-                      (fn [sid tid]
-                        (reset! cancelled [sid tid]))
+          submit-cancel
+          @#'state/gateway-cancel-io!]
 
-                      vis/notify!
-                      (fn [text & kvs]
-                        (deliver notified [text kvs]))]
+      (with-redefs [vis/gateway-list-turns
+                    (fn [_]
+                      [{"turn_id" "gw-old" "status" "completed"}])
 
-          (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
-          (state/dispatch [:cancel-turn])
-          (expect (= ["Nothing is running to cancel." [:level :info :ttl-ms 2500]]
-                     (deref notified 1000 :timeout)))
-          (expect (nil? @cancelled))))))
+                    state/gateway-cancel-io!
+                    (fn [f]
+                      (reset! cancel-task (submit-cancel f)))
+
+                    vis/gateway-cancel-turn!
+                    (fn [sid tid]
+                      (reset! cancelled [sid tid]))
+
+                    vis/notify!
+                    (fn [text & kvs]
+                      (deliver notified [text kvs]))]
+
+        (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
+        (state/dispatch [:cancel-turn])
+        (await-enqueue! @cancel-task)
+        (expect (not (realized? notified)))
+        (expect (nil? @cancelled))))))
 
 ;; User request 2026-11-07: a person stops subagents only through the leader. The stop of the
 ;; leader turn also stops its subagents, so Esc in a subagent session stops nothing.
-(defdescribe
-  subagent-session-cancel-test
-  (it "sends no stop from a working subagent session and says where to stop it"
-      (let [cancelled
-            (promise)
+(defdescribe subagent-session-cancel-test
+             (it "sends no stop from a working subagent session"
+                 (let [cancelled
+                       (promise)
 
-            notified
-            (promise)]
+                       notified
+                       (promise)]
 
-        (with-redefs [vis/gateway-list-turns
-                      (fn [_]
-                        [{"turn_id" "gw-live" "status" "running"}])
+                   (with-redefs [vis/gateway-list-turns
+                                 (fn [_]
+                                   [{"turn_id" "gw-live" "status" "running"}])
 
-                      vis/gateway-cancel-turn!
-                      (fn [sid tid]
-                        (deliver cancelled [sid tid]))
+                                 vis/gateway-cancel-turn!
+                                 (fn [sid tid]
+                                   (deliver cancelled [sid tid]))
 
-                      vis/gateway-cancel-current-turn!
-                      (fn [sid owner-key]
-                        (deliver cancelled [sid owner-key]))
+                                 vis/gateway-cancel-current-turn!
+                                 (fn [sid owner-key]
+                                   (deliver cancelled [sid owner-key]))
 
-                      vis/notify!
-                      (fn [text & kvs]
-                        (deliver notified [text kvs]))]
+                                 vis/notify!
+                                 (fn [text & kvs]
+                                   (deliver notified [text kvs]))]
 
-          (doseq [loading? [true false]]
-            (reset! state/app-db {:session {:id "child" :agent {:parent-id "leader"}}
-                                  :loading? loading?
-                                  :gateway-turn-id "gw-live"
-                                  :render-version 0})
-            (state/dispatch [:cancel-turn])
-            (expect (not (:cancelling? @state/app-db))))
-          (expect (= ["Stop the leader session to stop this subagent." [:level :info :ttl-ms 2500]]
-                     (deref notified 1000 :timeout)))
-          (expect (= :none (deref cancelled 300 :none)) "The subagent keeps working")))))
+                     (doseq [loading? [true false]]
+                       (reset! state/app-db {:session {:id "child" :agent {:parent-id "leader"}}
+                                             :loading? loading?
+                                             :gateway-turn-id "gw-live"
+                                             :render-version 0})
+                       (state/dispatch [:cancel-turn])
+                       (expect (not (:cancelling? @state/app-db))))
+                     (expect (= :none (deref cancelled 300 :none)) "The subagent keeps working")
+                     (expect (not (realized? notified)))))))
 
 ;; Regression: with no gateway turn id bound, Esc fell back to a BLIND
 ;; `cancel-current`, which stops whatever turn the SESSION is running. A session is
@@ -2083,8 +2092,8 @@
               (expect (false? (:loading? db')))
               (expect (nil? (:cancel-token db')))
               (expect (nil? (:cancelling-at-ms db')))
-              ;; The user is told, and with no authored backlog nothing is restored.
-              (expect (some #(= :notify (first %)) fx))
+              ;; No notification, and with no authored backlog nothing is restored.
+              (expect (not-any? #(= :notify (first %)) fx))
               (expect (not-any? #(= :dispatch (first %)) fx))))))
     (it "restores the authored backlog to the editor when it self-heals"
         (with-redefs [vis/cancel! (fn [_]
@@ -4011,10 +4020,10 @@
             (send-fn (assoc db :cancelling? false) [:send-message "second" :main])]
 
         ;; cancel window: kept in the editor — NOTHING queued locally, NOTHING
-        ;; registered server-side, and the user is told to resend.
+        ;; registered server-side, and no notification.
         (expect (not-any? #(= :gateway-enqueue (first %)) fx))
         (expect (empty? (:pending-sends cancelling-db)))
-        (expect (some #(= :notify (first %)) fx))
+        (expect (not-any? #(= :notify (first %)) fx))
         ;; normal in-flight queue (not cancelling) still registers server-side.
         (expect (some #(= :gateway-enqueue (first %)) normal-fx))))
   (it "a gateway enqueue that never lands is staged locally so no text is lost"
