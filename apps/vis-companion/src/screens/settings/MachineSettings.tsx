@@ -757,6 +757,7 @@ export function MachineSettings({
   const section = (id: string) => groups?.find((group) => group.id === id);
   const general = section('general');
   const providers = section('providers');
+  // Older gateways still send Voice as its own section; its rows stand in General.
   const voice = section('voice');
   const tools = section('tools');
   const sectionIds = ['general', 'providers', 'voice', 'tools'];
@@ -784,7 +785,9 @@ export function MachineSettings({
         <>
           <SettingsSection title={general?.title ?? 'General'}>
             {rowList(general?.toggles.filter((toggle) => !toggle.is_experimental) ?? [])}
+            {voice && settingRows(voice)}
             <NotificationsPanel client={client} gateway={gateway} />
+            <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
             {general?.toggles.some((toggle) => toggle.is_experimental) && (
               <SettingsPanel title="Experimental">
                 {rowList(general.toggles.filter((toggle) => toggle.is_experimental))}
@@ -804,10 +807,6 @@ export function MachineSettings({
               <SettingsPanel title="Options">{settingRows(providers)}</SettingsPanel>
             )}
           </ProvidersPanel>
-          <SettingsSection title={voice?.title ?? 'Voice'}>
-            {voice && settingRows(voice)}
-            <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
-          </SettingsSection>
         </>
       )}
 

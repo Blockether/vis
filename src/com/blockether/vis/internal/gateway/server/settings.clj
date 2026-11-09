@@ -154,8 +154,9 @@
   "The sections of settings, in order: id, title and the toggle groups that each gathers.
    Owners register toggles into groups. Clients add their own controls, such as provider
    accounts or MCP servers, to the section with the same id."
-  [[:general "General" [:council :session :experimental]] [:providers "Providers" [:provider]]
-   [:voice "Voice" [:voice]] [:permissions "Permissions" [:sandbox]] [:tools "Tools" [:skills]]])
+  [[:general "General" [:council :session :apps :sounds :voice :experimental]]
+   [:providers "Providers" [:provider]] [:permissions "Permissions" [:sandbox]]
+   [:tools "Tools" [:skills]]])
 
 (defn- section-title
   "The heading clients show for a section. Outside global settings the providers section
@@ -420,9 +421,7 @@
                        ;; The agent name stands first. Experimental switches stand last.
                        :general
                        (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
-                               (rows :council)
-                               (rows :session)
-                               (rows :experimental))
+                               (mapcat rows groups))
 
                        :permissions
                        (concat (access-settings target) (rows :sandbox))

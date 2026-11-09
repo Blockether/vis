@@ -62,6 +62,10 @@
         (expect (= ["subagents"]
                    (mapv #(get % "id")
                          (get (first (filter #(= "council" (get % "id")) general)) "children"))))
+        ;; Apps, Sounds and Voice stand in General, not in sections of their own.
+        (expect (empty? (filter #(#{"apps" "sounds" "voice"} (get % "id")) groups)))
+        (expect (every? (set (map #(get % "id") general))
+                        ["apps_inline" "sounds" "speech_model_idle_unload"]))
         ;; Experimental switches stand last in the General section.
         (expect (= rows (take-last (count rows) general)))
         (expect (every? #(true? (get % "is_experimental")) rows))

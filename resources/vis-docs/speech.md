@@ -31,7 +31,7 @@ The download can take some minutes.
 | `parakeet-local` | Fast transcription of short recordings | — |
 | `vibevoice-asr-local` | Transcription of long recordings | — |
 
-The **Voice** section of the Companion settings selects the default engines.
+The **General** section of the Companion settings selects the default engines.
 
 The `qwen3-tts-local` model is 3.7 GB, and Vis downloads it on first use. On a CPU, it speaks at about
 the speed of playback.
@@ -39,7 +39,7 @@ the speed of playback.
 ## Memory use
 
 A loaded model stays in the memory of the gateway, so the next request does not wait for it. Two
-settings in the **Voice** section control this memory:
+settings in the **General** section control this memory:
 
 - **Voice model memory limit** (default 4 GB): when the loaded models are larger than the limit, the
   gateway unloads the least recently used model. It does not unload a model that a request uses, or

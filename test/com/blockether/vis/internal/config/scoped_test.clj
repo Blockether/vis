@@ -972,40 +972,43 @@
 
           (expect (= "auto" (scoped/engine-mode env {:ext/name "infrastructure_fixture"} live)))
           (expect (not (realized? live))))))
-  (it "titles groups in plain words and hides unloaded engines and scoped MCP rows"
-      (with-empty-config
-        (let [db
-              (h/store)
+  (it
+    "titles groups in plain words and hides unloaded engines and scoped MCP rows"
+    (with-empty-config
+      (let [db
+            (h/store)
 
-              sid
-              (h/store-session! db {:title "Titles"})
+            sid
+            (h/store-session! db {:title "Titles"})
 
-              target
-              (scoped/target db "session" sid)]
+            target
+            (scoped/target db "session" sid)]
 
-          (scoped/engine-setting! {:ext/name "title-fixture"
-                                   :ext/engine {:ext.engine/symbols ['fixture]}})
-          (scoped/set-definition! db target ["mcp" "servers"] "title_fixture" {"command" "true"})
-          (with-redefs [lp/db-info
-                        (constantly db)
+        (scoped/engine-setting! {:ext/name "title-fixture"
+                                 :ext/engine {:ext.engine/symbols ['fixture]}})
+        (scoped/set-definition! db target ["mcp" "servers"] "title_fixture" {"command" "true"})
+        (with-redefs [lp/db-info
+                      (constantly db)
 
-                        discovery/all-skills
-                        (constantly [])]
+                      discovery/all-skills
+                      (constantly [])]
 
-            (let [groups
-                  (-> (#'settings-api/list-settings-handler
-                       {:query-params {"scope" "session" "target_id" (str sid)}})
-                      :body
-                      json/read-json
-                      (get "groups"))
+          (let [groups
+                (-> (#'settings-api/list-settings-handler
+                     {:query-params {"scope" "session" "target_id" (str sid)}})
+                    :body
+                    json/read-json
+                    (get "groups"))
 
-                  titles
-                  (into {} (map (juxt #(get % "id") #(get % "title"))) groups)]
+                titles
+                (into {} (map (juxt #(get % "id") #(get % "title"))) groups)]
 
-              (expect (not (contains? titles "engines")))
-              (expect (= "Response" (get titles "providers")))
-              (expect (= "Voice" (get titles "voice")))
-              (expect (not (contains? titles "mcp"))))))))
+            (expect (not (contains? titles "engines")))
+            (expect (= "Response" (get titles "providers")))
+            ;; Voice rows stand in General.
+            (expect (= "General" (get titles "general")))
+            (expect (not (contains? titles "voice")))
+            (expect (not (contains? titles "mcp"))))))))
   (it
     "puts an extension's engine choice, settings and switchable skills in its own section"
     (with-empty-config

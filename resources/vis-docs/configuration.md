@@ -840,9 +840,9 @@ Run `/reload` after editing.
 
 Settings for one machine have six sections:
 
-- **General**: the agent name, Council with Subagents, notifications and experimental features.
+- **General**: the agent name, Council with Subagents, apps, sounds, voice, notifications and
+  experimental features.
 - **Providers**: provider accounts and options for model requests, such as automatic fallback.
-- **Voice**: speech engines, the voice model and the transcription of recordings.
 - **Permissions**: files, network, process access and sandbox tools.
 - **Tools**: MCP servers and extensions.
 - **Automations**: prompts that run on a schedule or a webhook.
