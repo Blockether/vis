@@ -3516,14 +3516,18 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    The digest reads only the import sources of an editable install. `.pth` path lines and the
    `MAPPING` of a setuptools import-hook finder name them. A `direct_url.json` project counts
    only when no source of its distribution is inside it. `RECORD` names those sources. The
-   walk skips virtual environments (#398) and build output: a `target`, `build` or `dist`
-   directory without `__init__.py` (#454)."
+   walk skips virtual environments (#398), JavaScript dependencies and build output: a
+   `target`, `build`, `dist`, `out`, `coverage` or `htmlcov` directory without
+   `__init__.py` (#454)."
   [packages]
-  (let [skip?
+  (let [build-output
+        #{"target" "build" "dist" "out" "coverage" "htmlcov"}
+
+        skip?
         #(let [n (.getName ^File %)] (or (str/starts-with? n ".")
-                                         (#{"__pycache__" "node_modules"} n)
+                                         (#{"__pycache__" "node_modules" "bower_components"} n)
                                          (.isFile (io/file ^File % "pyvenv.cfg"))
-                                         (and (#{"target" "build" "dist"} n)
+                                         (and (build-output n)
                                               (not (.isFile (io/file ^File % "__init__.py"))))))
 
         walk

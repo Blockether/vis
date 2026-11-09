@@ -6595,7 +6595,8 @@ vis.register_extension(vis.Extension(
              (write-ext! repo "build/__init__.py" "VALUE = 1\n")
              (write-ext! packages "repo.pth" (str (.getCanonicalPath repo) "\n"))
              (let [initial (digest)]
-               (doseq [output ["target/out" "repo_pkg/build" "dist"]]
+               (doseq [output ["target/out" "repo_pkg/build" "dist" "out" "coverage" "htmlcov"
+                               "bower_components/lib"]]
                  (write-ext! repo (str output "/unused.py") "VALUE = 1\n"))
                (write-ext! repo "dist/unused.py" "VALUE = 2\n")
                (expect (= initial (digest)))
