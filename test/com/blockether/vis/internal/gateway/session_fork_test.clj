@@ -188,19 +188,25 @@
                           (let [f (io/file (paths/sandbox-defs-file id))]
                             (when (.isFile f) (slurp f))))]
 
-               ;; Turn 1 left `helper` at 1, turn 2 changed it to 2.
-               (io/make-parents (paths/sandbox-turns-dir sid) "1.py")
-               (spit (io/file (paths/sandbox-turns-dir sid) "1.py") "def helper():\n    return 1\n")
-               (spit (paths/sandbox-defs-file sid) "def helper():\n    return 2\n")
+               ;; Turn 1 left `helper` at 1, turn 2 changed it to 2. A later block wrote
+               ;; 3 to the live snapshot, after the fork point.
+               (doseq [[tid n] (map vector turn-ids [1 2])]
+                 (io/make-parents (paths/sandbox-turns-dir sid) "x")
+                 (spit (io/file (paths/sandbox-turns-dir sid) (str tid ".py"))
+                       (str "def helper():\n    return " n "\n")))
+               (spit (paths/sandbox-defs-file sid) "def helper():\n    return 3\n")
                (with-redefs [lp/db-info (constantly store)]
                  (let [at-first (get (state/fork-session! sid (first turn-ids)) "id")
-                       whole (get (state/fork-session! sid nil) "id")]
+                       whole (get (state/fork-session! sid nil) "id")
+                       first-copy (str (:id (first (ps/db-list-session-turns store whole))))]
 
                    (expect (= "def helper():\n    return 1\n" (defs at-first)))
                    (expect (= "def helper():\n    return 2\n" (defs whole)))
-                   ;; The fork keeps the turn state, so a fork of the fork works too.
+                   ;; The fork keeps the turn state under its own turn id, so a fork of
+                   ;; the fork works too.
                    (expect (= "def helper():\n    return 1\n"
-                              (slurp (io/file (paths/sandbox-turns-dir whole) "1.py"))))
+                              (slurp (io/file (paths/sandbox-turns-dir whole)
+                                              (str first-copy ".py")))))
                    (doseq [id [sid at-first whole]]
                      (python-env/delete-session-defs! id)))))
              (finally (ps/db-close! store)))))

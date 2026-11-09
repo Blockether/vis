@@ -310,7 +310,7 @@
 
 (defn sandbox-turns-dir
   "Directory for ONE session's sandbox state at the end of each turn —
-   `~/.vis/sandbox/<session-id>.turns`. It holds `<position>.py` and `<position>.spill`
+   `~/.vis/sandbox/<session-id>.turns`. It holds `<turn-id>.py` and `<turn-id>.spill`
    with the layout of [[sandbox-defs-file]] and [[sandbox-spill-dir]], so a fork at a
    turn starts from the state of that turn. The id is reduced to a safe file name."
   ^String [session-id]

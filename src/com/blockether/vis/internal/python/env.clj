@@ -2329,7 +2329,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 
     (str "[Sandbox restarted] This Python sandbox is a new process: the previous one "
          "stopped after an idle timeout, a settings change, a memory limit or a gateway "
-         "restart. The conversation above is unchanged. The host bound the tools, "
+         "restart, or this session is a fork of another session. The conversation above "
+         "is unchanged. The host bound the tools, "
          "`session` and the workspace path aliases again. "
          (if (seq restored)
            (str "Restored from the session snapshot: " (str/join ", " restored) ". ")
@@ -2470,6 +2471,26 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
         (apply-snapshot-delta base (:text-delta snapshot) (:length snapshot))
         :else (:text snapshot)))
 
+(defonce ^:private ^java.util.concurrent.ConcurrentHashMap defs-locks
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- defs-lock
+  "The one lock of `session-id`'s snapshot files. Persist, checkpoint, fork and delete
+   hold it, so a fork never reads a snapshot that a block writes."
+  ^java.util.concurrent.locks.ReentrantLock [session-id]
+  (.computeIfAbsent defs-locks
+                    (str session-id)
+                    (reify
+                      java.util.function.Function
+                        (apply [_ _] (java.util.concurrent.locks.ReentrantLock.)))))
+
+(defmacro ^:private with-defs-lock
+  "Run `body` while this process holds the [[defs-lock]] of `session-id`."
+  [session-id & body]
+  `(let [lock# (defs-lock ~session-id)]
+     (.lock lock#)
+     (try ~@body (finally (.unlock lock#)))))
+
 (defn persist-session-defs!
   "Write this session's helpers, imports and variables beside the session, for a
    LATER process.
@@ -2486,51 +2507,53 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    namespace, and that empty snapshot would erase the saved state."
   [session session-id]
   (when (and session session-id (not (contains? @disposed-sessions session)))
-    (try
-      (let [held
-            (get @last-session-defs session-id)
+    (with-defs-lock
+      session-id
+      (try
+        (let [held
+              (get @last-session-defs session-id)
 
-            fetch
-            (fn [base]
-              (within-budget #(guest-value session
-                                           (str "__import__('vis_snapshot').snapshot(globals(), "
-                                                spill-value-max-bytes
-                                                ", "
-                                                spill-max-bytes
-                                                ", "
-                                                (if (string? base) (py-json-literal base) "None")
-                                                ")"))))
+              fetch
+              (fn [base]
+                (within-budget #(guest-value session
+                                             (str "__import__('vis_snapshot').snapshot(globals(), "
+                                                  spill-value-max-bytes
+                                                  ", "
+                                                  spill-max-bytes
+                                                  ", "
+                                                  (if (string? base) (py-json-literal base) "None")
+                                                  ")"))))
 
-            snap
-            (fetch (:id held))
+              snap
+              (fetch (:id held))
 
-            ;; A delta that does not fit the held text asks once for the whole text.
-            [snap src]
-            (let [src (snapshot-text snap (:text held))]
-              (if (and (nil? src) (contains? snap :text-delta))
-                (let [snap (fetch nil)]
-                  [snap (snapshot-text snap nil)])
-                [snap src]))
+              ;; A delta that does not fit the held text asks once for the whole text.
+              [snap src]
+              (let [src (snapshot-text snap (:text held))]
+                (if (and (nil? src) (contains? snap :text-delta))
+                  (let [snap (fetch nil)]
+                    [snap (snapshot-text snap nil)])
+                  [snap src]))
 
-            f
-            (io/file (paths/sandbox-defs-file (str session-id)))]
+              f
+              (io/file (paths/sandbox-defs-file (str session-id)))]
 
-        (cond
-          ;; Over budget: the snapshot never came back, which says nothing
-          ;; about the toolbox on disk — leave what is there alone.
-          (nil? src) nil
-          (str/blank? (str src)) (do (swap! last-session-defs dissoc session-id)
-                                     (when (.exists f) (.delete f))
-                                     (sync-spill! session session-id [])
-                                     nil)
-          (> (count (str src)) (long session-defs-max-bytes)) nil
-          :else (let [changed? (not= (str src) (:text held))]
-                  (sync-spill! session session-id (:spill snap))
-                  (when changed? (paths/spit-private! f (str src) :fsync? false))
-                  ;; Keep the guest's id even when the text did not change.
-                  (swap! last-session-defs assoc session-id {:text (str src) :id (:id snap)})
-                  (when changed? f))))
-      (catch Throwable _ nil))))
+          (cond
+            ;; Over budget: the snapshot never came back, which says nothing
+            ;; about the toolbox on disk — leave what is there alone.
+            (nil? src) nil
+            (str/blank? (str src)) (do (swap! last-session-defs dissoc session-id)
+                                       (when (.exists f) (.delete f))
+                                       (sync-spill! session session-id [])
+                                       nil)
+            (> (count (str src)) (long session-defs-max-bytes)) nil
+            :else (let [changed? (not= (str src) (:text held))]
+                    (sync-spill! session session-id (:spill snap))
+                    (when changed? (paths/spit-private! f (str src) :fsync? false))
+                    ;; Keep the guest's id even when the text did not change.
+                    (swap! last-session-defs assoc session-id {:text (str src) :id (:id snap)})
+                    (when changed? f))))
+        (catch Throwable _ nil)))))
 
 (defn forget-session-defs!
   "Drop `session-id`'s entry from the in-memory dedup memo. The on-disk snapshot
@@ -2539,26 +2562,29 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
   (when session-id (swap! last-session-defs dissoc session-id) nil))
 
 (defn delete-session-defs!
-  "Delete `session-id`'s snapshot file and spill files when the session is deleted.
-   Nothing restores a deleted session, and its spill files can hold up to
+  "Delete `session-id`'s snapshot file, spill files and turn states when the session is
+   deleted. Nothing restores a deleted session, and its spill files can hold up to
    [[spill-max-bytes]], so they must not stay on disk (#347)."
   [session-id]
   (when session-id
-    (let [spill
-          (io/file (paths/sandbox-spill-dir (str session-id)))
+    (with-defs-lock session-id
+                    (let [spill
+                          (io/file (paths/sandbox-spill-dir (str session-id)))
 
-          turns
-          (io/file (paths/sandbox-turns-dir (str session-id)))]
+                          turns
+                          (io/file (paths/sandbox-turns-dir (str session-id)))]
 
-      (forget-session-defs! session-id)
-      (io/delete-file (io/file (paths/sandbox-defs-file (str session-id))) true)
-      (doseq [^java.io.File f (concat (reverse (file-seq spill)) (reverse (file-seq turns)))]
-        (io/delete-file f true))))
+                      (forget-session-defs! session-id)
+                      (io/delete-file (io/file (paths/sandbox-defs-file (str session-id))) true)
+                      (doseq [^java.io.File f (concat (reverse (file-seq spill))
+                                                      (reverse (file-seq turns)))]
+                        (io/delete-file f true)))))
   nil)
 
 (defn- link-file!
   "Make `target` the same file as `source` with an atomic replace. A hard link shares
-   the data. A filesystem without hard links gets a copy."
+   the data. A filesystem without hard links gets a copy, and one without atomic moves
+   a plain replace, like [[paths/spit-private!]]."
   [^java.io.File source ^java.io.File target]
   (let [src
         (.toPath source)
@@ -2575,22 +2601,27 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
             (into-array java.nio.file.CopyOption [java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])
 
             copy!
-            #(java.nio.file.Files/copy src tmp keep-mode)]
+            #(java.nio.file.Files/copy src tmp keep-mode)
+
+            move!
+            (fn [^java.nio.file.CopyOption option]
+              (java.nio.file.Files/move tmp dst (into-array java.nio.file.CopyOption [option])))]
 
         (try (try (java.nio.file.Files/createLink tmp src)
                   (catch UnsupportedOperationException _ (copy!))
                   (catch java.io.IOException _ (copy!)))
-             (java.nio.file.Files/move tmp
-                                       dst
-                                       (into-array java.nio.file.CopyOption
-                                                   [java.nio.file.StandardCopyOption/ATOMIC_MOVE]))
+             (try (move! java.nio.file.StandardCopyOption/ATOMIC_MOVE)
+                  (catch java.nio.file.AtomicMoveNotSupportedException _
+                    (move! java.nio.file.StandardCopyOption/REPLACE_EXISTING)))
              (finally (java.nio.file.Files/deleteIfExists tmp)))))))
 
 (defn- mirror-defs!
   "Make `dst-file` and `dst-spill` hold the snapshot in `src-file` and `src-spill`.
    New spill values go first and old ones last, so each step keeps a whole snapshot,
-   and a repeat changes nothing. An empty source file is an empty sandbox. Without a
-   source snapshot, `record-empty?` writes an empty file, else the target goes."
+   and a repeat changes nothing. A spill value is named by its digest, so a target of
+   the same size is the same value and is not linked or copied again. An empty source
+   file is an empty sandbox. Without a source snapshot, `record-empty?` writes an empty
+   file, else the target goes."
   [^java.io.File src-file ^java.io.File src-spill ^java.io.File dst-file ^java.io.File dst-spill
    record-empty?]
   (let [spill
@@ -2605,9 +2636,12 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     (doseq [^java.io.File f
             spill
 
-            :when (not= "index.json" (.getName f))]
+            :let [target
+                  (io/file dst-spill (.getName f))]
+            :when (and (not= "index.json" (.getName f))
+                       (not (and (.isFile target) (= (.length target) (.length f)))))]
 
-      (link-file! f (io/file dst-spill (.getName f))))
+      (link-file! f target))
     (if (.isFile index)
       (link-file! index (io/file dst-spill "index.json"))
       (io/delete-file (io/file dst-spill "index.json") true))
@@ -2630,57 +2664,74 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    (io/file (paths/sandbox-spill-dir (str session-id)))])
 
 (defn- turn-defs
-  "The snapshot file and spill directory of `session-id` at turn `position`."
-  [session-id position]
-  (let [dir (paths/sandbox-turns-dir (str session-id))]
-    [(io/file dir (str position ".py")) (io/file dir (str position ".spill"))]))
+  "The snapshot file and spill directory of `session-id` at the turn `turn-id`. The id
+   names the state, because turn positions repeat after a fork under the same session.
+   The id is reduced to a safe file name."
+  [session-id turn-id]
+  (let [dir
+        (paths/sandbox-turns-dir (str session-id))
+
+        base
+        (.replaceAll (str turn-id) "[^A-Za-z0-9_.-]" "_")]
+
+    [(io/file dir (str base ".py")) (io/file dir (str base ".spill"))]))
 
 (defn checkpoint-session-turn!
-  "Keep `session-id`'s snapshot as its state at turn `position`. It runs after each
-   block, so the checkpoint holds the state that the turn left. A turn that runs no
-   block has no checkpoint: its state is the state of the turn before. A fork at a
-   turn starts from it ([[fork-session-defs!]]). Best effort."
-  [session-id position]
-  (when (and session-id (pos-int? position))
-    (try (let [[f spill]
-               (live-defs session-id)
+  "Persist `session`'s snapshot ([[persist-session-defs!]]) and keep it as its state at
+   the turn `turn-id`, under one lock. It runs after each block, so the checkpoint holds
+   the state that the turn left. A turn that runs no block has no checkpoint: its state
+   is the state of the turn before. A fork at a turn starts from it
+   ([[fork-session-defs!]]). A disposed session is skipped. Best effort."
+  [session session-id turn-id]
+  (when (and session session-id (not (contains? @disposed-sessions session)))
+    (try (with-defs-lock session-id
+                         (persist-session-defs! session session-id)
+                         ;; A delete can run while this call waits for the lock.
+                         (when-not (or (str/blank? (str turn-id))
+                                       (contains? @disposed-sessions session))
+                           (let [[f spill]
+                                 (live-defs session-id)
 
-               [cf cspill]
-               (turn-defs session-id position)]
+                                 [cf cspill]
+                                 (turn-defs session-id turn-id)]
 
-           (mirror-defs! f spill cf cspill true))
+                             (mirror-defs! f spill cf cspill true))))
          (catch Throwable e
            (tel/log! {:level :warn
                       :id ::checkpoint-session-turn-failed
-                      :data {:session-id (str session-id) :position position}
+                      :data {:session-id (str session-id) :turn-id (str turn-id)}
                       :error e})
            nil))))
 
 (defn fork-session-defs!
   "Give fork `fork-id` the sandbox state of `source-id` at the last copied turn.
-   `positions` pairs each copied source turn position with its fork position, in turn
-   order. The fork gets the checkpoints of these turns, so a fork of the fork works
-   too. With `whole?` (the last turn was copied), the fork gets the live snapshot of
-   the source, else the latest checkpoint at or before the last copied turn. Without
-   one, the state at that turn is not known and the fork starts empty."
-  [source-id fork-id positions whole?]
-  (try (doseq [[from to]
-               positions
+   `turn-ids` pairs each copied source turn id with its fork turn id, in turn order.
+   The fork gets the checkpoints of these turns, so a fork of the fork works too, and
+   its live snapshot is the latest checkpoint at or before the last copied turn. A
+   later turn of the source can write the live snapshot at any time, so it is used
+   only with `whole?` (all turns were copied) when the source has no checkpoint named
+   by a turn id: a session from before them (commit 58311e8a8 named them by position).
+   Else the state at that turn is not known and the fork starts empty."
+  [source-id fork-id turn-ids whole?]
+  (try (with-defs-lock
+         source-id
+         (let [checkpoints (filterv (fn [[from _]]
+                                      (.isFile ^java.io.File (first (turn-defs source-id from))))
+                             turn-ids)]
+           (doseq [[from to] checkpoints]
+             (let [[cf cspill] (turn-defs source-id from)
+                   [tf tspill] (turn-defs fork-id to)]
 
-               :let [[cf cspill]
-                     (turn-defs source-id from)]
-               :when (.isFile ^java.io.File cf)]
-
-         (let [[tf tspill] (turn-defs fork-id to)]
-           (mirror-defs! cf cspill tf tspill true)))
-       (when-let [[src-file src-spill] (if whole?
-                                         (live-defs source-id)
-                                         (some (fn [[from _]]
-                                                 (let [[cf :as files] (turn-defs source-id from)]
-                                                   (when (.isFile ^java.io.File cf) files)))
-                                               (reverse positions)))]
-         (let [[f spill] (live-defs fork-id)]
-           (mirror-defs! src-file src-spill f spill false)))
+               (mirror-defs! cf cspill tf tspill true)))
+           (when-let [[src-file src-spill]
+                      (cond (seq checkpoints) (turn-defs source-id (first (peek checkpoints)))
+                            (and whole?
+                                 (not-any? #(re-matches #".*\D.*\.py" %)
+                                           (.list (io/file (paths/sandbox-turns-dir
+                                                             (str source-id))))))
+                            (live-defs source-id))]
+             (let [[f spill] (live-defs fork-id)]
+               (mirror-defs! src-file src-spill f spill false)))))
        (catch Throwable e
          (tel/log! {:level :warn
                     :id ::fork-session-defs-failed

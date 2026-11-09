@@ -8180,7 +8180,7 @@
         (python-env/fork-session-defs! sid
                                        forked
                                        (mapv (fn [from to]
-                                               [(:position from) (:position to)])
+                                               [(str (:id from)) (str (:id to))])
                                              copied
                                              (persistance/db-list-session-turns db forked))
                                        (= through (str (:id (peek turns))))))

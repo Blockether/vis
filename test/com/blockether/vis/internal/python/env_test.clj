@@ -455,6 +455,18 @@
           again
           (str "vis-test-defs-fork-again-" (random-uuid))
 
+          none
+          (str "vis-test-defs-fork-none-" (random-uuid))
+
+          legacy
+          (str "vis-test-defs-fork-legacy-" (random-uuid))
+
+          legacy-whole
+          (str "vis-test-defs-fork-legacy-whole-" (random-uuid))
+
+          legacy-at
+          (str "vis-test-defs-fork-legacy-at-" (random-uuid))
+
           answer
           (fn [id]
             (tpc/with-own [ctx {} nil {:worker? false}]
@@ -464,29 +476,46 @@
 
       (try (tpc/with-own
              [ctx {} nil {:worker? false}]
-             (doseq [[position code]
-                     [[1 "TOTAL = 1\ntext = 'a' * 2000000\ndef helper():\n    return 'one'\n"]
-                      [2 "TOTAL = 2\ntext = 'b' * 3000000\ndef helper():\n    return 'two'\n"]
-                      [3 "print('no change')\n"]]]
+             ;; Turn t3 runs no block. Turn t4 starts after the fork reads the turns.
+             (doseq [[turn-id code]
+                     [["t1" "TOTAL = 1\ntext = 'a' * 2000000\ndef helper():\n    return 'one'\n"]
+                      ["t2" "TOTAL = 2\ntext = 'b' * 3000000\ndef helper():\n    return 'two'\n"]
+                      ["t4" "TOTAL = 4\n"]]]
                (expect (nil? (:error (ep/run-python-block ctx code))))
-               (ep/persist-session-defs! ctx sid)
-               (ep/checkpoint-session-turn! sid position)))
-           (ep/fork-session-defs! sid at-1 [[1 1]] false)
-           (ep/fork-session-defs! sid whole [[1 1] [2 2] [3 3] [4 4]] true)
-           (ep/fork-session-defs! whole again [[1 1] [2 2] [3 3]] false)
+               (ep/checkpoint-session-turn! ctx sid turn-id)))
+           (ep/fork-session-defs! sid at-1 [["t1" "a1"]] false)
+           (ep/fork-session-defs! sid whole [["t1" "w1"] ["t2" "w2"] ["t3" "w3"]] true)
+           (ep/fork-session-defs! whole again [["w1" "g1"] ["w2" "g2"] ["w3" "g3"]] false)
            (expect (= "1 one 2000000\n" (answer at-1)))
+           ;; The fork ends at t3, so the live snapshot that t4 wrote is not its state.
            (expect (= "2 two 3000000\n" (answer whole)))
-           ;; Turn 3 ran no change, so its state is the state of turn 2.
            (expect (= "2 two 3000000\n" (answer again)))
            ;; The source keeps its own state.
-           (expect (= "2 two 3000000\n" (answer sid)))
+           (expect (= "4 two 3000000\n" (answer sid)))
+           ;; Copied turns without a state, while a later turn wrote the live snapshot.
+           (ep/fork-session-defs! sid none [["t3" "n3"]] true)
+           (expect (not (.exists (io/file (paths/sandbox-defs-file none)))))
            ;; A repeated fork gives the same state.
-           (ep/fork-session-defs! sid at-1 [[1 1]] false)
+           (ep/fork-session-defs! sid at-1 [["t1" "a1"]] false)
            (expect (= "1 one 2000000\n" (answer at-1)))
+           ;; A session from before turn states has only its live snapshot: a fork of the
+           ;; whole session gets it, and a fork at an earlier turn cannot know its state.
+           (tpc/with-own
+             [ctx {} nil {:worker? false}]
+             (expect (nil? (:error (ep/run-python-block
+                                     ctx
+                                     "TOTAL = 7\ntext = 'c'\ndef helper():\n    return 'old'\n"))))
+             (ep/persist-session-defs! ctx legacy))
+           ;; Commit 58311e8a8 named turn states by position, not by turn id.
+           (paths/spit-private! (io/file (paths/sandbox-turns-dir legacy) "1.py") "TOTAL = 1\n")
+           (ep/fork-session-defs! legacy legacy-whole [["o1" "n1"] ["o2" "n2"]] true)
+           (ep/fork-session-defs! legacy legacy-at [["o1" "n1"]] false)
+           (expect (= "7 old 1\n" (answer legacy-whole)))
+           (expect (not (.exists (io/file (paths/sandbox-defs-file legacy-at)))))
            ;; A deleted session leaves no turn state behind.
            (ep/delete-session-defs! sid)
            (expect (not (.exists (io/file (paths/sandbox-turns-dir sid)))))
-           (finally (doseq [id [sid at-1 whole again]]
+           (finally (doseq [id [sid at-1 whole again none legacy legacy-whole legacy-at]]
                       (ep/delete-session-defs! id)))))))
 
 ;; Snapshot and spill files hold session values, for example a token in a variable.
