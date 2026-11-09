@@ -76,6 +76,22 @@ it('shows the active preset, each slot with what it plays, and previews a slot a
   expect(writes()).toHaveLength(0);
 });
 
+it('ignores the late answer of a preview after the person previews another slot', async () => {
+  let answerFirst: (result: { is_played: boolean }) => void = () => {};
+  vi.spyOn(GatewayClient.prototype, 'previewSetting')
+    .mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve as typeof answerFirst; }))
+    .mockResolvedValueOnce({ is_played: true } as never);
+  const actor = user();
+  await open();
+  const slots = screen.getByRole('list', { name: 'Sounds of My mix' });
+  await actor.click(within(slots).getByRole('button', { name: 'Preview Finish' }));
+  await actor.click(within(slots).getByRole('button', { name: 'Preview Question' }));
+  await waitFor(() => expect(within(slots).getByRole('button', { name: 'Preview Question' })).toBeEnabled());
+  answerFirst({ is_played: false });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
 it('lists built-in presets first and writes the whole value when one is chosen', async () => {
   const actor = user();
   await actor.click(await open());

@@ -197,34 +197,38 @@
 
 (defn play-file!
   "Play `file` now. Returns true when a player starts, and false when `file` is
-   nil, a sound plays already or this machine has no player."
-  [^File file]
-  (if-let [command (some-> file
-                           .getPath
-                           player-command)]
-    (locking playing
-      (let [^Process current @playing]
-        (if (and current (.isAlive current))
-          false
-          (let [process (-> (ProcessBuilder. ^List command)
-                            (.redirectOutput ProcessBuilder$Redirect/DISCARD)
-                            (.redirectError ProcessBuilder$Redirect/DISCARD)
-                            (.start))]
-            (.close (.getOutputStream process))
-            (reset! playing process)
-            (future (when-not (.waitFor process MAX_PLAY_MS TimeUnit/MILLISECONDS)
-                      (.destroyForcibly process)))
-            true))))
-    (do (when file
-          (tel/log! {:level :debug :id ::no-player :data {:os (os-name)}}
-                    "No sound player on this machine"))
-        false)))
+   nil, this machine has no player or a sound plays already and `stop-current?`
+   is false. With `stop-current?`, the sound that plays now stops first."
+  ([file] (play-file! file false))
+  ([^File file stop-current?]
+   (if-let [command (some-> file
+                            .getPath
+                            player-command)]
+     (locking playing
+       (let [^Process current @playing]
+         (when (and stop-current? current) (.destroy current))
+         (if (and current (not stop-current?) (.isAlive current))
+           false
+           (let [process (-> (ProcessBuilder. ^List command)
+                             (.redirectOutput ProcessBuilder$Redirect/DISCARD)
+                             (.redirectError ProcessBuilder$Redirect/DISCARD)
+                             (.start))]
+             (.close (.getOutputStream process))
+             (reset! playing process)
+             (future (when-not (.waitFor process MAX_PLAY_MS TimeUnit/MILLISECONDS)
+                       (.destroyForcibly process)))
+             true))))
+     (do (when file
+           (tel/log! {:level :debug :id ::no-player :data {:os (os-name)}}
+                     "No sound player on this machine"))
+         false))))
 
 (defn preview!
   "Play slot value `value` in slot `slot`, before the person saves it. Returns
-   true when a player starts. Throws with a message for an unknown slot or a
-   path that is not a file."
+   true when a player starts. It stops the sound that plays now, so the last
+   preview that the person asks for plays. Throws with a message for an unknown
+   slot or a path that is not a file."
   [slot value]
   (when-not (slot-ids slot)
     (throw (ex-info (str "Unknown sound: " slot) {:type :vis.sounds/unknown-slot :slot slot})))
-  (play-file! (slot-file slot value)))
+  (play-file! (slot-file slot value) true))

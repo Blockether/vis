@@ -100,11 +100,15 @@ export function PresetsField({
   async function play(key: string, slot: string, text: string) {
     if (!machine) return;
     setPreview({ key });
+    // Only the answer for the preview that is current may change it: a late answer
+    // for an earlier click must not clear or mark the newer one.
+    const settle = (next: { key: string; note?: string } | null) =>
+      setPreview((now) => (now?.key === key ? next : now));
     try {
       const result = await machine.client.previewSetting(toggle.id, slot, text);
-      setPreview(result.is_played ? null : { key, note: 'The gateway did not play this sound.' });
+      settle(result.is_played ? null : { key, note: 'The gateway did not play this sound.' });
     } catch (e) {
-      setPreview({ key, note: (e as Error).message });
+      settle({ key, note: (e as Error).message });
     }
   }
 

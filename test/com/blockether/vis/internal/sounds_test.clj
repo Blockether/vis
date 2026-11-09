@@ -75,14 +75,27 @@
 (defdescribe preview-test
              (it "plays a slot value before a save and refuses an unknown slot"
                  (let [files (atom [])]
-                   (with-redefs [sounds/play-file! (fn [file]
+                   (with-redefs [sounds/play-file! (fn [file _]
                                                      (swap! files conj file)
                                                      (some? file))]
                      (expect (true? (sounds/preview! "finish" "bright")))
                      (expect (false? (sounds/preview! "input" "")))
                      (expect (= :vis.sounds/unknown-slot
                                 (thrown-type #(sounds/preview! "beep" "classic")))))
-                   (expect (= (bundled-bytes "bright" "finish") (file-bytes (first @files)))))))
+                   (expect (= (bundled-bytes "bright" "finish") (file-bytes (first @files))))))
+             (it "stops the sound that plays when the person previews another one"
+                 (let [started (atom [])]
+                   (with-redefs [sounds/player-command (fn [_]
+                                                         ["sleep" "30"])]
+                     (try (expect (true? (sounds/preview! "finish" "bright")))
+                          (swap! started conj @@#'sounds/playing)
+                          (expect (true? (sounds/preview! "error" "bright")))
+                          (swap! started conj @@#'sounds/playing)
+                          (let [[^Process first-player ^Process second-player] @started]
+                            (expect (.waitFor first-player 5 java.util.concurrent.TimeUnit/SECONDS))
+                            (expect (.isAlive second-player)))
+                          (finally (doseq [^Process process @started]
+                                     (.destroyForcibly process))))))))
 
 (defdescribe
   presets-fixture-test
