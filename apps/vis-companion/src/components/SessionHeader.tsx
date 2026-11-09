@@ -245,9 +245,14 @@ export function SessionHeader({
           />
           <span className="shrink-0">{model.connected ? 'Connected' : 'Reconnecting'}</span>
           {goal && (
-            <span className="min-w-0 truncate">
-              Goal: {GOAL_STATUS[goal.status]} - <GoalTime key={goal.id} goal={goal} />
-            </span>
+            <>
+              <span aria-hidden="true" className="shrink-0">
+                |
+              </span>
+              <span className="min-w-0 truncate">
+                Goal: {GOAL_STATUS[goal.status]} - <GoalTime key={goal.id} goal={goal} />
+              </span>
+            </>
           )}
         </div>
       </div>
