@@ -16,10 +16,10 @@
           "pattern": "\\S"
         },
         "title": {
-          "description": "A short label for people: one line of 1 to 40 characters. Without it, people see the child number, such as #2.",
+          "description": "A short label for people: one line of 1 to 60 characters. Without it, people see the child number, such as #2.",
           "type": "string",
           "minLength": 1,
-          "maxLength": 40,
+          "maxLength": 60,
           "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
         },
         "role": {

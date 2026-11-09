@@ -242,7 +242,7 @@ class Council:
         and it does not grant broader permissions. ``files`` narrows file access with
         ``write``, ``read_only`` and ``deny`` rules: paths or globs, also for future files.
         ``role`` is ``research``, ``implement`` or ``verify``: a label for people that sets
-        no limit. ``title`` is a short label for people: one line of 1 to 40
+        no limit. ``title`` is a short label for people: one line of 1 to 60
         characters.
         """
         body = {"task": task}

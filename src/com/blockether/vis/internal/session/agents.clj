@@ -1498,7 +1498,7 @@
    council.run([{\"task\": \"Fix the bug\", \"role\": \"implement\"},
                 {\"task\": \"Verify the fix\", \"role\": \"verify\", \"after\": [\"a1\"]}])
 
-   title is a short label for people: one line of 1 to 40 characters, such as \"Fix login test\".
+   title is a short label for people: one line of 1 to 60 characters, such as \"Fix login test\".
    Without it, people see the child number, such as #2.
 
    role is research, implement or verify. It is a label for people and sets no tool, file or model
@@ -2226,7 +2226,7 @@
       "## Subagents (Council)
 - Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
 - Do the critical-path step and shared work yourself. Give one coupled design one owner: never split modules that share an invariant, a protocol or a data format. Treat the modules of one program as one coupled design.
-- Start children with council.run([task, ...]), usually two to four in total. Each task names its goal, known facts, files, done condition, role and a short title of at most 40 characters. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
+- Start children with council.run([task, ...]), usually two to four in total. Each task names its goal, known facts, files, done condition, role and a short title of at most 60 characters. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
 "
       role-guide
       "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.

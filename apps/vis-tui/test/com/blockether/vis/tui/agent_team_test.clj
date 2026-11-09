@@ -575,7 +575,7 @@
   (it "ends a long title and a long result with an ellipsis"
       (let [long-agent
             (agent-row 1 "completed"
-                       "title" (apply str (repeat 40 "t"))
+                       "title" (apply str (repeat 60 "t"))
                        "result" (apply str (repeat 200 "r"))
                        "finished_at" now-ms)
 
@@ -583,11 +583,11 @@
             (first (team/team-rows "turn-1" [long-agent]))
 
             line
-            (first (team/row-lines row (team/row-columns [row]) 80 now-ms))]
+            (first (team/row-lines row (team/row-columns [row]) 100 now-ms))]
 
-        (expect (str/includes? line (apply str (repeat 40 "t"))))
+        (expect (str/includes? line (apply str (repeat 60 "t"))))
         (expect (str/includes? line "r…"))
-        (expect (<= (count line) 80))))
+        (expect (<= (count line) 100))))
   (it "takes two lines on a phone width"
       (let [rows
             (team/team-rows "turn-1" every-state)

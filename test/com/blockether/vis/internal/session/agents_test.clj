@@ -2231,10 +2231,12 @@
 ;; Subagent views: people see a short title, a one-line result and a timeline of each child.
 (defdescribe
   child-title-result-and-timeline-test
-  (it "accepts a one-line title of 1 to 40 characters and a one-line result"
+  (it "accepts a one-line title of 1 to 60 characters and a one-line result"
       (expect (document/valid-json? "agents" "spawn" {"task" "x" "title" "Fix login test"}))
+      (expect
+        (document/valid-json? "agents" "spawn" {"task" "x" "title" (apply str (repeat 60 "x"))}))
       (expect (document/valid-json? "agents" "run" {"tasks" [{"task" "x" "title" "Audit"}]}))
-      (doseq [bad ["" " " (apply str (repeat 41 "x")) "Two\nlines"]]
+      (doseq [bad ["" " " (apply str (repeat 61 "x")) "Two\nlines"]]
         (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "title" bad})) bad))
       (expect (document/valid-json? "agents" "result" {"text" "All pass" "outcome" "passed"}))
       (expect (not (document/valid-json? "agents" "result" {"text" "All pass" "outcome" "maybe"})))

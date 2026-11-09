@@ -257,9 +257,11 @@
 
 ;; ── Team rows ───────────────────────────────────────────────────────────────
 
-(def ^:private ^:const title-width
-  "The most cells that the title column takes. A longer title ends with an ellipsis."
-  40)
+(defn- title-width
+  "The most cells that the title column takes: the title bound of the agents contract. A longer
+   title ends with an ellipsis."
+  ^long []
+  (get-in (document/schema-document "agents") ["$defs" "spawn" "properties" "title" "maxLength"]))
 
 (def ^:private ^:const time-width "Cells of the time column, enough for `59m 59s`." 7)
 
@@ -511,7 +513,7 @@
    is the same for every team."
   [rows]
   {:role (role-width)
-   :label (min (long title-width) (long (widest (map label-sample rows))))
+   :label (min (title-width) (long (widest (map label-sample rows))))
    :status (widest (map :status rows))})
 
 (defn- pad
@@ -713,7 +715,7 @@
         {:key :role :w (max (role-width) (count (:role table-heads)))}
 
         label
-        (update (fixed :label (map label-sample rows)) :w min (long title-width))
+        (update (fixed :label (map label-sample rows)) :w min (title-width))
 
         status
         (fixed :status (map :status rows))

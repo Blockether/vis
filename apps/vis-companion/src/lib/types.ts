@@ -87,7 +87,7 @@ export interface Subagent {
   /** The newest progress note of a queued or running agent, as its leader reads it. */
   note?: string;
   usage?: SessionUsage | null;
-  /** A one-line label from `council.run`, 1-40 characters. Without it, people see `#N`. */
+  /** A one-line label from `council.run`, 1-60 characters. Without it, people see `#N`. */
   title?: string;
   /** The one-line result of the finished task. */
   result?: string;
