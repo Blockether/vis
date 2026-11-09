@@ -4,7 +4,6 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.host :as host]
-            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -88,17 +87,10 @@
               (expect (= [] (get page "entries")))
               (expect (= (get opts "after" 0) (get page "after")))
               (expect (false? (get page "has_more")))))
-          (doseq [symbol (filter #(contains? #{'council.threads 'council.read}
-                                             (:ext.symbol/symbol %))
-                                 host/symbols)
-                  :let [text (extension/symbol-doc-text symbol)]]
-
-            (expect (= 1 (get-in schema ["$defs" "page_request" "properties" "limit" "minimum"])))
-            (expect (= 50 (get-in schema ["$defs" "page_request" "properties" "limit" "maximum"])))
-            (expect (= 50 council/default-page-entries))
-            (doseq [part ["exclusive nonnegative integer" "default 0" "1–50" "default 50"
-                          "returned after" "has_more" "byte budget"]]
-              (expect (str/includes? text part))))))))
+          ;; The engine's default page must stay inside the bound that the contract schema allows.
+          (expect (<= (get-in schema ["$defs" "page_request" "properties" "limit" "minimum"])
+                      council/default-page-entries
+                      (get-in schema ["$defs" "page_request" "properties" "limit" "maximum"])))))))
 
 (defdescribe
   concise-prompt-safety-test

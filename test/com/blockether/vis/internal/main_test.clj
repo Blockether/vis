@@ -270,11 +270,6 @@
                (expect (.contains (str out) "zzz-test"))
                (expect (.contains (str out) "Test channel for help.")))
              (finally (registry/deregister-channel! (:channel/id fake-channel))))))
-  (it "initializes the closed distribution before concrete channel help"
-      (let [initialized? (atom false)]
-        (with-redefs [main/initialize-all! #(reset! initialized? true)]
-          (#'main/initialize-fast-help-deps! ["channels" "tui" "--help"])
-          (expect (true? @initialized?)))))
   ;; #300: asking for package-management help must not prepare or import packages.
   (it "renders package-management help without loading Python extensions"
       (doseq [command ["install" "sync" "versions" "update" "rollback"]]

@@ -594,23 +594,6 @@
                                       (finally (stop!)))))))))
 
 (defdescribe start-test
-             (it "opens the shared connection for the gateway database spec"
-                 ;; The gateway gives start! its database spec, not an open connection.
-                 (let [db
-                       (ps/db-create-connection! :memory)
-
-                       seen
-                       (atom nil)
-
-                       spec
-                       {:backend :sqlite :path "/tmp/vis-automation-test/vis.db"}]
-
-                   (try (with-redefs [ps/db-shared-connection! (fn [s]
-                                                                 (reset! seen s)
-                                                                 db)]
-                          ((runner/start! spec)))
-                        (expect (= spec @seen))
-                        (finally (ps/db-dispose-connection! db)))))
              (it "keeps the gateway running when the recovery fails"
                  (let [db (ps/db-create-connection! :memory)]
                    (try

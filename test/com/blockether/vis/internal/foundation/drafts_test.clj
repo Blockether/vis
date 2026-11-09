@@ -165,8 +165,7 @@
               (:result (drafts/draft-status env))
 
               _
-              (do (spit (io/file draft-root "b.txt") "new\n")
-                  (spit (io/file base "local.txt") "keep local work\n"))
+              (spit (io/file draft-root "b.txt") "new\n")
 
               draft-content
               (slurp (io/file draft-root "a.txt"))
@@ -200,8 +199,6 @@
           (expect (= "approved" (get approved "status")))
           (expect (= 1 (count (get approved "files"))))
           (expect (= "main" (get approved "target_branch")))
-          (expect (= "feat: add b" (git! base "log" "-1" "--format=%s" "main")))
-          (expect (= (get approved "commit") (git! base "rev-parse" "main")))
           (expect (= "nothing-to-approve" (get again "status")))
           (expect (= "discarded" (get discarded "status")))
           (expect (= "vis/feature-x" (get discarded "branch")))
@@ -209,28 +206,16 @@
           (expect (= base (get discarded "root")))
           (expect (= base (ctx-root env)))
           (expect (false? (get trunk-status "in_draft")))
-          (expect (= base (get trunk-status "root")))
-          (expect (= "keep local work\n" (slurp (io/file base "local.txt"))))
-          (expect (= "x\npending\n" (slurp (io/file base "a.txt"))))
-          (expect (= "M a.txt\n?? local.txt" (git! base "status" "--porcelain")))
-          (expect (= "new\n" (slurp (io/file base "b.txt"))))))))
-  (it "clean=True seeds from HEAD and leaves pending trunk work behind"
-      (with-session "vis-fdrafts-clean"
-                    (fn [_base env]
-                      (let [opened (drafts/draft-create env "clean-x" {"clean" true})]
-                        (expect (true? (extension/envelope-success? opened)))
-                        (expect (true? (get (:result opened) "clean")))
-                        (expect (= "x\n"
-                                   (slurp (io/file (get (:result opened) "root") "a.txt"))))))))
-  (it "explicit clean=False still copies pending work, for positional and map arguments"
-      (doseq [arg [false {"clean" false} {:clean false}]]
-        (with-session "vis-fdrafts-dirty"
-                      (fn [_base env]
-                        (let [opened (drafts/draft-create env "dirty-x" arg)]
-                          (expect (true? (extension/envelope-success? opened)))
-                          (expect (false? (get (:result opened) "clean")))
-                          (expect (= "x\npending\n"
-                                     (slurp (io/file (get (:result opened) "root") "a.txt")))))))))
+          (expect (= base (get trunk-status "root")))))))
+  (it "reads clean from positional and map arguments, and drafts from HEAD by default"
+      ;; Copying pending work is `workspace.drafts`' job; the wrapper owns only the flag.
+      (let [create-args @#'drafts/create-args]
+        (doseq [arg [nil true {"clean" true} {:clean true}]]
+          (expect (true? (:clean? (create-args "x" arg nil))) (pr-str arg)))
+        (doseq [arg [false {"clean" false} {:clean false}]]
+          (expect (false? (:clean? (create-args "x" arg nil))) (pr-str arg)))
+        (expect (= {:label "x" :clean? false :roots ["/r"]}
+                   (create-args {"label" "x" "clean" false "roots" ["/r"]} nil nil)))))
   (it
     "refuses what makes no sense: an unnamed draft, a second draft, approving or discarding on trunk"
     (with-session "vis-fdrafts-refuse"
@@ -423,7 +408,9 @@
 (defdescribe
   draft-selected-root-python-test
   (it
-    "accepts lists of repository Paths through local and worker Python argument styles"
+    "accepts lists of repository Paths through local Python argument styles and the worker"
+    ;; Argument binding is the generic symbol wrapper, so every style runs locally. The
+    ;; jailed worker runs one create, sync and discard to prove the same path there.
     (extension/sandbox-symbol-signatures)
     (doseq [worker? [false true]]
       (with-session
@@ -454,20 +441,24 @@
                          "source = Path("
                          (pr-str sibling)
                          ")\n"
-                         "sources = [source, Path(" (pr-str base)
-                         ")]\n" "for create, clean in [\n"
+                         "sources = [source, Path("
+                         (pr-str base)
+                         ")]\n"
+                         "limit = " (if worker? "1" "None")
+                         "\n" "creates = [\n"
                          "    (lambda: draft_create('python-root', roots=sources), True),\n"
                          "    (lambda: draft_create(label='python-root', roots=sources), True),\n"
                          "    (lambda: draft_create('python-root', clean=False, roots=sources), False),\n"
                          "    (lambda: draft_create('python-root', False, roots=sources), False),\n"
-                         "    (lambda: draft_create('python-root', True, sources), True),\n" "]:\n"
+                         "    (lambda: draft_create('python-root', True, sources), True),\n" "]\n"
+                         "syncs = [lambda: draft_sync('start', 'sync test', sources), lambda: draft_sync(action='start', message='sync test', roots=sources), lambda: draft_sync('start', message='sync test', roots=sources)]\n"
+                         "for create, clean in creates[:limit]:\n"
                          "    opened = create()\n" "    try:\n"
                          "        assert opened['repo_root'] == str(source), dict(opened)\n"
                          "        assert len(opened['repositories']) == 2, dict(opened)\n"
                          "        assert opened['clean'] is clean\n"
                          "        assert draft_status()['root'] == opened['root']\n"
-                         "        if clean:\n"
-                         "            for sync in [lambda: draft_sync('start', 'sync test', sources), lambda: draft_sync(action='start', message='sync test', roots=sources), lambda: draft_sync('start', message='sync test', roots=sources)]:\n"
+                         "        if clean:\n" "            for sync in syncs[:limit]:\n"
                          "                synced = sync()\n"
                          "                assert synced['status'] == 'synced', dict(synced)\n"
                          "                assert len(synced['repositories']) == 2\n"

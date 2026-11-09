@@ -51,6 +51,27 @@
   (spit (io/file root "a.txt") "x\npending\n")
   (spit (io/file root "new.txt") "untracked\n"))
 
+(def ^:private repo-template
+  "One prepared repository per JVM. Each fixture copies it, which costs one process
+   instead of the seven Git calls of `init-repo!`."
+  (delay (let [root (temp-dir "vis-drafts-template")]
+           (init-repo! root)
+           (.addShutdownHook (Runtime/getRuntime) (Thread. #(delete-tree! root)))
+           root)))
+
+(defn- copy-template!
+  "Copy the prepared repository into the empty directory `root`."
+  [root]
+  (let [p
+        (.start (doto (ProcessBuilder. ^java.util.List
+                                       (vector "cp" "-Rp" (str @repo-template "/.") (str root)))
+                  (.redirectErrorStream true)))
+
+        out
+        (slurp (.getInputStream p))]
+
+    (when-not (zero? (.waitFor p)) (throw (ex-info "template copy failed" {:out out})))))
+
 (defn- with-repo
   "Run `(f store base env)` against a fresh repo, an in-memory store and a
    throwaway drafts home; everything is deleted afterwards."
@@ -61,7 +82,7 @@
         store
         (ps/db-open! :memory)]
 
-    (try (init-repo! base)
+    (try (copy-template! base)
          (binding [ws/*drafts-home* (str base "-store")]
            (f store base {:db-info store :session-id "sess-drafts"}))
          (finally (ps/db-close! store) (delete-tree! (str base "-store")) (delete-tree! base)))))
@@ -639,16 +660,14 @@
 (defdescribe
   approve-origin-test
   (it "publishes only after restoring all unrelated local states, preserving existing stashes"
-      ;; The branch name does not interact with the local state, so the targets alternate:
-      ;; each backend still meets each kind and each target, in half the fixtures.
-      (doseq [backend
-              [:worktree :rift]
-
-              [kind target]
-              (map vector
-                   [:clean :staged :unstaged :partial :untracked :delete :rename]
-                   (cycle ["main" "master"]))]
-
+      ;; Restoring the local state does not depend on the backend or the branch name: every
+      ;; kind runs on worktree with alternating targets, and Rift runs the hardest kind once.
+      (doseq [[backend kind target] (concat (map vector
+                                                 (repeat :worktree)
+                                                 [:clean :staged :unstaged :partial :untracked
+                                                  :delete :rename]
+                                                 (cycle ["main" "master"]))
+                                            [[:rift :partial "master"]])]
         (with-origin-draft
           backend
           target
@@ -672,11 +691,8 @@
                   (when (#{:staged :partial} kind) (git! base "add" "a.txt"))
                   (when (= :partial kind) (spit (io/file base "a.txt") "unstaged\n"))))
             (spit (io/file (:root draft) "b.txt") "draft\n")
-            (let [before
-                  (local-state base)
-
-                  result
-                  (drafts/approve! env {:workspace-id (:id draft)})]
+            (let [before (local-state base)
+                  result (drafts/approve! env {:workspace-id (:id draft)})]
 
               (expect (= :approved (:status result)))
               (expect (true? (:published result)))
@@ -688,21 +704,13 @@
                          (:status (drafts/approve! env {:workspace-id (:id draft)})))))))))
   (it
     "refuses stale origin even when local target has not moved, then accepts explicit synchronization"
-    (doseq [backend
-            [:worktree :rift]
-
-            target
-            ["main" "master"]]
-
+    (doseq [[backend target] [[:worktree "main"] [:rift "master"]]]
       (with-origin-draft
         backend
         target
         (fn [base origin env draft]
-          (let [peer
-                (advanced-peer! base origin)
-
-                head
-                (git! base "rev-parse" target)]
+          (let [peer (advanced-peer! base origin)
+                head (git! base "rev-parse" target)]
 
             (git! peer "push" "origin" target)
             (spit (io/file (:root draft) "b.txt") "draft\n")
@@ -713,48 +721,34 @@
               (expect (true? (:published result)))
               (expect (= (:commit result) (git! origin "rev-parse" target)))
               (expect (= "remote\n" (slurp (io/file base "remote.txt"))))))))))
-  (it
-    "reports rejected push after local restoration and retries without a duplicate commit"
-    (doseq [backend
-            [:worktree :rift]
+  (it "reports rejected push after local restoration and retries without a duplicate commit"
+      (doseq [[backend target] [[:worktree "master"] [:rift "main"]]]
+        (with-origin-draft backend
+                           target
+                           (fn [base origin env draft]
+                             (let [hook (io/file origin "hooks" "pre-receive")
+                                   head (git! origin "rev-parse" target)]
 
-            target
-            ["main" "master"]]
+                               (spit hook "#!/bin/sh\nexit 1\n")
+                               (.setExecutable hook true)
+                               (spit (io/file base "a.txt") "local\n")
+                               (git! base "add" "a.txt")
+                               (spit (io/file (:root draft) "b.txt") "draft\n")
+                               (let [before (local-state base)
+                                     error (approval-error env draft)
+                                     landed (git! base "rev-parse" target)]
 
-      (with-origin-draft backend
-                         target
-                         (fn [base origin env draft]
-                           (let [hook
-                                 (io/file origin "hooks" "pre-receive")
-
-                                 head
-                                 (git! origin "rev-parse" target)]
-
-                             (spit hook "#!/bin/sh\nexit 1\n")
-                             (.setExecutable hook true)
-                             (spit (io/file base "a.txt") "local\n")
-                             (git! base "add" "a.txt")
-                             (spit (io/file (:root draft) "b.txt") "draft\n")
-                             (let [before
-                                   (local-state base)
-
-                                   error
-                                   (approval-error env draft)
-
-                                   landed
-                                   (git! base "rev-parse" target)]
-
-                               (expect (= :draft/push-failed (:type error)))
-                               (expect (= :landed-locally (:status error)))
-                               (expect (= before (local-state base)))
-                               (expect (= head (git! origin "rev-parse" target)))
-                               (expect (not= head landed))
-                               (.delete hook)
-                               (let [retry (drafts/approve! env {:workspace-id (:id draft)})]
-                                 (expect (= :nothing-to-approve (:status retry)))
-                                 (expect (true? (:published retry)))
-                                 (expect (= landed (git! origin "rev-parse" target)))
-                                 (expect (= before (local-state base))))))))))
+                                 (expect (= :draft/push-failed (:type error)))
+                                 (expect (= :landed-locally (:status error)))
+                                 (expect (= before (local-state base)))
+                                 (expect (= head (git! origin "rev-parse" target)))
+                                 (expect (not= head landed))
+                                 (.delete hook)
+                                 (let [retry (drafts/approve! env {:workspace-id (:id draft)})]
+                                   (expect (= :nothing-to-approve (:status retry)))
+                                   (expect (true? (:published retry)))
+                                   (expect (= landed (git! origin "rev-parse" target)))
+                                   (expect (= before (local-state base))))))))))
   (it "unreachable origin refuses before committing, stashing or landing"
       (with-origin-draft
         :worktree

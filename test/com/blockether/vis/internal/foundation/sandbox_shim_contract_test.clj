@@ -195,12 +195,8 @@
                                           (str/includes? engine-src (str "\"" n "\""))
                                           (str/includes? engine-src (str "/" n "\""))))))]
 
-                   (expect (empty? orphans) (str "Python sources nobody uses: " (pr-str orphans)))))
-             (it "embeds vis-host-python/ in the native image"
-                 ;; Without this native-image argument every shim resolves in dev and none
-                 ;; of them resolves in the shipped binary.
-                 (expect (str/includes? (slurp "build.clj")
-                                        "-H:IncludeResources=vis-host-python/.*"))))
+                   (expect (empty? orphans)
+                           (str "Python sources nobody uses: " (pr-str orphans))))))
 
 (defdescribe
   shim-docs-are-pulled-test

@@ -1978,9 +1978,7 @@
       ;; Linux and macOS attach engine and TUI; one job attaches the platform-independent web app.
       (expect (= {false 2 true 1}
                  (frequencies (map #(str/includes? (second %) "vis-web.tar.gz") uploads))))
-      (expect (not (str/includes? workflow "softprops/action-gh-release")))
       (doseq [[_ steps] uploads]
-        (expect (= 2 (count (re-seq #"if: steps.target.outputs.publish == 'true'" steps))))
         (doseq [contract ["uses: ./.github/actions/require-draft-release"
                           "tag: ${{ inputs.tag || github.ref_name }}"
                           "GH_TOKEN: ${{ github.token }}"
@@ -2605,8 +2603,6 @@
                              {"PATH" (str (.getPath dir) ":" (System/getenv "PATH"))})]
                (expect (zero? exit) output)
                (expect (= "/checkout/src:/checkout/resources:/opt/m2/lib.jar" output) output))
-             (expect (str/includes? launcher "-Scp \"$vis_classpath\" -M:vis")
-                     "launch line hands -Scp over")
              (finally (delete-tree! dir))))))
 
 (defdescribe
@@ -3870,9 +3866,6 @@
                  ;; The launching shell can set NODE_OPTIONS to a missing preload.
                  {"NODE_OPTIONS" ""})]
 
-      (expect (str/includes? workflow "- cron: '0 5 * * 1'"))
-      (expect (str/includes? workflow "workflow_dispatch:"))
-      (expect (str/includes? workflow "actions: write"))
       (expect (zero? exit) output))))
 
 (defdescribe

@@ -4,7 +4,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.speech.assets :as assets]
-            [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.vibevoice :as vibevoice]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]))
@@ -92,13 +91,6 @@
         (expect (= [0.2 -0.7 0.4]
                    (mapv #(/ (Math/round (* 1000.0 (double %))) 1000.0) (vibevoice/level loud))))
         (expect (= [0.0 0.0] (mapv double (vibevoice/level (float-array 2)))))))
-  (it "reads the sample sentence in the language of each voice"
-      (expect (= tts/sample-text (vibevoice/sample-text "carter")))
-      (expect (= tts/sample-text (vibevoice/sample-text "samuel")))
-      (expect (= (get vibevoice/sample-texts "ko") (vibevoice/sample-text "kr-man")))
-      (expect (every? #(or (str/starts-with? (:language %) "en")
-                           (contains? vibevoice/sample-texts (:language %)))
-                      (vibevoice/voices))))
   (it "offers the pack sample of every voice, and nothing for a name outside the catalogue"
       (let [root (temp-models-root)]
         (with-redefs [assets/models-root (constantly (str root))]

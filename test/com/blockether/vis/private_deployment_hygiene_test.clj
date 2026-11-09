@@ -11,13 +11,6 @@
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(def ^:private pruned-dirs
-  "Directory names never scanned: VCS, build output, vendored deps, generated
-   mobile projects, caches."
-  #{".git" ".gitworktrees" ".cpcache" ".clj-kondo" ".lsp" ".idea" ".vscode" ".gradle" ".vis"
-    "target" "classes" "node_modules" "dist" "build" "out" "coverage" "ios" "android" "browsers"
-    "venv" ".venv" "__pycache__" ".pytest_cache"})
-
 (def ^:private scanned-extensions
   #{"md" "mdx" "txt" "clj" "cljc" "cljs" "cljd" "edn" "bb" "yml" "yaml" "json" "ts" "tsx" "js" "jsx"
     "mjs" "cjs" "sh" "bash" "zsh" "toml" "ini" "conf" "properties" "service" "py" "html" "css" "sql"
@@ -50,19 +43,30 @@
          (or (contains? scanned-names name) (contains? scanned-extensions ext)))))
 
 (defn- text-files
-  [^java.io.File dir]
-  (mapcat (fn [^java.io.File file]
-            (cond (.isDirectory file)
-                  (if (contains? pruned-dirs (.getName file)) [] (text-files file))
-                  (scannable? file) [file]
-                  :else []))
-          (or (.listFiles dir) [])))
+  "The tracked and the untracked, not ignored files under `root`. Git knows what can be
+   published, so the scan skips build output, caches and dependencies without a walk."
+  [root]
+  (let [p
+        (.start (doto (ProcessBuilder.
+                        ^java.util.List
+                        (vector "git" "ls-files" "-z" "--cached" "--others" "--exclude-standard"))
+                  (.directory (io/file root))))
+
+        out
+        (slurp (.getInputStream p))]
+
+    (when-not (zero? (.waitFor p)) (throw (ex-info "git ls-files failed" {:root root})))
+    (->> (str/split out #"\u0000")
+         (remove str/blank?)
+         distinct
+         (map #(io/file root %))
+         (filter scannable?))))
 
 (defn- leaks
   "Every `path — what — fix` line found under `root`."
   [root]
   (vec (for [^java.io.File file
-             (text-files (io/file root))
+             (text-files root)
 
              :let [text
                    (try (slurp file) (catch Exception _ ""))]

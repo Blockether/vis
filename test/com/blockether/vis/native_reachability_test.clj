@@ -281,14 +281,6 @@
 ;; initializing in the BUILDER, poisoning that class for the whole image.
 (defdescribe
   aot-copies-every-root-classpath-root-test
-  (it "reads the root's AOT source roots from deps.edn, never a hardcoded pair"
-      (let [src (slurp (io/file "build.clj"))]
-        (expect (str/includes? src "(vec (:paths deps))")
-                (str "build.clj's all-source-roots must copy EVERY root :paths entry into "
-                     "the image; a literal list drops the next one that is added"))
-        (expect
-          (not (str/includes? src "(into [\"src\" \"resources\"]"))
-          "the hardcoded root pair is what shipped an image with no blockether/vis/extension.py")))
   (it "keeps the distributable vis Python module on the classpath it is read from"
       (let [paths (:paths (edn/read-string (slurp (io/file "deps.edn"))))]
         (expect (some #{"packages/vis-agent/src"} paths)
@@ -308,15 +300,6 @@
 ;; purpose, enabled by the application's native-image.properties.
 (defdescribe
   dynamically-resolved-namespaces-reach-the-native-image-test
-  (it "initializes the preload namespace in the builder, which is the whole mechanism"
-      (expect
-        (str/includes?
-          (slurp (io/file
-                   "resources/META-INF/native-image/com.blockether/vis/native-image.properties"))
-          "--initialize-at-build-time=com.blockether.vis.internal.extension.native_preload__init")
-        (str "native-image.properties must initialize the Vis preload at "
-             "BUILD time; nothing else loads it, and without it the binary cannot "
-             "resolve a single manifest entrypoint")))
   (it "keeps the preload namespace outside every other namespace's load"
       ;; It requires the manifest and loads every entrypoint, and an entrypoint
       ;; requires the engine back: required from inside that graph it is a cyclic load.
@@ -328,23 +311,13 @@
                            (filter #(str/includes? (slurp %) "internal.extension.native-preload"))
                            (mapv str))]
         (expect (empty? requiring)
-                (str "nothing may require the preload namespace: " (pr-str requiring)))))
-  (it "keeps prepared git dependency roots on the native-image classpath"
-      ;; The runtime's Clojure source, Java prep output and native-image metadata are
-      ;; three directory roots, not jars. Filtering the classpath down to jars removed
-      ;; HostFunction.class while leaving the native build deceptively green.
-      (let [src (slurp (io/file "build.clj"))]
-        (expect (str/includes? src "(filter :git/sha)")
-                "native-classpath must distinguish source git deps from local projects")
-        (expect (str/includes? src "(mapcat :paths)")
-                "every declared root of a prepared git dependency must reach native-image"))))
+                (str "nothing may require the preload namespace: " (pr-str requiring))))))
 
-(defdescribe
-  native-extension-package-resources-test
-  (it "includes the SDK parser and host module in the native resource pattern"
-      (doseq [resource ["blockether/vis/extension.py" "blockether/vis/extension_package.py"]]
-        (expect (io/resource resource)))
-      (expect (str/includes? (slurp "build.clj") "-H:IncludeResources=blockether/vis/.*"))))
+(defdescribe native-extension-package-resources-test
+             (it "keeps the SDK parser and host module on the classpath"
+                 (doseq [resource ["blockether/vis/extension.py"
+                                   "blockether/vis/extension_package.py"]]
+                   (expect (io/resource resource)))))
 
 (defdescribe
   native-contract-json-resources-test

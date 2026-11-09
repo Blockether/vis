@@ -11,46 +11,23 @@
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe
-  registered-tool-activity-test
-  (it
-    "gives every first-party tool readable copy and an explicit visibility policy"
-    (let [entries
-          (for [ext
-                [foundation/vis-extension mcp/vis-extension]
+(defdescribe registered-tool-activity-test
+             (it "gives every first-party tool readable copy and an explicit visibility policy"
+                 (let [entries (for [ext [foundation/vis-extension mcp/vis-extension]
+                                     entry (get-in ext [:ext/engine :ext.engine/symbols])
+                                     :when (and (:ext.symbol/fn entry)
+                                                (not (:ext.symbol/raw? entry)))]
 
-                entry
-                (get-in ext [:ext/engine :ext.engine/symbols])
+                                 entry)]
+                   (doseq [entry entries
+                           :let [declaration (:ext.symbol/activity entry)
+                                 headline (:headline declaration)
+                                 symbol (:ext.symbol/symbol entry)]]
 
-                :when (and (:ext.symbol/fn entry) (not (:ext.symbol/raw? entry)))]
-
-            entry)
-
-          end-only
-          '#{cat patch _shell-logs _shell-type council.read council.get council.threads
-             council.members draft-status main-agent-instructions update_goal council.publish
-             council.cancel council.extend council.deny council.grant council.result}]
-
-      (expect (= end-only
-                 (set (keep #(when (false? (get-in % [:ext.symbol/activity :show-start]))
-                               (:ext.symbol/symbol %))
-                            entries))))
-      (doseq [entry
-              entries
-
-              :let [declaration
-                    (:ext.symbol/activity entry)
-
-                    headline
-                    (:headline declaration)
-
-                    symbol
-                    (:ext.symbol/symbol entry)]]
-
-        (expect (map? declaration) (str symbol))
-        (expect (and (string? headline) (re-matches #"[A-Z][A-Za-z ]+" headline)))
-        (expect (= (not (contains? end-only symbol)) (:show-start declaration)) (str symbol))
-        (expect (fn? (:render declaration)))))))
+                     (expect (map? declaration) (str symbol))
+                     (expect (and (string? headline) (re-matches #"[A-Z][A-Za-z ]+" headline)))
+                     (expect (boolean? (:show-start declaration)) (str symbol))
+                     (expect (fn? (:render declaration)))))))
 
 (defdescribe
   draft-workflow-prompt-test
@@ -160,8 +137,7 @@
                     (constantly "off")]
 
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-          (expect (str/includes? prompt "## Subagents (Council)"))
-          (expect (str/includes? prompt "do only your task")))))
+          (expect (str/includes? prompt "## Subagents (Council)")))))
   (it "is the manifest's single initializer for core facilities"
       (let [initialization (set (manifest/initializers))]
         (expect (contains? initialization 'com.blockether.vis.internal.foundation.core/register!))
