@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.8] - 2026-11-09
+
 ### Added
 - Python SDK: `vis.ui.bound` gives the limit of a node key from the contract, and `vis.ui.fit` cuts a list or a text to that limit (#453). `vis.testing.bounds` gives the same limits to a test. `python -m blockether.vis.live_check [FILE|-]` checks a view file without Vis: exit 0 when the view is valid, 1 when it has faults, 2 when it cannot read a view: a missing file, empty input, a file that is not JSON or a wrong argument. `LiveRecorder.view_json()` gives the recorded view as wire JSON, and `LiveRecorder(extension=...)` records the view as that extension opens it. An extension that runs outside Vis sets its name with `VIS_OUTSIDE_EXTENSION`.
 
@@ -28,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion and TUI: the team table of a turn now shows the leader as the first row, in the dock and in the transcript: `LEADER`, `waited <t> of <T>` (the time in `council.run` and `council.wait` steps), the newest note or the answer, the time and the status. Before, a stored team showed only its agents, and the leader on the Companion timeline had 0 s. The team counts still count only agents.
 - TUI: in voice conversation, the words that you speak stay in the editor when you press Esc while the TUI sends them. Before, the queue refused the words because a cancel had started, and then the editor cleared, so the words were lost. Now only the step that takes a message clears the editor.
 - Usage: the reasoning tokens of a Claude response are now counted (svar 0.7.226). Before, each Claude step showed 0 reasoning tokens, also when the step spent 28,000 output tokens on thinking. Anthropic sends the count in `output_tokens_details.thinking_tokens`, and svar did not read it. For an Anthropic-compatible endpoint that does not send the count, svar estimates it from the output tokens minus the visible text and tool input, and marks it `estimated?`.
+- Review app: the package now needs `vis-agent>=0.5.8`, the first SDK with `vis.ui.fit`. Before, it needed `vis-agent>=0.4.12`, which does not have `vis.ui.fit`, so the app failed to load with an older SDK.
 - Review app: the review opens in a repository with many findings (#453). Before, one large log file gave 1890 diff threads, and the engine refused the view, because a diff takes at most 200. The review now shows errors first and tells how many findings it does not show. When the engine refuses a node, the error now names the broken rule of the node's own type, not each possible node type. The error is one short line for each broken rule, with no schema URL, for example `node diff: /threads: the array has 201 items, the maximum is 200 (maxItems)`.
 
 ## [v0.5.7] - 2026-11-08

@@ -5,7 +5,7 @@ description = "Review what a session changed: a journal of every block, diffs, c
 keywords = ["review", "diff", "undo", "development"]
 requires-python = ">=3.12"
 dependencies = [
-  "vis-agent>=0.4.12",
+  "vis-agent>=0.5.8",
   "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v3.3.2",
 ]
 
