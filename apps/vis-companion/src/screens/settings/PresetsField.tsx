@@ -148,63 +148,59 @@ export function PresetsField({
 
   return (
     <div className="flex min-w-0 flex-col gap-3 px-3 py-2 sm:px-4">
-      {/* The chosen preset sits on the right, like the picker of every closed-choice row. */}
-      {/* The text keeps a readable width; on a phone the controls wrap below it, still on the right. */}
-      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-[1_1_16rem]">
-          <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
-          {toggle.description && (
-            <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>
+      <div className="min-w-0">
+        <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
+        {toggle.description && (
+          <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>
+        )}
+      </div>
+      {/* The picker has its own line, so a longer preset name or the verbs of an own preset do not move the text. */}
+      <div className="flex min-w-0 items-center gap-2 mouse:gap-1">
+        <Select
+          className="min-w-0 flex-1"
+          aria-label={toggle.label}
+          aria-busy={busy}
+          disabled={locked || draft !== null}
+          options={choices}
+          value={value.active}
+          onValueChange={(active) => {
+            if (active !== value.active) void save({ ...value, active });
+          }}
+        />
+        <div role="group" aria-label={`Actions for ${toggle.label}`} className="flex items-center gap-2 mouse:gap-1">
+          <IconButton
+            type="button"
+            variant="quiet"
+            label="New preset"
+            title="New preset"
+            disabled={locked || isFull || draft !== null || isDeleteAsked}
+            onClick={() => setDraft({ name: freeName(value, options), slots: presetSlots(value, options) })}
+          >
+            <PlusIcon className="size-4" />
+          </IconButton>
+          {custom && (
+            <>
+              <IconButton
+                type="button"
+                label={`Edit ${custom.name}`}
+                title="Edit"
+                disabled={locked || draft !== null || isDeleteAsked}
+                onClick={() => setDraft({ editing: custom.name, name: custom.name, slots: presetSlots(value, options) })}
+              >
+                <PencilIcon />
+              </IconButton>
+              <IconButton
+                type="button"
+                variant="remove"
+                label={`Delete ${custom.name}`}
+                title="Delete"
+                disabled={locked || draft !== null || isDeleteAsked}
+                onClick={() => setDeleteAsked(true)}
+              >
+                <TrashIcon className="size-3.5" />
+              </IconButton>
+            </>
           )}
-        </div>
-        {/* The verbs stand beside the preset that they change, as on an automation. */}
-        <div className="ms-auto flex shrink-0 items-center gap-2 mouse:gap-1">
-          <Select
-            className="self-center"
-            aria-label={toggle.label}
-            aria-busy={busy}
-            disabled={locked || draft !== null}
-            options={choices}
-            value={value.active}
-            onValueChange={(active) => {
-              if (active !== value.active) void save({ ...value, active });
-            }}
-          />
-          <div role="group" aria-label={`Actions for ${toggle.label}`} className="flex items-center gap-2 mouse:gap-1">
-            <IconButton
-              type="button"
-              variant="quiet"
-              label="New preset"
-              title="New preset"
-              disabled={locked || isFull || draft !== null || isDeleteAsked}
-              onClick={() => setDraft({ name: freeName(value, options), slots: presetSlots(value, options) })}
-            >
-              <PlusIcon className="size-4" />
-            </IconButton>
-            {custom && (
-              <>
-                <IconButton
-                  type="button"
-                  label={`Edit ${custom.name}`}
-                  title="Edit"
-                  disabled={locked || draft !== null || isDeleteAsked}
-                  onClick={() => setDraft({ editing: custom.name, name: custom.name, slots: presetSlots(value, options) })}
-                >
-                  <PencilIcon />
-                </IconButton>
-                <IconButton
-                  type="button"
-                  variant="remove"
-                  label={`Delete ${custom.name}`}
-                  title="Delete"
-                  disabled={locked || draft !== null || isDeleteAsked}
-                  onClick={() => setDeleteAsked(true)}
-                >
-                  <TrashIcon className="size-3.5" />
-                </IconButton>
-              </>
-            )}
-          </div>
         </div>
       </div>
       {draft === null && (
