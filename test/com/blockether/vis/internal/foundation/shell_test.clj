@@ -1198,7 +1198,7 @@
               env {:session-id sid}
               id "large"]
 
-          (try (shell-bg* env id "seq 1 10000; printf 'ready> '; read ignored")
+          (try (shell-bg* env id "seq 1 10000; printf 'ready> '; read ignored" {"stdin" "tty"})
                (poll #(slurp (shell-log/log-file sid id)) #(str/ends-with? % "ready> ") 200)
                ;; The old SubVector tail kept all 10,000 source lines reachable.
                ;; Disk is the only output store, even while the process is alive.
@@ -1424,24 +1424,25 @@
                        (let [sid "shell-ext-send"
                              env {:session-id sid}]
 
-                         (try (shell-bg* env "echoer" "read x; echo GOT:$x; sleep 60")
-                              (let [snt (:result (shell-send* env "echoer" "hi-there"))]
-                                (expect (= "running" (get snt "status")))
-                                ;; The card must be able to show WHAT was typed, not
-                                ;; just how many chars it was — and the keystrokes are
-                                ;; the LABEL, never a second spelling of `out`.
-                                (expect (= "" (get snt "out")))
-                                (expect (= "\"hi-there\" ↵" (get snt "keys"))))
-                              (let [hit? (fn [r]
-                                           (str/includes? (str (get r "out")) "GOT:hi-there"))
-                                    r (poll #(:result (shell-logs* env "echoer")) hit?)]
+                         (try
+                           (shell-bg* env "echoer" "read x; echo GOT:$x; sleep 60" {"stdin" "tty"})
+                           (let [snt (:result (shell-send* env "echoer" "hi-there"))]
+                             (expect (= "running" (get snt "status")))
+                             ;; The card must be able to show WHAT was typed, not
+                             ;; just how many chars it was — and the keystrokes are
+                             ;; the LABEL, never a second spelling of `out`.
+                             (expect (= "" (get snt "out")))
+                             (expect (= "\"hi-there\" ↵" (get snt "keys"))))
+                           (let [hit? (fn [r]
+                                        (str/includes? (str (get r "out")) "GOT:hi-there"))
+                                 r (poll #(:result (shell-logs* env "echoer")) hit?)]
 
-                                (expect (hit? r))
-                                (let [stopped (:result (shell-stop* env "echoer"))]
-                                  (expect (= "stopped" (get stopped "status")))
-                                  (expect (= "" (get stopped "out")))
-                                  (expect (hit? (:result (shell-logs* env "echoer"))))))
-                              (finally (resources/stop-all! sid))))))))
+                             (expect (hit? r))
+                             (let [stopped (:result (shell-stop* env "echoer"))]
+                               (expect (= "stopped" (get stopped "status")))
+                               (expect (= "" (get stopped "out")))
+                               (expect (hit? (:result (shell-logs* env "echoer"))))))
+                           (finally (resources/stop-all! sid))))))))
              (it "refuses a send to an unknown id and to an exited shell"
                  (with-shell-on (fn []
                                   (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -1455,6 +1456,62 @@
                                            (expect (threw? #(shell-send* env "gone" "x")))
                                            (finally (resources/stop-all! sid)))))))))
 
+;; A command that read stdin hung for hours: nothing ever wrote to it and nothing closed it.
+(defdescribe
+  shell-stdin-test
+  (it "gives a command end of input at once unless it asks for the terminal"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid "shell-stdin-eof"
+              env {:session-id sid}]
+
+          (try (let [r (do (shell* env {"command" "cat; echo DONE:$?" "id" "eof"})
+                           (wait* env "eof" 10))]
+                 (expect (= "exited" (get r "status")))
+                 (expect (str/includes? (get r "out") "DONE:0")))
+               (let [r (:result (shell* env
+                                        {"command" "read x; echo GOT:$x"
+                                         "id" "tty"
+                                         "stdin" "tty"
+                                         "timeout_secs" 1}))]
+                 (expect (= "running" (get r "status")))
+                 (shell-send* env "tty" "typed")
+                 (expect (str/includes? (get (wait* env "tty" 10) "out") "GOT:typed")))
+               (expect (threw? #(shell* env {"command" "true" "id" "bad" "stdin" "pipe"})))
+               (finally (resources/stop-all! sid))))))
+  (it "gives an internal argv run end of input"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [r (shell/run-argv {} ["cat"] {"timeout_secs" 10})]
+          (expect (= 0 (get r "exit")))
+          (expect (false? (get r "timed_out"))))))
+  (it "reads a blocking terminal read from /proc/<pid>/syscall"
+      (let [read-fd @#'shell/terminal-read-fd]
+        (expect
+          (= 0 (read-fd "0 0x0 0x7ffd5c1b3c47 0x1 0x0 0x0 0x0 0x7ffd5c1b3c28 0x7f3a1c2e4992" 0)))
+        ;; Captured from Linux aarch64: `cat </dev/tty` (read on fd 0), then `sleep 5`.
+        (expect (= 0
+                   (read-fd
+                     "63 0x0 0xffffa8ae9000 0x10000 0x0 0x0 0x0 0xffffe9c4a780 0xffffa8aa0cfc"
+                     63)))
+        (expect
+          (nil? (read-fd
+                  "101 0xffffcced8518 0xffffcced8518 0x0 0x0 0x0 0x0 0xffffcced84d0 0xffff87353cfc"
+                  63)))
+        (expect (nil? (read-fd "61 0x3 0x0 0x0 0x0 0x0 0x0 0xffffd280 0xffff8a1c" 63)))
+        (expect (nil? (read-fd "-1 0x7ffd5c1b3c28 0x7f3a1c2e4992" 0)))
+        (expect (nil? (read-fd "running" 0)))))
+  (it "says when a running command printed nothing and used no CPU through a wait"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid "shell-stdin-quiet"
+              env {:session-id sid}]
+
+          (try (shell* env {"command" "sleep 30" "id" "quiet" "timeout_secs" 1})
+               (with-redefs-fn {#'shell/quiet-note-ms 500}
+                 (fn []
+                   (let [r (wait* env "quiet" 2)]
+                     (expect (true? (get r "timed_out")))
+                     (expect (str/includes? (str (get r "note")) "No output")))))
+               (finally (resources/stop-all! sid)))))))
+
 (defdescribe
   shell-bg-lifecycle-op-test
   (it "drives start -> logs -> send -> stop through one options map"
@@ -1467,7 +1524,8 @@
               (try (let [start (:result (shell* env
                                                 {"command" "read x; echo GOT:$x; sleep 30"
                                                  "op" "background"
-                                                 "id" "ops"}))]
+                                                 "id" "ops"
+                                                 "stdin" "tty"}))]
                      (expect (= "running" (get start "status"))))
                    (let [logs (:result (shell* env {"op" "logs" "id" "ops" "n" 5}))]
                      (expect (= "logs" (get logs "stage"))))
@@ -1744,7 +1802,8 @@
                 ks #(set (keys %))]
 
             (try (let [run (:result (shell* env {"command" "echo hi"}))
-                       bg (:result (shell* env {"command" "read x; echo got:$x" "id" "s1"}))
+                       bg (:result
+                            (shell* env {"command" "read x; echo got:$x" "id" "s1" "stdin" "tty"}))
                        logs2 (:result (shell-logs* env "s1"))
                        logs (:result (shell-logs* env "s1"))
                        sent (:result (shell-send* env "s1" "yes"))
@@ -2068,7 +2127,7 @@
 
         (spit secret "TOP-SECRET")
         (try (binding [workspace/*workspace-root* (.getCanonicalPath ws)]
-               (let [started (:result (shell-bg* env "pty" cmd))
+               (let [started (:result (shell-bg* env "pty" cmd {"stdin" "tty"}))
                      ready? (fn [r]
                               (str/includes? (str (get r "out")) "READY"))
                      before (poll #(:result (shell-logs* env "pty")) ready?)]
@@ -2142,28 +2201,32 @@
                                  "seen = [bool(r['timed_out']), r['status'], took < 45]\n"
                                  "sh.stop()\n" "seen"))))
              (finally (resources/stop-all! sid)))))
-  (it "answers with a HANDLE whose own methods drive the process"
-      ;; Phase 8: the three id-taking verbs are gone from the model's surface. What
-      ;; came back IS the object you drive — and it is still an ordinary dict.
-      (let [sid
-            (str "py-handle-" (System/nanoTime))
+  (it
+    "answers with a HANDLE whose own methods drive the process"
+    ;; Phase 8: the three id-taking verbs are gone from the model's surface. What
+    ;; came back IS the object you drive — and it is still an ordinary dict.
+    (let [sid
+          (str "py-handle-" (System/nanoTime))
 
-            c
-            (py-ctx {:session-id sid})]
+          c
+          (py-ctx {:session-id sid})]
 
-        ;; Regression: slicing type/stop output raised TypeError after the operation succeeded.
-        (try (expect (= [true "__VisShell__" false true "exited" false "" "" true]
-                        (py c
-                            (str
-                              "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle'}))\n"
-                              "sent = sh.type('ready')['out'][-300:]\n"
-                              "w = sh.wait(30)\n"
-                              "seen = ['got ready' in w['out'], w['status'], w['timed_out']]\n"
-                              "stopped = sh.stop()\n"
-                              "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals()]"
-                              " + seen + [sent, stopped.out[-300:],"
-                              " 'got ready' in sh.logs(-7)['out']]"))))
-             (finally (resources/stop-all! sid)))))
+      ;; Regression: slicing type/stop output raised TypeError after the operation succeeded.
+      (try
+        (expect
+          (=
+            [true "__VisShell__" false true "exited" false "" "" true]
+            (py
+              c
+              (str
+                "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle', 'stdin':'tty'}))\n"
+                "sent = sh.type('ready')['out'][-300:]\n"
+                "w = sh.wait(30)\n"
+                "seen = ['got ready' in w['out'], w['status'], w['timed_out']]\n"
+                "stopped = sh.stop()\n"
+                "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals()]"
+                " + seen + [sent, stopped.out[-300:]," " 'got ready' in sh.logs(-7)['out']]"))))
+        (finally (resources/stop-all! sid)))))
   (it "reads a LINE window on the handle, folds `n`, and refuses a keyword by name"
       ;; A near-miss keyword used to cross as an unread key: `sh.logs(n=10)` came
       ;; back as if nothing had been asked, and there was no line switch at all —
@@ -2757,14 +2820,16 @@
                                 (finally (resources/stop-all! sid)
                                          (shell-log/delete-session-logs! sid))))))))
   (it
-    "a spawned shell keeps a writable stdin, so an interactive command can be answered"
+    "a shell started with stdin tty keeps a writable stdin, so an interactive command can be answered"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let [sid "shell-stdin"
                 env {:session-id sid}
                 _ (shell* env
-                          {"command" "read answer; printf 'got %s\\n' \"$answer\"" "id" "asker"})]
+                          {"command" "read answer; printf 'got %s\\n' \"$answer\""
+                           "id" "asker"
+                           "stdin" "tty"})]
 
             (try (Thread/sleep 300)
                  (shell* env {"op" "send" "id" "asker" "text" "yes"})

@@ -258,6 +258,23 @@ def test_shell_runs_a_command_and_answers_the_engine_shape():
     assert run.logs()["out"] == "hello"
 
 
+# A command that read stdin hung for hours: nothing ever wrote to it and nothing closed it.
+def test_shell_stdin_is_empty_unless_the_command_asks_for_input():
+    started = time.monotonic()
+    run = vis.shell({"command": "cat; echo DONE:$?"}).wait(10)
+    assert run["status"] == "exited"
+    assert run["out"] == "DONE:0\n"
+    assert time.monotonic() - started < 5
+    with pytest.raises(_outside.Refused, match="stdin"):
+        run.type("late")
+
+    asker = vis.shell({"command": "read x; echo GOT:$x", "stdin": "tty"})
+    asker.type("typed")
+    assert asker.wait(10)["out"] == "GOT:typed\n"
+    with pytest.raises(_outside.Refused, match="stdin"):
+        vis.shell({"command": "true", "stdin": "pipe"})
+
+
 def _aged_log(path, days):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("diagnostic")

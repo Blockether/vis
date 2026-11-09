@@ -831,6 +831,8 @@
    "rss_bytes" nil
    "timed_out" false
    "timeout_secs" nil
+   ;; A `wait` that ended because the process blocks in a read on its terminal.
+   "waiting_for_input" false
    ;; OUTPUT, under ONE name everywhere: `out` — what a run captured, and what a
    ;; log read returned. Named for what it HOLDS, not for one of the two fds it
    ;; arrived on: every command runs under a real pty, where stdout and stderr ARE
@@ -914,6 +916,9 @@
                 (catch Throwable t (shell-log/close! sink) (throw t)))]
 
        (try (when on-spawn (on-spawn p))
+            ;; Nothing writes to this child's stdin, so it gets end of input at once: a
+            ;; program that reads stdin must not wait for bytes that can never come.
+            (try (.close (.getOutputStream p)) (catch Exception _ nil))
             (when own-log?
               (shell-log/index! (:db-info env)
                                 (:session-id env)
@@ -1500,6 +1505,43 @@
                                         (.pid h))
                                       handles))))))
 
+(def ^:private read-syscall
+  "Number of the `read` syscall in `/proc/<pid>/syscall`, by `os.arch`. x86-64 has its
+   own table; arm64 uses the generic table."
+  {"amd64" 0 "x86_64" 0 "aarch64" 63 "arm64" 63})
+
+(defn- terminal-read-fd
+  "The fd that one `/proc/<pid>/syscall` line shows a blocking `read` on, or nil. The
+   line is the syscall number, then its arguments in hex. `running` and `-1` mean that
+   the process is not in a syscall."
+  [line read-nr]
+  (let [[nr fd] (str/split (str/trim (str line)) #"\s+")]
+    (when (and fd (= (str read-nr) nr))
+      (try (Long/decode ^String fd) (catch NumberFormatException _ nil)))))
+
+(defn- terminal-reader
+  "The pid in the tree of `pid` that blocks in `read` on a terminal, or nil. Only Linux
+   shows the blocking syscall: macOS gives no wait channel, so there a program that waits
+   for input and a program that sleeps look the same, and this answers nil."
+  [pid]
+  (when-let [nr (and (= "Linux" (System/getProperty "os.name"))
+                     (read-syscall (System/getProperty "os.arch")))]
+    (some (fn [^ProcessHandle h]
+            (let [p (.pid h)]
+              (try (when-let [fd (terminal-read-fd (slurp (str "/proc/" p "/syscall")) nr)]
+                     (let [target (str (Files/readSymbolicLink
+                                         (.toPath (io/file (str "/proc/" p "/fd/" fd)))))]
+                       (when (or (str/starts-with? target "/dev/pts/") (= "/dev/tty" target)) p)))
+                   ;; The process exited, or the kernel refused the read: no answer.
+                   (catch Exception _ nil))))
+          (tree-handles pid))))
+
+(def ^:private quiet-note-ms
+  "A wait at least this long with no output and almost no CPU adds a note: the process
+   can wait for input, a lock or the network. Only a note, because the signs are the same
+   for all three."
+  30000)
+
 (defn- bg-core
   "Identity keys shared by EVERY background stage of `shell`, merged onto the
    TOTAL base. `op` names the stage that produced the result, so consumers and
@@ -1570,6 +1612,23 @@
                         deref)
          "attach" (when bridge (str "vis-agent extension shell attach " id))}))))
 
+(defn- stdin-tty?
+  "Whether a new shell reads its stdin from the terminal. By default its stdin is empty:
+   a program that read an open terminal stdin waited for hours for bytes that nothing
+   typed. `{\"stdin\": \"tty\"}` keeps the terminal, so `sh.type` reaches the program."
+  [opts]
+  (let [v (get opts "stdin")]
+    (case (some-> v
+                  str)
+      (nil "null")
+      false
+
+      "tty"
+      true
+
+      (throw (ex-info (str "shell `stdin` is \"tty\" or \"null\", not " (pr-str v) ".")
+                      {:type ::bad-stdin :stdin v})))))
+
 (defn- shell-bg-spawn!
   "Spawn a NEW background PTY under `id`. Callers guarantee no LIVE entry holds
    the id (`shell-bg-impl` owns that check); an exited-but-unread entry under
@@ -1584,7 +1643,10 @@
         ;; ONE command, so the script the pty is fed and the line the entry keeps are
         ;; the same string — there is no group to join.
         script
-        (str command)]
+        (str command)
+
+        stdin-tty?
+        (stdin-tty? opts)]
 
     (when (str/blank? id)
       (throw (ex-info "The shell background op needs a non-blank resource id ({\"id\": …})."
@@ -1617,7 +1679,8 @@
           (shell-log/open! session id)
 
           p
-          (try (pty-spawn! script dir policy) (catch Throwable t (shell-log/close! sink) (throw t)))
+          (try (pty-spawn! (if stdin-tty? script (str "exec 0</dev/null; " script)) dir policy)
+               (catch Throwable t (shell-log/close! sink) (throw t)))
 
           exit-atom
           (atom nil)
@@ -1699,6 +1762,7 @@
          :stopped? stopped?
          :send (:send p)
          :bridge bridge
+         :stdin-tty? stdin-tty?
          :command script
          :script script
          :dir (.getPath dir)
@@ -2209,7 +2273,7 @@
         (capped-capture max-sync-head-chars max-sync-tail-chars)
 
         finish
-        (fn [res nxt]
+        (fn [res nxt reader]
           (let [snap
                 ((:snapshot acc))
 
@@ -2221,24 +2285,54 @@
                 res
                 (if (= "running" (get res "status"))
                   (merge res (process-usage (get res "pid")))
-                  res)]
+                  res)
 
-            (extension/success {:result (assoc res
-                                          "stage" "wait"
-                                          "offset" start
-                                          "next_offset" nxt
-                                          "out" (normalize-terminal-output (:text snap))
-                                          "out_omitted_chars" (long (or (:omitted snap) 0))
-                                          ;; The WAIT expired, not the process: a still-running child means
-                                          ;; the deadline ended this call and the shell keeps its id.
-                                          "timed_out" (= "running" (get res "status"))
-                                          "timeout_secs" secs
-                                          "duration_ms" (- (util/now-ms) t0))
-                                :op :_shell-wait
-                                :metadata {:id id
-                                           :started-at-ms t0
-                                           :finished-at-ms (util/now-ms)
-                                           :duration-ms (- (util/now-ms) t0)}})))]
+                elapsed-ms
+                (- (util/now-ms) t0)
+
+                quiet?
+                (and (nil? reader)
+                     (= "running" (get res "status"))
+                     (str/blank? (:text snap))
+                     (>= elapsed-ms (long quiet-note-ms))
+                     (some-> (get res "cpu_percent")
+                             double
+                             (< 1.0)))
+
+                res
+                (cond-> res
+                  reader
+                  (assoc "note"
+                    (str "The process waits for terminal input: pid " reader
+                         " blocks in a read on "
+                         "its terminal. Type with sh.type(text), or stop it with sh.stop()."))
+
+                  (and quiet? (nil? (get res "note")))
+                  (assoc "note"
+                    (str "No output and almost no CPU for "
+                         (quot elapsed-ms 1000)
+                         " s: the process "
+                         "can wait for input, a lock or the network. sh.logs(-20) shows its last "
+                         "lines, and sh.stop() stops it.")))]
+
+            (extension/success
+              {:result (assoc res
+                         "stage" "wait"
+                         "offset" start
+                         "next_offset" nxt
+                         "out" (normalize-terminal-output (:text snap))
+                         "out_omitted_chars" (long (or (:omitted snap) 0))
+                         ;; The WAIT expired, not the process: a still-running child means
+                         ;; the deadline ended this call and the shell keeps its id.
+                         "timed_out" (and (nil? reader) (= "running" (get res "status")))
+                         "waiting_for_input" (some? reader)
+                         "timeout_secs" secs
+                         "duration_ms" (- (util/now-ms) t0))
+               :op :_shell-wait
+               :metadata {:id id
+                          :started-at-ms t0
+                          :finished-at-ms (util/now-ms)
+                          :duration-ms (- (util/now-ms) t0)}})))]
 
     (loop [off
            start
@@ -2253,6 +2347,10 @@
            ;; is complete. The read that first sees the exit took its chunk before it
            ;; looked at the status, so it can still miss the tail.
            exit-seen?
+           false
+
+           ;; Whether the last /proc probe saw the process block in a terminal read.
+           reader-seen?
            false]
 
       (let [res
@@ -2276,18 +2374,33 @@
             (long (or (get res "next_offset") off))
 
             idle
-            (if (= "" text) idle 0)]
+            (if (= "" text) idle 0)
+
+            ;; One /proc probe every ten idle reads, about twice a second.
+            probe?
+            (and (pos? idle) (zero? (mod (long idle) 10)) (= "running" (get res "status")))
+
+            reader
+            (when probe? (terminal-reader (get res "pid")))
+
+            ;; A program can block in a read for a moment. Two probes with no output
+            ;; between them show that it waits for input.
+            seen?
+            (cond (not= "" text) false
+                  probe? (some? reader)
+                  :else reader-seen?)]
 
         ((:append! acc) text)
-        (cond (>= (util/now-ms) deadline) (finish res nxt)
-              (not (get res "is_eof")) (recur nxt 0 exit-seen?)
+        (cond (>= (util/now-ms) deadline) (finish res nxt nil)
+              (not (get res "is_eof")) (recur nxt 0 exit-seen? false)
+              (and reader reader-seen?) (finish res nxt reader)
               (= "running" (get res "status"))
-              (recur nxt (inc idle) (await-exit env id (wait-idle-poll-ms idle)))
+              (recur nxt (inc idle) (await-exit env id (wait-idle-poll-ms idle)) seen?)
               ;; Exited: one more read, with no sleep, unless this read already
               ;; started after the exit. A silent command no longer waits out a
               ;; drain window that only guessed when the pump was done.
-              exit-seen? (finish res nxt)
-              :else (recur nxt (inc idle) true))))))
+              exit-seen? (finish res nxt nil)
+              :else (recur nxt (inc idle) true seen?))))))
 
 (def ^:private control-key-names
   "Human names for the control characters `send` writes into a PTY, so its factual
@@ -2360,10 +2473,15 @@
              t (util/now-ms)]
 
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
-         (extension/success {:result (assoc (bg-core "send" id entry) "keys" (keys-label payload))
-                             :op :_shell-type
-                             :metadata
-                             {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
+         (extension/success
+           {:result (cond-> (assoc (bg-core "send" id entry) "keys" (keys-label payload))
+                      (not (:stdin-tty? entry))
+                      (assoc "note"
+                        (str "The stdin of this shell is empty, so only a program that "
+                             "opens its terminal reads this. To type into stdin, start "
+                             "the command with {\"stdin\": \"tty\"}.")))
+            :op :_shell-type
+            :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
 ;; Internal lifecycle grammar — the model calls `shell` /
 
@@ -3030,6 +3148,11 @@
        "write their answer into the same handle and return it, so `sh` stays current after "
        "`sh.wait(30)`. A log page is a separate object. Calling `shell` again with a live `id` "
        "returns that shell.\n\n"
+       "The stdin of a command is empty, so a program that reads it gets end of input at once. Give "
+       "`{\"stdin\": \"tty\"}` for a program that reads `sh.type(text)` or a person's answer on its "
+       "stdin. When a program waits for input on its terminal, `sh.wait` returns early with "
+       "`waiting_for_input` true (exact on Linux only). A wait with no output and almost no CPU adds a "
+       "`note`.\n\n"
        "Never trim output inside the command. `| head`, `| tail`, `| grep`, `2>/dev/null` and `> "
        "file` throw away bytes that the handle keeps whole. A pipeline also reports the exit of its "
        "LAST stage, so a failed build looks green. Run the command plain. Then clip a log page "
@@ -3040,7 +3163,8 @@
        "map for a secret, because a literal stays in the transcript. Use null to unset a variable. "
        "Example: `print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"out\"])`.")
      :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
-              {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}]
+              {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}
+              {:name "stdin" :note "\"tty\" lets the program read sh.type; empty by default"}]
      :ticker-fn (shell-ticker "run")
      :inject-env? true
      :tag :mutation
@@ -3167,7 +3291,7 @@
       "- `sh = await shell(cmd, cwd=dir)` starts one `bash -lc` command and returns its handle at "
       "once, while the program runs.\n"
       "- `sh.wait(300)` waits up to 300 s, `sh.logs(-50)` gives the last 50 lines, `sh.type(text)` "
-      "sends input and `sh.stop()` stops it. Each returns the handle with `status`, `exit` and "
+      "sends input to a command started with `stdin=\"tty\"` and `sh.stop()` stops it. Each returns the handle with `status`, `exit` and "
       "`out`.\n"
       "- Example: `print((await shell(\"npm test\")).wait(300).out)`. `doc(\"shell\")` gives the rest.")))
 

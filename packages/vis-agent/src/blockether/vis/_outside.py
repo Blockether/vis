@@ -386,6 +386,7 @@ _SHELL_RESULT_KEYS = (
     "rss_bytes",
     "timed_out",
     "timeout_secs",
+    "waiting_for_input",
     "out",
     "out_omitted_chars",
     "offset",
@@ -481,7 +482,7 @@ def _start_log_sweeper(log_root):
 
 
 class _Run:
-    def __init__(self, command, cwd, timeout_secs, env):
+    def __init__(self, command, cwd, timeout_secs, env, stdin=None):
         self.id = "sh-" + secrets.token_hex(4)
         self.command = command
         self.cwd = str(Path(cwd).expanduser()) if cwd else os.getcwd()
@@ -503,7 +504,9 @@ class _Run:
             else ["/bin/sh", "-c", command],
             cwd=self.cwd,
             env={**os.environ, **(env or {})},
-            stdin=subprocess.PIPE,
+            # Empty stdin unless asked, as in the engine: a program that reads stdin
+            # must not wait for bytes that nothing types.
+            stdin=subprocess.PIPE if stdin == "tty" else subprocess.DEVNULL,
             stdout=self._sink,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -589,6 +592,7 @@ def _result(run, stage, **extra):
             "log_path": run.log_path,
             "timed_out": run.timed_out,
             "timeout_secs": run.timeout_secs,
+            "waiting_for_input": False,
             "out": out,
             "out_omitted_chars": omitted,
             "offset": 0,
@@ -626,11 +630,15 @@ def shell(opts):
     opts = dict(opts or {})
     op = str(opts.get("op") or "run").strip()
     if op in _SPAWN_OPS:
+        stdin = opts.get("stdin")
+        if stdin not in (None, "null", "tty"):
+            raise Refused(f'shell `stdin` is "tty" or "null", not {stdin!r}.')
         run = _Run(
             opts.get("command"),
             opts.get("cwd"),
             opts.get("timeout_secs"),
             opts.get("env"),
+            stdin,
         )
         # A named spawn (the engine's `background`) keeps the id it was given, so
         # the same name reaches the same process on the next call.
@@ -657,6 +665,11 @@ def shell(opts):
         text = str(opts.get("text", ""))
         if opts.get("is_enter", True):
             text += "\n"
+        if run.process.stdin is None:
+            raise Refused(
+                "The stdin of this shell is empty. To type into it, start the "
+                'command with {"stdin": "tty"}.'
+            )
         try:
             run.process.stdin.write(text.encode("utf-8"))
             run.process.stdin.flush()

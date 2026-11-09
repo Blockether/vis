@@ -1613,7 +1613,9 @@ merged configuration on disk, re-read at every spawn, and works with or without 
 `vis.shell({...})` applies no jail at all.
 
 Both calls return the same live handle: `sh.logs()`, `sh.wait(30)`, `sh.type("y")` and
-`sh.stop()` drive the process you started.
+`sh.stop()` drive the process you started. The stdin of the child is empty, so a program that
+reads it gets end of input at once. To answer a prompt with `sh.type("y")`, add
+`"stdin": "tty"` to the call.
 
 A jailed child sees the session's roots and the egress proxy, which is rarely everything a
 language runtime needs. Two options on `vis.jailed_shell` add exactly what you created for
