@@ -204,7 +204,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/skjema` | `0.3.4` | MIT | 77 KB | Blockether (in-house) |
+| `com.blockether/skjema` | `0.3.5` | MIT | 77 KB | Blockether (in-house) |
 
 ---
 
