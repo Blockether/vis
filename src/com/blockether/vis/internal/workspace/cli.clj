@@ -3,10 +3,11 @@
    every session in it."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.registry :as registry]
-            [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.workspace.core :as workspace]))
+            [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.loop :as lp]))
 
 (defn- match-projects
   "Projects from `projects` selected by `input`: an exact id wins outright,
@@ -77,50 +78,48 @@
   (shutdown-agents))
 
 (defn- delete-project-tree!
-  "Delete project `project-id` and return a summary; prints nothing.
+  "Delete project `project-id` through the gateway and return a summary; prints nothing.
 
    Without `:with-sessions` this is the SCATTER delete the schema has always
-   had: the row goes and its sessions survive as project-less. With it, every
-   MEMBER session tree is deleted FIRST — an interrupted teardown must leave a
-   project holding survivors, never orphans with a dead parent. Membership is
-   not a client's visible list: untitled and empty conversations are members
-   too, and a caller fanning out over what it can see would keep the rest."
-  [d project-id {:keys [with-sessions]}]
+   had: the row goes and its sessions survive as project-less. With it, the gateway
+   deletes every MEMBER session first, also the untitled and empty ones, and stops
+   the sessions that it has loaded: a running turn must not write the files of a
+   deleted session again."
+  [project-id {:keys [with-sessions]}]
   (let [pid
         (str project-id)
 
         member-ids
-        (vec (lp/project-session-ids pid))]
+        (vec (lp/project-session-ids pid))
 
-    (when with-sessions
-      (doseq [sid member-ids]
-        ;; Same order as `vis-agent sessions delete`: trash the draft clones
-        ;; (primary + auto-cloned roots) before the DB tree, and deref so
-        ;; reclamation finishes before this one-shot JVM exits.
-        (try (some-> (workspace/discard-session-clones! d sid)
-                     deref)
-             (catch Throwable _ nil))
-        (lp/delete! sid)))
-    (lp/delete-project! pid)
+        response
+        (gateway-client/request! :delete
+                                 (cond-> (str "/v1/projects/" pid)
+                                   with-sessions
+                                   (str "?is_recursive=true")))]
+
+    (when-not (<= 200 (long (:status response)) 299)
+      (throw (ex-info (str "The gateway answered HTTP " (:status response) ": " (:body response))
+                      {:vis/user-error true})))
     {:project-id pid
-     :deleted-session-ids (if with-sessions member-ids [])
+     :deleted-session-ids
+     (if with-sessions
+       (mapv str (get (wire/parse-json (str (:body response))) "deleted_session_ids"))
+       [])
      :kept-session-ids (if with-sessions [] member-ids)}))
 
 (defn- cli-delete-project!
   "`vis-agent projects delete <PROJECT-ID> [--with-sessions]` handler."
   [parsed _residual]
   (config/init-cli!)
-  (let [d
-        (lp/db-info)
-
-        project
+  (let [project
         (project-or-exit! (get parsed "project-id"))
 
         with-sessions
         (boolean (get parsed "with-sessions"))
 
         {:keys [project-id deleted-session-ids kept-session-ids]}
-        (delete-project-tree! d (:id project) {:with-sessions with-sessions})]
+        (delete-project-tree! (:id project) {:with-sessions with-sessions})]
 
     (commandline/stdout! (str "Deleted project "
                               project-id

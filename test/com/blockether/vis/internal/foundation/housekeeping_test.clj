@@ -3,9 +3,9 @@
    directories `sweep-stale!` deletes on its own.
 
    Everything here runs against throwaway directories bound through
-   `workspace/*drafts-home*` and — for every sweep test, ALL FOUR at once via
-   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*python-home*`
-   and `*events-home*`; no test may read, let alone delete,
+   `workspace/*drafts-home*` and — for every sweep test, ALL FIVE at once via
+   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*python-home*`,
+   `*events-home*` and `*sandbox-home*`; no test may read, let alone delete,
    anything under the real `~/.vis`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
@@ -506,10 +506,10 @@
     (.getPath d)))
 
 (defn- with-homes
-  "Call `f` with ALL FOUR sweep seams pointed at throwaway directories. A test
+  "Call `f` with ALL FIVE sweep seams pointed at throwaway directories. A test
    that bound only the seam it cares about would leave the other targets
    resolving to the operator's real `~/.vis` — and this sweep deletes."
-  [{:keys [logs cache events python]} f]
+  [{:keys [logs cache events python sandbox]} f]
   (binding [housekeeping/*logs-home*
             (seam-path logs "vis-hk-idle-logs")
 
@@ -520,7 +520,10 @@
             (seam-path python "vis-hk-idle-python")
 
             housekeeping/*events-home*
-            (seam-path events "vis-hk-idle-events")]
+            (seam-path events "vis-hk-idle-events")
+
+            housekeeping/*sandbox-home*
+            (seam-path sandbox "vis-hk-idle-sandbox")]
 
     (f)))
 
@@ -1038,7 +1041,7 @@
   (it
     "deletes old temp files in every sandbox folder and keeps young ones and snapshots"
     (let [dir
-          (io/file housekeeping/*sandbox-home*)
+          (tmp-dir "vis-hk-sandbox-temps")
 
           sid
           (str (random-uuid))
@@ -1066,7 +1069,7 @@
                 (Files/createLink (.toPath (io/file dir (str sid ".py"))))))
 
           report
-          (target (with-homes {} #(housekeeping/sweep-stale! nil)) :sandbox-temp)]
+          (target (with-homes {:sandbox dir} #(housekeeping/sweep-stale! nil)) :sandbox-temp)]
 
       (expect (= 3 (:deleted report)))
       (expect (= (* 3 (count "partial")) (:bytes report)))

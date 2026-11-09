@@ -476,21 +476,16 @@
 (defn- cli-delete-session!
   [parsed _residual]
   (config/init-cli!)
-  (let [d
-        (lp/db-info)
+  (let [session
+        (session-or-exit! (lp/db-info) (get parsed "session-id"))
 
-        session
-        (session-or-exit! d (get parsed "session-id"))]
+        ;; The gateway deletes the session, its draft clones and its sandbox state. A
+        ;; gateway that has the session loaded must stop it: a running turn wrote the
+        ;; files of a session that this process had deleted.
+        response
+        (gateway-client/request! :delete (str "/v1/sessions/" (:id session)))]
 
-    ;; DELETE removes the draft too: trash the session's draft clones (primary
-    ;; + auto-cloned filesystem roots) before the DB tree. Draft-only — a trunk
-    ;; workspace's roots are the user's real dirs and are never touched.
-    ;; CLI one-shot: deref so reclamation finishes before the JVM exits (the
-    ;; shared discard executor is a daemon thread and would be killed mid-delete).
-    (try (some-> (workspace/discard-session-clones! d (:id session))
-                 deref)
-         (catch Throwable _ nil))
-    (lp/delete! (:id session))
+    (when-not (<= 200 (long (:status response)) 299) (refuse! (gateway-error response)))
     (commandline/stdout! (str "Deleted session " (:id session)))
     (shutdown-agents)))
 
