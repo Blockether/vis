@@ -3,7 +3,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
             [lazytest.core :refer [defdescribe expect it throws?]])
-  (:import (java.io File)
+  (:import (com.blockether.vispython Locations)
+           (java.io File)
            (java.nio.file Files FileVisitOption LinkOption Path)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)
            (java.time Instant)
@@ -529,13 +530,19 @@
             (System/getProperty "vis.home")
 
             home
-            (System/getProperty "user.home")]
+            (System/getProperty "user.home")
+
+            python-state-below-home?
+            #(= (str (paths/vis-home) "/python") (Locations/stateRoot))]
 
         (try (System/setProperty "vis.home" "~/isolated-vis")
              (expect (= (.getAbsolutePath (File. home "isolated-vis")) (paths/vis-home)))
+             (expect (python-state-below-home?))
              (System/setProperty "vis.home" "relative-vis")
              (expect (= (.getAbsolutePath (File. "relative-vis")) (paths/vis-home)))
+             (expect (python-state-below-home?))
              (System/clearProperty "vis.home")
              (when-not (System/getenv "VIS_HOME") (expect (= (str home "/.vis") (paths/vis-home))))
+             (expect (python-state-below-home?))
              (finally
                (if old (System/setProperty "vis.home" old) (System/clearProperty "vis.home")))))))

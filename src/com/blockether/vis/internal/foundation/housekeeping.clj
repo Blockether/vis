@@ -225,10 +225,9 @@
 (defn- cache-dir ^File [^String sub] (io/file (home-dir *cache-home* ["cache"]) sub))
 
 (defn- python-dir
-  "`~/.vis/python/<sub>`, below `user.home` and not [[paths/vis-home]]: the runtime's
-   `com.blockether.vispython.Locations` owns that tree and reads `user.home`."
+  "`<vis-home>/python/<sub>`, the tree of the runtime's `com.blockether.vispython.Locations`."
   ^File [^String sub]
-  (io/file (or *python-home* (io/file (System/getProperty "user.home") ".vis" "python")) sub))
+  (io/file (or *python-home* (io/file (paths/vis-home) "python")) sub))
 
 (defn- delete-quietly!
   "Delete one path, answering true when this call removed it. A directory that

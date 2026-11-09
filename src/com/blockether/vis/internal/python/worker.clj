@@ -158,7 +158,7 @@
    that the modules exist and publishes again when one is missing."
   []
   (let [root
-        (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")
+        (io/file (Locations/stateRoot) "vis-guest")
 
         k
         (.getAbsolutePath root)
@@ -657,7 +657,11 @@
                                                       runtime-roots
                                                       (some-> packages
                                                               .getCanonicalPath)))
-              extra (cond-> {"VIS_PYTHON_TLS_STRICT" (str (python-runtime/tls-strict?))}
+              ;; #455: a confined worker gets a scrubbed environment. The packaged worker
+              ;; can be an older build, so the host names its state directories.
+              extra (cond-> {"VIS_PYTHON_TLS_STRICT" (str (python-runtime/tls-strict?))
+                             Locations/HOME_ENV (paths/vis-home)
+                             Locations/PYCACHE_PREFIX_ENV (Locations/pycachePrefix)}
                       packages
                       (assoc Locations/PACKAGES_ENV (.getCanonicalPath packages))
 

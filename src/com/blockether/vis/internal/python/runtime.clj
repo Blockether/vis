@@ -132,11 +132,11 @@
 (defonce ^:private library-provisioning-lock (Object.))
 
 (defn- store-version-dir
-  "The `~/.vis/python/<kind>/<version>` tree `path` belongs to, or nil when it
+  "The `<vis-home>/python/<kind>/<version>` tree `path` belongs to, or nil when it
    sits outside this machine's store — a staged native distribution or a built
    checkout, neither of which anything here installs or reclaims."
   ^File [^String kind ^String path]
-  (let [root (.getAbsolutePath (io/file (System/getProperty "user.home") ".vis" "python" kind))]
+  (let [root (.getAbsolutePath (io/file (Locations/stateRoot) kind))]
     (paths/nearest-ancestor (fn [^File dir]
                               (= root
                                  (some-> (.getParentFile dir)
