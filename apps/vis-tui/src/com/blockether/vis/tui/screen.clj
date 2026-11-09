@@ -7293,10 +7293,6 @@
   ;; A refresh was requested while one was already running — loop once more.
   (atom false))
 
-(defonce ^:private refresh-active-tab-notify*
-  ;; Whether any coalesced request asked for the "Switched workspace" toast.
-  (atom false))
-
 (defn- launch-root
   "Canonical path of the launch directory (`user.dir`) — the workspace root the
    auto-project binds to."
@@ -11219,7 +11215,7 @@
                      (when-not (get @session-live-listeners sid)
                        (vswap! session-live-listeners assoc sid (subscribe-session-live! id)))))
                  open-session-tab!
-                 (fn [{:keys [id history] :as session-result} notify? & [background?]]
+                 (fn [{:keys [id history] :as session-result} _ & [background?]]
                    (when (and id session-result)
                      (state/dispatch [:open-session-tab
                                       (select-keys session-result
@@ -11239,9 +11235,7 @@
                      (state/dispatch [:attach-running-turn
                                       (state/tab-id-for-session @state/app-db id) session-result])
                      (warm-session-render! session-result)
-                     (persist-tabs!)
-                     (when notify?
-                       (vis/notify! "Opened session" :level :success :ttl-ms copy-success-ttl-ms))))
+                     (persist-tabs!)))
                  ;; PENDING (name-only, pre-allocated — see restore-project-tabs!)
                  ;; tabs hydrate on FIRST FOCUS: one transcript fetch on a worker,
                  ;; then the normal open path (`:open-session-tab`'s pending
@@ -11300,26 +11294,19 @@
                                 (state/dispatch [:bind-built-session build-id
                                                  {:id id :group-id group-id :project-id project-id}
                                                  history (session-workspace id)])
-                                (persist-tabs!)
-                                (vis/notify! "Opened session"
-                                             :level :success
-                                             :ttl-ms copy-success-ttl-ms))
+                                (persist-tabs!))
                               (catch Throwable e
                                 (vis/notify! (str "Failed to open new session: " (ex-message e))
                                              :level :error
                                              :ttl-ms copy-success-ttl-ms)))))))
-                 refresh-active-tab-impl! (fn [notify?]
+                 refresh-active-tab-impl! (fn []
                                             (let [db @state/app-db]
                                               (when-let [id (current-session-id)]
                                                 (refresh-session-metadata! id)
                                                 (ensure-session-live! id)
                                                 (warm-session-render! {:id id
                                                                        :history (:messages db)})))
-                                            (persist-tabs!)
-                                            (when notify?
-                                              (vis/notify! "Switched workspace"
-                                                           :level :success
-                                                           :ttl-ms copy-success-ttl-ms)))
+                                            (persist-tabs!))
                  ;; Tab/workspace switches only need to REPAINT — already done by the
                  ;; `:select-tab-index` dispatch's render-version bump. The title
                  ;; refresh + bubble warm + persist are settle-after work; running them
@@ -11330,8 +11317,7 @@
                  ;; size. The worker reads app-db fresh, so it always refreshes the tab
                  ;; that is active WHEN it runs.
                  refresh-active-tab!
-                 (fn [notify?]
-                   (when notify? (reset! refresh-active-tab-notify* true))
+                 (fn [_]
                    (reset! refresh-active-tab-pending* true)
                    (when (compare-and-set! refresh-active-tab-running* false true)
                      (vis/worker-future
@@ -11340,9 +11326,7 @@
                          (loop []
 
                            (reset! refresh-active-tab-pending* false)
-                           (let [notify? (first (reset-vals! refresh-active-tab-notify* false))]
-                             (try (refresh-active-tab-impl! (boolean notify?))
-                                  (catch Throwable _ nil)))
+                           (try (refresh-active-tab-impl!) (catch Throwable _ nil))
                            (if @refresh-active-tab-pending*
                              (recur)
                              (do (reset! refresh-active-tab-running* false)

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- TUI: opening a session, starting a new session and changing to a different session no longer show a notification ("Opened session", "Switched workspace"). The new tab shows the change.
 - TUI: a turn cancel no longer shows a notification when it works. The transcript shows the cancelled turn. Before, each cancel showed "Cancelling current turn..." and then "Cancellation accepted. You can send again.". A cancel that stops nothing, cannot reach the gateway or times out still shows a notification.
 - Contract: each JSON Schema `$id` is now `https://vis.blockether.com/schema/<name>.json`, and the site serves the schema at that address (#453). Before, the ids named `contract.blockether.com`, `vis.dev` and `blockether.com/vis-contract`, which serve no schema. A cross-document `$ref` now names the file only.
 
