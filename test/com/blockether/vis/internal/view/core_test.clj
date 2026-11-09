@@ -3312,7 +3312,7 @@
                                             {"id" "note" "type" "text" "text" "x"})]))))))))
   ;; User report 2026-11-08: a diff with too many threads was refused with the
   ;; mismatch of each node type, starting with `status`, so no one saw the cause.
-  (it "names the broken rule of the node's own type when it refuses a node"
+  (it "names the broken rule of the node's own type in one short line when it refuses a node"
       (let [sid
             (str (random-uuid))
 
@@ -3334,9 +3334,10 @@
                  nil
                  (catch clojure.lang.ExceptionInfo e (ex-message e)))]
 
-        (expect (str/includes? message "/threads"))
-        (expect (str/includes? message "maxItems"))
-        (expect (not (str/includes? message "status")))))
+        (expect (str/includes? message
+                               "/threads: the array has 201 items, the maximum is 200 (maxItems)"))
+        (expect (not (str/includes? message "status")))
+        (expect (not (str/includes? message "https://")))))
   ;; Live apps D3: the owner hears an accepted selection.
   (it "pushes one select event with the selected row ids"
       (recorded

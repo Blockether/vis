@@ -443,8 +443,7 @@
 
 (defn- schema-error
   [definition value]
-  (some-> (document/explain "view" definition value)
-          pr-str
+  (some-> (document/explain-text (document/explain "view" definition value))
           (str/replace "_" "-")))
 
 (defn- component-error

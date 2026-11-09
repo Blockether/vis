@@ -3,6 +3,7 @@
    `schema/common.json` supplies shared definitions. Raw validators reject values outside
    the JSON data model; engine adapters may normalize keyword maps before validation."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.skjema.core :as skjema]
             [com.blockether.vis.contract.wire :as wire]))
 
@@ -112,6 +113,25 @@
   ([document-name value] (skjema/explain (compiled-schema document-name nil) value))
   ([document-name definition value]
    (skjema/explain (compiled-schema document-name definition) (wire/->wire value))))
+
+(def ^:private most-shown-errors 5)
+
+(defn explain-text
+  "One short line for each JSON Schema error of `explanation`, joined with `; `, or nil
+   when it has no errors. A line names the instance path, the broken rule and its keyword,
+   never a schema URL. It shows at most five errors and counts the others."
+  [explanation]
+  (when-let [errors (seq (:errors explanation))]
+    (let [lines (map (fn [{:keys [instanceLocation keyword error message]}]
+                       (str (if (str/blank? (str instanceLocation)) "/" instanceLocation)
+                            ": "
+                            (or error message)
+                            (when keyword (str " (" keyword ")"))))
+                     errors)
+          left (- (count errors) most-shown-errors)]
+
+      (str (str/join "; " (take most-shown-errors lines))
+           (when (pos? left) (str "; and " left " more"))))))
 
 (defn valid?
   "True when `value` satisfies the document root or named JSON Schema definition."
