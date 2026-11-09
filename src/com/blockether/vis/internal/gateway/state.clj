@@ -3923,6 +3923,14 @@
 (defn- finish-turn!
   [sid tid patch]
   (agents/finish! (lp/db-info) sid (:status patch))
+  ;; A subagent's background shells and REPLs end with its turn. Nothing else stops them, and a
+  ;; leftover can hold a shared lock for hours. Before the result: the leader sees them gone.
+  (when (agents/info (lp/db-info) sid)
+    (try (resources/stop-all! sid)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::agent-resources-stop-failed
+                      :data {:session-id sid :error-class (.getName (class t))}}))))
   ;; Before the result: the leader that it wakes sees the tasks that start now.
   (settle-after-end! (lp/db-info) sid)
   (try (report-agent-outcome! (lp/db-info) sid tid patch)

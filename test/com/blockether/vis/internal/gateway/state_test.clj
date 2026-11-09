@@ -7585,6 +7585,56 @@
              (expect (= "failed" (:status (get-in @registry [sid :turns tid])))))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
 
+;; A subagent's background shells outlived its task and held the shared uv cache lock for hours.
+(defdescribe
+  subagent-turn-end-stops-its-processes-test
+  (it
+    "stops the background resources of a subagent when its turn ends, and keeps a leader's"
+    (let [child
+          (str "child-" (random-uuid))
+
+          leader
+          (str "leader-" (random-uuid))
+
+          stopped
+          (atom [])
+
+          register!
+          (requiring-resolve 'com.blockether.vis.internal.gateway.resources/register!)
+
+          stop-all!
+          (requiring-resolve 'com.blockether.vis.internal.gateway.resources/stop-all!)
+
+          registry
+          @#'state/registry]
+
+      (try
+        (doseq [sid [child leader]]
+          (swap! registry assoc
+            sid
+            {:next-seq 0
+             :current-turn "t1"
+             :turn-order ["t1"]
+             :turns {"t1" {:turn_id "t1" :status "running" :role "assistant"}}})
+          (register! sid
+                     {:id "sh-1" :kind :shell}
+                     {:stop-fn #(swap! stopped conj sid) :alive-fn (constantly true)}))
+        (with-redefs-fn {#'lp/db-info (constantly nil)
+                         (requiring-resolve 'com.blockether.vis.internal.session.agents/info)
+                         (fn [_db sid]
+                           (when (= child (str sid)) {:session_id child :leader_id leader}))
+                         (requiring-resolve 'com.blockether.vis.internal.session.agents/finish!)
+                         (fn [& _]
+                           nil)}
+          (fn []
+            (doseq [sid [child leader]]
+              (#'state/finish-turn! sid "t1" {:status "completed" :role "assistant" :content []}))))
+        (expect (= [child] @stopped))
+        (finally (stop-all! leader)
+                 (swap! registry dissoc child leader)
+                 (doseq [sid [child leader]]
+                   (#'state/release-turn-terminal-claim! sid "t1")))))))
+
 (defdescribe
   attachment-listing-is-lean-and-filtered-test
   "Artifacts are DESCRIBED cheaply and FETCHED lazily. The list a human is shown
