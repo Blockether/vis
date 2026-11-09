@@ -9463,3 +9463,34 @@ h = 8"
           (expect (= 1 (count hits)))
           (expect (= (get-in toggle [:meta :node-id]) (:node-id (first hits))))
           (expect (true? (:collapsed? (first hits))))))))
+
+;; Visual check, user request: the rule under the queued rows painted one `─` and blank
+;; cells, because `repeat-str` got a string and filled the rest with NUL characters.
+(defdescribe queue-bottom-rule-test
+             (it "rules the whole row under the queued messages"
+                 (let [entries
+                       (#'render/queued-progress-entries [{:text "first" :turn-id "t1"}] 40 nil {})
+
+                       capture
+                       (cap/capture! {:cols 44
+                                      :rows 8
+                                      :paint! (fn [{:keys [g]}]
+                                                (render/draw-chat-bubble! g
+                                                                          {:role :assistant
+                                                                           :text ""
+                                                                           :prewrapped-lines
+                                                                           (mapv :line entries)
+                                                                           :line-meta
+                                                                           (mapv :meta entries)}
+                                                                          0 0
+                                                                          40 {:viewport-h 8}))})
+
+                       rows
+                       (map #(apply str (map :ch %)) (first (:frames capture)))
+
+                       rule
+                       (first (filter #(str/starts-with? % "─") rows))]
+
+                   (expect (nil? (:error capture)))
+                   (expect (some? rule))
+                   (expect (<= 30 (count (re-find #"─+" rule)))))))

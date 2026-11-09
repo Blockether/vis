@@ -2516,7 +2516,7 @@
       (str/starts-with? line queue-border-marker)
       (do (p/set-colors! g t/header-active-tab-accent bg-color)
           (p/fill-rect! g fbx y fill-iw 1)
-          (p/put-str! g x y (repeat-str "─" (max 0 (long iw)))))
+          (p/put-str! g x y (repeat-str \─ (max 0 (long iw)))))
       ;; A step digest stays on transcript paper; only its state colors it.
       (str/starts-with? line step-digest-marker)
       (let [raw
