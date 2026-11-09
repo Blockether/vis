@@ -6577,6 +6577,31 @@ vis.register_extension(vis.Extension(
                  (write-ext! hooked "hooked_pkg/__init__.py" "VALUE = 2\n")
                  (expect (not= package-edit (digest))))))
            (finally (#'pyx/delete-tree! dir)))))
+  (it "skips build output below an editable root but keeps a package of that name — #454"
+      ;; #454: a path line that named the vis repository read 89,860 files in target/.
+      (let [dir
+            (temp-dir)
+
+            packages
+            (doto (io/file dir "packages") .mkdirs)
+
+            repo
+            (io/file dir "repo")
+
+            digest
+            #(#'pyx/package-sources packages)]
+
+        (try (write-ext! repo "repo_pkg/__init__.py" "VALUE = 1\n")
+             (write-ext! repo "build/__init__.py" "VALUE = 1\n")
+             (write-ext! packages "repo.pth" (str (.getCanonicalPath repo) "\n"))
+             (let [initial (digest)]
+               (doseq [output ["target/out" "repo_pkg/build" "dist"]]
+                 (write-ext! repo (str output "/unused.py") "VALUE = 1\n"))
+               (write-ext! repo "dist/unused.py" "VALUE = 2\n")
+               (expect (= initial (digest)))
+               (write-ext! repo "build/__init__.py" "VALUE = 2\n")
+               (expect (not= initial (digest))))
+             (finally (#'pyx/delete-tree! dir)))))
   (it "keeps a project root when only another distribution's source is inside it — #398"
       (let [dir
             (temp-dir)
