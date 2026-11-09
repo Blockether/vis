@@ -520,3 +520,22 @@
                (write! path (str "providers:\n  - id: p" i "\n")))
              (expect (= ["state.yml"] (sort (mapv #(.getName ^java.io.File %) (.listFiles dir)))))
              (finally (delete-tree! dir))))))
+
+;; #455: a Vis that ran with its own VIS_HOME still used ~/.vis for its state.
+(defdescribe
+  vis-home-test
+  (it "uses the vis.home setting as an absolute path, and ~/.vis without it"
+      (let [old
+            (System/getProperty "vis.home")
+
+            home
+            (System/getProperty "user.home")]
+
+        (try (System/setProperty "vis.home" "~/isolated-vis")
+             (expect (= (.getAbsolutePath (File. home "isolated-vis")) (paths/vis-home)))
+             (System/setProperty "vis.home" "relative-vis")
+             (expect (= (.getAbsolutePath (File. "relative-vis")) (paths/vis-home)))
+             (System/clearProperty "vis.home")
+             (when-not (System/getenv "VIS_HOME") (expect (= (str home "/.vis") (paths/vis-home))))
+             (finally
+               (if old (System/setProperty "vis.home" old) (System/clearProperty "vis.home")))))))

@@ -4,12 +4,13 @@
    Gateway-owned settings and provider credentials never enter this file. It stores
    only client preferences, as JSON, under ~/.vis/tui/config.json."
   (:require [charred.api :as json]
+            [com.blockether.vis.tui.paths :as paths]
             [clojure.java.io :as io]))
 
 (defn- config-file
   "Resolve the runtime user's preferences path, never the native-image builder's."
   ^java.io.File []
-  (io/file (System/getProperty "user.home") ".vis" "tui" "config.json"))
+  (io/file (paths/vis-home) "tui" "config.json"))
 
 (def ^:private config-lock (Object.))
 

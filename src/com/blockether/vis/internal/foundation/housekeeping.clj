@@ -82,7 +82,7 @@
 
 (defn- events-dir
   ^File []
-  (io/file (or *events-home* (io/file (System/getProperty "user.home") ".vis" "gateway" "events"))))
+  (io/file (or *events-home* (io/file (paths/vis-home) "gateway" "events"))))
 
 ;; Filesystem helpers. Every one of these swallows IO failure: housekeeping is
 ;; advisory, and a permission-denied subtree must not take `vis-agent doctor` down.
@@ -216,15 +216,19 @@
   nil)
 
 (defn- home-dir
-  "`~/.vis/<segs…>` unless a test seam overrides the whole root."
+  "`<vis-home>/<segs…>` unless a test seam overrides the whole root."
   ^File [^String override segs]
-  (if override (io/file override) (apply io/file (System/getProperty "user.home") ".vis" segs)))
+  (if override (io/file override) (apply io/file (paths/vis-home) segs)))
 
 (defn- logs-dir ^File [] (if *logs-home* (io/file *logs-home*) (io/file (paths/logs-dir))))
 
 (defn- cache-dir ^File [^String sub] (io/file (home-dir *cache-home* ["cache"]) sub))
 
-(defn- python-dir ^File [^String sub] (io/file (home-dir *python-home* ["python"]) sub))
+(defn- python-dir
+  "`~/.vis/python/<sub>`, below `user.home` and not [[paths/vis-home]]: the runtime's
+   `com.blockether.vispython.Locations` owns that tree and reads `user.home`."
+  ^File [^String sub]
+  (io/file (or *python-home* (io/file (System/getProperty "user.home") ".vis" "python")) sub))
 
 (defn- delete-quietly!
   "Delete one path, answering true when this call removed it. A directory that

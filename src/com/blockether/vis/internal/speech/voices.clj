@@ -12,6 +12,7 @@
    is something Vis can fetch again; a recording is the user's own, and clearing
    a model cache must never take somebody's voice with it."
   (:require [clojure.edn :as edn]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.speech.assets :as assets]
@@ -45,7 +46,7 @@
    initializes this namespace at BUILD time, so a captured `user.home` would
    point every installed binary at the BUILDER's home."
   []
-  (or (assets/env-value voices-dir-env) (str (System/getProperty "user.home") "/.vis/voices")))
+  (or (assets/env-value voices-dir-env) (str (paths/vis-home) "/voices")))
 
 (defn voice-id
   "The id a voice is addressed by, from whatever a human typed as its name.

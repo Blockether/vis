@@ -74,6 +74,17 @@
                     :else path))
             (catch Throwable _ path))))))
 
+(defn vis-home
+  "Vis' state directory: the `vis.home` system property, then `VIS_HOME`, then
+   `~/.vis`. Empty is unset; a relative value or a leading `~` resolves to an
+   absolute path. The engine resolves the same directory, so the TUI reads the
+   gateway token and its own state where an isolated engine writes them (#455)."
+  ^String []
+  (if-let [setting (or (not-empty (System/getProperty "vis.home"))
+                       (not-empty (System/getenv "VIS_HOME")))]
+    (.getAbsolutePath (java.io.File. ^String (expand-home setting)))
+    (str (System/getProperty "user.home") "/.vis")))
+
 (defn logs-dir
   "Directory for vis diagnostic logs: the `vis.logs.dir` system property, else
    `~/.vis/logs`. A DEDICATED subdir (not `~/.vis` itself) so the native file
@@ -81,8 +92,7 @@
    exposing `config.edn`, the session DB, or gateway tokens. Returns the path
    string (native separators are fine for real I/O)."
   ^String []
-  (or (not-empty (System/getProperty "vis.logs.dir"))
-      (str (System/getProperty "user.home") "/.vis/logs")))
+  (or (not-empty (System/getProperty "vis.logs.dir")) (str (vis-home) "/logs")))
 
 (defn ensure-logs-dir!
   "Create `~/.vis/logs` (and parents) when absent; return its path string.
@@ -97,7 +107,7 @@
    Its own subdir (not `~/.vis`) for the same reason as `logs-dir`: nothing here
    needs to sit beside the session DB or the gateway token."
   ^String []
-  (str (System/getProperty "user.home") "/.vis/sandbox"))
+  (str (vis-home) "/sandbox"))
 
 (defn sandbox-defs-file
   "File holding ONE session's persisted sandbox helper definitions —

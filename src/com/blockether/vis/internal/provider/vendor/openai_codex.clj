@@ -48,7 +48,7 @@
   "Persisted OAuth credentials. A FUNCTION: native-image folds top-level `def`s at
    build time, which would bake the builder's home directory into the binary."
   ^String []
-  (str (System/getProperty "user.home") "/.vis/openai-codex-auth.json"))
+  (str (paths/vis-home) "/openai-codex-auth.json"))
 
 (def ^:private ^:const REFRESH_MARGIN_MS (* 5 60 1000))
 

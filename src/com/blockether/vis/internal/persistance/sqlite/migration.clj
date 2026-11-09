@@ -312,7 +312,8 @@
   "Columns DELETED from the canonical V1 after stores already existed, as
    `[table column]`. Named one by one on purpose: the additive pass's mirror
    image — drop whatever the shipped SQL no longer lists — would let a single
-   downgrade delete the newer version's data.
+   downgrade delete the newer version's data. Append only: the entry count is part
+   of `schema-generation`.
 
    `llm_assistant_message` held the provider's raw assistant envelope so
    preserved thinking could survive a restart. It never was replayed from disk
@@ -363,6 +364,65 @@
    the obsolete rail itself, and leaving them behind would fill every historical
    gallery with `.live.ndjson` files no surface can open."
   [["session_attachment" "classification" "classification = 'activity'"]])
+
+(def ^:private schema-generation
+  "The generation of the store shape that this Vis leaves: one step for each entry in
+   `retired-columns`, `retired-values` and `retired-rows`. Those lists only grow, never
+   remove an entry, so a newer Vis always has a higher generation. An older Vis cannot
+   run against a store that a newer Vis removed columns or values from (#455)."
+  (+ (count retired-columns) (count retired-values) (count retired-rows)))
+
+(defn- stored-generation
+  "The generation that `conn`'s store records, or 0 for a store from before the record."
+  ^long [^java.sql.Connection conn]
+  (if (seq (existing-columns conn "vis_schema"))
+    (with-open [st
+                (.createStatement conn)
+
+                rs
+                (.executeQuery st "SELECT generation FROM vis_schema WHERE id = 1")]
+
+      (if (.next rs) (.getLong rs 1) 0))
+    0))
+
+(defn newer-store-error
+  "An error that names the cause when a newer Vis has migrated the store of
+   `connectable` (a `DataSource` or an open `Connection`), else nil. `cause` is the
+   failure that made the caller ask, or nil."
+  [connectable cause]
+  (let [stored (if (instance? java.sql.Connection connectable)
+                 (stored-generation connectable)
+                 (with-open [conn (.getConnection ^DataSource connectable)]
+                   (stored-generation conn)))]
+    (when (> stored (long schema-generation))
+      (ex-info (str "The Vis database was migrated by a newer Vis (schema generation "
+                    stored
+                    ", this Vis has "
+                    schema-generation
+                    "). Upgrade Vis, or restart the newer Vis.")
+               {:vis/user-error true
+                :type :persistance/newer-schema
+                :stored-generation stored
+                :generation schema-generation}
+               cause))))
+
+(defn- record-generation!
+  "Record this Vis' generation in the store. A higher recorded generation stays."
+  [^DataSource ds]
+  (with-open [conn
+              (.getConnection ds)
+
+              st
+              (.prepareStatement
+                conn
+                (str "INSERT INTO vis_schema (id, generation, updated_at) VALUES (1, ?, ?)"
+                     " ON CONFLICT (id) DO UPDATE SET generation = excluded.generation,"
+                     " updated_at = excluded.updated_at"
+                     " WHERE excluded.generation > vis_schema.generation"))]
+
+    (.setLong st 1 (long schema-generation))
+    (.setLong st 2 (System/currentTimeMillis))
+    (.executeUpdate st)))
 
 (defn- word-end
   "Index just past the identifier that starts at `i`."
@@ -725,41 +785,53 @@
    gained since (`install-missing-canonical-indexes!`), realigned by
    `realign-drifted-columns!` wherever a column's own definition changed, and
    stripped of `retired-columns`, so one canonical migration keeps serving stores
-   that already exist."
-  [^DataSource ds locations]
-  (let [locs
-        (cond (string? locations) [locations]
-              (sequential? locations) (vec locations)
-              :else (throw (ex-info "locations must be a string or coll of strings"
-                                    {:type :persistance/invalid-migration-locations
-                                     :got (type locations)})))
+   that already exist.
 
-        rp
-        (index-resource-provider locs)
+   A store that a newer Vis migrated is refused with `newer-store-error`, and
+   nothing in it changes. With `:shared? true`, another process has the store open,
+   maybe an older Vis that still uses the retired columns and values. The retired
+   values, rows and columns then stay, and so does the recorded generation: a later
+   open that has the store alone removes them (#455)."
+  ([ds locations] (migrate! ds locations {}))
+  ([^DataSource ds locations {:keys [shared?]}]
+   (let [locs
+         (cond (string? locations) [locations]
+               (sequential? locations) (vec locations)
+               :else (throw (ex-info "locations must be a string or coll of strings"
+                                     {:type :persistance/invalid-migration-locations
+                                      :got (type locations)})))
 
-        ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
-        (cond-> (-> (org.flywaydb.core.Flyway/configure)
-                    (.dataSource ds)
-                    (.locations ^"[Ljava.lang.String;" (into-array String locs))
-                    (.baselineOnMigrate true)
-                    (.baselineVersion "0")
-                    (.mixed true))
-          rp
-          (-> (.resourceProvider rp)
-              (.javaMigrationClassProvider (reify
-                                             ClassProvider
-                                               (getClasses [_] [])))))]
+         rp
+         (index-resource-provider locs)
 
-    (let [^org.flywaydb.core.Flyway flyway (.load cfg)]
-      (try
-        (.migrate flyway)
-        (catch Throwable e
-          (if (repairable-validation-error? e) (do (.repair flyway) (.migrate flyway)) (throw e)))))
-    (install-missing-canonical-tables! ds locs)
-    (reconcile-canonical-columns! ds locs)
-    (rewrite-retired-values! ds)
-    (realign-drifted-columns! ds locs)
-    (install-missing-canonical-indexes! ds locs)
-    (delete-retired-rows! ds)
-    (drop-retired-columns! ds locs)
-    ds))
+         ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
+         (cond-> (-> (org.flywaydb.core.Flyway/configure)
+                     (.dataSource ds)
+                     (.locations ^"[Ljava.lang.String;" (into-array String locs))
+                     (.baselineOnMigrate true)
+                     (.baselineVersion "0")
+                     (.mixed true))
+           rp
+           (-> (.resourceProvider rp)
+               (.javaMigrationClassProvider (reify
+                                              ClassProvider
+                                                (getClasses [_] [])))))]
+
+     (when-let [newer (newer-store-error ds nil)]
+       (throw newer))
+     (let [^org.flywaydb.core.Flyway flyway (.load cfg)]
+       (try (.migrate flyway)
+            (catch Throwable e
+              (if (repairable-validation-error? e)
+                (do (.repair flyway) (.migrate flyway))
+                (throw e)))))
+     (install-missing-canonical-tables! ds locs)
+     (reconcile-canonical-columns! ds locs)
+     (when-not shared? (rewrite-retired-values! ds))
+     (realign-drifted-columns! ds locs)
+     (install-missing-canonical-indexes! ds locs)
+     (when-not shared?
+       (delete-retired-rows! ds)
+       (drop-retired-columns! ds locs)
+       (record-generation! ds))
+     ds)))

@@ -45,14 +45,14 @@
            (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
 (defn config-dir
-  "Vis' per-user config directory, `~/.vis`.
+  "Vis' state directory: [[paths/vis-home]], `~/.vis` by default.
 
    A FUNCTION, never a top-level `def`: `native-image` initializes this namespace
    at BUILD time, so a `def` reading `user.home` would fold the BUILDING machine's
    home into the binary and every installed copy would read and write that path.
    Everything below that touches the environment follows the same rule."
   ^String []
-  (str (System/getProperty "user.home") "/.vis"))
+  (paths/vis-home))
 
 (defn state-path
   "Machine-owned RMW config store `~/.vis/state.yml` (YAML). Vis read-modify-writes

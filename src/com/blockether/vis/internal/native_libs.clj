@@ -45,7 +45,7 @@
                         (.getBytes (pr-str [(str url) stamp]) StandardCharsets/UTF_8))]
     (apply str (map #(format "%02x" (bit-and (long %) 0xff)) (take 8 digest)))))
 
-(defn- root-dir ^File [id] (io/file (System/getProperty "user.home") ".vis" "native" (str id)))
+(defn- root-dir ^File [id] (io/file (paths/vis-home) "native" (str id)))
 
 (defn- install!
   "Copy `url` to `target` through a temp file in the same directory. A reader

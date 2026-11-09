@@ -15,6 +15,7 @@
    model enrichment, and the credit report from `GET /api/v1/key` - the credits
    this key has consumed and, for capped keys, its limit."
   (:require [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.paths :as paths]
             [babashka.http-client :as http]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -210,8 +211,7 @@
 
 (defn- catalog-file
   ^File []
-  (or *catalog-file*
-      (io/file (System/getProperty "user.home") ".vis" "cache" "openrouter" "models.edn")))
+  (or *catalog-file* (io/file (paths/vis-home) "cache" "openrouter" "models.edn")))
 
 (defn- saved-catalog
   "The cache entry of the catalog that an earlier fetch saved, or nil. Never throws."

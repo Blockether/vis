@@ -2050,3 +2050,19 @@
             (.getCanonicalPath (io/file (:path (config/resolve-db-spec))))]
 
         (expect (not (str/starts-with? db (str home "/")))))))
+
+;; #455: a Vis that ran with its own VIS_HOME opened and migrated ~/.vis/vis.mdb.
+(defdescribe
+  vis-home-store-test
+  (it "keeps the database and the machine store below an isolated Vis home"
+      (let [old
+            (System/getProperty "vis.home")
+
+            home
+            (.getAbsolutePath (io/file (System/getProperty "java.io.tmpdir") "vis-home-455"))]
+
+        (try (System/setProperty "vis.home" home)
+             (expect (= (str home "/vis.mdb") (config/db-path)))
+             (expect (= (str home "/state.yml") (config/state-path)))
+             (finally
+               (if old (System/setProperty "vis.home" old) (System/clearProperty "vis.home")))))))

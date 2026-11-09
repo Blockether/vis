@@ -19,6 +19,7 @@
    to `view/normalize-patch`: every live vocabulary is a closed table read in
    either spelling."
   (:require [charred.api :as json]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
@@ -38,7 +39,7 @@
    stream gets a directory of its own rather than a subdirectory somebody else's
    listing has to learn to skip."
   ^File []
-  (io/file (System/getProperty "user.home") ".vis" "gateway" "views"))
+  (io/file (paths/vis-home) "gateway" "views"))
 
 (def machine-dir
   "The directory of the records that belong to no session, such as a global app."

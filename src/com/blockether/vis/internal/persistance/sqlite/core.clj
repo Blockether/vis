@@ -64,9 +64,17 @@
   "Run the statement thunk `run`. On a shared-cache memory store, hold the Vis write lock.
    There, a writer that overlaps a reader or another writer fails at once with
    SQLITE_LOCKED, and the busy timeout does not wait. WAL-backed files keep concurrent
-   statements."
+   statements.
+
+   A statement that names a column or a table the store does not have fails with
+   `migration/newer-store-error` when a newer Vis migrated the store (#455)."
   [db-info run]
-  (if (= :memory (:mode db-info)) (locking sqlite-write-lock (run)) (run)))
+  (try (if (= :memory (:mode db-info)) (locking sqlite-write-lock (run)) (run))
+       (catch SQLException e
+         (throw (or (when (re-find #"no such (column|table)" (str (ex-message e)))
+                      (try (migration/newer-store-error (ds db-info) e)
+                           (catch Throwable t (.addSuppressed e t) nil)))
+                    e)))))
 
 (defn- query-sql!
   [db-info statement]
@@ -196,13 +204,13 @@
   [^Throwable e]
   (when (sqlite-cantopen-message? e)
     (let [home
-          (System/getProperty "user.home")
+          (paths/vis-home)
 
           dbpath
-          (str home "/.vis/vis.mdb/vis.db")
+          (str home "/vis.mdb/vis.db")
 
           dbdir
-          (str home "/.vis/vis.mdb")
+          (str home "/vis.mdb")
 
           dirf
           (File. dbdir)
@@ -513,10 +521,26 @@
       (jdbc/execute! ds [(str "PRAGMA user_version = " (inc (long n)))]))))
 
 (defn- install-schema!
-  [^DataSource ds]
-  (migration/migrate! ds MIGRATIONS)
-  ;; Projects show their name, never their path: rename the path-named ones once.
-  (jdbc/execute! ds [project-folder-name-sql]))
+  ([ds] (install-schema! ds {}))
+  ([^DataSource ds opts]
+   (migration/migrate! ds MIGRATIONS opts)
+   ;; Projects show their name, never their path: rename the path-named ones once.
+   (jdbc/execute! ds [project-folder-name-sql])))
+
+(defn- claim-store!
+  "Claim the store directory `dir` for this process, and answer true when another
+   process already holds it. Then `migration/migrate!` removes nothing that an older
+   Vis in that process may still use (#455). A store that this process claimed
+   before also reads as held: its first open already ran the removals."
+  [^String dir]
+  (let [f
+        (File. dir)
+
+        shared?
+        (= :held (paths/claim-state f))]
+
+    (paths/claim-dir! f)
+    shared?))
 
 ;; Connection management
 ;;
@@ -558,8 +582,7 @@
     (native-libs/stage-sqlite!)
     (or (System/getProperty "org.sqlite.tmpdir")
         (let [dir
-              (Paths/get (System/getProperty "user.home")
-                         (into-array String [".vis" "native" "sqlite"]))
+              (Paths/get (paths/vis-home) (into-array String ["native" "sqlite"]))
 
               attrs
               (if (contains? (.supportedFileAttributeViews (FileSystems/getDefault)) "posix")
@@ -841,7 +864,7 @@
         pool
         (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
-    (try (with-migration-lock! path #(install-schema! pool))
+    (try (with-migration-lock! path #(install-schema! pool {:shared? (claim-store! path)}))
          (maintenance/vacuum-async! pool file {:before #(rewrite-older-store! pool)})
          pool
          (catch Throwable t (try (.close pool) (catch Throwable _ nil)) (throw t)))))

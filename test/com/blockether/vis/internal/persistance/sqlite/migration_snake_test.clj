@@ -6,6 +6,7 @@
    behind in a store that already exists."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.persistance.sqlite.core :as sqlite]
             [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -247,6 +248,57 @@
              (migration/migrate! ds [migration-dir])
              (expect (not (contains? (columns-of ds "session_state") "system_prompt")))
              (expect (= "Kept" (scalar ds "SELECT title FROM session_state WHERE id = 'st1'")))
+             (finally (.delete file))))))
+
+(defdescribe
+  shared-store-retirement-test
+  ;; #455: a newer Vis migrated the store under a running older gateway. It dropped
+  ;; `session_state.system_prompt`, every turn of the older gateway then failed with
+  ;; `no such column`, and its restart added the column back without the values.
+  (it "keeps a retired column and its values while another process has the store open"
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             (exec! ds "DELETE FROM vis_schema")
+             (exec! ds "ALTER TABLE session_state ADD COLUMN system_prompt TEXT")
+             (exec! ds
+                    (str "INSERT INTO session_state (id, session_soul_id, workspace_id, title,"
+                         " version, system_prompt, created_at)"
+                         " VALUES ('st1', 's1', 'w1', 'Kept', 0, 'old prompt', 1)"))
+             (migration/migrate! ds [migration-dir] {:shared? true})
+             (expect (= "old prompt" (scalar ds "SELECT system_prompt FROM session_state")))
+             (expect (= 0 (row-count ds "vis_schema")))
+             ;; the next open that has the store alone retires it
+             (migration/migrate! ds [migration-dir])
+             (expect (not (contains? (columns-of ds "session_state") "system_prompt")))
+             (expect (= 1 (row-count ds "vis_schema")))
+             (finally (.delete file)))))
+  (it "refuses a store that a newer Vis migrated, and changes nothing in it"
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             (exec! ds "UPDATE vis_schema SET generation = generation + 1")
+             (let [generation (scalar ds "SELECT generation FROM vis_schema")
+                   error (try (migration/migrate! ds [migration-dir]) nil (catch Exception e e))]
+
+               (expect (= :persistance/newer-schema (:type (ex-data error))))
+               (expect (str/includes? (ex-message error) "migrated by a newer Vis"))
+               (expect (= generation (scalar ds "SELECT generation FROM vis_schema"))))
+             (finally (.delete file)))))
+  (it "names the newer Vis when a query meets a column it removed"
+      (let [[^java.io.File file ds]
+            (temp-ds)
+
+            query
+            #(try (sqlite/query! {:datasource ds} {:select [:system_prompt] :from :session_state})
+                  nil
+                  (catch Exception e e))]
+
+        (try (migration/migrate! ds [migration-dir])
+             ;; the same store generation: the plain SQLite error stays
+             (expect (instance? java.sql.SQLException (query)))
+             (exec! ds "UPDATE vis_schema SET generation = generation + 1")
+             (let [error (query)]
+               (expect (str/includes? (ex-message error) "migrated by a newer Vis"))
+               (expect (instance? java.sql.SQLException (ex-cause error))))
              (finally (.delete file))))))
 
 (defdescribe

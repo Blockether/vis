@@ -27,6 +27,7 @@
    Degrades safely: any IO failure is swallowed and the process falls
    back to today's in-process-only behavior."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]
@@ -130,9 +131,7 @@
       (= (long pid) (long (producer-pid)))
       (try (.isPresent (java.lang.ProcessHandle/of (long pid))) (catch Throwable _ true))))
 
-(defn- events-dir
-  ^Path []
-  (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway" "events"])))
+(defn- events-dir ^Path [] (Path/of (paths/vis-home) (into-array String ["gateway" "events"])))
 
 (defn- session-file ^File [sid] (.toFile (.resolve (events-dir) (str sid ".ndjson"))))
 
@@ -165,7 +164,7 @@
    session; this answers \"which sessions are running\" in one listing whose size
    is the number of LIVE turns, which is what a fleet listing can afford."
   ^Path []
-  (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway" "live"])))
+  (Path/of (paths/vis-home) (into-array String ["gateway" "live"])))
 
 (defn- live-file ^File [sid] (.toFile (.resolve (live-dir) (str sid ".json"))))
 
@@ -253,7 +252,7 @@
    RIGHT NOW, in one listing whose size is the number of open requests — which
    is what a fleet listing can afford (same shape as [[live-dir]])."
   ^Path []
-  (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway" "waiting"])))
+  (Path/of (paths/vis-home) (into-array String ["gateway" "waiting"])))
 
 (defn- waiting-file ^File [sid] (.toFile (.resolve (waiting-dir) (str sid ".json"))))
 

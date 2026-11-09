@@ -7,6 +7,7 @@
    account `service_account`), from the environment, or from a file under
    `~/.vis/fcm/`. Key material is never returned, logged or sent over the wire."
   (:require [babashka.http-client :as http]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.keychain :as keychain]
@@ -28,11 +29,7 @@
 
 ;; Credentials
 
-(defn- vis-home
-  ^File []
-  (io/file (or (System/getProperty "vis.push.home")
-               (System/getenv "VIS_HOME")
-               (str (System/getProperty "user.home") File/separator ".vis"))))
+(defn- vis-home ^File [] (io/file (or (System/getProperty "vis.push.home") (paths/vis-home))))
 
 (defn- fcm-dir ^File [] (io/file (vis-home) "fcm"))
 

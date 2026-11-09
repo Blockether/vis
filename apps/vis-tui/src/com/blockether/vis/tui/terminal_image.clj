@@ -9,6 +9,7 @@
    refresh. The HTML backend instead receives cell-positioned media values over
    the same reserved rows, so both backends share one transcript layout."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.tui.paths :as paths]
             [clojure.string :as str]
             [com.blockether.imaging :as img]
             [com.blockether.vis.tui.attachments :as attach]
@@ -639,8 +640,7 @@
    attachments, so a re-rendered history image survives its original (often
    OS-temp) source path vanishing. Created on demand."
   ^java.io.File []
-  (let [dir (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
-                                          "cache")
+  (let [dir (java.io.File. (java.io.File. (java.io.File. (paths/vis-home)) "cache")
                            "tui-attachments")]
     (.mkdirs dir)
     dir))

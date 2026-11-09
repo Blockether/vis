@@ -9,6 +9,7 @@
 
    This namespace does not depend on the renderer or tool namespaces."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]))
 
 (def ^:dynamic *attachment-sink*
@@ -159,9 +160,7 @@
   (let [dir
         (doto (if *display-home*
                 (java.io.File. ^String *display-home*)
-                (java.io.File.
-                  (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis") "cache")
-                  "display"))
+                (java.io.File. (java.io.File. (paths/vis-home) "cache") "display"))
           (.mkdirs))
 
         digest

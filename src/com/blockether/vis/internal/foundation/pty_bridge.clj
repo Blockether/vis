@@ -20,6 +20,7 @@
    `stty` for raw mode on the client side (the human's interactive shell always
    has it). No JNA, no new dep, native-image clean."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.session.cancellation :as cancellation])
   (:import (java.io InputStream OutputStream)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
@@ -42,8 +43,7 @@
   "Directory the per-shell attach sockets live in: `$VIS_BRIDGE_DIR` or
    `~/.vis/bridge`. Created on demand by `serve!`."
   ^Path []
-  (let [base (or (not-empty (System/getenv "VIS_BRIDGE_DIR"))
-                 (str (System/getProperty "user.home") "/.vis/bridge"))]
+  (let [base (or (not-empty (System/getenv "VIS_BRIDGE_DIR")) (str (paths/vis-home) "/bridge"))]
     (Paths/get base (make-array String 0))))
 
 (defn socket-path

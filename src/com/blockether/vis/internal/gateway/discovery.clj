@@ -35,7 +35,7 @@
 
 ;; Paths + registry key
 
-(defn- vis-home ^java.io.File [] (io/file (System/getProperty "user.home") ".vis"))
+(defn- vis-home ^java.io.File [] (io/file (paths/vis-home)))
 
 (defn registry-dir
   "Directory holding the per-DB registry files. Not created here."

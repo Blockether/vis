@@ -654,7 +654,7 @@
   []
   (filter (fn [^File f]
             (and (.isFile f) (str/ends-with? (.getName f) "-auth.json")))
-          (.listFiles (io/file (paths/expand-home "~/.vis")))))
+          (.listFiles (io/file (paths/vis-home)))))
 
 (defn- run-secrets
   "The known credentials of this process."

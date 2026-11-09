@@ -70,7 +70,7 @@
   ([token]
    (if (contains? runtime/shared-platforms token)
      (runtime/default-native-dir token)
-     (str (System/getProperty "user.home") "/.vis/native/sherpa-onnx-" version "/" token))))
+     (str (paths/vis-home) "/native/sherpa-onnx-" version "/" token))))
 
 (defn native-dir [] (or (config/extension-env-value native-dir-env) (default-native-dir)))
 

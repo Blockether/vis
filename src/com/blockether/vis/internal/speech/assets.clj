@@ -80,7 +80,7 @@
    `native-image` initializes this namespace at BUILD time, so a captured
    `user.home` would point every installed binary at the BUILDER's home."
   []
-  (or (env-value models-dir-env) (str (System/getProperty "user.home") "/.vis/models")))
+  (or (env-value models-dir-env) (str (paths/vis-home) "/models")))
 
 (defn install-dir
   "Absolute directory this entry installs into."

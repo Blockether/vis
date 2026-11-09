@@ -73,7 +73,7 @@
   "Persisted OAuth token file. A FUNCTION: native-image folds top-level `def`s at
    build time, which would bake the builder's home directory into the binary."
   ^String []
-  (str (System/getProperty "user.home") "/.vis/github-copilot-auth.json"))
+  (str (paths/vis-home) "/github-copilot-auth.json"))
 
 (def ^:private ^:const REFRESH_MARGIN_MS
   "Refresh the Copilot API token 5 minutes before expiry."

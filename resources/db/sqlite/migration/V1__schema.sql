@@ -1107,3 +1107,11 @@ CREATE TABLE gateway_queue_hold (
   payload BLOB NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+-- The schema generation of this store: one row. A Vis with a lower generation does
+-- not open the store, because a newer Vis removed columns or values from it (#455).
+CREATE TABLE vis_schema (
+  id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+  generation INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);

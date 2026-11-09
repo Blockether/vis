@@ -953,9 +953,8 @@
 
 (defn- drafts-home
   ^File []
-  (io/file (or *drafts-home*
-               (System/getProperty "vis.drafts.dir")
-               (io/file (System/getProperty "user.home") ".vis" "drafts"))))
+  (io/file
+    (or *drafts-home* (System/getProperty "vis.drafts.dir") (io/file (paths/vis-home) "drafts"))))
 
 (defn session-drafts-home
   "Canonical private clone store for a stable session ID. Reserving this narrow

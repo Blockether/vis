@@ -73,8 +73,7 @@
 (defn models-root
   "The persistent store, resolved at runtime rather than native-image build time."
   []
-  (or (config/extension-env-value models-dir-env)
-      (str (System/getProperty "user.home") "/.vis/models/decisions")))
+  (or (config/extension-env-value models-dir-env) (str (paths/vis-home) "/models/decisions")))
 
 (defn artifact
   "An inference or training archive from one manifest entry."

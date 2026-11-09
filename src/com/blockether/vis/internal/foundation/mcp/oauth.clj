@@ -165,7 +165,7 @@
 
 (defn- token-file
   ^java.io.File [server-name]
-  (io/file (System/getProperty "user.home") ".vis" "mcp-tokens" (str server-name ".edn")))
+  (io/file (paths/vis-home) "mcp-tokens" (str server-name ".edn")))
 
 (defn- read-tokens
   [server-name]

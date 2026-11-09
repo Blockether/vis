@@ -43,7 +43,7 @@
   "Persisted OAuth credentials. A FUNCTION: native-image folds top-level `def`s at
    build time, which would bake the builder's home directory into the binary."
   ^String []
-  (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
+  (str (paths/vis-home) "/anthropic-auth.json"))
 
 ;; base-url + default-models come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)

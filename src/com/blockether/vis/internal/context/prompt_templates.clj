@@ -26,6 +26,7 @@
    `:reason :unknown`), so real slash commands always win — same
    precedence pi uses."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.util :as util]
@@ -103,9 +104,7 @@
   []
   (mapv #(io/file % ".vis" "prompts") (workspace/ancestor-roots (workspace/cwd))))
 
-(defn- global-prompts-dir
-  ^java.io.File []
-  (io/file (System/getProperty "user.home") ".vis" "prompts"))
+(defn- global-prompts-dir ^java.io.File [] (io/file (paths/vis-home) "prompts"))
 
 ;; ── marker cache: stat-only revalidation, content re-read on change ─────────
 

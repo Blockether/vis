@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.inference.runtime
   "One ONNX Runtime native library shared by Sherpa speech and Java decisions."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config])
   (:import [java.io File InputStream]))
@@ -63,7 +64,7 @@
 (defn default-native-dir
   "Versioned path so upgrading either JNI package or Linux ABI cannot reuse an old library."
   [token]
-  (str (io/file (System/getProperty "user.home") ".vis" "native" (native-cache-name token) token)))
+  (str (io/file (paths/vis-home) "native" (native-cache-name token) token)))
 
 (defn native-dir
   "The one path both JNI loaders use on a supported native release platform."

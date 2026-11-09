@@ -36,6 +36,7 @@
    What a provider still owns: its plan table, its `:provider/limits-fn` (a
    quota endpoint is vendor-specific) and its own namespace docstring."
   (:require [charred.api :as json]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
@@ -48,7 +49,7 @@
    native-image folds constants at build time, which would bake the builder's
    home directory into the binary."
   ^String [book]
-  (str (System/getProperty "user.home") "/.vis/" (:file book)))
+  (str (paths/vis-home) "/" (:file book)))
 
 (defn- plan-of [book plan-tag] (get (:plans book) plan-tag))
 
@@ -87,7 +88,7 @@
   "Persist the WHOLE map through the ONE JSON boundary (`wire/json-str`):
    snake_case string keys, total encoding."
   [book auth-state]
-  (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
+  (let [dir (io/file (paths/vis-home))]
     (when-not (.exists dir) (.mkdirs dir))
     (spit (auth-file book) (wire/json-str auth-state))))
 

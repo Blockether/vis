@@ -31,6 +31,7 @@
    on one machine; the direct `gateway.push` / `gateway.fcm` credentials still
    work exactly as before."
   (:require [babashka.http-client :as http]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -40,11 +41,7 @@
   (:import [java.io File]
            [java.net URI]))
 
-(defn- vis-home
-  ^File []
-  (io/file (or (System/getProperty "vis.push.home")
-               (System/getenv "VIS_HOME")
-               (str (System/getProperty "user.home") File/separator ".vis"))))
+(defn- vis-home ^File [] (io/file (or (System/getProperty "vis.push.home") (paths/vis-home))))
 
 (defn- side-config
   "Optional `~/.vis/relay.edn` — `{:url \"https://push.example.com\"}`."

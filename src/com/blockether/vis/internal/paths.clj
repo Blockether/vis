@@ -226,14 +226,25 @@
   []
   (if (runtime-dir-setting) {"TMPDIR" (str (temp-dir))} {}))
 
+(defn vis-home
+  "Vis' state directory: the `vis.home` system property, then `VIS_HOME`, then
+   `~/.vis`. Empty is unset; a relative value or a leading `~` resolves to an
+   absolute path. Every state path (database, logs, tokens, caches) is below it,
+   so a Vis that runs with its own `VIS_HOME` never touches `~/.vis` (#455). A
+   function, read at runtime, so native-image never folds the builder's home in."
+  ^String []
+  (if-let [setting (or (not-empty (System/getProperty "vis.home"))
+                       (not-empty (System/getenv "VIS_HOME")))]
+    (.getAbsolutePath (File. (expand-home setting)))
+    (str (System/getProperty "user.home") "/.vis")))
+
 (defn logs-dir
   "Root for diagnostic logs and reports: the `vis.logs.dir` system property, else
    `~/.vis/logs`. Writers use UTC date directories below it. This dedicated root
    is accessible to the file tools and sandbox without exposing configuration,
    session databases or gateway tokens. The `:test` alias points it at `target/`."
   ^String []
-  (or (not-empty (System/getProperty "vis.logs.dir"))
-      (str (System/getProperty "user.home") "/.vis/logs")))
+  (or (not-empty (System/getProperty "vis.logs.dir")) (str (vis-home) "/logs")))
 
 (defn ensure-logs-dir!
   "Create `~/.vis/logs` (and parents) when absent; return its path string.
@@ -280,8 +291,7 @@
    same reason as `logs-dir`: nothing here needs to sit beside the session DB or
    the gateway token. The `:test` alias points it at `target/`."
   ^String []
-  (or (not-empty (System/getProperty "vis.sandbox.dir"))
-      (str (System/getProperty "user.home") "/.vis/sandbox")))
+  (or (not-empty (System/getProperty "vis.sandbox.dir")) (str (vis-home) "/sandbox")))
 
 (defn sandbox-defs-file
   "File holding ONE session's persisted sandbox helper definitions —

@@ -29,6 +29,7 @@
    The wire surface lives in `gateway.server.devices` (`/v1/devices`); this namespace
    knows nothing about Ring."
   (:require [babashka.http-client :as http]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [com.blockether.vis.internal.gateway.fcm :as fcm]
@@ -66,7 +67,7 @@
   ^File []
   (if-let [override (System/getProperty "vis.push.home")]
     (io/file override)
-    (io/file (System/getProperty "user.home") ".vis")))
+    (io/file (paths/vis-home))))
 
 (defn devices-file
   "Where the device registry is persisted."

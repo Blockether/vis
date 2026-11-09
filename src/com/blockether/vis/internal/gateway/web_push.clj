@@ -10,6 +10,7 @@
    the namespace passes ordinary Clojure maps and byte arrays between small
    helpers so the protocol steps remain visible and testable."
   (:require [babashka.http-client :as http]
+            [com.blockether.vis.internal.paths :as paths]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
@@ -57,12 +58,9 @@
 (defn- web-home
   "Resolve the Vis home used for gateway-owned push state.
 
-   Tests override `vis.push.home`; normal gateways use `VIS_HOME` or the
-   conventional `~/.vis` directory."
+   Tests override `vis.push.home`; normal gateways use [[paths/vis-home]]."
   ^File []
-  (io/file (or (System/getProperty "vis.push.home")
-               (util/env-val "VIS_HOME")
-               (str (System/getProperty "user.home") File/separator ".vis"))))
+  (io/file (or (System/getProperty "vis.push.home") (paths/vis-home))))
 
 (defn- web-push-dir
   "Return the directory containing this gateway's Web Push identity."

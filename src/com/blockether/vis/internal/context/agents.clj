@@ -44,7 +44,7 @@
   ;; falls back to the process cwd (REPL / test / one-off CLI paths).
   (workspace/cwd))
 
-(defn- global-config-dir ^java.io.File [] (java.io.File. (System/getProperty "user.home") ".vis"))
+(defn- global-config-dir ^java.io.File [] (java.io.File. (paths/vis-home)))
 
 (defn- global-guidance-dir
   "The user-global guidance dir, or nil when the session does not read the global tier."

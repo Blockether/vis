@@ -436,7 +436,7 @@
    Returns `{:replace <text|nil> :appends [text …]}`."
   []
   (let [global-dir
-        (io/file (System/getProperty "user.home") ".vis")
+        (io/file (paths/vis-home))
 
         proj-dir
         (try (io/file (workspace/cwd) ".vis") (catch Throwable _ nil))]

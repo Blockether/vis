@@ -100,7 +100,7 @@
   (let [token
         (or (not-empty (str/trim (str token)))
             (when (nil? url)
-              (let [file (io/file (System/getProperty "user.home") ".vis" "gateway.token")]
+              (let [file (io/file (paths/vis-home) "gateway.token")]
                 (when (.isFile file) (not-empty (str/trim (slurp file)))))))
 
         raw
