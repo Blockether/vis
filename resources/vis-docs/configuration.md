@@ -819,6 +819,26 @@ vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp \
   --headers "Authorization=Bearer <TOKEN>"
 ```
 
+Vis signs in as its own client, `vis MCP client`. Some servers, such as Figma, refuse clients that
+they did not register. For these servers, register a client with the provider. Then give its
+identifier, and its secret as an environment reference:
+
+```yaml
+mcp:
+  servers:
+    figma:
+      url: https://mcp.figma.com/mcp
+      auth:
+        client_id: <CLIENT_ID>
+        client_secret: ${FIGMA_CLIENT_SECRET}
+```
+
+Vis does not accept a secret as plain text. When sign-in fails, the error names the failed step
+and the HTTP status of the server.
+
+Vis keeps server names in one form: lowercase letters, digits and hyphens. `Figma Dev` becomes
+`figma-dev`. A name without a letter or a digit is refused.
+
 Other verbs: `test` (connect without saving), `remove`, `enable`, `disable`,
 `kill`, `start`, `auth-poll`, `auth-cancel`, `auth-logout`. Saving a server
 without `env` or `headers` keeps the stored values.

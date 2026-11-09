@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.foundation.harness.discovery :as harness]
+            [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.config.core :as config]
@@ -145,7 +146,7 @@
     (let [skills (cond->> (filter harness/own-setting? (harness/all-skills))
                    (= "global" (:scope target))
                    (remove :project-root))
-          servers (scoped/definitions (lp/db-info) target ["mcp" "servers"])]
+          servers (mcp/definitions (lp/db-info) target)]
 
       (set (concat (map #(scoped/register-resource! :skills (:name %)) skills)
                    (map #(scoped/register-resource! :mcp (:name %)) servers))))))

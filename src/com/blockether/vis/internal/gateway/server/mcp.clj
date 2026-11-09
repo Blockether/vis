@@ -32,7 +32,12 @@
 
           (or (:status (ex-data e)) 400))]
 
-    (http/error-response status (or type :mcp/invalid-request) (ex-message e))))
+    ;; A sign-in refusal names its failed step and the upstream answer (#458).
+    (apply http/error-response
+      status
+      (or type :mcp/invalid-request)
+      (ex-message e)
+      (mapcat identity (select-keys (ex-data e) [:step :upstream-status :upstream-url])))))
 
 (defn- settings-target
   [request body]

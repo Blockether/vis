@@ -3073,6 +3073,22 @@
             "message": {
               "type": "string"
             },
+            "step": {
+              "enum": [
+                "discovery",
+                "registration",
+                "authorize"
+              ],
+              "description": "MCP sign-in step that failed."
+            },
+            "upstream_status": {
+              "type": "integer",
+              "description": "HTTP status that the MCP authorization server answered at the failed step."
+            },
+            "upstream_url": {
+              "type": "string",
+              "description": "Authorization server URL that the failed step called."
+            },
             "input_tokens": {
               "type": "integer",
               "minimum": 1,

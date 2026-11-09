@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.mcp.oauth-test
   (:require [babashka.http-client :as http]
+            [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel]))
@@ -42,7 +43,7 @@
                      (fn [_ _ redirect]
                        {:url (str "https://gateway.example.com/authorize?redirect_uri=" redirect)
                         :client-id "test-client"})
-                     #'oauth/exchange-code! (fn [_ _ code redirect]
+                     #'oauth/exchange-code! (fn [_ _ _ code redirect]
                                               (swap! exchanges conj [code redirect]))}
       (fn []
         (let [flow (oauth/start-authorization! "test" "https://gateway.example.com/mcp" {})]
@@ -123,7 +124,7 @@
                          (swap! redirects conj redirect)
                          {:url "https://gateway.example.com/authorize?state=test-state"
                           :client-id "test-client"})
-                       #'oauth/exchange-code! (fn [ctx _ code redirect]
+                       #'oauth/exchange-code! (fn [ctx _ _ code redirect]
                                                 (swap! exchanges conj
                                                   [(:verifier ctx) code redirect]))}
         (fn []
@@ -258,3 +259,71 @@
              (finally (.setWritable dir true)
                       (doseq [^java.io.File f (reverse (file-seq dir))]
                         (.delete f))))))))
+
+(defn- authorization-server
+  "HTTP stub for an MCP server whose authorization server answers registration with
+   `register-status`, as Figma does with 403. Every request lands in `seen`."
+  [register-status seen]
+  (fn [{:keys [uri] :as request}]
+    (swap! seen conj request)
+    (cond
+      (str/ends-with? uri "/.well-known/oauth-protected-resource")
+      {:status 200
+       :body "{\"resource\":\"https://mcp.example.test/mcp\",\"authorization_servers\":[\"https://auth.example.test\"]}"}
+
+      (str/ends-with? uri "/.well-known/oauth-authorization-server")
+      {:status 200
+       :body (str "{\"authorization_endpoint\":\"https://auth.example.test/authorize\","
+                  "\"token_endpoint\":\"https://auth.example.test/token\","
+                  "\"registration_endpoint\":\"https://auth.example.test/register\","
+                  "\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\",\"client_secret_post\"]}")}
+
+      (str/ends-with? uri "/register")
+      {:status register-status :body "Forbidden"}
+
+      (str/ends-with? uri "/token")
+      {:status 200 :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
+
+      :else
+      {:status 404 :body ""})))
+
+(defdescribe
+  sign-in-refusal-test
+  (it "names a refused client registration with its step, status and URL"
+      ;; Regression #458: Figma answered 403, and Vis said it had no registration at all.
+      (with-redefs [http/request (authorization-server 403 (atom []))]
+        (let [data (try (oauth/start-authorization! "figma" "https://mcp.example.test/mcp" {})
+                        nil
+                        (catch clojure.lang.ExceptionInfo e
+                          (assoc (ex-data e) :message (ex-message e))))]
+          (expect (= :mcp/oauth-registration (:type data)))
+          (expect (= "registration" (:step data)))
+          (expect (= 403 (:upstream-status data)))
+          (expect (= "https://auth.example.test/register" (:upstream-url data)))
+          (expect (str/includes? (:message data)
+                                 "HTTP 403 from https://auth.example.test/register")))))
+  (it "signs in with a pre-registered client and secret, without registration"
+      (let [seen (atom [])
+            file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]
+        (try (with-redefs-fn {#'http/request (authorization-server 403 seen)
+                              #'oauth/token-file (constantly file)}
+               (fn []
+                 (let [flow (oauth/start-authorization! "figma"
+                                                        "https://mcp.example.test/mcp"
+                                                        {:auth-hint {:client-id "vis-test"
+                                                                     :client-secret "s3cret"}})
+                       state (second (re-find #"[?&]state=([^&]+)" (get flow "url")))]
+                   (oauth/complete-authorization! (get flow "flow_id")
+                                                  (str (get flow "redirect_uri")
+                                                       "?code=test-code&state="
+                                                       state))
+                   (let [token (first (filter #(str/ends-with? (:uri %) "/token") @seen))]
+                     (expect (not-any? #(str/ends-with? (:uri %) "/register") @seen))
+                     (expect (str/includes? (get flow "url") "client_id=vis-test"))
+                     (expect (= (str "Basic "
+                                     (.encodeToString (java.util.Base64/getEncoder)
+                                                      (.getBytes "vis-test:s3cret" "UTF-8")))
+                                (get-in token [:headers "Authorization"])))
+                     (expect (not (str/includes? (:body token) "s3cret")))
+                     (expect (not (str/includes? (slurp file) "s3cret")))))))
+             (finally (.delete file))))))

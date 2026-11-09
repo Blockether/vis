@@ -259,3 +259,19 @@ it.each([
   expect(screen.queryByText('test-sensitive-callback-value')).toBeNull();
   expect(confirm).not.toHaveBeenCalled();
 });
+// Regression, issue 458: the gateway said why sign-in could not start (the authorization
+// server refused client registration), and the panel showed only the generic sentence.
+it('shows the reason the gateway gives when it refuses to start sign-in', async () => {
+  const message =
+    "MCP server 'work': the authorization server refused client registration (HTTP 403 from https://auth.example.com/register). It accepts only clients it registered. Set auth.client_id (and auth.client_secret) on the server.";
+  const gateway = client();
+  gateway.mcpAuthStart.mockRejectedValue(
+    new GatewayError(400, message, {
+      error: { type: 'oauth-registration', message, step: 'registration', upstream_status: 403 },
+    }),
+  );
+  renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(screen.queryByText(/Cannot start sign-in/)).toBeNull();
+});

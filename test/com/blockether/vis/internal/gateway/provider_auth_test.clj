@@ -227,7 +227,7 @@
                                       (swap! registrations conj body)
                                       {:status 201 :body {"client_id" "test-client"}})
          #'mcp-oauth/http-post-form
-         (fn [url body]
+         (fn [url body _]
            (expect (= "https://gateway.example.com/token" url))
            (swap! exchanges conj body)
            {:status 200

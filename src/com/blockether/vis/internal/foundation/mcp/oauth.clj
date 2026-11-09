@@ -30,7 +30,8 @@
             [com.blockether.vis.internal.provider.flow :as auth-flow]
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.util :as util])
-  (:import (java.net URI URLDecoder URLEncoder)))
+  (:import (java.net URI URLDecoder URLEncoder)
+           (java.util Base64)))
 
 (def ^:private protocol-version-header "MCP-Protocol-Version")
 
@@ -83,13 +84,14 @@
     (when (< status 400) (try (json/read-json (:body resp)) (catch Throwable _ nil)))))
 
 (defn- http-post-form
-  [^String url form]
+  [^String url form headers]
   (let [resp (http/request {:uri url
                             :method :post
                             :client @mcp-http/client
-                            :headers {"Content-Type" "application/x-www-form-urlencoded"
-                                      "Accept" "application/json"
-                                      protocol-version-header protocol-version}
+                            :headers (merge {"Content-Type" "application/x-www-form-urlencoded"
+                                             "Accept" "application/json"
+                                             protocol-version-header protocol-version}
+                                            headers)
                             :body (form-encode form)
                             :timeout 30000
                             :throw false
@@ -111,6 +113,14 @@
                             :as :string})]
     {:status (:status resp)
      :body (try (json/read-json (:body resp)) (catch Throwable _ (:body resp)))}))
+
+(defn- oauth-failure
+  "A typed sign-in refusal for `server` that names the failed `step` (`discovery`,
+   `registration` or `authorize`) and, when there is one, the upstream answer as
+   `:upstream-status` and `:upstream-url`. The message is safe to show as is."
+  [type server step message & {:as upstream}]
+  (ex-info (str "MCP server '" server "': " message)
+           (merge {:type type :server server :step step} upstream)))
 
 ;; Discovery (RFC 9728 + RFC 8414 fallbacks)
 
@@ -149,17 +159,43 @@
 ;; Dynamic Client Registration (RFC 7591)
 
 (defn- register-client!
-  [{registration-url "registration_endpoint"} redirect-uri]
+  "Register Vis as a public client under its own name (RFC 7591), or throw the typed
+   refusal with the upstream status. Vis never borrows another product's client id."
+  [server {registration-url "registration_endpoint"} redirect-uri]
   (when registration-url
-    (let [{:keys [status body]} (http-post-json registration-url
-                                                {"client_name" "vis MCP client"
-                                                 "redirect_uris" [redirect-uri]
-                                                 "grant_types" ["authorization_code"
-                                                                "refresh_token"]
-                                                 "response_types" ["code"]
-                                                 "token_endpoint_auth_method" "none"
-                                                 "scope" "openid profile offline_access"})]
-      (when (and (< (long status) 400) (map? body) (get body "client_id")) body))))
+    (let [{:keys [status body]}
+          (http-post-json registration-url
+                          {"client_name" "vis MCP client"
+                           "redirect_uris" [redirect-uri]
+                           "grant_types" ["authorization_code" "refresh_token"]
+                           "response_types" ["code"]
+                           "token_endpoint_auth_method" "none"
+                           "scope" "openid profile offline_access"})
+
+          status
+          (long status)]
+
+      (if (and (< status 400) (map? body) (get body "client_id"))
+        body
+        (throw
+          (oauth-failure :mcp/oauth-registration server
+                         "registration"
+                         (if (< status 400)
+                           (str "the authorization server answered client registration "
+                                "without a client_id (HTTP "
+                                status
+                                " from "
+                                registration-url
+                                ").")
+                           (str "the authorization server refused client registration (HTTP "
+                                status
+                                " from "
+                                registration-url
+                                "). It accepts only clients "
+                                "that it registered. Set auth.client_id and auth.client_secret "
+                                "on the server."))
+                         :upstream-status status
+                         :upstream-url registration-url))))))
 
 ;; Token store — one EDN file per server under ~/.vis/mcp-tokens/
 
@@ -215,23 +251,30 @@
    well-known URL). `auth-hint` is optional user config:
    `{:client-id :scope :authorization-timeout-ms}`."
   [server-name server-url www-auth auth-hint]
-  (let [rmeta
+  (let [well-known
+        (str (origin-of server-url) "/.well-known/oauth-protected-resource")
+
+        rmeta
         (or (discover-protected-resource server-url www-auth)
-            (throw (ex-info
-                     (str "MCP " server-name ": no OAuth protected-resource metadata discoverable")
-                     {:type :mcp/oauth-discovery :server server-name})))
+            (throw (oauth-failure :mcp/oauth-discovery server-name
+                                  "discovery" (str "found no OAuth protected-resource metadata at "
+                                                   well-known
+                                                   ".")
+                                  :upstream-url well-known)))
 
         as-url
         (or (first (get rmeta "authorization_servers"))
-            (throw (ex-info (str "MCP "
-                                 server-name
-                                 ": protected-resource metadata has no authorization_servers")
-                            {:type :mcp/oauth-discovery :server server-name})))
+            (throw (oauth-failure :mcp/oauth-discovery server-name
+                                  "discovery"
+                                  "the protected-resource metadata names no authorization server."
+                                  :upstream-url (::url rmeta))))
 
         asmeta
         (or (discover-authorization-server as-url)
-            (throw (ex-info (str "MCP " server-name ": AS metadata not discoverable at " as-url)
-                            {:type :mcp/oauth-discovery :server server-name})))
+            (throw (oauth-failure :mcp/oauth-discovery server-name
+                                  "discovery"
+                                  (str "found no authorization server metadata at " as-url ".")
+                                  :upstream-url as-url)))
 
         verifier
         (util/base64url (util/random-bytes 32))]
@@ -256,21 +299,25 @@
    client, which the authorization server then rejects the code for."
   [{:keys [asmeta challenge state resource scope server]} auth-hint redirect-uri]
   (let [reg
-        (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
+        (when-not (:client-id auth-hint) (register-client! server asmeta redirect-uri))
 
         client-id
         (or (:client-id auth-hint) (get reg "client_id"))
 
         _
         (when-not client-id
-          (throw (ex-info (str
-                            "MCP " server
-                            ": the authorization server supports no dynamic client registration; "
-                            "set `auth: {client_id: …}` on the server")
-                          {:type :mcp/oauth-client :server server})))
+          (throw (oauth-failure :mcp/oauth-client server
+                                "registration"
+                                (str
+                                  "the authorization server offers no dynamic client registration. "
+                                  "Set auth.client_id on the server."))))
 
         endpoint
-        (get asmeta "authorization_endpoint")
+        (or (get asmeta "authorization_endpoint")
+            (throw (oauth-failure :mcp/oauth-discovery server
+                                  "authorize"
+                                  "the authorization server metadata has no authorization_endpoint."
+                                  :upstream-url (::url asmeta))))
 
         params
         (cond-> {"response_type" "code"
@@ -286,21 +333,58 @@
     {:client-id client-id
      :url (str endpoint (if (str/includes? endpoint "?") "&" "?") (form-encode params))}))
 
+(defn- token-auth-method
+  "How the client authenticates at the token endpoint (RFC 6749 section 2.3.1). A
+   client without a secret is public: `none`. A client with a secret uses
+   `client_secret_basic`, unless the server lists only `client_secret_post`."
+  [asmeta client-secret]
+  (let [methods (set (get asmeta "token_endpoint_auth_methods_supported"))]
+    (cond (not client-secret) "none"
+          (and (contains? methods "client_secret_post")
+               (not (contains? methods "client_secret_basic")))
+          "client_secret_post"
+          :else "client_secret_basic")))
+
+(defn- client-credentials
+  "The `client_id` form field plus the secret for `method`, as `[form headers]`."
+  [method client-id client-secret]
+  (let [enc #(URLEncoder/encode (str %) "UTF-8")]
+    (case method
+      "client_secret_post"
+      [{"client_id" client-id "client_secret" client-secret} nil]
+
+      "client_secret_basic"
+      [{"client_id" client-id}
+       {"Authorization" (str "Basic "
+                             (.encodeToString (Base64/getEncoder)
+                                              (util/utf8
+                                                (str (enc client-id) ":" (enc client-secret)))))}]
+
+      [{"client_id" client-id} nil])))
+
 (defn- exchange-code!
-  "Spend `code` at the token endpoint and PERSIST the resulting tokens."
-  [{:keys [server as-url asmeta verifier resource]} client-id code redirect-uri]
+  "Spend `code` at the token endpoint and PERSIST the resulting tokens. The secret
+   itself is never persisted; only the method that a refresh must use again."
+  [{:keys [server as-url asmeta verifier resource]} client-id client-secret code redirect-uri]
   (let [token-url
         (get asmeta "token_endpoint")
 
+        method
+        (token-auth-method asmeta client-secret)
+
+        [form headers]
+        (client-credentials method client-id client-secret)
+
         {:keys [status body]}
         (http-post-form token-url
-                        (cond-> {"grant_type" "authorization_code"
-                                 "code" code
-                                 "redirect_uri" redirect-uri
-                                 "client_id" client-id
-                                 "code_verifier" verifier}
+                        (cond-> (merge form
+                                       {"grant_type" "authorization_code"
+                                        "code" code
+                                        "redirect_uri" redirect-uri
+                                        "code_verifier" verifier})
                           resource
-                          (assoc "resource" resource)))]
+                          (assoc "resource" resource))
+                        headers)]
 
     (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server " token exchange failed: " status)
@@ -308,20 +392,27 @@
     (write-tokens! server
                    (->tokens body
                              {:client-id client-id
+                              :token-auth-method method
                               :token-endpoint token-url
                               :authorization-server as-url
                               :resource resource}))))
 
 (defn- refresh-exchange!
   "Spend `refresh-token` at the token endpoint of `creds` and return the new
-   tokens. The server may rotate the refresh token."
-  [server-name creds refresh-token]
-  (let [{:keys [status body]} (http-post-form (:token-endpoint creds)
-                                              (cond-> {"grant_type" "refresh_token"
-                                                       "refresh_token" refresh-token
-                                                       "client_id" (:client-id creds)}
-                                                (:resource creds)
-                                                (assoc "resource" (:resource creds))))]
+   tokens. The server may rotate the refresh token. A confidential client sends
+   `client-secret` with the method that the first exchange used."
+  [server-name creds client-secret refresh-token]
+  (let [[form headers]
+        (client-credentials (:token-auth-method creds) (:client-id creds) client-secret)
+
+        {:keys [status body]}
+        (http-post-form (:token-endpoint creds)
+                        (cond-> (merge form
+                                       {"grant_type" "refresh_token" "refresh_token" refresh-token})
+                          (:resource creds)
+                          (assoc "resource" (:resource creds)))
+                        headers)]
+
     (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server-name " token refresh failed: " status)
                       {:type :mcp/oauth-refresh :server server-name :status status :body body})))
@@ -362,40 +453,42 @@
    had signed into yet, which looked exactly like a hung daemon. With nothing to
    refresh it throws `:mcp/oauth-required` immediately; authorizing is the
    explicit headless flow below, which hands back a URL instead of waiting for
-   one."
-  [server-name server-url www-auth-atom]
-  (let [required
-        #(oauth-required server-name server-url @www-auth-atom %)
+   one. `client-secret` is the configured secret of a pre-registered client, sent
+   only when the persisted tokens came from a confidential exchange."
+  ([server-name server-url www-auth-atom] (make-bearer-fn server-name server-url www-auth-atom nil))
+  ([server-name server-url www-auth-atom client-secret]
+   (let [required
+         #(oauth-required server-name server-url @www-auth-atom %)
 
-        usable?
-        #(and (:token %) (not (expired? %)))
+         usable?
+         #(and (:token %) (not (expired? %)))
 
-        refresh
-        (oauth/make-file-refresher {:store (str "mcp/" server-name)
-                                    :load #(read-tokens server-name)
-                                    :usable? usable?
-                                    :refresh-token :refresh-token
-                                    :exchange!
-                                    #(refresh-exchange! server-name (read-tokens server-name) %)
-                                    :persist! #(write-tokens! server-name %)
-                                    :on-rejected! (fn [_]
-                                                    (forget! server-name))
-                                    :->token #(select-keys % [:token])
-                                    :no-token! #(throw (required nil))
-                                    :lock-path (str (token-file server-name) ".lock")})
+         refresh
+         (oauth/make-file-refresher
+           {:store (str "mcp/" server-name)
+            :load #(read-tokens server-name)
+            :usable? usable?
+            :refresh-token :refresh-token
+            :exchange! #(refresh-exchange! server-name (read-tokens server-name) client-secret %)
+            :persist! #(write-tokens! server-name %)
+            :on-rejected! (fn [_]
+                            (forget! server-name))
+            :->token #(select-keys % [:token])
+            :no-token! #(throw (required nil))
+            :lock-path (str (token-file server-name) ".lock")})
 
-        bearer
-        (fn [rejected]
-          ;; Nothing on file is a server that nobody signed in to, often a public
-          ;; one: no exchange and no refresh record.
-          (let [creds (or (read-tokens server-name) (throw (required nil)))]
-            (if (and (usable? creds) (not= rejected (:token creds)))
-              (:token creds)
-              (try (:token (refresh rejected))
-                   (catch Throwable t
-                     (throw (if (= :mcp/oauth-required (:type (ex-data t))) t (required t))))))))]
+         bearer
+         (fn [rejected]
+           ;; Nothing on file is a server that nobody signed in to, often a public
+           ;; one: no exchange and no refresh record.
+           (let [creds (or (read-tokens server-name) (throw (required nil)))]
+             (if (and (usable? creds) (not= rejected (:token creds)))
+               (:token creds)
+               (try (:token (refresh rejected))
+                    (catch Throwable t
+                      (throw (if (= :mcp/oauth-required (:type (ex-data t))) t (required t))))))))]
 
-    (fn ([] (bearer nil)) ([rejected] (bearer rejected)))))
+     (fn ([] (bearer nil)) ([rejected] (bearer rejected))))))
 
 (defn token-status
   "Non-secret view of the persisted OAuth tokens for `server-name`. Never returns
@@ -481,7 +574,13 @@
                            (stop!))
                          (throw t)))))
        :complete (fn [ctx input]
-                   (exchange-code! ctx (:client-id ctx) (code-of input) (:redirect-uri ctx)))})))
+                   ;; A configured secret belongs to the configured client id, never to a
+                   ;; client that dynamic registration made.
+                   (exchange-code! ctx
+                                   (:client-id ctx)
+                                   (when (:client-id auth-hint) (:client-secret auth-hint))
+                                   (code-of input)
+                                   (:redirect-uri ctx)))})))
 
 (defn complete-authorization!
   "Validate and complete via the shared engine; app flows require the full callback."

@@ -275,28 +275,38 @@
       (conj ["session" (own-definitions db target section)]))))
 
 (defn definitions
-  "Resolve named definitions atomically per name, never merging credentials across scopes."
-  [db target section]
-  (let [layers
-        (definition-layers db target section)
+  "Resolve named definitions atomically per name, never merging credentials across scopes.
+   `name-fn` gives each name its canonical spelling, or nil to drop it, before layers merge."
+  ([db target section] (definitions db target section identity))
+  ([db target section name-fn]
+   (let [rename
+         (fn [entries]
+           (into {}
+                 (keep (fn [[name value]]
+                         (when-let [name (name-fn name)]
+                           [name value])))
+                 entries))
 
-        own
-        (own-definitions db target section)]
+         layers
+         (definition-layers db target section)
 
-    (->> layers
-         (reduce (fn [result [source entries]]
-                   (reduce-kv (fn [result name value]
-                                (assoc result
-                                  name {:name name
-                                        :value value
-                                        :source source
-                                        :is-override (contains? own name)}))
-                              result
-                              (or entries {})))
-                 {})
-         vals
-         (sort-by :name)
-         vec)))
+         own
+         (rename (own-definitions db target section))]
+
+     (->> layers
+          (reduce (fn [result [source entries]]
+                    (reduce-kv (fn [result name value]
+                                 (assoc result
+                                   name {:name name
+                                         :value value
+                                         :source source
+                                         :is-override (contains? own name)}))
+                               result
+                               (rename entries)))
+                  {})
+          vals
+          (sort-by :name)
+          vec))))
 
 (defn set-definition!
   "Persist one validated named definition; nil removes only this target's override."

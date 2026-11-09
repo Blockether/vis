@@ -44,7 +44,9 @@
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
             [com.blockether.vis.internal.util :as util]
-            [taoensso.telemere :as tel]))
+            [taoensso.telemere :as tel])
+  (:import (java.text Normalizer Normalizer$Form)
+           (java.util Locale)))
 
 ;; Config — declared servers from ~/.vis/state.yml :mcp :servers
 
@@ -103,6 +105,13 @@
   (let [e (:enabled spec)]
     (if (nil? e) true (boolean e))))
 
+(defn- auth-hint
+  "The `auth` block of a server spec as the OAuth client reads it:
+   `{:client-id :client-secret :scope :authorization-timeout-ms}`. `runtime-config`
+   keywordizes only the keys that it knows, so this block arrives string-keyed."
+  [auth]
+  (when (map? auth) (update-keys auth #(keyword (str/replace (name %) "_" "-")))))
+
 (defn- ->client-spec
   "Coerce a user spec (already `runtime-config`'d) into what `mcp/connect`
    wants: env-interpolated, `:bearer-fn` synthesised for HTTP servers without a
@@ -130,11 +139,20 @@
         www-auth
         (atom nil)
 
+        auth
+        (auth-hint (or (:auth s) (get s "auth")))
+
         bearer-fn
         (when (and server-name (= :streamable-http transport) (not has-static-auth?))
-          (mcp-oauth/make-bearer-fn server-name (:url s) www-auth))]
+          (mcp-oauth/make-bearer-fn server-name
+                                    (:url s)
+                                    www-auth
+                                    (when (:client-id auth) (:client-secret auth))))]
 
     (cond-> (assoc s :transport transport)
+      auth
+      (assoc :auth auth)
+
       (:timeout_ms s)
       (assoc :timeout-ms (:timeout_ms s))
 
@@ -146,6 +164,43 @@
         bearer-fn :www-auth-atom
         www-auth))))
 
+(defn- canonical-name
+  "The one spelling of an MCP server name, or nil when nothing is left: lower case,
+   accents dropped, and each run of characters other than `a-z` and `0-9` (blanks,
+   newlines, `_`, `.`) as one `-`. `Figma Dev` is `figma-dev`. The name keys the
+   config, the token file and `mcp_call`, so every reader and writer uses it."
+  [name]
+  (let [s (some-> name
+                  str
+                  (Normalizer/normalize Normalizer$Form/NFD)
+                  (str/replace #"\p{M}+" "")
+                  (.toLowerCase Locale/ROOT)
+                  ;; Letters that NFD does not decompose.
+                  (str/escape {\ł \l \ø \o \đ \d \ß "ss"})
+                  (str/replace #"[^a-z0-9]+" "-")
+                  (str/replace #"^-+|-+$" ""))]
+    (when (seq s) s)))
+
+(defn- server-name
+  [name]
+  (or (canonical-name name)
+      (throw (ex-info "MCP server name must contain a letter or a digit"
+                      {:type :mcp/invalid-name}))))
+
+(defn- normalize-servers
+  "`servers` keyed by `canonical-name`. A key that is already canonical wins over
+   another spelling of it, so `figma` beats `Figma`. A key with no name left is
+   dropped with a warning."
+  [servers]
+  (reduce-kv (fn [acc k v]
+               (if-let [nm (canonical-name k)]
+                 (if (and (contains? acc nm) (not= nm (str k))) acc (assoc acc nm v))
+                 (do (tel/log! {:level :warn :id ::invalid-server-name :data {:server (str k)}}
+                               "MCP server name has no letter or digit; server ignored")
+                     acc)))
+             {}
+             (if (map? servers) servers {})))
+
 (defonce ^:private servers-cache
   ;; {:hash <hash-of-raw-mcp-map> :value {server-name coerced-spec}}
   (atom {:hash ::none :value {}}))
@@ -156,8 +211,9 @@
    not re-parse or re-wrap on every call. `${ENV_VAR}` is interpolated."
   []
   (let [raw
-        {"servers" (merge (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"])
-                          (get-in (config/load-global-config-raw) ["mcp" "servers"]))}
+        {"servers"
+         (merge (normalize-servers (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"]))
+                (normalize-servers (get-in (config/load-global-config-raw) ["mcp" "servers"])))}
 
         h
         (hash raw)]
@@ -355,6 +411,22 @@
 
 (defonce ^:private scoped-spec-cache (atom {}))
 
+(defn definitions
+  "The MCP server definitions that settings `target` resolves, under canonical names."
+  [db target]
+  (scoped/definitions db target ["mcp" "servers"] canonical-name))
+
+(defn- drop-scoped-aliases!
+  "Remove the other spellings of `name` that settings `target` itself defines, so a
+   save or delete leaves one definition under the canonical name."
+  [db target name]
+  (doseq [k
+          (keys (scoped/own-definitions db target ["mcp" "servers"]))
+
+          :when (and (not= k name) (= name (canonical-name k)))]
+
+    (scoped/set-definition! db target ["mcp" "servers"] k nil)))
+
 (defn- session-definitions
   "The MCP server definitions that `session-id` resolves, read once for each
    settings snapshot."
@@ -366,10 +438,9 @@
         (:db-info env)]
 
     (when (and session-id db)
-      (util/scope-cached
-        [::session-definitions session-id]
-        [db]
-        #(scoped/definitions db (scoped/session-target db session-id) ["mcp" "servers"])))))
+      (util/scope-cached [::session-definitions session-id]
+                         [db]
+                         #(definitions db (scoped/session-target db session-id))))))
 
 (defn- local-session-specs
   [session-id]
@@ -557,8 +628,8 @@
 
 (defn- raw-servers
   []
-  (merge (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"])
-         (get-in (config/load-global-config-raw) ["mcp" "servers"])))
+  (merge (normalize-servers (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"]))
+         (normalize-servers (get-in (config/load-global-config-raw) ["mcp" "servers"]))))
 
 (defn- machine-servers
   "The servers THIS GATEWAY owns: the `:mcp :servers` block of the machine-written
@@ -567,7 +638,7 @@
    `.vis/config.yml`) that belongs to the user, so this API lists those but never
    rewrites them."
   []
-  (or (get-in (or (config/load-global-config-raw) {}) ["mcp" "servers"]) {}))
+  (normalize-servers (get-in (or (config/load-global-config-raw) {}) ["mcp" "servers"])))
 
 (defn- ensure-managed!
   "Guard on every gateway write: `name` must be unknown, or owned by the machine
@@ -594,15 +665,6 @@
               (assoc spec k (get previous k))))
           next
           ["env" "headers"]))
-
-(defn- server-name
-  [name]
-  (let [name (some-> name
-                     str
-                     str/trim)]
-    (when-not (seq name)
-      (throw (ex-info "MCP server name must be a non-blank string" {:type :mcp/invalid-name})))
-    name))
 
 (defn set-session-servers!
   "Attach `servers` — `{name raw-spec}`, each raw spec shaped exactly like a
@@ -782,7 +844,10 @@
       ;; write boundary still validates the schema and preserves secret references.
       (config/update-machine-config!
         (fn [machine]
-          (let [spec* (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)]
+          ;; Every write stores canonical names, which also renames an older key.
+          (let [machine (update-in machine ["mcp" "servers"] normalize-servers)
+                spec* (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)]
+
             (vreset! spec spec*)
             (assoc-in machine ["mcp" "servers" name] spec*)))
         :gateway-mcp)
@@ -817,7 +882,7 @@
         machine
         (or (config/load-global-config-raw) {})]
 
-    (when-not (get-in machine ["mcp" "servers" name])
+    (when-not (get (normalize-servers (get-in machine ["mcp" "servers"])) name)
       ;; A hand-written server LOOKS deletable in the inventory; deleting the
       ;; machine tier would appear to work and the entry would come straight
       ;; back on the next merge. Say so instead.
@@ -826,7 +891,7 @@
     (config/update-machine-config!
       (fn [machine]
         (let [servers
-              (dissoc (get-in machine ["mcp" "servers"]) name)
+              (dissoc (normalize-servers (get-in machine ["mcp" "servers"])) name)
 
               machine*
               (if (seq servers)
@@ -846,7 +911,7 @@
   (if (= "global" (:scope target))
     (gateway-servers)
     (let [definitions
-          (scoped/definitions db target ["mcp" "servers"])
+          (definitions db target)
 
           ;; Register every server first so its availability row is in the settings.
           available
@@ -896,6 +961,7 @@
       (when (or (seq (get spec "env")) (seq (get spec "headers")) (seq (get spec "auth")))
         (throw (ex-info "MCP credentials and environment belong to global server definitions"
                         {:type :mcp/invalid-server})))
+      (drop-scoped-aliases! db target name)
       (scoped/set-definition! db target ["mcp" "servers"] name spec)
       (first (filter #(= name (get % "name")) (get (scoped-servers db target) "servers"))))))
 
@@ -904,16 +970,21 @@
   [db target name]
   (if (= "global" (:scope target))
     (delete-gateway-server! name)
-    (do (scoped/set-definition! db target ["mcp" "servers"] (server-name name) nil)
-        {"name" name "is_deleted" true})))
+    (let [name (server-name name)]
+      (drop-scoped-aliases! db target name)
+      (scoped/set-definition! db target ["mcp" "servers"] name nil)
+      {"name" name "is_deleted" true})))
 
 (defn set-scoped-server-enabled!
   "Change availability without mutating an ancestor definition or stopping another session."
   [db target name enabled]
   (if (= "global" (:scope target))
     (set-gateway-server-enabled! name enabled)
-    (let [_
-          (when-not (some #(= name (:name %)) (scoped/definitions db target ["mcp" "servers"]))
+    (let [name
+          (server-name name)
+
+          _
+          (when-not (some #(= name (:name %)) (definitions db target))
             (throw (ex-info "MCP server not found in this target" {:type :mcp/not-found})))
 
           id
@@ -983,11 +1054,29 @@
          (server-name name)
 
          spec
-         (oauth-server-spec name)]
+         (oauth-server-spec name)
 
-     (mcp-oauth/start-authorization! name
-                                     (:url spec)
-                                     {:auth-hint (:auth spec) :callback-mode callback-mode}))))
+         auth
+         (:auth spec)]
+
+     (try (when-let [ref (first (config/unresolved-env-refs (:client-secret auth)))]
+            (throw (ex-info (str "MCP server '"
+                                 name
+                                 "': auth.client_secret references ${"
+                                 ref
+                                 "}, which the gateway environment does not set.")
+                            {:type :mcp/oauth-client :server name :step "registration"})))
+          (mcp-oauth/start-authorization! name
+                                          (:url spec)
+                                          {:auth-hint auth :callback-mode callback-mode})
+          (catch Throwable t
+            (tel/log! {:level :warn
+                       :id ::auth-start-failed
+                       :data (merge {:server name :error (ex-message t)}
+                                    (select-keys (ex-data t)
+                                                 [:type :step :upstream-status :upstream-url]))}
+                      "MCP sign-in could not start")
+            (throw t))))))
 
 (defn- settle-auth!
   "A flow that landed leaves the server connected with a STALE 401'd session (or
@@ -1057,8 +1146,8 @@
                                (mcp/list-tools conn))}
                 (finally (mcp/close conn))))
          (catch clojure.lang.ExceptionInfo e
-           (if (and (= :mcp/http-error (:type (ex-data e)))
-                    (= 401 (:status (ex-data e)))
+           (if (and (or (oauth-required? e)
+                        (and (= :mcp/http-error (:type (ex-data e))) (= 401 (:status (ex-data e)))))
                     (:bearer-fn spec)
                     (some->> (some-> ^clojure.lang.IDeref (:www-auth-atom spec)
                                      deref)
@@ -1249,40 +1338,43 @@
    listing and calling all reach a remote peer."
   ([env server] (mcp-call-impl env server nil nil))
   ([env server tool] (mcp-call-impl env server tool nil))
-  ([env server tool args]
-   (try
-     (if-let [conn (when (scoped/resource-enabled? env :mcp server)
-                     (ensure-connected! (:session-id env) server))]
-       (let [rows (tool-rows conn)
-             row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
+  ([env requested tool args]
+   (let [server (or (canonical-name requested) requested)]
+     (try
+       (if-let [conn (when (scoped/resource-enabled? env :mcp server)
+                       (ensure-connected! (:session-id env) server))]
+         (let [rows (tool-rows conn)
+               row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
 
-         (cond
-           ;; No tool named - or an args map drifted into its slot. Answer with the
-           ;; catalog rather than guessing at a call: this IS the schema lookup.
-           (or (not (string? tool)) (str/blank? tool)) (ok :mcp/call {"server" server "tools" rows})
-           ;; Unknown name, judged only against a catalog we actually have: a
-           ;; momentarily empty listing must never refuse a real call.
-           (and (seq rows) (nil? row))
-           (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
-                :server server
-                :tools (mapv #(get % "name") rows)
-                :hint (str "Call `await "
-                           sandbox-verb
-                           "(server)` for every tool's description and input schema."))
-           :else
-           (let [r (mcp/call-tool conn tool (if (map? args) args {}))
-                 is-error (boolean (get r "isError"))]
+           (cond
+             ;; No tool named - or an args map drifted into its slot. Answer with the
+             ;; catalog rather than guessing at a call: this IS the schema lookup.
+             (or (not (string? tool)) (str/blank? tool)) (ok :mcp/call
+                                                             {"server" server "tools" rows})
+             ;; Unknown name, judged only against a catalog we actually have: a
+             ;; momentarily empty listing must never refuse a real call.
+             (and (seq rows) (nil? row))
+             (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
+                  :server server
+                  :tools (mapv #(get % "name") rows)
+                  :hint (str "Call `await "
+                             sandbox-verb
+                             "(server)` for every tool's description and input schema."))
+             :else (let [r (mcp/call-tool conn tool (if (map? args) args {}))
+                         is-error (boolean (get r "isError"))]
 
-             (ok
-               :mcp/call
-               (cond-> {"server" server "tool" tool "content" (get r "content") "is_error" is-error}
-                 ;; A refused call is nearly always an argument mismatch, and the
-                 ;; schema is already cached: ship it WITH the refusal so the retry
-                 ;; costs no extra round trip.
-                 (and is-error row)
-                 (assoc "input_schema" (get row "input_schema")))))))
-       (unavailable-err env server))
-     (catch Throwable t (call-failed-err env server tool t)))))
+                     (ok :mcp/call
+                         (cond-> {"server" server
+                                  "tool" tool
+                                  "content" (get r "content")
+                                  "is_error" is-error}
+                           ;; A refused call is nearly always an argument mismatch, and the
+                           ;; schema is already cached: ship it WITH the refusal so the retry
+                           ;; costs no extra round trip.
+                           (and is-error row)
+                           (assoc "input_schema" (get row "input_schema")))))))
+         (unavailable-err env server))
+       (catch Throwable t (call-failed-err env server tool t))))))
 
 ;; Public vars retain developer examples and fallback docs. Native symbols
 ;; below own compact model-facing semantics and exact schemas. Under alias

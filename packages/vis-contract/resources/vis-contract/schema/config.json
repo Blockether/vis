@@ -869,6 +869,11 @@
           "type": "string",
           "pattern": ".*\\S.*"
         },
+        "client_secret": {
+          "type": "string",
+          "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+          "description": "Secret of a pre-registered client as an environment reference, such as ${FIGMA_CLIENT_SECRET}. Plain text is refused."
+        },
         "scope": {
           "type": "string",
           "pattern": ".*\\S.*"

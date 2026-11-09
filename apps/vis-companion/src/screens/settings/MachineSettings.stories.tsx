@@ -149,6 +149,12 @@ export const AllStates: Story = {
         await expect(control).toHaveAccessibleDescription(/config file; edit it there/i);
       }
     }
+    // Issue 458: a signed-out server's Sign in is a button on the row itself, not a
+    // status word beside the chevron with the verb hidden in the row menu.
+    const signIn = canvas.getByRole('button', { name: 'Sign in to linear' });
+    await expect(signIn).toBeVisible();
+    await expect(canvas.getByRole('button', { name: /^linear/ }).contains(signIn)).toBe(false);
+    await expect(signIn.closest('[role="group"]')).toBeNull();
     const control = canvas.getByRole('switch', { name: 'filesystem MCP server: on' });
     const row = canvas.getByRole('button', { name: /^filesystem/ });
     control.focus();

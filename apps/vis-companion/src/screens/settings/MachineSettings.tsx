@@ -1199,7 +1199,8 @@ export function McpServersPanel({
         setError(
           error instanceof GatewayOAuthError
             ? error.message
-            : 'Cannot start sign-in. Check the gateway and MCP server settings, then try again.',
+            : (gatewayErrorMessage(error) ??
+                'Cannot start sign-in. Check the gateway and MCP server settings, then try again.'),
         );
     } finally {
       if (authEpoch.current === epoch) setBusy(null);
@@ -1431,7 +1432,10 @@ export function McpServersPanel({
           // verbs, so a config-file server carries them too; only the edits that
           // would rewrite somebody's `vis.yml` are missing from it.
           const actions: SwipeAction[] = [];
-          if (!isScoped && server.url)
+          // A signed-out server's one missing verb is a real button on the row, not a
+          // menu item: the status word beside the chevron only reports the state.
+          const needsSignIn = !isScoped && !!server.url && !server.is_authorized && !isSigningIn;
+          if (!isScoped && server.url && !needsSignIn)
             actions.push(
               // While the browser holds the sign-in, the same slot takes it back.
               isSigningIn
@@ -1444,13 +1448,9 @@ export function McpServersPanel({
                   }
                 : {
                     key: 'auth',
-                    label: server.is_authorized ? 'Re-auth' : 'Sign in',
-                    name: server.is_authorized
-                      ? `Sign in to ${server.name} again`
-                      : `Sign in to ${server.name}`,
+                    label: 'Re-auth',
+                    name: `Sign in to ${server.name} again`,
                     icon: <ArrowOutIcon className="size-4" />,
-                    // The one verb a server cannot work without wears the accent.
-                    tone: server.is_authorized ? 'neutral' : 'accent',
                     onSelect: () => {
                       if (idle) void authorize(server);
                     },
@@ -1501,7 +1501,26 @@ export function McpServersPanel({
 
           return (
             <div key={server.name} className="min-w-0">
-              <SwipeActions label={server.name} actions={actions} alignMenuWithHeader>
+              <SwipeActions
+                label={server.name}
+                actions={actions}
+                alignMenuWithHeader
+                trailing={
+                  needsSignIn && (
+                    <span className="flex items-center pe-3 sm:pe-4">
+                      <Button
+                        variant="secondary"
+                        density="compact"
+                        aria-label={`Sign in to ${server.name}`}
+                        disabled={!idle}
+                        onClick={() => void authorize(server)}
+                      >
+                        Sign in
+                      </Button>
+                    </span>
+                  )
+                }
+              >
                 <div className="flex min-h-13 min-w-0 items-center gap-2 pl-3 sm:pl-4 mouse:min-h-0">
                   {/* Enablement leads the row; connection status remains in its
                       trailing text. Config-file settings are visible but read-only. */}
@@ -1591,6 +1610,13 @@ export function McpServersPanel({
   );
 }
 
+/** The gateway's canonical `error.message`, which it writes to be shown; none for a transport failure. */
+function gatewayErrorMessage(error: unknown): string | null {
+  if (!(error instanceof GatewayError)) return null;
+  const message = (error.body as { error?: { message?: unknown } } | undefined)?.error?.message;
+  return typeof message === 'string' && message ? message : null;
+}
+
 /** Connection status is separate from the enable switch, which only reports configuration. */
 function mcpServerState(
   server: McpServer,
@@ -1626,7 +1652,7 @@ function mcpServerState(
     return {
       tone: 'text-warn',
       label: 'Not signed in — sign in to connect',
-      word: 'sign in',
+      word: 'not signed in',
     };
   return {
     tone: 'text-warn',

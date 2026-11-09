@@ -401,7 +401,10 @@
                 (send1 tok)]
 
             (if (and (= 401 (:status first-resp)) bearer-fn)
-              (let [fresh (try (bearer-fn tok) (catch Throwable _ nil))]
+              ;; `bearer-fn` refuses only with the typed `:mcp/oauth-required`. It must
+              ;; escape: as a plain HTTP 401 it skipped the sign-in backoff, and every
+              ;; turn connected again (#458).
+              (let [fresh (bearer-fn tok)]
                 (if (and fresh (not= fresh tok)) (send1 fresh) first-resp))
               first-resp)))
 

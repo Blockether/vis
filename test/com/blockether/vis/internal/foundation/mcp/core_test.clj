@@ -235,6 +235,52 @@
                                      (catch clojure.lang.ExceptionInfo e e)))))))))
 
 (defdescribe
+  mcp-sign-in-backoff-test
+  (it "asks an OAuth server that nobody signed in to once per backoff, not on every connect"
+      ;; Regression #458: 45 `HTTP 401 on initialize` connects in two minutes of turns.
+      (let [requests (atom 0)
+            missing (java.io.File. (System/getProperty "java.io.tmpdir")
+                                   (str "vis-mcp-none-" (random-uuid) ".edn"))]
+        (with-redefs-fn {#'oauth/token-file (constantly missing)
+                         #'http/request (fn [_]
+                                          (swap! requests inc)
+                                          {:status 401
+                                           :headers {"www-authenticate" "Bearer realm=\"mcp\""}
+                                           :body ""})
+                         #'config/load-global-config-raw
+                         (constantly {"mcp" {"servers" {"remote" {"transport" "streamable_http"
+                                                                  "url" "https://mcp.example.test/mcp"}}}})}
+          (fn []
+            (#'mcp/reset-server-cache!)
+            (try (dotimes [_ 3]
+                   (expect (nil? (#'mcp/ensure-connected! "remote"))))
+                 (expect (= 1 @requests))
+                 (finally (#'mcp/clear-auth-backoff! "remote") (#'mcp/reset-server-cache!))))))))
+
+(defdescribe
+  mcp-server-name-test
+  (it "stores one lower-case name, whatever blanks, case or older key the user gave"
+      (let [store (atom {"mcp" {"servers" {"Figma Dev" {"transport" "stdio" "command" "echo"}}}})]
+        (with-redefs-fn {#'config/load-global-config-raw (fn []
+                                                           @store)
+                         #'config/update-machine-config! (fn [f & _]
+                                                           (swap! store f))
+                         #'mcp/reconcile-async! (constantly nil)}
+          (fn []
+            (#'mcp/reset-server-cache!)
+            (try (expect (= "figma-dev"
+                            (get (mcp/save-gateway-server! "  FIGMA\n dev "
+                                                           {"transport" "stdio" "command" "true"})
+                                 "name")))
+                 (expect (= {"figma-dev" {"transport" "stdio" "command" "true"}}
+                            (get-in @store ["mcp" "servers"])))
+                 (expect (= :mcp/invalid-name
+                            (try (mcp/save-gateway-server! " \n- " {"transport" "stdio" "command" "true"})
+                                 nil
+                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                 (finally (#'mcp/reset-server-cache!))))))))
+
+(defdescribe
   gateway-mcp-management-test
   (it "persists gateway server values while returning only a sanitized inventory row"
       (let [saved
