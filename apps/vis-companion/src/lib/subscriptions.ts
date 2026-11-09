@@ -5,7 +5,7 @@ import { bufferStreamEvent } from './session-stream';
 import { MAX_SUBSCRIBED_SESSIONS } from './storage';
 import { onAway, onWake } from './wake';
 import type { SseEvent, Subagent } from './types';
-import { mergeAgents, teamRowsFromWire } from './gateway';
+import { mergeAgents, REWIND_CURSOR, teamRowsFromWire } from './gateway';
 
 type SessionListener = (event: SseEvent) => void;
 type FleetListener = (event: SseEvent) => void;
@@ -70,6 +70,8 @@ export class SessionSubscriptionHub {
   // the frame named none). Absence means "unknown" (e.g. the hub attached mid-turn),
   // which is treated as in-flight.
   private readonly ended = new Map<string, string>();
+  // Sessions whose last `subscription.ready` said that no turn runs, until a turn starts.
+  private readonly idle = new Set<string>();
   // The cursor after which this hub received every frame of a session: the lowest
   // `subscription.ready` echo. A hub built later than a cached running-turn bubble
   // resumes at the device's newer cursor, so the frames between them never arrive.
@@ -78,6 +80,8 @@ export class SessionSubscriptionHub {
   private readonly wantedFrom = new Map<string, number>();
   // Sessions resumed below their delivered frames, until the echo of that resume.
   private readonly replaying = new Set<string>();
+  // Sessions with a queued replay. Their frames until then come again in the replay.
+  private readonly superseded = new Set<string>();
   // The newest frame given to each session's listeners. A replay below it goes only
   // to the listeners that asked for those frames.
   private readonly delivered = new Map<string, number>();
@@ -223,7 +227,9 @@ export class SessionSubscriptionHub {
   /**
    * Deliver one session's frames to `listener`, with the buffered running turn first.
    * `from` is the cursor of a cached bubble that the listener already painted: the hub
-   * then also replays every frame after it that this hub never streamed.
+   * then also replays every frame after it that this hub never streamed. A negative
+   * `from` means that the listener holds nothing of the running turn: the hub then
+   * replays that turn from its first frame when its buffer does not start there.
    */
   subscribeSession(
     sid: string,
@@ -247,6 +253,9 @@ export class SessionSubscriptionHub {
     if (from !== undefined && from >= 0) {
       this.listenerFrom.set(listener, from);
       this.requireFrom(sid, from);
+    } else if (from !== undefined && !this.holdsRunningTurn(sid)) {
+      this.listenerFrom.set(listener, REWIND_CURSOR);
+      this.requireFrom(sid, REWIND_CURSOR);
     }
     if (replay) {
       // A copy: a listener may feed the hub while the replay is still running.
@@ -273,6 +282,11 @@ export class SessionSubscriptionHub {
     if (from < covered) this.replayFrom(sid, from);
   }
 
+  /** Whether the buffer gives a new listener all of the running turn of `sid`, or no turn runs. */
+  private holdsRunningTurn(sid: string): boolean {
+    return this.idle.has(sid) || this.ended.has(sid) || this.buffers.get(sid)?.[0]?.type === 'turn.started';
+  }
+
   /** Record the cursor that the gateway resumed `sid` from. */
   private noteCovered(sid: string, cursor: number): void {
     const covered = Math.min(this.coveredFrom.get(sid) ?? cursor, cursor);
@@ -281,11 +295,15 @@ export class SessionSubscriptionHub {
     if (!this.replaying.delete(sid)) this.delivered.set(sid, cursor);
     const wanted = this.wantedFrom.get(sid);
     this.wantedFrom.delete(sid);
+    if (wanted === undefined || wanted >= covered) return;
+    if (wanted === REWIND_CURSOR && this.holdsRunningTurn(sid)) return;
     // The stream stores this echo as its cursor after this frame, so resume after that.
-    if (wanted !== undefined && wanted < covered) queueMicrotask(() => this.replayFrom(sid, wanted));
+    this.superseded.add(sid);
+    queueMicrotask(() => this.replayFrom(sid, wanted));
   }
 
   private replayFrom(sid: string, from: number): void {
+    this.superseded.delete(sid);
     if (this.disposed || !this.watched.has(sid)) return;
     this.stopStream?.();
     this.stopStream = null;
@@ -301,7 +319,9 @@ export class SessionSubscriptionHub {
     this.coveredFrom.delete(sid);
     this.wantedFrom.delete(sid);
     this.replaying.delete(sid);
+    this.superseded.delete(sid);
     this.delivered.delete(sid);
+    this.idle.delete(sid);
   }
 
   /**
@@ -400,6 +420,7 @@ export class SessionSubscriptionHub {
     this.deleted.clear();
     this.buffers.clear();
     this.ended.clear();
+    this.idle.clear();
     this.teams.clear();
     this.teamListeners.clear();
   }
@@ -564,6 +585,8 @@ export class SessionSubscriptionHub {
     // screen uses it to decide whether the turn it paints is still the daemon's,
     // which is the one thing a reconnect cannot infer from its own cursor.
     if (event.type === 'subscription.ready') {
+      if (event.is_live === false) this.idle.add(sid);
+      else this.idle.delete(sid);
       if (typeof event.cursor === 'number') this.noteCovered(sid, event.cursor);
       this.noteTeam(sid, event);
       for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
@@ -579,6 +602,7 @@ export class SessionSubscriptionHub {
       for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
       return;
     }
+    if (this.superseded.has(sid)) return;
 
     // The buffer replays the turn that is STILL STREAMING to a screen that was
     // reopened mid-flight. A FINISHED turn must never be replayed: its
@@ -593,6 +617,7 @@ export class SessionSubscriptionHub {
       this.buffers.delete(sid);
     } else if (event.type === 'turn.started') {
       this.ended.delete(sid);
+      this.idle.delete(sid);
       this.buffers.set(sid, [event]);
     } else if (!this.ended.has(sid)) {
       const buffered = this.buffers.get(sid) ?? [];

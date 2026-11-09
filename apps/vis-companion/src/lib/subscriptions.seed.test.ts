@@ -32,8 +32,8 @@ function frame(value: Record<string, unknown>): SseEvent {
   return { session_id: 's', turn_id: 't', ...value } as unknown as SseEvent;
 }
 
-function ready(cursor: number): SseEvent {
-  return frame({ type: 'subscription.ready', cursor, running_turn_id: 't' });
+function ready(cursor: number, is_live?: boolean): SseEvent {
+  return frame({ type: 'subscription.ready', cursor, running_turn_id: 't', is_live });
 }
 
 function progress(seq: number): SseEvent {
@@ -115,5 +115,83 @@ describe('SessionSubscriptionHub seeded screens', () => {
     await Promise.resolve();
     expect(streams.at(-1)).toBe(first);
     expect(seqs(screen)).toEqual([3, 4, 5, 6]);
+  });
+});
+
+// After a reload the screen holds nothing of the running turn, and the device cursor
+// resumes the hub inside it. The screen must still get the turn from its first frame.
+describe('SessionSubscriptionHub screens without a bubble', () => {
+  it('rewinds a running turn that the hub joined mid-way', () => {
+    const { hub, streams, fleet } = setup();
+    const other: SseEvent[] = [];
+    hub.subscribeSession('s', (event) => other.push(event));
+    streams.at(-1)!.emit(ready(8, true));
+    streams.at(-1)!.emit(progress(9));
+
+    const screen: SseEvent[] = [];
+    hub.subscribeSession('s', (event) => screen.push(event), { from: -1 });
+    const replay = streams.at(-1)!;
+    expect(replay.from).toBe(-2);
+
+    replay.emit(ready(3, true));
+    replay.emit(frame({ type: 'turn.started', seq: 4 }));
+    for (let seq = 5; seq <= 10; seq += 1) replay.emit(progress(seq));
+
+    expect(seqs(screen)).toEqual([4, 5, 6, 7, 8, 9, 10]);
+    expect(seqs(other)).toEqual([9, 10]);
+    expect(seqs(fleet)).toEqual([9, 10]);
+  });
+
+  it('rewinds at the first echo of a running turn', async () => {
+    const { hub, streams } = setup();
+    const screen: SseEvent[] = [];
+    hub.subscribeSession('s', (event) => screen.push(event), { from: -1 });
+    const first = streams.at(-1)!;
+    first.emit(ready(8, true));
+    first.emit(progress(9));
+
+    await Promise.resolve();
+    const replay = streams.at(-1)!;
+    expect(replay).not.toBe(first);
+    expect(replay.from).toBe(-2);
+    replay.emit(ready(3, true));
+    replay.emit(frame({ type: 'turn.started', seq: 4 }));
+    for (let seq = 5; seq <= 9; seq += 1) replay.emit(progress(seq));
+
+    expect(seqs(screen)).toEqual([4, 5, 6, 7, 8, 9]);
+  });
+
+  it('keeps the stream when the first echo finds the session idle', async () => {
+    const { hub, streams } = setup();
+    hub.subscribeSession('s', () => {}, { from: -1 });
+    const first = streams.at(-1)!;
+    first.emit(ready(8, false));
+
+    await Promise.resolve();
+    expect(streams.at(-1)).toBe(first);
+  });
+
+  it('keeps the stream for an idle session', () => {
+    const { hub, streams } = setup();
+    hub.subscribeSession('s', () => {});
+    streams.at(-1)!.emit(ready(8, false));
+    const count = streams.length;
+
+    hub.subscribeSession('s', () => {}, { from: -1 });
+    expect(streams.length).toBe(count);
+  });
+
+  it('keeps the stream when the hub holds the turn from its start', () => {
+    const { hub, streams } = setup();
+    hub.subscribeSession('s', () => {});
+    streams.at(-1)!.emit(ready(3, false));
+    streams.at(-1)!.emit(frame({ type: 'turn.started', seq: 4 }));
+    streams.at(-1)!.emit(progress(5));
+    const count = streams.length;
+
+    const screen: SseEvent[] = [];
+    hub.subscribeSession('s', (event) => screen.push(event), { from: -1 });
+    expect(streams.length).toBe(count);
+    expect(seqs(screen)).toEqual([4, 5]);
   });
 });

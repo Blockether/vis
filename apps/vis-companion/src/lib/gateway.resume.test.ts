@@ -193,6 +193,20 @@ describe('a relaunched event stream', () => {
     expect(live.asked).toBe('s1:9');
   });
 
+  // Reported in this Vis session: a reload on a running session showed only the request.
+  // The screen had no bubble, and the remembered cursor resumed after the turn's start.
+  it('rewinds for a screen that holds none of the running turn', async () => {
+    vi.useFakeTimers();
+    const warm = await streamOnce(new Map([['s1', -1]]), [
+      { type: 'subscription.ready', session_id: 's1', cursor: 7 },
+    ]);
+    warm.gateway.persistGatewayCaches();
+
+    vi.resetModules();
+    const cold = await streamOnce(new Map([['s1', -2]]), []);
+    expect(cold.asked).toBe('s1:-2');
+  });
+
   it('rewinds again once the session is deleted', async () => {
     vi.useFakeTimers();
     const warm = await streamOnce(new Map([['s1', -1]]), [

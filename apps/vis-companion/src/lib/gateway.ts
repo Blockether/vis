@@ -160,6 +160,12 @@ export class GatewayOAuthError extends GatewayError {
 /** HTTP status a gateway refuses an unsupported client protocol with. */
 export const INCOMPATIBLE_STATUS = 426;
 
+/**
+ * A stream cursor that asks for the running turn from its first frame, also when this
+ * device remembers a later cursor. A screen without a bubble of that turn needs it whole.
+ */
+export const REWIND_CURSOR = -2;
+
 let incompatibleListener: ((error: GatewayError) => void) | null = null;
 
 /**
@@ -1691,9 +1697,10 @@ export class GatewayClient {
    * honest thing it can say about a session it has not streamed yet. This is
    * where "I have no cursor" becomes "resume where this device left off": the
    * remembered cursor, or the sentinel when there is none to use.
+   * `REWIND_CURSOR` always goes to the gateway unchanged.
    */
   private resumeCursor(sid: string, requested: number): number {
-    if (requested >= 0) return requested;
+    if (requested >= 0 || requested === REWIND_CURSOR) return requested;
     return this.cachedSessionCursor(sid) ?? requested;
   }
 
