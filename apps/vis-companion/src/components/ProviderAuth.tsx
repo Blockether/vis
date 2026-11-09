@@ -1686,7 +1686,7 @@ export function ProviderRows({ auth, focusId }: { auth: ProviderAuth; focusId?: 
                   </ul>
                 ) : !isProbing ? (
                   <Text as="p" variant="description">
-                    No limits reported by this provider.
+                    {provider.limits?.dynamic?.note ?? 'No limits reported by this provider.'}
                   </Text>
                 ) : null}
                 {authed && provider.id === 'openai-codex' && (

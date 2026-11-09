@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.provider.vendor.alibaba-test
-  (:require [com.blockether.vis.internal.extension.registry :as registry]
+  (:require [babashka.http-client :as http]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
@@ -25,12 +26,30 @@
 
 (defdescribe
   limits-test
-  (it "reports :unsupported with a console note - no endpoint verifies the key"
+  (it
+    "verifies a Token Plan key live, so a saved key is not left unverified"
+    (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
+    (doseq [[http-status verdict] [[200 :ok] [401 :unauthenticated] [503 :error]]]
+      (provider-limits/flush-limits-cache! :alibaba-token-plan)
+      (let [called (atom nil)]
+        (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :config})
+                         #'http/get (fn [url opts]
+                                      (reset! called [url (get-in opts [:headers "Authorization"])])
+                                      {:status http-status})}
+          (fn []
+            (let [report (provider-limits/provider-limits :alibaba-token-plan)]
+              (expect (= verdict (:status report)))
+              (expect
+                (= ["https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models"
+                    "Bearer k"]
+                   @called))))))))
+  (it "keeps the Coding Plan :unsupported - its /models route accepts any key"
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-      (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :auth-file})}
+      (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :auth-file})
+                       #'http/get (fn [& _]
+                                    (throw (ex-info "should not call" {})))}
         (fn []
-          (let [report (provider-limits/provider-limits :alibaba-token-plan)]
-            (expect (= :alibaba-token-plan (:provider-id report)))
+          (let [report (provider-limits/provider-limits :alibaba-coding-plan)]
             (expect (= :unsupported (:status report)))
             (expect (= [] (get-in report [:dynamic :limits])))))))
   (it "reports :unauthenticated when the plan key is absent"

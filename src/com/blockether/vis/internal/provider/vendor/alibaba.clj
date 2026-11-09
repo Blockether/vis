@@ -40,7 +40,8 @@
         (config / env / file) without exposing the full key.
      4. `vis-agent providers logout alibaba-coding-plan` clears the persisted
         key for that plan only; the other plan stays intact."
-  (:require [com.blockether.vis.internal.util :as util]
+  (:require [babashka.http-client :as http]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.provider.key-store :as key-store]))
 
@@ -85,30 +86,57 @@
             [{:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
              "qwen3.7-max" "qwen3.7-plus" "qwen3.6-flash" "glm-5.3" "deepseek-v4-pro"]
             :env-keys ["ALIBABA_TOKEN_PLAN_API_KEY"]
+            ;; This `/models` route answers 401 `InvalidApiKey` to a bad key, so
+            ;; it proves a key without spending tokens. The Coding Plan route
+            ;; answers 200 to any key, so that plan has no key check.
+            :key-check-path "/models"
             :policy {:preset-rank 8}}}})
+
+(def ^:private console-note
+  " Alibaba exposes no quota endpoint; check the remaining allowance in the Model Studio console.")
+
+(defn- key-check-status
+  "HTTP status of the plan's key check, or nil when the request fails."
+  [base-url path api-key]
+  (try (:status (http/get (str base-url path)
+                          {:headers {"Accept" "application/json"
+                                     "Authorization" (str "Bearer " api-key)}
+                           :timeout 30000
+                           :throw false}))
+       (catch Exception _ nil)))
 
 (defn- make-limits-fn
   "Neither plan exposes a quota/usage endpoint: `/usage`, `/quota` and the
    OpenAI-compatible `/dashboard/billing/*` routes all answer 404 on both
-   base URLs. So the report carries authentication state plus a note pointing
-   at the Model Studio console instead of inventing numbers."
+   base URLs. So the report carries no numbers. A plan with a
+   `:key-check-path` proves its key live (`:ok` or `:unauthenticated`);
+   the other plan stays `:unsupported`."
   [plan-tag]
   (fn []
-    (let [{:keys [provider-id label]}
+    (let [{:keys [provider-id label base-url key-check-path]}
           (get-in BOOK [:plans plan-tag])
 
           detected
-          (key-store/detect-key BOOK plan-tag)]
+          (key-store/detect-key BOOK plan-tag)
+
+          status
+          (when (and detected key-check-path)
+            (key-check-status base-url key-check-path (:api-key detected)))
+
+          [verdict note]
+          (cond (nil? detected) [:unauthenticated (str label " is not authenticated.")]
+                (nil? key-check-path) [:unsupported (str label " has no key check." console-note)]
+                (and (number? status) (<= 200 status 299))
+                [:ok (str label " accepted the API key." console-note)]
+                (contains? #{401 403} status) [:unauthenticated
+                                               (str label " rejected the current API key.")]
+                :else [:error
+                       (str label " key check failed" (when status (str ": HTTP " status)) ".")])]
 
       {:provider-id provider-id
-       :status (if detected :unsupported :unauthenticated)
+       :status verdict
        :fetched-at-ms (util/now-ms)
-       :dynamic {:limits []
-                 :note (if detected
-                         (str label
-                              " does not expose a quota endpoint; check the remaining"
-                              " allowance in the Model Studio console.")
-                         (str label " is not authenticated."))}})))
+       :dynamic {:limits [] :note note}})))
 
 ;; Provider registration
 ;;
