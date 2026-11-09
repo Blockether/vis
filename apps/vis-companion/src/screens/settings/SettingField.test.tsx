@@ -32,8 +32,8 @@ it('folds stored cards to one row each and opens a card that the person adds', (
   const { rerender } = render(
     <SettingField setting={setting} value={{ rules }} disabled={false} onChange={vi.fn()} onRawChange={vi.fn()} />,
   );
-  expect(screen.getByRole('button', { name: 'api.example.com Read only 1 / 2', expanded: false })).toBeTruthy();
-  expect(screen.getByRole('button', { name: '10.0.0.5 Blocked 2 / 2', expanded: false })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'api.example.com (Read only) 1 / 2', expanded: false })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '10.0.0.5 (Blocked) 2 / 2', expanded: false })).toBeTruthy();
   expect(screen.queryByRole('textbox', { name: 'Rule host 1' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /^api\.example\.com/ }));
   expect(screen.getByRole('textbox', { name: 'Rule host 1' })).toHaveValue('api.example.com');

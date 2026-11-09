@@ -153,7 +153,7 @@ function Entry({ index, count, name, detail, isAdded, children }: {
         onClick={() => setOpen((open) => !open)}
       >
         <span className="min-w-0 truncate font-bold">{name}</span>{' '}
-        <span className="shrink-0 italic">{detail}</span>
+        <span className="shrink-0 italic">({detail})</span>
         {count > 1 && ' '}
         {count > 1 && <span className="ms-auto shrink-0 tabular-nums">{index + 1} / {count}</span>}
       </Disclosure>
