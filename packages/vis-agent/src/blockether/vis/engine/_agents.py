@@ -55,7 +55,8 @@ class SubagentRecord:
     human holds the queue of the child; only a person can release it. ``unknown`` names a
     session that is not a subagent of the caller. ``warning`` reports a file overlap. A child
     that a 429 stopped is ``failed`` with ``error`` (code ``rate_limited``) and ``alternatives``:
-    the working provider and model routes for a new child. A running child also has
+    the working provider and model routes for a new child. Every record has the same keys
+    for each status; a key without a value is ``None``. A running child has values in
     ``activity``, ``notes``, ``messages``, ``step_secs``, ``elapsed_secs`` and ``alerts``: its
     progress since the last wait. A child that ended without an answer has its last ``notes``.
     """

@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
             [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -14,6 +15,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.council.host :as host]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -56,7 +58,7 @@
       (expect (document/valid? "agents" agent))
       (expect (document/valid? "agents" (assoc agent "note" "Reading the parser")))
       (expect (not (document/valid? "agents" (assoc agent "note" ""))))
-      (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
+      (expect (document/valid? "agents" (assoc agent "iteration_budget" 5000)) "No upper limit")
       (expect (not (document/valid? "agents" (assoc agent "iteration_budget" -1))))
       (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 65536 "x"))}))
       (expect (document/valid-json? "agents"
@@ -525,7 +527,6 @@
           (expect (agents/wake-allowed? db leader child) "A ping continues an extended child")
           ;; The follow-up ping runs the child again.
           (ps/db-agent-update! db child {:status "running"})
-          (expect (= :budget-exceeded (outcome #(agents/extend-agent env child 595))))
           (expect (= :invalid-request (outcome #(agents/extend-agent env child 0))))
           (expect (= :not-owner
                      (outcome #(agents/extend-agent {:db-info db :session-id other} child 1))))
@@ -601,7 +602,7 @@
             (expect (= :invalid-request
                        (outcome
                          #(agents/operation! env :answer {:session_id child :text "Late"})))))
-          (expect (= :invalid-request (outcome #(agents/ask-budget child-env 601 "Too many"))))
+          (expect (= :invalid-request (outcome #(agents/ask-budget child-env 0 "Too few"))))
           (expect (= :invalid-request (outcome #(agents/ask-budget env 5 "Not a child"))))))))
   (it
     "lets a child ask for files and the parent grant or deny them"
@@ -1989,7 +1990,7 @@
 
                   (expect (>= (- (System/currentTimeMillis) started) 1500))
                   (expect (= "running" (get-in records [busy "status"])))
-                  (expect (not (contains? (get records busy) "notes")))))))))))
+                  (expect (nil? (get-in records [busy "notes"])))))))))))
 
 ;; Council wait cost study (round 2 audit): a waiting leader built every team row each second, 47
 ;; statements with 3 running children, and a question or a full team polled each second. A wait
@@ -2526,3 +2527,210 @@
                                   [{:task "A" :after ["a1"]} {:task "B" :after ["a2" old]}]
                                   {:timeout_secs 1}))
             (expect (= [["a1"] ["a2" old]] @spawns))))))))
+
+;; Session 18979591: a leader read elapsed_secs of a completed child and got KeyError. A reply
+;; with files and no ping was refused, and an implementer got new edits while its verifiers ran.
+(defdescribe
+  council-leader-feedback-test
+  (it
+    "gives every record each contract key, also for an ended child"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          done
+          (child! db leader {})
+
+          r
+          (with-redefs [ps/db-list-session-turns (fn [_ id]
+                                                   (if (= done (str id))
+                                                     [{:id "t"
+                                                       :status :success
+                                                       :content [{"type" "prose"
+                                                                  "markdown" "Done"}]}]
+                                                     []))]
+            (#'agents/record
+             db
+             nil
+             (constantly false)
+             (constantly false)
+             (+ (System/currentTimeMillis) 60000)
+             (agents/info db done)))
+
+          wire
+          (walk/stringify-keys r)]
+
+      (expect (= "completed" (:status r)))
+      (expect (= (set (keys (get-in (document/schema-document "agents")
+                                    ["$defs" "record" "properties"])))
+                 (set (keys wire))))
+      (expect (nil? (get wire "elapsed_secs")))
+      (expect (document/valid-json? "agents" "record" wire) "A null value fits the contract")))
+  (it
+    "gives files to the child that wrote the reply_to entry"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {})
+
+          stranger
+          (str (h/store-session! db {:channel :api}))
+
+          env
+          {:db-info db :session-id leader}
+
+          live
+          (atom #{})
+
+          refusal
+          (fn [entry-id]
+            (try (agents/publish-with-files!
+                   env
+                   {:content "Fix it" :reply_to entry-id :files {:write ["e.txt"]}}
+                   identity)
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+
+      (with-fake-runtime
+        db
+        live
+        (fn [_]
+          (with-redefs [ps/db-council-get (fn [_ id]
+                                            (case (long id)
+                                              5
+                                              {:entry_id 5 :author_session_id child}
+
+                                              6
+                                              {:entry_id 6 :author_session_id stranger}
+
+                                              nil))]
+            (agents/finish! db child "completed")
+            (expect (nil? (refusal 5)))
+            (expect (= {:write ["e.txt"]} (:files (agents/info db child))))
+            (expect (str/includes? (refusal 6) "files needs exactly one recipient"))
+            (swap! live conj child)
+            (expect (str/includes? (refusal 5) "council.grant")
+                    "A running child gets more files with council.grant"))))))
+  (it "warns when a ping can change the files that a running verifier checks"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            writer
+            (child! db leader {:role "implement" :files {:write ["src/a.clj"]}})
+
+            reader
+            (child! db leader {:role "research"})
+
+            checker
+            (child! db leader {:role "verify"})
+
+            env
+            {:db-info db :session-id leader}]
+
+        (agents/finish! db writer "completed")
+        (agents/finish! db reader "completed")
+        (ps/db-agent-update! db checker {:status "running"})
+        (expect (str/includes? (str (agents/publish-warning env {:ping [writer]}))
+                               "Verifiers still run"))
+        (expect (nil? (agents/publish-warning env {:ping [reader]})) "A child without write rules")
+        (expect (nil? (agents/publish-warning env {:ping [checker]}))
+                "A ping to the verifier itself")
+        (expect (nil? (agents/publish-warning env {:content "No ping"})))
+        (agents/finish! db checker "completed")
+        (expect (nil? (agents/publish-warning env {:ping [writer]})) "No verifier runs")))
+  (it
+    "returns the warning in the council.publish result of the model tool only"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          writer
+          (child! db leader {:role "implement" :files {:write ["src/a.clj"]}})
+
+          checker
+          (child! db leader {:role "verify"})
+
+          env
+          {:db-info db :session-id leader :turn-state-atom (atom {})}
+
+          entry
+          (fn [opts]
+            {:entry_id 1
+             :thread_id 1
+             :group_id "g"
+             :content (:content opts)
+             :author_session_id leader
+             :created_at 1
+             :source "host"
+             :ping (vec (:ping opts))})]
+
+      (agents/finish! db writer "completed")
+      (ps/db-agent-update! db checker {:status "running"})
+      (with-redefs [council/publish!
+                    (fn [_ _ _ opts]
+                      (entry opts))
+
+                    extension/publish-activity!
+                    (constantly nil)]
+
+        (let [shown (:result (host/publish env "Fix the finding" {"ping" [writer]}))]
+          (expect (str/includes? (str (get shown "warning")) "Verifiers still run"))
+          (expect (document/valid-json? "council" "entry" (dissoc shown "warning"))))
+        (expect (nil? (get (:result (host/publish env "Note" {"ping" [checker]})) "warning"))))
+      (let [sdk (wire/->wire
+                  (agents/publish-with-files! env {:content "Fix" :ping [writer]} entry))]
+        (expect (document/valid-json? "council" "entry" sdk)
+                "The SDK publication has no warning key, so the entry schema holds"))))
+  ;; User decision: the iteration budget has no upper limit. The leader of session 18979591
+  ;; reached 530 iterations and could not give more.
+  (it
+    "extends a budget past 600 and starts a task with a budget of 1000"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:iteration_budget 530})
+
+          big
+          (child! db leader {:iteration_budget 1000})
+
+          env
+          {:db-info db :session-id leader}
+
+          spawns
+          (atom [])]
+
+      (with-fake-runtime
+        db
+        (atom #{})
+        (fn [_]
+          (agents/finish! db child "completed")
+          (expect
+            (= 730 (get (first (outcome #(agents/extend-agent env child 200))) "iteration_budget")))
+          (expect (= 1000 (:iteration_budget (agents/info db big)))
+                  "The store keeps a large budget")
+          (with-redefs [agents/runtime-op! (fn [_ op opts]
+                                             (when (= :spawn op)
+                                               (swap! spawns conj (:iteration_budget opts))
+                                               {:session_id big}))]
+            (outcome #(agents/run env [{:task "Large" :iteration_budget 1000}] {:timeout_secs 1}))
+            (expect (= [1000] @spawns)))
+          (expect (map? (outcome #(agents/ask-budget {:db-info db :session-id big}
+                                                     5000
+                                                     "Large"
+                                                     {:timeout_secs 1})))
+                  "A child can ask for more than 600"))))))

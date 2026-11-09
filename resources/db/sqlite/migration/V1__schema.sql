@@ -182,7 +182,7 @@ CREATE TABLE session_agent (
                    CHECK (status IN ('waiting', 'queued', 'running', 'completed', 'failed', 'cancelled',
                                      'budget_limited', 'blocked')),
   depth            INTEGER NOT NULL CHECK (depth BETWEEN 1 AND 2),
-  iteration_budget INTEGER NOT NULL DEFAULT 64 CHECK (iteration_budget BETWEEN 1 AND 600),
+  iteration_budget INTEGER NOT NULL DEFAULT 64 CHECK (iteration_budget >= 1),
   iterations_used  INTEGER NOT NULL DEFAULT 0 CHECK (iterations_used >= 0),
   inherited_turns  INTEGER NOT NULL,
   allowed_models   TEXT CHECK (allowed_models IS NULL OR json_valid(allowed_models)),

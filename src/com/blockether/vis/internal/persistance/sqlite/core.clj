@@ -5751,22 +5751,16 @@
                   0))))
 
 (defn db-agent-extend-budget!
-  "Add `iterations` to one child budget atomically, within the schema maximum. The status stays:
-   a `budget_limited` or `cancelled` child stays idle until a follow-up ping. Answers the new row, or
-   nil when the child is missing or the budget would pass the maximum."
+  "Add `iterations` to one child budget atomically. The budget has no upper limit. The status
+   stays: a `budget_limited` or `cancelled` child stays idle until a follow-up ping. Answers the new
+   row, or nil when the child is missing."
   [db sid iterations]
-  (let [max-budget
-        (long (get-in agent-schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
-
-        n
-        (long iterations)]
-
+  (let [n (long iterations)]
     (when (pos? (long (or (:next.jdbc/update-count
                             (first (execute! db
                                              {:update :session_agent
                                               :set {:iteration_budget [:+ :iteration_budget n]}
-                                              :where [:and [:= :session_id (str sid)]
-                                                      [:<= [:+ :iteration_budget n] max-budget]]})))
+                                              :where [:= :session_id (str sid)]})))
                           0)))
       (db-agent-info db sid))))
 

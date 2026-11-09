@@ -36,7 +36,6 @@
         "iteration_budget": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 600,
           "default": 120
         },
         "allowed_models": {
@@ -188,8 +187,7 @@
         },
         "iterations": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 600
+          "minimum": 1
         }
       },
       "required": [
@@ -593,7 +591,14 @@
           "minLength": 1
         },
         "id": {
-          "$ref": "#/$defs/agent/properties/id"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/agent/properties/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "status": {
           "enum": [
@@ -611,7 +616,14 @@
           ]
         },
         "after": {
-          "$ref": "#/$defs/agent/properties/after"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/agent/properties/after"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "answer": {
           "type": [
@@ -632,7 +644,10 @@
           ]
         },
         "budget_request": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
             "iterations": {
               "type": "integer",
@@ -648,7 +663,10 @@
           "additionalProperties": false
         },
         "files_request": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
             "files": {
               "$ref": "#/$defs/files"
@@ -663,29 +681,55 @@
           "additionalProperties": false
         },
         "files": {
-          "$ref": "#/$defs/files"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/files"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "iteration_budget": {
-          "$ref": "#/$defs/spawn/properties/iteration_budget"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/spawn/properties/iteration_budget"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "iterations_used": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0
         },
         "activity": {
           "description": "The latest Activity line of a running child.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "notes": {
           "description": "The new progress notes of a running child since the last wait. For a child that ended without an answer, its last progress notes.",
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "string"
           }
         },
         "messages": {
           "description": "The new Council messages of a running child since the last wait.",
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "object",
             "properties": {
@@ -706,17 +750,26 @@
         },
         "step_secs": {
           "description": "The seconds that a running child is in its current step.",
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0
         },
         "elapsed_secs": {
           "description": "The seconds since a running child started its current task.",
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0
         },
         "alerts": {
           "description": "For a running child: slow_step after 300 s in one step, errors for three failed steps of the last five, budget at 80% of the iteration budget.",
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "enum": [
               "slow_step",
@@ -726,11 +779,17 @@
           }
         },
         "warning": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "error": {
           "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider. Code not_started means that its turn never started. Code interrupted means that its turn stopped before its end. Code dependency_failed means that a task in after did not complete, so a blocked child never started.",
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
             "code": {
               "enum": [
@@ -760,7 +819,10 @@
         },
         "alternatives": {
           "description": "Working provider and model routes for a new child, outside a rate-limit or authentication cooldown.",
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "$ref": "#/$defs/model_pair"
           }

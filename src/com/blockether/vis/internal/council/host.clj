@@ -106,6 +106,9 @@
          opts
          (assoc (walk/keywordize-keys opts) :content content)
 
+         warning
+         (agents/publish-warning env opts)
+
          entry
          (agents/publish-with-files! env
                                      opts
@@ -128,7 +131,12 @@
          (tel/log! {:level :warn
                     :id ::publication-execution-ended
                     :data {:session-id sid :entry-id (:entry_id entry)}})))
-     (result env :council.publish opts entry))))
+     (result env
+             :council.publish
+             opts
+             (cond-> entry
+               warning
+               (assoc :warning warning))))))
 
 (defn threads
   "List thread roots and their kinds by ascending thread_id, without content. group_id defaults to

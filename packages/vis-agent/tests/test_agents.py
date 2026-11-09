@@ -274,7 +274,6 @@ def test_group_members_are_not_the_managed_team():
     [
         {"task": " "},
         {"task": "x", "iteration_budget": 0},
-        {"task": "x", "iteration_budget": 601},
         {"task": "x", "model": "small"},
         {"task": "x", "allowed_models": []},
         {"task": "x", "files": {"exec": ["a"]}},
@@ -329,7 +328,6 @@ def test_team_and_child_fields_are_frozen():
         ("wait", {"session_ids": ["a", "a"]}),
         ("wait", {"timeout_secs": 1801}),
         ("extend", {"session_id": "child", "iterations": 0}),
-        ("extend", {"session_id": "child", "iterations": 601}),
         ("deny", {"session_id": "child", "reason": ""}),
         ("spawn", {"task": "x", "provider": "p"}),
         ("spawn", {"task": "x", "iteration_budget": True}),

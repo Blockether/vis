@@ -884,11 +884,20 @@
 
 (declare ended-notes)
 
+(def ^:private blank-record
+  "Each key of the contract record without a value. Every record has all of them, for each status,
+   so a caller can read each key of each record."
+  (into {}
+        (map (fn [k]
+               [(keyword k) nil]))
+        (keys (get-in schema ["$defs" "record" "properties"]))))
+
 (defn- record
   "One wait record. A queued or running child without a live turn after 30 s settles from its
    last turn: see [[settle!]]. A queued
    child whose queue a human holds is held. A child that a 429 stopped gets error and the working
-   routes of `router` in alternatives. A child that ended without an answer gets its last notes."
+   routes of `router` in alternatives. A child that ended without an answer gets its last notes.
+   The record has each key of [[blank-record]]; a key without a value is nil."
   [db router live? held? now row]
   (let [sid
         (str (:session_id row))
@@ -923,13 +932,14 @@
         notes
         (when (and (terminal-statuses status) (nil? answer)) (ended-notes db row now))]
 
-    (cond-> {:session_id sid
-             :status (cond question "asking"
-                           (and (= "queued" status) (held? sid)) "held"
-                           :else status)
-             :answer answer
-             :question (:question question)
-             :question_entry_id (:entry_id question)}
+    (cond-> (merge blank-record
+                   {:session_id sid
+                    :status (cond question "asking"
+                                  (and (= "queued" status) (held? sid)) "held"
+                                  :else status)
+                    :answer answer
+                    :question (:question question)
+                    :question_entry_id (:entry_id question)})
       (:id row)
       (assoc :id (:id row))
 
@@ -1474,7 +1484,7 @@
 (defn run
   "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
    task and optional title, role, model, provider, iteration_budget, files and after.
-   iteration_budget defaults to 120 (max 600). Give a large task more at the start.
+   iteration_budget defaults to 120 and has no upper limit. Give a large task more at the start.
 
    Each task gets an id: a1, a2 and onward, in the order that you start tasks. The ids continue
    across calls: after a3, the first task of the next call is a4. Every child id argument takes
@@ -1511,8 +1521,10 @@
    dependency_failed. More than 16 tasks start as earlier ones finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
    council.wait. A failed record can have error with its code and message.
 
+   Every record has the same keys for each status. A key without a value is None.
+
    The call also returns when the first child ends, asks or publishes a message. A running
-   child's record then also has activity, notes, messages, step_secs, elapsed_secs and alerts.
+   child's record then has values in activity, notes, messages, step_secs, elapsed_secs and alerts.
 
    asking with budget_request needs council.extend or council.deny. asking with files_request
    needs council.grant or council.deny. budget_limited needs council.extend before a follow-up ping,
@@ -1620,9 +1632,6 @@
      (fail! :invalid-request "question must be a nonblank string"))
    (result :council.ask (parent-reply! env "council.ask" question nil opts))))
 
-(def ^:private max-budget
-  (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
-
 (defn ask-budget
   "As a subagent, ask your parent for more model iterations and wait for the answer. Ask before
    your budget ends, with the number that you need and the reason. Returns a dict with granted
@@ -1630,8 +1639,8 @@
    running or does not answer within timeout_secs (default 600)."
   ([env iterations reason] (ask-budget env iterations reason {}))
   ([env iterations reason opts]
-   (when-not (and (integer? iterations) (<= 1 (long iterations) (long max-budget)))
-     (fail! :invalid-request (str "iterations must be an integer from 1 to " max-budget)))
+   (when-not (and (integer? iterations) (<= 1 (long iterations)))
+     (fail! :invalid-request "iterations must be a positive integer"))
    (when (or (not (string? reason)) (str/blank? reason))
      (fail! :invalid-request "reason must be a nonblank string"))
    (let [db
@@ -1746,16 +1755,10 @@
         (checked env :extend {:session_id session-id :iterations iterations})
 
         db
-        (:db-info env)
-
-        child
-        (info db session_id)]
+        (:db-info env)]
 
     (when (= (str (:session-id env)) session_id)
       (fail! :not-owner "A subagent cannot extend its own budget"))
-    (when (> (+ (long (:iteration_budget child)) (long iterations)) (long max-budget))
-      (fail! :budget-exceeded
-             (str "The budget of a subagent stays at most " max-budget " iterations")))
     (let [row (or (ps/db-agent-extend-budget! db session_id iterations)
                   (fail! :budget-exceeded "The subagent budget did not change"))]
       ;; The team row shows the budget, and a plain extend answers no request.
@@ -1770,8 +1773,8 @@
 
 (defn extend-agent
   "Give a subagent more model iterations. Use it to answer a budget request (status asking with
-   budget_request), or before a follow-up ping to a budget_limited child. A budget stays at most
-   600. Returns the record."
+   budget_request), or before a follow-up ping to a budget_limited child. A budget has no upper
+   limit. Returns the record."
   [env session-id iterations]
   (result :council.extend (extend-records env session-id iterations)))
 
@@ -2008,9 +2011,13 @@
             ping
             (:ping opts)
 
+            ;; A reply without ping goes to the author of the entry that it answers.
             id
-            (when (and (sequential? ping) (= 1 (count ping)))
-              (str (header/unmark-session-id (first ping))))
+            (cond (and (sequential? ping) (= 1 (count ping))) (str (header/unmark-session-id
+                                                                     (first ping)))
+                  (and (nil? ping) (:reply_to opts)) (some-> (ps/db-council-get db (:reply_to opts))
+                                                             :author_session_id
+                                                             str))
 
             child
             (info db id)
@@ -2018,7 +2025,8 @@
             _
             (when-not (and child (= (str (:session-id env)) (str (:parent_id child))))
               (fail! :invalid-request
-                     "files needs exactly one ping recipient: an idle subagent of this session"))
+                     (str "files needs exactly one recipient: an idle subagent of this session, "
+                          "in ping or as the author of the reply_to entry")))
 
             _
             (when (or ((runtime-fn :live?) id) (contains? #{"queued" "running"} (:status child)))
@@ -2038,6 +2046,45 @@
 
         (when (some #(= "unavailable" (:state %)) (:replies entry)) (scope! before))
         entry))))
+
+(defn publish-warning
+  "A short warning when Council publication `opts` of the caller pings a child with write rules
+   while a verify or audit child of the same leader is queued or running, else nil. New edits then
+   change the files that the verifier checks."
+  [env opts]
+  (let [db
+        (:db-info env)
+
+        me
+        (str (:session-id env))
+
+        ping
+        (:ping opts)
+
+        writers
+        (when (sequential? ping)
+          (filter #(and %
+                        (seq (get-in % [:files :write]))
+                        (some #{me} [(str (:parent_id %)) (str (:leader_id %))]))
+                  (map #(info db (resolve-child db me %)) ping)))
+
+        pinged
+        (set (map #(str (:session_id %)) writers))
+
+        checkers
+        (when (seq writers)
+          (keep #(when (and (contains? #{"verify" "audit"}
+                                       (some-> (:role %)
+                                               name))
+                            (contains? #{"queued" "running"} (:status %))
+                            (not (pinged (str (:session_id %)))))
+                   (or (:id %) (str (:session_id %))))
+                (ps/db-agent-list db (leader-id db me))))]
+
+    (when (seq checkers)
+      (str "Verifiers still run: " (str/join ", " checkers)
+           ". This ping can change the files that they check. Collect all findings, send them in "
+           "one round, then ping the verifiers on the final files."))))
 
 (defn operation!
   "Run one managed-subagent operation for the calling session and answer its plain result.
@@ -2104,7 +2151,7 @@
                                   params)))))
     (let
       [records
-       "A list of records with `session_id`, `status`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget` and `iterations_used`. A running child's record also has `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs` and `alerts`."]
+       "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
       [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
        [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
         records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
@@ -2164,6 +2211,7 @@
 - To order tasks, give a later task after=[ids]. It starts by itself when they complete. If one does not complete, it is blocked: ping that task with a fix.
 - When a verifier fails, ping the task in its after with the failures. When that task completes, ping the verifier to check again.
 - Before your final answer, run every failing case that a child reported.
+- Do not send new edits to an implementer while a verifier or auditor of its work runs. Collect all findings, send them in one round, then start or ping the verifiers on the final files.
 ")
 
 (def ^:private lead-child-guide

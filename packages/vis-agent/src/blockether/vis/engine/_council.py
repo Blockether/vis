@@ -320,7 +320,7 @@ class Council:
         return self._records("/cancel", {"session_id": session_id}, "cancel")[0]
 
     def extend(self, session_id: str, iterations: int) -> SubagentRecord:
-        """Give a subagent more model iterations; the budget stays at most 600.
+        """Give a subagent more model iterations; the budget has no upper limit.
 
         Use it to answer a budget request, or before ``resume`` of a budget-limited child.
         """
