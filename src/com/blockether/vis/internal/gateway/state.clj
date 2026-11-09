@@ -9359,9 +9359,47 @@
   (session-group-wire (lp/create-session-group! pid opts)))
 
 (defn update-session-group!
-  "Patch a group: :name, :color and/or :archived?."
+  "Patch a group: :name, :color and/or :archived?. Archiving drops the turn states of
+   its sessions, like [[set-archived!]]."
   [gid opts]
-  (session-group-wire (lp/update-session-group! gid opts)))
+  (let [group (lp/update-session-group! gid opts)]
+    (when (and group (:archived? opts))
+      (doseq [sid (lp/session-group-session-ids gid)]
+        (python-env/prune-turn-states! (str sid) (constantly []) 0)))
+    (session-group-wire group)))
+
+(defn sweep-turn-states!
+  "Prune the turn states of each session ([[python-env/prune-turn-states!]]): all of
+   them for an archived session, else all but those of the newest turns. The gateway
+   runs it at start, for sessions archived or grown while no gateway pruned them. A
+   session with no row here is left alone, because a gateway can use another database:
+   `vis-agent doctor --purge` reports it. Answers the number of deleted entries."
+  []
+  (let [db
+        (lp/db-info)
+
+        archived-groups
+        (lp/archived-session-group-ids)]
+
+    (reduce (fn [total sid]
+              (let [row (some->> (parse-uuid sid)
+                                 (persistance/db-get-session db))]
+                (if-not row
+                  total
+                  (+ (long total)
+                     (long (or (python-env/prune-turn-states!
+                                 sid
+                                 (if (or (:archived-at row)
+                                         (contains? archived-groups
+                                                    (some-> (:group-id row)
+                                                            str)))
+                                   (constantly [])
+                                   #(mapv (comp str :id)
+                                          (persistance/db-list-session-turns-meta db sid)))
+                                 python-env/turn-states-kept)
+                               0))))))
+            0
+            (python-env/turn-state-session-ids))))
 
 (defn delete-session-group!
   "Delete a group and DETACH its sessions: they stay in the project and go back
@@ -9533,7 +9571,11 @@
    and makes it read-only; the conversation is kept and resume by id still finds
    it."
   [sid archived?]
-  (when (lp/by-id sid) (lp/set-archived! sid archived?) (soul sid)))
+  (when (lp/by-id sid)
+    (lp/set-archived! sid archived?)
+    ;; An archived session runs no turn, so no fork needs its turn states.
+    (when archived? (python-env/prune-turn-states! (str sid) (constantly []) 0))
+    (soul sid)))
 
 (defn session-archived?
   "Whether `sid` is EFFECTIVELY archived: its own stamp is set, or the stamp on the

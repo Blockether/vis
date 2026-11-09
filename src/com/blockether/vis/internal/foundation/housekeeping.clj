@@ -100,34 +100,39 @@
    trunk; counting them would report the user's whole source tree as
    reclaimable). The mtime is what makes an orphan directory safe to judge:
    a directory's own timestamp only moves when entries are added or removed, so
-   a busy clone can look untouched for weeks by that measure alone."
-  [^File root]
-  (try (let [total
-             (java.util.concurrent.atomic.AtomicLong. 0)
+   a busy clone can look untouched for weeks by that measure alone. A file with
+   more than one hard link counts once: a fork shares its sandbox snapshots with
+   the source when the walks share one `seen` set. Without the set, nothing is deduplicated."
+  ([^File root] (tree-stats root nil))
+  ([^File root ^java.util.Set seen]
+   (try (let [total
+              (java.util.concurrent.atomic.AtomicLong. 0)
 
-             newest
-             (java.util.concurrent.atomic.AtomicLong. 0)]
+              newest
+              (java.util.concurrent.atomic.AtomicLong. 0)]
 
-         (Files/walkFileTree (.toPath root)
-                             (proxy [SimpleFileVisitor] []
-                               (visitFile [_p ^BasicFileAttributes attrs]
-                                 (when (.isRegularFile attrs)
-                                   (.addAndGet total (.size attrs))
-                                   (.getAndUpdate
-                                     newest
-                                     (reify
-                                       java.util.function.LongUnaryOperator
-                                         (applyAsLong [_ cur]
-                                           (Math/max cur (.toMillis (.lastModifiedTime attrs)))))))
-                                 FileVisitResult/CONTINUE)
-                               (visitFileFailed [_p _e] FileVisitResult/CONTINUE)))
-         ;; Fall back to the directory's own stamp only for an EMPTY tree: a
-         ;; directory's mtime moves when entries are added or removed, so on a
-         ;; tree with files it reads as fresh even when nothing was worked on.
-         {:bytes (.get total)
-          :newest-ms (let [n (.get newest)]
-                       (if (pos? n) n (.lastModified root)))})
-       (catch Throwable _ {:bytes 0 :newest-ms (.lastModified root)})))
+          (Files/walkFileTree (.toPath root)
+                              (proxy [SimpleFileVisitor] []
+                                (visitFile [_p ^BasicFileAttributes attrs]
+                                  (when (.isRegularFile attrs)
+                                    (when (let [k (.fileKey attrs)]
+                                            (or (nil? seen) (nil? k) (.add seen k)))
+                                      (.addAndGet total (.size attrs)))
+                                    (.getAndUpdate
+                                      newest
+                                      (reify
+                                        java.util.function.LongUnaryOperator
+                                          (applyAsLong [_ cur]
+                                            (Math/max cur (.toMillis (.lastModifiedTime attrs)))))))
+                                  FileVisitResult/CONTINUE)
+                                (visitFileFailed [_p _e] FileVisitResult/CONTINUE)))
+          ;; Fall back to the directory's own stamp only for an EMPTY tree: a
+          ;; directory's mtime moves when entries are added or removed, so on a
+          ;; tree with files it reads as fresh even when nothing was worked on.
+          {:bytes (.get total)
+           :newest-ms (let [n (.get newest)]
+                        (if (pos? n) n (.lastModified root)))})
+        (catch Throwable _ {:bytes 0 :newest-ms (.lastModified root)}))))
 
 (defn- delete-tree!
   "Depth-first delete. Returns the number of entries removed."
@@ -602,6 +607,49 @@
    ;; it was unpacked into; today's fetch deletes its archive once unpacked.
    {:id :python-archives :dir #(python-dir "archives") :retention-days default-retention-days}])
 
+(defn- sandbox-dir ^File [] (io/file (or *sandbox-home* (paths/sandbox-defs-dir))))
+
+(defn- temp-leftover?
+  "True for the `.<name>.tmp-<uuid>` file of a write that a killed process left."
+  [^String file-name]
+  (and (.startsWith file-name ".") (.contains file-name ".tmp-")))
+
+(defn- sandbox-temps
+  "The temp files of killed writes inside the snapshot folder `dir`."
+  [^File dir]
+  (filter #(and (.isFile ^File %) (temp-leftover? (.getName ^File %))) (rest (file-seq dir))))
+
+(defn- temp-written-ms
+  "When the write of temp file `f` started. A hard link keeps the mtime of its source,
+   so a link temp carries its start time in its name: `.<name>.tmp-<millis>-<uuid>`."
+  ^long [^File f]
+  (if-let [[_ ms] (re-find #"\.tmp-(\d{13})-" (.getName f))]
+    (Long/parseLong ms)
+    (.lastModified f)))
+
+(defn- freed-bytes
+  "The bytes that a delete of `f` frees. A file with more hard links frees nothing."
+  ^long [^File f]
+  (let [links (try (long (Files/getAttribute (.toPath f) "unix:nlink" no-follow))
+                   (catch Throwable _ 1))]
+    (if (> links 1) 0 (.length f))))
+
+(defn- sweep-sandbox-temps!
+  "Delete the temp files of killed snapshot writes under `root` that are older than
+   `cutoff-ms`. A write takes milliseconds, so an old temp file has no writer."
+  [^File root ^long cutoff-ms]
+  (if (.isDirectory root)
+    (reduce (fn [acc ^File f]
+              (let [size (freed-bytes f)]
+                (if (and (< (temp-written-ms f) cutoff-ms) (delete-quietly! (.toPath f)))
+                  (-> acc
+                      (update :deleted inc)
+                      (update :bytes + size))
+                  acc)))
+            {:deleted 0 :bytes 0}
+            (sandbox-temps root))
+    {:deleted 0 :bytes 0}))
+
 (defn sweep-stale!
   "Delete the aged-out derived state of every `sweep-targets` entry, then the
    Python store trees no process claims any more. Returns
@@ -694,8 +742,21 @@
          (mapv #(merge {:days store-window :cutoff-ms store-cutoff} %)
                (prune-version-stores! store-cutoff))
 
+         ^File sandbox-root
+         (sandbox-dir)
+
+         sandbox-temps
+         (merge {:id :sandbox-temp
+                 :root (canonical sandbox-root)
+                 :days store-window
+                 :cutoff-ms store-cutoff}
+                (if (and (.isDirectory sandbox-root)
+                         (claim-sweep! (sweep-stamp "sandbox") now day-ms))
+                  (sweep-sandbox-temps! sandbox-root store-cutoff)
+                  {:deleted 0 :bytes 0}))
+
          all
-         (into (conj reports guest pycache) versions)]
+         (into (conj reports guest pycache sandbox-temps) versions)]
 
      {:targets all :deleted (reduce + 0 (map :deleted all)) :bytes (reduce + 0 (map :bytes all))})))
 
@@ -879,13 +940,6 @@
 
 ;; Sandbox snapshots
 
-(defn- sandbox-dir ^File [] (io/file (or *sandbox-home* (paths/sandbox-defs-dir))))
-
-(defn- temp-leftover?
-  "True for the `.<name>.tmp-<uuid>` file of a write that a killed process left."
-  [^String file-name]
-  (and (.startsWith file-name ".") (.contains file-name ".tmp-")))
-
 (defn- snapshot-owner
   "The session id in a snapshot entry name: `<id>.py`, or the `<id>.spill` or
    `<id>.turns` directory."
@@ -908,10 +962,11 @@
     false))
 
 (defn- scan-sandbox
-  "Report snapshot files of sessions with no row, and temp files of killed writes.
-   Both must be untouched since the cutoff. Without `db-info` no snapshot is
-   reported, because no row cannot be proved. A gateway can use another DB, so
-   this is a report for `doctor --purge`, never a startup sweep."
+  "Report snapshot files of sessions with no row, and temp files of killed writes,
+   also inside spill and turn state folders. Both must be untouched since the
+   cutoff. Without `db-info` no snapshot is reported, because no row cannot be
+   proved. A gateway can use another DB, so this is a report for `doctor --purge`,
+   never a startup sweep. A hard-linked file counts once over all items."
   [db-info ^long cutoff-ms ^long now-ms]
   (let [dir
         (sandbox-dir)
@@ -919,10 +974,13 @@
         entries
         (when (.isDirectory dir) (vec (or (.listFiles dir) (make-array File 0))))
 
+        seen
+        (java.util.HashSet.)
+
         item
         (fn [kind label files]
           (let [stats
-                (map tree-stats files)
+                (mapv #(tree-stats % seen) files)
 
                 newest
                 (long (reduce max 0 (map :newest-ms stats)))]
@@ -936,21 +994,43 @@
                :age-days (ms->days (- now-ms newest))
                :bytes (reduce + 0 (map :bytes stats))})))
 
-        temps
-        (keep (fn [^File f]
-                (when (and (.isFile f) (temp-leftover? (.getName f)))
-                  (item :sandbox-temp (.getName f) [f]))))
-
         snapshots
         (when db-info
-          (keep (fn [[id files]]
-                  (when-let [found (item :sandbox id files)]
-                    (when-not (session-row? db-info id) found)))))
+          (into []
+                (keep (fn [[id files]]
+                        (when-not (session-row? db-info id) (item :sandbox id files))))
+                (group-by snapshot-owner (sort (filter snapshot-owner entries)))))
+
+        ;; A temp file in the folder of a reported snapshot goes with that snapshot.
+        orphans
+        (into #{} (map :label) snapshots)
+
+        temps
+        (concat (filter #(and (.isFile ^File %) (temp-leftover? (.getName ^File %))) entries)
+                (mapcat sandbox-temps
+                        (filter #(let [owner (snapshot-owner %)] (and (.isDirectory ^File %)
+                                                                      owner
+                                                                      (not (orphans owner))))
+                                entries)))
+
+        relative
+        (fn [^File f]
+          (str (.relativize (.toPath dir) (.toPath f))))
+
+        temp-item
+        (fn [^File f]
+          (let [written (temp-written-ms f)]
+            (when (< written cutoff-ms)
+              {:kind :sandbox-temp
+               :root (canonical f)
+               :label (relative f)
+               :paths [(canonical f)]
+               :last-activity-ms written
+               :age-days (ms->days (- now-ms written))
+               :bytes (freed-bytes f)})))
 
         reclaimable
-        (cond-> (into [] temps entries)
-          snapshots
-          (into snapshots (group-by snapshot-owner (sort (filter snapshot-owner entries)))))]
+        (into (vec snapshots) (keep temp-item) temps)]
 
     {:root (canonical dir)
      :file-count (count entries)

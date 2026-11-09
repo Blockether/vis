@@ -2595,7 +2595,12 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     (when-not (and (.exists target) (java.nio.file.Files/isSameFile src dst))
       (paths/create-private-dirs! (.getParentFile target))
       (let [tmp
-            (.resolveSibling dst (str "." (.getFileName dst) ".tmp-" (java.util.UUID/randomUUID)))
+            ;; A link keeps the mtime of its source, so the name holds the age by which
+            ;; housekeeping judges a leftover.
+            (.resolveSibling dst
+                             (str "." (.getFileName dst)
+                                  ".tmp-" (System/currentTimeMillis)
+                                  "-" (java.util.UUID/randomUUID)))
 
             ^"[Ljava.nio.file.CopyOption;" keep-mode
             (into-array java.nio.file.CopyOption [java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])
@@ -2663,6 +2668,11 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
   [(io/file (paths/sandbox-defs-file (str session-id)))
    (io/file (paths/sandbox-spill-dir (str session-id)))])
 
+(defn- turn-file-base
+  "The file name of the state of the turn `turn-id`, without its extension."
+  [turn-id]
+  (.replaceAll (str turn-id) "[^A-Za-z0-9_.-]" "_"))
+
 (defn- turn-defs
   "The snapshot file and spill directory of `session-id` at the turn `turn-id`. The id
    names the state, because turn positions repeat after a fork under the same session.
@@ -2672,7 +2682,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
         (paths/sandbox-turns-dir (str session-id))
 
         base
-        (.replaceAll (str turn-id) "[^A-Za-z0-9_.-]" "_")]
+        (turn-file-base turn-id)]
 
     [(io/file dir (str base ".py")) (io/file dir (str base ".spill"))]))
 
@@ -2681,7 +2691,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    the turn `turn-id`, under one lock. It runs after each block, so the checkpoint holds
    the state that the turn left. A turn that runs no block has no checkpoint: its state
    is the state of the turn before. A fork at a turn starts from it
-   ([[fork-session-defs!]]). A disposed session is skipped. Best effort."
+   ([[fork-session-defs!]]). A disposed session is skipped. Answers true when it kept
+   the first state of the turn. Best effort."
   [session session-id turn-id]
   (when (and session session-id (not (contains? @disposed-sessions session)))
     (try (with-defs-lock session-id
@@ -2692,16 +2703,98 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                            (let [[f spill]
                                  (live-defs session-id)
 
-                                 [cf cspill]
-                                 (turn-defs session-id turn-id)]
+                                 [^java.io.File cf cspill]
+                                 (turn-defs session-id turn-id)
 
-                             (mirror-defs! f spill cf cspill true))))
+                                 new?
+                                 (not (.isFile cf))]
+
+                             (mirror-defs! f spill cf cspill true)
+                             new?)))
          (catch Throwable e
            (tel/log! {:level :warn
                       :id ::checkpoint-session-turn-failed
                       :data {:session-id (str session-id) :turn-id (str turn-id)}
                       :error e})
            nil))))
+
+(def turn-states-kept
+  "The number of turns at the end of a session that keep their own sandbox state. A
+   fork at an older turn starts from the newest state before them, or empty."
+  50)
+
+(defn- delete-tree!
+  "Delete `f` and everything under it."
+  [^java.io.File f]
+  (doseq [^java.io.File e (reverse (file-seq f))]
+    (io/delete-file e true)))
+
+(defn prune-turn-states!
+  "Delete the turn states of `session-id` that no fork can need. `turn-ids` gives the
+   ids of the turns of the session, in turn order. It is called under the lock, so a turn
+   that writes its first state meanwhile is in it. The states of the last `kept` turns stay,
+   and so does the newest state before them: it is the state of the turns between. The
+   state of a turn that is not in `turn-ids` goes, and so does a temp file of a killed
+   write, because no write runs while this holds the lock. With no turn kept, the folder
+   goes, and the live state stays for a resume. Answers the number of deleted entries.
+   Best effort."
+  [session-id turn-ids kept]
+  (when session-id
+    (try
+      (with-defs-lock
+        session-id
+        (let [dir
+              (io/file (paths/sandbox-turns-dir (str session-id)))
+
+              bases
+              (mapv turn-file-base (turn-ids))
+
+              split
+              (max 0 (- (count bases) (long kept)))
+
+              window
+              (subvec bases split)
+
+              carried
+              (some #(when (.isFile (io/file dir (str % ".py"))) %) (rseq (subvec bases 0 split)))
+
+              keep
+              (cond-> (set window)
+                (and (seq window) carried)
+                (conj carried))
+
+              base
+              (fn [^String file-name]
+                (cond (str/starts-with? file-name ".") nil
+                      (str/ends-with? file-name ".py") (subs file-name 0 (- (count file-name) 3))
+                      (str/ends-with? file-name ".spill")
+                      (subs file-name 0 (- (count file-name) 6))))
+
+              gone
+              (into []
+                    (remove #(contains? keep (base (.getName ^java.io.File %))))
+                    (or (.listFiles dir) (make-array java.io.File 0)))]
+
+          ;; A fork picks a state by its `.py` file, so the `.py` goes before its spill.
+          (run! delete-tree! (sort-by #(.isDirectory ^java.io.File %) gone))
+          (when (and (.isDirectory dir) (zero? (alength (.list dir)))) (.delete dir))
+          (count gone)))
+      (catch Throwable e
+        (tel/log! {:level :warn
+                   :id ::prune-turn-states-failed
+                   :data {:session-id (str session-id)}
+                   :error e})
+        nil))))
+
+(defn turn-state-session-ids
+  "The ids of the sessions that have a turn state folder."
+  []
+  (into []
+        (keep (fn [^java.io.File f]
+                (let [file-name (.getName f)]
+                  (when (and (.isDirectory f) (str/ends-with? file-name ".turns"))
+                    (subs file-name 0 (- (count file-name) 6))))))
+        (or (.listFiles (io/file (paths/sandbox-defs-dir))) (make-array java.io.File 0))))
 
 (defn fork-session-defs!
   "Give fork `fork-id` the sandbox state of `source-id` at the last copied turn.
@@ -2713,25 +2806,31 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    by a turn id: a session from before them (commit 58311e8a8 named them by position).
    Else the state at that turn is not known and the fork starts empty."
   [source-id fork-id turn-ids whole?]
-  (try (with-defs-lock
-         source-id
-         (let [checkpoints (filterv (fn [[from _]]
-                                      (.isFile ^java.io.File (first (turn-defs source-id from))))
-                             turn-ids)]
-           (doseq [[from to] checkpoints]
-             (let [[cf cspill] (turn-defs source-id from)
-                   [tf tspill] (turn-defs fork-id to)]
+  ;; The fork's files are written too, so its lock is held as well. The order of the
+  ;; ids keeps two forks in opposite directions from a deadlock.
+  (try (let [[a b] (sort [(str source-id) (str fork-id)])]
+         (with-defs-lock
+           a
+           (with-defs-lock
+             b
+             (let [checkpoints (filterv (fn [[from _]]
+                                          (.isFile ^java.io.File
+                                                   (first (turn-defs source-id from))))
+                                 turn-ids)]
+               (doseq [[from to] checkpoints]
+                 (let [[cf cspill] (turn-defs source-id from)
+                       [tf tspill] (turn-defs fork-id to)]
 
-               (mirror-defs! cf cspill tf tspill true)))
-           (when-let [[src-file src-spill]
-                      (cond (seq checkpoints) (turn-defs source-id (first (peek checkpoints)))
-                            (and whole?
-                                 (not-any? #(re-matches #".*\D.*\.py" %)
-                                           (.list (io/file (paths/sandbox-turns-dir
-                                                             (str source-id))))))
-                            (live-defs source-id))]
-             (let [[f spill] (live-defs fork-id)]
-               (mirror-defs! src-file src-spill f spill false)))))
+                   (mirror-defs! cf cspill tf tspill true)))
+               (when-let [[src-file src-spill]
+                          (cond (seq checkpoints) (turn-defs source-id (first (peek checkpoints)))
+                                (and whole?
+                                     (not-any? #(re-matches #".*\D.*\.py" %)
+                                               (.list (io/file (paths/sandbox-turns-dir
+                                                                 (str source-id))))))
+                                (live-defs source-id))]
+                 (let [[f spill] (live-defs fork-id)]
+                   (mirror-defs! src-file src-spill f spill false)))))))
        (catch Throwable e
          (tel/log! {:level :warn
                     :id ::fork-session-defs-failed

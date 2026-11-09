@@ -329,3 +329,72 @@
                               (str (:id group))]]
                             (filterv #(= fork-id (second %)) @frames))))))
            (finally (ps/db-close! store))))))
+
+;; Regression, user report in this Vis session: turn states grew with each turn of a
+;; long session, an archived session kept them, and `vis session delete` kept the whole
+;; sandbox state of the session.
+(defn- turn-states!
+  "Write a live state and one turn state for each id in `turn-ids` for session `sid`."
+  [sid turn-ids]
+  (doseq [tid turn-ids]
+    (paths/spit-private! (io/file (paths/sandbox-turns-dir sid) (str tid ".py")) "X = 1\n"))
+  (paths/spit-private! (io/file (paths/sandbox-defs-file sid)) "X = 1\n"))
+
+(defn- turn-state-names [sid] (set (.list (io/file (paths/sandbox-turns-dir sid)))))
+
+(defdescribe
+  session-sandbox-housekeeping-test
+  (it "drops the turn states of an archived session or group and keeps its live state"
+      (let [store (ps/db-open! :memory)]
+        (try (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask" "second ask"])
+                   grouped (:sid (seeded-session! store ["grouped ask"]))
+                   grouped-turns (mapv (comp str :id) (ps/db-list-session-turns store grouped))
+                   project (ps/db-create-project! store {:name "Housekeeping"})
+                   group (ps/db-create-session-group! store (:id project) {:name "Old work"})]
+
+               (ps/db-set-session-group! store grouped (:id group))
+               (turn-states! sid turn-ids)
+               (turn-states! grouped grouped-turns)
+               (with-redefs [lp/db-info (constantly store)]
+                 (state/set-archived! sid true)
+                 (state/update-session-group! (:id group) {:archived? true}))
+               (doseq [id [sid grouped]]
+                 (expect (not (.exists (io/file (paths/sandbox-turns-dir id)))))
+                 (expect (.isFile (io/file (paths/sandbox-defs-file id))))
+                 (python-env/delete-session-defs! id)))
+             (finally (ps/db-close! store)))))
+  (it "prunes old turn states and those of archived sessions at gateway start"
+      (let [store (ps/db-open! :memory)]
+        (try (let [{long-sid :sid long-turns :turn-ids} (seeded-session! store
+                                                                         ["one" "two" "three"])
+                   {archived :sid archived-turns :turn-ids} (seeded-session! store ["old"])
+                   unknown (str (random-uuid))]
+
+               (turn-states! long-sid long-turns)
+               (turn-states! archived archived-turns)
+               (turn-states! unknown ["t1"])
+               (ps/db-set-session-archived! store archived true)
+               (with-redefs [lp/db-info (constantly store)
+                             python-env/turn-states-kept 1]
+
+                 (state/sweep-turn-states!))
+               ;; The newest turn is the window; the turn before it carries the state.
+               (expect (= #{(str (nth long-turns 1) ".py") (str (nth long-turns 2) ".py")}
+                          (turn-state-names long-sid)))
+               (expect (not (.exists (io/file (paths/sandbox-turns-dir archived)))))
+               ;; A session with no row can belong to another database: doctor reports it.
+               (expect (= #{"t1.py"} (turn-state-names unknown)))
+               (doseq [id [long-sid archived unknown]]
+                 (python-env/delete-session-defs! id)))
+             (finally (ps/db-close! store)))))
+  (it "deletes the whole sandbox state of a session that `vis session delete` deletes"
+      (let [store (ps/db-open! :memory)]
+        (try (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask"])]
+               (turn-states! sid turn-ids)
+               (paths/spit-private! (io/file (paths/sandbox-spill-dir sid) "index.json") "{}")
+               (with-redefs [lp/db-info (constantly store)]
+                 (lp/delete! sid))
+               (expect (not-any? #(.exists (io/file %))
+                                 [(paths/sandbox-defs-file sid) (paths/sandbox-spill-dir sid)
+                                  (paths/sandbox-turns-dir sid)])))
+             (finally (ps/db-close! store))))))

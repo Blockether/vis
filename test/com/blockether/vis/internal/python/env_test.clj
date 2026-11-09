@@ -518,6 +518,46 @@
            (finally (doseq [id [sid at-1 whole again none legacy legacy-whole legacy-at]]
                       (ep/delete-session-defs! id)))))))
 
+;; Regression, user report in this Vis session: the turn states of a long session grew
+;; with each turn, and an archived session kept all of them.
+(defdescribe
+  turn-states-prune-test
+  (it
+    "keeps the states of the newest turns and the state that carries into them"
+    (let [sid
+          (str "vis-test-turn-prune-" (random-uuid))
+
+          fork
+          (str "vis-test-turn-prune-fork-" (random-uuid))
+
+          dir
+          (io/file (paths/sandbox-turns-dir sid))
+
+          turn-ids
+          ["t1" "t2" "t3" "t4" "t5" "t6"]
+
+          names
+          #(set (.list dir))]
+
+      (try (doseq [id ["t1" "t2" "t4" "t6" "gone"]]
+             (paths/spit-private! (io/file dir (str id ".py")) (str "TOTAL = '" id "'\n")))
+           (paths/spit-private! (io/file dir "t1.spill" "index.json") "{}")
+           (paths/spit-private! (io/file dir (str ".t1.py.tmp-" (random-uuid))) "partial")
+           (paths/spit-private! (io/file (paths/sandbox-defs-file sid)) "TOTAL = 't6'\n")
+           ;; Turns t5 and t6 are the window. Turn t4 holds the state at turn t5.
+           (ep/prune-turn-states! sid (constantly turn-ids) 2)
+           (expect (= #{"t4.py" "t6.py"} (names)))
+           (ep/prune-turn-states! sid (constantly turn-ids) 2)
+           (expect (= #{"t4.py" "t6.py"} (names)))
+           (ep/fork-session-defs! sid fork (mapv #(vector % (str "f-" %)) (take 5 turn-ids)) false)
+           (expect (= "TOTAL = 't4'\n" (slurp (paths/sandbox-defs-file fork))))
+           ;; With no turn kept, the turn states go and the live state stays.
+           (ep/prune-turn-states! sid (constantly []) 0)
+           (expect (not (.exists dir)))
+           (expect (.isFile (io/file (paths/sandbox-defs-file sid))))
+           (finally (doseq [id [sid fork]]
+                      (ep/delete-session-defs! id)))))))
+
 ;; Snapshot and spill files hold session values, for example a token in a variable.
 ;; A plain `spit` wrote them readable by every local user (mode 644).
 (defdescribe session-defs-private-files-test

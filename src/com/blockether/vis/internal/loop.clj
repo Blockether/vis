@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
@@ -453,6 +454,8 @@
   ;; A shell log dies with the session that produced it, and with nothing else:
   ;; the bytes on disk outlive the process, so the delete has to name them.
   (shell-log/delete-session-logs! id)
+  ;; After `close!`: no block of the session can write a new snapshot.
+  (python-env/delete-session-defs! id)
   (let [d (db-info)]
     (try (persistance/db-delete-session-tree! d id) (catch Exception _ nil))))
 

@@ -293,7 +293,51 @@
                          (set (keep #(let [n (.getName ^File %)] (when-not (.startsWith n ".") n))
                                     (.listFiles dir)))))
               (expect (= 1 (count (filter #(.startsWith (.getName ^File %) ".") (.listFiles dir)))))
-              (expect (zero? (:count (housekeeping/purge! {:db-info :fixture :days 14}))))))))))
+              (expect (zero? (:count (housekeeping/purge! {:db-info :fixture :days 14})))))))))
+  ;; Regression, user report in this Vis session: temp files of killed writes inside
+  ;; spill and turn state folders were never found, and a hard-linked turn state was
+  ;; counted once for each link.
+  (it
+    "reports old temp files in nested folders and counts a hard-linked file once"
+    (let [dir
+          (tmp-dir "vis-hk-sandbox-nested")
+
+          [gone kept]
+          (repeatedly 2 #(str (random-uuid)))
+
+          snapshot
+          (touch! dir (str gone ".py") 30 "x = 1\n")
+
+          linked
+          (io/file dir (str gone ".turns") "turn.py")]
+
+      (io/make-parents linked)
+      (Files/createLink (.toPath linked) (.toPath snapshot))
+      (touch! dir (str gone ".turns" File/separator ".turn.py.tmp-" (random-uuid)) 30 "partial")
+      (touch! dir (str kept ".py") 30 "x = 2\n")
+      (touch! dir (str kept ".turns" File/separator ".turn.py.tmp-" (random-uuid)) 30 "partial")
+      (touch! dir (str kept ".spill" File/separator ".young.bin.tmp-" (random-uuid)) 0 "in flight")
+      (binding [workspace/*drafts-home*
+                (.getPath (tmp-dir "vis-hk-d"))
+
+                housekeeping/*events-home*
+                (.getPath (tmp-dir "vis-hk-ev"))
+
+                housekeeping/*sandbox-home*
+                (.getPath dir)]
+
+        (with-redefs [p/db-get-session (fn [_ id]
+                                         (when (= kept (str id)) {:id id}))]
+          (let [items (:reclaimable (:sandbox (housekeeping/scan {:db-info :fixture :days 14})))]
+            (expect (= {:sandbox 1 :sandbox-temp 1} (frequencies (map :kind items))))
+            ;; The orphan item holds the temp file in its folder, and the linked file once.
+            (expect (= (+ (count "x = 1\n") (count "partial"))
+                       (:bytes (first (filter #(= :sandbox (:kind %)) items)))))
+            (expect (= 1 (count (:paths (first (filter #(= :sandbox-temp (:kind %)) items))))))
+            (expect (every? :is-purged
+                            (:purged (housekeeping/purge! {:db-info :fixture :days 14}))))
+            (expect (not (.exists linked)))
+            (expect (zero? (:count (housekeeping/scan {:db-info :fixture :days 14}))))))))))
 
 ;; purge!
 
@@ -620,7 +664,7 @@
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
         (expect (= [:logs :gateway-events :display :tui-attachments :python-archives :python-guest
-                    :python-pycache :python-runtime :python-sources]
+                    :python-pycache :sandbox-temp :python-runtime :python-sources]
                    (mapv :id (:targets report))))))
   (it "sweeps at startup and then repeats only diagnostic cleanup with bindings conveyed"
       ;; A startup-only sweep leaves logs behind when the daemon runs for weeks.
@@ -986,3 +1030,46 @@
       (expect (pos? (long (swept (+ now (long housekeeping/day-ms))))))
       (orphan)
       (expect (pos? (long (swept (- now 3600000))))))))
+
+;; Regression, user report in this Vis session: only `vis-agent doctor --purge` removed
+;; the temp files of killed snapshot writes, and only at the top of the folder.
+(defdescribe
+  sweep-sandbox-temps-test
+  (it
+    "deletes old temp files in every sandbox folder and keeps young ones and snapshots"
+    (let [dir
+          (io/file housekeeping/*sandbox-home*)
+
+          sid
+          (str (random-uuid))
+
+          old
+          (mapv #(touch! dir % 30 "partial")
+                [(str "." sid ".py.tmp-" (random-uuid))
+                 (str sid ".spill" File/separator ".a.bin.tmp-" (random-uuid))
+                 (str sid
+                      ".turns" File/separator
+                      "t1.spill" File/separator
+                      ".index.json.tmp-" (random-uuid))])
+
+          kept
+          [(touch! dir (str sid ".turns" File/separator ".t2.py.tmp-" (random-uuid)) 0 "in flight")
+           (touch! dir (str sid ".py") 30 "x = 1\n")
+           (touch! dir (str sid ".turns" File/separator "t1.py") 30 "x = 1\n")]
+
+          ;; A link temp keeps the old mtime of its source; its name holds its start.
+          link
+          (doto (io/file dir
+                         (str sid ".turns")
+                         (str ".t3.py.tmp-" (System/currentTimeMillis) "-" (random-uuid)))
+            (-> .toPath
+                (Files/createLink (.toPath (io/file dir (str sid ".py"))))))
+
+          report
+          (target (with-homes {} #(housekeeping/sweep-stale! nil)) :sandbox-temp)]
+
+      (expect (= 3 (:deleted report)))
+      (expect (= (* 3 (count "partial")) (:bytes report)))
+      (expect (not-any? #(.exists ^File %) old))
+      (expect (every? #(.exists ^File %) kept))
+      (expect (.exists link)))))

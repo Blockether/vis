@@ -926,12 +926,25 @@
         ;; imports and variables are snapshotted after every block and re-created
         ;; by `restore-session-defs!` in the next process's fresh sandbox. Best
         ;; effort, after the outcome is in hand — never in its way.
-        ;; A fork at this turn starts from the state that the turn left.
+        ;; A fork at this turn starts from the state that the turn left. The first
+        ;; state of a turn drops the states that no fork can need any more.
         (perf/timed :exec/persist-defs
-                    (env/checkpoint-session-turn! python-context
-                                                  (:session-id environment)
-                                                  (:session-turn-id (ctx-loop/read-turn-state
-                                                                      environment))))
+                    (let [sid (:session-id environment)
+                          turn-id (:session-turn-id (ctx-loop/read-turn-state environment))]
+
+                      (when (env/checkpoint-session-turn! python-context sid turn-id)
+                        (env/prune-turn-states!
+                          sid
+                          (fn []
+                            (let [ids (mapv (comp str :id)
+                                            (persistance/db-list-session-turns-meta (:db-info
+                                                                                      environment)
+                                                                                    sid))]
+                              ;; The running turn keeps its new state.
+                              (cond-> ids
+                                (not (some #{(str turn-id)} ids))
+                                (conj (str turn-id)))))
+                          env/turn-states-kept))))
         ;; Count successful operations even if their receipts were not printed or
         ;; the rest of this block failed. Summary supersession cannot erase usage.
         (let [folds (- (long (or (get (some-> (:ctx-atom environment)
