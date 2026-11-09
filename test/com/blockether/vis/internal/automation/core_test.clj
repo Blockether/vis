@@ -355,3 +355,64 @@
             (expect (true? (get (automation/delete! db id) "is_deleted")))
             (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] (+ now 3))
             (expect (= 1 (count (owned db)))))))))
+
+(defn- owners
+  [db]
+  (set (map #(vals (select-keys (get % "owner") ["extension" "key" "root"])) (owned db))))
+
+(defdescribe
+  removed-owner-test
+  (it "deletes the automations of an extension that a reload removed"
+      (with-db (fn [db]
+                 (automation/sync-extensions! db
+                                              "/p"
+                                              [(ext "iceberg" (declared "sync"))
+                                               (ext "other" (declared "sync"))]
+                                              now)
+                 (automation/sync-extensions! db
+                                              "/p"
+                                              [(ext "iceberg" (declared "sync"))]
+                                              (+ now 1)
+                                              {:removed ["other"]})
+                 (expect (= #{["iceberg" "sync" "/p"]} (owners db))))))
+  (it "after a complete load, deletes the automations of extensions that did not load in that root"
+      ;; A file deleted while the gateway was stopped is never named in :removed.
+      (with-db (fn [db]
+                 (automation/sync-extensions! db "/p" [(ext "gone" (declared "sync"))] now)
+                 (automation/sync-extensions! db "/q" [(ext "gone" (declared "sync"))] now)
+                 (automation/sync-extensions! db "/p" [] (+ now 1) {:complete? false})
+                 (expect (= #{["gone" "sync" "/p"] ["gone" "sync" "/q"]} (owners db)))
+                 (automation/sync-extensions! db "/p" [] (+ now 2) {:complete? true})
+                 (expect (= #{["gone" "sync" "/q"]} (owners db)))))))
+
+(defdescribe
+  project-root-owner-test
+  (it
+    "deletes the extension automations of a deleted project and keeps the others"
+    (with-db
+      (fn [db]
+        (let [project
+              (ps/db-create-project! db {:name "p" :workspace-root "/p"})
+
+              own
+              (automation/create! db (assoc input "target" {"mode" "temporary" "root" "/p"}) now)]
+
+          (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] now)
+          (automation/sync-extensions! db "/q" [(ext "iceberg" (declared "sync"))] now)
+          (ps/db-delete-project! db (:id project))
+          (expect (= #{["iceberg" "sync" "/q"]} (owners db)))
+          (expect (some? (ps/db-automation-get db (get own "id"))))))))
+  (it "moves the extension automations of a moved project and keeps their id and pause"
+      (with-db (fn [db]
+                 (let [project (ps/db-create-project! db {:name "p" :workspace-root "/p"})]
+                   (automation/sync-extensions! db "/p" [(ext "iceberg" (declared "sync"))] now)
+                   (let [id (get (first (owned db)) "id")]
+                     (automation/update! db id {"enabled" false} (+ now 1))
+                     (ps/db-update-project! db (:id project) {:workspace-root "/p2"})
+                     (let [[row & more] (owned db)]
+                       (expect (nil? more))
+                       (expect (= id (get row "id")))
+                       (expect (false? (get row "enabled")))
+                       (expect (= {"extension" "iceberg" "key" "sync" "root" "/p2"}
+                                  (get row "owner")))
+                       (expect (= {"mode" "temporary" "root" "/p2"} (get row "target"))))))))))

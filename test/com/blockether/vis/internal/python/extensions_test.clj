@@ -4884,6 +4884,19 @@ vis.register_extension(vis.Extension(
                (expect (= [] extensions))
                (expect (= ["counter"] removed)))
              (finally (pyx/remove-change-listener! ::test)))))
+  (it "marks a change complete only when no file failed without a last good version"
+      ;; Automations of absent extensions are deleted only after a complete load (#456).
+      (let [events (atom [])]
+        (pyx/add-change-listener! ::complete #(swap! events conj %))
+        (try (with-fresh-loaded {"counter.py" counter-py}
+                                (fn [_ {:keys [ext-dir]}]
+                                  (expect (true? (:complete? (last @events))))
+                                  (write-ext! ext-dir "broken.py" "raise RuntimeError('broken')\n")
+                                  (pyx/load-python-extensions! {:dirs [(str ext-dir)]})
+                                  (let [{:keys [extensions complete?]} (last @events)]
+                                    (expect (false? complete?))
+                                    (expect (= ["counter"] (mapv :ext/name extensions))))))
+             (finally (pyx/remove-change-listener! ::complete)))))
   (it "a later dir (project) wins over an earlier one (global) for the same extension name"
       (let [global
             (temp-dir)

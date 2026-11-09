@@ -344,18 +344,19 @@
 
 (defn sync-extensions!
   "Store the automations that the loaded `extensions` of one scope declare. `root` is
-   the project root, or nil for the global extensions. An extension that is absent
-   or did not load keeps its automations, so a failed load never deletes run history."
-  [db root extensions now]
-  (let [root (or root "")]
-    (doseq [ext extensions]
-      (sync-owned! db (:ext/name ext) root (:ext/automations ext) now))
-    (wake-scheduler!)))
-
-(defn owned-roots
-  "The project roots of the stored automations that project extensions own."
-  [db]
-  (into (sorted-set) (keep #(not-empty (:owner_root %))) (ps/db-automation-list db)))
+   the project root, or nil for the global extensions. The automations of the
+   `removed` extensions go. A `complete?` load registered every file of the scope,
+   so the automations of each other extension in it go too. Otherwise an extension
+   that did not load keeps its automations: a failed load never deletes run history."
+  ([db root extensions now] (sync-extensions! db root extensions now {}))
+  ([db root extensions now {:keys [removed complete?]}]
+   (let [root (or root "")]
+     (doseq [ext extensions]
+       (sync-owned! db (:ext/name ext) root (:ext/automations ext) now))
+     (doseq [extension removed]
+       (ps/db-automation-delete-owned! db extension root []))
+     (when complete? (ps/db-automation-delete-other-owners! db root (mapv :ext/name extensions)))
+     (wake-scheduler!))))
 
 (defn delete!
   [db id]

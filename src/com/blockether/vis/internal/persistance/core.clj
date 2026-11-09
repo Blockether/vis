@@ -258,6 +258,9 @@
   (db-automation-delete-owned! [db-info extension root keep-keys]
     "Delete the automations of `extension` in `root` whose key is not in `keep-keys`.
      Answer the deleted count.")
+  (db-automation-delete-other-owners! [db-info root keep-extensions]
+    "Delete the extension automations of `root` whose extension is not in
+     `keep-extensions`. Answer the deleted count.")
   (db-automation-claim-run! [db-info row]
     "Insert a run unless its trigger key exists. Answer the inserted row or nil.")
   (db-automation-run [db-info id]

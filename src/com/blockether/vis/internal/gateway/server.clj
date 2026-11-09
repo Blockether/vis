@@ -299,31 +299,49 @@
                           failures)))
       status)))
 
-(defn- prepare-known-projects!
-  "Prepare the catalog of each project that the person added or opened before (#396).
-   A session there then reuses that catalog and does not wait for its first load.
-   The roots of extension automations load too, so their extensions declare them
-   again without a session (#456). One failed project never stops the others. A
-   session load goes first (#407)."
-  []
-  (doseq [root
-          (distinct (concat (keep #(get % "workspace_root") (state/list-projects))
-                            (try (automation/owned-roots (lp/db-info))
-                                 (catch Throwable t
-                                   (tel/log! {:level :warn
-                                              :id ::owned-automation-roots-failed
-                                              :data {:error (ex-message t)}})
-                                   nil))))
-
-          :when (.isDirectory (java.io.File. ^String root))]
-
+(defn- prepare-known-project!
+  "Prepare the catalog of one project root in the background. A failure only logs."
+  [root]
+  (when (.isDirectory (java.io.File. ^String root))
     (try (python-extensions/prepare-project-in-background! root)
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::project-extensions-failed
                       :data {:root root
                              :error (extension-diagnostic-text (or (ex-message t) (str t)))}
-                      :msg "Could not prepare the extensions of a known project at startup"})))))
+                      :msg "Could not prepare the extensions of a known project"})))))
+
+(defn- prepare-known-projects!
+  "Prepare the catalog of each project that the person added or opened before (#396),
+   archived projects too. A session there then reuses that catalog and does not wait
+   for its first load, and its extensions declare their automations without a session
+   (#456). One failed project never stops the others. A session load goes first (#407)."
+  []
+  (run! prepare-known-project!
+        (distinct (keep #(get % "workspace_root") (state/list-projects {:archived :include})))))
+
+(defonce ^:private project-loader
+  ;; ONE daemon thread prepares the projects that this gateway learns about after it starts.
+  (delay (java.util.concurrent.Executors/newSingleThreadExecutor (util/daemon-thread-factory
+                                                                   "vis-project-extensions"))))
+
+(defonce ^:private queued-project-roots (atom #{}))
+
+(defn- project-root-changed!
+  "Prepare an added or moved project in the background, so its extension automations
+   exist before its first session (#456). Adding a project allows its extension code to
+   run, as a gateway start already does for each known project. A root waits in the
+   queue once. A moved or deleted project changed automation rows: wake the scheduler."
+  [{:keys [op root]}]
+  (when (#{:added :moved} op)
+    (let [[queued] (swap-vals! queued-project-roots conj root)]
+      (when-not (contains? queued root)
+        (.submit ^java.util.concurrent.ExecutorService @project-loader
+                 ^Runnable
+                 (fn []
+                   (swap! queued-project-roots disj root)
+                   (prepare-known-project! root))))))
+  (when (#{:moved :deleted} op) (automation/wake-scheduler!)))
 
 (defn- prepare-startup-extensions!
   "Load the global catalog after HTTP starts so clients can report preparation without a
@@ -333,6 +351,7 @@
    their saved manifests, and a warm worker waits for the next extension context (#407)."
   []
   (python-extensions/use-registration-manifests! true)
+  (lp/set-project-root-listener! #'project-root-changed!)
   ;; A later successful scan must clear a failed startup, including an empty catalog.
   (python-extensions/add-change-listener! ::extension-startup
                                           (fn [{:keys [project-root]}]
@@ -2322,6 +2341,7 @@
   ([] (stop! {}))
   ([{:keys [park-turns?] :or {park-turns? true}}]
    (when-let [{:keys [^Server server db stop-automations!]} @instance/server-state]
+     (lp/set-project-root-listener! nil)
      (when stop-automations! (stop-automations!))
      ;; Release the listening socket FIRST so a successor daemon racing this
      ;; close-then-reopen handoff can bind the port immediately. The slow reap

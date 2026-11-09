@@ -3,7 +3,8 @@
 
    Creates, opens, sends to, closes and deletes sessions, and manages projects,
    session groups and read marks."
-  (:require [com.blockether.svar.core :as svar]
+  (:require [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.extension.client :as client-extensions]
@@ -131,13 +132,38 @@
   (when-not (.isDirectory (java.io.File. (str root)))
     (throw (ex-info (str "Not a directory: " root) {:type :project/not-a-directory :path root}))))
 
-;; Project metadata never prepares packages or imports extensions. The first session in
-;; the project does that before it selects tools (#407).
+(defonce ^:private project-root-listener (atom nil))
+
+(defn set-project-root-listener!
+  "Install `f`. It receives `{:op :added|:moved|:deleted :root root}` after this process
+   commits a project change with a workspace root. The gateway installs it; a CLI
+   process leaves it empty. Returns nil."
+  [f]
+  (reset! project-root-listener f)
+  nil)
+
+(defn- project-root-changed!
+  [op root]
+  (when-let [f @project-root-listener]
+    (when-not (str/blank? (str root)) (f {:op op :root (str root)}))))
+
+;; Project metadata never prepares packages or imports extensions on the calling
+;; thread. The first session in the project does that before it selects tools (#407);
+;; the gateway's root listener does it in the background (#456).
 (defn create-project!
   [opts]
   (when-let [root (:workspace-root opts)]
     (assert-project-directory! root))
-  (persistance/db-create-project! (db-info) opts))
+  (let [opts
+        (cond-> opts
+          (:workspace-root opts)
+          (update :workspace-root workspace/normalize-root))
+
+        project
+        (persistance/db-create-project! (db-info) opts)]
+
+    (project-root-changed! :added (:workspace-root project))
+    project))
 
 (defn get-project-by-root
   "Project bound to canonical workspace `root` for `owner-id` (default
@@ -159,16 +185,17 @@
   ([root] (ensure-project-for-root! "local" root nil))
   ([owner-id root name]
    (assert-project-directory! root)
-   (or (get-project-by-root owner-id root)
-       (try (create-project! {:name (or (not-empty (str name)) (folder-name root))
-                              :owner-id (or owner-id "local")
-                              :workspace-root root})
-            ;; ONLY a lost get-or-create race is expected here (the partial
-            ;; UNIQUE index rejects the duplicate) -> re-read the winner. Any
-            ;; OTHER failure (disk full, real constraint break) must NOT be
-            ;; swallowed as nil: re-read, and if there's still no project the
-            ;; original error was the true cause, so rethrow it.
-            (catch Throwable e (or (get-project-by-root owner-id root) (throw e)))))))
+   (let [root (workspace/normalize-root root)]
+     (or (get-project-by-root owner-id root)
+         (try (create-project! {:name (or (not-empty (str name)) (folder-name root))
+                                :owner-id (or owner-id "local")
+                                :workspace-root root})
+              ;; ONLY a lost get-or-create race is expected here (the partial
+              ;; UNIQUE index rejects the duplicate) -> re-read the winner. Any
+              ;; OTHER failure (disk full, real constraint break) must NOT be
+              ;; swallowed as nil: re-read, and if there's still no project the
+              ;; original error was the true cause, so rethrow it.
+              (catch Throwable e (or (get-project-by-root owner-id root) (throw e))))))))
 
 (defn update-project!
   "Patch a project (see `db-update-project!`). A new `:workspace-root` must name an
@@ -193,13 +220,25 @@
         (throw (ex-info (str "Another project already uses " root)
                         {:type :project/root-taken :path root :project-id (:id holder)})))
       (when project
-        (persistance/db-update-project! (db-info)
-                                        project-id
-                                        (assoc opts
-                                          :workspace-root root
-                                          :repo-id (workspace/repo-id-for root)))))))
+        (let [updated (persistance/db-update-project! (db-info)
+                                                      project-id
+                                                      (assoc opts
+                                                        :workspace-root root
+                                                        :repo-id (workspace/repo-id-for root)))]
+          (when (not= root (:workspace-root project)) (project-root-changed! :moved root))
+          updated)))))
 
-(defn delete-project! [project-id] (persistance/db-delete-project! (db-info) project-id))
+(defn delete-project!
+  "Delete a project. Its sessions stay; its extension automations go (#456)."
+  [project-id]
+  (let [root
+        (:workspace-root (get-project project-id))
+
+        deleted
+        (persistance/db-delete-project! (db-info) project-id)]
+
+    (project-root-changed! :deleted root)
+    deleted))
 
 (defn project-session-ids
   "Ids of every session soul belonging to `project-id`, across channels, in the

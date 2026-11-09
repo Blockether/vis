@@ -25,7 +25,7 @@
    Domain namespaces own the other command groups. Each exports `command`
    and, when its children register through the registry, `subcommands`:
    `gateway.cli`, `foundation.mcp.cli`, `provider.cli`, `session.cli`,
-   `workspace.cli`, `speech.cli` and `decisions.cli`.
+   `workspace.cli`, `automation.cli`, `speech.cli` and `decisions.cli`.
 
    `vis-agent doctor` is host-owned. Extensions plug diagnostics into it
    with `:ext/doctor-fn`; extension-owned CLI commands stay under
@@ -44,6 +44,7 @@
     [com.blockether.vis.internal.decisions.cli :as decisions-cli]
     [com.blockether.vis.internal.gateway.wiring :as wiring]
     [com.blockether.vis.internal.speech.cli :as speech-cli]
+    [com.blockether.vis.internal.automation.cli :as automation-cli]
     [com.blockether.vis.internal.foundation.mcp.cli :as mcp-cli]
     [com.blockether.vis.internal.gateway.cli :as gateway-cli]
     [com.blockether.vis.internal.provider.catalog :as catalog]
@@ -2707,7 +2708,7 @@
             (finally (doseq [sid (gateway-state/session-ids)]
                        (gateway-state/release-session! sid))
                      (shutdown-agents))))} provider-cli/command session-cli/command
-    workspace-cli/command
+    workspace-cli/command automation-cli/command
     {:cmd/name "doctor"
      :cmd/doc "Run cross-extension diagnostics, and reclaim stale drafts / session journals."
      :cmd/usage "vis-agent doctor [--purge] [--dry-run] [--days N]"
@@ -2753,7 +2754,8 @@
 
 ;;; ── Domain-owned subcommands ──────────────────────────────────────────────────
 
-(doseq [spec (concat gateway-cli/subcommands
+(doseq [spec (concat automation-cli/subcommands
+                     gateway-cli/subcommands
                      mcp-cli/subcommands
                      provider-cli/subcommands
                      session-cli/subcommands
@@ -3041,7 +3043,8 @@
    without importing configured entrypoints."
   [args]
   (let [[command subcommand] args]
-    (or (contains? #{"stdio" "python" "web" "gateway" "sessions" "projects" "speech" "decisions"}
+    (or (contains? #{"stdio" "python" "web" "gateway" "sessions" "projects" "speech" "decisions"
+                     "automations"}
                    command)
         (and (= "extension" command)
              (contains? #{"install" "sync" "versions" "update" "rollback"} subcommand)))))

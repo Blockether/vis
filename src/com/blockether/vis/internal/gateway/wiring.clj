@@ -33,9 +33,14 @@
             [taoensso.telemere :as tel]))
 
 (defn- sync-extension-automations!
-  "Store the automations that a successful extension load declares."
-  [{:keys [project-root extensions]}]
-  (try (automation/sync-extensions! (lp/db-info) project-root extensions (util/now-ms))
+  "Store the automations that an extension load declares, and delete those of removed
+   extensions."
+  [{:keys [project-root extensions removed complete?]}]
+  (try (automation/sync-extensions! (lp/db-info)
+                                    project-root
+                                    extensions
+                                    (util/now-ms)
+                                    {:removed removed :complete? complete?})
        (catch Throwable t
          (tel/log! {:level :warn
                     :id ::extension-automations-sync-failed

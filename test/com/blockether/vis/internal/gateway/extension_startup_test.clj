@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.runtime :as runtime]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
@@ -17,6 +18,7 @@
                                                 #'state/list-projects (constantly [])
                                                 ;; Startup turns these on for the whole process.
                                                 #'pyx/use-registration-manifests! (constantly nil)
+                                                #'lp/set-project-root-listener! (constantly nil)
                                                 #'pyx/keep-spare-workers! (constantly nil)}
                                  run))])
 

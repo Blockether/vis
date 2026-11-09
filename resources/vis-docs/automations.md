@@ -15,6 +15,8 @@ notification or at an address that you choose. You do not need to turn automatio
   address that you choose.
 - **You want to test, pause or remove an automation.** [Manage your
   automations](#manage-automations) in the TUI or the app.
+- **A setup script must create or pause automations without the app.** Use the [command
+  line](#manage-automations-from-the-command-line).
 - **Your extension must do work on a schedule, without a model.** Declare an [automation in the
   extension](#automations-from-extensions).
 - **Your own program must create and control automations.** Read [Automations
@@ -39,7 +41,8 @@ Automations support these features:
 - **Extensions.** An extension can declare an automation that calls its own Python function.
 - **Delivery.** Phone notifications and signed callbacks. `[SILENT]` reports only changes.
 - **Control.** Manual runs, pause and resume, secrets and the last 200 runs of each automation.
-- **Access.** The app, the TUI and the [Automations API](automations-api.md).
+- **Access.** The app, the TUI, the `vis-agent automations` command and the [Automations
+  API](automations-api.md).
 
 Each automation has these parts:
 
@@ -172,6 +175,32 @@ An automation from an extension shows the name of the extension and its key. It 
 **Replace webhook secret** and **Replace callback secret** create a new secret. The old secret
 stops working at once, so update the other service right after the change.
 
+## Manage automations from the command line
+
+The `vis-agent automations` commands manage the automations of the gateway on this computer. If
+the gateway does not run, the command starts it. An automation ID can be the full ID or any
+unambiguous prefix from `vis-agent automations list`.
+
+```bash
+vis-agent automations list                     # automations, their state and next run
+vis-agent automations show 9f2c1a44            # the parts of one automation
+vis-agent automations create morning-review.json
+vis-agent automations run 9f2c1a44             # start a run now
+vis-agent automations pause 9f2c1a44           # stop the triggers
+vis-agent automations resume 9f2c1a44
+vis-agent automations delete 9f2c1a44          # also deletes its runs
+```
+
+`create` reads one automation as JSON from a file, or from standard input when you give `-`. The
+JSON has the fields of the [Automations API](automations-api.md#create-an-automation). When one
+automation with the same `name` exists and no extension owns it, `create` changes that automation
+and prints `Updated <ID>`. Otherwise it creates an automation and prints `Created <ID>`. So a setup
+script can run the same command again and does not make copies. When two or more automations have
+the same name, `create` stops and lists them.
+
+Add `--json` to `list` or `show` to get the JSON answer of the gateway. When a command fails, it
+writes the reason to standard error and exits with status 2.
+
 ## Automations from extensions
 
 An extension can declare an automation. A run of this automation calls a Python function of the
@@ -179,8 +208,13 @@ extension and does not call a model. The run sends no provider request and uses 
 for work that code can do alone, for example a sync or a cleanup every hour. [Extension
 API](extension-api.md#automations) tells how to declare one.
 
-Vis adds the automation when the extension loads. The gateway also loads the extensions in the
-background after it starts, so the automation is ready without a step from you.
+Vis adds the automation when the extension loads. After the gateway starts, it loads the global
+extensions and the extensions of each project in the background, also of archived projects. When
+you add a project, Vis loads the extensions of that project. So the automations are ready without a
+step from you.
+
+Adding a project lets the code of its extensions run on this computer, also on a schedule. Add only
+the projects that you trust.
 
 The extension owns the definition. The app and the TUI show **From extension** with the name of
 the extension and the key of the automation. You can run, pause, resume and delete the automation,
@@ -189,8 +223,13 @@ but you cannot edit it. To change it, change the extension.
 - **Pause** stays when the extension loads again.
 - **Delete** removes the automation and its runs. The automation comes back when the extension
   loads again. To stop its runs, pause it.
-- When the extension no longer declares the automation, Vis deletes it at the next load. When the
-  extension does not load, for example because of an error, Vis keeps the automation and its runs.
+- When the extension no longer declares the automation, Vis deletes it at the next load.
+- When you remove the extension, Vis deletes its automations and their runs.
+- When a file of the extension does not load, for example because of an error, Vis keeps the
+  automations and their runs.
+- The automations of an archived project continue to run. To stop them, pause them.
+- When you move a project to a different folder, its automations move with it. When you delete a
+  project, Vis deletes the automations of its extensions and their runs.
 
 The task of the automation is the description of its function. A run uses the target of the
 declaration: a `temporary` session or a `persistent` session in the project folder. The result of

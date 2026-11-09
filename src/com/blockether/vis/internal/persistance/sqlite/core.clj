@@ -2898,6 +2898,25 @@
                     (assoc :repo_id repo-id))
              :where [:= :repo_root from]}))
 
+(defn- move-owned-automations!
+  "Move the extension automations of root `from` to root `to` with their project:
+   owner, target and a later `updated_at`, so the scheduler reads them again. The
+   id, Pause and runs stay. A leftover row at `to` with the same owner gives way (#456)."
+  [tx-info from to]
+  (execute! tx-info
+            {:delete-from :automation
+             :where [:and [:= :owner_root to]
+                     [:in [:composite :owner_extension :owner_key]
+                      {:select [:owner_extension :owner_key]
+                       :from :automation
+                       :where [:= :owner_root from]}]]})
+  (execute! tx-info
+            {:update :automation
+             :set {:owner_root to
+                   :definition [:json_set :definition "$.target.root" to]
+                   :updated_at [:max (now-ms) [:+ :updated_at 1]]}
+             :where [:= :owner_root from]}))
+
 (defn db-update-project!
   "Patch a `project`: any of `:name` (non-blank), `:color`, `:position`,
    `:archived?` (true stamps `archived_at`=now, false clears it) and
@@ -2939,18 +2958,32 @@
               (when (and (not (str/blank? (str from)))
                          (not (str/blank? (str workspace-root)))
                          (not= from (str workspace-root)))
-                (move-project-workspaces! tx-info from (str workspace-root) repo-id)))))
+                (move-project-workspaces! tx-info from (str workspace-root) repo-id)
+                (move-owned-automations! tx-info from (str workspace-root))))))
         (db-get-project db-info project-id)))))
 
 (defn db-delete-project!
   "Delete a `project`. Member souls are scattered back to project-less by the
-   `ON DELETE SET NULL` FK - conversations are NEVER deleted."
+   `ON DELETE SET NULL` FK - conversations are NEVER deleted. The extension
+   automations of its root go in the same transaction, with their runs (#456)."
   [db-info project-id]
   (when (and (ds db-info) project-id)
-    (sqlite-write-tx! db-info
-                      (fn [tx-info]
-                        (execute! tx-info
-                                  {:delete-from :project :where [:= :id (->id project-id)]})))))
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [where
+              [:= :id (->id project-id)]
+
+              root
+              (:workspace_root (query-one! tx-info
+                                           {:select [:workspace_root] :from :project :where where}))
+
+              deleted
+              (execute! tx-info {:delete-from :project :where where})]
+
+          (when-not (str/blank? (str root))
+            (execute! tx-info {:delete-from :automation :where [:= :owner_root root]}))
+          deleted)))))
 
 (defn db-set-session-project!
   "Assign the soul behind `session-id` to `project-id`; a nil `project-id` clears
@@ -7984,6 +8017,18 @@
                                                         (seq keep-keys)
                                                         (conj [:not-in :owner_key
                                                                (vec keep-keys)]))})))))
+
+(defn db-automation-delete-other-owners!
+  [db root keep-extensions]
+  (update-count (sqlite-write-tx! db
+                                  (fn [tx]
+                                    (execute! tx
+                                              {:delete-from :automation
+                                               :where (cond-> [:and [:= :owner_root root]
+                                                               [:not= :owner_extension nil]]
+                                                        (seq keep-extensions)
+                                                        (conj [:not-in :owner_extension
+                                                               (vec keep-extensions)]))})))))
 
 (defn- run-row [row] (when row (update row :is_silent #(= 1 (long %)))))
 

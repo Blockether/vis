@@ -14057,8 +14057,8 @@
           prepared
           (atom [])]
 
-      ;; #407: project metadata must not prepare dependency environments or import
-      ;; extensions; the first session in the project does that.
+      ;; #407: project metadata alone must not prepare dependency environments or import
+      ;; extensions; the first session in the project or a gateway (#456) does that.
       (with-redefs [config/resolve-db-spec
                     (constantly (str home "/vis.db"))
 
@@ -14104,8 +14104,31 @@
             (expect (= new (:workspace-root moved)))
             (expect (= "vis" (:name moved)))
             (expect (= new (:root (persistance/db-workspace-get (lp/db-info) (:id trunk))))))
-          (expect (= [] @prepared)))))))
+          (expect (= [] @prepared))))))
+  (it "stores the real path of a root given through a symlink, so one folder is one project"
+      ;; #456: extensions own automations by the real path. A project kept by its link
+      ;; left them behind when it was deleted or moved.
+      (let [home
+            (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                          "vis-project-link-"
+                                          (make-array java.nio.file.attribute.FileAttribute 0))))
 
+            real
+            (doto (java.io.File. home "real") .mkdirs)
+
+            link!
+            (fn [^String link-name]
+              (str (java.nio.file.Files/createSymbolicLink
+                     (.toPath (java.io.File. home link-name))
+                     (.toPath real)
+                     (make-array java.nio.file.attribute.FileAttribute 0))))]
+
+        (with-redefs [config/resolve-db-spec (constantly (str home "/vis.db"))]
+          (let [created (lp/create-project! {:name "app" :workspace-root (link! "created")})]
+            (expect (= (.getCanonicalPath real) (:workspace-root created)))
+            (expect (= (:id created) (:id (lp/ensure-project-for-root! (link! "ensured")))))
+            (expect (= (:id created)
+                       (:id (lp/ensure-project-for-root! "local" (.getPath real) nil)))))))))
 
 ;; User report: the ticker said `waiting up to 600s for: npx …` for two minutes after npx ended,
 ;; while `gather` still waited for the Clojure tests.

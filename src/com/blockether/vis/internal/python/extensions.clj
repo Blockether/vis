@@ -2967,10 +2967,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (defn add-change-listener!
   "Subscribe `f` to Python-extension set changes. `f` receives
-   `{:project-root root :extensions [<validated ext map> ...] :removed [<ext-name> ...]}`
-   after every (re)load that changed anything. `:project-root` is nil for the global
-   catalog; `:extensions` is that scope's full freshly-registered set and `:removed`
-   the names that no longer exist in it. Re-registering the same `listener-id`
+   `{:project-root root :extensions [<validated ext map> ...] :removed [<ext-name> ...]
+   :complete? bool}` after every (re)load that changed anything. `:project-root` is nil
+   for the global catalog; `:extensions` is that scope's full freshly-registered set and
+   `:removed` the names that no longer exist in it. `:complete?` is true when no file
+   or package of the scope failed without a last good version, so `:extensions` names
+   every extension that the scope declares. Re-registering the same `listener-id`
    replaces the old listener. Returns `listener-id`."
   [listener-id f]
   (swap! change-listeners assoc listener-id f)
@@ -4578,7 +4580,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                (extension/set-project-extensions! project-root (keep :ext entries)))
              (notify-change-listeners! {:project-root project-root
                                         :extensions (vec (keep :ext entries))
-                                        :removed (vec (sort (remove new-names old-names)))}))
+                                        :removed (vec (sort (remove new-names old-names)))
+                                        :complete? (and (empty? preparation-failures)
+                                                        (not-any? #(and (= project-root
+                                                                           (:project-root %))
+                                                                        (not (:stale? %)))
+                                                                  @failures))}))
            {:loaded (count (scope-entries project-root))
             :reloaded @reloaded
             :failed (count (filter #(= project-root (:project-root %)) @failures))
