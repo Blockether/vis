@@ -1491,8 +1491,8 @@
    title is a short label for people: one line of 1 to 40 characters, such as \"Fix login test\".
    Without it, people see the child number, such as #2.
 
-   role is research, implement, verify or audit. It is a label for people and sets no tool, file or
-   model limit. Choose it by the result that you need: facts, changed files, a pass or fail, or
+   role is research, implement or verify. It is a label for people and sets no tool, file or model
+   limit. Choose it by the result that you need: facts, changed files, or a pass or fail with
    findings.
 
    files is a file grant: {\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Give only the

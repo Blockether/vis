@@ -194,7 +194,7 @@ describe('agent rows', () => {
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
     render(<>
-      <TurnAgents {...props} placement="dock" agents={[{ ...child, session_id: 'a', role: 'audit' }]} />
+      <TurnAgents {...props} placement="dock" agents={[{ ...child, session_id: 'a', role: 'verify' }]} />
       <TurnAgents {...props} placement="dock" agents={[{ ...child, session_id: 'i', team_id: 'turn-2', role: 'implement' }]} />
     </>);
     const widths = ['a', 'i'].map((sid) =>
@@ -212,13 +212,13 @@ describe('agent rows', () => {
     const leader = { start: T0 - 10_000, end: T0 + 20_000, waits: [{ start: T0, end: T0 + 12_000 }], note: 'Both reviews pass.' };
     render(<TurnAgents {...props} leader={leader} agents={[
       { ...child, title: 'Companion review', role: 'verify', status: 'completed', finished_at: T0 + 9_000, result: 'All **12** keys pass' },
-      { ...child, session_id: 'tui', title: 'TUI review', role: 'audit', status: 'completed', finished_at: T0 + 15_000 },
+      { ...child, session_id: 'tui', title: 'TUI review', role: 'verify', status: 'completed', finished_at: T0 + 15_000 },
     ]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
     const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent);
     expect(lanes).toEqual(['L leader30sdone', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
     const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
-    expect(legend).toEqual(['Lleaderwaited 12s of 30sBoth reviews pass.', 'A1verifyCompanion reviewAll 12 keys pass', 'A2auditTUI review']);
+    expect(legend).toEqual(['Lleaderwaited 12s of 30sBoth reviews pass.', 'A1verifyCompanion reviewAll 12 keys pass', 'A2verifyTUI review']);
   });
 
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {
@@ -284,7 +284,7 @@ describe('team line', () => {
       { ...child, session_id: 'b', role: 'research', status: 'completed' },
       { ...child, session_id: 'c', role: 'research', status: 'cancelled' },
       { ...child, session_id: 'd' },
-      { ...child, session_id: 'e', role: 'audit', status: 'queued' },
+      { ...child, session_id: 'e', role: 'verify', status: 'queued' },
     ]);
     expect(statuses.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 running', '1 queued', '1 done', '1 failed']);
     expect(teamCounts([])).toEqual([]);

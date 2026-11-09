@@ -52,7 +52,7 @@ export const STORY_LIVE_TEAM: Subagent[] = [
     role: 'implement', title: 'Sign in to the store', task: 'Upload the build to the store.', pending_input: true, pending_input_count: 1,
   }),
   member(STORY_AGENT_LIVE_TURN, 'live-links', 0.2, {
-    role: 'audit', title: 'Docs links', task: 'Check every link in the docs.\nReport the dead links with their pages.',
+    role: 'verify', title: 'Docs links', task: 'Check every link in the docs.\nReport the dead links with their pages.',
     status: 'queued', iterations_used: 0,
   }),
   ended(member(STORY_AGENT_LIVE_TURN, 'live-contract', 0.95, {
@@ -87,8 +87,8 @@ export const STORY_DONE_TEAM: Subagent[] = [
     role: 'implement', title: 'Fix the 404', status: 'failed', result: 'Stopped on a merge conflict in state.clj',
   }), 3),
   ended(member(STORY_AGENT_DONE_TURN, 'done-old', 29.6, { role: 'research', status: 'cancelled' }), 0.5),
-  ended(member(STORY_AGENT_DONE_TURN, 'done-audit', 29.5, {
-    role: 'audit', title: 'Review the Companion', status: 'budget_limited', iterations_used: 120,
+  ended(member(STORY_AGENT_DONE_TURN, 'done-verify', 29.5, {
+    role: 'verify', title: 'Review the Companion', status: 'budget_limited', iterations_used: 120,
     result: 'Read 41 of 60 files before the budget ended',
   }), 12),
   ended(member(STORY_AGENT_DONE_TURN, 'done-long', 29.4, {

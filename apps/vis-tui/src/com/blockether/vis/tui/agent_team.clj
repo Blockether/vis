@@ -496,9 +496,6 @@
     "verify"
     t/code-syntax-keyword-fg
 
-    "audit"
-    t/code-syntax-special-fg
-
     t/dialog-hint))
 
 (defn- tone-ink

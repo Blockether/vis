@@ -32,7 +32,6 @@ const ROLE_INK: ReadonlyMap<string, string> = new Map([
   ['research', 'text-role-research'],
   ['implement', 'text-role-implement'],
   ['verify', 'text-role-verify'],
-  ['audit', 'text-role-audit'],
 ]);
 
 /** The role word of an agent, with its ink. The views write the word in capitals. */

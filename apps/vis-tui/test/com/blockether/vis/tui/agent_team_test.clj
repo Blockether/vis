@@ -118,9 +118,9 @@
                                        (str/ends-with? % "1m 04s"))
                                  labels))
                    (expect (= :parent (:action (second (team/items [] "parent")))))
-                   (expect (some #(str/starts-with? % "AUDIT      #1")
+                   (expect (some #(str/starts-with? % "VERIFY     #1")
                                  (map :label
-                                      (team/items [(dissoc (assoc row "role" "audit") "title")]
+                                      (team/items [(dissoc (assoc row "role" "verify") "title")]
                                                   nil)))))))
 
 (def review-agent
@@ -443,7 +443,7 @@
     "team_id" "turn-2"
     "task" "Later team"
     "status" "completed"
-    "role" "audit"}])
+    "role" "verify"}])
 
 (defdescribe waiting-agents-test
              (it "keeps role order and numbers per team"
@@ -505,7 +505,7 @@
               "result" "2 reflection warnings"
               "finished_at" now-ms)
    (agent-row 8 "failed"
-              "role" "audit"
+              "role" "verify"
               "title" "Review diff"
               "result" "Provider error"
               "finished_at" now-ms)
@@ -528,7 +528,7 @@
                           (str/index-of
                             (first (team/row-lines (first rows) (team/row-columns rows) 100 now-ms))
                             "Report")]))]
-        (expect (= (title-at "audit") (title-at "implement"))))))
+        (expect (= (title-at "verify") (title-at "implement"))))))
 
 (defdescribe
   team-rows-test
