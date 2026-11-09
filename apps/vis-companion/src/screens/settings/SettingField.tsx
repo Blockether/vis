@@ -229,11 +229,6 @@ function StringList({
           </IconButton>
         </div>
       ))}
-      {!rows.length && (
-        <Text as="p" variant="description">
-          No entries
-        </Text>
-      )}
     </fieldset>
   );
 }
