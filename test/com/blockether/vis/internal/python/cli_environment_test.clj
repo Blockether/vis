@@ -362,7 +362,10 @@
         (let [result (sync! "--check")]
           (expect (= 1 (:exit result)) (:output result))
           (expect (str/includes? (:output result) "shared-base") (:output result)))
-        (let [result (sync!)]
+        ;; The first plain sync proved the `-main` dispatch; this repair skips its engine load.
+        (let [result (run-uv-cli dir
+                                 environment
+                                 ["--shared" "uv" "sync" "--project" (.getPath project) "--offline"])]
           (expect (= 0 (:exit result)) (:output result)))
         (let [result (sync! "--check")]
           (expect (= 0 (:exit result)) (:output result)))
