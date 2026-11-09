@@ -1419,12 +1419,14 @@
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 
-      ;; `agents` holds the changed team rows (gateway.json `team_update`).
+      ;; `agents` holds the whole changed team rows and `changes` the row changes
+      ;; (gateway.json `team_update`).
       "session.team_updated"
       {:phase :team-sync
        :session-id (event-get event :session-id)
        :team (event-get event :team)
-       :agents (event-get event :agents)}
+       :agents (event-get event :agents)
+       :changes (event-get event :changes)}
 
       ;; Both capabilities cross the process boundary on one lifecycle. Internal
       ;; state remains specialized: input owns the keyboard; live preserves it.

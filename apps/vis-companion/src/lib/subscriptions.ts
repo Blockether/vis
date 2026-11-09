@@ -5,7 +5,7 @@ import { bufferStreamEvent } from './session-stream';
 import { MAX_SUBSCRIBED_SESSIONS } from './storage';
 import { onAway, onWake } from './wake';
 import type { SseEvent, Subagent } from './types';
-import { mergeAgents, REWIND_CURSOR, teamRowsFromWire } from './gateway';
+import { applyAgentChanges, mergeAgents, REWIND_CURSOR, teamChangesFromWire, teamRowsFromWire } from './gateway';
 
 type SessionListener = (event: SseEvent) => void;
 type FleetListener = (event: SseEvent) => void;
@@ -206,8 +206,8 @@ export class SessionSubscriptionHub {
   /**
    * The ready frame gives the whole team of `sid`: it replaces the rows, and a frame without
    * `agents` means no team. A `session.team_updated` after it replaces the rows with the same
-   * `session_id` and adds the new ones at the end. The gateway never replays a push, so a
-   * reconnect gets the team again only from its ready frame.
+   * `session_id` and adds the new ones at the end, then applies its `changes` to the known rows.
+   * The gateway never replays a push, so a reconnect gets the team again only from its ready frame.
    */
   private noteTeam(sid: string, event: SseEvent): void {
     if (event.type === 'subscription.ready') {
@@ -216,8 +216,11 @@ export class SessionSubscriptionHub {
       return;
     }
     const base = this.teams.get(sid);
-    const changed = teamRowsFromWire(event.agents);
-    if (base && changed?.length) this.setTeam(sid, mergeAgents(base, changed));
+    if (!base) return;
+    const changed = teamRowsFromWire(event.agents) ?? [];
+    const changes = teamChangesFromWire(event.changes) ?? [];
+    if (!changed.length && !changes.length) return;
+    this.setTeam(sid, applyAgentChanges(mergeAgents(base, changed), changes));
   }
 
   watchedSessionIds(): ReadonlySet<string> {

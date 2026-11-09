@@ -67,8 +67,8 @@
   "Run `f` with a leader and one child for each status of `statuses`, in a store and a journal
    directory of this test. `f` gets `{:db :leader :children :events}`. `events` collects each
    `session.team_updated` as `[sid event]`. With `watched?`, a client stream watches the leader.
-   Steps are not rate limited."
-  [{:keys [statuses watched?]} f]
+   `task` is the task of each child. Steps are not rate limited."
+  [{:keys [statuses watched? task]} f]
   (let [db
         (h/store)
 
@@ -86,7 +86,7 @@
                                                :agent {:parent_id leader
                                                        :leader_id leader
                                                        :team_id (str turn)
-                                                       :task "Check evidence"
+                                                       :task (or task "Check evidence")
                                                        :status status
                                                        :iteration_budget 4
                                                        :spawn_key (str (random-uuid))
@@ -137,10 +137,43 @@
                     (reset! registry saved)
                     (reset! @#'bus/watch-cache {}))))))
 
+(defn- apply-team-event
+  "The team `rows` after one `session.team_updated` `event`, as a client applies it: the whole
+   rows of `agents` first, then each key of `changes`, where null removes the key."
+  [rows event]
+  (let [at
+        (fn [rows id]
+          (first (keep-indexed #(when (= id (get %2 "session_id")) %1) rows)))
+
+        rows
+        (reduce (fn [rows row]
+                  (if-let [i (at rows (get row "session_id"))]
+                    (assoc rows i row)
+                    (conj rows row)))
+                (vec rows)
+                (get event "agents"))]
+
+    (reduce (fn [rows change]
+              (if-let [i (at rows (get change "session_id"))]
+                (update rows
+                        i
+                        #(reduce-kv (fn [row k v]
+                                      (if (nil? v) (dissoc row k) (assoc row k v)))
+                                    %
+                                    change))
+                rows))
+            rows
+            (get event "changes"))))
+
+(defn- event-ids
+  "The session ids of the children that one team `event` changes."
+  [event]
+  (mapv #(get % "session_id") (concat (get event "agents") (get event "changes"))))
+
 (defn- last-row
-  "The row of `child` in the last team event, or nil."
+  "The row of `child` after each team event of `events`, as a client has it, or nil."
   [events child]
-  (some #(when (= child (get % "session_id")) %) (get (second (last @events)) "agents")))
+  (some #(when (= child (get % "session_id")) %) (reduce apply-team-event [] (map second @events))))
 
 (defn- request
   [method path body]
@@ -438,7 +471,8 @@
       (expect (= {"c1" :activity} (get-in q5 [:pending "lead"])))
       (let [[q a] (mark q3 "lead" "c1" 300 true :activity)]
         (expect (= :push a) "A lifecycle or request change goes at once")
-        (expect (= {"c1" :full} (get-in q [:pending "lead"])) "An urgent change rebuilds the row")
+        (expect (= {"c1" :urgent} (get-in q [:pending "lead"]))
+                "An urgent change rebuilds the row and sends it whole")
         (expect (empty? (:timers q)))
         (expect (= [q nil] (due q "lead" "c1"))
                 "The timer that the urgent push replaced sends nothing"))
@@ -574,6 +608,9 @@
           questions
           @#'agents/questions
 
+          seen
+          (atom [])
+
           push!
           (fn [n f]
             (reset! events [])
@@ -584,13 +621,23 @@
               (expect (= leader sid))
               (expect (document/valid-json? "gateway"
                                             "team_update"
-                                            (select-keys event ["team" "agents" "child_id"]))
+                                            (select-keys event
+                                                         ["team" "agents" "changes" "child_id"]))
                       (pr-str event)))
             (mapv second @events))
 
+          ;; The rows that a client has after `event`, for the children of `event`.
           rows
           (fn [event]
-            (mapv #(select-keys % ["session_id" "status" "question"]) (get event "agents")))]
+            (let [ids
+                  (set (event-ids event))
+
+                  upto
+                  (concat (take-while #(not (identical? event %)) (map second @seen)) [event])]
+
+              (->> (reduce apply-team-event [] upto)
+                   (filter #(contains? ids (get % "session_id")))
+                   (mapv #(select-keys % ["session_id" "status" "question"])))))]
 
       (with-redefs [lp/db-info
                     (constantly db)
@@ -604,6 +651,7 @@
         (try (state/add-event-tap! ::spy
                                    (fn [sid event]
                                      (when (= "session.team_updated" (get event "type"))
+                                       (swap! seen conj [sid event])
                                        (swap! events conj [sid event]))))
              ;; A client watches the leader, so the gateway builds and sends rows.
              (swap! registry assoc-in
@@ -641,7 +689,8 @@
              (let [merged (fn []
                             (into {}
                                   (for [[_ event] @events
-                                        row (get event "agents")]
+                                        row (concat (get event "agents") (get event "changes"))
+                                        :when (contains? row "status")]
 
                                     [(get row "session_id") (get row "status")])))]
                (loop [left 300]
@@ -653,10 +702,11 @@
                        "The leader stop pushes each child that it cancelled")
                (doseq [[sid event] @events]
                  (expect (= leader sid))
-                 (expect (document/valid-json? "gateway"
-                                               "team_update"
-                                               (select-keys event ["team" "agents" "child_id"])))
-                 (expect (= (= 1 (count (get event "agents"))) (contains? event "child_id"))
+                 (expect (document/valid-json?
+                           "gateway"
+                           "team_update"
+                           (select-keys event ["team" "agents" "changes" "child_id"])))
+                 (expect (= (= 1 (count (event-ids event))) (contains? event "child_id"))
                          "Only an event of one child names it"))
                (expect (= {"active" 0 "total" 3} (get (second (peek @events)) "team"))))
              (finally (state/remove-event-tap! ::spy) (reset! registry saved)))))))
@@ -673,7 +723,6 @@
                      (drain!)
                      (expect (= "small" (get (last-row events child) "model")))
                      (expect (false? (get (last-row events child) "routing_locked")))
-                     (reset! events [])
                      (state/set-session-model! child "p" "small")
                      (drain!)
                      (expect (true? (get (last-row events child) "routing_locked"))
@@ -750,6 +799,139 @@
                                                                        {:turn_id "t"})))))
             (expect (= "Read" (get (last-row events child) "activity"))))))))
 
+;; Session 18979591: each push sent the whole row of each child again, with its 8.8 KB task, up to
+;; every 2 s. One Council run wrote 641 pushes of ~12 KB each (7.6 MB) to the event journal.
+(defdescribe
+  team-change-push-test
+  (it
+    "sends only the changed keys of a known row, and sends a cleared key as null"
+    (with-team
+      {:statuses ["running"] :watched? true :task (apply str (repeat 9000 "t"))}
+      (fn [{:keys [leader children events]}]
+        (let [[child]
+              children
+
+              activity!
+              (fn [headline]
+                (state/append-event! child
+                                     "block.activity"
+                                     {:turn_id "t"
+                                      :iteration 1
+                                      :form_index 0
+                                      :activity {:rows [{:state "running"
+                                                         :presentation {:headline headline}}]}}
+                                     {:store? false}))
+
+              last-event
+              #(second (last @events))]
+
+          (state/append-event! child "turn.started" {:turn_id "t"})
+          (drain!)
+          (expect (= [child] (mapv #(get % "session_id") (get (last-event) "agents")))
+                  "The first push of a child has its whole row")
+          (expect (= 9000 (count (get (last-row events child) "task"))))
+          (activity! "Read a.clj")
+          (drain!)
+          (let [event
+                (last-event)
+
+                size
+                (count (.getBytes (json/write-json-str event) "UTF-8"))]
+
+            (expect (empty? (get event "agents")) (pr-str event))
+            (expect (= [{"session_id" child "activity" "Read a.clj"}] (get event "changes")))
+            (expect (< size 1024) (str "A push of " size " bytes"))
+            (expect (document/valid-json? "gateway"
+                                          "team_update"
+                                          (select-keys event
+                                                       ["team" "agents" "changes" "child_id"]))))
+          (expect (= 9000 (count (get (last-row events child) "task")))
+                  "The client keeps the task that the change does not name")
+          ;; Without an Activity line, the row has no `activity` key.
+          (with-redefs-fn {#'state/agent-activity (constantly nil)}
+            #(do (activity! "Gone") (drain!)))
+          (expect (= [{"session_id" child "activity" nil}] (get (last-event) "changes"))
+                  "A key that went away comes as null")
+          (expect (not (contains? (last-row events child) "activity")))
+          (let [n (count @events)]
+            (state/subscribe! leader
+                              "client-2"
+                              (fn [_])
+                              0)
+            (activity! "Again")
+            (drain!)
+            (expect (= (inc n) (count @events)))
+            (expect (= [child] (mapv #(get % "session_id") (get (last-event) "agents")))
+                    "After a new client stream, the next push has the whole row again"))))))
+  (it
+    "sends an urgent change and a row older than the bound whole"
+    (with-team
+      {:statuses ["running"] :watched? true}
+      (fn [{:keys [leader children events]}]
+        (let [[child]
+              children
+
+              activity!
+              (fn [headline]
+                (state/append-event! child
+                                     "block.activity"
+                                     {:turn_id "t"
+                                      :iteration 1
+                                      :form_index 0
+                                      :activity {:rows [{:state "running"
+                                                         :presentation {:headline headline}}]}}
+                                     {:store? false})
+                (drain!))
+
+              whole?
+              #(= [child]
+                  (mapv (fn [row]
+                          (get row "session_id"))
+                        (get (second (last @events)) "agents")))]
+
+          (state/append-event! child "turn.started" {:turn_id "t"})
+          (drain!)
+          (activity! "Read a.clj")
+          (expect (not (whole?)) "A step goes as its change")
+          (state/append-event! child "turn.started" {:turn_id "t"})
+          (drain!)
+          (expect (whole?) "A lifecycle change after a change goes whole")
+          (expect (empty? (get (second (last @events)) "changes")))
+          (activity! "Read b.clj")
+          (expect (not (whole?)))
+          ;; The last whole row of the child is as old as the bound.
+          (swap! @#'state/team-cache update-in
+            [:pushed leader :whole child]
+            -
+            @#'state/team-whole-ms)
+          (activity! "Read c.clj")
+          (expect (whole?) "A step after the bound goes whole")
+          (activity! "Read d.clj")
+          (expect (not (whole?)) "The whole row starts the bound again")))))
+  (it "sends the whole row when a child that ended resumes"
+      (with-team {:statuses ["running"] :watched? true}
+                 (fn [{:keys [db leader children events]}]
+                   (let [[child] children]
+                     (state/append-event! child "turn.started" {:turn_id "t"})
+                     (drain!)
+                     (ps/db-agent-update! db child {:status "completed" :result "Done."})
+                     (state/append-event! child "turn.completed" {:turn_id "t"})
+                     (drain!)
+                     (expect (= "completed" (get (last-row events child) "status")))
+                     (expect (nil? (get-in @@#'state/team-cache [:pushed leader]))
+                             "A team without an active child keeps no base rows")
+                     (ps/db-agent-update! db child {:status "running"})
+                     (state/append-event! child "turn.started" {:turn_id "t2"})
+                     (drain!)
+                     (expect (= "running" (get (last-row events child) "status"))
+                             "The client shows the resumed child as running")))))
+  (it "treats null and a missing key as the same"
+      (let [change #'state/team-change]
+        (expect (nil? (change {"session_id" "c1" "a" 1} {"session_id" "c1" "a" 1 "b" nil})))
+        (expect (nil? (change {"session_id" "c1" "b" nil} {"session_id" "c1"})))
+        (expect (= {"session_id" "c1" "b" nil}
+                   (change {"session_id" "c1" "b" 2} {"session_id" "c1" "b" nil}))))))
+
 (defn- ready-frame
   "The `subscription.ready` frame that a new stream of session `sid` gets first."
   [sid]
@@ -822,8 +1004,7 @@
             (marker! (.pid (.get (.parent (java.lang.ProcessHandle/current)))))
             (state/append-event! child "turn.completed" {:turn_id "t"})
             (drain!)
-            (expect (= [child]
-                       (mapv #(get % "session_id") (get (second (last @events)) "agents"))))))))
+            (expect (= [child] (event-ids (second (last @events)))) (pr-str @events))))))
   ;; Leader follow-up #9234: a push in the second before a scan saw a new watcher in another
   ;; process was skipped, so a child that then waited for the person kept a stale row there.
   (it

@@ -350,10 +350,14 @@
   team-update-merge-test
   ;; Contract fixture team-updated.json: the gateway pushes only the changed rows. A wrong
   ;; merge moves, doubles or drops agent rows in the dock.
-  (it "applies the session.team_updated rows of the contract fixture"
+  (it "applies the session.team_updated rows and changes of the contract fixture"
       (let [{:strs [base events merged]}
             (json/read-json (slurp (io/resource "vis-contract/fixtures/team-updated.json")))]
-        (expect (= merged (reduce #(team/merge-agents %1 (get %2 "agents")) base events))))))
+        (expect
+          (= merged
+             (reduce #(team/apply-update %1 {:agents (get %2 "agents") :changes (get %2 "changes")})
+                     base
+                     events))))))
 
 (defdescribe
   summary-counts-test

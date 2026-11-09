@@ -212,6 +212,11 @@
 ;; The team push below reacts to subscribers, model picks, grants and deletes.
 (declare team-changed! team-dropped! broadcast-team!)
 
+;; Goes up when a client stream starts here, or a process starts to watch a session. A client
+;; gets the whole team in its `subscription.ready` frame, so the next team push sends whole rows
+;; again instead of changes against rows that the new client did not get.
+(defonce ^:private team-watch-epoch (atom 0))
+
 (defn session-known?
   "True when this process holds a registry entry for `sid`."
   [sid]
@@ -1193,7 +1198,9 @@
                                  (dissoc :held-notices)))
              [events held]))]
 
-     (when (client-subscriber? sub-id) (bus/sync-watching! sid #(client-watched? sid)))
+     (when (client-subscriber? sub-id)
+       (swap! team-watch-epoch inc)
+       (bus/sync-watching! sid #(client-watched? sid)))
      ;; After registration, so each held notice reaches the new sink after its replay.
      (doseq [notice held]
        (append-event! sid "notification" notice {:store? false}))
@@ -2781,20 +2788,34 @@
 
 ;; The push queue. `:pending` holds the changed children of each leader for its next push, each
 ;; with its change kind, `:timers` the children that wait for a step push with their kind, and
-;; `:sent` the last push time of a child. A kind is `:full` (rebuild the row) or `:activity` (only
-;; the Activity line changed).
+;; `:sent` the last push time of a child. A kind is `:urgent` (a lifecycle or request change: rebuild
+;; the row and send it whole), `:full` (rebuild the row) or `:activity` (only the Activity line
+;; changed).
 (defonce ^:private team-queue (atom empty-team-queue))
 
 ;; The last pushed row of each queued or running child (`:rows`) and the last team summary of each
 ;; leader with an active child (`:teams`). Only the push thread writes it, so an Activity push
 ;; reuses them without a store read.
+;; `:pushed` holds, for each leader with an active child, the wire rows that the clients have now,
+;; as `leader -> {:epoch e :rows {child row} :whole {child ms}}`. A push sends only the changes
+;; against them. They count only while `team-watch-epoch` is still `e`. `:whole` is the time of the
+;; last whole row of each child, which `team-whole-ms` limits.
 ;; `:recent` holds each child with a `:full` change in the last `team-recent-ms` as
 ;; `child -> [leader ms]`, so a new watcher also gets a child that ended just before it came.
-(def ^:private empty-team-cache {:rows {} :teams {} :recent {}})
+(def ^:private empty-team-cache {:rows {} :teams {} :recent {} :pushed {}})
 
 (def ^:private team-recent-ms
   "How long a child counts as recently changed for a new watcher of its leader."
   10000)
+
+(def ^:private team-whole-ms
+  "How old the last whole row of a child can be before its next push sends it whole again. A change
+   applies only to the row that a client has, and a client can lack that row: a client of another
+   process gets ready rows without the keys that only this process holds, the bus drops a transient
+   event when its queue is full, and a push built before a ready frame can arrive after it. Thus
+   the first push of a child after this time sends its whole row and repairs a wrong row. A child
+   that pushes nothing, for example while it waits for an answer, keeps its row until its next push."
+  30000)
 
 (defonce ^:private team-cache (atom empty-team-cache))
 
@@ -2825,10 +2846,13 @@
 ;; The push thread fills it, so an event tap never reads the store on the turn thread.
 (defonce ^:private team-leaders (atom {}))
 
+(def ^:private team-kind-rank "The strength of each change kind." {:activity 1 :full 2 :urgent 3})
+
 (defn- team-kind
-  "The stronger of two change kinds: `:full` wins over `:activity`, and nil adds nothing."
+  "The stronger of two change kinds: `:urgent` wins over `:full`, `:full` over `:activity`, and nil
+   adds nothing."
   [a b]
-  (if (or (= :full a) (= :full b)) :full (or a b)))
+  (if (> (long (team-kind-rank a 0)) (long (team-kind-rank b 0))) a (or b a)))
 
 (defn- team-pend
   "`queue` with `child` pending for the next push of `leader` with change `kind`, and `:push` when
@@ -2839,7 +2863,7 @@
 
 (defn- team-mark
   "Mark child `child` of `leader` as changed at `now` with change `kind`. Answers `[queue action]`.
-   A lifecycle or request change (`urgent?`) is a `:full` change, pending at once, and takes the
+   A lifecycle or request change (`urgent?`) is an `:urgent` change, pending at once, and takes the
    step timer away. A step change is pending at once when the last push of the child is
    `team-step-ms` old. Else one timer for each child sends it later with the strongest kind of its
    steps, so more steps in that time add no work. `action` is `:push`, `[:timer ms]` or nil."
@@ -2847,7 +2871,7 @@
   (let [wait (if-let [sent (get-in queue [:sent child])]
                (- (+ (long sent) (long team-step-ms)) (long now))
                0)]
-    (cond urgent? (team-pend (update queue :timers dissoc child) leader child :full)
+    (cond urgent? (team-pend (update queue :timers dissoc child) leader child :urgent)
           (contains? (:timers queue) child) [(update-in queue [:timers child] team-kind kind) nil]
           (<= wait 0) (team-pend queue leader child kind)
           :else [(assoc-in queue [:timers child] kind) [:timer wait]])))
@@ -2903,15 +2927,81 @@
                 #(if (pos? (long (:active team 0))) (assoc % leader team) (dissoc % leader))))))
 
 (defn- team-forget
-  "`cache` without the rows of `children` and without the team summary of `leader`."
+  "`cache` without the rows of `children` and without the team summary and sent rows of `leader`."
   [cache leader children]
   (-> cache
       (update :rows #(apply dissoc % children))
-      (update :teams dissoc leader)))
+      (update :teams dissoc leader)
+      (update :pushed dissoc leader)))
+
+(defn- team-pushed
+  "The pushed rows of `leader` in `cache`, `{:rows {child row} :whole {child ms}}`, or an empty
+   map when they are of an earlier watch `epoch`: a client that came since then has other rows."
+  [cache leader epoch]
+  (let [pushed (get-in cache [:pushed leader])]
+    (if (= (:epoch pushed) epoch) pushed {})))
+
+(defn- team-base
+  "The wire rows of the children of `leader` that the clients have, `{child row}`, in watch
+   `epoch`. A child of `urgent` and a child whose last whole row is `team-whole-ms` old at `now`
+   has no base row, so it goes whole."
+  [cache leader epoch urgent now]
+  (let [{:keys [rows whole]} (team-pushed cache leader epoch)]
+    (into {}
+          (remove (fn [[child _]]
+                    (or (contains? urgent child)
+                        (<= (long team-whole-ms) (- (long now) (long (get whole child 0)))))))
+          rows)))
+
+(defn- team-sent
+  "`cache` after a push at `now` of the whole wire `rows` of children of `leader` in watch `epoch`,
+   of which `agents` went whole. They are the base of the next changes while `team` has an active
+   child. Without one, the next push sends whole rows."
+  [cache leader epoch rows agents team now]
+  (if (pos? (long (:active team 0)))
+    (let [{old-rows :rows old-whole :whole}
+          (team-pushed cache leader epoch)
+
+          by-id
+          #(get % "session_id")]
+
+      (assoc-in cache
+        [:pushed leader]
+        {:epoch epoch
+         :rows (into (or old-rows {}) (map (juxt by-id identity)) rows)
+         :whole (into (or old-whole {}) (map (juxt by-id (constantly now))) agents)}))
+    (update cache :pushed dissoc leader)))
+
+(defn- team-change
+  "The change from the wire row `base` to the wire row `row` of one child: `session_id`, each key
+   that changed and null for each key that went away. Null and a missing key mean the same, so a
+   key that is null or missing in both rows did not change. Nil when nothing changed."
+  [base row]
+  (let [change (-> (into {}
+                         (remove (fn [[k v]]
+                                   (= v (get base k))))
+                         row)
+                   (into (keep #(when-not (or (contains? row %) (nil? (get base %))) [% nil]))
+                         (keys base)))]
+    (when (seq change) (assoc change "session_id" (get row "session_id")))))
+
+(defn- team-split
+  "Split the whole wire `rows` of one push by the `base` rows that the clients have. Answers
+   `{:agents [row] :changes [change]}`: a child without a base row goes whole, each other child
+   as its change, and a child without a change not at all."
+  [base rows]
+  (reduce (fn [out row]
+            (if-let [old (get base (get row "session_id"))]
+              (if-let [change (team-change old row)]
+                (update out :changes conj change)
+                out)
+              (update out :agents conj row)))
+          {:agents [] :changes []}
+          rows))
 
 (defn- team-note
-  "`cache` after a push of `leader` at `now` with `pending`, `{child kind}`: each `:full` child is
-   recent at `now`, and each recent entry older than `team-recent-ms` goes."
+  "`cache` after a push of `leader` at `now` with `pending`, `{child kind}`: each `:full` or
+   `:urgent` child is recent at `now`, and each recent entry older than `team-recent-ms` goes."
   [cache leader pending now]
   (update cache
           :recent
@@ -2920,7 +3010,7 @@
                         (filter #(< (- (long now) (long (second (val %)))) (long team-recent-ms)))
                         recent)
                   (keep (fn [[child kind]]
-                          (when (= :full kind) [child [leader now]])))
+                          (when (#{:full :urgent} kind) [child [leader now]])))
                   pending))))
 
 (defn- team-recent
@@ -2964,7 +3054,10 @@
   "Send the rows of the pending children of `leader` live on its stream, with its team summary.
    Only the push thread calls it, so this is the one writer of `session.team_updated` and of
    `team-cache`. Without a watcher it builds nothing and forgets the rows that it skips. An
-   Activity change reuses the cached row and team summary, so it reads no store."
+   Activity change reuses the cached row and team summary, so it reads no store. A step or
+   Activity change of a child whose last pushed row the clients still have goes as its change in
+   `changes`. An urgent change, a child without such a row and a child whose last whole row is
+   `team-whole-ms` old go whole in `agents`."
   [leader]
   (let [[old _]
         (swap-vals! team-queue team-take leader (util/now-ms))
@@ -2978,43 +3071,73 @@
     (when (seq pending) (swap! team-cache team-note leader pending (util/now-ms)))
     (cond (empty? pending) nil
           (not (team-watched? leader)) (swap! team-cache team-forget leader children)
-          :else (let [{:keys [full reuse]}
-                      (team-plan @team-cache pending)
+          :else
+          (let [{:keys [full reuse]}
+                (team-plan @team-cache pending)
 
-                      ;; A failed build must not leave a stale row for a later Activity push.
-                      _
-                      (swap! team-cache update :rows #(apply dissoc % full))
+                ;; A failed build must not leave a stale row for a later Activity push.
+                _
+                (swap! team-cache update :rows #(apply dissoc % full))
 
-                      db
-                      (lp/db-info)
+                db
+                (lp/db-info)
 
-                      built
-                      (read-or {:read :team-rows :session-id leader}
-                               []
-                               #(->> full
-                                     (keep (fn [child]
-                                             (agents/info db child)))
-                                     (mapv (fn [child]
-                                             (agent-view db child)))))
+                built
+                (read-or {:read :team-rows :session-id leader}
+                         []
+                         #(->> full
+                               (keep (fn [child]
+                                       (agents/info db child)))
+                               (mapv (fn [child]
+                                       (agent-view db child)))))
 
-                      rows
-                      (->> reuse
-                           (map #(team-row % (agent-activity (:session_id %))))
-                           (concat built)
-                           (sort-by (juxt :created_at :session_id))
-                           vec)
+                rows
+                (->> reuse
+                     (map #(team-row % (agent-activity (:session_id %))))
+                     (concat built)
+                     (sort-by (juxt :created_at :session_id))
+                     vec)
 
-                      team
-                      (or (when (empty? full) (get-in @team-cache [:teams leader]))
-                          (team-wire (team-counts leader)))]
+                team
+                (or (when (empty? full) (get-in @team-cache [:teams leader]))
+                    (team-wire (team-counts leader)))
 
-                  (swap! team-cache team-remember leader children rows team)
-                  (append-event! leader
-                                 "session.team_updated"
-                                 (cond-> {:team team :agents rows}
-                                   (= 1 (count children))
-                                   (assoc :child_id (first children)))
-                                 {:store? false})))))
+                epoch
+                @team-watch-epoch
+
+                wire-rows
+                (mapv wire/canonical rows)
+
+                now
+                (util/now-ms)
+
+                urgent
+                (into #{}
+                      (keep (fn [[child kind]]
+                              (when (= :urgent kind) child)))
+                      pending)
+
+                {:keys [agents changes]}
+                (team-split (team-base @team-cache leader epoch urgent now) wire-rows)
+
+                ;; The clients have these rows and this team summary already.
+                same?
+                (and (empty? agents)
+                     (empty? changes)
+                     (= team (get-in @team-cache [:teams leader])))]
+
+            (swap! team-cache #(-> (team-remember % leader children rows team)
+                                   (team-sent leader epoch wire-rows agents team now)))
+            (when-not same?
+              (append-event! leader
+                             "session.team_updated"
+                             (cond-> {:team team :agents agents}
+                               (seq changes)
+                               (assoc :changes changes)
+
+                               (= 1 (count children))
+                               (assoc :child_id (first children)))
+                             {:store? false}))))))
 
 (defn- step-team!
   "Apply `f`, a queue step that answers `[queue action]`, and start what the action asks."
@@ -3103,6 +3226,7 @@
    the recently changed children of those leaders that this process knows, because a push of the
    last second may have seen no watcher. An older finished child is not pushed again."
   [sids]
+  (swap! team-watch-epoch inc)
   (let [sids
         (set (map str sids))
 

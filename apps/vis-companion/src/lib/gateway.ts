@@ -1298,6 +1298,40 @@ export function mergeAgents(rows: readonly Subagent[], changed: readonly Subagen
   return next;
 }
 
+/** One `changes` item of `session.team_updated`: the changed keys of one row, null for a removed key. */
+export type AgentChange = { session_id: string } & Record<string, unknown>;
+
+/** The row changes of `session.team_updated` (protocol 23), or null when they are not usable. */
+export function teamChangesFromWire(raw: unknown): AgentChange[] | null {
+  if (!Array.isArray(raw)) return null;
+  const isChange = (item: unknown) =>
+    !!item && typeof item === 'object' && !Array.isArray(item)
+    && typeof (item as Record<string, unknown>).session_id === 'string'
+    && ((item as Record<string, unknown>).session_id as string).length > 0;
+  return raw.every(isChange) ? (raw as AgentChange[]) : null;
+}
+
+/**
+ * Apply row changes to a team. Each key of a change goes into the row with the same
+ * `session_id`, and a null value removes the key: null and a missing key mean the same. A change
+ * of an unknown row changes nothing: the next ready frame has the whole row. A repeated change
+ * gives the same rows.
+ */
+export function applyAgentChanges(rows: readonly Subagent[], changes: readonly AgentChange[]): Subagent[] {
+  const next = [...rows];
+  for (const change of changes) {
+    const at = next.findIndex((one) => one.session_id === change.session_id);
+    if (at < 0) continue;
+    const row: Record<string, unknown> = { ...next[at] };
+    for (const [key, value] of Object.entries(change)) {
+      if (value === null) delete row[key];
+      else row[key] = value;
+    }
+    next[at] = row as unknown as Subagent;
+  }
+  return next;
+}
+
 function sessionGoalFromWire(raw: unknown): SessionGoal | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const g = raw as Record<string, unknown>;

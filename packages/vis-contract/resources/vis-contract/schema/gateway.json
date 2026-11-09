@@ -2198,7 +2198,7 @@
     },
     "team_update": {
       "type": "object",
-      "description": "The payload of session.team_updated since protocol 21. team is the new summary of the leader. agents has the rows of the children that changed, in the row shape of subscription.ready agents. A client replaces the row with the same session_id and appends a row with an unknown session_id at the end, which keeps spawn order. A repeated event gives the same rows.",
+      "description": "The payload of session.team_updated since protocol 21. team is the new summary of the leader. agents has the whole rows of the children that changed, in the row shape of subscription.ready agents. Since protocol 23, a step or Activity change of a child whose last pushed row the gateway knows that the clients have is in changes and not in agents. A lifecycle or request change, and the first change after 30 s without a whole row of that child, always comes as a whole row in agents. A client applies agents first: it replaces the row with the same session_id and appends a row with an unknown session_id at the end, which keeps spawn order. Then it applies each item of changes to the row with the same session_id. A repeated event gives the same rows.",
       "properties": {
         "team": {
           "$ref": "#/$defs/session_team"
@@ -2212,12 +2212,332 @@
           "items": {
             "$ref": "agents.json#/$defs/agent"
           }
+        },
+        "changes": {
+          "type": "array",
+          "description": "Since protocol 23: the changed keys of the rows of children that a client has. Each item has the session_id and each key that changed, with its new value. A key with a null value went away, so a client removes it from the row. A client ignores an item with an unknown session_id: it gets the whole row with the next subscription.ready frame.",
+          "items": {
+            "$ref": "#/$defs/team_change"
+          }
         }
       },
       "required": [
         "team",
         "agents"
       ]
+    },
+    "team_change": {
+      "type": "object",
+      "description": "The change of one team row since the last row that the gateway pushed for that child. Each key other than session_id has a value of the agent row shape, or null when the key went away. Null and a missing key mean the same: the gateway sends a key that becomes null or goes away once as null, and a key that is null or missing in both rows not at all. A client removes a key with a null value from the row. A lifecycle or request change never comes as a change: it comes as a whole row in agents.",
+      "properties": {
+        "session_id": {
+          "$ref": "agents.json#/$defs/agent/properties/session_id"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/parent_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leader_id": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/leader_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "team_id": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/team_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/task"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/title"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/role"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/status"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/after"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "iteration_budget": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/iteration_budget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "iterations_used": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/iterations_used"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/provider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/model"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "routing_locked": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/routing_locked"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending_input": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/pending_input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending_input_count": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/pending_input_count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "question": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/question"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "question_entry_id": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/question_entry_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget_request": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/budget_request"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files_request": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/files_request"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/activity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/note"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/outcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/files"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/created_at"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resumed_at": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/resumed_at"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/finished_at"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runs": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/runs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": true
     },
     "session_group_color": {
       "type": "string",
@@ -2710,11 +3030,11 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 22
+          "const": 23
         },
         "min_client": {
           "type": "integer",
-          "const": 20
+          "const": 23
         },
         "min_gateway": {
           "type": "integer",

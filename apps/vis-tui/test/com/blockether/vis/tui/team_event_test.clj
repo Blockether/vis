@@ -118,3 +118,30 @@
                                (expect (wait-for #(= ["running"] (statuses "emptied-leader"))))
                                (sink {"type" "subscription.ready" "session_id" "emptied-leader"})
                                (expect (wait-for #(= [] (statuses "emptied-leader")))))))))
+
+;; Protocol 23: a push sends only the changed keys of a known row, so the 8 KB task of a child
+;; does not come again with each step. A lost change would show an old status.
+(defdescribe
+  team-change-test
+  (it "applies the changes of session.team_updated to the known rows, in order"
+      (with-live-session
+        "change-leader"
+        (atom [])
+        (fn [sink]
+          (sink {"type" "subscription.ready"
+                 "session_id" "change-leader"
+                 "agents" [(assoc (row "c1" "running") "activity" "Read a.clj")]})
+          (sink {"type" "session.team_updated"
+                 "session_id" "change-leader"
+                 "team" {"active" 1 "total" 2}
+                 "agents" [(row "c2" "running")]
+                 "changes" [{"session_id" "c1" "activity" "Patched a.clj"}]})
+          (sink {"type" "session.team_updated"
+                 "session_id" "change-leader"
+                 "team" {"active" 1 "total" 2}
+                 "agents" []
+                 "changes" [{"session_id" "c1" "status" "completed" "activity" nil}]})
+          (expect (wait-for #(= ["completed" "running"] (statuses "change-leader"))))
+          (let [[c1] (:agents (team/summary "change-leader"))]
+            (expect (= "Work" (get c1 "task")) "A change keeps the keys that it does not name")
+            (expect (not (contains? c1 "activity")) "A null value removes the key"))))))

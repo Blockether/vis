@@ -110,8 +110,8 @@
       (expect (nil? (contract/match-route "/v1/sessions/s1/unknown")))
       (expect (nil? (contract/match-route nil))))
   (it "owns protocol compatibility without a runtime mirror"
-      (expect (= 22 contract/protocol-version))
-      (expect (= 20 contract/minimum-client-protocol))
+      (expect (= 23 contract/protocol-version))
+      (expect (= 23 contract/minimum-client-protocol))
       (expect (= 22 contract/minimum-gateway-protocol))
       (expect (every? (set (keys (get-in (document/schema-document "gateway")
                                          ["$defs" "http_headers" "properties"])))
@@ -130,7 +130,7 @@
                                              :client-min-gateway 1})))))
   (it "builds handshake and error response envelopes"
       (expect (=
-                {:protocol 22 :min-client 20 :min-gateway 22 :version "1.2.3" :build "abc123def456"}
+                {:protocol 23 :min-client 23 :min-gateway 22 :version "1.2.3" :build "abc123def456"}
                 (contract/handshake {:version "1.2.3" :build "abc123def456"})))
       (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
                  (contract/error-body :mcp/invalid-request
@@ -368,4 +368,39 @@
       (expect (not (document/valid-json? "gateway"
                                          "team_update"
                                          {"team" {"active" 1 "total" 1}
-                                          "agents" [{"session_id" "c1"}]})))))
+                                          "agents" [{"session_id" "c1"}]})))
+      (expect (not (document/valid-json?
+                     "gateway"
+                     "team_update"
+                     {"team" {"active" 1 "total" 1} "agents" [] "changes" [{"status" "running"}]}))
+              "A change names its row")
+      (expect (not (document/valid-json? "gateway"
+                                         "team_change"
+                                         {"session_id" "c1" "iterations_used" "three"}))
+              "A changed key has the type of the row key")
+      (expect (document/valid-json?
+                "gateway"
+                "team_change"
+                {"session_id" "c1" "activity" nil "question" nil "result" "Done."})
+              "A key that went away is null"))
+  ;; JSON Schema cannot make each property of a referenced object also allow null, so
+  ;; `team_change` lists the agent row keys again. A row key without its change key would fail
+  ;; each change that names it, or accept any value.
+  (it "gives team_change each key of the agent row, of the row type or null"
+      (let [row
+            (get-in (document/schema-document "agents") ["$defs" "agent"])
+
+            change
+            (get-in (document/schema-document "gateway") ["$defs" "team_change"])
+
+            row-ref
+            #(str "agents.json#/$defs/agent/properties/" %)]
+
+        (expect (= (set (keys (get row "properties"))) (set (keys (get change "properties")))))
+        (expect (= (get row "additionalProperties") (get change "additionalProperties")))
+        (expect (= {"$ref" (row-ref "session_id")} (get-in change ["properties" "session_id"]))
+                "A change always names its row")
+        (doseq [k (disj (set (keys (get row "properties"))) "session_id")]
+          (expect (= {"anyOf" [{"$ref" (row-ref k)} {"type" "null"}]}
+                     (get-in change ["properties" k]))
+                  k)))))

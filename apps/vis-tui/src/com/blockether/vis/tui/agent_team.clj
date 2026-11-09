@@ -21,9 +21,9 @@
 (defonce ^:private pending
   ;; Work for the refresh worker, by session id. Only the worker takes it.
   ;; `:rows` holds the `agents` of the newest `subscription.ready`: they replace the team.
-  ;; `:updates` holds the `agents` rows of the `session.team_updated` events after it, merged in
-  ;; arrival order, so it has at most one row for each agent. `:setting?` reads the Subagents
-  ;; setting again, and `:lost?` marks a dropped event stream.
+  ;; `:updates` holds the `session.team_updated` events after it as `{:agents :changes}`, in
+  ;; arrival order: a change needs the row before it. `:setting?` reads the Subagents setting
+  ;; again, and `:lost?` marks a dropped event stream.
   (atom {}))
 
 (defn- want!
@@ -57,12 +57,51 @@
           (vec agents)
           rows))
 
+(defn- change-rows
+  "The usable row changes of the wire value `changes`. A value that is not a list gives none."
+  [changes]
+  (if (sequential? changes) (filterv #(and (map? %) (string? (get % "session_id"))) changes) []))
+
+(defn apply-changes
+  "Apply the row `changes` of one `session.team_updated` to the team rows `agents`. Each key of a
+   change goes into the row with the same `session_id`, and a null value removes the key: null and a
+   missing key mean the same. A change of an unknown row changes nothing, and a repeated change
+   gives the same rows."
+  [agents changes]
+  (reduce (fn [out change]
+            (let [id (get change "session_id")]
+              (if-let [i (first (keep-indexed #(when (= id (get %2 "session_id")) %1) out))]
+                (update out
+                        i
+                        (fn [row]
+                          (reduce-kv (fn [row k v]
+                                       (if (nil? v) (dissoc row k) (assoc row k v)))
+                                     row
+                                     change)))
+                out)))
+          (vec agents)
+          changes))
+
+(defn apply-update
+  "Apply one `session.team_updated` update, `{:agents :changes}`, to the team rows `agents`: the
+   whole rows first, then the changes."
+  [team {:keys [agents changes]}]
+  (-> (merge-agents team agents)
+      (apply-changes changes)))
+
 (defn team-updated!
-  "Take the `session.team_updated` chunk of `sid`. Its `:agents` rows merge into the team after
-   the rows of the last `subscription.ready`. An event without usable rows changes nothing."
-  [sid {:keys [agents]}]
-  (when-let [rows (not-empty (agent-rows agents))]
-    (want! sid #(update % :updates merge-agents rows))))
+  "Take the `session.team_updated` chunk of `sid`. Its `:agents` rows and then its `:changes`
+   apply to the team after the rows of the last `subscription.ready`. An event without usable
+   rows or changes changes nothing."
+  [sid {:keys [agents changes]}]
+  (let [rows
+        (agent-rows agents)
+
+        changes
+        (change-rows changes)]
+
+    (when (or (seq rows) (seq changes))
+      (want! sid #(update % :updates (fnil conj []) {:agents rows :changes changes})))))
 
 (defn stream-lost!
   "Mark the team of `sid` stale: its event stream dropped, so events can be missing."
@@ -168,9 +207,9 @@
 (defn- sync!
   "Do the queued `work` of `sid` and store its new snapshot. Returns the snapshot.
 
-   The rows of `subscription.ready` replace the team, and `session.team_updated` rows merge
-   after them. Nothing reads the team from the gateway. A failed setting read keeps the last
-   Subagents state, so one error does not hide the dock."
+   The rows of `subscription.ready` replace the team, and the `session.team_updated` updates
+   apply after them in arrival order. Nothing reads the team from the gateway. A failed setting
+   read keeps the last Subagents state, so one error does not hide the dock."
   [sid {:keys [rows updates setting? lost?] :as work}]
   (let [previous
         (summary sid)
@@ -184,7 +223,7 @@
         (contains? work :rows)
 
         team
-        (merge-agents (if ready? rows (:rows previous)) updates)
+        (reduce apply-update (if ready? rows (:rows previous)) updates)
 
         snapshot
         (cond-> {:rows team
