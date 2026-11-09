@@ -14,7 +14,7 @@ it('updates the header from a goal event without another HTTP request', async ()
     subscriptions: hub,
     client: { session: read, noteSessionGoal: note },
   });
-  await screen.findByRole('button', { name: /^Goal: Active/ });
+  await screen.findByText(/^Goal: Active/);
   const before = read.mock.calls.length;
   act(() =>
     hub.emit({
@@ -22,7 +22,7 @@ it('updates the header from a goal event without another HTTP request', async ()
       goal: { ...STORY_GOAL, revision: 4, status: 'complete' },
     } as never),
   );
-  await waitFor(() => expect(screen.queryByRole('button', { name: /^Goal:/ })).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^Goal:/)).toBeNull());
   expect(note).toHaveBeenCalledOnce();
   expect(read).toHaveBeenCalledTimes(before);
 });
@@ -32,7 +32,7 @@ it('refreshes an idle goal from the canonical reconnect snapshot', async () => {
   let row = sessionFixture({ goal: STORY_GOAL });
   const note = vi.fn((_sid, goal) => (row = { ...row, goal }));
   renderSessionScreen({ session: row, subscriptions: hub, client: { noteSessionGoal: note } });
-  await screen.findByRole('button', { name: /^Goal: Active/ });
+  await screen.findByText(/^Goal: Active/);
   act(() =>
     hub.emit({
       type: 'subscription.ready',
@@ -41,7 +41,7 @@ it('refreshes an idle goal from the canonical reconnect snapshot', async () => {
     } as never),
   );
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: /^Goal: Paused/ })).toBeInTheDocument(),
+    expect(screen.getByText(/^Goal: Paused/)).toBeInTheDocument(),
   );
   expect(note).toHaveBeenCalledOnce();
 });

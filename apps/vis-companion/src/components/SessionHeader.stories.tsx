@@ -57,10 +57,8 @@ export const ActiveGoal: Story = {
   args: { model: { ...meta.args.model, goal: STORY_GOAL } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { name: /^Goal: Active/ }));
-    const page = within(document.body);
-    expect(page.getByRole('dialog', { name: 'Session goal' })).toBeVisible();
-    await userEvent.click(page.getByRole('button', { name: 'Close session goal' }));
+    await expect(canvas.getByText(/^Goal: Active/)).toBeVisible();
+    await expect(canvas.queryByRole('button', { name: /^Goal:/ })).toBeNull();
   },
 };
 

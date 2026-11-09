@@ -687,8 +687,6 @@
       cost-text
       (conj {:text cost-text :fg t/footer-fg-muted :bold? false :region :right :priority 3}))))
 
-(defn- goal-count [n] (String/format Locale/ROOT "%,d" (object-array [(long n)])))
-
 (defn- shown-goal
   "The goal that the footer shows, or nil. A complete goal leaves the footer: the transcript
    keeps the final reply of the model."
@@ -703,27 +701,8 @@
                             (max 0 (- (long now-ms) (long (get goal "updated_at"))))
                             0))))
 
-(defn goal-detail-lines
-  "State, iterations and active wall time at the time the viewer opens. The objective is in
-   the transcript."
-  ([goal] (goal-detail-lines goal (System/currentTimeMillis)))
-  ([goal now-ms]
-   (if-not (shown-goal goal)
-     ["No session goal. Use /goal <objective> to create one."]
-     [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
-      (str "Iterations: " (goal-count (get goal "iterations_used"))
-           " / " (if-let [budget (get goal "iteration_budget")]
-                   (goal-count budget)
-                   "unlimited")) (str "Time in goal: " (goal-time goal now-ms)) ""
-      "Use /goal --pause, --resume, --cancel or --clear in the composer."])))
-
-(defn goal-detail-markdown
-  "`goal-detail-lines` as Markdown paragraphs."
-  ([goal] (goal-detail-markdown goal (System/currentTimeMillis)))
-  ([goal now-ms] (str/join "\n\n" (remove str/blank? (goal-detail-lines goal now-ms)))))
-
 (defn- build-limits-segments
-  "Cached quota information is plain text; only the adjacent goal chip is interactive. The
+  "Cached quota information and the goal state are plain text. The
    agent dock above the prompt shows the team, so the footer does not repeat it."
   [db now-ms]
   (let [provider
@@ -745,13 +724,10 @@
                    :priority 2})
 
             (shown-goal (get-in db [:session :goal]))
-            (conj {:text (str " Goal: "
-                              (get gateway-contract/session-goal-labels
-                                   (get-in db [:session :goal "status"]))
-                              " - "
-                              (goal-time (get-in db [:session :goal]) now-ms)
-                              " ")
-                   :kind :footer-goal
+            (conj {:text (str "Goal: " (get gateway-contract/session-goal-labels
+                                            (get-in db [:session :goal "status"]))
+                              " - " (goal-time (get-in db [:session :goal]) now-ms))
+                   :fg t/footer-fg
                    :region :left
                    :priority 1
                    :join-left? true}))

@@ -19,7 +19,7 @@ import {
   SettingsIcon,
   ZenIcon,
 } from './icons';
-import { BAND_EDGE_CLASS, Button, DialogFrame, IconButton, Modal, SidebarToggle } from './ui';
+import { BAND_EDGE_CLASS, IconButton, SidebarToggle } from './ui';
 
 const GOAL_STATUS = Object.fromEntries(
   gatewaySchema.$defs.session_goal.properties.status.oneOf.map(({ const: status, title }) => [
@@ -149,7 +149,6 @@ export function SessionHeader({
   // with no list to toggle lets the title claim the edge.
   const isDesk = useDeskRail();
   const nativeIos = isIosNativeApp();
-  const [goalDetails, setGoalDetails] = useState(false);
   /** Where the session's own menu hangs, and `null` while it is closed. */
   const [menu, setMenu] = useState<MenuPosition | null>(null);
   // WHAT THE CLIPBOARD ANSWERED, worn by the row that asked it. Copying is silent, so
@@ -246,18 +245,9 @@ export function SessionHeader({
           />
           <span className="shrink-0">{model.connected ? 'Connected' : 'Reconnecting'}</span>
           {goal && (
-            <Button
-              variant="quiet"
-              density="compact"
-              pressEffect="none"
-              className="-my-1.5 min-w-0 max-w-full"
-              aria-haspopup="dialog"
-              onClick={() => setGoalDetails(true)}
-            >
-              <span className="block max-w-full truncate">
-                Goal: {GOAL_STATUS[goal.status]} - <GoalTime key={goal.id} goal={goal} />
-              </span>
-            </Button>
+            <span className="min-w-0 truncate">
+              Goal: {GOAL_STATUS[goal.status]} - <GoalTime key={goal.id} goal={goal} />
+            </span>
           )}
         </div>
       </div>
@@ -349,29 +339,6 @@ export function SessionHeader({
             <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { closeMenu(); commands.settings?.(); }} />
           )}
         </Menu>
-      )}
-      {goal && goalDetails && (
-        <Modal onDismiss={() => setGoalDetails(false)} size="fit">
-          <DialogFrame
-            title="Session goal"
-            subtitle={GOAL_STATUS[goal.status]}
-            closeLabel="Close session goal"
-            onClose={() => setGoalDetails(false)}
-          >
-            <div className="space-y-3 p-4 text-body text-white">
-              <p className="text-ui text-dialog-hint">
-                Iterations: {goal.iterations_used.toLocaleString('en-US')} /{' '}
-                {goal.iteration_budget?.toLocaleString('en-US') ?? 'unlimited'}
-              </p>
-              <p className="text-ui text-dialog-hint">
-                Time in goal: <GoalTime key={goal.id} goal={goal} />
-              </p>
-              <p className="text-ui text-dialog-hint">
-                Use /goal --pause, --resume, --cancel or --clear in the composer.
-              </p>
-            </div>
-          </DialogFrame>
-        </Modal>
       )}
     </header>
   );

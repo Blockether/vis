@@ -8,7 +8,6 @@
             [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.footer :as footer]
             [com.blockether.vis.tui.interactions :as interactions]
-            [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.state :as state]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.screen TerminalScreen]))
@@ -102,79 +101,60 @@
                            "status" "cleared")]
              (state/dispatch [:sync-session-goal "b" {:goal cleared}])
              (state/dispatch [:sync-session-goal "b" {:goal replacement}])
-             (expect (= cleared (get-in @state/app-db [:tab-locals "b" :session :goal])))
-             (expect (= ["No session goal. Use /goal <objective> to create one."]
-                        (footer/goal-detail-lines cleared))))
+             (expect (= cleared (get-in @state/app-db [:tab-locals "b" :session :goal]))))
            (finally (reset! state/app-db before))))))
+
+(defn- paint-footer
+  "Paint the real footer and return its second row and click regions."
+  [current-goal cols now-ms]
+  (let [frame (capture/capture! {:cols cols
+                                 :rows 6
+                                 :paint! (fn [{:keys [screen]}]
+                                           (.reset interactions/hit-map)
+                                           (.beginFrame interactions/hit-map)
+                                           (footer/draw-footer! (.newTextGraphics ^TerminalScreen
+                                                                                  screen)
+                                                                (header-db current-goal)
+                                                                0
+                                                                cols
+                                                                now-ms)
+                                           (.commitFrame interactions/hit-map))})]
+    (expect (nil? (:error frame)))
+    (nth (str/split-lines (capture/frame-text frame)) 1)))
 
 (defdescribe
   goal-footer-test
   (it
-    ;; Issue #204: limits are passive text, never a modal entry point.
-    "renders informational Limits beside the Goal button without objective or token counts"
+    ;; Issue #204: limits are passive text, never a modal entry point. The goal is passive too.
+    "renders Limits and the Goal state as text without objective, token counts or click regions"
     (doseq [cols
             [40 80 120]
 
             status
             (keys contract/session-goal-labels)]
 
-      (let [frame
-            (capture/capture! {:cols cols
-                               :rows 6
-                               :paint! (fn [{:keys [screen]}]
-                                         (.reset interactions/hit-map)
-                                         (.beginFrame interactions/hit-map)
-                                         (footer/draw-footer!
-                                           (.newTextGraphics ^TerminalScreen screen)
-                                           (header-db (assoc goal "status" status))
-                                           0
-                                           cols
-                                           0)
-                                         (.commitFrame interactions/hit-map))})
+      (let [row
+            (paint-footer (assoc goal "status" status) cols 0)
 
-            row
-            (nth (str/split-lines (capture/frame-text frame)) 1)
+            goal-col
+            (str/index-of row "Goal")]
 
-            hits
-            (.current interactions/hit-map)
-
-            limits
-            (some #(when (= :footer-limits (:kind %)) %) hits)
-
-            goal-hit
-            (some #(when (= :footer-goal (:kind %)) %) hits)]
-
-        (expect (nil? (:error frame)))
         (expect (not (str/includes? row "tokens")))
         (expect (not (str/includes? row "12,400")))
-        (expect (nil? limits))
+        (expect (not (some #(= :footer-limits (:kind %)) (.current interactions/hit-map))))
         (expect (not (str/includes? row "Verify session goals")))
         (if (contains? #{"cleared" "complete"} status)
           ;; A cleared goal was forgotten, and a complete goal leaves the footer.
-          (do (expect (nil? goal-hit)) (expect (not (str/includes? row "Goal"))))
-          (do (expect (some? goal-hit))
-              (when (= 120 cols)
+          (expect (nil? goal-col))
+          (do (when (= 120 cols)
                 (expect (str/includes?
                           row
                           (str "Goal: " (get contract/session-goal-labels status) " - 32.0s"))))
-              (doseq [col (range 2 (long (get-in goal-hit [:bounds :col])))]
-                (expect (nil? (.lookup interactions/hit-map col 1)))))))))
-  (it "shows each detail on its own row"
-      (let [rows (->> (layout/ast->lines (client/markdown->ast (footer/goal-detail-markdown
-                                                                 (assoc goal "status" "blocked")
-                                                                 0))
-                                         80)
-                      (map (fn [{:keys [runs]}]
-                             (str/trim (apply str (map :text runs)))))
-                      (remove str/blank?)
-                      set)]
-        (expect (contains? rows "Iterations: 12 / 30"))
-        (expect (contains? rows "Time in goal: 32.0s"))
-        (expect (contains? rows
-                           "Use /goal --pause, --resume, --cancel or --clear in the composer."))))
+              (when goal-col
+                (doseq [col (range goal-col (+ (long goal-col) 5))]
+                  (expect (nil? (.lookup interactions/hit-map col 1))))))))))
   (it "adds uncheckpointed active wall time but freezes all inactive states"
-      (expect (some #{"Time in goal: 35.0s"} (footer/goal-detail-lines goal 3002)))
-      (expect (some #{"Time in goal: 32.0s"} (footer/goal-detail-lines goal 0)))
+      (expect (str/includes? (paint-footer goal 120 3002) "Goal: Active - 35.0s"))
       (doseq [status ["paused" "blocked" "budget_limited" "cancelled"]]
-        (expect (some #{"Time in goal: 32.0s"}
-                      (footer/goal-detail-lines (assoc goal "status" status) 100000))))))
+        (expect (str/includes? (paint-footer (assoc goal "status" status) 120 100000)
+                               " - 32.0s")))))

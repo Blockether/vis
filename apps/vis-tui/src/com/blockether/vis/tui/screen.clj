@@ -5081,8 +5081,7 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :header-help :footer-goal :footer-reasoning :footer-thinking :header-tasks
-    :header-search})
+  #{:copy-id :header-help :footer-reasoning :footer-thinking :header-tasks :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -9076,13 +9075,6 @@
                 :search-close
                 (state/dispatch [:search-clear])
 
-                :footer-goal
-                (with-dialog-lock #(dlg/markdown-viewer-dialog! screen
-                                                                "Session goal"
-                                                                (footer/goal-detail-markdown
-                                                                  (get-in @state/app-db
-                                                                          [:session :goal]))))
-
                 :header-help
                 (state/dispatch [:toggle-help])
 
@@ -9296,13 +9288,6 @@
             :toggle-help
             (state/dispatch [:toggle-help])
 
-            :footer-goal
-            (with-dialog-lock #(dlg/markdown-viewer-dialog! screen
-                                                            "Session goal"
-                                                            (footer/goal-detail-markdown
-                                                              (get-in @state/app-db
-                                                                      [:session :goal]))))
-
             :header-help
             (state/dispatch [:toggle-help])
 
@@ -9472,13 +9457,6 @@
           ;; its own dispatch — so without these two branches
           ;; the chips fell through to `open-click-target!`
           ;; (a no-op) and never toggled their panel.
-          :footer-goal
-          (with-dialog-lock #(dlg/markdown-viewer-dialog! screen
-                                                          "Session goal"
-                                                          (footer/goal-detail-markdown
-                                                            (get-in @state/app-db
-                                                                    [:session :goal]))))
-
           :header-help
           (state/dispatch [:toggle-help])
 

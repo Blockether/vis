@@ -71,11 +71,11 @@ describe('SessionHeader', () => {
       window.removeEventListener('keydown', below);
     }
   });
-  it('shows only status and time, also in the goal dialog, without the objective', () => {
+  it('shows only status and time as text that opens nothing, without the objective', () => {
     const { rerender } = render(
       <SessionHeader model={model} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />,
     );
-    expect(screen.queryByRole('button', { name: /^Goal:/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Goal:/)).not.toBeInTheDocument();
     const goal = {
       ...STORY_GOAL,
       objective: 'Verify a very long objective '.repeat(50),
@@ -87,18 +87,12 @@ describe('SessionHeader', () => {
         commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
       />,
     );
-    const goalButton = screen.getByRole('button', { name: /^Goal: Blocked/ });
-    expect(goalButton).toHaveTextContent(/^Goal: Blocked - 32s$/);
-    expect(goalButton).not.toHaveAttribute('title');
-    fireEvent.click(goalButton);
-    expect(screen.queryByText(goal.objective.trim())).not.toBeInTheDocument();
-    expect(screen.getByRole('dialog', { name: 'Session goal' })).toBeInTheDocument();
-    expect(screen.getByText('Iterations: 12 / 30')).toBeInTheDocument();
-    expect(screen.getByText('Time in goal: 32s')).toBeInTheDocument();
-    expect(screen.queryByText(/tokens used/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/100,000 budget/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close session goal' }));
+    const goalText = screen.getByText(/^Goal: Blocked/);
+    expect(goalText).toHaveTextContent(/^Goal: Blocked - 32s$/);
+    expect(goalText.closest('button')).toBeNull();
+    fireEvent.click(goalText);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(goal.objective.trim())).not.toBeInTheDocument();
   });
   it('shows no goal after /goal --clear or a complete goal', () => {
     for (const status of ['cleared', 'complete'] as const) {
@@ -108,28 +102,9 @@ describe('SessionHeader', () => {
           commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
         />,
       );
-      expect(screen.queryByRole('button', { name: /^Goal:/ })).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Goal:/)).not.toBeInTheDocument();
       unmount();
     }
-  });
-  it('distinguishes unlimited iterations from a reached iteration limit', () => {
-    const { rerender } = render(
-      <SessionHeader
-        model={{ ...model, goal: { ...STORY_GOAL, iteration_budget: null } }}
-        commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: /^Goal:/ }));
-    expect(screen.getByText('Iterations: 12 / unlimited')).toBeInTheDocument();
-    rerender(
-      <SessionHeader
-        model={{ ...model, goal: { ...STORY_GOAL, status: 'budget_limited', iterations_used: 30 } }}
-        commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
-      />,
-    );
-    expect(screen.getByText('Iterations: 30 / 30')).toBeInTheDocument();
-    expect(screen.getByText('Iteration limit reached')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close session goal' }));
   });
   it('ticks active wall time, freezes inactive goals and cleans up the clock', () => {
     vi.useFakeTimers();
@@ -141,16 +116,10 @@ describe('SessionHeader', () => {
           commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
         />,
       );
-      expect(screen.getByRole('button', { name: /^Goal:/ })).toHaveTextContent(
-        'Goal: Active - 1h 2m 5s',
-      );
-      fireEvent.click(screen.getByRole('button', { name: /^Goal:/ }));
-      expect(screen.getByText('Time in goal: 1h 2m 5s')).toBeInTheDocument();
+      const goalText = () => screen.getByText(/^Goal:/);
+      expect(goalText()).toHaveTextContent('Goal: Active - 1h 2m 5s');
       act(() => vi.advanceTimersByTime(2_000));
-      expect(screen.getByText('Time in goal: 1h 2m 7s')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^Goal:/ })).toHaveTextContent(
-        'Goal: Active - 1h 2m 7s',
-      );
+      expect(goalText()).toHaveTextContent('Goal: Active - 1h 2m 7s');
       for (const status of [
         'paused',
         'blocked',
@@ -164,7 +133,7 @@ describe('SessionHeader', () => {
           />,
         );
         act(() => vi.advanceTimersByTime(5_000));
-        expect(screen.getByText('Time in goal: 1h 2m 7s')).toBeInTheDocument();
+        expect(goalText()).toHaveTextContent(/ - 1h 2m 7s$/);
       }
       rerender(
         <SessionHeader
@@ -176,11 +145,7 @@ describe('SessionHeader', () => {
         />,
       );
       act(() => vi.advanceTimersByTime(1_000));
-      expect(screen.getByText('Time in goal: 1h 2m 8s')).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Close session goal' }));
-      act(() => vi.advanceTimersByTime(10_000));
-      fireEvent.click(screen.getByRole('button', { name: /^Goal:/ }));
-      expect(screen.getByText('Time in goal: 1h 2m 18s')).toBeInTheDocument();
+      expect(goalText()).toHaveTextContent('Goal: Active - 1h 2m 8s');
       rerender(
         <SessionHeader
           model={{
@@ -195,7 +160,7 @@ describe('SessionHeader', () => {
           commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
         />,
       );
-      expect(screen.getByText('Time in goal: 0s')).toBeInTheDocument();
+      expect(goalText()).toHaveTextContent('Goal: Active - 0s');
       unmount();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
