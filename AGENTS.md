@@ -7,7 +7,7 @@ Only decisions that the code cannot show. Contracts live in namespaces, invarian
 Run each project's tools from its own directory.
 
 - One namespace: `clojure -M:test --namespace my.ns-test` or `--var my.ns-test/my-test`.
-- Full suite: `clojure -M:test:test-parallel`. Lint: `clojure -M:lint`, reflection warnings included.
+- Full suite: `clojure -M:test` (one JVM). Lint: `clojure -M:lint`, reflection warnings included.
 - Native: `clojure -T:build native`, then `clojure -M:test-native`. JVM tests do not prove the binary.
 - Companion Android Gradle uses stock JDK 21.
 - `clojure -M:audit` generates `audit/README.md` (network required). Never edit that file by hand.
