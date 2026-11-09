@@ -887,12 +887,15 @@
   (and (.startsWith file-name ".") (.contains file-name ".tmp-")))
 
 (defn- snapshot-owner
-  "The session id in a snapshot entry name: `<id>.py` or the `<id>.spill` directory."
+  "The session id in a snapshot entry name: `<id>.py`, or the `<id>.spill` or
+   `<id>.turns` directory."
   [^File f]
   (let [file-name (.getName f)]
     (cond (temp-leftover? file-name) nil
           (and (.isFile f) (.endsWith file-name ".py")) (subs file-name 0 (- (count file-name) 3))
           (and (.isDirectory f) (.endsWith file-name ".spill"))
+          (subs file-name 0 (- (count file-name) 6))
+          (and (.isDirectory f) (.endsWith file-name ".turns"))
           (subs file-name 0 (- (count file-name) 6))
           :else nil)))
 

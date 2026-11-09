@@ -2544,11 +2544,148 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    [[spill-max-bytes]], so they must not stay on disk (#347)."
   [session-id]
   (when session-id
-    (let [spill (io/file (paths/sandbox-spill-dir (str session-id)))]
+    (let [spill
+          (io/file (paths/sandbox-spill-dir (str session-id)))
+
+          turns
+          (io/file (paths/sandbox-turns-dir (str session-id)))]
+
       (forget-session-defs! session-id)
       (io/delete-file (io/file (paths/sandbox-defs-file (str session-id))) true)
-      (doseq [^java.io.File f (reverse (file-seq spill))]
+      (doseq [^java.io.File f (concat (reverse (file-seq spill)) (reverse (file-seq turns)))]
         (io/delete-file f true))))
+  nil)
+
+(defn- link-file!
+  "Make `target` the same file as `source` with an atomic replace. A hard link shares
+   the data. A filesystem without hard links gets a copy."
+  [^java.io.File source ^java.io.File target]
+  (let [src
+        (.toPath source)
+
+        dst
+        (.toPath target)]
+
+    (when-not (and (.exists target) (java.nio.file.Files/isSameFile src dst))
+      (paths/create-private-dirs! (.getParentFile target))
+      (let [tmp
+            (.resolveSibling dst (str "." (.getFileName dst) ".tmp-" (java.util.UUID/randomUUID)))
+
+            ^"[Ljava.nio.file.CopyOption;" keep-mode
+            (into-array java.nio.file.CopyOption [java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])
+
+            copy!
+            #(java.nio.file.Files/copy src tmp keep-mode)]
+
+        (try (try (java.nio.file.Files/createLink tmp src)
+                  (catch UnsupportedOperationException _ (copy!))
+                  (catch java.io.IOException _ (copy!)))
+             (java.nio.file.Files/move tmp
+                                       dst
+                                       (into-array java.nio.file.CopyOption
+                                                   [java.nio.file.StandardCopyOption/ATOMIC_MOVE]))
+             (finally (java.nio.file.Files/deleteIfExists tmp)))))))
+
+(defn- mirror-defs!
+  "Make `dst-file` and `dst-spill` hold the snapshot in `src-file` and `src-spill`.
+   New spill values go first and old ones last, so each step keeps a whole snapshot,
+   and a repeat changes nothing. An empty source file is an empty sandbox. Without a
+   source snapshot, `record-empty?` writes an empty file, else the target goes."
+  [^java.io.File src-file ^java.io.File src-spill ^java.io.File dst-file ^java.io.File dst-spill
+   record-empty?]
+  (let [spill
+        (vec (.listFiles src-spill))
+
+        index
+        (io/file src-spill "index.json")
+
+        kept
+        (into #{} (map #(.getName ^java.io.File %)) spill)]
+
+    (doseq [^java.io.File f
+            spill
+
+            :when (not= "index.json" (.getName f))]
+
+      (link-file! f (io/file dst-spill (.getName f))))
+    (if (.isFile index)
+      (link-file! index (io/file dst-spill "index.json"))
+      (io/delete-file (io/file dst-spill "index.json") true))
+    (cond (and (.isFile src-file) (pos? (.length src-file))) (link-file! src-file dst-file)
+          record-empty? (paths/spit-private! dst-file "" :fsync? false)
+          :else (io/delete-file dst-file true))
+    (doseq [^java.io.File f
+            (.listFiles dst-spill)
+
+            :when (not (contains? kept (.getName f)))]
+
+      (io/delete-file f true))
+    (when (and (.isDirectory dst-spill) (zero? (alength (.list dst-spill)))) (.delete dst-spill))
+    nil))
+
+(defn- live-defs
+  "The snapshot file and spill directory of `session-id`."
+  [session-id]
+  [(io/file (paths/sandbox-defs-file (str session-id)))
+   (io/file (paths/sandbox-spill-dir (str session-id)))])
+
+(defn- turn-defs
+  "The snapshot file and spill directory of `session-id` at turn `position`."
+  [session-id position]
+  (let [dir (paths/sandbox-turns-dir (str session-id))]
+    [(io/file dir (str position ".py")) (io/file dir (str position ".spill"))]))
+
+(defn checkpoint-session-turn!
+  "Keep `session-id`'s snapshot as its state at turn `position`. It runs after each
+   block, so the checkpoint holds the state that the turn left. A turn that runs no
+   block has no checkpoint: its state is the state of the turn before. A fork at a
+   turn starts from it ([[fork-session-defs!]]). Best effort."
+  [session-id position]
+  (when (and session-id (pos-int? position))
+    (try (let [[f spill]
+               (live-defs session-id)
+
+               [cf cspill]
+               (turn-defs session-id position)]
+
+           (mirror-defs! f spill cf cspill true))
+         (catch Throwable e
+           (tel/log! {:level :warn
+                      :id ::checkpoint-session-turn-failed
+                      :data {:session-id (str session-id) :position position}
+                      :error e})
+           nil))))
+
+(defn fork-session-defs!
+  "Give fork `fork-id` the sandbox state of `source-id` at the last copied turn.
+   `positions` pairs each copied source turn position with its fork position, in turn
+   order. The fork gets the checkpoints of these turns, so a fork of the fork works
+   too. With `whole?` (the last turn was copied), the fork gets the live snapshot of
+   the source, else the latest checkpoint at or before the last copied turn. Without
+   one, the state at that turn is not known and the fork starts empty."
+  [source-id fork-id positions whole?]
+  (try (doseq [[from to]
+               positions
+
+               :let [[cf cspill]
+                     (turn-defs source-id from)]
+               :when (.isFile ^java.io.File cf)]
+
+         (let [[tf tspill] (turn-defs fork-id to)]
+           (mirror-defs! cf cspill tf tspill true)))
+       (when-let [[src-file src-spill] (if whole?
+                                         (live-defs source-id)
+                                         (some (fn [[from _]]
+                                                 (let [[cf :as files] (turn-defs source-id from)]
+                                                   (when (.isFile ^java.io.File cf) files)))
+                                               (reverse positions)))]
+         (let [[f spill] (live-defs fork-id)]
+           (mirror-defs! src-file src-spill f spill false)))
+       (catch Throwable e
+         (tel/log! {:level :warn
+                    :id ::fork-session-defs-failed
+                    :data {:source-id (str source-id) :fork-id (str fork-id)}
+                    :error e})))
   nil)
 
 (defn- restore-spilled!

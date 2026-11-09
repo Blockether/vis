@@ -437,6 +437,58 @@
           (expect (not (.exists spill)))
           (finally (ep/delete-session-defs! sid)))))))
 
+;; Regression, user report: a fork of the session or at a turn started with an empty
+;; sandbox. A fork at turn 1 must not see the state of turn 2.
+(defdescribe
+  session-defs-fork-test
+  (it
+    "gives a fork the sandbox state of the source at the picked turn"
+    (let [sid
+          (str "vis-test-defs-fork-src-" (random-uuid))
+
+          at-1
+          (str "vis-test-defs-fork-at1-" (random-uuid))
+
+          whole
+          (str "vis-test-defs-fork-whole-" (random-uuid))
+
+          again
+          (str "vis-test-defs-fork-again-" (random-uuid))
+
+          answer
+          (fn [id]
+            (tpc/with-own [ctx {} nil {:worker? false}]
+                          (ep/restore-session-defs! ctx id)
+                          (let [r (ep/run-python-block ctx "print(TOTAL, helper(), len(text))")]
+                            (or (:stdout r) (str (:error r))))))]
+
+      (try (tpc/with-own
+             [ctx {} nil {:worker? false}]
+             (doseq [[position code]
+                     [[1 "TOTAL = 1\ntext = 'a' * 2000000\ndef helper():\n    return 'one'\n"]
+                      [2 "TOTAL = 2\ntext = 'b' * 3000000\ndef helper():\n    return 'two'\n"]
+                      [3 "print('no change')\n"]]]
+               (expect (nil? (:error (ep/run-python-block ctx code))))
+               (ep/persist-session-defs! ctx sid)
+               (ep/checkpoint-session-turn! sid position)))
+           (ep/fork-session-defs! sid at-1 [[1 1]] false)
+           (ep/fork-session-defs! sid whole [[1 1] [2 2] [3 3] [4 4]] true)
+           (ep/fork-session-defs! whole again [[1 1] [2 2] [3 3]] false)
+           (expect (= "1 one 2000000\n" (answer at-1)))
+           (expect (= "2 two 3000000\n" (answer whole)))
+           ;; Turn 3 ran no change, so its state is the state of turn 2.
+           (expect (= "2 two 3000000\n" (answer again)))
+           ;; The source keeps its own state.
+           (expect (= "2 two 3000000\n" (answer sid)))
+           ;; A repeated fork gives the same state.
+           (ep/fork-session-defs! sid at-1 [[1 1]] false)
+           (expect (= "1 one 2000000\n" (answer at-1)))
+           ;; A deleted session leaves no turn state behind.
+           (ep/delete-session-defs! sid)
+           (expect (not (.exists (io/file (paths/sandbox-turns-dir sid)))))
+           (finally (doseq [id [sid at-1 whole again]]
+                      (ep/delete-session-defs! id)))))))
+
 ;; Snapshot and spill files hold session values, for example a token in a variable.
 ;; A plain `spit` wrote them readable by every local user (mode 644).
 (defdescribe session-defs-private-files-test

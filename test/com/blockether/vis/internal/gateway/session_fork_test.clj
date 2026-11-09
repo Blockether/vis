@@ -10,6 +10,8 @@
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.python.env :as python-env]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))
 
@@ -177,6 +179,31 @@
               ;; A cut inside a fence renders as an open code block, so it stays as cut.
               (expect (str/ends-with? (get-in points [5 "answer"]) "c…")))))
         (finally (ps/db-close! store)))))
+  ;; Regression, user report in this Vis session: a fork of the session or at a turn
+  ;; started with an empty sandbox. It lost the helpers and variables of the source.
+  (it "gives the fork the sandbox state of the source at the picked turn"
+      (let [store (ps/db-open! :memory)]
+        (try (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask" "second ask"])
+                   defs (fn [id]
+                          (let [f (io/file (paths/sandbox-defs-file id))]
+                            (when (.isFile f) (slurp f))))]
+
+               ;; Turn 1 left `helper` at 1, turn 2 changed it to 2.
+               (io/make-parents (paths/sandbox-turns-dir sid) "1.py")
+               (spit (io/file (paths/sandbox-turns-dir sid) "1.py") "def helper():\n    return 1\n")
+               (spit (paths/sandbox-defs-file sid) "def helper():\n    return 2\n")
+               (with-redefs [lp/db-info (constantly store)]
+                 (let [at-first (get (state/fork-session! sid (first turn-ids)) "id")
+                       whole (get (state/fork-session! sid nil) "id")]
+
+                   (expect (= "def helper():\n    return 1\n" (defs at-first)))
+                   (expect (= "def helper():\n    return 2\n" (defs whole)))
+                   ;; The fork keeps the turn state, so a fork of the fork works too.
+                   (expect (= "def helper():\n    return 1\n"
+                              (slurp (io/file (paths/sandbox-turns-dir whole) "1.py"))))
+                   (doseq [id [sid at-first whole]]
+                     (python-env/delete-session-defs! id)))))
+             (finally (ps/db-close! store)))))
   (it "gives each fork point the wire status of its turn"
       (let [store (ps/db-open! :memory)]
         (try (let [{:keys [sid]} (seeded-session! store [])]

@@ -8175,6 +8175,15 @@
       (let [{:keys [group-id project-id]} (persistance/db-get-session db sid)]
         (cond group-id (persistance/db-set-session-group! db forked group-id)
               project-id (persistance/db-set-session-project! db forked project-id)))
+      ;; The fork continues with the helpers and variables of the source at that turn.
+      (let [copied (take (inc (count (take-while #(not= through (str (:id %))) turns))) turns)]
+        (python-env/fork-session-defs! sid
+                                       forked
+                                       (mapv (fn [from to]
+                                               [(:position from) (:position to)])
+                                             copied
+                                             (persistance/db-list-session-turns db forked))
+                                       (= through (str (:id (peek turns))))))
       (put-session! forked {:next-seq 0 :last-active (util/now-ms)})
       (publish-session-created! db (soul forked)))))
 

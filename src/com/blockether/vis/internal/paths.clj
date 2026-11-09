@@ -308,6 +308,14 @@
   ^String [session-id]
   (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".spill"))
 
+(defn sandbox-turns-dir
+  "Directory for ONE session's sandbox state at the end of each turn —
+   `~/.vis/sandbox/<session-id>.turns`. It holds `<position>.py` and `<position>.spill`
+   with the layout of [[sandbox-defs-file]] and [[sandbox-spill-dir]], so a fork at a
+   turn starts from the state of that turn. The id is reduced to a safe file name."
+  ^String [session-id]
+  (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".turns"))
+
 (defn- owner-only
   "A file attribute array that creates a file or directory with POSIX `mode`."
   [^String mode]

@@ -928,6 +928,12 @@
         ;; effort, after the outcome is in hand — never in its way.
         (perf/timed :exec/persist-defs
                     (env/persist-session-defs! python-context (:session-id environment)))
+        ;; A fork at this turn starts from the state that the turn left.
+        (perf/timed :exec/checkpoint-defs
+                    (env/checkpoint-session-turn! (:session-id environment)
+                                                  (some-> (:ctx-atom environment)
+                                                          deref
+                                                          (get "session_turn"))))
         ;; Count successful operations even if their receipts were not printed or
         ;; the rest of this block failed. Summary supersession cannot erase usage.
         (let [folds (- (long (or (get (some-> (:ctx-atom environment)
