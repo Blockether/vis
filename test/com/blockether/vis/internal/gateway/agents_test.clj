@@ -660,8 +660,16 @@
              (let [[event] (push! 1 #(state/append-event! a "turn.started" {:turn_id "a-turn"}))]
                (expect (= a (get event "child_id")))
                (expect (= [{"session_id" a "status" "running"}] (rows event))))
-             ;; The start was the last push of `a`, so this step waits for its timer.
-             (push! 1 #(state/append-event! a "iteration.completed" {:turn_id "a-turn"}))
+             ;; The start was the last push of `a`, so this step waits for its timer. A step claims
+             ;; its iteration first, as a child turn does: a step that changes no key sends nothing.
+             (let [[event]
+                   (push! 1
+                          #(do (ps/db-agent-claim-iteration! db a)
+                               (state/append-event! a "iteration.completed" {:turn_id "a-turn"})))]
+               (expect (= [1]
+                          (keep #(when (= a (get % "session_id")) (get % "iterations_used"))
+                                (concat (get event "agents") (get event "changes"))))
+                       "The step pushes the used iteration"))
              (let [[opened]
                    (push! 1 #(swap! questions assoc b {:question "May I?" :entry_id 7}))
 
