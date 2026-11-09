@@ -7784,6 +7784,97 @@ vis.register_extension(vis.Extension(name='hookasker', description='hookasker', 
                                   (expect (= "sess-hook" (:session-id @drawn)))
                                   (expect (empty? (human-input/pending-requests))))))))
 
+;; Op hooks may ask the person, directly or through a tool they call
+(def ^:private interactive-hook-py
+  "import blockether.vis.extension as vis
+
+def before(call):
+    answer = vis.ask('HookGate', [{'name': 'go', 'type': 'checkbox'}], timeout_ms=20000)
+    if not answer.values.get('go'):
+        return vis.block('declined by hook')
+    if not vis.tools.confirm()['ok']:
+        return vis.block('declined by tool')
+    return vis.with_env({'ASKED': 'yes'})
+
+vis.register_extension(vis.Extension(
+    name='ia-hook', description='Ask before one tool.',
+    op_hooks=[vis.OpHook(['envtool/start'], before)]))
+")
+
+(def ^:private interactive-tool-py
+  "import blockether.vis.extension as vis
+
+def confirm() -> dict:
+    'Ask for confirmation.'
+    answer = vis.ask('ToolGate', [{'name': 'yes', 'type': 'checkbox'}], timeout_ms=20000)
+    return {'ok': bool(answer.values.get('yes'))}
+
+vis.register_extension(vis.Extension(
+    name='asker', description='Confirmation fixture.', alias='asker',
+    symbols=[vis.Symbol(confirm, activity=vis.Activity(label='Confirm', show_start=False))]))
+")
+
+(defn- run-interactive-hook
+  "Run `start()` under the asking hook. Answer each dialog in `answers`
+   (title -> checkbox values) and return the Python result."
+  [answers]
+  (with-fresh-loaded
+    {"env_tool.py" env-hook-tool-py "ia_hook.py" interactive-hook-py "asker.py" interactive-tool-py}
+    (fn [_ {:keys [ext-dir store]}]
+      (let [exts
+            (mapv registered ["env-tool" "ia-hook" "asker"])
+
+            ctx
+            (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+            env
+            {:python-context ctx
+             :db-info store
+             :session-id (str (db-test/store-session! store {:channel :api}))
+             :cwd (str ext-dir)
+             :extensions (atom exts)
+             :active-extensions (atom exts)}
+
+            answering
+            (mapv (fn [[title values]]
+                    (answer-pending! title #(human-input/submit! % values)))
+                  answers)]
+
+        ;; Each `answer-pending!` unmounts its listener once it answers, so
+        ;; keep one mounted until the second dialog has opened too.
+        (doseq [chan [:tui :app]]
+          (channel-events/add-channel-event-listener! chan
+                                                      ::interactive-hook
+                                                      (fn [_])))
+        (try (loop-env/sync-active-extension-symbols! env exts)
+             (#'python-exec/run-python-code ctx "print(start())" :env env)
+             (finally (run! future-cancel answering)
+                      (doseq [chan [:tui :app]]
+                        (channel-events/remove-channel-event-listener! chan ::interactive-hook))
+                      (ep/dispose-python-context! ctx)))))))
+
+(defdescribe interactive-op-hook-test
+             (it "lets a before hook ask the person and call a tool that asks too"
+                 (let [run
+                       #(select-keys (run-interactive-hook %) [:stdout :error])
+
+                       accepted
+                       (run {"HookGate" {"go" true} "ToolGate" {"yes" true}})
+
+                       tool-declined
+                       (run {"HookGate" {"go" true} "ToolGate" {"yes" false}})
+
+                       hook-declined
+                       (run {"HookGate" {"go" false}})]
+
+                   ;; ASKED shows that the hook got to its end, so the call did not run
+                   ;; only because a failed hook lets it through.
+                   (expect (= "{'ASKED': 'yes', 'op': 'envtool_start'}\n" (:stdout accepted))
+                           (pr-str accepted))
+                   (expect (= "declined by tool" (get-in tool-declined [:error :message])))
+                   (expect (= "declined by hook" (get-in hook-declined [:error :message])))
+                   (expect (empty? (human-input/pending-requests))))))
+
 ;; Torn-down contexts heal instead of dying (issues #102, #103)
 (def ^:private rebuilder-py
   "import blockether.vis.extension as vis

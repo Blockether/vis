@@ -1214,6 +1214,38 @@ A REPL that runs already keeps its environment. If the variables differ,
 REPL with `clj.repl_stop`, then start it again. Do not set one variable in two
 hooks, because the order of the hooks is not fixed.
 
+### Ask the person in a hook
+
+A hook can ask the person before it decides. It can call `vis.ask`, open a
+`vis.live` view or call a tool through `vis.tools`, also a tool that asks. The
+operation waits until the hook returns. The dialog shows in the session of the
+operation.
+
+```python
+import blockether.vis.extension as vis
+
+
+def before(call):
+    answer = vis.ask("Start the REPL?", [{"name": "go", "type": "checkbox"}])
+    if not answer or not answer.values.get("go"):
+        return vis.block("The person did not allow the REPL start.")
+    return None
+
+
+vis.register_extension(vis.Extension(
+    name="repl-gate", description="Ask before a REPL start.",
+    op_hooks=[vis.OpHook(["clj/repl_start"], before)]))
+```
+
+When the person cancels or the dialog times out, `answer` is false, and this
+hook refuses the call. A session that cannot ask the person, for example a
+subagent session, gets `answer.reason == "undeliverable"` at once.
+
+If a hook raises an exception, the operation runs. When the operation must not
+run without an answer, catch the exception and return `vis.block`. A hook that
+calls a tool of its own extension through `vis.tools` turns off its own hooks for
+that inner call. Vis logs a warning, and the inner call runs without them.
+
 ## Durable state
 
 `vis.state` is a dict-like store persisted in the Vis database. It survives `/reload` and restarts.
