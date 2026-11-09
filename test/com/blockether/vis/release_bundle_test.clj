@@ -198,6 +198,8 @@
               "  printf '%s\\n' 'vis-agent: fatal error - Update the gateway - protocol mismatch' >&2\n"
               "  exit 1\n" "fi\n"))
           (when (pos? (long (or fetch-failures 0)))
+            ;; The retry waits are 1 s and 2 s; the fixture checks the retries, not the wait.
+            (write-executable! (io/file path-dir "sleep") "#!/usr/bin/env bash\nexit 0\n")
             (write-executable!
               (io/file path-dir "git")
               (str
@@ -514,6 +516,8 @@
                 :prepare!
                 (fn [env tools]
                   (io/delete-file (io/file tools "git"))
+                  ;; Failed fetches retry after 1 s and 2 s; the cases check the outcome.
+                  (write-executable! (io/file tools "sleep") "#!/usr/bin/env bash\nexit 0\n")
                   (let [src (io/file (get env "VIS_HOME") "install" "src")]
                     (git! remote "clone" "--quiet" (.getAbsolutePath remote) (.getAbsolutePath src))
                     (git! src "checkout" "--quiet" "--detach" old)
@@ -1501,19 +1505,19 @@
             (expect (not (.exists (io/file bin "vis-agent-native"))))
             (expect (= wrapper (slurp launcher)))))))
   (it "repairs missing native components even when the selected release is unchanged"
-      (doseq [component ["vis-agent-native" "vis-agent-native.build" "vis-tui" "libjsound.so"
-                         "vis-agent-python/python" "vis-agent-python/libvispython.so"
-                         "vis-web/index.html"]]
-        (with-native-install-fixture
-          {:build-commit (apply str (repeat 40 "a")) :web? true}
-          (fn [{:keys [exit output bin] :as fixture}]
-            (expect (zero? exit) output)
+      (with-native-install-fixture
+        {:build-commit (apply str (repeat 40 "a")) :web? true}
+        (fn [{:keys [exit output bin] :as fixture}]
+          (expect (zero? exit) output)
+          (doseq [component ["vis-agent-native" "vis-agent-native.build" "vis-tui" "libjsound.so"
+                             "vis-agent-python/python" "vis-agent-python/libvispython.so"
+                             "vis-web/index.html"]]
             (delete-tree! (io/file bin component))
             (let [{:keys [exit output urls]} (rerun-native-update fixture ["--keep-gateway"])]
-              (expect (zero? exit) output)
+              (expect (zero? exit) (str component ": " output))
               (expect (str/includes? urls ".tar.gz") urls)
               (expect (not (str/includes? output "already up to date")) output)
-              (expect (.exists (io/file bin component))))))))
+              (expect (.exists (io/file bin component)) component))))))
   (it "installs a changed release version, beta commit or build track"
       (doseq [[track stamp] [["release" (str "9.9.8 " (apply str (repeat 40 "a")) " release now\n")]
                              ["beta" (str "9.9.9 " (apply str (repeat 40 "b")) " beta now\n")]
@@ -2160,6 +2164,8 @@
             (let [script (str "sleep() { command sleep 0.02; };\n"
                               (-> body
                                   (str/replace #"(?m)^          " "")
+                                  ;; A failing mode would poll all 60 times.
+                                  (str/replace "for _ in {1..60}; do" "for _ in {1..3}; do")
                                   (str/replace "target/release-bundle/vis-agent"
                                                (.getAbsolutePath binary))))
                   {:keys [exit output]} (run-bash ["bash" "-c" script]
@@ -2908,8 +2914,8 @@
   ;; local gateway in the background and keeps it up while the app runs.
   (it
     "downloads the platform release, opens it with the local gateway, and reuses it without network"
-    (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]
-                       ["Linux" "aarch64"]]]
+    ;; Darwin x86_64 selects the same universal release as arm64.
+    (doseq [[os arch] [["Darwin" "arm64"] ["Linux" "x86_64"] ["Linux" "aarch64"]]]
       (with-desktop-fixture
         os
         arch
@@ -3296,8 +3302,8 @@
             (expect (not (.exists (io/file beta-desktop "9.8.7-beta.aaaaaaaaaaaa"))))
             (expect (not (.exists ^java.io.File desktop)))))))
   (it "builds dev from the selected source every time and keeps the release cache separate"
-      (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]
-                         ["Linux" "aarch64"]]]
+      ;; Linux aarch64 builds like x86_64; the release case covers its platform name.
+      (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]]]
         (with-desktop-fixture
           os
           arch
@@ -4931,7 +4937,7 @@
                                                             (.getAbsolutePath ^File bundle)]
                                                            {"VIS_SMOKE_LAN_HOST" "192.0.2.1"
                                                             "VIS_SMOKE_TIMEOUT_S" "15"
-                                                            "VIS_SMOKE_LAN_TIMEOUT_S" "2"})]
+                                                            "VIS_SMOKE_LAN_TIMEOUT_S" "1"})]
                        (expect (not= 0 exit) output)
                        (expect (str/includes? output "ok: loopback") output)
                        (expect (str/includes? output "the LAN address never answered") output)))))
@@ -4941,7 +4947,7 @@
                    (fn [bundle _log]
                      (let [{:keys [exit output]} (run-bash ["bin/smoke-gateway-routes"
                                                             (.getAbsolutePath ^File bundle)]
-                                                           {"VIS_SMOKE_TIMEOUT_S" "2"})]
+                                                           {"VIS_SMOKE_TIMEOUT_S" "1"})]
                        (expect (not= 0 exit) output)
                        (expect (str/includes? output "loopback never answered") output))))))
 
