@@ -4113,6 +4113,14 @@ class Shell(dict):
     def _vis_op(self, opts):
         return Shell(self._vis_call(dict(opts, id=self.get("id"))), self._vis_call)
 
+    def _vis_drive(self, opts):
+        # `wait`, `type` and `stop` write their answer into THIS handle and return
+        # it, as the sandbox handle does. A log page stays its own object.
+        answer = self._vis_op(opts)
+        self.clear()
+        self.update(answer)
+        return self
+
     def logs(self, offset=None, limit=None):
         # A NEGATIVE offset reads the last n LINES; a positive one is a byte cursor.
         opts: dict[str, Any] = {"op": "logs"}
@@ -4123,18 +4131,18 @@ class Shell(dict):
         return self._vis_op(opts)
 
     def type(self, text, is_enter=True):
-        return self._vis_op(
+        return self._vis_drive(
             {"op": "send", "text": str(text), "is_enter": bool(is_enter)}
         )
 
     def stop(self):
-        return self._vis_op({"op": "stop"})
+        return self._vis_drive({"op": "stop"})
 
     def wait(self, seconds=120):
         # ONE wait, in the HOST: `{'op': 'wait'}` runs the bounded poll loop that the
         # sandbox handle also calls, so an extension and the model can never disagree
         # about when a wait ends or what it accumulated.
-        return self._vis_op({"op": "wait", "seconds": int(seconds)})
+        return self._vis_drive({"op": "wait", "seconds": int(seconds)})
 
 
 def _shell_call(name):

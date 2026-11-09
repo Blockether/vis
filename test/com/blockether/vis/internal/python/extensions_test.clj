@@ -6118,7 +6118,7 @@ vis.register_extension(vis.Extension(
     ;; `{"op": "logs", "id": …}` grammar that the handle object replaced.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop() is sh, sh['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -6134,8 +6134,8 @@ vis.register_extension(vis.Extension(
                                                 :metadata {:duration-ms 1}}))]
             (binding [extension/*current-environment* env]
               ;; Every op reaches the ONE dispatch grammar, and every answer is
-              ;; itself a handle.
-              (expect (= ["h" "logs" "wait" "send" "stop"] (:result (run))))))))))
+              ;; itself a handle. A stop answers into the handle that the caller holds.
+              (expect (= ["h" "logs" "wait" "send" true "stop"] (:result (run))))))))))
   (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded

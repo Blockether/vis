@@ -2113,12 +2113,14 @@
                         (py c
                             (str "r = __vis_settle__(shell('echo hi')).wait(20)\n"
                                  "[r['stage'], r['out'].strip(), r['command']]"))))
-             (expect (= ["run" "logs" "stop"]
+             ;; User report: a held handle stayed at `running` after `sh.wait(...)`; a
+             ;; driving stage now answers into that handle, a log page does not.
+             (expect (= ["stop" "logs" "stop" true]
                         (py c
                             (str
                               "b = __vis_settle__(shell('echo alive; sleep 30', {'id':'pyjob'}))\n"
                               "l = b.logs(limit=10)\n"
-                              "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
+                              "s = b.stop()\n" "[b['stage'], l['stage'], s['stage'], s is b]"))))
              (finally (resources/stop-all! sid)))))
   (it "bounds sh.wait(secs) even when the command NEVER stops printing"
       ;; Regression, shell audit: the poll loop only checked its deadline once the log
@@ -2134,9 +2136,11 @@
                         (py c
                             (str "import time\n"
                                  "sh = __vis_settle__(shell('while true; do echo x; done',"
-                                 " {'id':'chatty'}))\n" "t0 = time.time()\n"
-                                 "r = sh.wait(1)\n" "took = time.time() - t0\n"
-                                 "sh.stop()\n" "[bool(r['timed_out']), r['status'], took < 45]"))))
+                                 " {'id':'chatty'}))\n"
+                                 "t0 = time.time()\n" "r = sh.wait(1)\n"
+                                 "took = time.time() - t0\n"
+                                 "seen = [bool(r['timed_out']), r['status'], took < 45]\n"
+                                 "sh.stop()\n" "seen"))))
              (finally (resources/stop-all! sid)))))
   (it "answers with a HANDLE whose own methods drive the process"
       ;; Phase 8: the three id-taking verbs are gone from the model's surface. What
@@ -2152,11 +2156,12 @@
                         (py c
                             (str
                               "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle'}))\n"
-                              "sent = sh.type('ready')\n"
-                              "w = sh.wait(30)\n" "stopped = sh.stop()\n"
-                              "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
-                              " 'got ready' in w['out'], w['status'], w['timed_out'],"
-                              " sent['out'][-300:], stopped.out[-300:],"
+                              "sent = sh.type('ready')['out'][-300:]\n"
+                              "w = sh.wait(30)\n"
+                              "seen = ['got ready' in w['out'], w['status'], w['timed_out']]\n"
+                              "stopped = sh.stop()\n"
+                              "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals()]"
+                              " + seen + [sent, stopped.out[-300:],"
                               " 'got ready' in sh.logs(-7)['out']]"))))
              (finally (resources/stop-all! sid)))))
   (it "reads a LINE window on the handle, folds `n`, and refuses a keyword by name"
@@ -2322,11 +2327,12 @@
             (py
               c
               (str
-                "sh = __vis_settle__(shell('sleep 30', {'id':'stat'}))\n" "sh.stop()\n"
-                "[hasattr(sh, 'status'), callable(sh.status),"
+                "sh = __vis_settle__(shell('sleep 30', {'id':'stat'}))\n"
+                "seen = [hasattr(sh, 'status'), callable(sh.status),"
                 " sh.status == sh['status'], sh['status'], sh['exit'] is None,"
                 " sh['log_path'].endswith('stat.log'),"
-                " isinstance(sh['rss_bytes'], int) and sh['rss_bytes'] >= 0, sh['started_at'] > 0]"))))
+                " isinstance(sh['rss_bytes'], int) and sh['rss_bytes'] >= 0, sh['started_at'] > 0]\n"
+                "sh.stop()\n" "seen"))))
         (finally (resources/stop-all! sid)))))
   (it "removes the binding when the shell toggle is off"
       (let [before
@@ -2431,7 +2437,7 @@
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= ["run" "logs" "stop"]
+        (try (expect (= ["stop" "logs" "stop"]
                         (py c
                             (str "job = "
                                  (pr-str sid)
