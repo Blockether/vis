@@ -1073,6 +1073,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       (extension/observe-host-call ext-name operation label show-start? host-failure answer)
       (answer))))
 
+(def ^:dynamic *call-env*
+  "Environment variables that `before` op hooks added to the tool call running on
+   this thread with `vis.with_env`, as `{name value}`; a nil value unsets a name.
+   `vis.call_env()` reads it, so the tool can give it to the processes it starts."
+  nil)
+
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -1230,6 +1236,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             ;; One SDK exchange as JSON in and JSON out: `{status headers content}`.
             (wire/json-str
               (host-request label bound-session (json/read-json (str frame) :key-fn identity)))))
+    (put! g
+          "__vis_host_call_env__"
+          (fn []
+            (or *call-env* {})))
     (put! g
           "__vis_host_bound_session__"
           (fn []
@@ -2234,7 +2244,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    when the op can show what it would write. Returning `vis.block(reason)`
    refuses the op with a failure envelope the model reads; its `hint`, when
    given, replaces the advice to ask the user. None allows it; `vis.repair`
-   submits source to the patch repair contract before the patch writes.
+   submits source to the patch repair contract before the patch writes, and
+   `vis.with_env` allows it with more variables in `*call-env*`.
    A hook error fails OPEN (op runs) — a broken guard must not brick the
    loop."
   [ext-name ctx pyfn]
@@ -2267,6 +2278,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                       "' Python extension. Ask the user before retrying."))}}))
             (and (map? res) (= "repair" (get res "marker")))
             (run-repaired-op env op-kw args preview res next-fn)
+            (and (map? res) (= "env" (get res "marker")))
+            (binding [*call-env* (merge *call-env* (update-vals (get res "env") #(some-> % str)))]
+              (next-fn args))
             :else (next-fn args)))))
 
 (defn- gate-adapter

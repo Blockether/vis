@@ -134,6 +134,10 @@ class Host(Protocol):
         """Run one shell op inside the workspace jail."""
         ...
 
+    def call_env(self) -> Mapping[str, str | None]:
+        """Read the variables that `before` op hooks added to the current tool call."""
+        ...
+
     def request_input(
         self,
         request_json: str,
@@ -3910,6 +3914,31 @@ def repair(source, *, notes):
     ):
         raise ValueError("Repair notes must be a non-empty sequence of strings")
     return {"marker": "repair", "source": source, "notes": list(notes)}
+
+
+def with_env(variables):
+    """Allow the call a `before` op hook is deciding, with more environment variables.
+
+    The tool reads them with `call_env()` and gives them to the processes that
+    it starts. `clj.repl_start` gives them to the REPL JVM. A name mapped to None
+    is unset in that process.
+    """
+    if not isinstance(variables, Mapping) or not variables:
+        raise ValueError("vis.with_env requires a non-empty mapping")
+    for name, value in variables.items():
+        if not isinstance(name, str) or not name.strip() or "=" in name:
+            raise ValueError("vis.with_env names must be nonblank text without '='")
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"vis.with_env value of {name} must be text or None")
+    return {"marker": "env", "env": dict(variables)}
+
+
+def call_env() -> dict[str, str | None]:
+    """Return the variables that `before` op hooks added to the current tool call.
+
+    The result is empty when no hook added any, and outside a Vis process.
+    """
+    return dict(_host.call_env() or {})
 
 
 def strings_of(value):

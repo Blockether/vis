@@ -1116,6 +1116,12 @@ vis.OpHook(ops, fn, phase="before")
 ```
 
 `ops` names operations such as `"patch"`, `"shell"` or `"python_execution"`.
+A hook also works on a tool of another extension. Write the extension alias, a
+slash and the tool name, for example `"clj/repl_start"` for `clj.repl_start`.
+For such a tool, `args` holds the positional arguments, then one dict with the
+keyword arguments. The call `clj.repl_start("app", aliases=["dev"])` gives
+`["app", {"aliases": ["dev"]}]`.
+
 With `phase="before"`, `fn(call)` receives `{"op", "args"}`. Return `None` to
 allow the call or `vis.block(reason)` to refuse it. The model sees the reason
 as a tool failure. For `"patch"`, return `vis.repair(source, notes=[...])` to
@@ -1175,6 +1181,38 @@ in the sandbox, which uses the sandbox's filesystem policy.
 
 `vis.strings_of(value)` collects strings from a nested structure, for example
 to check paths in tool arguments.
+
+### Add environment variables to a tool call
+
+A before hook can also return `vis.with_env(variables)`. This allows the call
+and adds the variables to it. Map a name to `None` to unset that variable. The
+tool reads the variables with `vis.call_env()` and gives them to the processes
+that it starts. Other calls do not get them. Outside Vis, `vis.call_env()`
+returns an empty dict.
+
+`clj.repl_start` gives these variables to the REPL JVM that it starts:
+
+```python
+import blockether.vis.extension as vis
+
+
+def repl_env(call):
+    return vis.with_env({"AWS_PROFILE": "dev", "JAVA_TOOL_OPTIONS": "-Xmx4g"})
+
+
+vis.register_extension(
+    vis.Extension(
+        name="repl-env",
+        description="Start each project REPL with the dev AWS profile.",
+        op_hooks=[vis.OpHook(["clj/repl_start"], repl_env)],
+    )
+)
+```
+
+A REPL that runs already keeps its environment. If the variables differ,
+`clj.repl_start` fails and names the variables, never their values. Stop the
+REPL with `clj.repl_stop`, then start it again. Do not set one variable in two
+hooks, because the order of the hooks is not fixed.
 
 ## Durable state
 

@@ -4003,6 +4003,69 @@ vis.register_extension(vis.Extension(
                (expect (nil? (get-in (snapshot) ["after" "result"])))
                (finally (ep/dispose-python-context! ctx))))))))
 
+(def ^:private env-hook-tool-py
+  "import blockether.vis.extension as vis
+
+def start(cwd: str = '', *, aliases: list = ()) -> dict:
+    'Report the variables this call received.'
+    return vis.call_env()
+
+def other() -> dict:
+    'Report the variables this call received.'
+    return vis.call_env()
+
+vis.register_extension(vis.Extension(
+    name='env-tool', description='Environment fixture.', alias='envtool',
+    symbols=[vis.Symbol(start, activity=vis.Activity(label='Start', show_start=False)),
+             vis.Symbol(other, activity=vis.Activity(label='Other', show_start=False))]))
+")
+
+(def ^:private env-hook-py
+  "import blockether.vis.extension as vis
+
+def before(call):
+    return vis.with_env({'HOOK_VAR': 'on', 'DROPPED': None})
+
+vis.register_extension(vis.Extension(
+    name='env-hook', description='Add variables to one tool.',
+    op_hooks=[vis.OpHook(['envtool/start'], before)]))
+")
+
+(defdescribe
+  extension-tool-env-hook-test
+  (it "gives an extension tool the variables that its before hook adds, and no other call"
+      (with-fresh-loaded
+        {"env_tool.py" env-hook-tool-py "env_hook.py" env-hook-py}
+        (fn [_ {:keys [ext-dir store]}]
+          (let [exts
+                [(registered "env-tool") (registered "env-hook")]
+
+                ctx
+                (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+                env
+                {:python-context ctx
+                 :db-info store
+                 :cwd (str ext-dir)
+                 :extensions (atom exts)
+                 :active-extensions (atom [])}
+
+                code
+                "import json\nprint(json.dumps([start('x', aliases=['dev']), other(), start()]))"]
+
+            (try (loop-env/sync-active-extension-symbols! env exts)
+                 (let [result
+                       (#'python-exec/run-python-code ctx code :env env)
+
+                       hooked
+                       {"HOOK_VAR" "on" "DROPPED" nil}]
+
+                   (expect (nil? (:error result)) (pr-str result))
+                   (expect (= [hooked {} hooked]
+                              (mapv #(dissoc % "op")
+                                    (json/read-json (:stdout result) :key-fn identity)))))
+                 (finally (ep/dispose-python-context! ctx))))))))
+
 (defdescribe
   code-quality-recipe-test
   (it

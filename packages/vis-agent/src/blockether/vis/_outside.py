@@ -104,6 +104,11 @@ def list_sessions(search):
     )
 
 
+def call_env():
+    """No op hook runs outside a Vis process, so no call has added variables."""
+    return {}
+
+
 # -- Where the outside host keeps things --------------------------------------
 
 
@@ -1354,6 +1359,7 @@ _IMPLEMENTATIONS = {
     "notify": notify,
     "shell": shell,
     "jailed_shell": jailed_shell,
+    "call_env": call_env,
     "request": request,
     "bound_session": bound_session,
     "call_tool": call_tool,

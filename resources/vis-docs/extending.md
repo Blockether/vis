@@ -31,6 +31,7 @@ need](#choose-what-you-need) compares the options.
 | Explain when to use an extension's tools | The extension's short `prompt` | [Prompts and discovery](extension-api.md#prompts-and-discovery) |
 | Describe a reusable, multi-step procedure | A skill (`SKILL.md`), with no Python extension | [Skills](skills.md) |
 | Check calls before they run or inspect results afterward | `vis.OpHook` | [Op hooks](extension-api.md#op-hooks) |
+| Start a tool's processes with more environment variables | `vis.with_env` in a before `vis.OpHook` | [Environment variables](extension-api.md#add-environment-variables-to-a-tool-call) |
 | Ask for input or display progress | `vis.ask` or `vis.live` inside a tool | [Forms](human-input.md) · [Live views](live-views.md) |
 | Add an LLM service with custom authentication | `vis.Provider` | [Provider extensions](provider-extensions.md) |
 

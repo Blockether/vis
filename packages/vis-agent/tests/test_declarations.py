@@ -298,6 +298,12 @@ def test_gate_declarations_reject_invalid_execution_semantics(ops, phase):
         vis.OpHook(ops, lambda event: None, phase=phase)
 
 
+@pytest.mark.parametrize("variables", [{}, ["A"], {"": "x"}, {"A=B": "x"}, {"A": 1}])
+def test_hook_variables_reject_what_no_process_can_receive(variables):
+    with pytest.raises(ValueError):
+        vis.with_env(variables)
+
+
 def test_registration_snapshots_collections_and_provider_config(monkeypatch):
     monkeypatch.setattr(vis, "_registration", {"spec": None})
     monkeypatch.setattr(vis._host, "declare_env", lambda _: "{}")
