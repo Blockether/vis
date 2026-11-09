@@ -1105,7 +1105,9 @@ def _live_checked(view):
         else:
             view.pop("shortcuts", None)
         for one in faults.dropped:
-            print(f"! {one.note}", file=sys.stderr)
+            log("warn", f"vis live view: {one.note}")
+    for text in faults.nodes.values():
+        log("warn", f"vis live view: {text}")
     _live_cards(view, faults.nodes)
     return view
 

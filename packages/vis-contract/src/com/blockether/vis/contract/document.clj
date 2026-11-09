@@ -90,7 +90,10 @@
                                     :registry (into {(get @common-schema "$id") @common-schema}
                                                     (map (juxt #(get % "$id") identity))
                                                     dependencies)
-                                    :format-assertion true})]
+                                    :format-assertion true
+                                    ;; The Python SDK reports every error, so a fault list and
+                                    ;; its count are the same in both hosts.
+                                    :error-limit Long/MAX_VALUE})]
 
         (swap! documents assoc document-name compiled)
         compiled)))

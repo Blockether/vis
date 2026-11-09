@@ -68,6 +68,22 @@ def test_a_send_logs_a_node_fault_and_opens_the_rest(monkeypatch, capsys):
     assert "vis live view: node odd /type - unknown node type (type)" in warnings[0]
 
 
+def test_a_send_inside_vis_needs_no_jsonschema(monkeypatch):
+    # The guest sandbox of a dev engine has no jsonschema; Vis checks the view.
+    monkeypatch.setitem(sys.modules, "jsonschema", None)
+    _contracts._validator.cache_clear()
+    sent = []
+
+    class Engine:
+        def live(self, envelope_json, listener=None):
+            sent.append(json.loads(envelope_json))
+            return json.dumps({"view_id": "v1", "is_open": True, "seq": 0})
+
+    monkeypatch.setattr(vis, "_host", Engine())
+    vis.live("Deploy", [vis.ui.status("now", "waiting")], flush_ms=0)
+    assert [envelope["op"] for envelope in sent] == ["open"]
+
+
 def test_a_send_raises_for_a_fault_of_the_whole_view(monkeypatch):
     monkeypatch.setattr(vis, "_host", _outside.host)
     with pytest.raises(RuntimeError, match='two nodes have the id "now"'):

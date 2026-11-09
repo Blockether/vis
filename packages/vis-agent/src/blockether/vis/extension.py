@@ -5482,7 +5482,6 @@ class LiveView:
 
     def _live(self, envelope, listener=None):
         """Cross one envelope to the host and answer the decoded reply."""
-        _check_sent(envelope)
         door = self._door or _host.live
         text = self._json.dumps(envelope)
         return self._json.loads(
@@ -6533,29 +6532,6 @@ def _merge_append(earlier, op):
         merged[item.get("id")] = item
     earlier[key] = list(merged.values())
     return True
-
-
-def _check_sent(envelope):
-    """Check a live view before it opens.
-
-    A fault of the whole view raises, as Vis refuses that view. Vis shows a node
-    with a fault as an error card and keeps the rest, so the send goes on and the
-    extension log gets one warning for each such node. Vis refuses a patch that
-    breaks a node itself.
-    """
-    from blockether.vis import _contracts
-
-    if envelope.get("op") != "open":
-        return
-    faults = _contracts.live_view_faults(envelope.get("view"))
-    if faults.view:
-        # Vis raises VisToolError, a RuntimeError, for the same view.
-        raise RuntimeError(_contracts.VIEW_REFUSAL + faults.view_text())
-    # `log` writes the extension log of Vis; the `logging` module does not.
-    for text in faults.nodes.values():
-        log("warn", f"vis live view: {text}")
-    for one in faults.dropped:
-        log("warn", f"vis live view: {one.note}")
 
 
 def live(title, nodes, placement=None, key=None, on_event=None, **options):

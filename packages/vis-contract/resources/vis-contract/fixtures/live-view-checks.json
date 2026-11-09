@@ -2585,6 +2585,160 @@
           "node sp /steps - two items have the id \"a\" (unique)"
         ]
       }
+    },
+    {
+      "name": "a view with more than ten unknown keys names each of them",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "p",
+            "type": "paragraph",
+            "text": "x"
+          }
+        ],
+        "x00": 1,
+        "x01": 1,
+        "x02": 1,
+        "x03": 1,
+        "x04": 1,
+        "x05": 1,
+        "x06": 1,
+        "x07": 1,
+        "x08": 1,
+        "x09": 1,
+        "x10": 1,
+        "x11": 1,
+        "x12": 1
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/ - unknown property \"x00\" (additionalProperties)",
+          "/ - unknown property \"x01\" (additionalProperties)",
+          "/ - unknown property \"x02\" (additionalProperties)",
+          "/ - unknown property \"x03\" (additionalProperties)",
+          "/ - unknown property \"x04\" (additionalProperties)",
+          "/ - unknown property \"x05\" (additionalProperties)",
+          "/ - unknown property \"x06\" (additionalProperties)",
+          "/ - unknown property \"x07\" (additionalProperties)",
+          "/ - unknown property \"x08\" (additionalProperties)",
+          "/ - unknown property \"x09\" (additionalProperties)",
+          "/ - unknown property \"x10\" (additionalProperties)",
+          "/ - unknown property \"x11\" (additionalProperties)",
+          "/ - unknown property \"x12\" (additionalProperties)"
+        ]
+      }
+    },
+    {
+      "name": "a node with more than ten faults names each of them",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "s",
+            "type": "status",
+            "text": 1,
+            "label": 2,
+            "detail": 3,
+            "tone": 4,
+            "a1": 1,
+            "a2": 1,
+            "a3": 1,
+            "a4": 1,
+            "a5": 1,
+            "a6": 1,
+            "a7": 1
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "s"
+        ],
+        "text": [
+          "node s / - unknown property \"a1\" (additionalProperties); / - unknown property \"a2\" (additionalProperties); / - unknown property \"a3\" (additionalProperties); / - unknown property \"a4\" (additionalProperties); / - unknown property \"a5\" (additionalProperties); and 7 more"
+        ]
+      }
+    },
+    {
+      "name": "a table with more than ten faults in its rows names each of them",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "table",
+            "columns": [
+              {
+                "id": "a",
+                "label": "A"
+              }
+            ],
+            "rows": [
+              {
+                "id": "r0",
+                "cells": [
+                  3,
+                  4,
+                  5
+                ]
+              },
+              {
+                "id": "r1",
+                "cells": [
+                  3,
+                  4,
+                  5
+                ]
+              },
+              {
+                "id": "r2",
+                "cells": [
+                  3,
+                  4,
+                  5
+                ]
+              },
+              {
+                "id": "r3",
+                "cells": [
+                  3,
+                  4,
+                  5
+                ]
+              },
+              {
+                "id": "r4",
+                "cells": [
+                  3,
+                  4,
+                  5
+                ]
+              },
+              {
+                "id": "r5",
+                "cells": [
+                  3,
+                  4,
+                  5
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "t"
+        ],
+        "text": [
+          "node t /rows/0/cells/0 - expected string, got integer (type); /rows/0/cells/1 - expected string, got integer (type); /rows/0/cells/2 - expected string, got integer (type); /rows/1/cells/0 - expected string, got integer (type); /rows/1/cells/1 - expected string, got integer (type); and 13 more"
+        ]
+      }
     }
   ],
   "patches": [
@@ -2790,6 +2944,49 @@
         ]
       },
       "expect": []
+    },
+    {
+      "name": "a patch with more than ten unknown keys names each of them",
+      "patch": {
+        "op": "patch",
+        "view_id": "v",
+        "ops": [
+          {
+            "op": "clear",
+            "node_id": "p"
+          }
+        ],
+        "x00": 1,
+        "x01": 1,
+        "x02": 1,
+        "x03": 1,
+        "x04": 1,
+        "x05": 1,
+        "x06": 1,
+        "x07": 1,
+        "x08": 1,
+        "x09": 1,
+        "x10": 1,
+        "x11": 1,
+        "x12": 1
+      },
+      "expect": [
+        "/ - missing required property \"seq\" (required)",
+        "/ - unknown property \"op\" (additionalProperties)",
+        "/ - unknown property \"x00\" (additionalProperties)",
+        "/ - unknown property \"x01\" (additionalProperties)",
+        "/ - unknown property \"x02\" (additionalProperties)",
+        "/ - unknown property \"x03\" (additionalProperties)",
+        "/ - unknown property \"x04\" (additionalProperties)",
+        "/ - unknown property \"x05\" (additionalProperties)",
+        "/ - unknown property \"x06\" (additionalProperties)",
+        "/ - unknown property \"x07\" (additionalProperties)",
+        "/ - unknown property \"x08\" (additionalProperties)",
+        "/ - unknown property \"x09\" (additionalProperties)",
+        "/ - unknown property \"x10\" (additionalProperties)",
+        "/ - unknown property \"x11\" (additionalProperties)",
+        "/ - unknown property \"x12\" (additionalProperties)"
+      ]
     }
   ],
   "applies": [

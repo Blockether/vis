@@ -7,7 +7,9 @@ one line for each node with an error card. The exit
 code is 0 for a valid view, 1 for a view with a problem and 2 when the input is
 not a view.
 
-`vis.testing.LiveRecorder(...).view_json()` gives a view to check.
+`vis.testing.LiveRecorder(...).view_json()` gives a view to check. For the
+nodes and their rules, use the
+[live-view guide](https://vis.blockether.com/live-views.html).
 """
 
 from __future__ import annotations

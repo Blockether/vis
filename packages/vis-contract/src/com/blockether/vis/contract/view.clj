@@ -472,88 +472,10 @@
   [definition value]
   (document/explain-text (document/explain "view" definition value) value))
 
-(def ^:private most-schema-errors
-  "How many errors one skjema report holds. A report of this size may have left
-   errors out."
-  10)
-
-(defn- part-lines
-  "The fault lines of wire value `value` against the schema `shape` at `pointer` in
-   `$defs`, with `prefix` in front of each path. skjema stops at ten errors, so a full
-   report of an array checks the keywords of the array, then each item on its own: the
-   Python SDK, which has every error, gives the same lines."
-  [pointer shape value prefix]
-  (let [explanation (document/explain "view" pointer value)]
-    (if (and (>= (count (:errors explanation)) most-schema-errors)
-             (sequential? value)
-             (map? (get shape "items")))
-      (let [n (count value)
-            item (get shape "items")
-            item-shape (if-let [ref (get item "$ref")]
-                         (definition (subs ref (count "#/$defs/")))
-                         item)]
-
-        (concat (document/explain-lines
-                  {:errors (cond-> []
-                             (and (get shape "maxItems") (> n (long (get shape "maxItems"))))
-                             (conj {:instanceLocation ""
-                                    :keyword "maxItems"
-                                    :params {:limit (get shape "maxItems")}})
-
-                             (and (get shape "minItems") (< n (long (get shape "minItems"))))
-                             (conj {:instanceLocation ""
-                                    :keyword "minItems"
-                                    :params {:limit (get shape "minItems")}}))}
-                  value
-                  prefix)
-                (apply concat
-                  (map-indexed
-                    (fn [i v]
-                      (part-lines (str pointer "/items") item-shape v (str prefix "/" i)))
-                    value))))
-      (document/explain-lines explanation value prefix))))
-
 (defn- variant-lines
-  "The schema fault lines of wire node `node` against `component` variant `index`. A
-   report that skjema cut at ten errors is made again from its parts: the unknown and
-   missing keys from the schema data, then each property on its own."
+  "The schema fault lines of wire node `node` against `component` variant `index`."
   [index node]
-  (let [pointer
-        (str "component/oneOf/" index)
-
-        explanation
-        (document/explain "view" pointer node)]
-
-    (if (and (>= (count (:errors explanation)) most-schema-errors) (map? node))
-      (let [shape
-            (get-in (definition "component") ["oneOf" index])
-
-            properties
-            (get shape "properties")]
-
-        (concat
-          (document/explain-lines {:errors (concat (for [k
-                                                         (keys node)
-
-                                                         :when (not (contains? properties k))]
-
-                                                     {:instanceLocation ""
-                                                      :keyword "additionalProperties"
-                                                      :params {:additionalProperty k}})
-                                                   (for [k
-                                                         (get shape "required")
-
-                                                         :when (not (contains? node k))]
-
-                                                     {:instanceLocation ""
-                                                      :keyword "required"
-                                                      :params {:missingProperty k}}))}
-                                  node)
-          (mapcat (fn [[k v]]
-                    (when (contains? properties k)
-                      (part-lines (str pointer "/properties/" k) (get properties k) v (str "/" k))))
-                  node)))
-      (document/explain-lines explanation node))))
+  (document/explain-lines (document/explain "view" (str "component/oneOf/" index) node) node))
 
 (defn- component-error
   "The schema error of `value` against the one `component` variant `type-name`."
