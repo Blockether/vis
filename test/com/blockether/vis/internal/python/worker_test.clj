@@ -908,96 +908,100 @@ print(worker_value)"))))
 
 (defn- assert-trusted-cancellation
   [native-wait?]
-  (with-worker-context
-    (fn [session]
-      (let [key
-            (worker/extension-worker-key session)
+  ;; A short unwind window keeps the test fast; the guest sleep below still outlives it.
+  (with-redefs-fn {#'python-exec/INTERRUPT_UNWIND_MS 300}
+    (fn []
+      (with-worker-context
+        (fn [session]
+          (let [key
+                (worker/extension-worker-key session)
 
-            caller
-            (str session "-extension")
+                caller
+                (str session "-extension")
 
-            marker
-            (doto (java.io.File/createTempFile "vis-extension-wait-" ".ready") (.delete))
+                marker
+                (doto (java.io.File/createTempFile "vis-extension-wait-" ".ready") (.delete))
 
-            entered
-            (promise)
+                entered
+                (promise)
 
-            released
-            (promise)
+                released
+                (promise)
 
-            retired
-            (atom false)
+                retired
+                (atom false)
 
-            dispatch
-            python-host/dispatch]
+                dispatch
+                python-host/dispatch]
 
-        (try (worker/trust! key caller true)
-             (worker/install-runtime! key caller)
-             (worker/exec!
-               key
-               caller
-               (str "import threading, vis_runtime\nextension_value = 42\n"
-                    "def wait_for_cancel():\n"
-                    (if native-wait?
-                      ;; A raw `_thread` lock acquire stays in C: the runtime slices
-                      ;; threading's own waits, so those unwind on an interrupt.
-                      (str "    import _thread\n    gate = threading.Lock()\n"
-                           "    waiter = _thread.allocate_lock()\n    waiter.acquire()\n"
-                           "    def notify_waiting():\n        with gate:\n"
-                           "            with open("
-                           (pr-str (str marker))
-                           ", 'w') as ready:\n"
-                           "                ready.write('waiting')\n" "    gate.acquire()\n"
-                           "    threading.Thread(target=notify_waiting, daemon=True).start()\n"
-                           "    gate.release()\n    waiter.acquire(timeout=30)\n")
-                      "    return vis_runtime.host_call('extension-blocked', '{}')\n")))
-             (let [process ^Process (:process (get @(var-get #'worker/workers) key))]
-               (with-redefs [python-host/dispatch (fn [host-session tool payload]
-                                                    (case tool
-                                                      "extension-wait"
-                                                      (worker/run key caller "wait_for_cancel()")
+            (try
+              (worker/trust! key caller true)
+              (worker/install-runtime! key caller)
+              (worker/exec!
+                key
+                caller
+                (str "import threading, vis_runtime\nextension_value = 42\n"
+                     "def wait_for_cancel():\n"
+                     (if native-wait?
+                       ;; A raw `_thread` lock acquire stays in C: the runtime slices
+                       ;; threading's own waits, so those unwind on an interrupt.
+                       (str "    import _thread\n    gate = threading.Lock()\n"
+                            "    waiter = _thread.allocate_lock()\n    waiter.acquire()\n"
+                            "    def notify_waiting():\n        with gate:\n"
+                            "            with open("
+                            (pr-str (str marker))
+                            ", 'w') as ready:\n"
+                            "                ready.write('waiting')\n" "    gate.acquire()\n"
+                            "    threading.Thread(target=notify_waiting, daemon=True).start()\n"
+                            "    gate.release()\n    waiter.acquire(timeout=30)\n")
+                       "    return vis_runtime.host_call('extension-blocked', '{}')\n")))
+              (let [process ^Process (:process (get @(var-get #'worker/workers) key))]
+                (with-redefs [python-host/dispatch (fn [host-session tool payload]
+                                                     (case tool
+                                                       "extension-wait"
+                                                       (worker/run key caller "wait_for_cancel()")
 
-                                                      "extension-blocked"
-                                                      (do (deliver entered true)
-                                                          (deref released 30000 "null"))
+                                                       "extension-blocked"
+                                                       (do (deliver entered true)
+                                                           (deref released 30000 "null"))
 
-                                                      (dispatch host-session tool payload)))]
-                 (let [execution (future (env/run-python-block
-                                           session
-                                           (str "import vis_runtime\nworker_value = 41\n"
-                                                "vis_runtime.host_call('extension-wait', '{}')")))]
-                   (try (expect (if native-wait?
-                                  (loop [remaining 500]
-                                    (cond (.exists marker) true
-                                          (or (zero? remaining) (realized? execution)) false
-                                          :else (do (Thread/sleep 10) (recur (dec remaining)))))
-                                  (true? (deref entered 5000 false))))
-                        (expect (true? (#'python-exec/interrupt-block!
-                                        session
-                                        execution
-                                        {:python-context-retired-atom retired})))
-                        (expect (not= ::parked (deref execution 5000 ::parked)))
-                        (if native-wait?
-                          (do
-                            ;; The caller can finish while its trusted extension remains in C.
-                            (expect (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS))
-                            (expect (true? @retired))
-                            (expect (false? (env/context-enterable? {:python-context session}))))
-                          (do
-                            ;; New work may outlive the previous interrupt's unwind deadline.
-                            (expect (= "41\n"
-                                       (:stdout
-                                         (env/run-python-block
-                                           session
-                                           "import time\ntime.sleep(3)\nprint(worker_value)"))))
-                            (expect (= "42" (worker/eval-str key caller "extension_value")))
-                            (expect (identical? process
-                                                (:process (get @(var-get #'worker/workers) key))))
-                            (expect (.isAlive process))
-                            (expect (false? @retired))
-                            (expect (env/context-enterable? {:python-context session}))))
-                        (finally (future-cancel execution))))))
-             (finally (deliver released "null") (worker/stop-worker! key) (.delete marker)))))))
+                                                       (dispatch host-session tool payload)))]
+                  (let [execution (future (env/run-python-block
+                                            session
+                                            (str "import vis_runtime\nworker_value = 41\n"
+                                                 "vis_runtime.host_call('extension-wait', '{}')")))]
+                    (try (expect (if native-wait?
+                                   (loop [remaining 500]
+                                     (cond (.exists marker) true
+                                           (or (zero? remaining) (realized? execution)) false
+                                           :else (do (Thread/sleep 10) (recur (dec remaining)))))
+                                   (true? (deref entered 5000 false))))
+                         (expect (true? (#'python-exec/interrupt-block!
+                                         session
+                                         execution
+                                         {:python-context-retired-atom retired})))
+                         (expect (not= ::parked (deref execution 5000 ::parked)))
+                         (if native-wait?
+                           (do
+                             ;; The caller can finish while its trusted extension remains in C.
+                             (expect (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS))
+                             (expect (true? @retired))
+                             (expect (false? (env/context-enterable? {:python-context session}))))
+                           (do
+                             ;; New work may outlive the previous interrupt's unwind deadline.
+                             (expect (= "41\n"
+                                        (:stdout
+                                          (env/run-python-block
+                                            session
+                                            "import time\ntime.sleep(0.6)\nprint(worker_value)"))))
+                             (expect (= "42" (worker/eval-str key caller "extension_value")))
+                             (expect (identical? process
+                                                 (:process (get @(var-get #'worker/workers) key))))
+                             (expect (.isAlive process))
+                             (expect (false? @retired))
+                             (expect (env/context-enterable? {:python-context session}))))
+                         (finally (future-cancel execution))))))
+              (finally (deliver released "null") (worker/stop-worker! key) (.delete marker)))))))))
 
 (defdescribe trusted-extension-cancellation-test
              (it "retires a trusted extension stuck in C after its sandbox caller unwinds"
@@ -1982,13 +1986,13 @@ print(worker_value)"))))
               prestart
               (future (worker/prestart-worker!
                         key
-                        "import json, time\ntime.sleep(2)\njson.__vis_prestart_warm__ = True\n"))]
+                        "import json, time\ntime.sleep(0.3)\njson.__vis_prestart_warm__ = True\n"))]
 
           (try (loop [n 0]
                  (when (and (< n 1000) (not (worker/worker-live? key)))
                    (Thread/sleep 10)
                    (recur (inc n))))
-               (expect (<= 2000 (quot (- (System/nanoTime) start) 1000000)))
+               (expect (<= 300 (quot (- (System/nanoTime) start) 1000000)))
                @prestart
                (worker/trust! key caller true)
                (worker/install-runtime! key caller)

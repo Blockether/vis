@@ -55,7 +55,8 @@
     [com.blockether.vis.contract.gateway :as gateway-contract]
     [com.blockether.vis.internal.paths :as paths]
     [taoensso.nippy :as nippy]
-    [lazytest.core :refer [defdescribe expect it]])
+    [babashka.fs :as fs]
+    [lazytest.core :refer [around around-each defdescribe expect it set-ns-context!]])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.io ByteArrayOutputStream]
            [java.net InetSocketAddress]
@@ -74,43 +75,46 @@
   [value]
   (json/write-json-str value :escape-slash false))
 
-(defdescribe bootstrap-python-test
-             ;; Regression, td-f2732d: JSON slash escaping made the embedded API invalid Python.
-             (it "embeds division operators without JSON-only slash escapes"
-                 (expect (str/includes? pyx/bootstrap-python " / 1000"))
-                 (expect (not (str/includes? pyx/bootstrap-python "\\/")))))
-
-(defonce ^:private temp-dirs
-  ;; Every throwaway extension directory this JVM makes, removed when it exits.
-  ;; `target/` used to keep one tree per test RUN, forever.
+(defonce ^:private exit-dirs
+  ;; Directories that no single test owns, removed when this JVM exits.
   (let [dirs (atom [])]
     (.addShutdownHook (Runtime/getRuntime)
                       (Thread. ^Runnable
                                (fn []
-                                 (doseq [^java.io.File dir @dirs
-                                         ^java.io.File entry (reverse (file-seq dir))]
-
-                                   (.delete entry)))))
+                                 (doseq [dir @dirs]
+                                   (fs/delete-tree dir)))))
     dirs))
 
-(defn- temp-dir
-  "A throwaway extension directory INSIDE the working directory, which is what
-   the sandbox confines the interpreter to.
+(def ^:private ^:dynamic *test-dirs*
+  "The directories that the running test made. The test deletes them when it ends."
+  nil)
+
+(set-ns-context! [(around-each [f]
+                               (binding [*test-dirs* (atom [])]
+                                 (try (f)
+                                      (finally (doseq [dir @*test-dirs*]
+                                                 (fs/delete-tree dir))))))])
+
+(defn- new-temp-dir
+  "A new directory INSIDE the working directory, which is what the sandbox
+   confines the interpreter to.
 
    The embedded interpreter's filesystem policy is PROCESS state, not session
    state: once any session is confined, the system temp folder is outside every
    later session's roots too, so an extension written there is one the loader
    genuinely may not read."
   ^java.io.File []
-  (let [target
-        (doto (java.io.File. "target") .mkdirs)
+  (let [target (doto (java.io.File. "target") .mkdirs)]
+    (.getAbsoluteFile (.toFile (Files/createTempDirectory (.toPath target)
+                                                          "vis-pyext-test"
+                                                          (make-array FileAttribute 0))))))
 
-        dir
-        (.getAbsoluteFile (.toFile (Files/createTempDirectory (.toPath target)
-                                                              "vis-pyext-test"
-                                                              (make-array FileAttribute 0))))]
-
-    (swap! temp-dirs conj dir)
+(defn- temp-dir
+  "A throwaway extension directory. The running test deletes it when it ends,
+   so a killed run leaves at most the directories of one test in `target/`."
+  ^java.io.File []
+  (let [dir (new-temp-dir)]
+    (swap! (or *test-dirs* exit-dirs) conj dir)
     dir))
 
 (defn- write-ext!
@@ -125,14 +129,23 @@
   ;; :result :fingerprint}. nil when nothing is loaded.
   (atom nil))
 
+(defonce ^:private live-dir
+  ;; The directory of the last load. It stays until the next load replaces it.
+  (atom nil))
+
 (defn- load-sources!
   "Write `sources` to a fresh temp dir and load them, replacing whatever was
    loaded before. Returns the new `live-load` value."
   [sources]
-  (let [ext-dir (temp-dir)]
+  (let [ext-dir (new-temp-dir)]
     (doseq [[fname src] sources]
       (write-ext! ext-dir fname src))
     (let [result (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})]
+      ;; The cached load outlives its test, so the next load deletes it.
+      (some-> (reset-vals! live-dir ext-dir)
+              first
+              fs/delete-tree)
+      (swap! exit-dirs conj ext-dir)
       (reset! live-load
         {:sources sources :ext-dir ext-dir :result result :fingerprint @@#'pyx/last-fingerprint}))))
 
@@ -5087,7 +5100,8 @@ vis.register_extension(vis.Extension(
   (it
     "downloads a wheel from vis.yml's index and calls the tool in its trusted worker"
     (doseq [mode
-            [:pip :uv-default :uv-index :uv-path]
+            ;; Vis gives the index stanza to uv unchanged, so one named-index mode is enough.
+            [:pip :uv-index :uv-path]
 
             :let [uv?
                   (not= :pip mode)
@@ -5231,18 +5245,13 @@ vis.register_extension(vis.Extension(
                             "[project]\nname = 'fixture-project'\nversion = '0.0.1'\n"
                             "requires-python = '>=3.12'\n"
                             "dependencies = ['vis-einmal-dependency-fixture==0.0.1']\n"
-                            (cond
-                              local?
+                            (if local?
                               "[tool.uv.sources]\nvis-einmal-dependency-fixture = {path = '../dependency', editable = true}\n"
-                              (= :uv-index mode)
                               (str
                                 "[tool.uv.sources]\nvis-einmal-dependency-fixture = {index = 'fixture'}\n"
                                 "[[tool.uv.index]]\nname = 'fixture'\nurl = '"
                                 (get-in (config/load-config-raw) ["python" "index_url"])
-                                "'\nexplicit = true\n")
-                              :else (str "[[tool.uv.index]]\nurl = '"
-                                         (get-in (config/load-config-raw) ["python" "index_url"])
-                                         "'\ndefault = true\n"))))
+                                "'\nexplicit = true\n"))))
                         (let [p (.start
                                   (doto (ProcessBuilder.
                                           ^java.util.List
@@ -5372,7 +5381,8 @@ vis.register_extension(vis.Extension(
           (let [add (symbol-fn ext 'mx_add)]
             (expect (= 3 (get-in (add 1 2) [:result "sum"])))))))))
 
-;; Python-level self-tests — test_*.py / *_test.py run through the pytest shim
+;; Python-level self-tests — test_*.py / *_test.py run through the pytest shim.
+;; One shim run: each pytest start imports pytest again and costs about 2 s.
 (defdescribe
   python-self-test-test
   (it
@@ -5403,20 +5413,37 @@ vis.register_extension(vis.Extension(
                   "foo_test.py"
                   (str "def test_pass():\n    assert 1 + 1 == 2\n"
                        "def test_fail():\n    assert 2 + 2 == 5\n"))
+      ;; the failure detail literally says "9 passed" — a stdout regex would
+      ;; miscount it as nine passes; the shim's structured outcomes cannot lie
+      (write-ext! ext-dir
+                  "liar_test.py"
+                  "def test_only_fail():\n    assert False, \"9 passed items were expected\"\n")
       (write-ext! ext-dir
                   ".venv/lib/test_not_collected.py"
                   "raise AssertionError('dependency tests must not be collected')\n")
       (binding [extension/*current-environment* {:db-info store}]
-        (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})]
-               (expect (= 2 (:files res)))
-               (expect (= 2 (:passed res)))
-               (expect (= 1 (:failed res)))
+        ;; `run-and-report` is the /test code path: it runs the tests and renders them.
+        (try (let [{res :result report :report} (#'runner/run-and-report {:dirs [(str ext-dir)]})
+                   by-name
+                   (into {} (map (juxt #(last (str/split (:file %) #"/")) :ok?)) (:results res))
+                   by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
+
+               (expect (= 3 (:files res)))
+               (expect (= 2 (:passed res)) (pr-str res))
+               (expect (= 2 (:failed res)))
                (expect (false? (:ok? res)))
-               (let [by-name
-                     (into {} (map (juxt #(last (str/split (:file %) #"/")) :ok?)) (:results res))]
-                 ;; the package test resolves `from mypkg.core import add`
-                 (expect (true? (get by-name "test_core.py")))
-                 (expect (false? (get by-name "foo_test.py")))))
+               ;; the package test resolves `from mypkg.core import add`
+               (expect (= {"test_core.py" true "foo_test.py" false "liar_test.py" false} by-name))
+               ;; pytest's own nodeid: the file it was collected from, then
+               ;; the test - never a bare function name.
+               (expect (= 4 (count (:tests res))))
+               (expect (= :passed (get by-id "foo_test.py::test_pass")) (pr-str by-id))
+               (expect (= :failed (get by-id "foo_test.py::test_fail")))
+               (expect (= :failed (get by-id "liar_test.py::test_only_fail")))
+               ;; every record carries the file it came from
+               (expect (every? :file (:tests res)))
+               ;; the report lists each test, not only each file
+               (expect (every? #(str/includes? report %) (keys by-id)) report))
              (finally (ps/db-dispose-connection! store)))))))
 
 (defdescribe
@@ -5470,81 +5497,6 @@ vis.register_extension(vis.Extension(
                (expect (= 3 (count found))))
              (finally (doseq [f (reverse (file-seq dir))]
                         (io/delete-file f)))))))
-
-;; Structured counts — outcomes come from the shim, never scraped from stdout
-(defdescribe
-  structured-counts-test
-  (it "a failure whose assertion message contains '9 passed' must NOT inflate the pass count"
-      (let [ext-dir
-            (temp-dir)
-
-            store
-            (ps/db-create-connection! :memory)]
-
-        ;; the failure detail literally says \"9 passed\" — a stdout regex would
-        ;; miscount it as nine passes; the shim's structured outcomes cannot lie
-        (write-ext! ext-dir
-                    "liar_test.py"
-                    "def test_only_fail():\n    assert False, \"9 passed items were expected\"\n")
-        (binding [extension/*current-environment* {:db-info store}]
-          (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})]
-                 (expect (= 1 (:files res)))
-                 (expect (= 1 (:failed res)))
-                 (expect (= 0 (get res :passed 0)))
-                 (expect (false? (:ok? res))))
-               (finally (ps/db-dispose-connection! store)))))))
-
-(defdescribe run-and-report-test
-             (it "the /test code path runs tests and renders a report"
-                 (let [ext-dir
-                       (temp-dir)
-
-                       store
-                       (ps/db-create-connection! :memory)]
-
-                   (write-ext! ext-dir
-                               "foo_test.py"
-                               (str "def test_pass():\n    assert 1 + 1 == 2\n"
-                                    "def test_fail():\n    assert 2 + 2 == 5\n"))
-                   (binding [extension/*current-environment* {:db-info store}]
-                     (try (let [{:keys [result report]} (#'runner/run-and-report
-                                                         {:dirs [(str ext-dir)]})]
-                            (expect (= 1 (:files result)))
-                            (expect (false? (:ok? result)))
-                            (expect (str/includes? report "1 passed"))
-                            (expect (str/includes? report "1 failed"))
-                            (expect (str/includes? report "foo_test.py")))
-                          (finally (ps/db-dispose-connection! store)))))))
-
-;; Per-test granularity — the runner reports EACH test, not just a file verdict
-(defdescribe
-  per-test-granularity-test
-  (it "reports each test's nodeid + outcome (tagged with its file), not just a per-file aggregate"
-      (let [ext-dir
-            (temp-dir)
-
-            store
-            (ps/db-create-connection! :memory)]
-
-        (write-ext! ext-dir
-                    "foo_test.py"
-                    (str "def test_alpha():\n    assert 1 + 1 == 2\n"
-                         "def test_beta():\n    assert 2 + 2 == 5\n"))
-        (binding [extension/*current-environment* {:db-info store}]
-          (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})
-                     by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
-
-                 (expect (= 2 (count (:tests res))))
-                 ;; pytest's own nodeid: the file it was collected from, then
-                 ;; the test - never a bare function name.
-                 (expect (= :passed (get by-id "foo_test.py::test_alpha")))
-                 (expect (= :failed (get by-id "foo_test.py::test_beta")))
-                 ;; every record carries the file it came from
-                 (expect (every? :file (:tests res)))
-                 (let [report (#'runner/render-test-report res)]
-                   (expect (str/includes? report "test_alpha"))
-                   (expect (str/includes? report "test_beta"))))
-               (finally (ps/db-dispose-connection! store)))))))
 
 ;; Providers — a `vis.Provider(...)` registers a first-class provider descriptor
 (def ^:private provider-py
@@ -6178,27 +6130,41 @@ vis.register_extension(vis.Extension(
           ;; the surrounding form, so a `with-redefs` wrapping the `it`s
           ;; would already be unwound.
           (with-redefs [pyx/session-network-policy (constantly pol)]
-            (pyx/net-probe-report method target (or headers-json "") (or body ""))))]
+            (json/read-json
+              (pyx/net-probe-report method target (or headers-json "") (or body "")))))
+
+        verdicts
+        (fn [r]
+          {"tier1" (get r "tier1")
+           "filters" (mapv #(select-keys % ["owner" "allow" "reason"]) (get r "filters"))})
+
+        owner
+        (fn [k]
+          (str k))]
 
     (it "allows a GET to an allowed host and sees a registered gateway filter"
         (try (egress/register-network-filter! ::npr
                                               (fn [_ctx]
                                                 nil))
-             (let [s (report "GET" "https://example.com/data")]
-               (expect (re-find #"\"allow\":true" s)) ; tier1 allow
-               (expect (re-find #"npr" s))            ; the registered filter shows up
-               (expect (re-find #"\"phase\":\"http\"" s)))
+             (let [r (report "GET" "https://example.com/data")]
+               (expect (= {"tier1" {"allow" true "reason" nil}
+                           "filters" [{"owner" (owner ::npr) "allow" true "reason" nil}]}
+                          (update (verdicts r)
+                                  "filters"
+                                  (partial filterv #(= (owner ::npr) (get % "owner")))))
+                       (pr-str r))
+               (expect (= {"phase" "http" "method" "GET" "host" "example.com" "path" "/data"}
+                          (select-keys (get r "ctx") ["phase" "method" "host" "path"]))))
              (finally (egress/unregister-network-filters-for-owner! ::npr))))
     (it "denies POST at tier-1 for a read-only host"
-        (let [s (report "POST" "https://example.com/data")]
-          (expect (re-find #"\"allow\":false" s))
-          (expect (re-find #"not allowed for host example.com" s))))
+        (expect (= {"allow" false "reason" "method POST /data not allowed for host example.com"}
+                   (get (report "POST" "https://example.com/data") "tier1"))))
     (it "denies a host outside the allow-list"
-        (let [s (report nil "https://google.com/")]
-          (expect (re-find #"host not permitted: google.com" s))))
+        (expect (= {"allow" false "reason" "host not permitted: google.com"}
+                   (get (report nil "https://google.com/") "tier1"))))
     (it "preserves the query string in the probed ctx path"
-        (let [s (report "GET" "https://example.com/get?token=abc")]
-          (expect (re-find #"\?token=abc" s))))
+        (expect (= "/get?token=abc"
+                   (get-in (report "GET" "https://example.com/get?token=abc") ["ctx" "path"]))))
     (it "feeds headers + body into the ctx so a filter can simulate rules on them"
         (try (egress/register-network-filter!
                ::npr-hb
@@ -6208,19 +6174,32 @@ vis.register_extension(vis.Extension(
                        (and (:body ctx) (clojure.string/includes? (:body ctx) "SECRET"))
                        {:allow? false :reason "secret in body"}
                        :else nil)))
-             (let [s (report "GET" "https://example.com/data"
-                             "{\"authorization\":\"Bearer leaked\"}" "")]
-               (expect (re-find #"\"authorization\":\"Bearer leaked\"" s)) ; echoed back
-               (expect (re-find #"token exfil in header" s)))
-             (let [s (report "GET" "https://example.com/data" "{}" "has a SECRET inside")]
-               (expect (re-find #"\"body\":\"has a SECRET inside\"" s))
-               (expect (re-find #"secret in body" s)))
-             (let [s (report "GET" "https://example.com/data" "{}" "clean")]
-               (expect (re-find #"\"allow\":true" s)))
+             (let [verdict
+                   (fn [r]
+                     (some #(when (= (owner ::npr-hb) (get % "owner"))
+                              (select-keys % ["allow" "reason"]))
+                           (get r "filters")))
+
+                   leaked
+                   (report "GET" "https://example.com/data"
+                           "{\"authorization\":\"Bearer leaked\"}" "")
+
+                   secret
+                   (report "GET" "https://example.com/data" "{}" "has a SECRET inside")
+
+                   clean
+                   (report "GET" "https://example.com/data" "{}" "clean")]
+
+               (expect (= {"authorization" "Bearer leaked"} (get-in leaked ["ctx" "headers"])))
+               (expect (= {"allow" false "reason" "token exfil in header"} (verdict leaked)))
+               (expect (= "has a SECRET inside" (get-in secret ["ctx" "body"])))
+               (expect (= {"allow" false "reason" "secret in body"} (verdict secret)))
+               (expect (= {"allow" true "reason" nil} (verdict clean))))
              (finally (egress/unregister-network-filters-for-owner! ::npr-hb))))
     (it "reports a parse error for a blank target"
-        (let [s (report nil "   ")]
-          (expect (re-find #"\"error\"" s))))))
+        (let [r (report nil "   ")]
+          (expect (= ["error"] (keys r)) (pr-str r))
+          (expect (string? (get r "error")))))))
 
 ;; /reload re-hydrates feature toggles
 (defdescribe
@@ -9740,145 +9719,237 @@ vis.register_extension(vis.Extension(
              (f ctx env)
              (finally (ep/dispose-python-context! ctx)))))))
 
+(def ^:private ^:dynamic *watchdog*
+  "The `{:ctx :env}` that the tests of one watchdog describe share."
+  nil)
+
+(def ^:private shared-watchdog
+  "One sandbox and extension worker for a whole describe. A test that retires the
+   sandbox or stops the worker makes its own with `with-watchdog-extension`."
+  (around [f]
+          (binding [*test-dirs* (atom [])]
+            (try (with-watchdog-extension (fn [ctx env]
+                                            (binding [*watchdog* {:ctx ctx :env env}]
+                                              (f))))
+                 (finally (doseq [dir @*test-dirs*]
+                            (fs/delete-tree dir)))))))
+
+(def ^:private watchdog-budget-ms
+  "The execution budget of a watchdog block. Each sleep in a block stays below it,
+   and two sleeps together, or one extension call, go above it."
+  600)
+
 (defn- watchdog-block
   [ctx env code & {:keys [tool-event-fn]}]
-  (with-redefs [rt/MIN_EVAL_TIMEOUT_MS 1000]
-    (binding [rt/*eval-timeout-ms* 1000]
+  (with-redefs [rt/MIN_EVAL_TIMEOUT_MS watchdog-budget-ms]
+    (binding [rt/*eval-timeout-ms* watchdog-budget-ms]
       ;; A source-code timeout heuristic must not hide this regression.
-      (expect (= 1000 (rt/eval-timeout-ms-for-code 1000 code)))
+      (expect (= watchdog-budget-ms (rt/eval-timeout-ms-for-code watchdog-budget-ms code)))
       (#'python-exec/run-python-code ctx code :env env :tool-event-fn tool-event-fn))))
+
+(defn- probe-count
+  "The number of observations that the shared probe has returned until now."
+  [ctx env]
+  (let [result (watchdog-block ctx env "print((await watchdog_probe.poll(0)).count)\n")]
+    (expect (nil? (:error result)) (pr-str result))
+    (parse-long (str/trim (:stdout result)))))
 
 (defdescribe
   python-extension-execution-budget-test
   ;; Issue #187 and session 633cdc58-89fe-4b3d-88ec-caa624d118ed:
   ;; reproduce silent calls and helpers, never replay historical deployments.
-  (it "lets a silent extension outlive execution and grants a full budget on return"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result (watchdog-block ctx
-                                       env
-                                       (str "import time\n"
-                                            "time.sleep(0.65)\n"
-                                            "answer = await watchdog_probe.poll(1.3)\n"
-                                            "time.sleep(0.65)\n"
-                                            "print(answer.count, answer.timed_out, 'resumed')\n"))]
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (not (:timeout? result)))
-            (expect (str/includes? (or (:stdout result) "") "2 False resumed"))
-            (expect (not (worker/retired? ctx)))))))
+  {:context [shared-watchdog]}
+  (doseq [[method label]
+          [["poll" "lets a silent extension outlive execution and grants a full budget on return"]
+           ["poll_async" "parks an asynchronous extension method through its await"]]]
+    (it label
+        (let [{:keys [ctx env]} *watchdog*
+              base (probe-count ctx env)
+              result (watchdog-block ctx
+                                     env
+                                     (str "import time\n"
+                                          "time.sleep(0.35)\n"
+                                          "answer = await watchdog_probe."
+                                          method
+                                          "(0.8)\n"
+                                          "time.sleep(0.35)\n"
+                                          "print(answer.count, answer.timed_out, 'resumed')\n"))]
+
+          (expect (nil? (:error result)) (pr-str result))
+          (expect (not (:timeout? result)))
+          (expect (= (str (inc base) " False resumed") (str/trim (or (:stdout result) ""))))
+          (expect (not (worker/retired? ctx))))))
   (it "resolves a previous-block helper and computed duration without replaying calls"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [defined
-                (watchdog-block ctx
-                                env
-                                (str "async def wait_release_progress():\n"
-                                     "    duration = sum([0.7, 0.6])\n"
-                                     "    return await watchdog_probe.poll(duration)\n"))
+      (let [{:keys [ctx env]}
+            *watchdog*
 
-                result
-                (watchdog-block ctx
-                                env
-                                (str "import time\n" "for _ in range(3):\n"
-                                     "    time.sleep(0.6)\n"
-                                     "    observation = await wait_release_progress()\n"
-                                     "    print(observation.count)\n" "time.sleep(0.6)\n"))]
+            base
+            (probe-count ctx env)
 
-            (expect (nil? (:error defined)) (pr-str defined))
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (= "2\n3\n4" (str/trim (or (:stdout result) ""))))))))
-  (it "keeps overlapping calls parked until the last one finishes"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result
-                (watchdog-block
-                  ctx
-                  env
-                  (str
-                    "import time\n"
-                    "time.sleep(0.6)\n"
-                    "answers = await gather(watchdog_probe.poll(0.2), watchdog_probe.poll(1.6))\n"
-                    "time.sleep(0.6)\n" "print(sorted(answer.count for answer in answers))\n"))]
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (str/includes? (or (:stdout result) "") "[2, 3]"))))))
-  (it "restores the budget after a handled extension exception"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result (watchdog-block ctx
-                                       env
-                                       (str "import time\n" "time.sleep(0.6)\n"
-                                            "try:\n" "    await watchdog_probe.fail(1.3)\n"
-                                            "except Exception:\n" "    print('handled')\n"
-                                            "time.sleep(0.6)\n" "print('continued')\n"))]
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (str/includes? (or (:stdout result) "") "handled\ncontinued"))))))
+            defined
+            (watchdog-block ctx
+                            env
+                            (str "async def wait_release_progress():\n"
+                                 "    duration = sum([0.4, 0.4])\n"
+                                 "    return await watchdog_probe.poll(duration)\n"))
+
+            result
+            (watchdog-block ctx
+                            env
+                            (str "import time\n" "for _ in range(3):\n"
+                                 "    time.sleep(0.35)\n"
+                                 "    observation = await wait_release_progress()\n"
+                                 "    print(observation.count)\n" "time.sleep(0.35)\n"))]
+
+        (expect (nil? (:error defined)) (pr-str defined))
+        (expect (nil? (:error result)) (pr-str result))
+        (expect (= (str/join "\n" (map #(+ base %) [1 2 3])) (str/trim (or (:stdout result) ""))))))
+  (doseq [[method label] [["poll" "keeps overlapping calls parked until the last one finishes"]
+                          ["poll_async" "keeps concurrent async calls parked until both complete"]]]
+    (it label
+        (let [{:keys [ctx env]} *watchdog*
+              base (probe-count ctx env)
+              result (watchdog-block ctx
+                                     env
+                                     (str "import time\n"
+                                          "time.sleep(0.35)\n"
+                                          "answers = await gather(watchdog_probe."
+                                          method
+                                          "(0.1), watchdog_probe."
+                                          method
+                                          "(0.9))\n"
+                                          "time.sleep(0.35)\n"
+                                          "print(sorted(answer.count for answer in answers))\n"))]
+
+          (expect (nil? (:error result)) (pr-str result))
+          (expect (= (str "[" (+ base 1) ", " (+ base 2) "]")
+                     (str/trim (or (:stdout result) "")))))))
+  (doseq [[method label] [["fail" "restores the budget after a handled extension exception"]
+                          ["fail_async"
+                           "restores execution after an asynchronous extension raises"]]]
+    (it label
+        (let [{:keys [ctx env]} *watchdog*
+              result (watchdog-block ctx
+                                     env
+                                     (str "import time\n"
+                                          "time.sleep(0.35)\n" "try:\n"
+                                          "    await watchdog_probe." method
+                                          "(0.8)\n" "except Exception as exc:\n"
+                                          "    assert 'extension observation failed' in str(exc)\n"
+                                          "    print('handled')\n"
+                                          "time.sleep(0.35)\n" "print('continued')\n"))]
+
+          (expect (nil? (:error result)) (pr-str result))
+          (expect (= "handled\ncontinued" (str/trim (or (:stdout result) "")))))))
   (it "preserves an extension-owned timeout as data and continues the same block"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result (watchdog-block ctx
-                                       env
-                                       (str "import time\n" "time.sleep(0.6)\n"
-                                            "observation = await watchdog_probe.deadline(1.3)\n"
-                                            "assert observation.timed_out\n"
-                                            "time.sleep(0.6)\n"
-                                            "print('operation timed out; execution resumed')\n"))]
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (not (:timeout? result)))
-            (expect (str/includes? (or (:stdout result) "") "execution resumed"))))))
+      (let [{:keys [ctx env]}
+            *watchdog*
+
+            result
+            (watchdog-block ctx
+                            env
+                            (str "import time\n" "time.sleep(0.35)\n"
+                                 "observation = await watchdog_probe.deadline(0.8)\n"
+                                 "assert observation.timed_out\n"
+                                 "time.sleep(0.35)\n"
+                                 "print('operation timed out; execution resumed')\n"))]
+
+        (expect (nil? (:error result)) (pr-str result))
+        (expect (not (:timeout? result)))
+        (expect (str/includes? (or (:stdout result) "") "execution resumed"))))
   ;; Session 3bcf13c4-499f-4033-9523-684d466bbcfa: a regex that never ended ran
   ;; for 20 minutes, because a `shell(` later in the same block raised its limit
   ;; to 30 minutes. A shell call parks the wall, so its text must not widen it.
   (it "stops a CPU-bound block at the base limit when the block also calls shell"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result (watchdog-block
-                         ctx
-                         env
-                         "while True:\n    pass\nsh = await shell('true')\nsh.wait(600)\n")]
-            (expect (true? (:timeout? result)))
-            (expect (not (worker/retired? ctx)))))))
+      (let [{:keys [ctx env]}
+            *watchdog*
+
+            result
+            (watchdog-block ctx
+                            env
+                            "while True:\n    pass\nsh = await shell('true')\nsh.wait(600)\n")]
+
+        (expect (true? (:timeout? result)))
+        (expect (not (worker/retired? ctx)))))
   (it "names a CPU-bound block busy while it runs and ends the notice with the block"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [notices
-                (atom [])
+      (let [{:keys [ctx env]}
+            *watchdog*
 
-                result
-                (with-redefs-fn {#'python-exec/BUSY_NOTICE_MS 200 #'python-exec/BUSY_POLL_MS 100}
-                  #(watchdog-block ctx
-                                   (assoc env
-                                     :python/on-busy (fn [n]
-                                                       (swap! notices conj n)))
-                                   (str "import time\n"
-                                        "t = time.time()\n" "while time.time() - t < 0.8:\n"
-                                        "    pass\n" "print('done')\n")))
+            notices
+            (atom [])
 
-                busy
-                (filterv seq @notices)]
+            result
+            (with-redefs-fn {#'python-exec/BUSY_NOTICE_MS 200 #'python-exec/BUSY_POLL_MS 100}
+              #(watchdog-block ctx
+                               (assoc env
+                                 :python/on-busy (fn [n]
+                                                   (swap! notices conj n)))
+                               (str "import time\n"
+                                    "t = time.time()\n" "while time.time() - t < 0.4:\n"
+                                    "    pass\n" "print('done')\n")))
 
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (seq busy) (pr-str @notices))
-            (expect (every? #(<= 200 (long (:busy-ms %)) 1000) busy) (pr-str busy))
-            (expect (every? #(<= 0 (long (:deadline-in-ms %)) 800) busy) (pr-str busy))
-            (expect (some #(< 50 (long (:cpu-percent % 0))) busy) (pr-str busy))
-            (expect (= {} (peek @notices)))))))
+            busy
+            (filterv seq @notices)]
+
+        (expect (nil? (:error result)) (pr-str result))
+        (expect (seq busy) (pr-str @notices))
+        (expect (every? #(<= 200 (long (:busy-ms %)) watchdog-budget-ms) busy) (pr-str busy))
+        (expect (every? #(<= 0 (long (:deadline-in-ms %)) (- watchdog-budget-ms 200)) busy)
+                (pr-str busy))
+        (expect (some #(< 50 (long (:cpu-percent % 0))) busy) (pr-str busy))
+        (expect (= {} (peek @notices)))))
   (it "stops runaway Python after a returned extension and preserves the context"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result
-                (watchdog-block ctx env "await watchdog_probe.poll(1.3)\nwhile True:\n    pass\n")
+      (let [{:keys [ctx env]}
+            *watchdog*
 
-                next-result
-                (watchdog-block ctx env "print((await watchdog_probe.poll(0)).count)\n")]
+            base
+            (probe-count ctx env)
 
-            (expect (true? (:timeout? result)))
-            (expect (not (worker/retired? ctx)))
-            (expect (nil? (:error next-result)) (pr-str next-result))
-            (expect (= "3" (str/trim (or (:stdout next-result) "")))))))))
+            result
+            (watchdog-block ctx env "await watchdog_probe.poll(0.8)\nwhile True:\n    pass\n")
+
+            next-result
+            (watchdog-block ctx env "print((await watchdog_probe.poll(0)).count)\n")]
+
+        (expect (true? (:timeout? result)))
+        (expect (not (worker/retired? ctx)))
+        (expect (nil? (:error next-result)) (pr-str next-result))
+        (expect (= (str (+ base 2)) (str/trim (or (:stdout next-result) ""))))))
+  ;; Issue #187: parking the execution clock must not look like a stalled turn.
+  (it "does not classify a silent real extension as a stalled turn"
+      (let [{:keys [ctx env]}
+            *watchdog*
+
+            started
+            (promise)
+
+            checked
+            (promise)
+
+            inspector
+            (future (when (= true (deref started 5000 :timeout))
+                      (Thread/sleep 700)
+                      (deliver checked
+                               (#'gateway-state/turn-stall-decision
+                                (#'gateway-state/advance-turn-stall-state
+                                 {:started? true :first-output-timeout-ms 10 :stall-timeout-ms 10}
+                                 {:phase :tool-start}
+                                 0)
+                                900000))))]
+
+        (try (let [result (watchdog-block ctx
+                                          env
+                                          "print((await watchdog_probe.poll(0.9)).count)\n"
+                                          :tool-event-fn
+                                          #(when (= :start (:phase %)) (deliver started true)))]
+               (expect (nil? (:error result)) (pr-str result))
+               (expect (= false (:tripped? (deref checked 3000 nil)))))
+             (finally (deref inspector 5000 nil))))))
 
 (defdescribe
   python-extension-watchdog-lifecycle-test
   ;; Issue #187: parking the execution clock must not hide cancellation or death.
+  ;; Each test here retires its sandbox or stops its worker, so each makes its own.
   (it "still lets the user cancel an in-flight extension"
       (with-watchdog-extension
         (fn [ctx env]
@@ -9923,107 +9994,73 @@ vis.register_extension(vis.Extension(
                    (expect (some? (:error result)))
                    (expect (not (:timeout? result)))
                    (expect (not (worker/worker-live? (worker/extension-worker-key ctx)))))
-                 (finally (deref stopper 5000 nil)))))))
-  (it "does not classify a silent real extension as a stalled turn"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [started
-                (promise)
-
-                checked
-                (promise)
-
-                inspector
-                (future (when (= true (deref started 5000 :timeout))
-                          (Thread/sleep 1100)
-                          (deliver
-                            checked
-                            (#'gateway-state/turn-stall-decision
-                             (#'gateway-state/advance-turn-stall-state
-                              {:started? true :first-output-timeout-ms 10 :stall-timeout-ms 10}
-                              {:phase :tool-start}
-                              0)
-                             900000))))]
-
-            (try (let [result (watchdog-block ctx
-                                              env
-                                              "print((await watchdog_probe.poll(1.6)).count)\n"
-                                              :tool-event-fn
-                                              #(when (= :start (:phase %)) (deliver started true)))]
-                   (expect (nil? (:error result)) (pr-str result))
-                   (expect (= false (:tripped? (deref checked 3000 nil)))))
-                 (finally (deref inspector 5000 nil))))))))
+                 (finally (deref stopper 5000 nil))))))))
 
 (defdescribe
   python-extension-watchdog-cross-validation-test
   ;; Issue #187: exercise different worker paths and verify a disabled fix is detected.
+  {:context [shared-watchdog]}
   (it "detects the original timeout when dispatch parking is deliberately disabled"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (with-redefs [rt/park-blocking-wall (fn [thunk]
-                                                (thunk))]
-            (let [result (watchdog-block ctx env "await watchdog_probe.poll(1.6)\n")]
-              (expect (true? (:timeout? result)) (pr-str result))
-              (expect (some? (:error result))))))))
-  (it "parks an asynchronous extension method through its await"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result (watchdog-block ctx
-                                       env
-                                       (str "import time\ntime.sleep(0.6)\n"
-                                            "observation = await watchdog_probe.poll_async(1.6)\n"
-                                            "time.sleep(0.6)\nprint(observation.count)\n"))]
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (= "2" (str/trim (or (:stdout result) ""))))))))
+      (let [{:keys [ctx env]} *watchdog*]
+        (with-redefs [rt/park-blocking-wall (fn [thunk]
+                                              (thunk))]
+          (let [result (watchdog-block ctx env "await watchdog_probe.poll(0.9)\n")]
+            (expect (true? (:timeout? result)) (pr-str result))
+            (expect (some? (:error result)))))))
   (it "keeps a sibling call parked when a concurrent operation fails"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [events
-                (atom [])
+      (let [{:keys [ctx env]}
+            *watchdog*
 
-                result
-                (watchdog-block
-                  ctx
-                  env
-                  (str "async def recover():\n" "    try:\n        await watchdog_probe.fail(0.2)\n"
-                       "    except Exception:\n        return 'handled'\n"
-                       "answers = await gather(recover(), watchdog_probe.poll(1.6))\n"
-                       "import time\ntime.sleep(0.6)\n" "print(answers[0], answers[1].count)\n")
-                  :tool-event-fn
-                  #(swap! events conj %))
+            base
+            (probe-count ctx env)
 
-                starts
-                (filter #(= :start (:phase %)) @events)
+            events
+            (atom [])
 
-                terminals
-                (filter #(= :terminal (:phase %)) @events)]
+            result
+            (watchdog-block
+              ctx
+              env
+              (str "async def recover():\n" "    try:\n        await watchdog_probe.fail(0.1)\n"
+                   "    except Exception:\n        return 'handled'\n"
+                   "answers = await gather(recover(), watchdog_probe.poll(0.9))\n"
+                   "import time\ntime.sleep(0.35)\n" "print(answers[0], answers[1].count)\n")
+              :tool-event-fn
+              #(swap! events conj %))
 
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (= "handled 2" (str/trim (or (:stdout result) ""))))
-            (expect (= 2 (count starts)))
-            (expect (= (set (map :invocation-id starts)) (set (map :invocation-id terminals))))))))
+            starts
+            (filter #(= :start (:phase %)) @events)
+
+            terminals
+            (filter #(= :terminal (:phase %)) @events)]
+
+        (expect (nil? (:error result)) (pr-str result))
+        (expect (= (str "handled " (inc base)) (str/trim (or (:stdout result) ""))))
+        (expect (= 2 (count starts)))
+        (expect (= (set (map :invocation-id starts)) (set (map :invocation-id terminals))))))
   (it "restores execution after an operation-owned TimeoutError"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result
-                (watchdog-block ctx
-                                env
-                                (str "import time\ntime.sleep(0.6)\n"
-                                     "try:\n    await watchdog_probe.expire(1.6)\n"
-                                     "except Exception as exc:\n"
-                                     "    assert 'extension observation expired' in str(exc)\n"
-                                     "    print('operation expired')\n"
-                                     "time.sleep(0.6)\nprint('resumed')\n"))
+      (let [{:keys [ctx env]}
+            *watchdog*
 
-                runaway
-                (watchdog-block ctx env "while True:\n    pass\n")]
+            result
+            (watchdog-block
+              ctx
+              env
+              (str "import time\ntime.sleep(0.35)\n" "try:\n    await watchdog_probe.expire(0.9)\n"
+                   "except Exception as exc:\n"
+                   "    assert 'extension observation expired' in str(exc)\n"
+                   "    print('operation expired')\n" "time.sleep(0.35)\nprint('resumed')\n"))
 
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (not (:timeout? result)))
-            (expect (= "operation expired\nresumed" (str/trim (or (:stdout result) ""))))
-            (expect (true? (:timeout? runaway)))
-            (expect (not (worker/retired? ctx)))))))
+            runaway
+            (watchdog-block ctx env "while True:\n    pass\n")]
+
+        (expect (nil? (:error result)) (pr-str result))
+        (expect (not (:timeout? result)))
+        (expect (= "operation expired\nresumed" (str/trim (or (:stdout result) ""))))
+        (expect (true? (:timeout? runaway)))
+        (expect (not (worker/retired? ctx)))))
   (it "retires an uncooperative extension after cancellation instead of leaking work"
+      ;; This test retires the sandbox, so it makes its own.
       (with-watchdog-extension
         (fn [ctx env]
           (let [token
@@ -10055,64 +10092,41 @@ vis.register_extension(vis.Extension(
                                    (zero? remaining) false
                                    :else (do (Thread/sleep 50) (recur (dec remaining)))))))
                  (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil)))))))
-  (it "restores the watchdog and context after cancelling a cooperative extension"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [token
-                (cancellation/cancellation-token)
+  (it
+    "restores the watchdog and context after cancelling a cooperative extension"
+    (let [{:keys [ctx env]}
+          *watchdog*
 
-                started
-                (promise)
+          token
+          (cancellation/cancellation-token)
 
-                stopper
-                (future (when (= true (deref started 5000 :timeout))
-                          (Thread/sleep 200)
-                          (cancellation/cancel! token :client-cancel-turn)))]
+          started
+          (promise)
 
-            (try (let [cancelled
-                       (watchdog-block ctx
-                                       (assoc env :cancel-token token)
-                                       "await watchdog_probe.poll_cooperative(30)\n"
-                                       :tool-event-fn
-                                       #(when (= :start (:phase %)) (deliver started true)))
+          stopper
+          (future (when (= true (deref started 5000 :timeout))
+                    (Thread/sleep 200)
+                    (cancellation/cancel! token :client-cancel-turn)))]
 
-                       runaway
-                       (watchdog-block ctx env "while True:\n    pass\n")
+      (try (let [cancelled
+                 (watchdog-block ctx
+                                 (assoc env :cancel-token token)
+                                 "await watchdog_probe.poll_cooperative(30)\n"
+                                 :tool-event-fn
+                                 #(when (= :start (:phase %)) (deliver started true)))
 
-                       resumed
-                       (watchdog-block ctx env "print('context reusable')\n")]
+                 runaway
+                 (watchdog-block ctx env "while True:\n    pass\n")
 
-                   (expect (some? (:error cancelled)))
-                   (expect (not (:timeout? cancelled)))
-                   (expect (true? (:timeout? runaway)) (pr-str runaway))
-                   (expect (nil? (:error resumed)) (pr-str resumed))
-                   (expect (= "context reusable" (str/trim (or (:stdout resumed) "")))))
-                 (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil)))))))
-  (it "keeps concurrent async calls parked until both complete"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result (watchdog-block ctx
-                                       env
-                                       (str
-                                         "answers = await gather(watchdog_probe.poll_async(0.2), "
-                                         "watchdog_probe.poll_async(1.6))\n"
-                                         "import time\ntime.sleep(0.6)\n"
-                                         "print(sorted(answer.count for answer in answers))\n"))]
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (= "[2, 3]" (str/trim (or (:stdout result) ""))))))))
-  (it "restores execution after an asynchronous extension raises"
-      (with-watchdog-extension
-        (fn [ctx env]
-          (let [result (watchdog-block
-                         ctx
-                         env
-                         (str "import time\ntime.sleep(0.6)\n"
-                              "try:\n    await watchdog_probe.fail_async(1.6)\n"
-                              "except Exception as exc:\n"
-                              "    assert 'asynchronous extension observation failed' in str(exc)\n"
-                              "    print('handled')\n" "time.sleep(0.6)\nprint('resumed')\n"))]
-            (expect (nil? (:error result)) (pr-str result))
-            (expect (= "handled\nresumed" (str/trim (or (:stdout result) "")))))))))
+                 resumed
+                 (watchdog-block ctx env "print('context reusable')\n")]
+
+             (expect (some? (:error cancelled)))
+             (expect (not (:timeout? cancelled)))
+             (expect (true? (:timeout? runaway)) (pr-str runaway))
+             (expect (nil? (:error resumed)) (pr-str resumed))
+             (expect (= "context reusable" (str/trim (or (:stdout resumed) "")))))
+           (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil))))))
 
 (defdescribe
   python-keyword-transport-test

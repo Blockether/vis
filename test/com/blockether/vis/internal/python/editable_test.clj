@@ -69,8 +69,14 @@
     ;; #194: refreshing an editable root containing cwd evicted the synthetic SDK.
     (#'fixtures/with-shared-packages
      (fn [packages]
-       ;; An editable .pth can cover cwd without containing an installed SDK copy.
-       (spit (io/file packages "cwd.pth") (str (.getCanonicalPath (io/file ".")) "\n"))
+       ;; An editable .pth can cover the home that holds the package site, like a native
+       ;; gateway whose cwd is its home, without an installed SDK copy. The root is this
+       ;; test's small home and not the repository: `package-sources` reads each `.py` of
+       ;; an editable root on every reload, and the repository has many thousands.
+       (spit (io/file packages "cwd.pth")
+             (str (.getCanonicalPath
+                    (.. ^java.io.File packages getParentFile getParentFile getParentFile))
+                  "\n"))
        (#'fixtures/with-fresh-loaded
         {"sdk.py"
          (str

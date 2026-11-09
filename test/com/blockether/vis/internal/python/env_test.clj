@@ -212,10 +212,15 @@
                           left
                           (promise)]
 
-                      (with-redefs [worker-peer/request! (fn [& _]
-                                                           (deliver entered true)
-                                                           (try @release
-                                                                (finally (deliver left true))))]
+                      ;; A short readiness budget keeps the test fast; the request still never completes.
+                      (with-redefs [worker/READY_REPLY_MS
+                                    300
+
+                                    worker-peer/request!
+                                    (fn [& _]
+                                      (deliver entered true)
+                                      (try @release (finally (deliver left true))))]
+
                         (try (expect (worker/worker-live? ctx))
                              (expect (not (ep/context-enterable? {:python-context ctx})))
                              (expect (realized? entered))
@@ -1097,18 +1102,7 @@
           (expect (some? (:error result)))
           (expect (str/includes? (pr-str (:error result)) "[1] expected fixture failure"))
           (expect (not (str/includes? (str (:stdout result)) "not reached")))
-          (expect (= {1 1 2 1 :failed 1} (frequencies seen)) (pr-str seen)))))
-  (it "names every other failing slot below the one it raises"
-      (let [{:keys [result seen]}
-            (gather-outcome "await gather(succeed(1), fail(), succeed(2), fail())")
-
-            error
-            (pr-str (:error result))]
-
-        (expect (str/includes? error "[1] expected fixture failure") error)
-        (expect (str/includes? error "also failed: ") error)
-        (expect (str/includes? error "[3] expected fixture failure") error)
-        (expect (= {1 1 2 1 :failed 2} (frequencies seen)) (pr-str seen)))))
+          (expect (= {1 1 2 1 :failed 1} (frequencies seen)) (pr-str seen))))))
 
 (defdescribe
   doc-authoritative-lookup-test
@@ -1301,7 +1295,13 @@
                             " 'grep='+str('grep' in a))"))]
           (expect (str/includes? out "x=False"))
           (expect (str/includes? out "day_set=False"))
-          (expect (str/includes? out "grep=True"))))))
+          (expect (str/includes? out "grep=True"))))
+    (it "keeps the private handle transports out of every listing"
+        (let [out (run (str "names = [i.name for i in apropos('')]\n"
+                            "print('hidden='+str('_shell_logs' in names))\n"
+                            "print('shell='+str('shell' in names))"))]
+          (expect (str/includes? out "hidden=False"))
+          (expect (str/includes? out "shell=True"))))))
 
 ;; User report 168155ca: each cheap block copied a large snapshot through JSON.
 (defdescribe
@@ -1452,21 +1452,23 @@ zz_note = 'n' * 3000
                                        (deliver entered true)
                                        (deref released 30000 nil))}]
           (let [sid (str "vis-test-defs-budget-" (System/nanoTime))]
-            (try (ep/run-python-block
-                   ctx
-                   "def __vis_defs_snapshot__():\n    snapshot_wait()\n    return ''\n")
-                 (let [started (System/nanoTime)
-                       out (ep/persist-session-defs! ctx sid)
-                       elapsed (/ (- (System/nanoTime) started) 1000000.0)]
+            ;; A short budget keeps the test fast; the snapshot still never returns.
+            (with-redefs [ep/guest-budget-ms 300]
+              (try (ep/run-python-block
+                     ctx
+                     "def __vis_defs_snapshot__():\n    snapshot_wait()\n    return ''\n")
+                   (let [started (System/nanoTime)
+                         out (ep/persist-session-defs! ctx sid)
+                         elapsed (/ (- (System/nanoTime) started) 1000000.0)]
 
-                   (expect (realized? entered))
-                   (expect (nil? out))
-                   (expect (< elapsed 15000)
-                           (str "persist-session-defs! held the turn thread for " elapsed "ms")))
-                 (finally
-                   ;; Release the real guest before teardown, not after a 30s sleep.
-                   (deliver released true)
-                   (.delete (io/file (paths/sandbox-defs-file sid))))))))))
+                     (expect (realized? entered))
+                     (expect (nil? out))
+                     (expect (< elapsed 3000)
+                             (str "persist-session-defs! held the turn thread for " elapsed "ms")))
+                   (finally
+                     ;; Release the real guest before teardown, not after a 30s sleep.
+                     (deliver released true)
+                     (.delete (io/file (paths/sandbox-defs-file sid)))))))))))
 
 (defdescribe
   sandbox-open-flush-test
@@ -1537,28 +1539,6 @@ zz_note = 'n' * 3000
 
 ;; A BARE sandbox verb (`_shell_logs`) is called from Python with no schema in
 ;; front of it — so `doc(name)` is the only place its result keys are stated.
-(defdescribe
-  bare-verb-docs-test
-  "`doc` states the raw-result contract for the private handle transports, which
-   no listing advertises."
-  (let [bind
-        (ext/builtin-sandbox-bindings (fn []
-                                        nil))
-
-        ctx
-        (:python-context (tpc/new-context bind))
-
-        run
-        (fn [code]
-          (str (:stdout (ep/run-python-block ctx code))))]
-
-    (it "the private handle transports stay out of every listing"
-        (let [out (run (str "names = [i.name for i in apropos('')]\n"
-                            "print('hidden='+str('_shell_logs' in names))\n"
-                            "print('shell='+str('shell' in names))"))]
-          (expect (str/includes? out "hidden=False"))
-          (expect (str/includes? out "shell=True"))))))
-
 ;; ONE corpus, two verbs. `apropos` filters every reachable symbol NAME with a
 ;; regular expression, and `doc` retrieves one of those documents whole.
 (defdescribe

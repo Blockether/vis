@@ -125,9 +125,9 @@
           (pr-str (.getCanonicalPath directory))]
 
       (try (certificates! directory)
-           (doseq [strict [nil true false]]
-             (with-redefs [config/load-config-raw
-                           (constantly (if (nil? strict) {} {"python" {"tls_strict" strict}}))]
+           ;; tls-config-contract-test proves that an empty config is strict.
+           (doseq [strict [true false]]
+             (with-redefs [config/load-config-raw (constantly {"python" {"tls_strict" strict}})]
                (let [made (env/create-python-context {}
                                                      (constantly [project])
                                                      {:worker? true
@@ -158,7 +158,7 @@
                               extension-value (callable [(.getCanonicalPath directory)])]
 
                           (expect (= sandbox-value extension-value))
-                          (expect (= (not (false? strict)) (get sandbox-value "strict")))
+                          (expect (= strict (get sandbox-value "strict")))
                           (expect (true? (get sandbox-value "required")))
                           (expect (true? (get sandbox-value "hostname")))
                           (expect (= "ok" (get sandbox-value "valid")))
