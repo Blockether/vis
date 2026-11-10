@@ -214,38 +214,42 @@
             target
             (ps/db-open! :memory)]
 
-        (try (let [sid
-                   (on source #(session! source "Durable talk"))
+        (try
+          (let [sid
+                (on source #(session! source "Durable talk"))
 
-                   data
-                   (on source
-                       (fn []
-                         (doseq [[request status] [["remember ORCA-4127" :success]
-                                                   ["slow" :cancelled] ["broken" :error]
-                                                   ["still running" :running]]]
-                           (turn! source sid request status))
-                         ;; A week-old conversation: its turns are older than any work on the target.
-                         (jdbc/execute! (:datasource source)
-                                        ["UPDATE session_turn_soul SET created_at = 1000"])
-                         (state/export-session sid)))
+                data
+                (on source
+                    (fn []
+                      (doseq [[request status] [["remember ORCA-4127" :success] ["slow" :cancelled]
+                                                ["broken" :error] ["still running" :running]]]
+                        (turn! source sid request status))
+                      ;; A week-old conversation: its turns are older than any work on the target.
+                      (jdbc/execute! (:datasource source)
+                                     ["UPDATE session_turn_soul SET created_at = 1000"])
+                      (state/export-session sid)))
 
-                   fresh
-                   (on target #(session! target "Fresh work"))]
+                fresh
+                (on target #(session! target "Fresh work"))]
 
-               (on target #(turn! target fresh "today" :success))
-               ;; Work of a minute ago: the restore must not share its millisecond.
-               (jdbc/execute! (:datasource target)
-                              ["UPDATE session_turn_soul SET created_at = ?"
-                               (- (System/currentTimeMillis) 60000)])
-               (let [new-id (on target #(get (state/import-session! data {}) "id"))]
-                 (expect (= [:done :interrupted :error :interrupted]
-                            (mapv :status (ps/db-list-session-turns target new-id))))
-                 (expect (= [new-id fresh]
-                            (on target
-                                #(mapv (fn [row]
-                                         (get row "id"))
-                                       (:sessions (state/list-sessions-page {:limit 10}))))))))
-             (finally (ps/db-close! source) (ps/db-close! target)))))
+            (on target #(turn! target fresh "today" :success))
+            ;; Work of a minute ago, its turn and its claim: the restore must not share
+            ;; their millisecond. The first turn sets the claim time.
+            (jdbc/execute! (:datasource target)
+                           ["UPDATE session_turn_soul SET created_at = ?"
+                            (- (System/currentTimeMillis) 60000)])
+            (jdbc/execute! (:datasource target)
+                           ["UPDATE session_soul SET claimed_at = ? WHERE id = ?"
+                            (- (System/currentTimeMillis) 60000) fresh])
+            (let [new-id (on target #(get (state/import-session! data {}) "id"))]
+              (expect (= [:done :interrupted :error :interrupted]
+                         (mapv :status (ps/db-list-session-turns target new-id))))
+              (expect (= [new-id fresh]
+                         (on target
+                             #(mapv (fn [row]
+                                      (get row "id"))
+                                    (:sessions (state/list-sessions-page {:limit 10}))))))))
+          (finally (ps/db-close! source) (ps/db-close! target)))))
     (it
       "exports a restored session again and records the session that it came from"
       (let [stores
