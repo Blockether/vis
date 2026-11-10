@@ -3554,6 +3554,26 @@
             (when (= :openai (:id provider))
               (expect (false? (get-in details [0 "is_reasoning_effort_configurable"])))))))))
 
+;; The pickers of the TUI and the Companion offered wan3.0-video and qwen-image-3.0-pro from a
+;; saved provider: the router row filtered its model details, but not its models.
+(defdescribe router-row-offers-only-chat-models
+             (it "leaves image and video models out of the models of a router row"
+                 (with-redefs [providers/provider-status
+                               (constantly {})
+
+                               providers/provider-limits-safe
+                               (constantly {})]
+
+                   (let [row (wire/->wire (#'providers-api/router-provider-entry
+                                           {:id :custom
+                                            :base-url "https://gateway.example.com/v1"
+                                            :models [{:name "glm-5.3"} {:name "wan3.0-video"}
+                                                     {:name "qwen-image-3.0-pro"}]}
+                                           nil
+                                           nil
+                                           false))]
+                     (expect (= ["glm-5.3"] (get row "models")))))))
+
 ;; Issue #410: machine Sign in for a provider from `<project>/.vis/extensions/`
 ;; answered 404 unknown-provider, and its router row offered an API key.
 (defdescribe

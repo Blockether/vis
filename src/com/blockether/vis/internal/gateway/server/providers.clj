@@ -376,7 +376,8 @@
      ;; How a client signs in: a managed provider with `auth-fn` reads `oauth`.
      :auth-kind (if shared "managed" (name (providers/auth-kind id provider)))
      :base-url (or (config/provider-base-url provider) (:base-url provider))
-     :models (into [] (keep :name) (:models provider))
+     ;; Pickers offer these: an image, video or speech model cannot answer a turn.
+     :models (into [] (comp (keep :name) (filter #(catalog/chat-model? id %))) (:models provider))
      :model-details (mapv (fn [model]
                             {:name (:name model)
                              :is-reasoning-effort-configurable (:reasoning-effort? model)
