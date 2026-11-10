@@ -3064,6 +3064,9 @@
                              :conversation-options recall-options
                              :count-messages-fn message-token-counter})))
 
+                      answered-usage
+                      (atom nil)
+
                       result
                       (try
                         (when (and cancel-atom @cancel-atom)
@@ -3088,6 +3091,7 @@
                            :turn-pricing turn-pricing
                            :on-response
                            (fn [response]
+                             (reset! answered-usage (:api-usage response))
                              (transcript/stamp-served-route! environment response)
                              (when-let [ca (:ctx-atom environment)]
                                (swap! ca transcript/record-provider-input response))
@@ -3182,15 +3186,24 @@
                                                      :recovery-attempts (:attempts
                                                                           @context-recovery-state)})
                                        :msg "Context overflow: no emergency-fold retry scheduled"}))
-                                  (loop-errors/handle-iteration-exception!
-                                    e
-                                    {:iteration iteration
-                                     :messages @effective-messages-atom
-                                     :routing @iteration-routing
-                                     :reasoning-level reasoning-level
-                                     :log-id (:request-id request-context)
-                                     :stream-recovery
-                                     (stream-recovery-outcome e @provider-replay-evidence)}))))))]
+                                  (let [failed (loop-errors/handle-iteration-exception!
+                                                 e
+                                                 {:iteration iteration
+                                                  :messages @effective-messages-atom
+                                                  :routing @iteration-routing
+                                                  :reasoning-level reasoning-level
+                                                  :log-id (:request-id request-context)
+                                                  :stream-recovery (stream-recovery-outcome
+                                                                     e
+                                                                     @provider-replay-evidence)})]
+                                    ;; The provider answered before the block failed: charge that response.
+                                    (cond-> failed
+                                      (and @answered-usage
+                                           (::loop-errors/iteration-error failed)
+                                           (nil? (get-in failed
+                                                         [::loop-errors/iteration-error :data
+                                                          :api-usage])))
+                                      (assoc :api-usage @answered-usage))))))))]
 
                   {:result result :env env}))
               {:extra-body iteration-extra-body :env environment})))]
@@ -3275,6 +3288,8 @@
                                          (:name resolved-model)
                                          (:provider resolved-model))
             _ (swap! accounting-atom accounting/add-cost tc)
+            ;; The turn totals count a failed response too; its time was not measured.
+            _ (swap! accounting-atom accounting/add-usage err-api-usage nil)
             trace-entry {:iteration iteration
                          :error iteration-error-data
                          :final? false

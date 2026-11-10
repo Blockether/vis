@@ -3707,6 +3707,56 @@
                      {:iteration 2 :messages []})]
         (expect (nil? (::loop-errors/fatal-iteration-error result))))))
 
+;; Regression, CTB kv-live-surgery: the provider answered, then the retired worker failed the
+;; block. The error trace entry had no usage, so the turn total lost 50,262 input tokens.
+(defdescribe
+  failed-iteration-keeps-provider-usage-test
+  (it
+    "counts the response of an iteration whose block failed after the provider answered"
+    (let [environment
+          (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+          tid
+          (persistance/db-store-session-turn! (:db-info environment)
+                                              {:parent-session-id (:session-id environment)
+                                               :user-request "usage regression"})
+
+          calls
+          (atom 0)
+
+          thrown?
+          (atom false)]
+
+      (try
+        (let [result
+              (with-redefs [svar/session-capability (constantly nil)
+                            toggles/enabled? (constantly false)
+                            env/refresh-confinement!
+                            (fn [& _]
+                              (when (and (= 1 @calls) (compare-and-set! thrown? false true))
+                                (throw (ex-info "The Python worker was retired"
+                                                {:type :vis/python-worker-retired
+                                                 :worker "k"
+                                                 :reason :exited}))))
+                            svar/ask-code!
+                            (fn [_ _]
+                              (if (= 1 (swap! calls inc))
+                                {:stop-reason :tool-calls
+                                 :tool-calls
+                                 [{:id "call_0" :name "python_execution" :input {:code "print(1)"}}]
+                                 :api-usage {:input-tokens 1000 :output-tokens 10}}
+                                {:stop-reason :end
+                                 :content "done"
+                                 :api-usage {:input-tokens 2000 :output-tokens 20}}))]
+
+                (iteration/iteration-loop environment "usage regression" {:session-turn-id tid}))]
+          (expect (true? @thrown?))
+          (expect (= 2 @calls))
+          (expect (= 1000 (get-in (first (:trace result)) [:usage :tokens "input"]))
+                  (pr-str (first (:trace result))))
+          (expect (= 3000 (get-in result [:tokens "input"])) (pr-str (:tokens result))))
+        (finally (loop-env/dispose-environment! environment))))))
+
 (defdescribe
   retired-python-stops-turn-test
   {:context [short-eval-wall]}

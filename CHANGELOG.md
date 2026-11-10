@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - One-shot runs: a `vis-agent -- "task"` run no longer gets session introspection (`read_session`, `get_session`, `list_sessions` and their prompt section), also when the `introspection` toggle is on. Nobody can refer to a past session in such a run. Before, the toggle alone decided.
+- Usage: a turn now counts the tokens and cost of a response whose code failed after the provider answered, for example when the Python worker stopped. Before, the turn total and the trace lost that response. A failed response that carried its own usage added its cost but not its tokens.
 
 ## [v0.5.9] - 2026-11-10
 
