@@ -499,8 +499,8 @@
    extension's `vis.shell` is wired unconditionally in
    `python-extensions/build-context` and no toggle gates it.
 
-   Reaches Python as the `__vis_process_surface__` global (see
-   `install-process-surface!`), so no `.py` file carries a copy."
+   Reaches Python as the `__vis_process_surface__` global, bound when a context
+   opens, so no `.py` file carries a copy."
   {"ban" (str "`subprocess`, `os.system` and `os.popen` cannot start a process here. "
               "Use the sandbox `shell` verb.")
    "use" (str "Use `sh = await shell('npm test')`. Control the process with `sh.logs()`, "
@@ -1491,6 +1491,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
       (seed-json! session
                   "__vis_docs__"
                   {"shell" shell-off-doc}))
+    ;; The runtime says these sentences from a handle that outlived its tool.
+    (seed-json! session "__vis_process_surface__" PROCESS_SURFACE)
     (perf/timed :sandbox/shims (install-shims! session))
     (perf/timed :sandbox/introspection (install-introspection! session))
     (perf/timed :sandbox/results

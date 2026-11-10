@@ -2421,6 +2421,12 @@
              ;; Discovery still names the tool and says why it is off.
              (expect (= ["shell"] (py c "[i.name for i in apropos('^shell$')]")))
              (expect (str/includes? (str (py c "str(doc('shell'))")) (get ep/PROCESS_SURFACE "off")))
+             ;; A handle that a block still holds says the same sentence.
+             (expect (= (str "RuntimeError: " (get ep/PROCESS_SURFACE "off"))
+                        (py c
+                            (str "try:\n    __VisShell__({'op': 'shell', 'id': 'held'}).wait(1)\n"
+                                 "except Exception as error:\n"
+                                 "    said = f'{type(error).__name__}: {error}'\n" "said"))))
              (finally (toggles/set-enabled! "shell" before)))))
   ;; Regression, issue #106: turning Shell commands back ON from a settings
   ;; dialog left every session that was already open without the `shell` global
