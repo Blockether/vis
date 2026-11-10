@@ -1779,7 +1779,8 @@ Read a field of the handle by key, such as `sh["exit"]`. A field is also an attr
 ### The shell outside Vis
 
 Outside Vis, for example in a plain unit test, the SDK starts the command itself. The handle takes
-the same calls and gives the same answers, with these differences:
+the same calls. For the calls of the contract fixture `shell-handle.json`, it gives the answers
+of Vis, with these differences:
 
 - The child has pipes and no terminal. In Vis, a terminal writes two bytes at the end of a line.
   Outside Vis, the log has one, so the byte offsets of the same output differ.
@@ -1787,6 +1788,12 @@ the same calls and gives the same answers, with these differences:
 - The command runs with `/bin/sh -c`, not with `bash -lc`.
 - `vis.jailed_shell` raises an error, because no jail exists there.
 - No session holds the shell, so `attach` and `keys` are empty and `note` names a local process.
+- The start answer always has the status `running`. In Vis, a command that ends at once can
+  show `exited` there.
+- A value of `env` is a string, a number, a boolean or `None`. A source map, such as
+  `{"keychain": "name"}`, raises an error.
+- Ctrl-D that you type does not end the input of the command. The byte goes into the pipe.
+- An error is a `RuntimeError`, but its class is not `VisToolError`.
 - The keys of the handle have a different order.
 
 ### Toolchain grants

@@ -261,6 +261,27 @@ def test_shell_runs_a_command_and_answers_the_engine_shape():
     assert run.logs()["out"] == "hello"
 
 
+def test_the_start_answer_says_running_also_for_a_command_that_ends_at_once():
+    # Only a later call reads the exit. The engine can answer `exited` here, so the
+    # contract fixture does not hold this answer.
+    run = vis.shell({"command": "true"})
+    time.sleep(0.5)
+    assert (run["status"], run["exit"], run["is_eof"]) == ("running", None, False)
+    assert run.wait(10)["status"] == "exited"
+
+
+def test_a_start_with_a_live_id_starts_no_second_process():
+    # Before, the second start replaced the first run, and nothing could stop it.
+    first = vis.shell({"command": "sleep 30", "id": "live-id-test"})
+    again = vis.shell({"command": "sleep 30", "id": "live-id-test"})
+    try:
+        assert again["already_running"] is True
+        assert again["pid"] == first["pid"]
+    finally:
+        assert first.stop()["status"] == "stopped"
+    assert _outside._RUNS["live-id-test"].process.poll() is not None
+
+
 # A command that read stdin hung for hours: nothing ever wrote to it and nothing closed it.
 def test_shell_stdin_is_empty_unless_the_command_asks_for_input():
     started = time.monotonic()

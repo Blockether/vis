@@ -731,7 +731,9 @@ def _whole(value, what):
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         shown = (
-            json.dumps(value, ensure_ascii=False) if isinstance(value, str) else value
+            json.dumps(value, ensure_ascii=False)
+            if isinstance(value, (str, bool))
+            else value
         )
         raise Refused(f"{what} must be a number, got {shown}.")
     if value != value or value in (float("inf"), float("-inf")):
@@ -807,6 +809,76 @@ def _shell_vocabulary():
     return ", ".join(names[:-1]) + " or " + names[-1]
 
 
+def _given(value):
+    # The engine reads a null, a blank string and an empty collection as no option.
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set, frozenset)):
+        return bool(value)
+    return value is not None
+
+
+def _shell_cwd(cwd):
+    # The directory that a start names, or the refusal of the engine in its words.
+    if cwd is None:
+        return None
+    path = Path(str(cwd)).expanduser()
+    if not path.exists():
+        raise Refused(f"shell cwd '{cwd}' does not exist ({path.resolve()}).")
+    if not path.is_dir():
+        raise Refused(
+            f"shell cwd '{cwd}' is a file, not a directory ({path.resolve()})."
+        )
+    return str(path)
+
+
+def _shell_env(env):
+    # The variables of one start: a literal as its text, None to unset a name. A
+    # source map needs the stores of Vis, so this host refuses it.
+    if env is None:
+        return {}
+    if not isinstance(env, dict):
+        raise Refused(f"env must be a map of NAME → value, got {env!r}")
+    values = {}
+    for name, value in env.items():
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            value = str(value)
+        elif value is not None and not isinstance(value, str):
+            raise Refused(
+                f"env {name}: outside Vis a value is a string, a number, a boolean "
+                f"or None to unset — got {value!r}."
+            )
+        values[str(name).strip()] = value
+    return values
+
+
+def _one_line(text, limit):
+    # A command as one display line of at most `limit` characters.
+    text = " ".join(str(text).split())
+    return text[:limit] + "…" if len(text) > limit else text
+
+
+def _live_run(run_id, command, cwd):
+    # The live shell that a start names again by its id, or None when the id is
+    # free. The same id with other work is refused, as in the engine.
+    run = _RUNS.get(run_id)
+    if run is None or run.is_stopped or run.poll() is not None:
+        return None
+    reason = None
+    if command != run.command:
+        reason = f"it is running a different command ({_one_line(run.command, 60)})"
+    elif cwd and os.path.realpath(cwd) != os.path.realpath(run.cwd):
+        reason = f"it is running in a different directory ({os.path.realpath(run.cwd)})"
+    if reason:
+        raise Refused(
+            f"Shell '{run_id}' is already running and {reason} — nothing was started. "
+            "Stop it first with sh.stop(), or start this command under a different id."
+        )
+    return run
+
+
 def _known_run(opts, op):
     # The run that a handle op names, or the refusal of the engine in its words.
     run_id = opts.get("id")
@@ -836,7 +908,7 @@ def shell(opts):
     host keeps. The answers follow the engine; the `shell-handle` contract fixture
     holds the cases and names each difference.
     """
-    opts = dict(opts or {})
+    opts = {name: value for name, value in dict(opts or {}).items() if _given(value)}
     op = str(opts.get("op") or "run").strip()
     if op in _SPAWN_OPS:
         if opts.get("cmd") is not None:
@@ -853,18 +925,31 @@ def shell(opts):
         stdin = opts.get("stdin")
         if stdin not in (None, "null", "tty"):
             raise Refused(f'shell `stdin` is "tty" or "null", not {json.dumps(stdin)}.')
-        cwd = opts.get("cwd")
-        if cwd and not Path(cwd).expanduser().exists():
-            resolved = Path(cwd).expanduser().absolute()
-            raise Refused(f"shell cwd '{cwd}' does not exist ({resolved}).")
-        run = _Run(command, cwd, opts.get("env"), stdin)
-        # A named spawn (the engine's `background`) keeps the id it was given, so
-        # the same name reaches the same process on the next call.
-        if opts.get("id"):
-            run.id = str(opts["id"])
+        cwd = _shell_cwd(opts.get("cwd"))
+        env = _shell_env(opts.get("env"))
+        # A named start keeps the id that it was given. While that shell runs, the
+        # same start answers the same process and starts no second one.
+        run_id = str(opts["id"]).strip() if "id" in opts else None
+        if run_id:
+            live = _live_run(run_id, command, cwd)
+            if live is not None:
+                return _result(
+                    live,
+                    op,
+                    already_running=True,
+                    note=(
+                        f"Shell '{run_id}' was ALREADY running — nothing was "
+                        "restarted. Read it with sh.logs(offset=0) and stop it with "
+                        "sh.stop()."
+                    ),
+                )
+        run = _Run(command, cwd, env, stdin)
+        if run_id:
+            run.id = run_id
         _RUNS[run.id] = run
-        # The start answer says that the process runs, as in the engine: only a
-        # later call reads the exit, also the exit of a command that ends at once.
+        # The start answer says that the process runs: only a later call reads the
+        # exit, also the exit of a command that ends at once. The engine can answer
+        # `exited` here, when its command ended before the answer.
         return _result(run, op, status="running", exit=None, is_eof=False)
     if op not in _HANDLE_OPS:
         raise Refused(f"Unknown shell op {json.dumps(op)} — use {_shell_vocabulary()}.")
@@ -879,7 +964,9 @@ def shell(opts):
             run, "logs", out=out, offset=start, next_offset=end, is_eof=end >= len(raw)
         )
     if op == "send":
-        text = str(opts.get("text", ""))
+        text = opts.get("text", "")
+        if not isinstance(text, str):
+            raise Refused("shell `text` must be a string.")
         if opts.get("is_enter", True):
             text += "\n"
         if run.poll() is not None:
@@ -916,8 +1003,7 @@ def shell(opts):
         while run.poll() is None and time.time() < deadline:
             time.sleep(0.05)
         raw = run.log()
-        start = min(offset, len(raw))
-        out, omitted = _wait_text(raw, start)
+        out, omitted = _wait_text(raw, min(offset, len(raw)))
         return _result(
             run,
             "wait",
@@ -925,7 +1011,7 @@ def shell(opts):
             timeout_secs=seconds,
             out=out,
             out_omitted_chars=omitted,
-            offset=start,
+            offset=offset,
             next_offset=len(raw),
             is_eof=True,
         )

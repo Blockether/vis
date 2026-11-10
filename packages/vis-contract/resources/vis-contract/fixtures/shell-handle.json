@@ -1,7 +1,7 @@
 {
   "description": "Shell handle rules. Each case starts a shell with `args` and `kwargs`, then runs `steps` as Python. The steps see `sh` (the handle), `view` and `door` (the call that started the shell) and put the result in `answer`. `expect` is the answer of `vis.shell` in the engine. The engine test `shell-handle-contract-test` runs each case in a real extension worker through `vis.shell` (the SDK handle) and through `vis.tools.shell` (the runtime handle). The SDK test `test_shell_contract.py` runs each case on the host outside Vis. Where one of them answers differently, the case has a `tools` or `outside` object with a `reason` (a key of `exceptions`) and its own `expect`. `runner` is the Python source that all three use. A handle id in an answer shows as '<id>'.",
   "exceptions": {
-    "pipe": "Outside Vis, a child process has pipes and no terminal. A line ends with one byte, typed text has no echo, and `type` needs a command that started with `stdin: tty`.",
+    "pipe": "Outside Vis, a child process has pipes and no terminal. A line ends with one byte, typed text has no echo, `type` needs a command that started with `stdin: tty`, and Ctrl-D does not end the input.",
     "sh": "Outside Vis, the command runs with `/bin/sh -c`. The engine runs it with `bash -lc`.",
     "raw-op": "`vis.tools.shell` is the `shell` tool of the model. It starts a command only and does not take an op map.",
     "op-key": "The answer of the `shell` tool has the `op` key. The SDK handle does not have it.",
@@ -657,19 +657,34 @@
       "steps": [
         "import time",
         "time.sleep(1)",
-        "answer = view(sh, 'stage', 'status', 'exit', 'is_eof', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset')"
+        "answer = view(sh, 'stage', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset')"
       ],
       "expect": [
         "run",
-        "running",
-        null,
-        false,
         false,
         null,
         "",
         0,
         0,
         0
+      ]
+    },
+    {
+      "name": "the start answer of a command that runs",
+      "args": [
+        {
+          "command": "sleep 30"
+        }
+      ],
+      "steps": [
+        "answer = view(sh, 'stage', 'status', 'exit', 'is_eof', 'already_running')"
+      ],
+      "expect": [
+        "run",
+        "running",
+        null,
+        false,
+        false
       ]
     },
     {
@@ -1739,6 +1754,472 @@
         ],
         6
       ]
+    },
+    {
+      "name": "a start with the id of a live shell answers that shell",
+      "args": [
+        {
+          "command": "sleep 30",
+          "id": "contract-live"
+        }
+      ],
+      "steps": [
+        "again = door({'command': 'sleep 30', 'id': 'contract-live'})",
+        "answer = [again['already_running'], again['pid'] == sh['pid'], again['id'], again['status'], again['stage'], again['note'], sh['already_running']]"
+      ],
+      "expect": [
+        true,
+        true,
+        "contract-live",
+        "running",
+        "run",
+        "Shell '<id>' was ALREADY running — nothing was restarted. Read it with sh.logs(offset=0) and stop it with sh.stop().",
+        false
+      ]
+    },
+    {
+      "name": "a live id with another command is refused",
+      "args": [
+        {
+          "command": "sleep 30",
+          "id": "contract-other"
+        }
+      ],
+      "steps": [
+        "try:",
+        "    door({'command': 'sleep 31', 'id': 'contract-other'})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error)]"
+      ],
+      "expect": [
+        true,
+        "Shell '<id>' is already running and it is running a different command (sleep 30) — nothing was started. Stop it first with sh.stop(), or start this command under a different id."
+      ]
+    },
+    {
+      "name": "a live id in another directory is refused",
+      "args": [
+        {
+          "command": "sleep 30",
+          "id": "contract-dir"
+        }
+      ],
+      "steps": [
+        "try:",
+        "    door({'command': 'sleep 30', 'id': 'contract-dir', 'cwd': '/tmp'})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
+      ],
+      "expect": [
+        true,
+        "Shell '<id>' is already running and it is running in a different directory"
+      ]
+    },
+    {
+      "name": "an id is free after the exit",
+      "args": [
+        {
+          "command": "echo one",
+          "id": "contract-exit"
+        }
+      ],
+      "steps": [
+        "sh.wait(5)",
+        "again = door({'command': 'echo two', 'id': 'contract-exit'})",
+        "page = again.wait(5)",
+        "answer = [again['already_running'], again['id'], page['out'], page['exit']]"
+      ],
+      "expect": [
+        false,
+        "contract-exit",
+        "two\n",
+        0
+      ]
+    },
+    {
+      "name": "an id is free after stop",
+      "args": [
+        {
+          "command": "sleep 30",
+          "id": "contract-stop"
+        }
+      ],
+      "steps": [
+        "sh.stop()",
+        "again = door({'command': 'echo two', 'id': 'contract-stop'})",
+        "page = again.wait(5)",
+        "answer = [again['already_running'], again['id'], page['out'], page['exit']]"
+      ],
+      "expect": [
+        false,
+        "contract-stop",
+        "two\n",
+        0
+      ]
+    },
+    {
+      "name": "a boolean is no number of lines",
+      "args": [
+        {
+          "command": "echo a"
+        }
+      ],
+      "steps": [
+        "sh.wait(5)",
+        "try:",
+        "    door({'op': 'logs', 'id': sh['id'], 'lines': True})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error)]"
+      ],
+      "expect": [
+        true,
+        "lines must be a number, got true."
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": [
+          true,
+          "shell: command required; use shell(command)."
+        ]
+      }
+    },
+    {
+      "name": "a boolean is no offset",
+      "args": [
+        {
+          "command": "echo a"
+        }
+      ],
+      "steps": [
+        "sh.wait(5)",
+        "try:",
+        "    door({'op': 'logs', 'id': sh['id'], 'offset': False})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error)]"
+      ],
+      "expect": [
+        true,
+        "offset must be a number, got false."
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": [
+          true,
+          "shell: command required; use shell(command)."
+        ]
+      }
+    },
+    {
+      "name": "a boolean is no limit",
+      "args": [
+        {
+          "command": "echo a"
+        }
+      ],
+      "steps": [
+        "sh.wait(5)",
+        "try:",
+        "    door({'op': 'logs', 'id': sh['id'], 'limit': True})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error)]"
+      ],
+      "expect": [
+        true,
+        "limit must be a number, got true."
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": [
+          true,
+          "shell: command required; use shell(command)."
+        ]
+      }
+    },
+    {
+      "name": "a boolean is no number of seconds",
+      "args": [
+        {
+          "command": "echo a"
+        }
+      ],
+      "steps": [
+        "try:",
+        "    door({'op': 'wait', 'id': sh['id'], 'seconds': True})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error)]"
+      ],
+      "expect": [
+        true,
+        "seconds must be a number, got true."
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": [
+          true,
+          "shell: command required; use shell(command)."
+        ]
+      }
+    },
+    {
+      "name": "a raw send ends the line",
+      "args": [
+        {
+          "command": "read x; echo got:$x",
+          "stdin": "tty"
+        }
+      ],
+      "steps": [
+        "door({'op': 'send', 'id': sh['id'], 'text': 'raw'})",
+        "page = sh.wait(5)",
+        "answer = ['got:raw' in page['out'], page['exit']]"
+      ],
+      "expect": [
+        true,
+        0
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": {
+          "error": "shell op \"run\" takes no text payload.",
+          "is_runtime_error": true
+        }
+      }
+    },
+    {
+      "name": "a raw send without Enter keeps the line open",
+      "args": [
+        {
+          "command": "read x; echo got:$x",
+          "stdin": "tty"
+        }
+      ],
+      "steps": [
+        "door({'op': 'send', 'id': sh['id'], 'text': 'ra', 'is_enter': False})",
+        "door({'op': 'send', 'id': sh['id'], 'text': 'w'})",
+        "page = sh.wait(5)",
+        "answer = ['got:raw' in page['out'], page['exit']]"
+      ],
+      "expect": [
+        true,
+        0
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": {
+          "error": "shell op \"run\" takes no text payload.",
+          "is_runtime_error": true
+        }
+      }
+    },
+    {
+      "name": "a raw send of a number is refused",
+      "args": [
+        {
+          "command": "cat",
+          "stdin": "tty"
+        }
+      ],
+      "steps": [
+        "try:",
+        "    door({'op': 'send', 'id': sh['id'], 'text': 123})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error)]"
+      ],
+      "expect": [
+        true,
+        "shell `text` must be a string."
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": [
+          true,
+          "shell op \"run\" takes no text payload."
+        ]
+      }
+    },
+    {
+      "name": "wait reads from an offset",
+      "args": [
+        {
+          "command": "printf abcdef"
+        }
+      ],
+      "steps": [
+        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 3, 'seconds': 5}))"
+      ],
+      "expect": [
+        "def",
+        3,
+        6,
+        true,
+        0
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": {
+          "error": "shell: command required; use shell(command).",
+          "is_runtime_error": true
+        }
+      }
+    },
+    {
+      "name": "wait from an offset after the end",
+      "args": [
+        {
+          "command": "printf abcdef"
+        }
+      ],
+      "steps": [
+        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 99, 'seconds': 5}))"
+      ],
+      "expect": [
+        "",
+        99,
+        6,
+        true,
+        0
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": {
+          "error": "shell: command required; use shell(command).",
+          "is_runtime_error": true
+        }
+      }
+    },
+    {
+      "name": "a file as cwd is refused",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "try:",
+        "    door({'command': 'true', 'cwd': '/etc/hosts'})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
+      ],
+      "expect": [
+        true,
+        "shell cwd '/etc/hosts' is a file, not a directory"
+      ],
+      "tools": {
+        "reason": "roots",
+        "expect": [
+          true,
+          "shell cwd '/etc/hosts' resolves outside the allowed filesystem roots"
+        ]
+      }
+    },
+    {
+      "name": "a number as cwd names a directory",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "try:",
+        "    door({'command': 'true', 'cwd': 5})",
+        "    answer = 'no refusal'",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
+      ],
+      "expect": [
+        true,
+        "shell cwd '5' does not exist"
+      ]
+    },
+    {
+      "name": "a blank cwd is no cwd",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "answer = door({'command': 'echo ok', 'cwd': '  '}).wait(5)['out']"
+      ],
+      "expect": "ok\n"
+    },
+    {
+      "name": "a blank `cmd` option is no option",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "answer = door({'command': 'echo ok', 'cmd': ''}).wait(5)['out']"
+      ],
+      "expect": "ok\n"
+    },
+    {
+      "name": "a number is the value of a variable",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "answer = door({'command': 'echo v=$ZZ_N', 'env': {'ZZ_N': 1}}).wait(5)['out']"
+      ],
+      "expect": "v=1\n"
+    },
+    {
+      "name": "a boolean is the value of a variable and None unsets one",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "answer = door({'command': 'echo v=$ZZ_N$HOME', 'env': {'ZZ_N': True, 'HOME': None}}).wait(5)['out']"
+      ],
+      "expect": "v=true\n"
+    },
+    {
+      "name": "Ctrl-D ends the input of a terminal",
+      "args": [
+        {
+          "command": "cat; echo ended",
+          "stdin": "tty"
+        }
+      ],
+      "steps": [
+        "door({'op': 'send', 'id': sh['id'], 'text': '\\x04', 'is_enter': False})",
+        "page = sh.wait(3)",
+        "answer = ['ended' in page['out'], page['timed_out'], page['status']]"
+      ],
+      "expect": [
+        true,
+        false,
+        "exited"
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": {
+          "error": "shell op \"run\" takes no text payload.",
+          "is_runtime_error": true
+        }
+      },
+      "outside": {
+        "reason": "pipe",
+        "expect": [
+          false,
+          true,
+          "running"
+        ]
+      }
     }
   ]
 }
