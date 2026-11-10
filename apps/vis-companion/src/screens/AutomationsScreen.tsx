@@ -38,6 +38,7 @@ import { AutomationForm } from './AutomationForm';
 export type AutomationsClient = Pick<
   GatewayClient,
   | 'automations'
+  | 'isAutomationsAvailable'
   | 'createAutomation'
   | 'automationRuns'
   | 'updateAutomation'

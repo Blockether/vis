@@ -125,6 +125,23 @@ describe('settings panels across a cold start', () => {
     await client.devices();
     expect(client.isDevicesUnsupported()).toBe(false);
   });
+
+  it('remembers whether this machine has automations, also after a cold start', async () => {
+    const warm = vi.fn(() => Promise.resolve(json({ automations: [] })));
+    const first = await relaunch(warm as unknown as typeof fetch);
+    expect(new first.GatewayClient(conn).isAutomationsAvailable()).toBeNull();
+    await new first.GatewayClient(conn).automations();
+    first.persistGatewayCaches();
+
+    const old = vi.fn(() => Promise.resolve(json({ error: 'no route' }, 404)));
+    const second = await relaunch(old as unknown as typeof fetch);
+    const client = new second.GatewayClient(conn);
+    expect(client.isAutomationsAvailable()).toBe(true);
+    expect(old).not.toHaveBeenCalled();
+
+    await expect(client.automations()).rejects.toThrow();
+    expect(client.isAutomationsAvailable()).toBe(false);
+  });
 });
 
 // The panel a reader opens has already answered, whichever machine it is: the
@@ -141,9 +158,16 @@ describe("warming a machine's settings panels", () => {
     const client = new mod.GatewayClient(conn);
 
     client.prefetchPanels();
-    await vi.waitFor(() => expect(asked).toHaveLength(5));
+    await vi.waitFor(() => expect(asked).toHaveLength(6));
     expect(new Set(asked)).toEqual(
-      new Set(['/v1/settings', '/v1/capabilities', '/v1/mcp/servers', '/v1/devices', '/v1/router']),
+      new Set([
+        '/v1/settings',
+        '/v1/capabilities',
+        '/v1/mcp/servers',
+        '/v1/devices',
+        '/v1/automations',
+        '/v1/router',
+      ]),
     );
 
     // Wake, a re-render, another machine added: the sweep runs again and the
@@ -151,7 +175,7 @@ describe("warming a machine's settings panels", () => {
     client.prefetchPanels();
     new mod.GatewayClient(conn).prefetchPanels();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(asked).toHaveLength(5);
+    expect(asked).toHaveLength(6);
   });
 });
 

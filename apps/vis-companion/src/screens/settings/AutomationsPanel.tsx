@@ -12,7 +12,8 @@ const AutomationsWorkspace = lazy(async () => ({
  * AUTOMATIONS ARE A MACHINE SETTING. They run on one machine, with its models and
  * folders, so they stand under that machine's row in Settings, not in the app bar.
  * A machine that does not answer the automations request (an older or unavailable
- * gateway) shows no band. The band opens closed, so the other settings stay near.
+ * gateway) shows no band. The band paints the machine's last answer at once and
+ * then asks again. It opens closed, so the other settings stay near.
  */
 export function AutomationsPanel({
   client,
@@ -23,7 +24,7 @@ export function AutomationsPanel({
   gatewayUrl?: string;
 }) {
   const bandsOpen = useContext(SettingsBandsOpen);
-  const [isAvailable, setIsAvailable] = useState(false);
+  const [isAvailable, setIsAvailable] = useState(() => client.isAutomationsAvailable() === true);
   const [isOpen, setIsOpen] = useState(bandsOpen);
   // The band owns the form, so its header + opens it like the + of the other bands.
   const [form, setForm] = useState<AutomationsForm>(null);
@@ -35,7 +36,10 @@ export function AutomationsPanel({
       .then((list) => {
         if (!controller.signal.aborted) setIsAvailable(Array.isArray(list?.automations));
       })
-      .catch(() => {});
+      .catch(() => {
+        // A refusal is remembered as false; a lost network keeps the last answer.
+        if (!controller.signal.aborted) setIsAvailable(client.isAutomationsAvailable() === true);
+      });
     return () => controller.abort();
   }, [client]);
   if (!isAvailable) return null;

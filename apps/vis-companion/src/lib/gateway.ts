@@ -2865,8 +2865,27 @@ export class GatewayClient {
 
   // ── Automations: prompts that run on a schedule or a webhook ────
 
-  automations(signal?: AbortSignal): Promise<AutomationList> {
-    return this.request('GET', '/v1/automations', undefined, signal);
+  /**
+   * Whether THIS gateway last answered `/v1/automations`: true or false, or null
+   * before its first answer. The Settings band paints from it, so it does not
+   * appear a round trip after the bands around it.
+   */
+  isAutomationsAvailable(): boolean | null {
+    return readSnapshot<boolean>(this.snapshotKey('automations-available'));
+  }
+
+  async automations(signal?: AbortSignal): Promise<AutomationList> {
+    const key = this.snapshotKey('automations-available');
+    try {
+      const list = await this.request<AutomationList>('GET', '/v1/automations', undefined, signal);
+      writeSnapshot(key, Array.isArray(list?.automations));
+      return list;
+    } catch (error) {
+      // An older gateway answers 404/501 again tomorrow; a lost network says nothing.
+      if (error instanceof GatewayError && (error.status === 404 || error.status === 501))
+        writeSnapshot(key, false);
+      throw error;
+    }
   }
 
   createAutomation(input: AutomationInput): Promise<Automation> {
@@ -3144,6 +3163,7 @@ export class GatewayClient {
     quietly(this.capabilities());
     quietly(this.mcpServers());
     quietly(this.devices());
+    quietly(this.automations());
     this.prefetchRouter();
   }
 

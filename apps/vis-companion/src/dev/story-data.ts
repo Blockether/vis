@@ -2352,6 +2352,7 @@ export function storyAutomationsClient({
   };
   return {
     automations: async () => ({ automations: [...automations] }),
+    isAutomationsAvailable: () => null,
     automationRuns: async (automationId) => ({
       runs: runs.filter((run) => run.automation_id === automationId),
     }),

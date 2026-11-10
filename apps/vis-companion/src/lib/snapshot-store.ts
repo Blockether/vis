@@ -74,6 +74,8 @@ const DURABLE_KINDS = new Set([
   'capabilities',
   'mcp-servers',
   'router',
+  // Whether the machine answers `/v1/automations`, so its band is in the first frame.
+  'automations-available',
 ]);
 
 // A transcript page is 24 turns and a single turn can be hundreds of kilobytes
