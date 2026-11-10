@@ -1254,10 +1254,15 @@
                 (fn [type tid]
                   (json/write-json-str {"type" type "turn_id" (str tid) "started_at_ms" started}))]
 
+            ;; Verifier report: Council writes megabytes of other events while a block waits.
             (spit journal
                   (str (str/join "\n"
-                                 [(line "block.started" ended) (line "block.output" ended)
-                                  (line "block.started" waiting)])
+                                 (concat [(line "block.started" ended) (line "block.output" ended)
+                                          (line "block.started" waiting)]
+                                         (repeat 1000
+                                                 (json/write-json-str
+                                                   {"type" "session.team_updated"
+                                                    "text" (apply str (repeat 600 "x"))}))))
                        "\n"))
             (expect (= ["ended turn"]
                        (mapv #(get % "user_request")

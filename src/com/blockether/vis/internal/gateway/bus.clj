@@ -709,10 +709,57 @@
          (tel/log! :debug ["gateway-bus: terminal tail scan failed" (str f) (ex-message t)])
          false)))
 
-(def ^:private ^:const BLOCK_TAIL_SCAN_BYTES
-  "How much of a journal's END [[block-started-ms]] reads. A `block.started` line
-   holds the code of its block, so it gets more room than a terminal."
-  262144)
+(def ^:private ^:const BLOCK_SCAN_CHUNK_BYTES "Bytes that [[scan-back]] reads in one step." 262144)
+
+(def ^:private ^:const BLOCK_SCAN_MAX_BYTES
+  "Bytes from the end of a journal that [[scan-back]] reads at most. A journal
+   holds one turn, but Council and view events can add megabytes while one block
+   waits: a 2 MB gap was measured in a 30-minute block."
+  33554432)
+
+(defn- first-newline
+  "Index of the first newline byte in `b`, or -1."
+  ^long [^bytes b]
+  (loop [i 0]
+    (cond (>= i (alength b)) -1
+          (== 10 (aget b i)) i
+          :else (recur (inc i)))))
+
+(defn- scan-back
+  "The first non-nil `(decide line)` over the COMPLETE lines of `f`, newest
+   first, or nil. Reads backward in [[BLOCK_SCAN_CHUNK_BYTES]] steps and stops
+   after [[BLOCK_SCAN_MAX_BYTES]]. A trailing line without a newline is dropped."
+  [^File f decide]
+  (with-open [raf (RandomAccessFile. f "r")]
+    (let [len (.length raf)
+          floor (max 0 (- len (long BLOCK_SCAN_MAX_BYTES)))]
+
+      (loop [end len
+             ^bytes carry (byte-array 0)]
+
+        (when (> end floor)
+          (let [start (max floor (- end (long BLOCK_SCAN_CHUNK_BYTES)))
+                n (- end start)
+                buf (byte-array (+ n (alength carry)))
+                got (read-at! raf start buf n)]
+
+            ;; A short read means a sibling truncated the journal: the turn is over.
+            (when (== got n)
+              (System/arraycopy carry 0 buf (int n) (alength carry))
+              (let [stop (long (if (== end len) (whole-bytes buf) (alength buf)))
+                    nl (first-newline buf)]
+
+                ;; The bytes before the first newline end a line that starts in an older step.
+                (if (and (pos? start) (or (neg? nl) (>= nl stop)))
+                  (recur start (java.util.Arrays/copyOf buf (int stop)))
+                  (let [from (if (pos? start) (inc nl) 0)
+                        lines
+                        (str/split-lines
+                          (String. buf (int from) (int (- stop from)) StandardCharsets/UTF_8))]
+
+                    (if-let [hit (some decide (rseq lines))]
+                      hit
+                      (recur start (java.util.Arrays/copyOf buf (int from))))))))))))))
 
 (def ^:private BLOCK_END_TYPES
   "Types that end the newest block of a turn."
@@ -726,7 +773,7 @@
   "Epoch milliseconds when the Python block that turn `turn-id` of `sid` still
    runs started, or nil. A block runs while its `block.started` line is newer
    than each `block.output`, `iteration.completed` and terminal line of the turn.
-   nil also when the journal is unreadable or the start is outside the tail."
+   nil also when the journal is unreadable or the start is beyond [[BLOCK_SCAN_MAX_BYTES]]."
   [sid turn-id]
   (try (let [f
              (session-file sid)
@@ -735,20 +782,20 @@
              (str turn-id)]
 
          (when (.isFile f)
-           (first (some (fn [^String line]
-                          (when (some #(str/includes? line %) block-markers)
-                            (let [event
-                                  (wire/parse-json line)
+           (first (scan-back f
+                             (fn [^String line]
+                               (when (some #(str/includes? line %) block-markers)
+                                 (let [event
+                                       (wire/parse-json line)
 
-                                  type
-                                  (get event "type")]
+                                       type
+                                       (get event "type")]
 
-                              (when (= tid (str (get event "turn_id")))
-                                (cond (= "block.started" type)
-                                      [(let [ms (get event "started_at_ms" (get event "ts"))]
-                                         (when (integer? ms) (long ms)))]
-                                      (contains? BLOCK_END_TYPES type) [nil])))))
-                        (rseq (str/split-lines (tail-text f BLOCK_TAIL_SCAN_BYTES)))))))
+                                   (when (= tid (str (get event "turn_id")))
+                                     (cond (= "block.started" type)
+                                           [(let [ms (get event "started_at_ms" (get event "ts"))]
+                                              (when (integer? ms) (long ms)))]
+                                           (contains? BLOCK_END_TYPES type) [nil])))))))))
        (catch Throwable t
          (tel/log! :debug ["gateway-bus: block tail scan failed" (str sid) (ex-message t)])
          nil)))
