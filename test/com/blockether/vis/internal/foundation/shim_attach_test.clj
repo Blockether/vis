@@ -99,7 +99,8 @@
 
             out
             (block pctx
-                   (str "png = bytes([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]) + b'body'\n"
+                   (str "png = bytes([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A])\n"
+                        "png += (13).to_bytes(4, 'big') + b'IHDR' + bytes(13)\n"
                         "attach(png, 'fig.dat')\n"))
 
             [att]
@@ -1145,7 +1146,7 @@
           (expect (= "text/plain"
                      (get (extension-attach {"base64" csv "filename" "x" "media_type" "text/plain"})
                           "media-type")))
-          (expect (= "application/octet-stream"
+          (expect (= "text/plain"
                      (get (extension-attach {"base64" csv "filename" "x"}) "media-type")))
           (expect (not (contains? (extension-attach {"base64" pdf "filename" "b.pdf"})
                                   "display"))))))
@@ -1174,6 +1175,111 @@
                                  "documents require audience='user'")))
         (expect (str/includes? (extension-attach {"base64" pdf})
                                "call it from a tool that python_execution runs")))))
+
+(def ^:private door-cases
+  "`[label python-bytes filename expected-media-type]` rows for both attach doors.
+   A nil filename means that the caller gives none."
+  [["text" "b'BMW sales rose 4% in Q3\\n'" "notes.txt" "text/plain"]
+   ["mp4" "bytes([0, 0, 0, 0x18]) + b'ftypmp42' + bytes(4) + b'mp42isom'" nil "video/mp4"]
+   ["m4a" "bytes([0, 0, 0, 0x18]) + b'ftypM4A ' + bytes(4) + b'M4A mp42'" nil "audio/mp4"]
+   ["flac" "b'fLaC' + bytes([0, 0, 0, 0x22])" nil "audio/flac"]
+   ["svg" "b'<svg xmlns=\"http://www.w3.org/2000/svg\"/>'" nil "image/svg+xml"]
+   ["mp3" "bytes([0xFF, 0xF3, 0x90, 0x00])" nil "audio/mpeg"]
+   ["words" "b'just words'" "note" "text/plain"]
+   ["binary" "bytes([0x00, 0x01, 0xFE, 0xFF])" "blob" "application/octet-stream"]
+   ["page" "b'<!doctype html><html><svg width=\"1\"/></html>'" "report.html" "text/html"]
+   ["json" "b'{\"a\": 1}\\n'" "result.json" "application/json"]])
+
+(defdescribe
+  attach-doors-media-type-test
+  (it
+    "gives the same bytes and filename the same media type at the sandbox door and the SDK door"
+    (let [out
+          (block (ctx-with-root (temp-root))
+                 (str "import base64, mimetypes\n"
+                      (str/join (for [[label data filename] door-cases]
+                                  (str "d = "
+                                       data
+                                       "\n"
+                                       "n = "
+                                       (if filename (pr-str filename) "None")
+                                       "\n"
+                                       "r = attach(d, n) if n else attach(d)\n"
+                                       "h = mimetypes.guess_type(n)[0] if n else None\n"
+                                       "print('CASE', " (pr-str label)
+                                       ", r['media_type'], r['kind'],"
+                                       " base64.b64encode(d).decode(), h or '-')\n")))))
+
+          sandbox
+          (into {}
+                (for [[_ label media-type kind b64 hint]
+                      (re-seq #"CASE (\S+) (\S+) (\S+) (\S+) (\S+)" (str (:stdout out)))]
+                  [label {:media-type media-type :kind kind :b64 b64 :hint hint}]))]
+
+      (expect (nil? (:error out)))
+      (binding [mpl-capture/*attachment-sink* (atom [])]
+        (doseq [[label _ filename expected] door-cases]
+          (let [{:keys [media-type kind b64 hint]} (get sandbox label)
+                row (extension-attach (cond-> {"base64" b64}
+                                        filename
+                                        (assoc "filename" filename)
+
+                                        (not= "-" hint)
+                                        (assoc "media_type_hint" hint)))]
+
+            (expect (= [label expected] [label media-type]))
+            (expect (= [label expected] [label (get row "media-type")]))
+            (expect (= [label kind] [label (get row "kind")])))))))
+  (it
+    "lets an explicit media type win at both doors"
+    (let
+      [out
+       (block
+         (ctx-with-root (temp-root))
+         "print('MT', attach(b'fLaC' + bytes(4), 'a.flac', media_type='text/x-note')['media_type'])\n")
+
+       flac
+       (.encodeToString (java.util.Base64/getEncoder)
+                        (byte-array (concat (.getBytes "fLaC" "US-ASCII") (repeat 4 (byte 0)))))]
+
+      (expect (nil? (:error out)))
+      (expect (re-find #"MT text/x-note" (str (:stdout out))))
+      (binding [mpl-capture/*attachment-sink* (atom [])]
+        (expect (= "text/x-note"
+                   (get (extension-attach
+                          {"base64" flac "filename" "a.flac" "media_type" "text/x-note"})
+                        "media-type"))))))
+  (it "names a file above the limit from its first bytes, also when the cut splits a character"
+      (let [root
+            (.getCanonicalPath (java.io.File. (temp-root)))
+
+            mp4
+            (byte-array
+              (concat [0 0 0 0x18] (.getBytes "ftypmp42" "US-ASCII") (repeat 6000 (byte 0))))
+
+            _
+            (with-open [out (java.io.FileOutputStream. (java.io.File. root "clip"))]
+              (.write out mp4))
+
+            _
+            (spit (java.io.File. root "big.log")
+                  (str "a" (str/join (repeat 3000 "é")))
+                  :encoding
+                  "UTF-8")
+
+            out
+            (extension/with-context
+              {:env {:session-id (random-uuid) :workspace {:root root}}}
+              (binding [mpl-capture/*attachment-limit-bytes* 100]
+                (block (ctx-with-root root)
+                       (str "for n in ('clip', 'big.log'):\n"
+                            "    r = attach(" (pr-str (str root "/"))
+                            " + n)\n"
+                            "    print('REF', r['storage'], r['media_type'], r['kind'])\n"))))]
+
+        (expect (nil? (:error out)))
+        (expect (= [["reference" "video/mp4" "file"] ["reference" "text/plain" "file"]]
+                   (mapv (comp vec rest) (re-seq #"REF (\S+) (\S+) (\S+)" (str (:stdout out)))))))))
 
 (defn- app-block
   "Run `code` as one block of session `sid`, with view records in a temp root."

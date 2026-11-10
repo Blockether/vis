@@ -39,7 +39,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import [java.io ByteArrayInputStream File RandomAccessFile]
-           [java.nio.charset StandardCharsets]
+           [java.nio ByteBuffer CharBuffer]
+           [java.nio.charset CodingErrorAction StandardCharsets]
            [java.nio.file Files]
            [java.util Arrays Base64]
            [java.util.zip ZipFile ZipInputStream]))
@@ -187,9 +188,15 @@
                                        :else [nil nil])]
                 (and (= 1 planes) (contains? #{1 4 8 16 24 32} bpp)))))))
 
+(def ^:private svg-root-pattern
+  "An `<svg` ROOT element, after any processing instruction, comment or `svg`
+   doctype. The doctype can hold an internal subset in brackets."
+  #"(?s)^(?:(?:<\?[^>]*>|<!--.*?-->|<!doctype\s+svg(?:[^>\[]*\[.*?\]\s*>|[^>]*>))\s*)*<svg(?:[\s/>:]|$)")
+
 (defn- svg-markup?
-  "True when the head reads as an SVG document: an XML/comment/doctype prolog or
-   the root tag itself, followed by an `<svg` element. Text sniffing, not magic
+  "True when the head reads as an SVG document: its ROOT element is `<svg`, after
+   an optional byte-order mark and XML/comment/doctype prolog. An HTML page with
+   an inline `<svg>` chart is a page, not a picture. Text sniffing, not magic
    bytes -- SVG has none."
   [^bytes b]
   (let [head
@@ -198,7 +205,7 @@
         start
         (str/triml (str/replace head "\ufeff" ""))]
 
-    (and (str/starts-with? start "<") (str/includes? head "<svg"))))
+    (boolean (re-find svg-root-pattern start))))
 
 (defn- brand-at
   "The 4-char ASCII box brand at `off`, lower-cased, or nil when the head is
@@ -419,8 +426,8 @@
 (def viewer-document-media-types
   "The documents a SURFACE can show in a document viewer: a PDF handed to the
    system viewer, an HTML page rendered inside the companion's sandboxed frame.
-   The sandbox spells the same closed table in `resources/vis-host-python/attach.py`
-   (`__vis_doc_media_types`). Markdown, CSV, TSV and NDJSON are documents too,
+   This is the only copy of the table: the sandbox `attach` asks the engine.
+   Markdown, CSV, TSV and NDJSON are documents too,
    but they ride the transcript as text or as a table fence, so they never mint
    a display file."
   #{(:pdf document-media-types) (:html document-media-types) (:xhtml document-media-types)})
@@ -521,8 +528,8 @@
                (when (docx-registry? (.readNBytes in 65536)) (:docx document-media-types)))))
          (catch Exception _ nil))))
 
-(defn detect-media-mime
-  "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
+(defn- detect-signature-mime
+  "The type that a signature or a root element names: [[detect-image-mime]] first,
    then audio, video, document, Word document, gzip and ZIP detection. Stills win
    the ISO-BMFF tie deliberately; recordings are asked about before clips for the
    same reason."
@@ -533,8 +540,13 @@
       (detect-document-mime b)
       (detect-docx-mime b)
       (detect-gzip-mime b)
-      (detect-zip-mime b)
-      (detect-jsonl-mime b)))
+      (detect-zip-mime b)))
+
+(defn detect-media-mime
+  "The sniffed type of anything vis can attach: [[detect-signature-mime]], then
+   the JSON Lines probe, which reads content and no signature."
+  [^bytes b]
+  (or (detect-signature-mime b) (detect-jsonl-mime b)))
 
 (def provider-image-media-types
   "The ONLY image media types a vision wire accepts VERBATIM. Anthropic names
@@ -556,18 +568,77 @@
   [media-type]
   (str media-type " is not a provider-supported image format (JPEG, PNG, GIF, WebP)"))
 
+(defn- file-head
+  "The first [[sniff-bytes]] bytes of `f`. The file is never read whole."
+  ^bytes [^File f]
+  (with-open [raf (RandomAccessFile. f "r")]
+    (let [n (int (min (.length raf) (long sniff-bytes)))
+          buf (byte-array n)]
+
+      (.readFully raf buf)
+      buf)))
+
 (defn sniff-file-mime
   "Read a file head and return its sniffed attachment media type. nil on any
    read failure or unsupported bytes; a caller never needs to trust an extension."
   [^File f]
-  (try (with-open [raf (RandomAccessFile. f "r")]
-         (let [n (int (min (.length raf) (long sniff-bytes)))
-               buf (byte-array n)]
-
-           (.readFully raf buf)
-           ;; The registry of a Word document can be past this head: ask the file first.
-           (or (detect-docx-file f buf) (detect-media-mime buf))))
+  (try (let [buf (file-head f)]
+         ;; The registry of a Word document can be past this head: ask the file first.
+         (or (detect-docx-file f buf) (detect-media-mime buf)))
        (catch Throwable _ nil)))
+
+(defn- utf8-text?
+  "True when the first [[sniff-bytes]] bytes of `b` are UTF-8 text without binary
+   control characters. A full window can be the head of longer data, so its last
+   character can be cut. Tab, line ends, form feed and the escape of a terminal
+   color are text."
+  [^bytes b]
+  (let [n
+        (int (min (alength b) (long sniff-bytes)))
+
+        decoder
+        (doto (.newDecoder StandardCharsets/UTF_8)
+          (.onMalformedInput CodingErrorAction/REPORT)
+          (.onUnmappableCharacter CodingErrorAction/REPORT))
+
+        out
+        (CharBuffer/allocate n)
+
+        result
+        (.decode decoder (ByteBuffer/wrap b 0 n) out (< n (long sniff-bytes)))]
+
+    (and (not (.isError result))
+         (not (re-find #"[\x00-\x08\x0b\x0e-\x1a\x1c-\x1f\x7f]" (str (.flip out)))))))
+
+(defn- attached-type
+  "The rule of [[attached-media-type]] for a `sniffed` signature type or nil."
+  [sniffed hint ^bytes head]
+  (let [hint (not-empty (str/trim (str hint)))]
+    (or
+      ;; A workbook, an EPUB and a JAR are ZIP archives too: the hint names which
+      ;; format the generic ZIP sniff stands for.
+      (if (and hint (= "application/zip" sniffed)) hint sniffed)
+      hint
+      (detect-jsonl-mime head)
+      (when (utf8-text? head) "text/plain")
+      "application/octet-stream")))
+
+(defn attached-media-type
+  "The media type of bytes that a tool attaches without an explicit type. This is
+   the one rule for the sandbox `attach` and for `vis.attach` of an extension: a
+   signature sniff wins, then `hint` (the type that the file name suggests), then
+   the JSON Lines probe, then `text/plain` for text, then
+   `application/octet-stream`. A hint also names the format of a generic ZIP sniff."
+  [^bytes b hint]
+  (attached-type (detect-signature-mime b) hint b))
+
+(defn attached-file-media-type
+  "[[attached-media-type]] for a file on disk, from its head only: a file that is
+   larger than the attachment limit is never read whole."
+  [^File f hint]
+  (let [head (file-head f)]
+    ;; The registry of a Word document can be past this head: ask the file first.
+    (attached-type (or (detect-docx-file f head) (detect-signature-mime head)) hint head)))
 
 ;; Path-candidate extraction
 

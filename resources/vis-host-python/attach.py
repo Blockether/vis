@@ -11,105 +11,13 @@ def __vis_install_attach__():
     import os as _os
     import base64 as _b64
 
-    # A PDF and an HTML page are DOCUMENTS: bytes a HUMAN reads, never an image
-    # block on the model's wire. The engine clamps their audience to "user" in
-    # `attachments/attachment-audience`; this is that same closed table on the
-    # sandbox side, so audience='model' is refused at the call site instead of
-    # quietly attaching something nobody will ever see.
-    __vis_doc_media_types = (
-        "application/pdf",
-        "text/html",
-        "application/xhtml+xml",
-    )
-
-    def __vis_is_doc(mt):
-        head = str(mt or "").split(";")[0].strip().lower()
-        return head in __vis_doc_media_types
-
-    def __vis_kind_for(mt):
-        if str(mt or "").startswith("image/"):
-            return "image"
-        return "doc" if __vis_is_doc(mt) else "file"
-
-    __vis_zip_formats = {
-        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".odt": "application/vnd.oasis.opendocument.text",
-        ".ods": "application/vnd.oasis.opendocument.spreadsheet",
-        ".odp": "application/vnd.oasis.opendocument.presentation",
-        ".epub": "application/epub+zip",
-    }
-
-    def __vis_guess_media_type(name, data):
-        head = bytes(data[:16])
-
-        def starts(sig):
-            s = bytes(sig)
-            return head[: len(s)] == s
-
-        if starts([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]):
-            return "image/png"
-        if starts([0xFF, 0xD8, 0xFF]):
-            return "image/jpeg"
-        if starts([0x47, 0x49, 0x46, 0x38]):
-            return "image/gif"
-        if starts([0x42, 0x4D]):
-            return "image/bmp"
-        # HEIF: a HEIF brand as the major or a compatible brand. An HEVC major
-        # brand (an iPhone photo, a camera .HIF) is image/heic. An AV1 brand
-        # makes it image/avif. Any other HEIF file is image/heif.
-        box = bytes(data[:256])
-        if box[4:8] == b"ftyp":
-            end = max(16, min(len(box), int.from_bytes(box[:4], "big")))
-            brands = [
-                b.lower()
-                for b in [box[8:12]] + [box[i : i + 4] for i in range(16, end - 3, 4)]
-            ]
-            hevc = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx")
-            avif = (b"avif", b"avis")
-            other = (b"mif1", b"msf1", b"avci", b"avcs", b"jpeg", b"unif")
-            if any(b in hevc + avif + other for b in brands):
-                if brands[0] in hevc:
-                    return "image/heic"
-                return "image/avif" if any(b in avif for b in brands) else "image/heif"
-        if starts([0x25, 0x50, 0x44, 0x46]):
-            return "application/pdf"
-        if starts([0x50, 0x4B, 0x03, 0x04]) or starts([0x50, 0x4B, 0x05, 0x06]):
-            # An Office file and an EPUB are ZIP archives too. A browser saves
-            # application/zip as "name.xlsx.zip", so the extension names the format.
-            ext = _os.path.splitext(str(name or ""))[1].lower()
-            return __vis_zip_formats.get(ext, "application/zip")
-        if starts([0x1F, 0x8B]):
-            return "application/gzip"
-        if starts([0x52, 0x49, 0x46, 0x46]) and head[8:12] == bytes(
-            [0x57, 0x45, 0x42, 0x50]
-        ):
-            return "image/webp"
-        if starts([0x52, 0x49, 0x46, 0x46]) and head[8:12] == bytes(
-            [0x57, 0x41, 0x56, 0x45]
-        ):
-            return "audio/wav"
-        if starts([0x4F, 0x67, 0x67, 0x53]):
-            return "audio/ogg"
-        if starts([0x49, 0x44, 0x33]) or starts([0xFF, 0xFB]):
-            return "audio/mpeg"
-        try:
-            probe = bytes(data[:256]).lstrip().lower()
-            if probe.startswith(b"<!doctype html") or probe.startswith(b"<html"):
-                return "text/html"
-        except Exception:
-            pass
+    def __vis_name_hint(name):
+        # The ENGINE decides the media type (`attachment/core.clj`), with one rule
+        # for this verb and for `vis.attach` of an extension. The type that the
+        # filename suggests is only a hint for bytes that have no signature.
         import mimetypes
 
-        mt = mimetypes.guess_type(str(name))[0]
-        if mt:
-            return mt
-        try:
-            bytes(data).decode("utf-8")
-            return "text/plain"
-        except Exception:
-            return "application/octet-stream"
+        return mimetypes.guess_type(str(name))[0]
 
     def __vis_caption(label):
         # A caption is exactly ONE line: the `vis-image`/`vis-table` fences are
@@ -256,24 +164,15 @@ def __vis_install_attach__():
         print(chr(10).join(lines))
         return True
 
-    def __vis_audience(audience, mt=None):
+    def __vis_audience(audience):
+        # The engine refuses a document for audience='model' and clamps every
+        # other audience of a document to 'user': it knows the media type.
         aud = str(audience if audience is not None else "both").strip().lower()
         if aud not in ("both", "user", "model"):
             raise ValueError(
                 "attach: audience must be 'both', 'user' or 'model', got "
                 + repr(audience)
             )
-        if __vis_is_doc(mt):
-            # A document can never be an image block, so 'model' would mean
-            # "send it to nobody". Refuse that outright; every other spelling
-            # settles on 'user' - the human reads the document and the model is
-            # told the file exists.
-            if aud == "model":
-                raise ValueError(
-                    "attach: documents require audience='user'; "
-                    "read_attachment(target) returns their bytes."
-                )
-            return "user"
         return aud
 
     def __vis_row(row):
@@ -298,26 +197,28 @@ def __vis_install_attach__():
             ) from exc
 
     def __vis_attach_data(data, name, kind, media_type, label, audience):
-        mt = media_type or __vis_guess_media_type(name, data)
-        knd = kind or __vis_kind_for(mt)
         cap = __vis_caption(label)
-        aud = __vis_audience(audience, mt)
+        aud = __vis_audience(audience)
         b64 = _b64.b64encode(data).decode("ascii")
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
             raise RuntimeError("attach: capture bridge not bound in this sandbox")
-        payload = rec(knd, mt, b64, name, len(data), aud, cap)
+        payload = rec(
+            kind, media_type, b64, name, len(data), aud, cap, __vis_name_hint(name)
+        )
 
         # The stored artifact's own DESCRIPTOR: its id and version exist from
         # this moment, so the caller holds a handle to what it just made instead
         # of having to go looking for it.
         row = __vis_row(__vis_decoded(payload, "attach"))
         disp = row.pop("display", None)
+        is_doc = row.pop("is_document", False)
+        mt = row.get("media_type")
         if aud == "model":
             # audience='model': the bytes ride the next request and NOTHING is
             # painted for the human. Staying silent here is the whole point.
             return row
-        if __vis_is_doc(mt):
+        if is_doc:
             if not __vis_emit_doc_fence(disp, name, mt, len(data), cap):
                 print("[Attached: " + name + "]" + ((" " + cap) if cap else ""))
         elif disp:
@@ -334,14 +235,13 @@ def __vis_install_attach__():
         lim = globals().get("__vis_attachment_limit__")
         return int(lim()) if lim is not None else None
 
-    def __vis_attach_reference(path, head, size, name, kind, media_type, label, audience):
+    def __vis_attach_reference(path, size, name, kind, media_type, label, audience):
         # The file stays where it is. The engine checks the path with the same
         # read gate as the file preview of the gateway, stores the path and NO
         # byte of the file, and every client streams it with Range requests.
-        mt = media_type or __vis_guess_media_type(name, head)
-        knd = kind or __vis_kind_for(mt)
+        # The engine names the media type from the first bytes of the file.
         cap = __vis_caption(label)
-        aud = __vis_audience(audience, mt)
+        aud = __vis_audience(audience)
         if aud == "model":
             raise ValueError(
                 "attach: " + name + " is larger than the attachment limit, so it is "
@@ -352,7 +252,10 @@ def __vis_install_attach__():
             raise RuntimeError("attach: reference bridge not bound in this sandbox")
         absolute = _os.path.abspath(path)
         row = __vis_row(
-            __vis_decoded(rec(knd, mt, absolute, name, aud, cap), "attach")
+            __vis_decoded(
+                rec(kind, media_type, absolute, name, aud, cap, __vis_name_hint(name)),
+                "attach",
+            )
         )
         print(
             "[Attached: " + name + "] "
@@ -558,20 +461,18 @@ def __vis_install_attach__():
         name = str(filename or _os.path.basename(path) or "artifact")
         try:
             with open(path, "rb") as f:
-                # A file larger than the attachment limit is never read whole: the
+                # A file larger than the attachment limit is never read here: the
                 # gateway keeps a REFERENCE to it and every client streams it from
-                # disk. The first bytes are enough to name its media type.
+                # disk. The engine reads only its first bytes to name its media type.
                 size = _os.fstat(f.fileno()).st_size
                 limit = __vis_attachment_limit()
-                if limit is not None and size > limit:
-                    head = f.read(256)
-                else:
-                    data = f.read()
+                is_reference = limit is not None and size > limit
+                data = None if is_reference else f.read()
         except FileNotFoundError:
             raise FileNotFoundError("attach: no such file: " + path) from None
-        if limit is not None and size > limit:
+        if is_reference:
             return __vis_attach_reference(
-                path, head, size, name, kind, media_type, label, audience
+                path, size, name, kind, media_type, label, audience
             )
         return __vis_attach_data(data, name, kind, media_type, label, audience)
 
@@ -765,9 +666,6 @@ def __vis_install_attach__():
         # ONE text for one handle: `help(attach)` and `doc("attach")` read the
         # same string, so neither can go stale against the other.
         fn.__doc__ = page
-
-    g["__vis_guess_media_type"] = __vis_guess_media_type
-    g["__vis_kind_for"] = __vis_kind_for
 
 
 __vis_install_attach__()

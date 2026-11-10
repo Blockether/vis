@@ -1659,7 +1659,8 @@ document is for the user only. A script in an HTML page can still give the model
 TSV table shows as a table, and its rows do not go to the model.
 
 If you do not give `media_type`, Vis detects the type from the bytes, then from the filename.
-If both fail, Vis uses `application/octet-stream`.
+If both fail, text is `text/plain` and other bytes are `application/octet-stream`.
+The sandbox `attach` uses the same rule.
 
 The read functions take the same target: a filename, an `id` or a descriptor. A filename means
 the latest version, unless you give `version`. A negative version counts back from the latest

@@ -11,9 +11,11 @@
    No parsing, no round-trip through the model-facing stdout: we control the whole
    boundary. The Python side reads the file through the sandbox's OWN confined
    `open` (so filesystem-root confinement is enforced for free — a path outside
-   the roots raises the normal sandbox error), sniffs the media-type (magic bytes
-   then extension then utf-8 probe), base64-encodes, and calls the tiny host
-   bridge `__vis_record_attachment__`, which appends the attachment map to the
+   the roots raises the normal sandbox error), base64-encodes, and calls the tiny host
+   bridge `__vis_record_attachment__` with the type that the filename suggests as
+   a hint. The engine decides the media type ([[decide-attachment]]), so the
+   sandbox door and the `vis.attach` door of an extension give the same bytes the
+   same type. The bridge appends the attachment map to the
    per-block `*attachment-sink*` (`mpl-capture/record-attachment!`). `run-python-block`
    drains that sink into the block outcome's `:attachments`; the loop stamps each with
    the producing block's tool-call-id and hands them to `db-store-iteration!`'s
@@ -208,16 +210,49 @@
                          " no copy of its bytes. Open the path itself.")
                     {:type ::attachment-reference :path (:path row)}))))
 
+(defn- blank->nil [v] (when-not (str/blank? (str (or v ""))) (str v)))
+
+(def ^:private sandbox-door
+  "How the sandbox `attach` names itself and its reader in a refusal."
+  {:name "attach" :reader "read_attachment(target)"})
+
+(def ^:private extension-door
+  "How `vis.attach` of an extension names itself and its reader in a refusal."
+  {:name "vis.attach" :reader "vis.read_attachment"})
+
+(defn- decide-attachment
+  "The media type and the kind of an attachment, for each attach door. An explicit
+   `media-type` or `kind` wins. Else `detect`, a function without arguments, asks
+   [[attachments/attached-media-type]] or [[attachments/attached-file-media-type]],
+   and the media type gives the kind. Refuses a viewer document for `audience`
+   `model`, in the words of `door`."
+  [door kind media-type audience detect]
+  (let [media-type (or (blank->nil media-type) (detect))]
+    (when (and (= "model" (str/lower-case (str audience)))
+               (attachments/viewer-document-media-type? media-type))
+      (throw (ex-info (str (:name door)
+                           ": documents require audience='user'; "
+                           (:reader door)
+                           " returns their bytes.")
+                      {})))
+    {:media-type media-type
+     :kind (or (blank->nil kind)
+               (cond (str/starts-with? media-type "image/") "image"
+                     (attachments/viewer-document-media-type? media-type) "doc"
+                     :else "file"))}))
+
 (defn- record-reference-call
   "Body of `__vis_record_attachment_reference__`: record a file that is larger than
    the attachment limit as a REFERENCE to its path on the gateway machine. No byte
-   of the file is read here or stored in the session database.
+   of the file is stored in the session database. Without an explicit media type,
+   the engine reads only the head of the file to name its type; `hint` is the type
+   that the filename suggests.
 
    The path goes through the same read gate as the file preview and the media stream
    of the gateway, so a block cannot reference a file that a client could not read.
    A reference is for people: its audience is always `user`, and its bytes never go
    into a model request."
-  [kind media-type path filename audience label]
+  [kind media-type path filename audience label hint]
   (let [env
         extension/*current-environment*
 
@@ -243,9 +278,14 @@
                                            (str ": " p)))
                                     {:type ::reference-refused :status (:status refusal)})))
                   (let [absolute (.getPath file)
-                        media-type (or (not-empty (str media-type)) "application/octet-stream")
+                        {:keys [kind media-type]}
+                        (decide-attachment sandbox-door
+                                           kind
+                                           media-type
+                                           audience
+                                           #(attachments/attached-file-media-type file hint))
                         recorded (mpl-capture/record-attachment!
-                                   (cond-> {:kind (or (not-empty (str kind)) "file")
+                                   (cond-> {:kind kind
                                             :media-type media-type
                                             :storage-uri (storage/reference-uri absolute)
                                             :size (.length file)
@@ -301,7 +341,26 @@
 
                 (json/write-json-str (cond-> (dissoc (pending-descriptor 0 recorded) :position)
                                        (some? info)
-                                       (assoc :display (vec info)))))))
+                                       (assoc :display (vec info))
+
+                                       (attachments/viewer-document-media-type? (str media-type))
+                                       (assoc :is-document true))))))
+
+(defn- sandbox-attach-call
+  "Body of `__vis_record_attachment__`, the sandbox `attach` door. `kind` and
+   `media-type` are the explicit choices of the caller or blank, and `hint` is the
+   type that the filename suggests. [[decide-attachment]] fills the open fields,
+   then [[record-attachment-call]] stores the artifact."
+  [kind media-type b64 filename size audience label hint]
+  (let [{:keys [kind media-type]} (decide-attachment sandbox-door
+                                                     kind
+                                                     media-type
+                                                     audience
+                                                     #(attachments/attached-media-type
+                                                        (.decode (java.util.Base64/getDecoder)
+                                                                 (str b64))
+                                                        hint))]
+    (record-attachment-call kind media-type b64 filename size audience label)))
 
 (defn- attachment-tool
   "Wrap an attachment operation with the standard error hook."
@@ -324,7 +383,7 @@
   "Attachment host operations. Values cross directly; failures use the shared
    observed-symbol hook and remain catchable host errors in Python."
   []
-  {"__vis_record_attachment__" (attachment-tool 'attach :mutation record-attachment-call)
+  {"__vis_record_attachment__" (attachment-tool 'attach :mutation sandbox-attach-call)
    "__vis_record_attachment_reference__" (attachment-tool 'attach :mutation record-reference-call)
    "__vis_attachment_limit__" (fn []
                                 (long mpl-capture/*attachment-limit-bytes*))
@@ -374,16 +433,12 @@
              (throw (ex-info (str "show_attachment: " (pr-str (:filename row)) " is not an image.")
                              {:type ::not-an-image})))))))})
 
-(defn- blank->nil [v] (when-not (str/blank? (str (or v ""))) (str v)))
-
 (defn- extension-attach-call
   "Body of `vis.attach` for a Python extension. Its one options map holds `base64`
    and the optional `filename`, `media_type`, `media_type_hint`, `kind`,
-   `audience` and `label`. An explicit media type wins, then the
-   magic-byte sniff, then the hint from the filename. A hint also names the format
-   of a generic ZIP sniff. The fallback is
-   `application/octet-stream`. The result is the descriptor JSON, without the
-   sandbox-only display data."
+   `audience` and `label`. [[decide-attachment]] gives the media type and the kind
+   with the rule of the sandbox `attach`. The result is the descriptor JSON,
+   without the sandbox-only display data."
   [opts]
   (let [opt
         #(get opts %)
@@ -396,20 +451,6 @@
              (catch IllegalArgumentException _
                (throw (ex-info "vis.attach: the payload is not base64." {}))))
 
-        media-type
-        (let [sniffed
-              (when (pos? (alength ^bytes data)) (attachments/detect-media-mime data))
-
-              hint
-              (blank->nil (opt "media_type_hint"))]
-
-          (or (blank->nil (opt "media_type"))
-              ;; A workbook, an EPUB and a JAR are ZIP archives too: the hint names
-              ;; which format the generic ZIP sniff stands for.
-              (if (and hint (= "application/zip" sniffed)) hint sniffed)
-              hint
-              "application/octet-stream"))
-
         audience
         (str/lower-case (str (or (blank->nil (opt "audience")) "both")))]
 
@@ -417,26 +458,24 @@
       (throw (ex-info (str "vis.attach: audience must be 'both', 'user' or 'model', got "
                            (pr-str (opt "audience")))
                       {})))
-    (when (and (= "model" audience) (attachments/viewer-document-media-type? media-type))
-      (throw
-        (ex-info
-          "vis.attach: documents require audience='user'; vis.read_attachment returns their bytes."
-          {})))
-    (when (nil? mpl-capture/*attachment-sink*)
-      (throw (ex-info "vis.attach: call it from a tool that python_execution runs." {})))
-    (-> (record-attachment-call (or (blank->nil (opt "kind"))
-                                    (cond (str/starts-with? media-type "image/") "image"
-                                          (attachments/viewer-document-media-type? media-type) "doc"
-                                          :else "file"))
-                                media-type
-                                b64
-                                (or (blank->nil (opt "filename")) "artifact")
-                                (alength ^bytes data)
-                                audience
-                                (opt "label"))
-        (json/read-json)
-        (dissoc "display")
-        (json/write-json-str))))
+    (let [{:keys [kind media-type]}
+          (decide-attachment extension-door
+                             (opt "kind")
+                             (opt "media_type")
+                             audience
+                             #(attachments/attached-media-type data (opt "media_type_hint")))]
+      (when (nil? mpl-capture/*attachment-sink*)
+        (throw (ex-info "vis.attach: call it from a tool that python_execution runs." {})))
+      (-> (record-attachment-call kind
+                                  media-type
+                                  b64
+                                  (or (blank->nil (opt "filename")) "artifact")
+                                  (alength ^bytes data)
+                                  audience
+                                  (opt "label"))
+          (json/read-json)
+          (dissoc "display" "is-document")
+          (json/write-json-str)))))
 
 (defn ^:no-doc extension-host-doors
   "The attachment doors of a Python extension, as `{guest-name fn}`. `vis.attach`
