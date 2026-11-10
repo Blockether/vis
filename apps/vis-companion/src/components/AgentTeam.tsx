@@ -162,22 +162,27 @@ function Divider() {
   return <span aria-hidden="true" className="h-3 w-px shrink-0 bg-dialog-edge" data-team-divider />;
 }
 
-// The short status words of the team line on a phone. A screen reader still reads the whole word.
-const SHORT_STATUS: Readonly<Record<string, string>> = { running: 'run', failed: 'fail' };
+// The counts of a team on a phone: one square for each agent, in the bar ink of its status. A
+// queued or waiting agent is an empty square. A screen reader reads the counts as words.
+function CountMarks({ counts, id }: { counts: readonly TeamCount[]; id?: string }) {
+  return (
+    <span id={id} className="flex min-w-0 flex-wrap items-center gap-0.5" data-team-marks>
+      {counts.flatMap(({ text, count }) =>
+        Array.from({ length: count }, (_, index) => (
+          <span key={`${text}-${index}`} aria-hidden="true" className={`size-2 ${BAR_INK[text] ?? 'border border-dialog-hint'}`} />
+        )),
+      )}
+      <span className="sr-only">{counts.map(({ text, count }) => `${count} ${text}`).join(', ')}</span>
+    </span>
+  );
+}
 
 function Counts({ counts, id, isShort }: { counts: readonly TeamCount[]; id?: string; isShort: boolean }) {
+  if (isShort) return <CountMarks counts={counts} id={id} />;
   return (
     <span id={id} className="flex flex-wrap gap-x-3">
       {counts.map(({ text, count, ink }) => (
-        <span key={text} className={`whitespace-nowrap uppercase tabular-nums ${ink}`}>
-          {`${count} `}
-          {isShort && SHORT_STATUS[text] ? (
-            <>
-              <span aria-hidden="true">{SHORT_STATUS[text]}</span>
-              <span className="sr-only">{text}</span>
-            </>
-          ) : text}
-        </span>
+        <span key={text} className={`whitespace-nowrap uppercase tabular-nums ${ink}`}>{`${count} ${text}`}</span>
       ))}
     </span>
   );
@@ -194,7 +199,7 @@ export function TeamLine({ agents, action, labelId }: { agents: readonly Subagen
   const isWide = useWide();
   return (
     <span className="flex min-w-0 flex-1 items-center gap-x-3 sm:min-h-5" data-team-line>
-      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3">
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 max-sm:flex-nowrap">
         <span id={labelId && `${labelId}-team`} className="font-bold uppercase text-white">team</span>
         {time !== undefined && <Divider />}
         {time !== undefined && (
@@ -497,11 +502,10 @@ function columnWidths(rows: readonly Subagent[], leader?: LeaderLane): CSSProper
 // The columns of the chart of a team: the KEY of each lane, its time BAR, its TIME and its
 // STATUS. The legend under the chart gives each KEY its ROLE, TITLE and the NOTE of its row.
 const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_7ch] items-baseline gap-x-3 px-3';
-// On a phone the note goes under the role and the title.
-const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_minmax(0,1fr)] sm:grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
-const LEGEND_KEY = 'max-sm:row-span-2';
-const LEGEND_NOTE = 'min-w-0 max-sm:col-span-2 max-sm:col-start-2';
-// On a phone the note runs under ROLE and TITLE, so no hairline stands after them.
+// A phone legend has one line for each lane and no note: the rows of the team show the notes.
+const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_minmax(0,1fr)] max-sm:py-0.5 sm:grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
+const LEGEND_NOTE = 'min-w-0 max-sm:hidden';
+// A phone legend draws only the hairline after the KEY.
 const LEGEND_LAST = 'max-sm:after:hidden';
 
 // The bar column of a chart row: the inset of the row, the KEY and one gap on the left; one gap,
@@ -747,7 +751,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
       <ul aria-label="Legend" className="border-t border-dialog-edge pt-1">
         {leader && (
           <li className={LEGEND_ROW} data-hover-note-frame>
-            <span className={`font-bold ${LEGEND_KEY} ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
+            <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
             <span className={`font-bold uppercase ${CELL_RULE} ${LEGEND_LAST} ${LEADER_INK}`}>{LEADER_ROLE}</span>
             <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE} ${LEGEND_LAST}`}>{leaderWait(times)}</span>
             <HoverNote className={LEGEND_NOTE} note={leader.note}>
@@ -760,7 +764,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           const update = agentUpdate(agent);
           return (
             <li key={agent.session_id} className={LEGEND_ROW} data-hover-note-frame>
-              <span className={`${LEGEND_KEY} ${CELL_RULE} ${role.ink}`}>{keys[index]}</span>
+              <span className={`${CELL_RULE} ${role.ink}`}>{keys[index]}</span>
               <span className={`uppercase ${CELL_RULE} ${LEGEND_LAST} ${role.ink}`}>{role.text}</span>
               <HoverNote className={`min-w-0 ${CELL_RULE} ${LEGEND_LAST}`} note={taskNote(agent.task)}>
                 <span className="font-bold [overflow-wrap:anywhere]">{agentLabel(agent, rows)}</span>

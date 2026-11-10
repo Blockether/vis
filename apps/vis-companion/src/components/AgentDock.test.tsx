@@ -28,7 +28,7 @@ describe('AgentDock', () => {
   it('folds the whole team of the running turn to one line: its time and its counts by status', () => {
     dock([{ ...base, status: 'completed', result: 'Found 3 routes' }, { ...asking, title: 'Fix it' }], 'turn-1');
     const line = within(region()).getByRole('button', { expanded: false });
-    expect(line).toHaveAccessibleName(/^team (\d+[hms][\d ms]*)?1 running1 done$/);
+    expect(line).toHaveAccessibleName(/^team (\d+[hms][\d ms]*)?1 running, 1 done$/);
     expect(rows()).toEqual([]);
     expect(region().querySelectorAll('svg')).toHaveLength(1);
   });
