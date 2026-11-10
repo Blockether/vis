@@ -552,32 +552,73 @@ class _Run:
                 pass
         self.poll()
 
-    def read(self, offset=None, limit=None):
-        # A NEGATIVE offset reads the last n LINES; a positive one is a byte cursor.
+    def read(self, offset=None, limit=None, lines=None):
+        # The line rules of the engine. A NEGATIVE offset reads the last n LINES; a
+        # positive one is a byte cursor. `lines` is the line window: the last n lines
+        # without an offset, the next n lines from an offset, and the n lines that
+        # end at the offset when it is negative. `limit` cuts the bytes of one read.
+        # Without an offset and a line window, this host reads the whole log.
         try:
             raw = Path(self.log_path).read_bytes()
         except OSError:
             raw = b""
-        if offset is not None and int(offset) < 0:
-            lines = raw.decode("utf-8", "replace").splitlines()
-            text = "\n".join(lines[int(offset) :])
-            return text, len(raw), len(raw) - len(text.encode("utf-8"))
-        start = max(0, int(offset or 0))
-        chunk = raw[start:]
-        omitted = 0
+        size = len(raw)
+        offset = None if offset is None else int(offset)
+        count = abs(int(lines or 0))
+        is_backward = int(lines or 0) < 0
+        end = size
+        if is_backward:
+            end = size if offset is None or offset < 0 else min(offset, size)
+            start = _tail_start(raw, end, count)
+        elif offset is None:
+            start = _tail_start(raw, size, count) if count else 0
+        elif offset < 0:
+            start = _tail_start(raw, size, -offset)
+        else:
+            start = min(offset, size)
+        chunk = raw[start:end]
+        if count and not is_backward:
+            # A line ends at its newline, so the last line of the window is whole.
+            index = -1
+            for _ in range(count):
+                index = chunk.find(b"\n", index + 1)
+                if index < 0:
+                    break
+            if index >= 0:
+                chunk = chunk[: index + 1]
+        omitted = start if offset is not None and offset < 0 else 0
         if limit is not None and len(chunk) > int(limit):
             omitted = len(chunk) - int(limit)
             chunk = chunk[: int(limit)]
-        return chunk.decode("utf-8", "replace"), start + len(chunk), omitted
+        text = chunk.decode("utf-8", "replace")
+        return text, start, start + len(chunk), omitted, size
+
+
+def _tail_start(raw, end, count):
+    # The byte where the last `count` lines before `end` start. A newline at `end`
+    # closes the last line; it does not start an empty line.
+    index = end - 1 if raw[end - 1 : end] == b"\n" else end
+    for _ in range(count):
+        index = raw.rfind(b"\n", 0, index)
+        if index < 0:
+            return 0
+    return index + 1
+
+
+def _shell_option(opts, *names):
+    # The first of the names that the options give. The engine reads the same names.
+    return next((opts[name] for name in names if opts.get(name) is not None), None)
 
 
 def _result(run, stage, **extra):
     code = run.poll()
     now = time.time()
     result: dict[str, Any] = dict.fromkeys(_SHELL_RESULT_KEYS)
-    out, next_offset, omitted = run.read(
-        extra.pop("_offset", None), extra.pop("_limit", None)
+    out, offset, next_offset, omitted, size = run.read(
+        extra.pop("_offset", None), extra.pop("_limit", None), extra.pop("_lines", None)
     )
+    # Only a log read answers the cursor of its window, as in the engine.
+    is_log_read = stage == "logs"
     result.update(
         {
             "stage": stage,
@@ -605,9 +646,9 @@ def _result(run, stage, **extra):
             "waiting_for_input": False,
             "out": out,
             "out_omitted_chars": omitted,
-            "offset": 0,
+            "offset": offset if is_log_read else 0,
             "next_offset": next_offset,
-            "is_eof": code is not None,
+            "is_eof": next_offset >= size if is_log_read else code is not None,
             "attach": None,
             "already_running": False,
             "keys": None,
@@ -669,7 +710,11 @@ def shell(opts):
         raise Refused("no such shell in this process: {!r}".format(opts.get("id")))
     if op == "logs":
         return _result(
-            run, "logs", _offset=opts.get("offset"), _limit=opts.get("limit")
+            run,
+            "logs",
+            _offset=_shell_option(opts, "offset", "start"),
+            _limit=_shell_option(opts, "limit", "bytes"),
+            _lines=_shell_option(opts, "lines", "n", "tail"),
         )
     if op == "send":
         text = str(opts.get("text", ""))
@@ -691,7 +736,8 @@ def shell(opts):
         run.kill()
         return _result(run, "stop")
     if op == "wait":
-        deadline = time.time() + float(opts.get("seconds", 120))
+        seconds = _shell_option(opts, "seconds", "secs", "timeout")
+        deadline = time.time() + float(120 if seconds is None else seconds)
         while time.time() < deadline and run.poll() is None:
             time.sleep(0.05)
         return _result(run, "wait")
@@ -706,11 +752,7 @@ _COMPONENT_SCHEMAS = {
     branch["properties"]["type"]["const"]: branch
     for branch in _contracts.definition("view", "component")["oneOf"]
 }
-_FIELD_SCHEMAS = {
-    kind: branch
-    for kind, branch in _COMPONENT_SCHEMAS.items()
-    if "name" in branch["required"]
-}
+_FIELD_SCHEMAS = _contracts.input_branches()
 _GROUP = next(
     kind
     for kind, branch in _COMPONENT_SCHEMAS.items()
@@ -727,11 +769,7 @@ _TEXT = {
 _CHOICE = {
     kind for kind, branch in _FIELD_SCHEMAS.items() if "options" in branch["properties"]
 }
-_SECRET = {
-    kind
-    for kind, branch in _FIELD_SCHEMAS.items()
-    if branch["properties"]["is_secret"]["const"]
-}
+_SECRET = _contracts.secret_input_types()
 _RANGE = _FIELD_SCHEMAS["range"]["properties"]
 _OTP = _FIELD_SCHEMAS["otp"]["properties"]["max_length"]
 

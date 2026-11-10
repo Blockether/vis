@@ -360,6 +360,8 @@ def __getattr__(name: str) -> Any:
             raise RuntimeError(f"vis.{name} needs a bound Vis session")
         handle = _host_layer().session(sid)
         return handle if name == "session" else handle.council()
+    if name == "_APP_MEDIA_TYPE":
+        return _app_media_type()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -487,21 +489,6 @@ class _Tools:
 
 
 tools = _Tools()
-
-
-# Hosted SDK code has no package-loader dependency; cross-language contract tests
-# pin this vocabulary to activity.json, just as they pin the live-node table.
-_ACTIVITY_PRESENTERS = (
-    "generic",
-    "shell",
-    "tests",
-    "patch",
-    "observation",
-    "lint",
-    "repl",
-    "format",
-    "list",
-)
 
 
 def _bounded_text(value, limit, name):
@@ -941,6 +928,11 @@ class ActivityPresentation(ActivitySection):
         return value
 
 
+# The presenter of an activity that names none. The SDK import builds such
+# activities, so this name needs no schema read. A test compares it with the schema.
+_DEFAULT_ACTIVITY_PRESENTER = "generic"
+
+
 @dataclass(frozen=True, slots=True)
 class Activity:
     """Human-facing symbol presentation. The engine owns identity, timing and outcome.
@@ -980,7 +972,7 @@ class Activity:
         ValueError: The presenter is unknown or the label is invalid.
     """
 
-    presenter: str = "generic"
+    presenter: str = _DEFAULT_ACTIVITY_PRESENTER
     label: str | None = None
     render: Callable[..., ActivityPresentation | None] | None = None
     show_start: bool = True
@@ -992,8 +984,13 @@ class Activity:
             not callable(self.render) or inspect.iscoroutinefunction(self.render)
         ):
             raise TypeError("Activity render must be a synchronous callable")
-        if self.presenter not in _ACTIVITY_PRESENTERS:
-            raise ValueError("unknown Activity presenter")
+        if self.presenter != _DEFAULT_ACTIVITY_PRESENTER:
+            from blockether.vis import _contracts
+
+            # The activity schema owns the presenter names.
+            presenters = _contracts.definition("activity", "presenter")["enum"]
+            if self.presenter not in presenters:
+                raise ValueError("unknown Activity presenter")
         if self.label is not None and (
             not isinstance(self.label, str)
             or not self.label.strip()
@@ -4030,6 +4027,76 @@ def _shell_options(name, opts):
     return opts
 
 
+# The words of a log read that mean another word. The engine reads the same words.
+_SHELL_LOG_ALIASES = {
+    "n": "lines",
+    "tail": "lines",
+    "start": "offset",
+    "bytes": "limit",
+}
+_SHELL_LOG_PAGE_CAP = 10
+# The text reads that a log page answers from its `out` text.
+_SHELL_LOG_TEXT_READS = frozenset(
+    (
+        "count",
+        "endswith",
+        "find",
+        "index",
+        "lower",
+        "lstrip",
+        "partition",
+        "removeprefix",
+        "removesuffix",
+        "replace",
+        "rfind",
+        "rindex",
+        "rpartition",
+        "rsplit",
+        "rstrip",
+        "split",
+        "splitlines",
+        "startswith",
+        "strip",
+        "upper",
+    )
+)
+
+
+def _shell_name_tip(names, wanted):
+    # A near name contains the wrong name or is a part of it.
+    low = wanted.lower()
+    near = [
+        name
+        for name in names
+        if isinstance(name, str) and (low in name.lower() or name.lower() in low)
+    ]
+    if not near:
+        return ""
+    return " Did you mean " + " / ".join(repr(name) for name in near) + "?"
+
+
+class _ShellLogs:
+    # The log reader of a handle. A call reads one page. A text read or a slice
+    # reads the current log.
+    __slots__ = ("_shell",)
+
+    def __init__(self, shell):
+        self._shell = shell
+
+    def __call__(self, offset=None, lines=None, limit=None, **aliases):
+        return self._shell._vis_logs(offset, lines, limit, **aliases)
+
+    def __getattr__(self, name):
+        if name in _SHELL_LOG_TEXT_READS:
+            return getattr(self()["out"], name)
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
+
+    def __getitem__(self, key):
+        return self()[key]
+
+
 class Shell(dict):
     # A SHELL RESULT IS A LIVE HANDLE — the SAME contract the model's sandbox gets.
     # `vis.shell` and `vis.jailed_shell` both answer this
@@ -4038,6 +4105,13 @@ class Shell(dict):
     # hand-authoring `{'op': 'logs', 'id': …}` maps. It IS a dict — `sh['exit']`,
     # `json.dumps(sh)`, `{**sh}` all behave — and every op answers the one shell
     # result shape, so no key can KeyError.
+    #
+    # The sandbox handle is the reference for each call that this class answers.
+    # It is a class of the Python runtime, and it calls session tools. This class
+    # calls the host of the extension, which is also there outside Vis.
+    # The options of the log read that made this page. Only a log page has them.
+    _vis_logs_spec: dict[str, Any] | None = None
+
     def __init__(self, raw, call):
         dict.__init__(self, dict(raw or {}))
         self._vis_call = call
@@ -4051,16 +4125,145 @@ class Shell(dict):
         answer = self._vis_op(opts)
         self.clear()
         self.update(answer)
+        self.__dict__.pop("_vis_logs_spec", None)
         return self
 
-    def logs(self, offset=None, limit=None):
+    def _vis_is_log_page(self):
+        return dict.get(self, "stage") == "logs"
+
+    def _vis_keys_text(self, empty):
+        return ", ".join(repr(key) for key in self) or empty
+
+    def __missing__(self, key):
+        if not isinstance(key, str):
+            raise KeyError(
+                f"cannot index this shell result with {key!r}: a dict is not "
+                "sliceable or positional — use list(d), d.items(), or a string key. "
+                f"Keys: {self._vis_keys_text('(no keys)')}"
+            )
+        raise KeyError(
+            f"{key!r} is not a key of this shell result. "
+            f"Keys: {self._vis_keys_text('(no keys)')}.{_shell_name_tip(self, key)} "
+            "Read the keys it returned instead of guessing another name; use "
+            ".get(k, default) when the field is optional."
+        )
+
+    def __getitem__(self, key):
+        # A slice of a log page reads its text. Each other key is a dict read.
+        if isinstance(key, slice) and self._vis_is_log_page():
+            return dict.__getitem__(self, "out")[key]
+        return dict.__getitem__(self, key)
+
+    def __getattr__(self, name):
+        # A private name is not a field: copy and pickle look for such names.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name in _SHELL_LOG_TEXT_READS and self._vis_is_log_page():
+            out = dict.get(self, "out")
+            if isinstance(out, str):
+                return getattr(out, name)
+        if name in self:
+            return dict.__getitem__(self, name)
+        example = next(
+            (
+                f"r[{key!r}] is r.{key}"
+                for key in self
+                if isinstance(key, str) and key.isidentifier()
+            ),
+            "r[key] is r.key",
+        )
+        raise AttributeError(
+            f"{name!r} is not a field of this shell result. Every field answers by "
+            f"key AND by attribute: {example}. Keys: {self._vis_keys_text('(none)')}."
+            f"{_shell_name_tip(self, name)} "
+            "Methods: logs(offset, lines), wait(secs), type(text), stop()."
+        )
+
+    def _vis_log_text_concat(self, other, is_reversed):
+        if not self._vis_is_log_page() or not isinstance(other, str):
+            return NotImplemented
+        out = dict.__getitem__(self, "out")
+        return other + out if is_reversed else out + other
+
+    def __add__(self, other):
+        return self._vis_log_text_concat(other, False)
+
+    def __radd__(self, other):
+        return self._vis_log_text_concat(other, True)
+
+    @property
+    def stdout(self):
+        # `out` is the field. These names are the ones that process APIs use.
+        return self["out"]
+
+    stderr = stdout
+
+    @property
+    def logs(self):
+        return _ShellLogs(self)
+
+    def _vis_log_page(self, spec):
+        page = self._vis_op(dict(spec, op="logs"))
+        page._vis_logs_spec = dict(spec)
+        return page
+
+    def _vis_log_spec(self):
+        spec = self._vis_logs_spec
+        if spec is None:
+            raise RuntimeError(
+                "shell log paging starts on a log page; call "
+                "sh.logs(0, lines=100) first."
+            )
+        return spec
+
+    def _vis_logs(self, offset=None, lines=None, limit=None, **aliases):
         # A NEGATIVE offset reads the last n LINES; a positive one is a byte cursor.
-        opts: dict[str, Any] = {"op": "logs"}
-        if offset is not None:
-            opts["offset"] = int(offset)
-        if limit is not None:
-            opts["limit"] = int(limit)
-        return self._vis_op(opts)
+        # `lines` is the line window: the last n lines without an offset, the next
+        # n lines from an offset, and the n lines above the offset when negative.
+        named = {"offset": offset, "lines": lines, "limit": limit}
+        for key, value in aliases.items():
+            canonical = _SHELL_LOG_ALIASES.get(key)
+            if canonical is None:
+                raise TypeError(
+                    f"logs: no keyword '{key}'. Keywords: offset, lines, limit "
+                    "(n/tail mean lines, start means offset)."
+                )
+            if named[canonical] is not None:
+                raise TypeError(f"logs: {canonical} named twice, as '{key}' too.")
+            named[canonical] = value
+        return self._vis_log_page(
+            {key: int(value) for key, value in named.items() if value is not None}
+        )
+
+    def __next__(self):
+        # Continue the read of this page. A forward read stops at the end that the
+        # page saw. A negative line window goes to the start of the log.
+        spec = self._vis_log_spec()
+        lines = spec.get("lines")
+        if lines is not None and int(lines) < 0:
+            cursor = self.get("offset")
+            if cursor is None or int(cursor) <= 0 or cursor == spec.get("offset"):
+                raise StopIteration
+        else:
+            if self.get("is_eof"):
+                raise StopIteration
+            cursor = self.get("next_offset")
+            if cursor is None or cursor in (self.get("offset"), spec.get("offset")):
+                raise StopIteration
+        return self._vis_log_page(dict(spec, offset=int(cursor)))
+
+    def pages(self, max_pages=None):
+        # This page, then each page after it, to a limit of ten pages by default.
+        self._vis_log_spec()
+        cap = _SHELL_LOG_PAGE_CAP if max_pages is None else int(max_pages)
+        page = self
+        seen = 0
+        while page is not None:
+            yield page
+            seen += 1
+            if seen >= cap:
+                break
+            page = next(page, None)
 
     def type(self, text, is_enter=True):
         return self._vis_drive(
@@ -4070,10 +4273,19 @@ class Shell(dict):
     def stop(self):
         return self._vis_drive({"op": "stop"})
 
-    def wait(self, seconds=120):
+    def wait(self, seconds=120, **aliases):
         # ONE wait, in the HOST: `{'op': 'wait'}` runs the bounded poll loop that the
         # sandbox handle also calls, so an extension and the model can never disagree
         # about when a wait ends or what it accumulated.
+        # `secs` and `timeout` mean `seconds`.
+        for key in ("secs", "timeout"):
+            if key in aliases:
+                seconds = aliases.pop(key)
+        if aliases:
+            raise TypeError(
+                f"wait: no keyword '{sorted(aliases)[0]}'. "
+                "Keywords: seconds (secs/timeout mean it)."
+            )
         return self._vis_drive({"op": "wait", "seconds": int(seconds)})
 
 
@@ -4730,7 +4942,7 @@ def attach(
     """
     if isinstance(source, Mapping) and (
         source.get("placement") == "attachment"
-        or source.get("media_type") == _APP_MEDIA_TYPE
+        or source.get("media_type") == _app_media_type()
     ):
         if (filename, kind, media_type, label) != (None,) * 4 or audience != "both":
             raise TypeError(
@@ -4840,18 +5052,6 @@ def list_sessions(search=None):
 # Nodes are addressed BY ID, because a view with two tables has no "the" table.
 
 _FLUSH_MS = 100
-_INPUT_TYPES = frozenset(
-    (
-        "plaintext",
-        "password",
-        "multiline",
-        "select",
-        "multiselect",
-        "checkbox",
-        "range",
-        "otp",
-    )
-)
 # Coalesce pushes briefly: a host round trip per written line would park the
 # extension on the journal writer once per line.
 
@@ -5312,17 +5512,16 @@ _LIVE_NODES = {
     "image": ImageNode,
     "thread": ThreadNode,
     "scene": Scene,
-    "plaintext": Input,
-    "password": Input,
-    "multiline": Input,
-    "select": Input,
-    "multiselect": Input,
-    "checkbox": Input,
-    "range": Input,
-    "otp": Input,
 }
-# The typed handle each schema-defined node type answers. Host-boundary tests
-# keep these handles aligned with the canonical View schema.
+# The typed handle of each node type that is not an input. Each input type of the
+# view schema has an `Input` handle. A test compares this table with the schema.
+
+
+def _input_types() -> set[str]:
+    """The type of each input component. The view schema owns the list."""
+    from blockether.vis import _contracts
+
+    return _contracts.input_types()
 
 
 def _cell(value):
@@ -5692,12 +5891,13 @@ class LiveView:
         """Every visible input value by node id. Secret inputs are left out."""
         found = {}
         stack = list(self.state().get("nodes") or [])
+        inputs = _input_types()
         while stack:
             node = stack.pop(0)
             if not isinstance(node, dict):
                 continue
             stack.extend(node.get("children") or [])
-            if node.get("type") in _INPUT_TYPES and not node.get("is_secret"):
+            if node.get("type") in inputs and not node.get("is_secret"):
                 found[str(node.get("id") or node.get("name"))] = node.get("value")
         return found
 
@@ -5753,14 +5953,15 @@ class LiveView:
         self._listeners.append(callback)
         return callback
 
-    def node(self, node_id):
+    def node(self, node_id) -> Any:
         """The typed handle for one node, by id."""
         name = str(node_id)
         type_name = self._nodes.get(name)
         if not type_name:
             known = ", ".join(self._order) or "no nodes"
             raise KeyError(f"this view has no node {name!r} — it has {known}")
-        return _LIVE_NODES[type_name](self, name, type_name)
+        handle = Input if type_name in _input_types() else _LIVE_NODES[type_name]
+        return handle(self, name, type_name)
 
     def __getitem__(self, node_id):
         return self.node(node_id)
@@ -5936,7 +6137,13 @@ class LiveView:
         return f"<vis live view {self.view_id!r} {state}>"
 
 
-_APP_MEDIA_TYPE = "application/vnd.vis.app+json"
+def _app_media_type() -> str:
+    """The media type of an app attachment row. The view schema owns it."""
+    from blockether.vis import _contracts
+
+    return _contracts.definition("view", "app_attachment")["contentMediaType"]
+
+
 # One events wait of `LiveAttachment.run`, below the 30 s cap of the SDK door.
 _RUN_WAIT_S = 25.0
 _DOOR_WAIT_MS = 25000
@@ -6167,8 +6374,14 @@ class _AppDoor:
         return int(answer.get("events_cursor") or 0)
 
 
-_RECEIPT_STAGES = ("accepted", "delivered", "processing", "answered", "failed")
-# The stages of one Send receipt, in order. The host refuses a step back.
+def _receipt_stages() -> list[str]:
+    """The stages of one Send receipt, in order. The view schema owns them.
+
+    The host refuses a step back.
+    """
+    from blockether.vis import _contracts
+
+    return _contracts.definition("view", "submission_status")["enum"]
 
 
 class LiveAttachment(LiveView):
@@ -6201,7 +6414,7 @@ class LiveAttachment(LiveView):
             raise TypeError(
                 "an app is a vis.ui.app(...) declaration or an app attachment row"
             )
-        if source.get("media_type") == _APP_MEDIA_TYPE:
+        if source.get("media_type") == _app_media_type():
             view_id = str(source.get("view_id") or "").strip()
             if not view_id:
                 raise ValueError("this app attachment row has no view_id")
@@ -6285,9 +6498,10 @@ class LiveAttachment(LiveView):
         `status` is `delivered`, `processing`, `answered` or `failed`. People see the
         stage, and `note` (at most 500 characters) tells them why.
         """
-        if status not in _RECEIPT_STAGES:
+        stages = _receipt_stages()
+        if status not in stages:
             raise ValueError(
-                f"status must be one of {', '.join(_RECEIPT_STAGES)}, got {status!r}"
+                f"status must be one of {', '.join(stages)}, got {status!r}"
             )
         answer = self._app_call(
             {
@@ -6307,9 +6521,10 @@ class LiveAttachment(LiveView):
         and `node_id`, `values`, `comments`, `revision` or `note` when it has them.
         With `status`, only the receipts in that stage.
         """
-        if status is not None and status not in _RECEIPT_STAGES:
+        stages = _receipt_stages()
+        if status is not None and status not in stages:
             raise ValueError(
-                f"status must be one of {', '.join(_RECEIPT_STAGES)}, got {status!r}"
+                f"status must be one of {', '.join(stages)}, got {status!r}"
             )
         receipts = [dict(r) for r in (self.state() or {}).get("submissions") or []]
         return [r for r in receipts if status is None or r.get("status") == status]
@@ -6683,8 +6898,8 @@ class _LiveRecorder:
                 node["clicks"] = 0
             elif kind == "card" and node.get("is_selectable"):
                 node["clicks"] = 0
-            elif kind in _INPUT_TYPES:
-                node["is_secret"] = kind in ("password", "otp")
+            elif kind in _contracts.input_types():
+                node["is_secret"] = kind in _contracts.secret_input_types()
             elif kind == "scene":
                 complaint = _contracts.scene_node(node)
                 if complaint:
@@ -7051,7 +7266,7 @@ class _LiveRecorder:
         """Simulate the human setting one input; queue its `change` event."""
         with self._condition:
             node = self.node(node_id)
-            if self._result is not None or node.get("type") not in _INPUT_TYPES:
+            if self._result is not None or node.get("type") not in _input_types():
                 raise AssertionError("only an input in an open view can change")
             if node.get("is_secret"):
                 self._event("change", node_id, is_set=value is not None)
@@ -7083,7 +7298,7 @@ class _LiveRecorder:
             scope = [
                 node
                 for node in self._nodes(self._scope(str(node_id)))
-                if node.get("type") in _INPUT_TYPES
+                if node.get("type") in _input_types()
             ]
             given = dict(values or {})
             collected = {}

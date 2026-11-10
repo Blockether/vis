@@ -8,6 +8,7 @@ import json
 
 import blockether.vis.extension as vis
 import pytest
+from blockether.vis import _contracts
 from blockether.vis._contracts import validate
 
 PATCH = (
@@ -262,6 +263,16 @@ def test_submissions_read_the_receipts_from_the_app_state(host):
         app.submission("sub-9")
     with pytest.raises(ValueError, match="status must be one of"):
         app.submissions(status="sent")
+
+
+def test_a_receipt_takes_each_stage_of_the_schema(host, monkeypatch):
+    stages = _contracts.definition("view", "submission_status")
+    monkeypatch.setitem(stages, "enum", [*stages["enum"], "archived"])
+    app = vis.attach(vis.ui.app("Review", vis.ui.thread("general")))
+    assert app.submissions(status="archived") == []
+    assert app.set_status("sub-1", "archived")["status"] == "archived"
+    with pytest.raises(ValueError, match="accepted, .*, archived, got 'sent'"):
+        app.set_status("sub-1", "sent")
 
 
 def test_a_send_event_names_its_receipt_and_its_comments(host):

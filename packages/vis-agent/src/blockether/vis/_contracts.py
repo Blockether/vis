@@ -1009,20 +1009,40 @@ def _char_count(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
+def input_branches() -> dict[str, dict[str, Any]]:
+    """The schema of each input component of a view, by type.
+
+    An input component holds one answer, so its schema has `is_required`.
+    """
+    return {
+        branch["properties"]["type"]["const"]: branch
+        for branch in definition("view", "component")["oneOf"]
+        if "is_required" in branch["properties"]
+    }
+
+
+def input_types() -> set[str]:
+    """The type of each input component of a view."""
+    return set(input_branches())
+
+
+def secret_input_types() -> set[str]:
+    """The type of each input component that hides its value."""
+    return {
+        kind
+        for kind, branch in input_branches().items()
+        if branch["properties"]["is_secret"].get("const") is True
+    }
+
+
 def _input_kinds() -> tuple[set[str], set[str]]:
-    secret, text = set(), set()
-    for branch in definition("view", "component")["oneOf"]:
-        properties = branch["properties"]
-        kind = properties["type"].get("const")
-        if "is_secret" not in properties:
-            continue
-        if properties["is_secret"].get("const") is True:
-            secret.add(kind)
-        if "min_length" in properties and "min_length" not in branch.get(
-            "required", []
-        ):
-            text.add(kind)
-    return secret, text
+    text = {
+        kind
+        for kind, branch in input_branches().items()
+        if "min_length" in branch["properties"]
+        and "min_length" not in branch.get("required", [])
+    }
+    return secret_input_types(), text
 
 
 def _range_defaults() -> dict[str, Any]:

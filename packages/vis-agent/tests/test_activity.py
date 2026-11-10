@@ -67,9 +67,6 @@ def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
     }
     with pytest.raises(TypeError):
         vis.Activity(state="succeeded")
-    assert set(vis._ACTIVITY_PRESENTERS) == set(
-        _contracts.definition("activity", "presenter")["enum"]
-    )
 
 
 @pytest.mark.parametrize(
