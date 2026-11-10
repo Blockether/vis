@@ -2554,6 +2554,14 @@
                                                            {:workspace-root root}))))
        (catch Throwable _ nil)))
 
+(defn- live-turn-attachments
+  "The images that a running or queued turn record holds in memory, as transcript
+   rows: its inline uploads and the files that its request text names. nil when it
+   has none."
+  [turn]
+  (seq (wire/canonical (distinct-attachments (into (vec (:attachments turn))
+                                                   (request-text-attachments turn))))))
+
 (defn turn-attachments
   "The FULL attachments (filename / media_type / base64) of ONE turn.
 
@@ -2579,8 +2587,7 @@
           (read-turn-record (turn-record sid tid))
 
           live
-          #(seq (wire/canonical (distinct-attachments (into (vec (:attachments turn))
-                                                            (request-text-attachments turn)))))
+          #(live-turn-attachments turn)
 
           stored
           (fn [lister]
@@ -5896,11 +5903,17 @@
                                    (assoc entry :cancel-floor (long cancelling-at))
                                    stale))
                          entry)))
+    ;; The row is gone after this swap, so its images ride on the frame: a channel
+    ;; without its own copy of the bytes restores them with the text.
     (doseq [turn @dropped]
-      (append-event! sid
-                     "turn.queued.deleted"
-                     {:turn_id (:turn_id turn) :request (:request turn) :reason "cancelled"}
-                     {:store? false}))
+      (let [images (live-turn-attachments turn)]
+        (append-event!
+          sid
+          "turn.queued.deleted"
+          (cond-> {:turn_id (:turn_id turn) :request (:request turn) :reason "cancelled"}
+            images
+            (assoc :attachments images))
+          {:store? false})))
     @dropped))
 
 (defn- after-turn-terminal!

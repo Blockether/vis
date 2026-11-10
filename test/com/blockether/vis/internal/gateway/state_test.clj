@@ -2483,6 +2483,51 @@
                            @seen)))
           (expect (= "running" (get-in @registry [sid :turns "r0" :status])))
           (expect (cancellation/cancelled? token))))))
+  ;; Regression, user report: a queued message with an image came back from a stop as
+  ;; the bare `[IMAGE #1]` text on every channel that had no own copy of the bytes, so
+  ;; the re-sent turn named an image that it did not carry.
+  (it
+    "a cancelled queued row's frame carries its images, so any channel can restore them"
+    (let
+      [sid
+       (str "cancel-backlog-image-" (java.util.UUID/randomUUID))
+
+       png
+       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+       seen
+       (atom [])
+
+       registry
+       (atom {sid {:next-seq 0
+                   :current-turn "r0"
+                   :subscribers {"test" #(swap! seen conj %)}
+                   :turns {"r0" {:turn_id "r0"
+                                 :status "running"
+                                 :cancel-token (cancellation/cancellation-token)}
+                           "old" {:turn_id "old"
+                                  :status "queued"
+                                  :request "[IMAGE #1] what is this"
+                                  :queued_at 1
+                                  :attachments [{:filename "shot.png"
+                                                 :media-type "image/png"
+                                                 :base64 png
+                                                 :reference "[IMAGE #1]"}]}}
+                   :turn-order ["r0" "old"]
+                   :idempotency {}}})]
+
+      (with-redefs-fn {#'state/registry registry
+                       #'state/start-cancel-terminal-backstop! (fn [& _]
+                                                                 nil)}
+        (fn []
+          (state/cancel-turn! sid "r0")
+          (let [deleted (first (filter #(= "turn.queued.deleted" (get % "type")) @seen))]
+            (expect (= [["shot.png" "image/png" png "[IMAGE #1]"]]
+                       (mapv (juxt #(get % "filename")
+                                   #(get % "media_type")
+                                   #(get % "base64")
+                                   #(get % "reference"))
+                             (get deleted "attachments")))))))))
   (it "a stalled force-cancel is a failure, not a user stop: backlog survives"
       (let [sid
             (str "cancel-stall-" (java.util.UUID/randomUUID))

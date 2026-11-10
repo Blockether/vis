@@ -4605,7 +4605,7 @@
                  :slash-command-hidden? true)
            :fx (cond-> []
                  (and sid tid)
-                 (conj [:gateway-delete-queued sid tid (current-tab-id db) entry]))})
+                 (conj [:gateway-delete-queued sid tid (current-tab-id db) entry true]))})
         (empty? history) {:db db}
         :else (let [new-idx
                     (if (nil? cur-idx) (dec (count history)) (max 0 (dec (long cur-idx))))
@@ -5885,7 +5885,7 @@
   ;; by late events.
   (fn [db
        [_ workspace-id
-        {:keys [op turn-id client-id text preview-text reason deliver]
+        {:keys [op turn-id client-id text preview-text reason deliver attachments]
          mine-hint? :mine?
          :as chunk}]]
     (let [workspace-id (or workspace-id (current-tab-id db))]
@@ -5982,9 +5982,15 @@
 
                        (cond-> w'
                          restore?
+                         ;; The row's own staged files win; a row mirrored from another
+                         ;; channel has none, so it takes the bytes the frame carried.
                          (restore-entries-to-input [(cond-> mirrored
                                                       (str/blank? (:text mirrored))
-                                                      (assoc :text text))])))))}))))
+                                                      (assoc :text text)
+
+                                                      (and (empty? (:attachments mirrored))
+                                                           (seq attachments))
+                                                      (assoc :attachments attachments))])))))}))))
 
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
@@ -6055,7 +6061,8 @@
       {:db (assoc db
              :slash-command-index 0
              :slash-command-hidden? true)
-       :fx fx})))
+       ;; `true`: the rows came back to the editor, so their images come too.
+       :fx (mapv #(conj % true) fx)})))
 
 (defn- newest-index [db] (dec (count (:pending-sends (db-for-tab db (current-tab-id db))))))
 
@@ -7922,22 +7929,54 @@
         ;; `:sync-queued-turn` writer — otherwise the turn would still auto-drain
         ;; server-side with nothing on screen to say so. A 404 (already gone) and a
         ;; 409 (already started — the attach machinery paints it) stay removed.
-        (fn [sid tid workspace-id entry]
+        ;; `pull?`: the row came back into the editor. A row mirrored from another
+        ;; channel has no staged files, so its images are read from the gateway BEFORE
+        ;; the delete, which drops the gateway's only copy.
+        (fn [sid tid workspace-id entry & [pull?]]
           (when (and sid tid)
             (gateway-queue-io!
               (fn []
-                (let [failed? (try (not= "deleted"
-                                         (get (vis/gateway-delete-queued-turn! sid tid) "status"))
-                                   (catch Throwable t
-                                     (not (contains? #{404 409} (:http-status (ex-data t))))))]
-                  (when (and failed? workspace-id)
-                    (dispatch [:sync-queued-turn workspace-id
-                               {:op :add
-                                :turn-id tid
-                                :text (:text entry)
-                                :preview-text (:preview-text entry)
-                                :client-id (:client-id entry)
-                                :mine? (:mine? entry)}]))))))))
+                (let [images
+                      (when (and pull? (empty? (:attachments entry)))
+                        (try (into []
+                                   (keep composer-attachments/staged-from-wire)
+                                   (vis/gateway-turn-attachments sid tid))
+                             (catch Throwable t
+                               (tel/log! {:level :warn
+                                          :id ::queued-attachments-fetch-failed
+                                          :data {:sid sid :turn-id tid :error (ex-message t)}
+                                          :msg "Could not read the images of a queued row"})
+                               nil)))
+
+                      failed?
+                      (try (not= "deleted" (get (vis/gateway-delete-queued-turn! sid tid) "status"))
+                           (catch Throwable t
+                             (not (contains? #{404 409} (:http-status (ex-data t))))))]
+
+                  (cond (and failed? workspace-id) (dispatch [:sync-queued-turn workspace-id
+                                                              {:op :add
+                                                               :turn-id tid
+                                                               :text (:text entry)
+                                                               :preview-text (:preview-text entry)
+                                                               :client-id (:client-id entry)
+                                                               :mine? (:mine? entry)}])
+                        (and workspace-id (seq images)) (dispatch [:add-pulled-attachments
+                                                                   workspace-id images]))))))))
+
+(reg-event-db :add-pulled-attachments
+              ;; The staged files of a queued row that came back into the editor without
+              ;; them. Its text already names them, under the numbers they keep here.
+              (fn [db [_ workspace-id images]]
+                (update-tab db
+                            workspace-id
+                            (fn [w]
+                              (let [ids (set (map :id (:attachments w)))]
+                                (assoc w
+                                  :attachments
+                                  (into (vec (:attachments w)) (remove (comp ids :id)) images)
+                                  :image-counter (reduce max
+                                                         (long (or (:image-counter w) 0))
+                                                         (keep :image-number images))))))))
 
 (reg-fx :gateway-retract-queued
         ;; The ONE writer (`:sync-queued-turn`) refused to mirror a submission the user

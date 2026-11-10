@@ -9,6 +9,7 @@
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
+            [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.iteration :as iteration]
@@ -1269,13 +1270,19 @@
       ;; A plain delete carries nothing extra. A delete that is the fallout of a
       ;; USER CANCEL carries `reason "cancelled"` plus the dropped row's text
       ;; (gateway `drop-cancelled-backlog!`), which is what lets every attached
-      ;; channel pull the words back into its editor instead of losing them.
+      ;; channel pull the words back into its editor instead of losing them. Its
+      ;; images ride along too, staged here as composer files: a channel that did not
+      ;; author the row has no other copy of the bytes once the row is gone.
       (cond-> {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
         (event-get event :reason)
         (assoc :reason (event-get event :reason))
 
         (event-get event :request)
-        (assoc :text (event-get event :request)))
+        (assoc :text (event-get event :request))
+
+        (seq (event-get event :attachments))
+        (assoc :attachments
+          (into [] (keep composer-attachments/staged-from-wire) (event-get event :attachments))))
 
       ;; The queue head left the queue because the gateway auto-STARTED it.
       ;; Drop the mirrored entry — the drain/attach machinery renders the

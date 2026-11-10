@@ -8,8 +8,11 @@
             [com.blockether.vis.tui.terminal-image :as terminal-image]
             [com.blockether.vis.tui.attachments :as attachments]
             [com.blockether.vis.tui.format :as fmt]
-            [com.blockether.vis.tui.input :as input])
+            [com.blockether.vis.tui.input :as input]
+            [taoensso.telemere :as tel])
   (:import [java.io File FileInputStream]
+           [java.nio.file Files OpenOption]
+           [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]
            [java.util Base64]))
 
@@ -181,6 +184,73 @@
               (not-empty (str words))
               (assoc :transcription (str words)))))
         (or staged [])))
+
+(defn staged-from-wire
+  "Stage ONE gateway attachment (wire map with `base64`) as a composer file: the
+   inverse of [[inline-payloads]]. A message that comes back from the gateway queue
+   then sends the same bytes again, under its own `[IMAGE #n]` number. nil when the
+   map carries no decodable payload."
+  [attachment]
+  (try
+    (let [payload
+          (str (wire-value attachment "base64"))
+
+          payload
+          (if (str/starts-with? payload "data:")
+            (subs payload (inc (long (str/index-of payload ","))))
+            payload)
+
+          media-type
+          (str (wire-value attachment "media_type"))
+
+          number
+          (some->> (wire-value attachment "reference")
+                   str
+                   (re-find #"^\[IMAGE #(\d+)\]$")
+                   second
+                   parse-long)
+
+          words
+          (wire-value attachment "transcription")]
+
+      (when-not (str/blank? payload)
+        (let [^File dir
+              (.toFile (Files/createTempDirectory "vis-restored-" (make-array FileAttribute 0)))
+
+              ^File file
+              (File. dir
+                     (.getName (File. (str (or (not-empty (str (wire-value attachment "filename")))
+                                               "attachment")))))]
+
+          ;; Exit deletes in reverse order: the file first, then its directory.
+          (.deleteOnExit dir)
+          (.deleteOnExit file)
+          (Files/write (.toPath file)
+                       (.decode (Base64/getDecoder) payload)
+                       ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
+          (let [{:keys [w h]}
+                (or (terminal-image/probe-dimensions (.getAbsolutePath file) media-type) {})]
+            (cond-> {:id (content-id file)
+                     :path (.getCanonicalPath file)
+                     :filename (.getName file)
+                     :media-type media-type
+                     :size (.length file)}
+              (and w h)
+              (assoc :width
+                w :height
+                h)
+
+              number
+              (assoc :image-number number)
+
+              (not-empty (str words))
+              (assoc :transcription (str words)))))))
+    (catch Throwable t
+      (tel/log! {:level :warn
+                 :id ::staged-from-wire-failed
+                 :data {:filename (wire-value attachment "filename") :error (ex-message t)}
+                 :msg "Could not stage a gateway attachment for the composer"})
+      nil)))
 
 (defn remove-attachment
   "Remove exactly the staged attachment with stable `id`, preserving order."

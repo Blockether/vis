@@ -1439,6 +1439,14 @@
   [sid tid]
   (send-json! "DELETE" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid))))
 
+(defn turn-attachments
+  "The full attachments (`filename`/`media_type`/`base64`) of ONE turn. A queued row
+   mirrored from another channel holds no bytes; while it is queued the gateway is
+   their only source."
+  [sid tid]
+  (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid) "/attachments"))
+            "attachments")))
+
 (defn cancel-turn!
   [sid tid]
   (send-json! "POST" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid) "/cancel")))
@@ -2603,6 +2611,8 @@
 (def gateway-reload-extensions! reload-extensions!)
 
 (def gateway-delete-queued-turn! delete-queued-turn!)
+
+(def gateway-turn-attachments turn-attachments)
 
 (def gateway-mark-queued-turn! mark-queued-turn!)
 

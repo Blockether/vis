@@ -1357,7 +1357,14 @@ export function SessionScreen({
     const authored = authoredQueueRef.current.get(turnId);
     authoredQueueRef.current.delete(turnId);
     const text = (authored?.request || request || '').trim();
-    const attachments = authored?.attachments ?? images;
+    // Without the authored copy (the screen was opened again, or the stop came from
+    // another channel) the client still holds the bytes it sent. Without them a
+    // restored `[IMAGE #1]` is a marker with no picture behind it.
+    const attachments =
+      authored?.attachments ??
+      (images.length
+        ? images
+        : (client.cachedSentAttachments(sid, turnId) ?? []).map(pendingFromGateway));
     if (text || attachments.length) restoreComposerImages(text, attachments);
     if (authored?.pastes.size) {
       setPastes((current) => {
@@ -1366,7 +1373,7 @@ export function SessionScreen({
         return next;
       });
     }
-  }, [restoreComposerImages]);
+  }, [client, sid, restoreComposerImages]);
   // The pencil on a queued row: the row leaves the queue and comes back into the
   // composer whole, so the person can change it or add a picture and send it again.
   // The gateway holds the bytes of a row that another device queued. Nothing leaves
@@ -3050,7 +3057,16 @@ export function SessionScreen({
             // A plain delete (the user removed the row) carries no reason and
             // restores nothing.
             if (eventString(event, 'reason') === 'cancelled') {
-              restoreCancelledQueued(tid, eventString(event, 'request'));
+              // The frame carries the dropped row's images too: once the row is gone the
+              // gateway holds no other copy of a picture that another device queued.
+              const rows = Array.isArray(event.attachments)
+                ? (event.attachments as GatewayAttachment[])
+                : [];
+              restoreCancelledQueued(
+                tid,
+                eventString(event, 'request'),
+                rows.filter((row) => !!row?.base64).map(pendingFromGateway),
+              );
             }
             break;
           case 'turn.queued.drained':
@@ -4374,10 +4390,18 @@ export function SessionScreen({
       if (liveTid) await client.cancelTurn(sid, liveTid);
       else await client.cancelCurrentTurn(sid);
       // The gateway dropped these rows when it accepted the stop. Take them out of the
-      // tray with their text, so the words never show in two places at once.
+      // tray with their text, so the words never show in two places at once. A row
+      // whose image bytes this client never held comes back through the
+      // `turn.queued.deleted` frame instead, which carries them.
       const restored = new Set(backlog.map((row) => row.turnId));
       for (const row of backlog) {
-        restoreCancelledQueued(row.turnId, row.request);
+        if (
+          !row.attachments.length ||
+          authoredQueueRef.current.has(row.turnId) ||
+          client.cachedSentAttachments(sid, row.turnId)?.length
+        ) {
+          restoreCancelledQueued(row.turnId, row.request);
+        }
         noteQueueDelta(row.turnId, null);
       }
       if (restored.size) setQueued((current) => current.filter((item) => !restored.has(item.turnId)));

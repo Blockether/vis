@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.state-test
   (:require [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.scroll :as scroll]
@@ -5758,6 +5759,46 @@
                             "s1"
                             {:text "gone" :mine? true}))
           (expect (= [] (:pending-sends @state/app-db))))))
+  (it
+    "a row pulled back into the editor brings the images that the gateway holds"
+    ;; ArrowUp and C-x e on a row that another channel queued: the row has no staged
+    ;; files, and the delete drops the gateway's only copy, so the bytes are read first.
+    (let
+      [png
+       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+       calls
+       (atom [])]
+
+      (with-redefs [vis/gateway-turn-attachments
+                    (fn [_ tid]
+                      (swap! calls conj [:read tid])
+                      [{"filename" "shot.png"
+                        "media_type" "image/png"
+                        "base64" png
+                        "reference" "[IMAGE #1]"}])
+
+                    vis/gateway-delete-queued-turn!
+                    (fn [_ tid]
+                      (swap! calls conj [:delete tid])
+                      {"status" "deleted"})]
+
+        (reset! state/app-db {:session {:id "s1"}
+                              :active-tab-id "s1"
+                              :render-version 0
+                              :input (input/empty-input)
+                              :pastes {}
+                              :paste-counter 0
+                              :image-counter 0
+                              :attachments []
+                              :pending-sends [{:turn-id "q1" :text "[IMAGE #1] what is this"}]})
+        (state/dispatch [:history-up])
+        (flush-queue-io!)
+        (expect (= [[:read "q1"] [:delete "q1"]] @calls))
+        (expect (= "[IMAGE #1] what is this" (input/input->text (:input @state/app-db))))
+        (expect
+          (= [{:filename "shot.png" :media-type "image/png" :base64 png :reference "[IMAGE #1]"}]
+             (composer-attachments/inline-payloads (:attachments @state/app-db)))))))
   (it "does nothing more when the delete succeeds"
       (with-redefs [vis/gateway-delete-queued-turn! (fn [_ _]
                                                       {"status" "deleted"})]
@@ -5856,6 +5897,53 @@
       (expect (= "draft\n\none\n\ntwo" (input/input->text (:input @state/app-db))))
       (expect (= [] (:pending-sends @state/app-db)))
       (expect (not (:loading? @state/app-db))))
+  (it
+    "a sibling's queued image comes back with its bytes and re-sends them"
+    ;; Regression, user report: the row came back as bare `[IMAGE #1]` text, so the
+    ;; re-sent turn named an image that it did not carry.
+    (let
+      [png
+       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+       frame
+       (#'chat/gateway-event->chunk
+        {"type" "turn.queued.deleted"
+         "turn_id" "q1"
+         "reason" "cancelled"
+         "request" "[IMAGE #1] what is this"
+         "attachments"
+         [{"filename" "shot.png" "media_type" "image/png" "base64" png "reference" "[IMAGE #1]"}]})]
+
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :input (input/empty-input)
+                            :pastes {}
+                            :paste-counter 0
+                            :image-counter 0
+                            :attachments []
+                            :pending-sends []})
+      (state/dispatch
+        [:sync-queued-turn nil
+         {:op :add :turn-id "q1" :client-id "other-channel:abc" :text "[IMAGE #1] what is this"}])
+      (state/dispatch [:sync-queued-turn nil frame])
+      (let [db
+            @state/app-db
+
+            text
+            (input/input->text (:input db))
+
+            send
+            (:fn (get @@#'state/event-registry :send-message))
+
+            effect
+            (first (filter #(= :session-turn (first %))
+                           (:fx (send db [:send-message text nil {:reset-input? true}]))))]
+
+        (expect (= "[IMAGE #1] what is this" text))
+        (expect
+          (= [{:filename "shot.png" :media-type "image/png" :base64 png :reference "[IMAGE #1]"}]
+             (composer-attachments/inline-payloads (last effect)))))))
   (it "a plain delete or a drain leaves the input untouched"
       (reset! state/app-db {:session {:id "s1"}
                             :active-tab-id "s1"
