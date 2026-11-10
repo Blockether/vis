@@ -9,10 +9,12 @@ owns the live views, the author of the owner's messages.
 
 from __future__ import annotations
 
+import atexit
 import base64
 import json
 import os
 import secrets
+import signal
 import stat
 import subprocess
 import sys
@@ -419,6 +421,25 @@ _LOG_SWEEP_INTERVAL_SECS = 3600
 _LOG_SWEEPERS = {}
 
 
+def _end_runs():
+    """End every shell of this host that still runs, when the host exits.
+
+    Each shell leads its own session, so nothing else ends it after this process.
+    """
+    live = [run for run in list(_RUNS.values()) if run.process.poll() is None]
+    for run in live:
+        run.signal_group(signal.SIGTERM)
+    deadline = time.monotonic() + 2
+    for run in live:
+        try:
+            run.process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            run.signal_group(signal.SIGKILL)
+
+
+atexit.register(_end_runs)
+
+
 def _sweep_logs(log_root):
     """Remove stale SDK logs without following links or touching other producers."""
     cutoff = time.time() - _LOG_RETENTION_SECS
@@ -551,14 +572,25 @@ class _Run:
             return self.process.poll()
         return code
 
-    def kill(self):
-        try:
-            self.process.terminate()
-            self.process.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+    def signal_group(self, sig):
+        # The command leads its own session, so its process group holds every process
+        # that it started. The group id is the command's pid: it stays ours only until
+        # the command is reaped.
+        if self.process.poll() is None:
             try:
-                self.process.kill()
-            except OSError:
+                os.killpg(self.process.pid, sig)
+            except (PermissionError, ProcessLookupError):
+                pass
+
+    def kill(self):
+        self.signal_group(signal.SIGTERM)
+        try:
+            self.process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self.signal_group(signal.SIGKILL)
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
                 pass
         self.poll()
 

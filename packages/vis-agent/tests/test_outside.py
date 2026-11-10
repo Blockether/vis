@@ -3,7 +3,10 @@
 import inspect
 import json
 import os
+import signal
+import subprocess
 import sys
+import textwrap
 import threading
 import time
 from datetime import UTC, datetime
@@ -502,6 +505,73 @@ def test_a_shell_handle_stops_what_it_started():
     stopped = run.stop()
     assert stopped["status"] == "stopped"
     assert stopped["exit"] is not None
+
+
+def _started_pid(run):
+    # The command prints the pid of the child it started in the background.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        out = run.logs()["out"].strip()
+        if out:
+            return int(out.splitlines()[0])
+        time.sleep(0.02)
+    raise AssertionError("the command printed no pid")
+
+
+def _ends(pid):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    os.kill(pid, signal.SIGKILL)
+    return False
+
+
+# Report 2026-11-10: a stopped or timed-out shell left the children of its command
+# running under init, because only the command itself got the signal.
+@pytest.mark.parametrize("ending", ["stop", "timeout"])
+def test_ending_a_shell_ends_the_processes_its_command_started(ending):
+    opts = {"command": "sleep 30 & echo $!; wait"}
+    if ending == "timeout":
+        opts["timeout_secs"] = 1
+    run = vis.shell(opts)
+    pid = _started_pid(run)
+    ended = run.stop() if ending == "stop" else run.wait(10)
+    assert ended["status"] != "running"
+    assert _ends(pid)
+
+
+# Report 2026-11-10: Python REPL drivers that a script started outside Vis ran for
+# hours after the script exited. Each shell has its own session, so nothing else ends it.
+def test_a_host_that_exits_ends_the_shells_it_left_running():
+    script = textwrap.dedent(
+        """
+        import time
+        import blockether.vis.extension as vis
+
+        run = vis.shell({"op": "background", "command": "sleep 30 & echo $!; wait"})
+        while not run.logs()["out"].strip():
+            time.sleep(0.02)
+        print(run.logs()["out"].strip(), flush=True)
+        """
+    )
+    src = str(Path(_outside.__file__).resolve().parents[2])
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([src, os.environ.get("PYTHONPATH", "")]),
+    }
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert done.returncode == 0, done.stderr
+    assert _ends(int(done.stdout.split()[0]))
 
 
 def test_shell_reads_the_last_lines_from_a_negative_offset():
