@@ -1664,6 +1664,13 @@ Without a filename type, two or more lines of JSON objects are `application/x-nd
 After that, UTF-8 text is `text/plain` and other bytes are `application/octet-stream`.
 The sandbox `attach` uses the same rule.
 
+The functions take the same arguments as the sandbox functions, because the same code runs at
+both places. `vis.attach` accepts the near-miss keywords of the sandbox, such as `name=` for
+`filename` and `title=` for `label`. A file larger than the attachment limit is not copied: Vis
+keeps a reference to its path. A reference is for people only, and `read_attachment` and
+`show_attachment` refuse it. In `python_execution`, `attach` also prints a preview of the file in
+the block output. Only `vis.attach` in an extension accepts `on_event` for an app.
+
 The read functions take the same target: a filename, an `id` or a descriptor. A filename means
 the latest version, unless you give `version`. A negative version counts back from the latest
 version. `read_attachment` is the only function that returns the bytes. `show_attachment` shows a
@@ -1671,7 +1678,8 @@ stored image to the model for the next request only.
 
 If no `python_execution` block runs your code, for example in a slash command, these functions
 raise an error. Outside Vis, for example in plain unit tests, they keep the files in process
-memory. A test can then attach a file and read it back.
+memory. A test can then attach a file and read it back. Outside Vis there is no size limit and no
+reference: the functions read each file whole.
 
 ## Filesystem and processes
 

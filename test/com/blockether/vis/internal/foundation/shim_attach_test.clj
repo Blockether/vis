@@ -1147,9 +1147,7 @@
                      (get (extension-attach {"base64" csv "filename" "x" "media_type" "text/plain"})
                           "media-type")))
           (expect (= "text/plain"
-                     (get (extension-attach {"base64" csv "filename" "x"}) "media-type")))
-          (expect (not (contains? (extension-attach {"base64" pdf "filename" "b.pdf"})
-                                  "display"))))))
+                     (get (extension-attach {"base64" csv "filename" "x"}) "media-type"))))))
   (it "keeps a ZIP archive a ZIP unless the filename hint names its format"
       (binding [mpl-capture/*attachment-sink* (atom [])]
         (let [zip (let [out (java.io.ByteArrayOutputStream.)]
@@ -1166,15 +1164,12 @@
                      (get (extension-attach
                             {"base64" zip "filename" "report.xlsx" "media_type_hint" xlsx})
                           "media-type"))))))
-  (it "refuses a wrong audience, a document for the model and a call outside a block"
+  (it "refuses a document for the model and a call outside a block"
       (let [pdf (.encodeToString (java.util.Base64/getEncoder) (.getBytes "%PDF-1.4\n" "UTF-8"))]
         (binding [mpl-capture/*attachment-sink* (atom [])]
-          (expect (str/includes? (extension-attach {"base64" pdf "audience" "all"})
-                                 "audience must be 'both', 'user' or 'model'"))
           (expect (str/includes? (extension-attach {"base64" pdf "audience" "model"})
                                  "documents require audience='user'")))
-        (expect (str/includes? (extension-attach {"base64" pdf})
-                               "call it from a tool that python_execution runs")))))
+        (expect (str/includes? (extension-attach {"base64" pdf}) "call inside python_execution")))))
 
 (def ^:private door-cases
   "`[label python-bytes filename expected-media-type]` rows for both attach doors.

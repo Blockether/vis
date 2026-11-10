@@ -5,26 +5,21 @@
 # survives a restart and, for image media-types, replays to a vision model. The
 # bytes are read through the sandbox's own CONFINED open, so a path outside the
 # filesystem roots raises the normal sandbox error.
+#
+# The five verbs are the verbs of the SDK (`_attachment_verbs` in
+# `blockether/vis/extension.py`), bound to the bridges of this sandbox. This file
+# owns only what an extension does not have: the preview that a block prints.
 
 
 def __vis_install_attach__():
-    import os as _os
-    import base64 as _b64
+    import importlib as _importlib
+    import types as _types
 
-    def __vis_name_hint(name):
-        # The ENGINE decides the media type (`attachment/core.clj`), with one rule
-        # for this verb and for `vis.attach` of an extension. The type that the
-        # filename suggests is only a hint for bytes that have no signature.
-        import mimetypes
-
-        return mimetypes.guess_type(str(name))[0]
-
-    def __vis_caption(label):
-        # A caption is exactly ONE line: the `vis-image`/`vis-table` fences are
-        # line-structured, so a newline inside the label would corrupt the header
-        # the renderer parses.
-        text = " ".join(str(label).split()) if label is not None else ""
-        return text or None
+    # ONE implementation of the five verbs: `_attachment_verbs` of the SDK module,
+    # which `vis.attach` of an extension also uses. This shim gives it the host
+    # doors of this session, prints the transcript fence of a stored artifact and
+    # holds the `doc()` pages.
+    __vis_sdk = _importlib.import_module("blockether.vis.extension")
 
     def __vis_human_bytes(n):
         n = float(n)
@@ -164,374 +159,71 @@ def __vis_install_attach__():
         print(chr(10).join(lines))
         return True
 
-    def __vis_audience(audience):
-        # The engine refuses a document for audience='model' and clamps every
-        # other audience of a document to 'user': it knows the media type.
-        aud = str(audience if audience is not None else "both").strip().lower()
-        if aud not in ("both", "user", "model"):
-            raise ValueError(
-                "attach: audience must be 'both', 'user' or 'model', got "
-                + repr(audience)
+    def __vis_present(
+        row, *, name, data, size, label, audience, display, is_document, path
+    ):
+        # Show what `attach` stored to whoever reads the block. `data` is None for
+        # a REFERENCE: the file stays on disk and no byte of it was read.
+        if data is None:
+            print(
+                "[Attached: "
+                + name
+                + "] "
+                + __vis_human_bytes(size)
+                + " kept on disk as a reference: "
+                + str(row.get("path") or path)
+                + ((" " + label) if label else "")
             )
-        return aud
-
-    def __vis_row(row):
-        # Descriptors cross the bridge with the engine's kebab-case keys; the
-        # sandbox speaks snake_case, and every accessor here returns the SAME
-        # shape.
-        return {str(k).replace("-", "_"): v for k, v in row.items()}
-
-    def __vis_decoded(payload, call):
-        # The bridge answers JSON text. Anything else is a boundary regression:
-        # name it, and what came back, rather than raising a bare
-        # JSONDecodeError that points at the caller's own line.
-        import json as _json
-
-        text = str(payload)
-        try:
-            return _json.loads(text)
-        except ValueError as exc:
-            raise RuntimeError(
-                "%s: the host bridge answered %s, not JSON (%s): %.200r"
-                % (call, type(payload).__name__, exc, text)
-            ) from exc
-
-    def __vis_attach_data(data, name, kind, media_type, label, audience):
-        cap = __vis_caption(label)
-        aud = __vis_audience(audience)
-        b64 = _b64.b64encode(data).decode("ascii")
-        rec = globals().get("__vis_record_attachment__")
-        if rec is None:
-            raise RuntimeError("attach: capture bridge not bound in this sandbox")
-        payload = rec(
-            kind, media_type, b64, name, len(data), aud, cap, __vis_name_hint(name)
-        )
-
-        # The stored artifact's own DESCRIPTOR: its id and version exist from
-        # this moment, so the caller holds a handle to what it just made instead
-        # of having to go looking for it.
-        row = __vis_row(__vis_decoded(payload, "attach"))
-        disp = row.pop("display", None)
-        is_doc = row.pop("is_document", False)
-        mt = row.get("media_type")
-        if aud == "model":
+            return
+        if audience == "model":
             # audience='model': the bytes ride the next request and NOTHING is
             # painted for the human. Staying silent here is the whole point.
-            return row
-        if is_doc:
-            if not __vis_emit_doc_fence(disp, name, mt, len(data), cap):
-                print("[Attached: " + name + "]" + ((" " + cap) if cap else ""))
-        elif disp:
-            __vis_emit_image_fence(disp, name, mt, len(data), cap)
-        elif not __vis_emit_table_fence(name, mt, data, len(data), cap):
-            if cap:
+            return
+        mt = row.get("media_type")
+        if is_document:
+            if not __vis_emit_doc_fence(display, name, mt, size, label):
+                print("[Attached: " + name + "]" + ((" " + label) if label else ""))
+        elif display:
+            __vis_emit_image_fence(display, name, mt, size, label)
+        elif not __vis_emit_table_fence(name, mt, data, size, label):
+            if label:
                 # No inline fence (a non-image, non-tabular artifact, or an image
                 # the host could not probe): the caption still has to reach
                 # whoever reads the block.
-                print("[Attached: " + name + "] " + cap)
-        return row
+                print("[Attached: " + name + "] " + label)
 
-    def __vis_attachment_limit():
-        lim = globals().get("__vis_attachment_limit__")
-        return int(lim()) if lim is not None else None
+    def __vis_bridge(bridge, verb):
+        # One host door of this session. The engine binds the bridge into these
+        # globals, so the lookup happens at each call.
+        def door(*args):
+            bound = globals().get(bridge)
+            if bound is None:
+                raise RuntimeError(verb + ": bridge not bound in this sandbox")
+            return bound(*args)
 
-    def __vis_attach_reference(path, size, name, kind, media_type, label, audience):
-        # The file stays where it is. The engine checks the path with the same
-        # read gate as the file preview of the gateway, stores the path and NO
-        # byte of the file, and every client streams it with Range requests.
-        # The engine names the media type from the first bytes of the file.
-        cap = __vis_caption(label)
-        aud = __vis_audience(audience)
-        if aud == "model":
-            raise ValueError(
-                "attach: " + name + " is larger than the attachment limit, so it is "
-                "kept as a reference for people; audience='model' cannot see it."
-            )
-        rec = globals().get("__vis_record_attachment_reference__")
-        if rec is None:
-            raise RuntimeError("attach: reference bridge not bound in this sandbox")
-        absolute = _os.path.abspath(path)
-        row = __vis_row(
-            __vis_decoded(
-                rec(kind, media_type, absolute, name, aud, cap, __vis_name_hint(name)),
-                "attach",
-            )
-        )
-        print(
-            "[Attached: " + name + "] "
-            + __vis_human_bytes(size)
-            + " kept on disk as a reference: " + str(row.get("path") or absolute)
-            + ((" " + cap) if cap else "")
-        )
-        return row
+        return door
 
-    # A Pillow image is the OTHER in-memory picture a block can hand over
-    # (when the sandbox has Pillow installed), so `attach(img, 'crop.png')` has
-    # to work exactly like the matplotlib idiom instead of falling through to
-    # the path branch and reporting the repr as a missing file.
-    __vis_pil_encoders = {
-        ".png": "PNG",
-        ".jpg": "JPEG",
-        ".jpeg": "JPEG",
-        ".gif": "GIF",
-        ".bmp": "BMP",
-        ".webp": "WEBP",
-        ".tif": "TIFF",
-        ".tiff": "TIFF",
-    }
-
-    def __vis_is_pil_image(source):
-        # Duck-typed, never isinstance: importing PIL to test a type would drag
-        # the imaging shim into every attach call.
-        return (
-            hasattr(source, "save")
-            and hasattr(source, "mode")
-            and hasattr(source, "size")
-            and not hasattr(source, "savefig")
-        )
-
-    def __vis_pil_bytes(image, name):
-        # The FILENAME chooses the encoder, so attach(img, 'shot.jpg') really
-        # stores a JPEG; anything else is lossless PNG. JPEG carries no alpha
-        # channel, so a mode the encoder cannot take is converted first instead
-        # of failing inside it.
-        import io as _io
-
-        fmt = __vis_pil_encoders.get(_os.path.splitext(str(name))[1].lower(), "PNG")
-        if fmt == "JPEG" and str(getattr(image, "mode", "")) not in ("RGB", "L"):
-            image = image.convert("RGB")
-        buf = _io.BytesIO()
-        image.save(buf, format=fmt)
-        return buf.getvalue()
-
-    # ONE canonical name per idea - and the near-misses a caller reaches for FOLD
-    # into it. `attach(p, name=..., title=...)` attaches; learning that the words
-    # here are `filename=` and `label=` is not worth a whole failed call, and the
-    # model that types `name=` types it again next turn. The same idea named
-    # TWICE (canonical and alias together) is still refused: that is two answers
-    # to one question, not a slip.
-    __vis_attach_kwargs = (
-        "source",
-        "filename",
-        "kind",
-        "media_type",
-        "label",
-        "audience",
+    __vis_door = _types.SimpleNamespace(
+        attach=__vis_bridge("__vis_record_attachment__", "attach"),
+        attach_reference=__vis_bridge("__vis_record_attachment_reference__", "attach"),
+        attachment_limit=__vis_bridge("__vis_attachment_limit__", "attach"),
+        list_attachments=__vis_bridge("__vis_list_attachments__", "list_attachments"),
+        get_attachment=__vis_bridge("__vis_get_attachment__", "get_attachment"),
+        read_attachment=__vis_bridge("__vis_read_attachment__", "read_attachment"),
+        show_attachment=__vis_bridge("__vis_reinspect_attachment__", "show_attachment"),
     )
 
-    __vis_attach_kwarg_aliases = {
-        "name": "filename",
-        "file_name": "filename",
-        "fname": "filename",
-        "path": "source",
-        "file": "source",
-        "src": "source",
-        "title": "label",
-        "caption": "label",
-        "description": "label",
-        "alt": "label",
-        "mime": "media_type",
-        "mime_type": "media_type",
-        "content_type": "media_type",
-        "type": "kind",
-    }
-
-    def attach(
-        source=None,
-        filename=None,
-        kind=None,
-        media_type=None,
-        label=None,
-        audience="both",
-        **aliases,
-    ):
-        if aliases:
-            given = {
-                "source": source,
-                "filename": filename,
-                "kind": kind,
-                "media_type": media_type,
-                "label": label,
-            }
-            for spelled in sorted(aliases):
-                canonical = __vis_attach_kwarg_aliases.get(spelled)
-                if canonical is None:
-                    raise TypeError(
-                        "attach: no keyword '"
-                        + spelled
-                        + "'. Keywords: "
-                        + ", ".join(__vis_attach_kwargs)
-                        + "."
-                    )
-                if given[canonical] is not None:
-                    raise TypeError(
-                        "attach: "
-                        + canonical
-                        + " named twice, as '"
-                        + spelled
-                        + "' and as '"
-                        + canonical
-                        + "' - pass one."
-                    )
-                given[canonical] = aliases[spelled]
-            source = given["source"]
-            filename = given["filename"]
-            kind = given["kind"]
-            media_type = given["media_type"]
-            label = given["label"]
-        # `source` carries no default in the CONTRACT (`doc("attach")` marks it
-        # REQUIRED); it only carries one in the signature so `path=`/`file=` can
-        # reach it as a keyword at all.
-        if source is None:
-            raise TypeError(
-                "attach: source is required - a confined path, bytes, an image "
-                "or a figure object (path=/file= reach it too)."
-            )
-        # An app is a live view that stays in the session. It uses the same
-        # `ui` components and the same handle as an app of an extension.
-        if isinstance(source, dict) and (
-            source.get("placement") == "attachment"
-            or source.get("media_type") == "application/vnd.vis.app+json"
-        ):
-            if (filename, kind, media_type, label) != (None,) * 4 or audience != "both":
-                raise TypeError(
-                    "attach: an app takes no filename, kind, media_type, label "
-                    "or audience."
-                )
-            door = globals().get("__vis_live_app__")
-            if door is None:
-                raise RuntimeError("attach: app bridge not bound in this sandbox")
-            import importlib
-
-            sdk = importlib.import_module("blockether.vis.extension")
-            return sdk.LiveAttachment._from(source, door=door)
-        # ONE attach verb, four shapes of source: a confined PATH, in-memory
-        # BYTES (a str is a path, so encode text you produced), anything with
-        # `savefig` - the matplotlib idiom `attach(fig, 'plot.png')` - and a PIL
-        # image, `attach(img, 'crop.png')`.
-        if isinstance(source, (bytes, bytearray, memoryview)):
-            return __vis_attach_data(
-                bytes(source),
-                str(filename) if filename else "artifact",
-                kind,
-                media_type,
-                label,
-                audience,
-            )
-        if hasattr(source, "savefig"):
-            import io
-
-            buf = io.BytesIO()
-            source.savefig(buf, format="png")
-            return __vis_attach_data(
-                buf.getvalue(),
-                str(filename) if filename else "figure.png",
-                kind,
-                media_type,
-                label,
-                audience,
-            )
-        if __vis_is_pil_image(source):
-            name = str(filename) if filename else "image.png"
-            return __vis_attach_data(
-                __vis_pil_bytes(source, name),
-                name,
-                kind,
-                media_type,
-                label,
-                audience,
-            )
-        # Everything left has to be a PATH. An object that is neither one nor a
-        # producer we know is REFUSED by name here: str()-ing it would report a
-        # repr as a missing file and hide which shape was actually wrong.
-        if not isinstance(source, str) and not hasattr(source, "__fspath__"):
-            raise TypeError(
-                "attach: source must be a path, bytes, an image or a figure "
-                "object, got " + type(source).__name__
-            )
-        # A PATH in any spelling a human types: a str, an os.PathLike (pathlib),
-        # with `~` and $VARS expanded - the string that works in a shell works
-        # here - and a plain sentence instead of a bare OSError when it is wrong.
-        raw = _os.fspath(source) if hasattr(source, "__fspath__") else str(source)
-        path = _os.path.expanduser(_os.path.expandvars(raw))
-        if _os.path.isdir(path):
-            raise IsADirectoryError(
-                "attach: " + path + " is a directory - attach one file"
-            )
-        name = str(filename or _os.path.basename(path) or "artifact")
-        try:
-            with open(path, "rb") as f:
-                # A file larger than the attachment limit is never read here: the
-                # gateway keeps a REFERENCE to it and every client streams it from
-                # disk. The engine reads only its first bytes to name its media type.
-                size = _os.fstat(f.fileno()).st_size
-                limit = __vis_attachment_limit()
-                is_reference = limit is not None and size > limit
-                data = None if is_reference else f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError("attach: no such file: " + path) from None
-        if is_reference:
-            return __vis_attach_reference(
-                path, size, name, kind, media_type, label, audience
-            )
-        return __vis_attach_data(data, name, kind, media_type, label, audience)
-
-    def __vis_attachment_rows():
-        lst = globals().get("__vis_list_attachments__")
-        if lst is None:
-            raise RuntimeError(
-                "list_attachments: reader bridge not bound in this sandbox"
-            )
-        payload = lst()
-
-        # Stored artifacts AND the ones this very block attached: an artifact is
-        # addressable the moment it exists.
-        rows = __vis_decoded(payload, "list_attachments")
-        return [__vis_row(r) for r in rows]
-
-    def __vis_thread(rows, name):
-        # One NAME is one artifact: every cut of it, oldest first.
-        thread = [r for r in rows if r.get("filename") == str(name)]
-        thread.sort(key=lambda r: int(r.get("version") or 1))
-        return thread
-
-    def list_attachments(name=None):
-        rows = __vis_attachment_rows()
-        return rows if name is None else __vis_thread(rows, name)
-
-    def __vis_attachment_args(target, version):
-        wanted = (
-            str(target.get("id") or target.get("filename") or "")
-            if isinstance(target, dict)
-            else str(target)
-        )
-        return wanted, None if version is None else int(version)
-
-    def get_attachment(target, version=None):
-        payload = globals()["__vis_get_attachment__"](
-            *__vis_attachment_args(target, version)
-        )
-        return __vis_row(__vis_decoded(payload, "get_attachment"))
-
-    def show_attachment(target, version=None):
-        reinsp = globals().get("__vis_reinspect_attachment__")
-        if reinsp is None:
-            raise RuntimeError(
-                "show_attachment: reader bridge not bound in this sandbox"
-            )
-        out = reinsp(*__vis_attachment_args(target, version))
-        return {"id": out[0], "filename": out[1], "media_type": out[2], "size": out[3]}
-
-    def read_attachment(target, version=None):
-        rd = globals().get("__vis_read_attachment__")
-        if rd is None:
-            raise RuntimeError(
-                "read_attachment: reader bridge not bound in this sandbox"
-            )
-        b64 = rd(*__vis_attachment_args(target, version))
-        # BYTES, nothing else: the descriptor is one get_attachment() away, so
-        # printing this call can never spill a metadata map nobody asked for.
-        return _b64.b64decode(b64) if b64 else b""
+    (
+        attach,
+        list_attachments,
+        get_attachment,
+        read_attachment,
+        show_attachment,
+    ) = __vis_sdk._attachment_verbs(
+        lambda: __vis_door,
+        present=__vis_present,
+        app_door=__vis_bridge("__vis_live_app__", "attach"),
+    )
 
     # ONE page per callable, in the shape every documented Vis verb wears: the
     # CALL LINE and the KEYS are STRUCTURE - `doc(name)` prints them above the
@@ -563,7 +255,8 @@ def __vis_install_attach__():
             " · filename (same name stores the next version)"
             " · kind · media_type (overrides what the bytes sniff as)"
             " · label (one-line caption)"
-            " · audience ('both', 'user' or 'model')",
+            " · audience ('both', 'user' or 'model')"
+            " · on_event (the listener of an app, only in an extension)",
             "Store a produced artifact as a durable attachment that survives restarts. "
             "source is a confined PATH, in-memory BYTES (name them with filename), or "
             "an in-memory image or figure object. SAME DOCUMENT, SAME NAME: "

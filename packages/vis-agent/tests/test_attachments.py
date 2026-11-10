@@ -101,5 +101,6 @@ def test_readers_name_an_unknown_target_and_a_non_image():
         vis.read_attachment("notes.txt", 3)
     with pytest.raises(ValueError, match="not an image"):
         vis.show_attachment("notes.txt")
-    with pytest.raises(TypeError, match="version must be an integer"):
-        vis.get_attachment("notes.txt", "1")
+    assert vis.get_attachment("notes.txt", "1")["version"] == 1
+    with pytest.raises(ValueError, match="version must be an integer"):
+        vis.get_attachment("notes.txt", "first")

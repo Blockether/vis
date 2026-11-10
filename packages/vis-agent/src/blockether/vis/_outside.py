@@ -281,7 +281,7 @@ def attach(options):
     """Store one artifact in memory and return its descriptor as JSON."""
     data = base64.b64decode(options.get("base64") or "")
     if not data:
-        raise ValueError("vis.attach: empty payload.")
+        raise ValueError("attach: empty payload.")
     name = options.get("filename") or "artifact"
     media_type = (
         options.get("media_type")
@@ -304,6 +304,16 @@ def attach(options):
         _ARTIFACTS.append(row)
         _ARTIFACT_BYTES[row["id"]] = data
     return json.dumps(row)
+
+
+def attachment_limit():
+    """No limit: outside Vis, `attach` reads each file whole into this process."""
+    return None
+
+
+def attach_reference(options):
+    """Refuse a reference. Without a limit, `attach` never asks for one."""
+    raise RuntimeError("attach: a reference to a file needs a Vis session.")
 
 
 def list_attachments():
@@ -1416,6 +1426,8 @@ _IMPLEMENTATIONS = {
     "declare_env": declare_env,
     "attach": attach,
     "list_attachments": list_attachments,
+    "attach_reference": attach_reference,
+    "attachment_limit": attachment_limit,
     "get_attachment": get_attachment,
     "read_attachment": read_attachment,
     "show_attachment": show_attachment,

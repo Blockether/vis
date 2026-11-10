@@ -9,13 +9,15 @@
    vision model cross-turn.
 
    No parsing, no round-trip through the model-facing stdout: we control the whole
-   boundary. The Python side reads the file through the sandbox's OWN confined
-   `open` (so filesystem-root confinement is enforced for free — a path outside
-   the roots raises the normal sandbox error), base64-encodes, and calls the tiny host
-   bridge `__vis_record_attachment__` with the type that the filename suggests as
-   a hint. The engine decides the media type ([[decide-attachment]]), so the
-   sandbox door and the `vis.attach` door of an extension give the same bytes the
-   same type. The bridge appends the attachment map to the
+   boundary. One Python front serves `attach` in a block and `vis.attach` in an
+   extension: `_attachment_verbs` of the SDK (`blockether/vis/extension.py`). It reads
+   the file through the confined `open` of its process, so a path outside the roots
+   raises the normal sandbox error. Then it calls the host bridge with one options
+   map and the type that the filename suggests as a hint. Each operation has one
+   body here behind two door names: a `__vis_record_attachment__` name for the
+   sandbox and a `__vis_host_attach__` name for an extension
+   ([[extension-host-doors]]). The engine decides the media type
+   ([[decide-attachment]]). The bridge appends the attachment map to the
    per-block `*attachment-sink*` (`mpl-capture/record-attachment!`). `run-python-block`
    drains that sink into the block outcome's `:attachments`; the loop stamps each with
    the producing block's tool-call-id and hands them to `db-store-iteration!`'s
@@ -212,28 +214,18 @@
 
 (defn- blank->nil [v] (when-not (str/blank? (str (or v ""))) (str v)))
 
-(def ^:private sandbox-door
-  "How the sandbox `attach` names itself and its reader in a refusal."
-  {:name "attach" :reader "read_attachment(target)"})
-
-(def ^:private extension-door
-  "How `vis.attach` of an extension names itself and its reader in a refusal."
-  {:name "vis.attach" :reader "vis.read_attachment"})
-
 (defn- decide-attachment
   "The media type and the kind of an attachment, for each attach door. An explicit
    `media-type` or `kind` wins. Else `detect`, a function without arguments, asks
    [[attachments/attached-media-type]] or [[attachments/attached-file-media-type]],
    and the media type gives the kind. Refuses a viewer document for `audience`
-   `model`, in the words of `door`."
-  [door kind media-type audience detect]
+   `model`."
+  [kind media-type audience detect]
   (let [media-type (or (blank->nil media-type) (detect))]
     (when (and (= "model" (str/lower-case (str audience)))
                (attachments/viewer-document-media-type? media-type))
-      (throw (ex-info (str (:name door)
-                           ": documents require audience='user'; "
-                           (:reader door)
-                           " returns their bytes.")
+      (throw (ex-info (str "attach: documents require audience='user'; "
+                           "read_attachment(target) returns their bytes.")
                       {})))
     {:media-type media-type
      :kind (or (blank->nil kind)
@@ -242,17 +234,24 @@
                      :else "file"))}))
 
 (defn- record-reference-call
-  "Body of `__vis_record_attachment_reference__`: record a file that is larger than
-   the attachment limit as a REFERENCE to its path on the gateway machine. No byte
-   of the file is stored in the session database. Without an explicit media type,
-   the engine reads only the head of the file to name its type; `hint` is the type
-   that the filename suggests.
+  "Body of `attach` for a file that is larger than the attachment limit, for each
+   door: record a REFERENCE to its path on the gateway machine. No byte of the
+   file is stored in the session database. The one options map holds `path` and
+   the optional `filename`, `media_type`, `media_type_hint`, `kind`, `audience`
+   and `label`. Without an explicit media type, the engine reads only the head of
+   the file to name its type; the hint is the type that the filename suggests.
 
    The path goes through the same read gate as the file preview and the media stream
    of the gateway, so a block cannot reference a file that a client could not read.
    A reference is for people: its audience is always `user`, and its bytes never go
    into a model request."
-  [kind media-type path filename audience label hint]
+  [{kind "kind"
+    media-type "media_type"
+    path "path"
+    filename "filename"
+    audience "audience"
+    label "label"
+    hint "media_type_hint"}]
   (let [env
         extension/*current-environment*
 
@@ -279,7 +278,6 @@
                                     {:type ::reference-refused :status (:status refusal)})))
                   (let [absolute (.getPath file)
                         {:keys [kind media-type]} (decide-attachment
-                                                    sandbox-door
                                                     kind
                                                     media-type
                                                     audience
@@ -349,22 +347,38 @@
                                        (attachments/viewer-document-media-type? (str media-type))
                                        (assoc :is-document true))))))
 
-(defn- sandbox-attach-call
-  "Body of `__vis_record_attachment__`, the sandbox `attach` door. `kind` and
-   `media-type` are the explicit choices of the caller or blank, and `hint` is the
-   type that the filename suggests. [[decide-attachment]] fills the open fields,
-   then [[record-attachment-call]] stores the artifact."
-  [kind media-type b64 filename size audience label hint]
-  (let [{:keys [kind media-type]} (decide-attachment sandbox-door
-                                                     kind
-                                                     media-type
-                                                     audience
-                                                     #(attachments/attached-media-type
-                                                        (.decode (java.util.Base64/getDecoder)
-                                                                 (str b64))
-                                                        hint
-                                                        filename))]
-    (record-attachment-call kind media-type b64 filename size audience label)))
+(defn- attach-call
+  "Body of `attach` for each door: `python_execution` and `vis.attach` of a Python
+   extension send the same options map. It holds `base64` and the optional
+   `filename`, `media_type`, `media_type_hint`, `kind`, `audience` and `label`.
+   `kind` and `media_type` are the explicit choices of the caller, and the hint is
+   the type that the filename suggests. [[decide-attachment]] fills the open
+   fields, then [[record-attachment-call]] stores the artifact."
+  [{b64 "base64"
+    filename "filename"
+    media-type "media_type"
+    hint "media_type_hint"
+    kind "kind"
+    audience "audience"
+    label "label"}]
+  (let [b64
+        (str (or b64 ""))
+
+        data
+        (try (.decode (java.util.Base64/getDecoder) b64)
+             (catch IllegalArgumentException _
+               (throw (ex-info "attach: the payload is not base64." {}))))
+
+        audience
+        (or (blank->nil audience) "both")
+
+        {:keys [kind media-type]}
+        (decide-attachment kind
+                           media-type
+                           audience
+                           #(attachments/attached-media-type data hint filename))]
+
+    (record-attachment-call kind media-type b64 filename (alength ^bytes data) audience label)))
 
 (defn- attachment-tool
   "Wrap an attachment operation with the standard error hook."
@@ -387,7 +401,7 @@
   "Attachment host operations. Values cross directly; failures use the shared
    observed-symbol hook and remain catchable host errors in Python."
   []
-  {"__vis_record_attachment__" (attachment-tool 'attach :mutation sandbox-attach-call)
+  {"__vis_record_attachment__" (attachment-tool 'attach :mutation attach-call)
    "__vis_record_attachment_reference__" (attachment-tool 'attach :mutation record-reference-call)
    "__vis_attachment_limit__" (fn []
                                 (long mpl-capture/*attachment-limit-bytes*))
@@ -437,58 +451,16 @@
              (throw (ex-info (str "show_attachment: " (pr-str (:filename row)) " is not an image.")
                              {:type ::not-an-image})))))))})
 
-(defn- extension-attach-call
-  "Body of `vis.attach` for a Python extension. Its one options map holds `base64`
-   and the optional `filename`, `media_type`, `media_type_hint`, `kind`,
-   `audience` and `label`. [[decide-attachment]] gives the media type and the kind
-   with the rule of the sandbox `attach`. The result is the descriptor JSON,
-   without the sandbox-only display data."
-  [opts]
-  (let [opt
-        #(get opts %)
-
-        b64
-        (str (or (opt "base64") ""))
-
-        data
-        (try (.decode (java.util.Base64/getDecoder) b64)
-             (catch IllegalArgumentException _
-               (throw (ex-info "vis.attach: the payload is not base64." {}))))
-
-        audience
-        (str/lower-case (str (or (blank->nil (opt "audience")) "both")))]
-
-    (when-not (contains? #{"both" "user" "model"} audience)
-      (throw (ex-info (str "vis.attach: audience must be 'both', 'user' or 'model', got "
-                           (pr-str (opt "audience")))
-                      {})))
-    (let [{:keys [kind media-type]}
-          (decide-attachment
-            extension-door
-            (opt "kind")
-            (opt "media_type")
-            audience
-            #(attachments/attached-media-type data (opt "media_type_hint") (opt "filename")))]
-      (when (nil? mpl-capture/*attachment-sink*)
-        (throw (ex-info "vis.attach: call it from a tool that python_execution runs." {})))
-      (-> (record-attachment-call kind
-                                  media-type
-                                  b64
-                                  (or (blank->nil (opt "filename")) "artifact")
-                                  (alength ^bytes data)
-                                  audience
-                                  (opt "label"))
-          (json/read-json)
-          (dissoc "display" "is-document")
-          (json/write-json-str)))))
-
 (defn ^:no-doc extension-host-doors
-  "The attachment doors of a Python extension, as `{guest-name fn}`. `vis.attach`
-   and its readers use the bindings of the running `python_execution` block, so an
-   extension tool stores and reads the same artifacts as the block that calls it."
+  "The attachment doors of a Python extension, as `{guest-name fn}`. They are the
+   doors of the sandbox `attach` verbs under the names of the SDK host. They use
+   the bindings of the running `python_execution` block, so an extension tool
+   stores and reads the same artifacts as the block that calls it."
   []
   (let [bridge (attach-bridge-bindings)]
-    {"__vis_host_attach__" (attachment-tool 'attach :mutation extension-attach-call)
+    {"__vis_host_attach__" (bridge "__vis_record_attachment__")
+     "__vis_host_attach_reference__" (bridge "__vis_record_attachment_reference__")
+     "__vis_host_attachment_limit__" (bridge "__vis_attachment_limit__")
      "__vis_host_list_attachments__" (bridge "__vis_list_attachments__")
      "__vis_host_get_attachment__" (bridge "__vis_get_attachment__")
      "__vis_host_read_attachment__" (bridge "__vis_read_attachment__")

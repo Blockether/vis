@@ -193,6 +193,14 @@ class Host(Protocol):
         """Store one artifact of the running block. Return its descriptor as JSON."""
         ...
 
+    def attach_reference(self, options: Mapping[str, Any]) -> str:
+        """Keep a reference to a file above the limit. Return its descriptor as JSON."""
+        ...
+
+    def attachment_limit(self) -> int | None:
+        """Return the most bytes that one stored artifact can have, or None."""
+        ...
+
     def list_attachments(self) -> str:
         """List the session's artifact descriptors as JSON, pending ones included."""
         ...
@@ -4864,12 +4872,35 @@ def forget(handle):
 
 
 # -- Attachments ----------------------------------------------------------------
-# An extension tool stores and reads artifacts like the sandbox `attach` verbs.
-# The engine binds each call to the python_execution block that runs the tool.
+# ONE implementation of the five attachment verbs. It serves `vis.attach` of an
+# extension, the `attach` of `python_execution` and the host outside Vis. Only
+# the host door differs. The engine owns each rule that needs the bytes: the media
+# type, the kind, the size limit and the audience of a document.
 
 _ATTACH_AUDIENCES = ("both", "user", "model")
 
-# Pillow encoders by filename suffix, as in the sandbox `attach` verb.
+_ATTACH_KEYWORDS = ("source", "filename", "kind", "media_type", "label", "audience")
+
+# A near-miss keyword folds onto the keyword that it means, so the call does not
+# fail. The same idea named twice is refused: that is two answers to one question.
+_ATTACH_ALIASES = {
+    "name": "filename",
+    "file_name": "filename",
+    "fname": "filename",
+    "path": "source",
+    "file": "source",
+    "src": "source",
+    "title": "label",
+    "caption": "label",
+    "description": "label",
+    "alt": "label",
+    "mime": "media_type",
+    "mime_type": "media_type",
+    "content_type": "media_type",
+    "type": "kind",
+}
+
+# Pillow encoders by filename suffix. Each other suffix gives a lossless PNG.
 _PIL_FORMATS = {
     ".png": "PNG",
     ".jpg": "JPEG",
@@ -4883,140 +4914,282 @@ _PIL_FORMATS = {
 
 
 def _attachment_row(row):
-    # The engine sends kebab-case keys; the SDK returns snake_case keys.
+    # The engine sends kebab-case keys; each verb returns snake_case keys.
     return {str(k).replace("-", "_"): v for k, v in dict(row).items()}
 
 
-def _attachment_source(source, filename):
-    """Return `(bytes, filename)` for a path, bytes, a figure or a Pillow image."""
+def _attachment_json(payload, verb):
+    # The host answers JSON text. Name any other answer: a bare JSONDecodeError
+    # points at the line of the caller.
+    text = str(payload)
+    try:
+        return json.loads(text)
+    except ValueError as error:
+        raise RuntimeError(
+            f"{verb}: the host answered {type(payload).__name__}, not JSON "
+            f"({error}): {text[:200]!r}"
+        ) from error
+
+
+def _attachment_caption(label):
+    # A caption is exactly one line: a line break breaks the transcript fence.
+    text = " ".join(str(label).split()) if label is not None else ""
+    return text or None
+
+
+def _attachment_audience(audience):
+    text = str(audience if audience is not None else "both").strip().lower()
+    if text not in _ATTACH_AUDIENCES:
+        raise ValueError(
+            f"attach: audience must be 'both', 'user' or 'model', got {audience!r}"
+        )
+    return text
+
+
+def _attachment_keywords(given, aliases):
+    """Fold each alias of `aliases` into `given`, the map of the main keywords."""
+    for spelled in sorted(aliases):
+        canonical = _ATTACH_ALIASES.get(spelled)
+        if canonical is None:
+            raise TypeError(
+                f"attach: no keyword '{spelled}'. Keywords: "
+                + ", ".join(_ATTACH_KEYWORDS)
+                + "."
+            )
+        if given[canonical] is not None:
+            raise TypeError(
+                f"attach: {canonical} named twice, as '{spelled}' and as "
+                f"'{canonical}' - pass one."
+            )
+        given[canonical] = aliases[spelled]
+    return given
+
+
+def _image_bytes(image, name):
+    # The filename chooses the encoder. JPEG has no alpha channel, so a mode that
+    # its encoder refuses becomes RGB first.
+    encoder = _PIL_FORMATS.get(os.path.splitext(name)[1].lower(), "PNG")
+    if encoder == "JPEG" and str(getattr(image, "mode", "")) not in ("RGB", "L"):
+        image = image.convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format=encoder)
+    return buffer.getvalue()
+
+
+def _attachment_source(source, filename, door):
+    """Read `source` for `attach`. Return `(data, name, path, size)`.
+
+    `data` is None for a file larger than `door.attachment_limit()` bytes. Such a
+    file is not read: the host keeps a reference to `path`.
+    """
     if isinstance(source, (bytes, bytearray, memoryview)):
-        return bytes(source), str(filename) if filename else "artifact"
+        data, name = bytes(source), str(filename) if filename else "artifact"
+        return data, name, None, len(data)
     if hasattr(source, "savefig"):
         buffer = io.BytesIO()
         source.savefig(buffer, format="png")
-        return buffer.getvalue(), str(filename) if filename else "figure.png"
+        data, name = buffer.getvalue(), str(filename) if filename else "figure.png"
+        return data, name, None, len(data)
     if hasattr(source, "save") and hasattr(source, "mode") and hasattr(source, "size"):
         name = str(filename) if filename else "image.png"
-        buffer = io.BytesIO()
-        source.save(buffer, format=_PIL_FORMATS.get(Path(name).suffix.lower(), "PNG"))
-        return buffer.getvalue(), name
+        data = _image_bytes(source, name)
+        return data, name, None, len(data)
+    # Each other source is a path. Refuse another object by its type: its repr is
+    # not a missing file.
     if not isinstance(source, (str, PathLike)):
         raise TypeError(
-            "vis.attach: source must be a path, bytes, an image or a figure object, got "
+            "attach: source must be a path, bytes, an image or a figure object, got "
             + type(source).__name__
         )
-    path = Path(os.path.expandvars(os.path.expanduser(os.fspath(source))))
-    if path.is_dir():
-        raise IsADirectoryError(f"vis.attach: {path} is a directory - attach one file")
+    path = os.path.expanduser(os.path.expandvars(os.fspath(source)))
+    if os.path.isdir(path):
+        raise IsADirectoryError(f"attach: {path} is a directory - attach one file")
+    name = str(filename or os.path.basename(path) or "artifact")
     try:
-        data = path.read_bytes()
+        with open(path, "rb") as file:
+            size = os.fstat(file.fileno()).st_size
+            most = door.attachment_limit()
+            data = None if most is not None and size > most else file.read()
     except FileNotFoundError:
-        raise FileNotFoundError(f"vis.attach: no such file: {path}") from None
-    return data, str(filename) if filename else (path.name or "artifact")
+        raise FileNotFoundError(f"attach: no such file: {path}") from None
+    return data, name, os.path.abspath(path), size
 
 
-def _attachment_target(target, version):
+def _attachment_target(verb, target, version):
     if isinstance(target, Mapping):
         target = target.get("id") or target.get("filename") or ""
-    if version is not None and (type(version) is not int):
-        raise TypeError("attachment version must be an integer")
-    return str(target), version
+    if version is None or type(version) is int:
+        return str(target), version
+    refusal = f"{verb}: version must be an integer, got {version!r}"
+    if isinstance(version, bool) or not isinstance(version, (int, float, str)):
+        raise TypeError(refusal)
+    try:
+        whole = int(version)
+    except (ValueError, OverflowError):
+        raise ValueError(refusal) from None
+    if whole != version and not isinstance(version, str):
+        raise ValueError(refusal)
+    return str(target), whole
 
 
-def attach(
-    source,
-    filename=None,
-    *,
-    kind=None,
-    media_type=None,
-    label=None,
-    audience="both",
-    on_event=None,
-):
-    """Store an artifact as a durable attachment of the running block, or open an app.
+def _attachment_verbs(host, *, present=None, app_door=None):
+    """Build the five attachment verbs over one host door.
 
-    `source` is a path, bytes, a Matplotlib figure or a Pillow image. The engine
-    stores the artifact with the `python_execution` block that called this tool,
-    exactly like the sandbox `attach` verb. A second attachment under the same
-    `filename` is the next version of that artifact. `audience` is `both`, `user`
-    or `model`; a PDF or HTML document is for the user only.
-
-    Returns the descriptor dict: id, filename, version, media_type, kind, size
-    and audience. Every read function takes it as its target.
-
-    An app declaration from `vis.ui.app(...)` opens an app and answers its
-    `LiveAttachment` handle. The app row from `list_attachments()` answers a handle
-    for that app again. An app takes only `on_event(event)`, which then runs for
-    each human change, submit, activate or shortcut, as with `vis.live`.
+    `host()` answers the host of the call. `present(row, **facts)`, when given,
+    shows a stored artifact to the person: `python_execution` prints a transcript
+    fence. `app_door` is the app door of a `python_execution` session.
     """
-    if isinstance(source, Mapping) and (
-        source.get("placement") == "attachment"
-        or source.get("media_type") == _app_media_type()
+
+    def attach(
+        source=None,
+        filename=None,
+        kind=None,
+        media_type=None,
+        label=None,
+        audience="both",
+        *,
+        on_event=None,
+        **aliases,
     ):
-        if (filename, kind, media_type, label) != (None,) * 4 or audience != "both":
-            raise TypeError(
-                "vis.attach: an app takes no filename, kind, media_type, label or audience"
+        """Store an artifact as a durable attachment of the running block, or open an app.
+
+        `source` is required: a path, bytes, a Matplotlib figure or a Pillow image.
+        The engine stores the artifact with the running `python_execution` block.
+        A second attachment under the same `filename` is the next version of that
+        artifact. `audience` is `both`, `user` or `model`; a PDF or HTML document
+        is for the user only.
+
+        A file larger than the attachment limit is not read: the engine keeps a
+        reference to its path, for people only.
+
+        A near-miss keyword means the keyword that it resembles: `name` is
+        `filename`, `path` is `source`, `title` is `label`, `mime` is `media_type`
+        and `type` is `kind`.
+
+        Returns the descriptor dict: id, filename, version, media_type, kind, size
+        and audience. Every read function takes it as its target.
+
+        An app declaration from `vis.ui.app(...)` opens an app and answers its
+        `LiveAttachment` handle. The app row from `list_attachments()` answers a handle
+        for that app again. An app takes only `on_event(event)`, which then runs for
+        each human change, submit, activate or shortcut, as with `vis.live`.
+        """
+        if aliases:
+            given = _attachment_keywords(
+                {
+                    "source": source,
+                    "filename": filename,
+                    "kind": kind,
+                    "media_type": media_type,
+                    "label": label,
+                },
+                aliases,
             )
-        return LiveAttachment._from(source, on_event=on_event)
-    if on_event is not None:
-        raise TypeError("vis.attach: on_event is only for an app")
-    data, name = _attachment_source(source, filename)
-    if audience not in _ATTACH_AUDIENCES:
-        raise ValueError(
-            f"vis.attach: audience must be 'both', 'user' or 'model', got {audience!r}"
+            source, filename, kind = given["source"], given["filename"], given["kind"]
+            media_type, label = given["media_type"], given["label"]
+        # `source` has a default only so that `path=` and `file=` can name it.
+        if source is None:
+            raise TypeError(
+                "attach: source is required - a confined path, bytes, an image "
+                "or a figure object (path=/file= reach it too)."
+            )
+        if isinstance(source, Mapping) and (
+            source.get("placement") == "attachment"
+            or source.get("media_type") == _app_media_type()
+        ):
+            if (filename, kind, media_type, label) != (None,) * 4 or audience != "both":
+                raise TypeError(
+                    "attach: an app takes no filename, kind, media_type, label "
+                    "or audience."
+                )
+            if on_event is not None and app_door is not None:
+                raise TypeError(
+                    "attach: on_event is only for an extension: the app door of "
+                    "python_execution takes no callback."
+                )
+            return LiveAttachment._from(source, door=app_door, on_event=on_event)
+        if on_event is not None:
+            raise TypeError("attach: on_event is only for an app")
+        door = host()
+        data, name, path, size = _attachment_source(source, filename, door)
+        caption = _attachment_caption(label)
+        options = {
+            "base64": None if data is None else base64.b64encode(data).decode("ascii"),
+            "path": None if data is not None else path,
+            "filename": name,
+            "media_type": media_type,
+            "media_type_hint": mimetypes.guess_type(name)[0],
+            "kind": kind,
+            "audience": _attachment_audience(audience),
+            "label": caption,
+        }
+        send = door.attach_reference if data is None else door.attach
+        row = _attachment_row(
+            _attachment_json(
+                send({k: v for k, v in options.items() if v is not None}), "attach"
+            )
         )
-    if not data:
-        raise ValueError("vis.attach: empty payload.")
-    options = {
-        "base64": base64.b64encode(data).decode("ascii"),
-        "filename": name,
-        "media_type": media_type,
-        "media_type_hint": mimetypes.guess_type(name)[0],
-        "kind": kind,
-        "audience": audience,
-        "label": label,
-    }
-    payload = _host.attach({k: v for k, v in options.items() if v is not None})
-    return _attachment_row(json.loads(payload))
+        # The engine adds what only a transcript fence needs.
+        display, is_document = row.pop("display", None), row.pop("is_document", False)
+        if present is not None:
+            present(
+                row,
+                name=name,
+                data=data,
+                size=size,
+                label=caption,
+                audience=options["audience"],
+                display=display,
+                is_document=is_document,
+                path=path,
+            )
+        return row
+
+    def list_attachments(name=None):
+        """List the artifact descriptors of this session, oldest first.
+
+        The list includes the artifacts that the running block attached. With `name`,
+        it lists the versions of that one artifact.
+        """
+        payload = _attachment_json(host().list_attachments(), "list_attachments")
+        rows = [_attachment_row(row) for row in payload]
+        if name is None:
+            return rows
+        versions = [row for row in rows if row.get("filename") == str(name)]
+        return sorted(versions, key=lambda row: int(row.get("version") or 1))
+
+    def get_attachment(target, version=None):
+        """Return the descriptor of one artifact, without its bytes.
+
+        `target` is a filename, an id or a descriptor. A filename means the latest
+        version, unless you give `version`. A negative version counts back.
+        """
+        wanted = _attachment_target("get_attachment", target, version)
+        payload = host().get_attachment(*wanted)
+        return _attachment_row(_attachment_json(payload, "get_attachment"))
+
+    def read_attachment(target, version=None):
+        """Return the bytes of one artifact. `target` works as in `get_attachment`."""
+        wanted = _attachment_target("read_attachment", target, version)
+        encoded = host().read_attachment(*wanted)
+        return base64.b64decode(encoded) if encoded else b""
+
+    def show_attachment(target, version=None):
+        """Show a stored image to the model for the next request only.
+
+        `target` works as in `get_attachment`. Returns the id, filename, media_type
+        and size of the queued image.
+        """
+        wanted = _attachment_target("show_attachment", target, version)
+        shown = list(host().show_attachment(*wanted))
+        return dict(zip(("id", "filename", "media_type", "size"), shown, strict=True))
+
+    return attach, list_attachments, get_attachment, read_attachment, show_attachment
 
 
-def list_attachments(name=None):
-    """List the artifact descriptors of this session, oldest first.
-
-    The list includes the artifacts that the running block attached. With `name`,
-    it lists the versions of that one artifact.
-    """
-    rows = [_attachment_row(row) for row in json.loads(_host.list_attachments())]
-    if name is None:
-        return rows
-    versions = [row for row in rows if row.get("filename") == str(name)]
-    return sorted(versions, key=lambda row: int(row.get("version") or 1))
-
-
-def get_attachment(target, version=None):
-    """Return the descriptor of one artifact, without its bytes.
-
-    `target` is a filename, an id or a descriptor. A filename means the latest
-    version, unless you give `version`. A negative version counts back.
-    """
-    payload = _host.get_attachment(*_attachment_target(target, version))
-    return _attachment_row(json.loads(payload))
-
-
-def read_attachment(target, version=None):
-    """Return the bytes of one artifact. `target` works as in `get_attachment`."""
-    encoded = _host.read_attachment(*_attachment_target(target, version))
-    return base64.b64decode(encoded) if encoded else b""
-
-
-def show_attachment(target, version=None):
-    """Show a stored image to the model for the next request only.
-
-    `target` works as in `get_attachment`. Returns the id, filename, media_type
-    and size of the queued image.
-    """
-    shown = list(_host.show_attachment(*_attachment_target(target, version)))
-    return dict(zip(("id", "filename", "media_type", "size"), shown, strict=True))
+attach, list_attachments, get_attachment, read_attachment, show_attachment = (
+    _attachment_verbs(lambda: _host)
+)
 
 
 def read_session(target=None):
