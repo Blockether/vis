@@ -2946,6 +2946,27 @@
       "expect": []
     },
     {
+      "name": "an appended link with a target that has a scheme is a url link",
+      "patch": {
+        "view_id": "v",
+        "seq": 1,
+        "ops": [
+          {
+            "op": "append",
+            "node_id": "l",
+            "links": [
+              {
+                "id": "run",
+                "label": "This run",
+                "target": "https://github.com/o/r/actions/runs/1"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": []
+    },
+    {
       "name": "a patch with more than ten unknown keys names each of them",
       "patch": {
         "op": "patch",
@@ -3418,6 +3439,48 @@
       ],
       "expect": {
         "refusal": "Invalid live-view patch: node t /rows - the table has 2 rows, its max_rows is 1 (max_rows)"
+      }
+    },
+    {
+      "name": "an appended link with a target that has a scheme is kept as a url link",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "l",
+            "type": "link",
+            "links": [
+              {
+                "id": "docs",
+                "label": "Docs",
+                "target": "https://gateway.example.com/docs"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "l",
+          "links": [
+            {
+              "id": "run",
+              "label": "This run",
+              "target": "https://github.com/o/r/actions/runs/1"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "links",
+          1,
+          "target_kind"
+        ],
+        "value": "url"
       }
     },
     {

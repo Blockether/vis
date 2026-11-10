@@ -699,16 +699,25 @@ def run_shape(payload, selected_ids=None, now=None):
         "selected_ids": selected_ids,
         "steps": steps,
         "active_step_ids": active_step_ids,
+        # A run without a URL yet (checks not registered) has nothing to open.
         "links": [
-            {"id": "run", "label": "This run", "target": str(payload.get("url") or "")},
-        ]
-        + [
-            {
-                "id": _job_id(job),
-                "label": f"Failed · {job.get('name')}",
-                "target": str(job.get("url") or payload.get("url") or ""),
-            }
-            for job in failed
+            one
+            for one in [
+                {
+                    "id": "run",
+                    "label": "This run",
+                    "target": str(payload.get("url") or ""),
+                },
+            ]
+            + [
+                {
+                    "id": _job_id(job),
+                    "label": f"Failed · {job.get('name')}",
+                    "target": str(job.get("url") or payload.get("url") or ""),
+                }
+                for job in failed
+            ]
+            if one["target"]
         ],
     }
 

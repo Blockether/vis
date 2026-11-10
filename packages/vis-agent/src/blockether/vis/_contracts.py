@@ -822,25 +822,11 @@ def live_patch_lines(patch: Any) -> list[str]:
 
 
 def _filled_op(op: Any) -> Any:
-    """Wire op `op` with the schema default of each required item key that an item
-    leaves out, as the host keeps the item. A lane without a `tone` is an `idle` lane."""
+    """Wire op `op` with each item filled as the host keeps it: see `_filled_item`. A
+    lane without a `tone` is an `idle` lane, and a link with a scheme is a `url` link."""
     if not isinstance(op, dict):
         return op
-    filled = dict(op)
-    for key, name in _LIVE_ITEMS.items():
-        items = filled.get(key)
-        shape = definition("view", name)
-        defaults = {
-            k: shape["properties"][k]["default"]
-            for k in shape.get("required", [])
-            if "default" in shape.get("properties", {}).get(k, {})
-        }
-        if defaults and isinstance(items, list):
-            filled[key] = [
-                {**defaults, **item} if isinstance(item, dict) else item
-                for item in items
-            ]
-    return filled
+    return {key: _filled_items(key, value) for key, value in op.items()}
 
 
 def joined_lines(lines: list[str]) -> str:

@@ -947,6 +947,21 @@
             m
             (sort-by key properties))))
 
+(defn- filled-item
+  "Wire item `item` of collection `k` as every host keeps it: the defaults of `shape`,
+   and a link with a target that has a scheme is a `url` link."
+  [shape k item]
+  (cond-> item
+    (map? item)
+    (filled-defaults shape)
+
+    (and (= "links" k)
+         (map? item)
+         (not (contains? item "target_kind"))
+         (string? (get item "target"))
+         (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" (get item "target")))
+    (assoc "target_kind" "url")))
+
 (defn fill-live-node
   "Live wire node `node` with the defaults that every host fills: a null key is an
    absent key, a node without a type is a `plaintext` input, an input takes its name
@@ -997,16 +1012,7 @@
                              (ref-definition rule)]
 
                          (if (and item-shape (sequential? items))
-                           (assoc n
-                             k (mapv #(cond-> % (map? %) (filled-defaults item-shape)
-                                        (and (= "links" k)
-                                             (map? %)
-                                             (not (contains? % "target_kind"))
-                                             (string? (get % "target"))
-                                             (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:"
-                                                      (get % "target"))) (assoc "target_kind"
-                                                                           "url"))
-                                     items))
+                           (assoc n k (mapv #(filled-item item-shape k %) items))
                            n)))
                      node
                      (or (get shape "properties") {}))]
@@ -1590,23 +1596,36 @@
                                                "actual" (document/json-type op)})
                              "type")]))))
 
+(def ^:private live-item-shapes
+  "Collection key to the schema of one item, from the append targets of `live_op`, for
+   the keyed items that every host fills in an op (`_LIVE_ITEMS` of the Python SDK)."
+  (into {}
+        (for [[node-type ks]
+              (get-in (definition "live_op") ["x-vis-patch-targets" "append"])
+
+              :when (sequential? ks)
+              k
+              ks
+
+              :when (contains? #{"stats" "steps" "lanes" "rows" "links"} k)
+              :let [shape
+                    (ref-definition (get-in live-nodes [node-type "properties" k]))]
+              :when shape]
+
+          [k shape])))
+
 (defn- filled-op
-  "Wire op `op` with the schema default of each required item key that an item leaves
-   out, as the host keeps the item. A lane without a `tone` is an `idle` lane."
+  "Wire op `op` with each item filled as the host keeps it: see [[filled-item]]. A lane
+   without a `tone` is an `idle` lane, and a link with a scheme is a `url` link."
   [op]
-  (reduce-kv (fn [op kind defaults]
-               (let [k
-                     (name kind)
-
-                     items
-                     (get op k)]
-
-                 (if (sequential? items)
-                   (assoc op
-                     k (mapv #(if (map? %) (merge (update-keys defaults wire/wire-key) %) %) items))
-                   op)))
-             op
-             (if (map? op) live-item-defaults {})))
+  (if (map? op)
+    (reduce-kv (fn [op k shape]
+                 (cond-> op
+                   (sequential? (get op k))
+                   (update k #(mapv (partial filled-item shape k) %))))
+               op
+               live-item-shapes)
+    op))
 
 (defn live-patch-lines
   "The sorted fault lines of live patch `patch`, which every host gives before it applies
