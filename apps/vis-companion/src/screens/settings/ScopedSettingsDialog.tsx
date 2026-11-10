@@ -184,7 +184,8 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
           {data && (groups.length > 0 || !needle) && (
             // A search opens every band again, so a folded band cannot hide a match.
             <SettingsBandsOpen.Provider value={bandsOpen || Boolean(needle)}>
-            <div className="divide-y divide-dialog-edge">
+            {/* `divide-y` rules only between bands, so the last band gets its own rule and does not look open. */}
+            <div className="divide-y divide-dialog-edge [&>:last-child]:border-b [&>:last-child]:border-dialog-edge">
               {groups.filter((group) => !isExtensionGroup(group) && group !== tools).map((group) => <SettingsPanel key={needle ? `${group.id}:search` : group.id} title={group.title} headingLevel={3}>
                 {rows(group)}
               </SettingsPanel>)}
