@@ -680,6 +680,92 @@
                        (try (map? (json/read-json %)) (catch Exception _ false)))
                  lines))))
 
+(defn- mpeg-frame-length
+  "The length in bytes of the MPEG audio frame whose header starts `b`, or nil for
+   the free format, which states no bit rate."
+  [^bytes b]
+  (let [b1
+        (u8 b 1)
+
+        b2
+        (u8 b 2)
+
+        version
+        (bit-and b1 0x18)
+
+        layer-3?
+        (= 0x02 (bit-and b1 0x06))
+
+        kbps
+        (nth (cond (not= 0x18 version) [0 8 16 24 32 40 48 56 64 80 96 112 128 144 160]
+                   layer-3? [0 32 40 48 56 64 80 96 112 128 160 192 224 256 320]
+                   :else [0 32 48 56 64 80 96 112 128 160 192 224 256 320 384])
+             (bit-shift-right b2 4))
+
+        hz
+        (nth (condp = version 0x18 [44100 48000 32000] 0x10 [22050 24000 16000] [11025 12000 8000])
+             (bit-and (bit-shift-right b2 2) 3))
+
+        ;; Layer III of MPEG 2 and 2.5 holds half the samples in a frame.
+        scale
+        (if (and layer-3? (not= 0x18 version)) 72000 144000)]
+
+    (when (pos? (long kbps))
+      (+ (quot (* (long scale) (long kbps)) (long hz)) (bit-and (bit-shift-right b2 1) 1)))))
+
+(defn- frame-length
+  "The length in bytes of the audio frame whose header starts `b`, or nil when `b`
+   does not start with a frame header that states its length."
+  [^bytes b]
+  (cond (mpeg-audio-frame? b) (mpeg-frame-length b)
+        (and (adts-aac? b) (>= (alength b) 6)) (let [n (bit-or
+                                                         (bit-shift-left (bit-and (u8 b 3) 0x03) 11)
+                                                         (bit-shift-left (u8 b 4) 3)
+                                                         (bit-shift-right (u8 b 5) 5))]
+                                                 (when (>= n 7) n))))
+
+(defn- frame-run?
+  "True when `head` starts with a run of frames of one audio stream: a frame
+   header of the same kind follows at each frame length. The check reads two
+   headers after the first, or one when `head` ends before the third. A frame
+   header has no magic number, and text in an 8-bit encoding can start with its
+   bytes: in Windows-1251, one letter is the byte `FF`."
+  [^bytes head]
+  (let [size
+        (alength head)
+
+        mask
+        (if (adts-aac? head) 0xfc 0x0c)]
+
+    (loop [at
+           0
+
+           confirmed
+           0]
+
+      (let [frame
+            (Arrays/copyOfRange head (int at) (int (min size (+ at 6))))
+
+            n
+            (frame-length frame)]
+
+        (cond (not (and n
+                        (= (u8 head 1) (u8 frame 1))
+                        (= (bit-and (u8 head 2) (long mask)) (bit-and (u8 frame 2) (long mask)))))
+              false
+              (= 2 confirmed) true
+              ;; `head` ends before the next header: one header after the first is enough.
+              (> (+ at (long n) 6) size) (pos? confirmed)
+              :else (recur (+ at (long n)) (inc confirmed)))))))
+
+(defn- lone-frame?
+  "True when the `sniffed` audio type comes from one bare frame header that no
+   second frame confirms."
+  [sniffed ^bytes head]
+  (boolean (and (contains? #{"audio/mpeg" "audio/aac"} sniffed)
+                (or (adts-aac? head) (mpeg-audio-frame? head))
+                (not (frame-run? head)))))
+
 (defn- control-free?
   "True when the head holds no binary control character. Text in an 8-bit encoding
    reads so; the head of a media file does not."
@@ -695,21 +781,25 @@
   "True when the `text/*` filename type `named` replaces the `sniffed` signature
    type. Text can start with the bytes of a signature: in Windows-1251, one letter
    is the byte `FF`, the start of an audio frame header. So an audio or video
-   signature yields when the bytes read as text, and a bare audio frame header,
-   which has no magic number, yields to each text filename. A picture and a PDF
-   keep their signature type: the head of a small PDF is text too."
+   signature yields when the bytes read as text. A picture and a PDF keep their
+   signature type: the head of a small PDF is text too."
   [sniffed named ^bytes head]
   (boolean (and named
                 (str/starts-with? named "text/")
                 (or (audio-media-type? sniffed) (video-media-type? sniffed))
-                (or (adts-aac? head) (mpeg-audio-frame? head) (control-free? head)))))
+                (control-free? head))))
 
 (defn- attached-type
   "The rule of [[attached-media-type]] for a `sniffed` signature type or nil."
   [sniffed hint filename ^bytes head]
-  (let [named (if (re-find #"(?i)\.(?:jsonl|ndjson)$" (str/trim (str filename)))
-                "application/x-ndjson"
-                (not-empty (str/trim (str hint))))]
+  (let [sniffed
+        (when-not (lone-frame? sniffed head) sniffed)
+
+        named
+        (if (re-find #"(?i)\.(?:jsonl|ndjson)$" (str/trim (str filename)))
+          "application/x-ndjson"
+          (not-empty (str/trim (str hint))))]
+
     (or (when (text-name-wins? sniffed named head) named)
         ;; A workbook, an EPUB and a JAR are ZIP archives too: the filename type names
         ;; which format the generic ZIP sniff stands for. No other type names ZIP bytes.
@@ -729,7 +819,8 @@
       [[detect-image-mime]] holds back from a provider. For ZIP bytes, a filename
       type of a ZIP-based format replaces `application/zip`. A `text/*` filename
       type replaces an audio or video signature when the bytes hold no binary
-      control character, and it always replaces a bare audio frame header.
+      control character. A bare audio frame header is a signature only when a
+      second frame follows it at the frame length.
    2. The filename type: `application/x-ndjson` for a `.jsonl` or `.ndjson`
       `filename`, else `hint`, the type that the caller reads from the name.
    3. `application/x-ndjson` when the first two lines are JSON objects.

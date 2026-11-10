@@ -1184,8 +1184,7 @@
    ["m4a" "bytes([0, 0, 0, 0x18]) + b'ftypM4A ' + bytes(4) + b'M4A mp42'" nil "audio/mp4"]
    ["flac" "b'fLaC' + bytes([0, 0, 0, 0x22])" nil "audio/flac"]
    ["svg" "b'<svg xmlns=\"http://www.w3.org/2000/svg\"/>'" nil "image/svg+xml"]
-   ["mp3" "bytes([0xFF, 0xF3, 0x90, 0x00])" nil "audio/mpeg"]
-   ["words" "b'just words'" "note" "text/plain"]
+   ["mp3" "mp3_22k" nil "audio/mpeg"] ["words" "b'just words'" "note" "text/plain"]
    ["binary" "bytes([0x00, 0x01, 0xFE, 0xFF])" "blob" "application/octet-stream"]
    ["page" "b'<!doctype html><html><svg width=\"1\"/></html>'" "report.html" "text/html"]
    ["json" "b'{\"a\": 1}\\n'" "result.json" "application/json"]
@@ -1195,7 +1194,7 @@
    ["utf32" "'hello\\n'.encode('utf-32')" "notes.txt" "text/plain"]
    ["latin1" "b'\\xff\\xfe plain'" "notes.txt" "text/plain"]
    ["utf16-svg" "'<svg xmlns=\"http://www.w3.org/2000/svg\"/>'.encode('utf-16')" "pic.svg"
-    "image/svg+xml"] ["mp3-fb" "bytes([0xFF, 0xFB, 0x90, 0x00])" nil "audio/mpeg"]
+    "image/svg+xml"] ["mp3-fb" "mp3" nil "audio/mpeg"]
    ;; An animated PNG is a PNG, with or without a name.
    ["apng" "apng" "real.apng" "image/png"] ["apng-bare" "apng" nil "image/png"]
    ;; HTML can omit the html tag.
@@ -1222,12 +1221,31 @@
    ;; Real media keeps its type under a text filename: its bytes are not text.
    ["png-txt" "png" "pic.txt" "image/png"]
    ["flac-txt" "b'fLaC' + bytes([0, 0, 0, 0x22]) + bytes(34)" "song.txt" "audio/flac"]
-   ["id3-txt" "b'ID3' + bytes([4, 0, 0, 0, 0, 0, 10]) + bytes(16)" "song.txt" "audio/mpeg"]])
+   ["id3-txt" "b'ID3' + bytes([4, 0, 0, 0, 0, 0, 10]) + bytes(16)" "song.txt" "audio/mpeg"]
+   ;; A frame header alone is not a recording: a second frame must follow at the
+   ;; frame length. So 8-bit text is never audio, and a recording keeps its type
+   ;; under a text filename.
+   ["cp1251-log" "bytes.fromhex('ffe2ebe5ede8e520eff0e8f0eee4fb0a')" "server.log"
+    "application/octet-stream"]
+   ["cp1251-bare" "bytes.fromhex('ffe2ebe5ede8e520eff0e8f0eee4fb0a')" nil
+    "application/octet-stream"]
+   ["cp1251-long" "bytes.fromhex('ffe2ebe5ede8e520eff0e8f0eee4fb0a') * 200" "server.log"
+    "application/octet-stream"]
+   ;; The same word can stand at the frame length by chance: the third header decides.
+   ["cp1251-twice"
+    "bytes.fromhex('ffe2ebe5ede8e520eff0e8f0eee4fb0a') + b' ' * 1425 + bytes.fromhex('ffe2ebe5ede8e520eff0e8f0eee4fb0a') + b' ' * 3000"
+    nil "application/octet-stream"]
+   ["telnet-bare" "bytes.fromhex('fffd18fffd20fffd23fffd270d0a6c6f67696e3a20')" nil
+    "application/octet-stream"]
+   ["frame-alone" "bytes([0xFF, 0xFB, 0x90, 0x64])" nil "application/octet-stream"]
+   ["mp3-txt" "mp3" "song.txt" "audio/mpeg"] ["mp3-log" "mp3" "song.log" "audio/mpeg"]
+   ["aac" "aac" nil "audio/aac"] ["aac-txt" "aac" "song.txt" "audio/aac"]])
 
 (def ^:private door-prelude
   "Python names that the rows of [[door-cases]] use: `apng` is a real 1x1 PNG
    with an `acTL` chunk after its header, `svg_pi` is an SVG with a `>` inside a
-   processing instruction and `pk` is the head of a ZIP archive."
+   processing instruction, `pk` is the head of a ZIP archive, and `mp3`, `mp3_22k`
+   and `aac` are two audio frames each, without a tag."
   (str
     "import base64, binascii, mimetypes\n"
     "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
@@ -1235,7 +1253,11 @@
     "apng = png[:33] + (8).to_bytes(4, 'big') + actl + binascii.crc32(actl).to_bytes(4, 'big')"
     " + png[33:]\n"
     "svg_pi = (b'<?xml version=\"1.0\"?>\\n<?xml-stylesheet href=\"a>b.css\" type=\"text/css\"?>\\n'"
-    " + b'<svg xmlns=\"http://www.w3.org/2000/svg\"/>\\n')\n" "pk = b'PK\\x03\\x04' + bytes(20)\n"))
+    " + b'<svg xmlns=\"http://www.w3.org/2000/svg\"/>\\n')\n"
+    "pk = b'PK\\x03\\x04' + bytes(20)\n"
+    "mp3 = (bytes([0xFF, 0xFB, 0x90, 0x00]) + bytes(413)) * 2\n"
+    "mp3_22k = (bytes([0xFF, 0xF3, 0x90, 0x00]) + bytes(257)) * 2\n"
+    "aac = (bytes.fromhex('fff15080021ffc') + bytes(9)) * 2\n"))
 
 (defdescribe
   attach-doors-media-type-test
