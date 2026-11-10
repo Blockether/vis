@@ -417,8 +417,11 @@ export function leaderParts(leader: LeaderLane, now: number): { start: number; e
   return parts;
 }
 
-/** The key of an agent on the chart: `A1`, `A2`, by spawn order. The leader is `L`. */
-export const agentKey = (index: number) => `A${index + 1}`;
+/**
+ * The key of an agent on the chart: its task id in capitals, so task `a5` is `A5` in every team of
+ * its parent. A child from before task ids gets its place in the spawn order. The leader is `L`.
+ */
+export const agentKey = (agent: Subagent, index: number) => agent.id?.toUpperCase() ?? `A${index + 1}`;
 const LEADER_KEY = 'L';
 /** The role word of the leader and its ink, in the team chart and the header path. */
 export const LEADER_ROLE = 'leader';
@@ -660,7 +663,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
   const bars = agentBars(rows, now, leader);
   const parts = leader ? leaderParts(leader, now) : [];
   const times = leader ? leaderTimes(leader, now) : { waited: 0, total: 0 };
-  const keys = rows.map((_, index) => agentKey(index));
+  const keys = rows.map(agentKey);
   const widths = {
     ...columnWidths(rows, leader),
     '--key': `${Math.max(2, ...keys.map((key) => key.length))}ch`,

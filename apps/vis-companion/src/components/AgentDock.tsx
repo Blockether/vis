@@ -28,9 +28,11 @@ export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<
     'agent-team': teams.length > 0 && (() => setOpen(true)),
   });
   if (teams.length === 0) return null;
-  // The leader of the running turn heads only the team of that turn, not an older team that still works.
-  const leaderOf = (members: readonly Subagent[]) => (members[0].team_id === runningTurnId ? leader : undefined);
-  const toggle = isWide && teams.some((members) => hasTimeline(members, leaderOf(members))) ? (
+  // One table for all docked teams, so each child has one row and one key. The leader of the
+  // running turn heads it only when that turn started a team.
+  const members = teams.flat();
+  const head = teams.some((team) => team[0].team_id === runningTurnId) ? leader : undefined;
+  const toggle = isWide && hasTimeline(members, head) ? (
     <TimelineToggle
       isOn={open && isTimeline}
       onToggle={() => {
@@ -58,13 +60,11 @@ export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<
         />
         <span className="pointer-events-none relative flex min-w-0 flex-1 items-baseline gap-2">
           <ChevronIcon open={open} className={`size-3 shrink-0 text-dialog-hint ${MARK_NUDGE}`} />
-          <TeamLine agents={teams.flat()} action={toggle} labelId={line} />
+          <TeamLine agents={members} action={toggle} labelId={line} />
         </span>
       </div>
       <div id={body} hidden={!open} className="max-h-[40dvh] space-y-2 overflow-y-auto border-t border-dialog-edge px-3 sm:px-0">
-        {teams.map((members) => (
-          <TurnAgents key={members[0].team_id} agents={members} placement="dock" isTimeline={isTimeline} leader={leaderOf(members)} {...team} />
-        ))}
+        <TurnAgents agents={members} placement="dock" isTimeline={isTimeline} leader={head} {...team} />
       </div>
     </section>
   );

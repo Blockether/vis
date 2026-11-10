@@ -394,7 +394,31 @@ describe('leader row', () => {
     expect(document.querySelector('[data-leader-row]')).toHaveTextContent(/30sfailed$/);
   });
 
-  it('puts the running leader first only in the dock team of the running turn', () => {
+  // Regression, issue #460: four children of an earlier turn and two of the running turn split the
+  // dock into two charts. The new children were A1 and A2 again, and the leader stood in both.
+  it('draws every docked child on one chart, keyed by its task id, under one leader lane', () => {
+    wide(true);
+    vi.useFakeTimers({ now: T0 + 5_000 });
+    const leader = leaderLane(T0 - 10_000, undefined, [{ assistant_prose: 'I wait for both implementers.' }]);
+    const early = [1, 2, 3, 4].map((n) => ({ ...child, session_id: `r${n}`, id: `a${n}`, team_id: 'turn-0', role: 'research', title: `Read ${n}`, created_at: T0 - 7_000_000 + n }));
+    const late = [5, 6].map((n) => ({ ...child, session_id: `i${n}`, id: `a${n}`, role: 'implement', title: `Write ${n}`, created_at: T0 - 9_000 + n }));
+    render(<AgentDock sid="leader" runningTurnId="turn-1" onOpen={vi.fn()} leader={leader} agents={[...early, ...late]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent?.split(' ')[0]);
+    expect(lanes).toEqual(['L', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6']);
+    const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
+    expect(legend.slice(1)).toEqual([1, 2, 3, 4, 5, 6].map((n) => `A${n}${n < 5 ? 'researchRead' : 'implementWrite'} ${n}Verify the contract`));
+  });
+
+  // Issue #460: a team of a later turn keeps the task ids of its children, so the keys match a5 and a6.
+  it('keys the lanes of a later team by the task ids of its children', () => {
+    wide(true);
+    render(<TurnAgents {...props} isTimeline agents={[5, 6].map((n) => ({ ...child, session_id: `i${n}`, id: `a${n}`, status: 'completed' as const, finished_at: T0 + n * 1_000 }))} />);
+    const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent?.split(' ')[0]);
+    expect(lanes).toEqual(['A5', 'A6']);
+  });
+
+  it('puts the running leader first in the dock, once for all docked teams', () => {
     wide(true);
     vi.useFakeTimers({ now: T0 + 5_000 });
     const leader = leaderLane(T0 - 10_000, undefined, [{ assistant_prose: 'I wait for the reviews.' }]);
