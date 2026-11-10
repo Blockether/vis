@@ -1,4 +1,7 @@
-"""`vis.tools` calls another active session tool and rebuilds its answer as classes."""
+"""`vis.tools` calls another active session tool and sends its arguments as data.
+
+The Vis runtime builds the answer; `extension_tools_test.clj` checks it in the engine.
+"""
 
 from __future__ import annotations
 
@@ -12,96 +15,24 @@ from blockether.vis import _outside
 from blockether.vis.activity import ActivityGroup
 
 
-def _object(name, attrs, **extra):
-    return {"__vis_object__": name, "__vis_attrs__": attrs, **extra}
-
-
-def test_calls_the_tool_python_execution_names_and_answers_its_class(monkeypatch):
+def test_calls_the_tool_python_execution_names_and_answers_the_host_value(monkeypatch):
     calls = []
+    answer = object()
 
     def call_tool(tool, args, kwargs):
         calls.append((tool, args, kwargs))
-        return _object("Reservation", {"id": "r-1", "name": "x-login", "label": "x"})
+        return answer
 
     monkeypatch.setattr(vis._host, "call_tool", call_tool)
-    first = vis.tools.spel.reserve("x-login", profile="x-com")
-    second = vis.tools["spel.reserve"]("x-login")
 
+    assert vis.tools.spel.reserve("x-login", profile="x-com") is answer
+    assert vis.tools["spel.reserve"]("x-login") is answer
     assert calls == [
         ("spel.reserve", ["x-login"], {"profile": "x-com"}),
         ("spel.reserve", ["x-login"], {}),
     ]
     assert repr(vis.tools) == "<vis tools>"
     assert repr(vis.tools.spel.reserve) == "<vis tool spel.reserve>"
-    assert type(first).__name__ == "Reservation"
-    assert dataclasses.is_dataclass(first)
-    assert type(first) is type(second)
-    assert first == second
-    assert repr(first) == "Reservation(id='r-1', name='x-login', label='x')"
-    assert first.id == first["id"] == "r-1"
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        first.id = "other"
-    with pytest.raises(AttributeError, match="available fields: id, name, label"):
-        _ = first.session
-    with pytest.raises(KeyError, match="Reservation has no field 'session'"):
-        first["session"]
-    with pytest.raises(TypeError, match="not iterable"):
-        iter(first)
-
-
-def test_rebuilds_nested_objects_sequences_and_json_objects(monkeypatch):
-    rows = [
-        _object("Browser", {"engine": "chromium"}),
-        _object("Browser", {"engine": "webkit"}),
-    ]
-    answer = _object(
-        "Page",
-        {"rows": rows, "meta": {"total": 2, "tags": ["a"]}},
-        __vis_sequence_field__="rows",
-    )
-    monkeypatch.setattr(vis._host, "call_tool", lambda tool, args, kwargs: answer)
-    page = vis.tools.spel.page()
-
-    assert type(page).__name__ == "Page"
-    assert [row.engine for row in page] == ["chromium", "webkit"]
-    assert len(page) == 2 and page[1].engine == "webkit"
-    assert type(page.rows[0]) is type(page.rows[1])
-    assert isinstance(page.meta, dict)
-    assert page.meta.total == 2 and page.meta["tags"] == ["a"]
-    with pytest.raises(AttributeError, match="fields: total, tags"):
-        _ = page.meta.count
-
-
-@pytest.mark.parametrize(
-    ("sequence", "error"),
-    [("_rows", ValueError), ("missing", ValueError), ("count", TypeError)],
-)
-def test_refuses_a_sequence_field_that_names_no_list(monkeypatch, sequence, error):
-    answer = _object("Page", {"count": 1}, __vis_sequence_field__=sequence)
-    monkeypatch.setattr(vis._host, "call_tool", lambda tool, args, kwargs: answer)
-    with pytest.raises(error, match="sequence field"):
-        vis.tools.spel.page()
-
-
-def test_answers_a_model_text_as_its_str(monkeypatch):
-    # Regression #367: a model's own `__str__` text crosses; the repr stays the fields.
-    answers = iter(
-        [
-            _object("Status", {"env": "DEV04"}, __vis_text__="STATUS: DEV04"),
-            _object("Status", {"env": "DEV05"}),
-            _object("Status", {"env": "DEV06"}, __vis_text__=7),
-        ]
-    )
-    monkeypatch.setattr(
-        vis._host, "call_tool", lambda tool, args, kwargs: next(answers)
-    )
-    told, plain, odd = (vis.tools.env.status() for _ in range(3))
-
-    assert str(told) == f"{told}" == "STATUS: DEV04"
-    assert repr(told) == "Status(env='DEV04')"
-    assert str(plain) == repr(plain) == "Status(env='DEV05')"
-    assert str(odd) == repr(odd)
-    assert type(plain) is type(odd)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -159,12 +90,11 @@ def test_sends_dataclass_arguments_as_their_public_fields(monkeypatch):
     monkeypatch.setattr(
         vis._host, "call_tool", lambda tool, args, kwargs: calls.append((args, kwargs))
     )
-    reservation = vis._tool_value(_object("Reservation", {"id": "r-1"}))
 
-    assert vis.tools.spel.open(reservation, targets=(Target("https://x.com"),)) is None
+    assert vis.tools.spel.open("r-1", targets=(Target("https://x.com"),)) is None
     assert calls == [
         (
-            [{"__vis_object__": "Reservation", "__vis_attrs__": {"id": "r-1"}}],
+            ["r-1"],
             {
                 "targets": [
                     {

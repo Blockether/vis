@@ -87,8 +87,8 @@
           (atom 0)
 
           code
-          (str "from dataclasses import FrozenInstanceError\n" "result = await records()\n"
-               "assert result['items'] is result.items\n" "item = result['items'][0]\n"
+          (str "result = await records()\n"
+               "assert result['items'] is result.get('items')\n" "item = result['items'][0]\n"
                "assert item['url'] == item.url == 'https://gateway.example.com/240'\n"
                "try:\n    item['missing']\n"
                "except KeyError as exc:\n    assert 'url' in str(exc) and 'missing' in str(exc)\n"
@@ -98,7 +98,7 @@
                "try:\n    item['url'] = 'changed'\n"
                "except TypeError:\n    pass\n"
                "else:\n    raise AssertionError('mutable subscription')\n"
-               "try:\n    item.url = 'changed'\n" "except FrozenInstanceError:\n    pass\n"
+               "try:\n    item.url = 'changed'\n" "except AttributeError:\n    pass\n"
                "else:\n    raise AssertionError('mutable attribute')\n"
                "print('Native record subscription ' + 'verified')")
 

@@ -48,7 +48,17 @@ def __vis_seal__(value):
         _vis_callables[cid] = value
         return {"__vis_callable__": cid}
     if isinstance(value, dict):
-        return {str(k): __vis_seal__(v) for k, v in value.items()}
+        sealed = {str(k): __vis_seal__(v) for k, v in value.items()}
+        name = getattr(type(value), "__vis_object__", None)
+        if not isinstance(name, str):
+            return sealed
+        # A runtime record keeps its name, its sequence field and its `str` text.
+        markers = {"__vis_object__": name, "__vis_attrs__": sealed}
+        if type(value).__vis_sequence_field__ is not None:
+            markers["__vis_sequence_field__"] = type(value).__vis_sequence_field__
+        if value.__vis_text__ is not None:
+            markers["__vis_text__"] = value.__vis_text__
+        return markers
     if isinstance(value, (list, tuple)):
         return [__vis_seal__(v) for v in value]
     if _vis_dataclasses.is_dataclass(value) and not isinstance(value, type):
@@ -162,20 +172,35 @@ def __vis_member__(op):
     return call
 
 
+def __vis_typed__(call):
+    """Answer a tool result with the records and maps that `python_execution` builds.
+
+    The runtime owns those types, so the SDK has no copy of them. Text, numbers and
+    lists stay built-in values.
+    """
+
+    def typed(*args):
+        return __vis_typed_value__(call(*args))  # noqa: F821 — a runtime global.
+
+    return typed
+
+
 # Every `__vis_host_*__` name the host injected becomes a member of `_host`,
 # under that name with the marker trimmed: `__vis_host_jailed_shell__` is
 # `_host.jailed_shell`. The list is NOT written out here on purpose — it lived in
 # this file once, so a door added in the host meant a release of this library
 # before the host could use it, for a name this file only ever passed through.
+_vis_host = _vis_types.SimpleNamespace(
+    **{
+        _vis_name[len("__vis_host_") : -len("__")]: __vis_member__(_vis_door)
+        for _vis_name, _vis_door in list(globals().items())
+        if _vis_name.startswith("__vis_host_")
+        and _vis_name.endswith("__")
+        and callable(_vis_door)
+    }
+)
+_vis_host.call_tool = __vis_typed__(_vis_host.call_tool)
 _vis_mod = _vis_sdk.install(
     _vis_body,  # noqa: F821 — supplied by the host with the canonical SDK source.
-    _vis_types.SimpleNamespace(
-        **{
-            _vis_name[len("__vis_host_") : -len("__")]: __vis_member__(_vis_door)
-            for _vis_name, _vis_door in list(globals().items())
-            if _vis_name.startswith("__vis_host_")
-            and _vis_name.endswith("__")
-            and callable(_vis_door)
-        }
-    ),
+    _vis_host,
 )

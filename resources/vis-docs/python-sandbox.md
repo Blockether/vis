@@ -206,24 +206,21 @@ Extension tools answer with records built from their public fields, not with the
 Python objects. For example, a `PageList` result has `r.results` or `r["results"]` and `r.total`,
 but none of the original methods.
 
-You can also read a record as a mapping. `r.get("total")`, `r.keys()`, `r.items()` and `r.values()`
-read its fields. `dict(r)` gives the fields as a dictionary. `json.dumps(r)` writes them, also for
-a record inside a record. A field wins over a mapping method of the same name: on a record with an
-`items` field, `r.items` is that field.
+A record is a read-only dictionary of its fields. `r.get("total")`, `r.keys()`, `r.items()` and
+`r.values()` read them. `json.dumps(r)` writes the fields, also for a record inside a record and
+with your own `default=`. `dict(r)` gives a copy that you can change. Dictionary names keep their
+dictionary meaning: on a record with an `items` field, `r.items` is the mapping method and
+`r["items"]` is the field.
 
-Two limits apply. If you give `json.dumps` your own `default=`, that function gets the record, and
-`default=dict` writes its fields. A record is not a `collections.abc.Mapping`, because only a
-backing field iterates.
+A name that is not a field raises an error that lists the fields of the record:
 
-A name that is not a field raises an error:
-
-- `r["methods"]` raises `KeyError`. Its message lists the fields that the record has.
-- `r.methods` raises `AttributeError`. It reports only the missing name.
+- `r["methods"]` raises `KeyError`.
+- `r.methods` raises `AttributeError`.
 
 Use a listed field. Do not guess another one. `doc(tool)` shows the same fields under **Model
-schemas**. Only records whose extension declares a
-[backing field](extension-api.md#field-backed-sequences) iterate. Read other records through their
-list field.
+schemas**. When the extension declares a
+[backing field](extension-api.md#field-backed-sequences), iteration, `len(r)` and `r[0]` read that
+field. Another record iterates over its field names, as a dictionary does.
 
 `read_session()` also returns more data than its printed summary. The full history,
 including folded steps, is under `transcript["turns"]`, then `iterations`, then

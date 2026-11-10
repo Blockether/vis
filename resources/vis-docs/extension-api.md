@@ -1593,22 +1593,26 @@ shows its own Activity under your tool's Activity.
 
 Results arrive in the same shape the model sees:
 
-- A typed object from a Python extension becomes a frozen object with the same
+- A typed object from a Python extension becomes a read-only record with the same
   class name and public fields. Read a field as an attribute or with
   `result["field"]`. An unknown field raises `AttributeError` or `KeyError`
   listing the available fields. An object with a
   [field-backed sequence](#field-backed-sequences) iterates over that field and
   supports `len()`. Its property fields and its `str` text arrive as in
   [Return typed objects](#return-typed-objects).
+- A record is also a dictionary of its fields, so `json.dumps(result)` and
+  `dict(result)` work. Read a field that has the name of a dictionary method, such
+  as `items`, with `result["items"]`.
 - Other results are JSON data. Objects become dicts that also allow attribute
   access, such as `page.meta.total`, and lists stay lists.
 
-The object is a copy in your extension's process, not an instance of the other extension's class. So
-check its fields. Do not use `isinstance` with the other package's class. Results with the same
-class name and fields share one class, unless the object has its own `str` text.
+The record is a copy in your extension's process, not an instance of the other extension's class. So
+check its fields. Do not use `isinstance` with the other package's class. Vis builds these records
+the same way for `python_execution` and for your extension.
 
 Pass JSON-compatible arguments: strings, numbers, booleans, `None`, lists and
-dicts. A dataclass argument is sent as a dict of its public fields. An extension
+dicts. A dataclass argument is sent as a dict of its public fields, and so is a record
+that `vis.tools` answered. An extension
 tool that annotates the parameter with a dataclass receives an instance of its own
 class, as described in [Accept records as arguments](#accept-records-as-arguments).
 

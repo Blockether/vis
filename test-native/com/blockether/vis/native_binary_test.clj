@@ -2019,7 +2019,7 @@
                                (ep/run-python-block
                                  ctx
                                  (str
-                                   "import json, dataclasses, importlib.util\n"
+                                   "import json, importlib.util\n"
                                    "assert all(importlib.util.find_spec(name) is None "
                                    "for name in ('numpy', 'scipy', 'cryptography'))\n"
                                    ;; #405: the sandbox sees only the pydantic that ships with the SDK.
@@ -2027,7 +2027,7 @@
                                    "assert spec is None or 'vis-sdk-packages' in spec.origin, spec\n"
                                    "status = await packages_status()\n"
                                    "assert type(status).__name__ == 'PackageStatus' and status.state == 'ready'\n"
-                                   "assert dataclasses.is_dataclass(status)\n"
+                                   "assert json.loads(json.dumps(status))['state'] == 'ready'\n"
                                    "report = await packages_check()\n"
                                    "print('PACKAGE_CHECK ' + json.dumps(report))"))
                                report (package-check-result (:stdout answer))

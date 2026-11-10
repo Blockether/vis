@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.python.extension-tools-test
   "`vis.tools`: a Python extension calls another active session tool the way the
-   model does and gets that extension's objects back as frozen classes. Boots real
+   model does and gets that extension's objects back as read-only records. Boots real
    extension contexts on the shared engine, with no model in the loop."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -14,25 +14,34 @@
 
 (def ^:private svc-source
   (str
-    "from __future__ import annotations\n"
-    "from dataclasses import dataclass\n" "import blockether.vis.extension as vis\n"
+    "from __future__ import annotations\n" "from dataclasses import dataclass\n"
+    "import blockether.vis.extension as vis\n" "\n"
+    "\n" "@dataclass(frozen=True)\n"
+    "class Browser:\n" "    \"A browser engine.\"\n"
+    "    engine: str\n" "\n"
+    "\n" "@dataclass(frozen=True)\n"
+    "class Reservation:\n" "    \"A reserved browser.\"\n"
+    "    id: str\n" "    profile: str\n"
+    "    browser: Browser\n" "\n"
+    "\n" "@dataclass(frozen=True)\n"
+    "class Page:\n" "    \"Rows of one page.\"\n"
+    "    __vis_sequence_field__ = \"rows\"\n" "    rows: tuple[Browser, ...]\n"
     "\n" "\n"
-    "@dataclass(frozen=True)\n" "class Browser:\n"
-    "    \"A browser engine.\"\n" "    engine: str\n"
-    "\n" "\n"
-    "@dataclass(frozen=True)\n" "class Reservation:\n"
-    "    \"A reserved browser.\"\n" "    id: str\n"
-    "    profile: str\n" "    browser: Browser\n"
-    "\n" "\n"
-    "@dataclass(frozen=True)\n" "class Page:\n"
-    "    \"Rows of one page.\"\n" "    __vis_sequence_field__ = \"rows\"\n"
-    "    rows: tuple[Browser, ...]\n" "\n"
+    "@dataclass(frozen=True)\n" "class Status:\n"
+    "    \"An environment status.\"\n" "    env: str\n"
+    "\n" "    def __str__(self):\n"
+    "        return f\"STATUS: {self.env}\"\n" "\n"
     "\n" "class Svc:\n"
     "    def reserve(self, label: str, *, profile: str = \"default\") -> Reservation:\n"
     "        \"Reserve a browser.\"\n"
     "        return Reservation(f\"r-{label}\", profile, Browser(\"chromium\"))\n" "\n"
     "    def page(self, reservation: str) -> Page:\n" "        \"List the rows of one page.\"\n"
     "        return Page((Browser(\"a\"), Browser(\"b\")))\n" "\n"
+    "    def status(self) -> Status:\n" "        \"Answer a model with its own text.\"\n"
+    "        return Status(\"DEV04\")\n" "\n"
+    "    def name(self, reservation: Reservation) -> str:\n" "        \"Name a reservation.\"\n"
+    "        return f\"{type(reservation).__name__}:{reservation.id}:{reservation.browser.engine}\"\n"
+    "\n"
     "    def plain(self) -> dict:\n" "        \"Answer plain JSON data.\"\n"
     "        return {\"answer\": 42, \"nested\": {\"rows\": [1, 2]}}\n" "\n"
     "    def fail(self) -> str:\n" "        \"Fail on purpose.\"\n"
@@ -44,20 +53,20 @@
 
 (def ^:private client-source
   (str
-    "from __future__ import annotations\n" "import dataclasses\n"
-    "import blockether.vis.extension as vis\n" "\n"
-    "\n" "def _refusal(call):\n"
-    "    try:\n" "        call()\n"
-    "    except Exception as error:\n" "        return f\"{type(error).__name__}: {error}\"\n"
-    "    return \"no refusal\"\n" "\n"
-    "\n" "class Client:\n"
-    "    def probe(self) -> dict:\n"
+    "from __future__ import annotations\n" "import collections.abc\n"
+    "import json\n" "import blockether.vis.extension as vis\n"
+    "\n" "\n"
+    "def _refusal(call):\n" "    try:\n"
+    "        call()\n" "    except Exception as error:\n"
+    "        return f\"{type(error).__name__}: {error}\"\n" "    return \"no refusal\"\n"
+    "\n" "\n"
+    "class Client:\n" "    def probe(self) -> dict:\n"
     "        \"Call svc through vis.tools and describe the answers.\"\n"
     "        first = vis.tools.svc.reserve(\"x-login\", profile=\"x-com\")\n"
     "        second = vis.tools[\"svc.reserve\"](\"other\")\n"
-    "        page = vis.tools.svc.page(first.id)\n" "        plain = vis.tools.svc.plain()\n"
-    "        return {\n" "            \"class\": type(first).__name__,\n"
-    "            \"dataclass\": dataclasses.is_dataclass(first),\n"
+    "        page = vis.tools.svc.page(first.id)\n"
+    "        plain = vis.tools.svc.plain()\n" "        return {\n"
+    "            \"class\": type(first).__name__,\n"
     "            \"same_class\": type(first) is type(second),\n"
     "            \"id\": [first.id, first[\"id\"]],\n"
     "            \"profiles\": [first.profile, second.profile],\n"
@@ -67,6 +76,17 @@
     "            \"rows\": [type(page).__name__, [row.engine for row in page], len(page), page[0].engine],\n"
     "            \"plain\": [isinstance(plain, dict), plain.answer, plain[\"nested\"].rows],\n"
     "            \"repr\": repr(first),\n"
+    "        }\n" "\n"
+    "    def records(self) -> dict:\n"
+    "        \"Describe the record rules of a vis.tools answer.\"\n"
+    "        first = vis.tools.svc.reserve(\"x\")\n" "        status = vis.tools.svc.status()\n"
+    "        return {\n" "            \"mapping\": isinstance(first, collections.abc.Mapping),\n"
+    "            \"json\": json.dumps({\"rows\": [first]}),\n"
+    "            \"key\": _refusal(lambda: first[\"session\"]),\n"
+    "            \"index\": _refusal(lambda: first[0]),\n"
+    "            \"text\": [str(status), repr(status)],\n"
+    "            \"argument\": vis.tools.svc.name(first),\n"
+    "            \"passed\": vis.tools.svc.page(first.id),\n"
     "        }\n" "\n"
     "    def loop(self) -> str:\n" "        \"Call this extension back through vis.tools.\"\n"
     "        return _refusal(lambda: vis.tools.client.probe())\n" "\n"
@@ -132,17 +152,17 @@
 
 (defdescribe
   extension-tool-call-test
-  (it "answers another extension's objects as frozen classes of the same name"
+  (it "answers another extension's objects as read-only records of the same name"
       (with-tools
         (fn [exts]
           (expect
             (= {"class" "Reservation"
-                "dataclass" true
                 "same_class" true
                 "id" ["r-x-login" "r-x-login"]
                 "profiles" ["x-com" "default"]
                 "browser" ["Browser" "chromium"]
-                "frozen" "FrozenInstanceError: cannot assign to field 'id'"
+                "frozen"
+                "AttributeError: Reservation is read-only; copy it with dict(r) to change it"
                 "missing" (str "AttributeError: Reservation has no field 'missing'; "
                                "available fields: id, profile, browser")
                 "rows" ["Page" ["a" "b"] 2 "a"]
@@ -150,6 +170,27 @@
                 "repr"
                 "Reservation(id='r-x-login', profile='x-com', browser=Browser(engine='chromium'))"}
                (dissoc (call (exts "client") 'client.probe) "op"))))))
+  (it
+    "answers a record that is a mapping, serializes, and travels on as an argument or a result"
+    ;; Regressions #462 (JSON), #367 (a model's own `str` text) and #256 (sequence field).
+    (with-tools
+      (fn [exts]
+        (expect
+          (=
+            {"mapping" true
+             "json"
+             "{\"rows\": [{\"id\": \"r-x\", \"profile\": \"default\", \"browser\": {\"engine\": \"chromium\"}}]}"
+             "key" (str "KeyError: \"Reservation has no field 'session'; "
+                        "available fields: id, profile, browser\"")
+             "index" "TypeError: Reservation field name must be a string"
+             "text" ["STATUS: DEV04" "Status(env='DEV04')"]
+             "argument" "Reservation:r-x:chromium"
+             "passed" {"__vis_object__" "Page"
+                       "__vis_attrs__"
+                       {"rows" [{"__vis_object__" "Browser" "__vis_attrs__" {"engine" "a"}}
+                                {"__vis_object__" "Browser" "__vis_attrs__" {"engine" "b"}}]}
+                       "__vis_sequence_field__" "rows"}}
+            (dissoc (call (exts "client") 'client.records) "op"))))))
   (it "shows each nested call as its own Activity under the calling tool"
       (with-tools (fn [exts]
                     (let [events (atom [])]
@@ -170,16 +211,18 @@
             (expect (= (str "VisToolError: Extension `client` is waiting on this vis.tools call; "
                             "calling back into it would never return")
                        (call (exts "client") sym)))))))
-  (it "names similar tools for an unknown name and raises a tool's own failure"
-      (with-tools
-        (fn [exts]
-          (expect
-            (= (str
-                 "VisToolError: vis.tools: no active tool is named `svc.reserv` in this session; "
-                 "similar: svc.back, svc.fail, svc.page, svc.plain, svc.reserve")
-               (call (exts "client") 'client.unknown)))
-          (expect (= "VisToolError: ValueError: no browser available"
-                     (call (exts "client") 'client.failing))))))
+  (it
+    "names similar tools for an unknown name and raises a tool's own failure"
+    (with-tools
+      (fn [exts]
+        (expect
+          (=
+            (str
+              "VisToolError: vis.tools: no active tool is named `svc.reserv` in this session; "
+              "similar: svc.back, svc.fail, svc.name, svc.page, svc.plain, svc.reserve, svc.status")
+            (call (exts "client") 'client.unknown)))
+        (expect (= "VisToolError: ValueError: no browser available"
+                   (call (exts "client") 'client.failing))))))
   (it "stores an extension artifact in the calling block and reads it back"
       (with-tools (fn [exts]
                     (let [sink (atom [])]

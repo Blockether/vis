@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
-from dataclasses import MISSING, dataclass, field, fields, is_dataclass, make_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from functools import cached_property
 from os import PathLike
 from pathlib import Path
@@ -363,115 +363,19 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class _ToolRecord(dict):
-    """A tool's JSON object answer, read by key or, as in python_execution, by field."""
-
-    __slots__ = ()
-
-    def __getattr__(self, name):
-        try:
-            return self[name]
-        except KeyError:
-            names = ", ".join(map(str, self)) or "none"
-            raise AttributeError(
-                f"tool result has no field {name!r}; fields: {names}"
-            ) from None
-
-
-_tool_classes = {}
-
-
-def _tool_class(name, names, sequence, text=None):
-    """The frozen class for objects answered as `name` with fields `names`.
-
-    Built once per shape, as python_execution rebuilds an extension object. It has its
-    public fields only, read by field or key. It is iterable only through its declared
-    sequence field. A `text` answer from a class with its own `__str__` becomes the
-    `str` of a class built for that one object.
-    """
-    shape = (name, names, sequence)
-    if text is None and shape in _tool_classes:
-        return _tool_classes[shape]
-
-    def missing(self, key):
-        return (
-            f"{type(self).__name__} has no field {key!r}; "
-            f"available fields: {', '.join(names) or '(none)'}"
-        )
-
-    def getitem(self, key):
-        if not isinstance(key, str):
-            if sequence is not None:
-                return getattr(self, sequence)[key]
-            raise TypeError(f"{type(self).__name__} field name must be a string")
-        if key not in names:
-            raise KeyError(missing(self, key))
-        return getattr(self, key)
-
-    def getattr_(self, key):
-        raise AttributeError(missing(self, key))
-
-    # `__iter__ = None` disables Python's integer-subscription iteration fallback.
-    namespace = {"__getitem__": getitem, "__getattr__": getattr_, "__iter__": None}
-    if sequence is not None:
-        namespace["__iter__"] = lambda self: iter(getattr(self, sequence))
-        namespace["__len__"] = lambda self: len(getattr(self, sequence))
-    if text is not None:
-        namespace["__str__"] = lambda self: text
-    cls = make_dataclass(
-        name,
-        [(n, object) for n in names],
-        namespace=namespace,
-        frozen=True,
-        slots=True,
-    )
-    if text is not None:
-        return cls
-    # setdefault keeps one class per shape when two threads build it at once.
-    return _tool_classes.setdefault(shape, cls)
-
-
-def _tool_object(name, attrs, sequence, text=None):
-    values = {str(key): _tool_value(item) for key, item in attrs.items()}
-    if sequence is not None:
-        if (
-            not isinstance(sequence, str)
-            or not sequence.isidentifier()
-            or sequence.startswith("_")
-            or sequence not in values
-        ):
-            raise ValueError("sequence field must name a public serialized field")
-        if type(values[sequence]) not in (list, tuple):
-            raise TypeError("sequence field must contain a list or tuple")
-    if not isinstance(text, str):
-        text = None
-    return _tool_class(name, tuple(values), sequence, text)(**values)
-
-
-def _tool_value(value):
-    """One answered value: extension objects as frozen classes, JSON objects as records."""
-    if isinstance(value, Mapping):
-        name = value.get("__vis_object__")
-        attrs = value.get("__vis_attrs__")
-        if isinstance(name, str) and isinstance(attrs, Mapping):
-            return _tool_object(
-                name,
-                attrs,
-                value.get("__vis_sequence_field__"),
-                value.get("__vis_text__"),
-            )
-        return _ToolRecord({key: _tool_value(item) for key, item in value.items()})
-    if isinstance(value, (list, tuple)):
-        return [_tool_value(item) for item in value]
-    return value
-
-
 def _tool_data(value) -> Any:
     """One argument as JSON data.
 
     A dataclass instance travels as its class name and public fields, as from the
-    sandbox. A `types.SimpleNamespace` travels as a dict of its public attributes.
+    sandbox. So does a record that a tool answered. A `types.SimpleNamespace` travels
+    as a dict of its public attributes.
     """
+    name = getattr(type(value), "__vis_object__", None)
+    if isinstance(name, str) and isinstance(value, dict):
+        return {
+            _RECORD_NAME: name,
+            _RECORD_FIELDS: {key: _tool_data(item) for key, item in value.items()},
+        }
     if is_dataclass(value) and not isinstance(value, type):
         return {
             _RECORD_NAME: type(value).__name__,
@@ -576,8 +480,7 @@ class _Tools:
             raise TypeError(
                 "vis.tools is not a tool; call one, such as vis.tools.spel.reserve(...)"
             )
-        answer = _host.call_tool(self._name, _tool_data(args), _tool_data(kwargs))
-        return _tool_value(answer)
+        return _host.call_tool(self._name, _tool_data(args), _tool_data(kwargs))
 
     def __repr__(self):
         return f"<vis tool {self._name}>" if self._name else "<vis tools>"

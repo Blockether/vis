@@ -1,7 +1,7 @@
 # Issue #256: runs unchanged in a JVM worker and the native binary's python_execution.
 # Sandbox blocks allow top-level await and inject the declared tools plus doc().
 # ruff: noqa: F704, F821
-import dataclasses
+import collections.abc
 
 for as_list in (False, True):
     r = await sequence_probe_search(as_list=as_list)
@@ -9,7 +9,7 @@ for as_list in (False, True):
     assert len(r) == 2 and bool(r) and r.total == 20
     assert r[0] is r.results[0] and r[-1] is r.results[-1]
     assert r[:] == r.results and r[::-1] == r.results[::-1]
-    assert r[0]["title"] == "First" and dataclasses.is_dataclass(r[0])
+    assert r[0]["title"] == "First" and isinstance(r[0], collections.abc.Mapping)
     assert r["results"] is r.results and r["total"] == 20
     assert not hasattr(r, "remote_only") and not hasattr(r, "_private")
     assert not hasattr(r, "__dict__")
@@ -29,7 +29,7 @@ for as_list in (False, True):
         raise AssertionError("Item assignment allowed")
     try:
         r.results = []
-    except dataclasses.FrozenInstanceError:
+    except AttributeError:
         pass
     else:
         raise AssertionError("Field assignment allowed")
@@ -40,12 +40,8 @@ report = await sequence_probe_nested()
 assert report.pages[0].title == "First" and len(report.pages) == 2
 for plain in (report.plain, report.undeclared):
     assert plain.results == [] and plain["results"] == [] and bool(plain)
-    try:
-        iter(plain)
-    except TypeError as error:
-        assert "not iterable" in str(error)
-    else:
-        raise AssertionError("Implicit collection behavior allowed")
+    # An undeclared record iterates over its field names, as a dictionary does, never over rows.
+    assert list(plain) == list(plain.keys()) and "results" in plain
 
 for kind in ("none", "mapping", "text", "set", "lazy", "subclass"):
     try:

@@ -9267,8 +9267,9 @@ vis.register_extension(vis.Extension(
                        " in doc('greet.hello')\n"
                        "value = await greet.hello('Ada', loud=True)\n"
                        ;; Regression #240: subscription survives the real extension boundary and reload.
-                       "assert value['items'] is value.items\n"
-                       "assert value['items'][0]['text'] == value.items[0].text == 'ADA'\n"
+                       ;; A field with the name of a dict method is read by key (#462).
+                       "assert value['items'] is value.get('items') and callable(value.items)\n"
+                       "assert value['items'][0]['text'] == value['items'][0].text == 'ADA'\n"
                        "assert value['opaque'] is None and value['missing'] is None\n"
                        "try:\n    value['unknown']\n"
                        "except KeyError as exc:\n    assert 'items' in str(exc) and 'unknown' in str(exc)\n"
@@ -9276,10 +9277,10 @@ vis.register_extension(vis.Extension(
                        "try:\n    value['items'][0]['text'] = 'changed'\n"
                        "except TypeError:\n    pass\n"
                        "else:\n    raise AssertionError('mutable subscription')\n"
-                       "assert (await greet.hello('Ada')).items[0].text == 'Ada'\n"
+                       "assert (await greet.hello('Ada'))['items'][0].text == 'Ada'\n"
                        (when (pos? iteration)
-                         "assert (await greet.hello('Ada', repeat=2)).items[0].text == 'AdaAda'\n")
-                       "try:\n    value.items[0].text = 'changed'\n"
+                         "assert (await greet.hello('Ada', repeat=2))['items'][0].text == 'AdaAda'\n")
+                       "try:\n    value['items'][0].text = 'changed'\n"
                        "except AttributeError:\n    pass\n"
                        "else:\n    raise AssertionError('mutable nested result')\n"
                        "print(json.dumps(greet.hello.contract['returns']['fields'][0]['name']))"))]
@@ -9641,10 +9642,9 @@ vis.register_extension(vis.Extension(
                  (ep/run-python-block
                    ctx
                    (str
-                     "import dataclasses\n" "r = await env_status('DEV04')\n"
+                     "r = await env_status('DEV04')\n"
                      "print(r.next_phase, r['next_phase'], r.phases[0].label)\n" "print(r)\n"
-                     "print(str(r.phases[0]) == repr(r.phases[0]))\n"
-                     "print([f.name for f in dataclasses.fields(r)])\n"
+                     "print(str(r.phases[0]) == repr(r.phases[0]))\n" "print(list(r.keys()))\n"
                      "print(hasattr(r, 'broken'), hasattr(r, 'text_report'), hasattr(r, '_hidden'))\n"
                      "print(await env_report(r))\n"))]
                 (expect (nil? (:error answer)) (str "worker? " worker? " " (pr-str answer)))
