@@ -4,6 +4,7 @@ import activityFixture from '../../../../packages/vis-contract/resources/vis-con
 import {
   providerWaitDetail,
   reduceRunningTurnEvent,
+  withStoredSteps,
   type RunningTurn,
   type ProviderWait,
 } from './running-turn';
@@ -276,6 +277,52 @@ describe('the turn this device started', () => {
     expect(reduceRunningTurnEvent(null, startedFrame('gw-2', 1_700_000))?.startedAt).toBe(
       1_700_000,
     );
+  });
+});
+
+// Reported: after a gateway restart the bubble lost its work and looked as if the
+// message was sent again. The resumed turn announces the same id again, and the
+// stream replays only the steps of the new process.
+describe('a turn that a gateway restart continued', () => {
+  const step = (position: number) => ({ position, thinking: `step ${position}`, forms: [] });
+  const painted: RunningTurn = { ...runningTurn, iterations: [step(1), step(2)], answer: 'so far' };
+  const again = event({ type: 'turn.started', turn_id: 'gw-thinking', request: 'show your plan', resumed: true });
+
+  it('keeps the steps it painted when turn.started names it again', () => {
+    const resumed = reduceRunningTurnEvent(painted, again);
+
+    expect(resumed?.iterations.map((iteration) => iteration.position)).toEqual([1, 2]);
+    expect(resumed?.answer).toBe('so far');
+    expect(resumed?.resumed).toBe(true);
+  });
+
+  it('ends the restart notice at the first progress frame', () => {
+    const resumed = reduceRunningTurnEvent(painted, again);
+    expect(resumed?.resumed).toBe(true);
+    const progressing = reduceRunningTurnEvent(
+      resumed,
+      event({ type: 'turn.progress', turn_id: 'gw-thinking', progress: 'provider-call', iteration: 3 }),
+    );
+
+    expect(progressing?.resumed).toBeUndefined();
+  });
+
+  it('starts empty for a turn it did not paint', () => {
+    const other = reduceRunningTurnEvent(painted, event({ type: 'turn.started', turn_id: 'gw-other' }));
+
+    expect(other?.iterations).toEqual([]);
+    expect(other?.resumed).toBeUndefined();
+  });
+
+  it('shows the stored steps before the first live step once', () => {
+    const live: RunningTurn = { ...runningTurn, iterations: [step(3), step(4)] };
+    const row = { turn_id: 'gw-thinking', iterations: [step(1), step(2), step(3)], iterations_offset: 5 };
+    const merged = withStoredSteps(live, row);
+
+    expect(merged.iterations.map((iteration) => iteration.position)).toEqual([1, 2, 3, 4]);
+    expect(merged.iterationsOffset).toBe(5);
+    expect(withStoredSteps({ ...runningTurn, iterations: [] }, row).iterations).toHaveLength(3);
+    expect(withStoredSteps(live, { ...row, turn_id: 'gw-other' })).toBe(live);
   });
 });
 

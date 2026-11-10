@@ -1246,17 +1246,25 @@
                                                (get artifacts (str (:iteration-id rec)))))]))
             compacted))))
 
-(def ^:private resume-note
-  "The note that a forced park leaves for the model of the resumed turn."
-  (str "The gateway stopped during your last step and continued this turn in a new process. "
-       "Tool calls of that step can have run in part, and their results are not here. "
-       "Check the current state before you repeat a call that changes something."))
+(defn- resume-note
+  "The note that a park leaves for the model of the resumed turn. A forced park
+   (`clean?` false) cut a step, so the note also warns about partial tool calls."
+  [clean?]
+  (if clean?
+    (str
+      "The gateway restarted between two of your steps and continued this turn in a new process. "
+      "Your earlier steps are above. Continue the task from where it stopped.")
+    (str "The gateway stopped during your last step and continued this turn in a new process. "
+         "Tool calls of that step can have run in part, and their results are not here. "
+         "Check the current state before you repeat a call that changes something. "
+         "Then continue the task from where it stopped.")))
 
 (defn resumed-turn-steps
   "The stored steps of turn `turn-id` that an earlier gateway process ran before it
    parked the turn. Answers `{:steps [trailer-entry ...] :iteration n}`: the done
-   steps oldest first, then a note when `clean?` is false (a forced stop cut a
-   step), and `n`, the highest stored step position, where the resumed loop goes on.
+   steps oldest first, then a note that the turn continues after a restart (it also
+   warns about partial tool calls when `clean?` is false), and `n`, the highest
+   stored step position, where the resumed loop goes on.
    The entries keep `:turn/resumed? true`, so a carried request prefix never hides
    them."
   [environment turn-id turn-position clean?]
@@ -1293,20 +1301,19 @@
         (persistance/db-list-iterations-attachments-meta db ids)]
 
     {:iteration (reduce max 0 (keep :position stored))
-     :steps (cond-> (mapv (fn [[k rec]]
-                            [k
-                             (settled-step rec
-                                           (get bodies (str (:iteration-id rec)))
-                                           (mapv #(assoc % ::attachment-db db)
-                                                 (get artifacts (str (:iteration-id rec)))))])
-                          recs)
-              (not clean?)
-              (conj [(str "t" position "/resume")
-                     {:turn/boundary :resume
-                      :turn/position position
-                      :turn/current? true
-                      :turn/resumed? true
-                      :turn/messages [{:role "user" :content resume-note}]}]))}))
+     :steps (conj (mapv (fn [[k rec]]
+                          [k
+                           (settled-step rec
+                                         (get bodies (str (:iteration-id rec)))
+                                         (mapv #(assoc % ::attachment-db db)
+                                               (get artifacts (str (:iteration-id rec)))))])
+                        recs)
+                  [(str "t" position "/resume")
+                   {:turn/boundary :resume
+                    :turn/position position
+                    :turn/current? true
+                    :turn/resumed? true
+                    :turn/messages [{:role "user" :content (resume-note clean?)}]}])}))
 
 (defn error->display
   "LLM-legible rendering of a form `:error` for the model wire. The human

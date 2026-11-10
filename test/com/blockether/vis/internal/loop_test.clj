@@ -5680,7 +5680,9 @@
                                                                    (:session-id environment))))))
              (finally (loop-env/dispose-environment! environment)))))
   (doseq [clean? [true false]]
-    (it (if clean? "resumes a clean park without a note" "tells the model about a forced park")
+    (it (if clean?
+          "tells the model that a clean park continues"
+          "tells the model about a forced park")
         (let [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
               tid (persistance/db-store-session-turn! (:db-info environment)
                                                       {:parent-session-id (:session-id environment)
@@ -5696,7 +5698,10 @@
                                                         "start"
                                                         {:session-turn-id tid
                                                          :resume {:turn-id tid :clean? clean?}})]
-                   (expect (not= :parked (:status result)))))
+                   (expect (not= :parked (:status result)))
+                   (let [wire (pr-str (:messages (first @requests)))]
+                     (expect (str/includes? wire "continued this turn in a new process"))
+                     (expect (= (not clean?) (str/includes? wire "Tool calls of that step"))))))
                (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe llm-provider-error-context-test

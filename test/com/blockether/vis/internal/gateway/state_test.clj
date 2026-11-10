@@ -5645,6 +5645,42 @@
                            second
                            :idempotency_key)))
            (finally (swap! registry dissoc sid)))))
+  (it "marks the turn.started of a resumed launch"
+      ;; A gateway restart announces the parked turn again. Clients keep its earlier
+      ;; steps only when they can tell this re-announcement from a new turn.
+      (let [registry
+            @#'state/registry
+
+            sid
+            (str "started-resumed-" (java.util.UUID/randomUUID))
+
+            tid
+            "turn-1"
+
+            events
+            (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0 :turns {tid {:turn_id tid :session_id sid :status "running"}}})
+             (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                      (swap! events conj [type payload])
+                                                      nil)
+                              #'cancellation/worker-future (fn [& _]
+                                                             nil)
+                              #'cancellation/cancellation-set-future! (fn [& _]
+                                                                        nil)}
+               #(doseq [engine-opts [{:resume {:turn-id tid :clean? true}} {}]]
+                  (#'state/launch-turn-worker!
+                   sid
+                   tid
+                   "hello"
+                   {:cancel-token (cancellation/cancellation-token) :engine-opts engine-opts})))
+             (expect (= [true nil]
+                        (->> @events
+                             (filter (comp #{"turn.started"} first))
+                             (mapv (comp :resumed second)))))
+             (finally (swap! registry dissoc sid)))))
   (it "always lands a terminal for a turn whose token is cancelled at launch"
       ;; The worker runs on a FutureTask: cancelling it BEFORE its thread enters
       ;; `run` skips the body entirely. `turn.started` is already on the wire by
@@ -8808,6 +8844,56 @@
                             [(get-in row [:payload :clean?]) (get-in row [:payload :resumes])])))
                (forget-session! sid)))
            (finally (sqlite/db-close! store)))))
+  (it "keeps the journal of a parked turn unreaped until the turn resumes"
+      ;; A client that subscribed before `restore-pending-turns!` resumed the turn
+      ;; hydrated the journal of the stopped gateway and reaped the turn as interrupted.
+      ;; Clients ended the turn, then its resumed turn.started painted the request again.
+      (let [store
+            (sqlite/db-open! :memory)
+
+            tmp
+            (java.nio.file.Files/createTempDirectory
+              "parked-hydrate"
+              (make-array java.nio.file.attribute.FileAttribute 0))
+
+            reg
+            @#'state/registry]
+
+        (try
+          (let [sid
+                (str (h/store-session! store {:channel :api}))
+
+                tid
+                (str (persistance/db-store-session-turn! store
+                                                         {:parent-session-id sid
+                                                          :user-request "busy"}))]
+
+            (parked-row store sid tid 0)
+            (with-redefs [lp/db-info
+                          (constantly store)
+
+                          bus/events-dir
+                          (fn []
+                            tmp)]
+
+              (spit (#'bus/session-file sid)
+                    (str (wire/json-str {:_producer "stopped-gateway"
+                                         :_pid 2147483646
+                                         :_store true
+                                         :schema 1
+                                         :seq 5
+                                         :type "turn.started"
+                                         :turn_id tid
+                                         :session_id sid
+                                         :request "busy"})
+                         "\n"))
+              (state/subscribe! sid
+                                "sub-1"
+                                (fn [_])
+                                0)
+              (expect (= [] (mapv #(get % "type") (:events (get @reg sid)))))
+              (forget-session! sid)))
+          (finally (sqlite/db-close! store)))))
   (it "lands no terminal for a turn that the engine parks"
       (let [store
             (sqlite/db-open! :memory)

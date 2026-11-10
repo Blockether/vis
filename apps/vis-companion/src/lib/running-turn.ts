@@ -17,6 +17,7 @@ import type {
   SseEvent,
   TranscriptForm,
   TranscriptIteration,
+  TranscriptTurn,
 } from './types';
 
 /**
@@ -88,6 +89,8 @@ export interface RunningTurn {
   content?: ContentBlock[];
   /** Start offset of each live block's known text; absent means offset 0. */
   streamBases?: Record<string, number>;
+  /** A gateway restart continued this turn. Set until its first progress frame. */
+  resumed?: boolean;
 }
 
 /**
@@ -263,6 +266,27 @@ function applyFormActivity(
   return { ...turn, iterations };
 }
 
+/**
+ * The bubble with the stored steps of its turn that come before its first live step.
+ * After a gateway restart the stream replays only the steps of the new process; the
+ * stored row of the same turn holds the steps of the earlier process.
+ */
+export function withStoredSteps(turn: RunningTurn, row: TranscriptTurn | undefined): RunningTurn {
+  if (!turn.id || row?.turn_id !== turn.id || !row.iterations?.length) return turn;
+  const first = Math.min(
+    ...turn.iterations.map((iteration) => iteration.position ?? Number.POSITIVE_INFINITY),
+  );
+  const earlier = row.iterations.filter(
+    (iteration) => typeof iteration.position === 'number' && iteration.position < first,
+  );
+  if (!earlier.length) return turn;
+  return {
+    ...turn,
+    iterations: [...earlier, ...turn.iterations],
+    iterationsOffset: row.iterations_offset,
+  };
+}
+
 /** Fold one running-turn SSE frame into the transient turn snapshot. */
 export function reduceRunningTurnEvent(
   turn: RunningTurn | null,
@@ -274,6 +298,9 @@ export function reduceRunningTurnEvent(
     // The bubble we are already painting, if this frame names it. It carries the
     // image bytes `turn.started` never does — and OUR clock.
     const own = turn && (!turn.id || turn.id === startedId) ? turn : null;
+    // A gateway restart announces the same turn again. Its earlier steps stay, so
+    // the bubble continues instead of starting over as if the message was sent again.
+    const same = own?.id === startedId ? own : null;
     return {
       id: startedId,
       position: typeof event.position === 'number' ? event.position : own?.position,
@@ -281,8 +308,12 @@ export function reduceRunningTurnEvent(
       request: eventString(event, 'request'),
       requestKind: event.request_kind,
       council: event.council,
-      answer: '',
-      iterations: [],
+      answer: same?.answer ?? '',
+      iterations: same?.iterations ?? [],
+      iterationsOffset: same?.iterationsOffset,
+      latestIteration: same?.latestIteration,
+      streamBases: same?.streamBases,
+      resumed: event.resumed === true || undefined,
       // `started_at` is the GATEWAY host's clock; the elapsed line under "Vis" is
       // `Date.now() - startedAt` on the device. Stamping our own bubble with the
       // foreign clock made that counter jump by the whole difference the instant
@@ -436,6 +467,7 @@ export function reduceRunningTurnEvent(
           : undefined;
     return {
       ...turn,
+      resumed: undefined,
       progress: kind
         ? {
             kind,

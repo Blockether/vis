@@ -80,7 +80,7 @@ import { useLiveViews } from '../components/LiveView';
 import { LivePanel, ResizablePanel } from '../components/LivePanel';
 import { useMediaMatch } from '../lib/fit-rows';
 import { livePlacement } from '../lib/live-view';
-import { reduceRunningTurnEvent, type RunningTurn } from '../lib/running-turn';
+import { reduceRunningTurnEvent, withStoredSteps, type RunningTurn } from '../lib/running-turn';
 import { eventString, sessionEventBatch } from '../lib/session-stream';
 import { speechOutput } from '../lib/speech';
 import { VoiceTurnOwnership, type VoiceModeLease } from '../lib/voice-conversation';
@@ -472,6 +472,7 @@ function runningTurnPhase(
   );
 
   if (last?.error != null) return `${agentName} is retrying`;
+  if (turn.resumed) return `${agentName} is continuing after a gateway restart`;
   // Nothing has arrived from the engine yet. The message IS sent — that is the
   // one thing this screen knows for certain — and the clock beside this line
   // says how long ago. `${agentName} is waiting for an update` put the waiting on Vis
@@ -4769,6 +4770,14 @@ export function SessionScreen({
       }),
     [preservedTurns, runningTurn, runningTurnId, turnsFresh],
   );
+  // After a gateway restart the stream replays only the new steps of the bubble; its
+  // stored row, hidden above, holds the earlier ones.
+  const paintedRunningTurn = useMemo(
+    () =>
+      runningTurn &&
+      withStoredSteps(runningTurn, turns.find((turn) => turn.turn_id === runningTurn.id)),
+    [runningTurn, turns],
+  );
   // A retained finished turn holds the window slot its row takes when it lands, so
   // neither its retention nor that landing moves the oldest row on screen.
   const settlingShown = !!settlingTurn?.id && !settledTurnRow(turns, settlingTurn.id);
@@ -5164,10 +5173,10 @@ export function SessionScreen({
         )}
         <AssistantMessage
           agentName={session?.agent_name}
-          turn={runningTurnAsTranscriptTurn(runningTurn)}
+          turn={runningTurnAsTranscriptTurn(paintedRunningTurn ?? runningTurn)}
           streaming={runningTurn.status === 'running'}
           progressLabel={runningTurnPhase(
-            runningTurn,
+            paintedRunningTurn ?? runningTurn,
             connected,
             workspaceRoots,
             watching,

@@ -1145,13 +1145,23 @@
                            (do (vreset! claimed true) (assoc entry :is-hydrating true))))))
     @claimed))
 
+(defn- resumable-parked-rows
+  "The parked gateway turn rows in `db` that a start can still resume."
+  [db]
+  (try (filterv #(and (= "parked" (:kind %))
+                      (< (long (get-in % [:payload :resumes] 0)) MAX_TURN_RESUMES))
+         (:turns (persistance/db-list-pending-turns db)))
+       (catch Throwable t (tel/log! :warn ["gateway: parked turns unreadable" (ex-message t)]) [])))
+
 (defn- hydrate-foreign-turn!
   "Mirror a turn running in a SIBLING process into this registry: at most one
    hydrate in flight per session, and none at all while this process is already
-   tracking a live turn."
+   tracking a live turn. A session with a parked turn is not hydrated: the journal
+   of the stopped gateway is not an orphan, because a gateway start resumes that turn."
   [sid]
   (when (claim-hydrate! sid)
-    (try (bus/hydrate! sid)
+    (try (when-not (some #(= (str sid) (str (:session-id %))) (resumable-parked-rows (lp/db-info)))
+           (bus/hydrate! sid))
          (finally (update-existing-session! sid
                                             (fn [entry]
                                               (dissoc entry :is-hydrating)))))))
@@ -5574,6 +5584,11 @@
                            queued?
                            (assoc :queued? true)
 
+                           ;; A restart announces a parked turn again. Clients keep
+                           ;; the steps that they already show.
+                           (:resume engine-opts)
+                           (assoc :resumed true)
+
                            (:idempotency_key (turn-record sid tid))
                            (assoc :idempotency_key (:idempotency_key (turn-record sid tid)))
 
@@ -6268,12 +6283,7 @@
 (defn- parked-turn-ids
   "The ids of the parked gateway turns in `db` that a start can still resume."
   [db]
-  (try (into []
-             (comp (filter #(and (= "parked" (:kind %))
-                                 (< (long (get-in % [:payload :resumes] 0)) MAX_TURN_RESUMES)))
-                   (map :turn-id))
-             (:turns (persistance/db-list-pending-turns db)))
-       (catch Throwable t (tel/log! :warn ["gateway: parked turns unreadable" (ex-message t)]) [])))
+  (mapv :turn-id (resumable-parked-rows db)))
 
 (defn reconcile-orphaned-turns!
   "Mark turns left running by a dead process as interrupted, and fail the managed
