@@ -4,7 +4,9 @@
     "pipe": "Outside Vis, a child process has pipes and no terminal. A line ends with one byte, typed text has no echo, and `type` needs a command that started with `stdin: tty`.",
     "sh": "Outside Vis, the command runs with `/bin/sh -c`. The engine runs it with `bash -lc`.",
     "raw-op": "`vis.tools.shell` is the `shell` tool of the model. It starts a command only and does not take an op map.",
-    "op-key": "The answer of the `shell` tool has the `op` key. The SDK handle does not have it."
+    "op-key": "The answer of the `shell` tool has the `op` key. The SDK handle does not have it.",
+    "local": "Outside Vis, no session holds the shell. `attach` is empty, `note` says that the command is a local process, and `keys` is empty after `type`.",
+    "roots": "`vis.tools.shell` is the `shell` tool of the model. It keeps the working directory in the filesystem roots of the session, and it checks that first."
   },
   "runner": [
     "import json",
@@ -655,10 +657,13 @@
       "steps": [
         "import time",
         "time.sleep(1)",
-        "answer = view(sh, 'stage', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset')"
+        "answer = view(sh, 'stage', 'status', 'exit', 'is_eof', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset')"
       ],
       "expect": [
         "run",
+        "running",
+        null,
+        false,
         false,
         null,
         "",
@@ -1574,6 +1579,166 @@
           "is_runtime_error": true
         }
       }
+    },
+    {
+      "name": "a missing cwd is refused",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "try:",
+        "    door({'command': 'true', 'cwd': '/no-such-dir-zz'})",
+        "except Exception as error:",
+        "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
+      ],
+      "expect": [
+        true,
+        "shell cwd '/no-such-dir-zz' does not exist"
+      ],
+      "tools": {
+        "reason": "roots",
+        "expect": [
+          true,
+          "shell cwd '/no-such-dir-zz' resolves outside the allowed filesystem roots"
+        ]
+      }
+    },
+    {
+      "name": "the `cmd` option is refused",
+      "args": [
+        {
+          "cmd": "true"
+        }
+      ],
+      "steps": [],
+      "expect": {
+        "error": "shell has no `cmd` option — put the bash line in {\"command\": \"…\"}.",
+        "is_runtime_error": true
+      }
+    },
+    {
+      "name": "type after the exit",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "sh.wait(30)",
+        "sh.type('x')"
+      ],
+      "expect": {
+        "error": "Background shell '<id>' has exited — nothing to send to. Read its output with sh.logs(offset=0).",
+        "is_runtime_error": true
+      }
+    },
+    {
+      "name": "type after the exit of a tty command",
+      "args": [
+        {
+          "command": "true",
+          "stdin": "tty"
+        }
+      ],
+      "steps": [
+        "sh.wait(30)",
+        "sh.type('x')"
+      ],
+      "expect": {
+        "error": "Background shell '<id>' has exited — nothing to send to. Read its output with sh.logs(offset=0).",
+        "is_runtime_error": true
+      }
+    },
+    {
+      "name": "the start answer says how to attach",
+      "args": [
+        {
+          "command": "sleep 30"
+        }
+      ],
+      "steps": [
+        "answer = [str(sh['note']).startswith('Spawned'), str(sh['attach']).startswith('vis-agent extension shell attach')]"
+      ],
+      "expect": [
+        true,
+        true
+      ],
+      "outside": {
+        "reason": "local",
+        "expect": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "the answer of type shows the keys",
+      "args": [
+        {
+          "command": "stty -onlcr <&1 2>/dev/null; echo ready; read x; echo got:$x",
+          "stdin": "tty"
+        }
+      ],
+      "steps": [
+        "until(sh, 'ready')",
+        "answer = view(sh.type('hello'), 'stage', 'keys', 'note')"
+      ],
+      "expect": [
+        "send",
+        "\"hello\" ↵",
+        null
+      ],
+      "outside": {
+        "reason": "local",
+        "expect": [
+          "send",
+          null,
+          "vis-agent outside a Vis session: a local subprocess, no jail"
+        ]
+      }
+    },
+    {
+      "name": "a log page answers the text reads",
+      "args": [
+        {
+          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\n'"
+        }
+      ],
+      "steps": [
+        "page = sh.wait(30).logs()",
+        "answer = [sorted(name for name in dir(str) if not name.startswith('_') and callable(getattr(page, name, None))), page.splitlines(), page.find('line2')]"
+      ],
+      "expect": [
+        [
+          "count",
+          "endswith",
+          "find",
+          "index",
+          "lower",
+          "lstrip",
+          "partition",
+          "removeprefix",
+          "removesuffix",
+          "replace",
+          "rfind",
+          "rindex",
+          "rpartition",
+          "rsplit",
+          "rstrip",
+          "split",
+          "splitlines",
+          "startswith",
+          "strip",
+          "upper"
+        ],
+        [
+          "line1",
+          "line2"
+        ],
+        6
+      ]
     }
   ]
 }

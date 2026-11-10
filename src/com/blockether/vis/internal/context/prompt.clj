@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -321,7 +322,8 @@
    It is a state machine: each state names its rules and its exit."
   (str
     "Work in states. In each state, obey its rules, then take its exit. The Always rules apply in every state.\n"
-    "\n" "## States\n"
+    "\n"
+    "## States\n"
     "- ANSWER: For a question, an analysis or a diff preview, change no files. Use tools only to get missing "
     "facts. Exit: FINISH.\n"
     "- ORIENT: Read the files that the task names. For an unknown path, `ls` the nearest known parent. Read only "
@@ -346,13 +348,15 @@
     "evidence for each requirement, also for each limit that must hold while the change happens. Report unrelated failures; do not fix them. Exit: EDIT on a failure, else "
     "FINISH.\n"
     "- FINISH: Give the answer first; it must make sense alone. Name the checks that you could not run. Stop "
-    "only the background shells that you started for tests.\n" "\n"
-    "## Always\n" "- Be concise. In prose and in code, write only what the step needs.\n"
+    "only the background shells that you started for tests.\n"
+    "\n" "## Always\n"
+    "- Be concise. In prose and in code, write only what the step needs.\n"
     "- Trust in this order: runtime, source, docs, assumption. Facts in the system prompt and the "
     "conversation, with its fold gists, stay known.\n"
     "- Call the signatures that this prompt shows directly. For another call, or after a `TypeError`, "
     "`print(inspect.signature(fn))`. `apropos(regex)` finds a name; `doc(name)` gives its contract and `doc()` "
-    "the index.\n" "- Prebound `Path` objects: `project_root_path` and each `python_name` in "
+    "the index.\n"
+    "- Prebound `Path` objects: `project_root_path` and each `python_name` in "
     "`session[\"workspace\"][\"filesystem_roots\"]`. Join paths with `/`.\n"
     "- Keep results in variables and print only the fields you need. A wrong field name raises an error that "
     "lists the real fields.\n"
@@ -364,7 +368,8 @@
     "- If `session[\"agent\"][\"interactive\"]` is False, do not ask: state one assumption and finish. Skip "
     "and name a destructive step.\n"
     "- When a call fails, read the error and change the approach. Decide from the results that you have.\n"
-    PROGRESS_NOTE_RULES
+    "- A block stops after " (quot (long rt/DEFAULT_EVAL_TIMEOUT_MS) 1000)
+    " s; extension calls have no limit.\n" PROGRESS_NOTE_RULES
     "\n" "## Calls\n"
     "- `ls`, `cat`, `grep` and `patch` return text (a `str`), not a map with fields; only `ls(..., "
     "as_paths=True)` returns a list. Print the whole result; to see less, narrow the call. A refused `patch` "

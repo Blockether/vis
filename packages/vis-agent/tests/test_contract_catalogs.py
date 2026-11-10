@@ -12,6 +12,7 @@ import pytest
 from blockether.vis import _contracts, _outside
 from blockether.vis.activity import ActivityProjection
 from blockether.vis.engine import GatewayClient
+from blockether.vis.engine._extensions import ClientExtensions
 
 
 def _add_input(monkeypatch, kind, *, like):
@@ -444,3 +445,27 @@ def test_each_view_event_of_the_gateway_has_a_view_definition():
     }
     assert set(EVENT_DEFINITIONS) == events
     assert set(EVENT_DEFINITIONS.values()) <= set(_contracts.schema("view")["$defs"])
+
+
+def test_an_agent_takes_the_count_of_extensions_of_the_schema(monkeypatch):
+    def read() -> list:
+        """Read the state."""
+        return []
+
+    manifest = _contracts.rule(
+        "gateway", "client_extensions", "properties", "extensions"
+    )
+    monkeypatch.setitem(manifest, "maxItems", 1)
+    two = [
+        vis.Extension(
+            name=name,
+            description="Application-owned tools.",
+            alias=name,
+            symbols=[vis.Symbol(read, name=name, activity=vis.Activity(label="Read"))],
+        )
+        for name in ("one", "two")
+    ]
+
+    ClientExtensions(two[:1])
+    with pytest.raises(ValueError, match="limited to 1 extensions"):
+        ClientExtensions(two)

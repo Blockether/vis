@@ -1506,8 +1506,9 @@
 
           ;; Linux `ps` gives `pcpu` as an average over the life of the process, so
           ;; the CPU that the command used before the wait hid the note there.
-          (doseq [[command settle-secs] [["sleep 30" 0]
-                                         ["i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; sleep 30" 3]]]
+          (doseq [[command settle-secs]
+                  [["sleep 30" 0]
+                   ["i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; sleep 30" 3]]]
             (try (shell* env {"command" command "id" "quiet" "timeout_secs" 1})
                  ;; The first wait lets the work end; the second one sees only the sleep.
                  (when (pos? settle-secs) (wait* env "quiet" settle-secs))
@@ -1761,36 +1762,40 @@
                      (expect (number? (get waited "cpu_percent")))
                      (expect (number? (get waited "cpu_ms"))))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  (it "tells the ticker WHAT it waits for — the command and the budget, not the op"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [sid "shell-wait-ticker"
-                  env {:session-id sid}
-                  ticker-of #(:ext.symbol/ticker-fn %)]
+  (it
+    "tells the ticker WHAT it waits for — the command and the budget, not the op"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let [sid "shell-wait-ticker"
+                env {:session-id sid}
+                ticker-of #(:ext.symbol/ticker-fn %)]
 
-              (try
-                (shell* env {"command" "sleep 30" "id" "dev"})
-                ;; The live phrase names the COMMAND and the budget — never the
-                ;; handle, which is the caller's own bookkeeping and answers as
-                ;; little as `_shell-wait dev` did.
-                (expect (= "waiting up to 60s for: sleep 30"
-                           ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 60}])))
-                (expect (= (str "waiting up to " rt/DEFAULT_SHELL_TIMEOUT_SECS "s for: sleep 30")
-                           ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
-                (expect (= "stopping: sleep 30"
-                           ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
-                ;; The SPAWN says what it is about to run, read from its own
-                ;; argument — the one call that cannot look the command up yet.
-                (expect (= "running: npm test" ((ticker-of shell/shell-symbol) env ["npm test"])))
-                ;; Regression, user report (paraphrased: what is `tt`?): no live
-                ;; shell answers, and the sentence says the generic noun rather
-                ;; than a token only the caller can resolve.
-                (expect (= "reading the log of the shell"
-                           ((ticker-of shell/shell-logs-symbol) env [{"id" "zq7"}])))
-                (expect (not (str/includes? ((ticker-of shell/shell-wait-symbol) env [{"id" "zq7"}])
-                                            "zq7")))
-                (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
+            (try
+              (shell* env {"command" "sleep 30" "id" "dev"})
+              ;; The live phrase names the COMMAND and the budget — never the
+              ;; handle, which is the caller's own bookkeeping and answers as
+              ;; little as `_shell-wait dev` did.
+              (expect (= "waiting up to 60s for: sleep 30"
+                         ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 60}])))
+              (expect (= (str "waiting up to " rt/DEFAULT_SHELL_TIMEOUT_SECS "s for: sleep 30")
+                         ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
+              ;; User report: the ticker said 3600s while the wait ended at the 1800 s cap.
+              (expect (= (str "waiting up to " rt/MAX_SHELL_TIMEOUT_SECS "s for: sleep 30")
+                         ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 3600}])))
+              (expect (= "stopping: sleep 30"
+                         ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
+              ;; The SPAWN says what it is about to run, read from its own
+              ;; argument — the one call that cannot look the command up yet.
+              (expect (= "running: npm test" ((ticker-of shell/shell-symbol) env ["npm test"])))
+              ;; Regression, user report (paraphrased: what is `tt`?): no live
+              ;; shell answers, and the sentence says the generic noun rather
+              ;; than a token only the caller can resolve.
+              (expect (= "reading the log of the shell"
+                         ((ticker-of shell/shell-logs-symbol) env [{"id" "zq7"}])))
+              (expect (not (str/includes? ((ticker-of shell/shell-wait-symbol) env [{"id" "zq7"}])
+                                          "zq7")))
+              (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
 
 (defdescribe
   shell-one-shape-test
@@ -2420,7 +2425,8 @@
              (expect (false? (boolean (py c "'shell' in globals()"))))
              ;; Discovery still names the tool and says why it is off.
              (expect (= ["shell"] (py c "[i.name for i in apropos('^shell$')]")))
-             (expect (str/includes? (str (py c "str(doc('shell'))")) (get ep/PROCESS_SURFACE "off")))
+             (expect (str/includes? (str (py c "str(doc('shell'))"))
+                                    (get ep/PROCESS_SURFACE "off")))
              ;; A handle that a block still holds says the same sentence.
              (expect (= (str "RuntimeError: " (get ep/PROCESS_SURFACE "off"))
                         (py c

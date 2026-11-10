@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 
 import blockether.vis.extension as vis
+from blockether.vis import _contracts
 
 from ._client import GatewayError, ProtocolError
 
@@ -160,9 +161,13 @@ class ClientExtensions:
                 if value is not None:
                     manifest[key] = value
             self.manifest.append(manifest)
-        if len(self._functions) > 256 or len(self.manifest) > 32:
+        # The gateway schema owns the count of extensions in one manifest.
+        most = _contracts.rule(
+            "gateway", "client_extensions", "properties", "extensions", "maxItems"
+        )
+        if len(self._functions) > 256 or len(self.manifest) > most:
             raise ValueError(
-                "client extensions are limited to 32 extensions and 256 symbols"
+                f"client extensions are limited to {most} extensions and 256 symbols"
             )
         _json_text({"extensions": self.manifest})
 

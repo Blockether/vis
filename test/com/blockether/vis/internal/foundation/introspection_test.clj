@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.test-python-context :as tpc]
+            [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
             [com.blockether.vis.internal.paths :as paths]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
@@ -1213,6 +1214,58 @@
         (finally (persistance/db-dispose-connection! s)
                  (doseq [^java.io.File file (reverse (file-seq dir))]
                    (.delete file)))))))
+
+(defdescribe
+  shell-wait-is-not-a-hang-test
+  ;; User report: a block that waited 30 minutes on a shell was diagnosed as a hung turn.
+  (it
+    "skips a turn whose Python block still runs and reports one whose block ended"
+    (let [s
+          (persistance/db-create-connection! :memory)
+
+          journal
+          (java.io.File/createTempFile "vis-journal-" ".ndjson")]
+
+      (try
+        (with-redefs [introspection/STALE_RUNNING_TURN_MS
+                      0
+
+                      bus/session-file
+                      (fn [_]
+                        journal)]
+
+          (let [cid
+                (h/store-session! s {:channel :tui :title "Shell wait fixture"})
+
+                waiting
+                (persistance/db-store-session-turn!
+                  s
+                  {:parent-session-id cid :user-request "waiting turn" :status :running})
+
+                ended
+                (persistance/db-store-session-turn!
+                  s
+                  {:parent-session-id cid :user-request "ended turn" :status :running})
+
+                started
+                (- (System/currentTimeMillis) (* 30 60 1000))
+
+                line
+                (fn [type tid]
+                  (json/write-json-str {"type" type "turn_id" (str tid) "started_at_ms" started}))]
+
+            (spit journal
+                  (str (str/join "\n"
+                                 [(line "block.started" ended) (line "block.output" ended)
+                                  (line "block.started" waiting)])
+                       "\n"))
+            (expect (= ["ended turn"]
+                       (mapv #(get % "user_request")
+                             (get-in (:result (@#'introspection/foundation-inspect
+                                               {:session-id "other-session" :db-info s}
+                                               cid))
+                                     ["diagnosis" "hung_turns"]))))))
+        (finally (persistance/db-dispose-connection! s) (.delete journal))))))
 
 (defdescribe
   read-session-fork-origin-test

@@ -1785,6 +1785,7 @@ the same calls and gives the same answers, with these differences:
 - The log does not show the text that you type, and `sh.type()` needs `stdin="tty"`.
 - The command runs with `/bin/sh -c`, not with `bash -lc`.
 - `vis.jailed_shell` raises an error, because no jail exists there.
+- No session holds the shell, so `attach` and `keys` are empty and `note` names a local process.
 - The keys of the handle have a different order.
 
 ### Toolchain grants

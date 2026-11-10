@@ -822,6 +822,10 @@ def shell(opts):
     opts = dict(opts or {})
     op = str(opts.get("op") or "run").strip()
     if op in _SPAWN_OPS:
+        if opts.get("cmd") is not None:
+            raise Refused(
+                'shell has no `cmd` option — put the bash line in {"command": "…"}.'
+            )
         command = opts.get("command")
         if not command or (isinstance(command, str) and not command.strip()):
             raise Refused("shell: command required; use shell(command).")
@@ -832,19 +836,19 @@ def shell(opts):
         stdin = opts.get("stdin")
         if stdin not in (None, "null", "tty"):
             raise Refused(f'shell `stdin` is "tty" or "null", not {json.dumps(stdin)}.')
-        run = _Run(command, opts.get("cwd"), opts.get("env"), stdin)
+        cwd = opts.get("cwd")
+        if cwd and not Path(cwd).expanduser().exists():
+            resolved = Path(cwd).expanduser().absolute()
+            raise Refused(f"shell cwd '{cwd}' does not exist ({resolved}).")
+        run = _Run(command, cwd, opts.get("env"), stdin)
         # A named spawn (the engine's `background`) keeps the id it was given, so
         # the same name reaches the same process on the next call.
         if opts.get("id"):
             run.id = str(opts["id"])
         _RUNS[run.id] = run
-        # Settle briefly so a command that finishes at once reports its exit, the
-        # way the engine's spawn does, without turning a spawn into a blocking wait.
-        for _ in range(20):
-            if run.poll() is not None:
-                break
-            time.sleep(0.01)
-        return _result(run, op)
+        # The start answer says that the process runs, as in the engine: only a
+        # later call reads the exit, also the exit of a command that ends at once.
+        return _result(run, op, status="running", exit=None, is_eof=False)
     if op not in _HANDLE_OPS:
         raise Refused(f"Unknown shell op {json.dumps(op)} — use {_shell_vocabulary()}.")
     run = _known_run(opts, op)
@@ -861,6 +865,11 @@ def shell(opts):
         text = str(opts.get("text", ""))
         if opts.get("is_enter", True):
             text += "\n"
+        if run.poll() is not None:
+            raise Refused(
+                f"Background shell '{run.id}' has exited — nothing to send to. "
+                "Read its output with sh.logs(offset=0)."
+            )
         if run.process.stdin is None:
             raise Refused(
                 "The stdin of this shell is empty. To type into it, start the "

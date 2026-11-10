@@ -268,7 +268,7 @@ def test_shell_stdin_is_empty_unless_the_command_asks_for_input():
     assert run["status"] == "exited"
     assert run["out"] == "DONE:0\n"
     assert time.monotonic() - started < 5
-    with pytest.raises(_outside.Refused, match="stdin"):
+    with pytest.raises(_outside.Refused, match="has exited"):
         run.type("late")
 
     asker = vis.shell({"command": "read x; echo GOT:$x", "stdin": "tty"})
