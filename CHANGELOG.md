@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.11] - 2026-11-10
+
+The release runs of v0.5.9 and v0.5.10 failed a test, so these versions were not published. v0.5.11 contains their changes.
+
+### Added
+- Providers: Claude Fable 5.2 (`claude-fable-5-2`) on Anthropic and in the Copilot model list (svar 0.7.228).
+
+### Fixed
+- Queue: when Esc restores a queued row, its images come back with its text in the TUI and in Companion. Before, the composer got the text `[IMAGE #1]` without the image, and Enter sent no attachments.
+- Companion (#460): the dock shows all teams of a session in one chart with one leader lane. A lane takes its name from the task id, so `a5` is A5 in each team. Before, each `council.run` started a new chart at A1.
+- Models: `GET /v1/models` no longer sends an output limit of 0, so the SDK accepts the model list again (svar 0.7.229).
+- Models: the model pickers, `GET /v1/models` and the saved configuration no longer offer image, video or speech models, such as `wan2.7-image`. They cannot answer an agent turn (svar 0.7.230).
+
 ## [v0.5.10] - 2026-11-10
 
 ### Changed
