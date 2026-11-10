@@ -5145,14 +5145,16 @@ def _attachment_target(verb, target, version):
         target = target.get("id") or target.get("filename") or ""
     if version is None or type(version) is int:
         return str(target), version
+    # A whole number of each numeric type, such as `numpy.int64(1)` or `1.0`, or its
+    # text. `int` decides what a number is; a fraction is refused, not cut.
     refusal = f"{verb}: version must be an integer, got {version!r}"
-    if isinstance(version, bool) or not isinstance(version, (int, float, str)):
-        raise TypeError(refusal)
     try:
         whole = int(version)
+    except TypeError:
+        raise TypeError(refusal) from None
     except (ValueError, OverflowError):
         raise ValueError(refusal) from None
-    if whole != version and not isinstance(version, str):
+    if whole != version and not isinstance(version, (str, bytes, bytearray)):
         raise ValueError(refusal)
     return str(target), whole
 

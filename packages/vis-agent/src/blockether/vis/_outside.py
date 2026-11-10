@@ -273,7 +273,9 @@ def forget_secret(handle):
 
 # -- Attachments ----------------------------------------------------------------
 # Outside Vis, no session stores artifacts. They stay in this process memory, so
-# an extension test can attach an artifact and read it back.
+# an extension test can attach an artifact and read it back. A refusal has the
+# words of the engine and is a `RuntimeError`: in Vis it is `VisToolError`, a
+# `RuntimeError`. `vis-contract/fixtures/attachment-verbs.json` holds the answers.
 
 _ARTIFACTS = []
 _ARTIFACT_BYTES = {}
@@ -283,9 +285,9 @@ def attach(options):
     """Store one artifact in memory and return its descriptor as JSON."""
     data = base64.b64decode(options.get("base64") or "")
     if not data:
-        raise ValueError("attach: empty payload.")
+        raise RuntimeError("attach: empty payload.")
     name = options.get("filename") or "artifact"
-    media_type = (
+    media_type = str(
         options.get("media_type")
         or options.get("media_type_hint")
         or "application/octet-stream"
@@ -324,6 +326,10 @@ def list_attachments():
         return json.dumps(_ARTIFACTS)
 
 
+def _quoted(text):
+    return json.dumps(text, ensure_ascii=False)
+
+
 def _artifact(caller, target, version):
     # The same addressing as the engine: an id, or a filename with an optional
     # version, where a negative version counts back from the latest one.
@@ -344,8 +350,16 @@ def _artifact(caller, target, version):
         for row in versions:
             if row["version"] == version:
                 return row
-        raise LookupError(f"{caller}: {target!r} has no version {version}.")
-    raise LookupError(f"{caller}: unknown id or filename {target!r}.")
+        known = ", ".join(str(row["version"]) for row in versions)
+        raise RuntimeError(
+            f"{caller}: {_quoted(target)} has no version {version} (versions: {known})."
+        )
+    hint = (
+        "local image: show_attachment(attach(path))"
+        if caller == "show_attachment"
+        else "use list_attachments()"
+    )
+    raise RuntimeError(f"{caller}: unknown id or filename {_quoted(target)}; {hint}.")
 
 
 def get_attachment(target, version):
@@ -363,7 +377,9 @@ def show_attachment(target, version):
     """Accept an image. Outside Vis, no model request follows to show it to."""
     row = _artifact("show_attachment", target, version)
     if not row["media_type"].startswith("image/"):
-        raise ValueError(f"show_attachment: {row['filename']!r} is not an image.")
+        raise RuntimeError(
+            f"show_attachment: {_quoted(row['filename'])} is not an image."
+        )
     return [row["id"], row["filename"], row["media_type"], row["size"]]
 
 

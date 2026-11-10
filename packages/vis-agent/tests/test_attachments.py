@@ -88,18 +88,18 @@ def test_attach_refuses_wrong_sources_and_options(tmp_path):
         vis.attach(tmp_path / "missing.png")
     with pytest.raises(ValueError, match="audience"):
         vis.attach(PNG, "a.png", audience="everyone")
-    with pytest.raises(ValueError, match="empty payload"):
+    with pytest.raises(RuntimeError, match="empty payload"):
         vis.attach(b"", "a.png")
 
 
 def test_readers_name_an_unknown_target_and_a_non_image():
     vis.attach(b"text", "notes.txt")
 
-    with pytest.raises(LookupError, match="unknown id or filename"):
+    with pytest.raises(RuntimeError, match="unknown id or filename"):
         vis.get_attachment("other.txt")
-    with pytest.raises(LookupError, match="has no version 3"):
+    with pytest.raises(RuntimeError, match="has no version 3"):
         vis.read_attachment("notes.txt", 3)
-    with pytest.raises(ValueError, match="not an image"):
+    with pytest.raises(RuntimeError, match="not an image"):
         vis.show_attachment("notes.txt")
     assert vis.get_attachment("notes.txt", "1")["version"] == 1
     with pytest.raises(ValueError, match="version must be an integer"):

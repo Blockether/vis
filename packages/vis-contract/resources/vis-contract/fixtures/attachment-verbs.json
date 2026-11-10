@@ -1,0 +1,413 @@
+{
+  "description": "Attachment verb rules. Each case runs `code` as Python with the five verbs `attach`, `list_attachments`, `get_attachment`, `read_attachment` and `show_attachment` in an empty store. The code needs bytes only and puts the result in `out`. `expect` is the answer of the engine. For a value, `json` holds the fields of `out` that the case fixes, and `keys` holds each key of `out`. For a refusal, `error` is the class name and `message` is its text. The engine test `door-parity-test` runs each case in `python_execution`, in a sandbox worker and in a real extension worker. The SDK test `test_attach_parity.py` runs each case on the host outside Vis. Where that host answers differently, the case has an `outside` object with a `reason` (a key of `exceptions`) and its own `expect`.",
+  "exceptions": {
+    "audience": "Outside Vis, no rule keeps a document for the user only. The audience is the one that the call names, else `both`.",
+    "position": "Outside Vis, the descriptor that a read verb returns has no `position` key.",
+    "error-class": "In Vis, a refusal of the engine is `VisToolError`, a `RuntimeError`. Outside Vis that class does not exist: the refusal is a `RuntimeError` with the same words."
+  },
+  "cases": [
+    {
+      "name": "attach-bytes",
+      "code": [
+        "out = attach(b'a,b\\n1,2\\n', 'totals.csv', label='Totals')"
+      ],
+      "expect": {
+        "json": {
+          "audience": "user",
+          "filename": "totals.csv",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/csv",
+          "size": 8,
+          "source": "tool",
+          "version": 1
+        },
+        "keys": [
+          "audience",
+          "filename",
+          "id",
+          "is_pending",
+          "kind",
+          "media_type",
+          "size",
+          "source",
+          "version"
+        ]
+      },
+      "outside": {
+        "reason": "audience",
+        "expect": {
+          "json": {
+            "audience": "both",
+            "filename": "totals.csv",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/csv",
+            "size": 8,
+            "source": "tool",
+            "version": 1
+          },
+          "keys": [
+            "audience",
+            "filename",
+            "id",
+            "is_pending",
+            "kind",
+            "media_type",
+            "size",
+            "source",
+            "version"
+          ]
+        }
+      }
+    },
+    {
+      "name": "attach-kind",
+      "code": [
+        "out = attach(b'words\\n', 'w.txt', kind='note')"
+      ],
+      "expect": {
+        "json": {
+          "audience": "both",
+          "kind": "note",
+          "media_type": "text/plain"
+        }
+      }
+    },
+    {
+      "name": "attach-kind-positional",
+      "code": [
+        "out = attach(b'words\\n', 'w.txt', 'note', 'text/x-note', 'Cap', 'user')"
+      ],
+      "expect": {
+        "json": {
+          "audience": "user",
+          "kind": "note",
+          "media_type": "text/x-note"
+        }
+      }
+    },
+    {
+      "name": "attach-media-type-number",
+      "code": [
+        "out = attach(b'x\\n', 'n.bin', media_type=5)"
+      ],
+      "expect": {
+        "json": {
+          "kind": "file",
+          "media_type": "5"
+        }
+      }
+    },
+    {
+      "name": "alias-fname",
+      "code": [
+        "out = attach(b'x\\n', fname='n.txt')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt"
+        }
+      }
+    },
+    {
+      "name": "alias-twice",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', name='m.txt')"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "attach: filename named twice, as 'name' and as 'filename' - pass one."
+      }
+    },
+    {
+      "name": "alias-unknown",
+      "code": [
+        "out = attach(b'x\\n', colour='red')"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "attach: no keyword 'colour'. Keywords: source, filename, kind, media_type, label, audience."
+      }
+    },
+    {
+      "name": "attach-empty",
+      "code": [
+        "out = attach(b'', 'empty.txt')"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "attach: empty payload."
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "attach: empty payload."
+        }
+      }
+    },
+    {
+      "name": "attach-wrong-audience",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', audience='everyone')"
+      ],
+      "expect": {
+        "error": "ValueError",
+        "message": "attach: audience must be 'both', 'user' or 'model', got 'everyone'"
+      }
+    },
+    {
+      "name": "attach-on-event-file",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', on_event=print)"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "attach: on_event is only for an app"
+      }
+    },
+    {
+      "name": "get-by-version",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "attach(b'two!\\n', 'n.txt')",
+        "out = get_attachment('n.txt', 1)"
+      ],
+      "expect": {
+        "json": {
+          "size": 4,
+          "version": 1
+        },
+        "keys": [
+          "audience",
+          "filename",
+          "id",
+          "is_pending",
+          "kind",
+          "media_type",
+          "position",
+          "size",
+          "source",
+          "version"
+        ]
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "json": {
+            "size": 4,
+            "version": 1
+          },
+          "keys": [
+            "audience",
+            "filename",
+            "id",
+            "is_pending",
+            "kind",
+            "media_type",
+            "size",
+            "source",
+            "version"
+          ]
+        }
+      }
+    },
+    {
+      "name": "get-negative-version",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "attach(b'two!\\n', 'n.txt')",
+        "out = get_attachment('n.txt', -2)"
+      ],
+      "expect": {
+        "json": {
+          "size": 4,
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "get-version-text",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', '1')"
+      ],
+      "expect": {
+        "json": {
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "get-version-true",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', True)"
+      ],
+      "expect": {
+        "json": {
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "get-version-decimal",
+      "code": [
+        "import decimal",
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', decimal.Decimal(1))"
+      ],
+      "expect": {
+        "json": {
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "get-version-fraction",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', 1.5)"
+      ],
+      "expect": {
+        "error": "ValueError",
+        "message": "get_attachment: version must be an integer, got 1.5"
+      }
+    },
+    {
+      "name": "get-version-wrong",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', 'first')"
+      ],
+      "expect": {
+        "error": "ValueError",
+        "message": "get_attachment: version must be an integer, got 'first'"
+      }
+    },
+    {
+      "name": "get-version-absent",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', 7)"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "get_attachment: \"n.txt\" has no version 7 (versions: 1)."
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "get_attachment: \"n.txt\" has no version 7 (versions: 1)."
+        }
+      }
+    },
+    {
+      "name": "get-unknown",
+      "code": [
+        "out = get_attachment('absent.txt')"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "get_attachment: unknown id or filename \"absent.txt\"; use list_attachments()."
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "get_attachment: unknown id or filename \"absent.txt\"; use list_attachments()."
+        }
+      }
+    },
+    {
+      "name": "read-bytes",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "attach(b'two!\\n', 'n.txt')",
+        "out = {'text': read_attachment('n.txt', -2).decode()}"
+      ],
+      "expect": {
+        "json": {
+          "text": "one\n"
+        }
+      }
+    },
+    {
+      "name": "read-unknown",
+      "code": [
+        "out = read_attachment('absent.txt')"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "read_attachment: unknown id or filename \"absent.txt\"; use list_attachments()."
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "read_attachment: unknown id or filename \"absent.txt\"; use list_attachments()."
+        }
+      }
+    },
+    {
+      "name": "show-not-image",
+      "code": [
+        "out = show_attachment(attach(b'one\\n', 'n.txt'))"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "show_attachment: \"n.txt\" is not an image."
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "show_attachment: \"n.txt\" is not an image."
+        }
+      }
+    },
+    {
+      "name": "show-unknown",
+      "code": [
+        "out = show_attachment('absent.png')"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "show_attachment: unknown id or filename \"absent.png\"; local image: show_attachment(attach(path))."
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "show_attachment: unknown id or filename \"absent.png\"; local image: show_attachment(attach(path))."
+        }
+      }
+    },
+    {
+      "name": "list-rows",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "attach(b'two!\\n', 'n.txt')",
+        "out = {'rows': [[r['filename'], r['version'], r['size']] for r in list_attachments()]}"
+      ],
+      "expect": {
+        "json": {
+          "rows": [
+            [
+              "n.txt",
+              1,
+              4
+            ],
+            [
+              "n.txt",
+              2,
+              5
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

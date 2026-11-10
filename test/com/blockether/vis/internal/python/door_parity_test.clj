@@ -98,15 +98,14 @@
     "\n"
     "vis.register_extension(vis.Extension(name=\"parity\", description=\"Parity fixture\", alias=\"parity\", symbols=[vis.Symbol(Parity(), name=\"parity\")]))\n"))
 
-(def ^:private cases
-  "`[id code]` rows. `code` is Python that sets `out`. It uses only names that each
+(def ^:private engine-cases
+  "`[id code]` rows that need a file, a figure, a picture or a tool of the session. `code` is Python that sets `out`. It uses only names that each
    door has: the verbs, `ROOT`, `Figure`, `Picture`, `tool` and `settle`. `await
    tool(name, ...)` calls the tool `name` of the session as the door calls it.
    `await settle(value)` waits for a value that the sandbox gives as an awaitable."
   [;; -- attach: each shape of source --
    [:attach-path "out = attach(ROOT + '/notes.txt')"]
    [:attach-path-renamed "out = attach(ROOT + '/notes.txt', 'renamed.md', label='Two\\nlines')"]
-   [:attach-bytes "out = attach(b'a,b\\n1,2\\n', 'totals.csv', label='Totals')"]
    [:attach-bytes-default-name "out = attach(b'plain words\\n')"]
    [:attach-figure "out = attach(Figure())"]
    [:attach-figure-named "out = attach(Figure(), 'plot.png', label='A plot')"]
@@ -114,14 +113,10 @@
    [:attach-image-default-name "out = attach(Picture())"]
    [:attach-rgba-jpeg "out = attach(Picture('RGBA'), 'shot.jpg')"]
    [:attach-media-type "out = attach(b'fLaC' + bytes(4), 'a.flac', media_type='text/x-note')"]
-   [:attach-kind "out = attach(b'words\\n', 'w.txt', kind='note')"]
-   [:attach-kind-positional
-    "out = attach(b'words\\n', 'w.txt', 'note', 'text/x-note', 'Cap', 'user')"]
    [:attach-pathlike "import pathlib\nout = attach(pathlib.Path(ROOT) / 'notes.txt')"]
    ;; -- attach: keyword aliases --
    [:alias-name "out = attach(b'x\\n', name='n.txt')"]
    [:alias-file-name "out = attach(b'x\\n', file_name='n.txt')"]
-   [:alias-fname "out = attach(b'x\\n', fname='n.txt')"]
    [:alias-path "out = attach(path=ROOT + '/notes.txt')"]
    [:alias-file "out = attach(file=ROOT + '/notes.txt')"]
    [:alias-src "out = attach(src=ROOT + '/notes.txt')"]
@@ -133,13 +128,9 @@
    [:alias-mime-type "out = attach(b'x\\n', 'n.txt', mime_type='text/x-note')"]
    [:alias-content-type "out = attach(b'x\\n', 'n.txt', content_type='text/x-note')"]
    [:alias-type "out = attach(b'x\\n', 'n.txt', type='note')"]
-   [:alias-twice "out = attach(b'x\\n', 'n.txt', name='m.txt')"]
-   [:alias-unknown "out = attach(b'x\\n', colour='red')"]
    ;; -- attach: refusals --
-   [:attach-nothing "out = attach()"] [:attach-empty "out = attach(b'', 'empty.txt')"]
-   [:attach-missing "out = attach(ROOT + '/absent.txt')"] [:attach-directory "out = attach(ROOT)"]
-   [:attach-wrong-source "out = attach(42)"]
-   [:attach-wrong-audience "out = attach(b'x\\n', 'n.txt', audience='everyone')"]
+   [:attach-nothing "out = attach()"] [:attach-missing "out = attach(ROOT + '/absent.txt')"]
+   [:attach-directory "out = attach(ROOT)"] [:attach-wrong-source "out = attach(42)"]
    [:attach-audience-case "out = attach(b'x\\n', 'n.txt', audience=' User ')"]
    [:attach-document-for-model "out = attach(b'%PDF-1.4\\n', 'r.pdf', audience='model')"]
    [:attach-document "out = attach(b'%PDF-1.4\\n', 'r.pdf')"]
@@ -152,35 +143,23 @@
    [:get-by-filename "attach(b'one\\n', 'n.txt')\nout = get_attachment('n.txt')"]
    [:get-by-id "r = attach(b'one\\n', 'n.txt')\nout = get_attachment(r['id'])"]
    [:get-by-descriptor "r = attach(b'one\\n', 'n.txt')\nout = get_attachment(r)"]
-   [:get-by-version
-    "attach(b'one\\n', 'n.txt')\nattach(b'two!\\n', 'n.txt')\nout = get_attachment('n.txt', 1)"]
-   [:get-negative-version
-    "attach(b'one\\n', 'n.txt')\nattach(b'two!\\n', 'n.txt')\nout = get_attachment('n.txt', -2)"]
-   [:get-version-text "attach(b'one\\n', 'n.txt')\nout = get_attachment('n.txt', '1')"]
    [:get-version-float "attach(b'one\\n', 'n.txt')\nout = get_attachment('n.txt', 1.0)"]
-   [:get-version-wrong "attach(b'one\\n', 'n.txt')\nout = get_attachment('n.txt', 'first')"]
-   [:get-version-absent "attach(b'one\\n', 'n.txt')\nout = get_attachment('n.txt', 7)"]
-   [:get-unknown "out = get_attachment('absent.txt')"]
    [:read-by-filename "attach(b'one\\n', 'n.txt')\nout = read_attachment('n.txt')"]
    [:read-by-descriptor "out = read_attachment(attach(b'one\\n', 'n.txt'))"]
    [:read-by-version
     "attach(b'one\\n', 'n.txt')\nattach(b'two!\\n', 'n.txt')\nout = read_attachment('n.txt', -2)"]
    [:read-version-wrong "attach(b'one\\n', 'n.txt')\nout = read_attachment('n.txt', 'first')"]
-   [:read-unknown "out = read_attachment('absent.txt')"]
    [:read-reference "out = read_attachment(attach(ROOT + '/big.mp4'))"]
    [:show-image "out = show_attachment(attach(Figure(), 'plot.png', audience='user'))"]
    [:show-by-filename
     "attach(Figure(), 'plot.png', audience='user')\nout = show_attachment('plot.png')"]
-   [:show-not-image "out = show_attachment(attach(b'one\\n', 'n.txt'))"]
    [:show-version-wrong "attach(Figure(), 'plot.png')\nout = show_attachment('plot.png', 'first')"]
-   [:show-unknown "out = show_attachment('absent.png')"]
    [:show-reference "out = show_attachment(attach(ROOT + '/big.mp4'))"]
    [:list-all "attach(b'one\\n', 'n.txt')\nattach(Figure())\nout = {'rows': list_attachments()}"]
    [:list-one-name
     "attach(b'one\\n', 'n.txt')\nattach(b'two!\\n', 'n.txt')\nattach(Figure())\nout = {'rows': list_attachments('n.txt')}"]
    [:list-unknown-name "out = {'rows': list_attachments('absent.txt')}"]
    [:list-empty "out = {'rows': list_attachments()}"]
-   [:attach-on-event-file "out = attach(b'x\\n', 'n.txt', on_event=print)"]
    ;; -- the session verbs --
    [:read-session
     "s = await settle(read_session())\nout = [type(s).__name__, 'op' in s, s['session']['title'], s['scope']]"]
@@ -223,6 +202,19 @@
     "page = await tool('ls', ROOT, limit=1)\nout = [type(page).__name__, str(page), str(next(page, None)), str(page.all()), [str(p) for p in page.pages()]]"]
    [:grep-pages
     "page = await tool('grep', {'query': ['BMW'], 'paths': [ROOT]})\nout = [type(page).__name__, str(page), str(next(page, None)), str(page.all())]"]])
+
+(def ^:private verb-fixture
+  "The contract fixture of the attachment verbs: rows that need bytes only, each
+   with the answer of the engine. The SDK test `test_attach_parity.py` runs the
+   same rows on the host outside Vis."
+  (json/read-json (slurp (io/resource "vis-contract/fixtures/attachment-verbs.json"))))
+
+(def ^:private cases
+  "Each row: the rows of the engine, then the rows of [[verb-fixture]]."
+  (into engine-cases
+        (map (fn [row]
+               [(keyword (get row "name")) (str/join "\n" (get row "code"))]))
+        (get verb-fixture "cases")))
 
 (defn- indent [code] (str/join "\n" (map #(str "    " %) (str/split-lines code))))
 
@@ -413,6 +405,37 @@
           sandbox-answer
           documented-differences))
 
+(def ^:private fixed-answers
+  "The fields of the sandbox answer that some rows must hold. One front runs at the
+   three doors, so a change of the front changes each door equally: only a fixed
+   value sees it. Of the JSON value, a row names the keys that it checks. Each row
+   of [[verb-fixture]] has such an answer."
+  (into {:attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}}
+        (map (fn [row]
+               [(keyword (get row "name")) (get row "expect")]))
+        (get verb-fixture "cases")))
+
+(defn- fixed-view
+  "The fields of `answer` that `expected` names. `keys` is each key of the JSON value."
+  [expected answer]
+  (let [value (some-> (get answer "json")
+                      json/read-json)]
+    (into {}
+          (map (fn [[field wanted]]
+                 [field
+                  (case field
+                    "json"
+                    (select-keys value (keys wanted))
+
+                    "keys"
+                    (some-> value
+                            keys
+                            sort
+                            vec)
+
+                    (get answer field))]))
+          expected)))
+
 (def ^:private twin-verbs-code
   "A row that sets `out` to each public verb of the SDK that the sandbox also binds."
   (str "import blockether.vis.extension as _sdk\n"
@@ -458,10 +481,25 @@
                                (run door code)]
                          :when (not= expected got)]
 
-                     {:row id :door door :expected expected :got got}))]
+                     {:row id :door door :expected expected :got got}))
+
+              code-of
+              (into {} cases)
+
+              fixed
+              (vec (for [[id expected]
+                         fixed-answers
+
+                         :let [got
+                               (fixed-view expected (run :sandbox (code-of id)))]
+                         :when (not= expected got)]
+
+                     {:row id :expected expected :got got}))]
 
           ;; Each public verb of the SDK with a twin in the sandbox has a row.
           (expect (seq verbs) (pr-str twins))
           (expect (= [] (remove called? verbs)))
           (expect (= [] (remove known (mapcat :rows documented-differences))))
+          (expect (= [] (remove known (keys fixed-answers))))
+          (expect (= [] fixed))
           (expect (= [] differences)))))))
