@@ -680,21 +680,45 @@
                        (try (map? (json/read-json %)) (catch Exception _ false)))
                  lines))))
 
+(defn- control-free?
+  "True when the head holds no binary control character. Text in an 8-bit encoding
+   reads so; the head of a media file does not."
+  [^bytes head]
+  (let [n (int (min (alength head) (long sniff-bytes)))]
+    (and (pos? n)
+         (not-any? (fn [i]
+                     (let [c (u8 head i)]
+                       (or (<= c 0x08) (= c 0x0b) (<= 0x0e c 0x1a) (<= 0x1c c 0x1f) (= c 0x7f))))
+                   (range n)))))
+
+(defn- text-name-wins?
+  "True when the `text/*` filename type `named` replaces the `sniffed` signature
+   type. Text can start with the bytes of a signature: in Windows-1251, one letter
+   is the byte `FF`, the start of an audio frame header. So an audio or video
+   signature yields when the bytes read as text, and a bare audio frame header,
+   which has no magic number, yields to each text filename. A picture and a PDF
+   keep their signature type: the head of a small PDF is text too."
+  [sniffed named ^bytes head]
+  (boolean (and named
+                (str/starts-with? named "text/")
+                (or (audio-media-type? sniffed) (video-media-type? sniffed))
+                (or (adts-aac? head) (mpeg-audio-frame? head) (control-free? head)))))
+
 (defn- attached-type
   "The rule of [[attached-media-type]] for a `sniffed` signature type or nil."
   [sniffed hint filename ^bytes head]
   (let [named (if (re-find #"(?i)\.(?:jsonl|ndjson)$" (str/trim (str filename)))
                 "application/x-ndjson"
                 (not-empty (str/trim (str hint))))]
-    (or
-      ;; A workbook, an EPUB and a JAR are ZIP archives too: the filename type names
-      ;; which format the generic ZIP sniff stands for. No other type names ZIP bytes.
-      (if (and (= "application/zip" sniffed) named (zip-format-media-type? named)) named sniffed)
-      (held-back-image-mime head)
-      named
-      (when (json-lines? head) "application/x-ndjson")
-      (when (utf8-text? head) "text/plain")
-      "application/octet-stream")))
+    (or (when (text-name-wins? sniffed named head) named)
+        ;; A workbook, an EPUB and a JAR are ZIP archives too: the filename type names
+        ;; which format the generic ZIP sniff stands for. No other type names ZIP bytes.
+        (if (and (= "application/zip" sniffed) named (zip-format-media-type? named)) named sniffed)
+        (held-back-image-mime head)
+        named
+        (when (json-lines? head) "application/x-ndjson")
+        (when (utf8-text? head) "text/plain")
+        "application/octet-stream")))
 
 (defn attached-media-type
   "The media type of bytes that a tool attaches without an explicit type. This is
@@ -703,7 +727,9 @@
 
    1. A signature or root-element sniff, also for a picture that
       [[detect-image-mime]] holds back from a provider. For ZIP bytes, a filename
-      type of a ZIP-based format replaces `application/zip`.
+      type of a ZIP-based format replaces `application/zip`. A `text/*` filename
+      type replaces an audio or video signature when the bytes hold no binary
+      control character, and it always replaces a bare audio frame header.
    2. The filename type: `application/x-ndjson` for a `.jsonl` or `.ndjson`
       `filename`, else `hint`, the type that the caller reads from the name.
    3. `application/x-ndjson` when the first two lines are JSON objects.

@@ -1211,7 +1211,18 @@
    ["svg-pi" "svg_pi" nil "image/svg+xml"]
    ;; Only the type of a ZIP-based format names ZIP bytes.
    ["zip-txt" "pk" "notes.txt" "application/zip"] ["zip-png" "pk" "pic.png" "application/zip"]
-   ["zip-epub" "pk" "book.epub" "application/epub+zip"]])
+   ["zip-epub" "pk" "book.epub" "application/epub+zip"]
+   ;; Text in an 8-bit encoding is not audio when the filename says text: in
+   ;; Windows-1251, the letter `ya` is the byte `FF`, the start of a frame header.
+   ["cp1251-frame" "bytes.fromhex('ffe2ebe5ede8e520eff0e8f0eee4fb0a')" "notes.txt" "text/plain"]
+   ["cp1251-csv" "bytes.fromhex('ffe2ebe5ede8e520eff0e8f0eee4fb0a')" "data.csv" "text/csv"]
+   ["cp1251-adts" "bytes.fromhex('fff1edee20e820efeeedfff2edee0a')" "notes.txt" "text/plain"]
+   ["telnet" "bytes.fromhex('fffd18fffd20fffd23fffd270d0a6c6f67696e3a20')" "notes.txt" "text/plain"]
+   ["flac-words" "b'fLaC is a codec\\n'" "notes.txt" "text/plain"]
+   ;; Real media keeps its type under a text filename: its bytes are not text.
+   ["png-txt" "png" "pic.txt" "image/png"]
+   ["flac-txt" "b'fLaC' + bytes([0, 0, 0, 0x22]) + bytes(34)" "song.txt" "audio/flac"]
+   ["id3-txt" "b'ID3' + bytes([4, 0, 0, 0, 0, 0, 10]) + bytes(16)" "song.txt" "audio/mpeg"]])
 
 (def ^:private door-prelude
   "Python names that the rows of [[door-cases]] use: `apng` is a real 1x1 PNG
