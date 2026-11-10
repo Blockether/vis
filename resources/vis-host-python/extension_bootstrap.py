@@ -185,6 +185,20 @@ def __vis_typed__(call):
     return typed
 
 
+def __vis_handle_op__(tool):
+    """The session tool `tool` as the name that a shell handle calls.
+
+    A shell answer of `vis.tools` is the live handle of the runtime. The handle
+    drives its process with the private shell tools, which `python_execution`
+    binds as session names. Here each name calls that tool through `vis.tools`.
+    """
+
+    def op(spec):
+        return _vis_host.call_tool(tool, [spec], {})
+
+    return op
+
+
 # Every `__vis_host_*__` name the host injected becomes a member of `_host`,
 # under that name with the marker trimmed: `__vis_host_jailed_shell__` is
 # `_host.jailed_shell`. The list is NOT written out here on purpose — it lived in
@@ -200,6 +214,9 @@ _vis_host = _vis_types.SimpleNamespace(
     }
 )
 _vis_host.call_tool = __vis_typed__(_vis_host.call_tool)
+for _vis_name in __VisShell__.__vis_shell_ops__:  # noqa: F821 — a runtime global.
+    if _vis_name.startswith("_"):
+        globals().setdefault(_vis_name, __vis_handle_op__(_vis_name))
 _vis_mod = _vis_sdk.install(
     _vis_body,  # noqa: F821 — supplied by the host with the canonical SDK source.
     _vis_host,

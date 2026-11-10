@@ -365,10 +365,11 @@ Generated records support both `result.url` and `result["url"]`, including neste
 records. An unknown name raises `KeyError` (`result["missing"]`) or `AttributeError`
 (`result.missing`) listing the available fields, so `hasattr` and `getattr(result, name, default)`
 keep their usual meaning.
-By default, records are not iterable, have no length, and reject non-string indices
-with `TypeError`. Field assignment remains unsupported. These records are not mappings:
-names such as `items`, `keys` and `get` remain available for your fields rather than
-becoming mapping methods.
+A record is a read-only dictionary of its fields: `result.keys()`, `result.get("url")`,
+`dict(result)` and `json.dumps(result)` read them, and an assignment raises an error. By default, a
+record iterates over its field names, `len(result)` counts its fields, and a non-string index raises
+`TypeError`. A dictionary name keeps its dictionary meaning: read a field named `items`, `keys` or
+`get` as `result["items"]`.
 
 ### Accept records as arguments
 
@@ -457,7 +458,8 @@ local data.
 The field must be a public dataclass field holding a **built-in list or tuple** at
 return time. Strings, mappings, sets, generators and list/tuple subclasses are rejected.
 Vis does not consume lazy iterators. Length and truth testing describe the received
-items, not a `total` field. Iteration never fetches another page.
+items, not a `total` field. Iteration never fetches another page. A record with no received items
+is false, so `json.dump(result, file)` writes `{}` for it, while `json.dumps(result)` writes its fields.
 
 This declaration adds metadata, not methods to your original Python class. Keep any
 methods you need when calling the class directly outside the sandbox. Original methods
@@ -1605,6 +1607,8 @@ Results arrive in the same shape the model sees:
   as `items`, with `result["items"]`.
 - Other results are JSON data. Objects become dicts that also allow attribute
   access, such as `page.meta.total`, and lists stay lists.
+- The answer of `vis.tools.shell(...)` is the live handle that `python_execution` gets:
+  `sh.wait()`, `sh.logs()` and `sh.stop()` control the process.
 
 The record is a copy in your extension's process, not an instance of the other extension's class. So
 check its fields. Do not use `isinstance` with the other package's class. Vis builds these records

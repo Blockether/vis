@@ -222,6 +222,11 @@ schemas**. When the extension declares a
 [backing field](extension-api.md#field-backed-sequences), iteration, `len(r)` and `r[0]` read that
 field. Another record iterates over its field names, as a dictionary does.
 
+On a record with a backing field, `x in r` tests the rows, and a record with no rows is false. For
+that record `json.dump(r, file)` writes `{}`: use `file.write(json.dumps(r))`. Two records with equal
+fields are equal, also when their class names differ. A record is also equal to a plain dictionary
+with the same fields. `r | other` and `r.copy()` give a plain dictionary.
+
 `read_session()` also returns more data than its printed summary. The full history,
 including folded steps, is under `transcript["turns"]`, then `iterations`, then
 `blocks`. Each block holds `code`, `stdout` and any `error`. `list_sessions()`

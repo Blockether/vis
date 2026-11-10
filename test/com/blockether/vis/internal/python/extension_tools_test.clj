@@ -4,6 +4,7 @@
    extension contexts on the shared engine, with no model in the loop."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -18,6 +19,9 @@
     "import blockether.vis.extension as vis\n" "\n"
     "\n" "@dataclass(frozen=True)\n"
     "class Browser:\n" "    \"A browser engine.\"\n"
+    "    engine: str\n" "\n"
+    "\n" "@dataclass(frozen=True)\n"
+    "class Webview:\n" "    \"An embedded engine with the fields of a browser.\"\n"
     "    engine: str\n" "\n"
     "\n" "@dataclass(frozen=True)\n"
     "class Reservation:\n" "    \"A reserved browser.\"\n"
@@ -42,6 +46,9 @@
     "    def name(self, reservation: Reservation) -> str:\n" "        \"Name a reservation.\"\n"
     "        return f\"{type(reservation).__name__}:{reservation.id}:{reservation.browser.engine}\"\n"
     "\n"
+    "    def kinds(self, engines: list[Browser | Webview]) -> str:\n"
+    "        \"Name the class of each engine.\"\n"
+    "        return \",\".join(type(engine).__name__ for engine in engines)\n" "\n"
     "    def plain(self) -> dict:\n" "        \"Answer plain JSON data.\"\n"
     "        return {\"answer\": 42, \"nested\": {\"rows\": [1, 2]}}\n" "\n"
     "    def fail(self) -> str:\n" "        \"Fail on purpose.\"\n"
@@ -86,16 +93,27 @@
     "            \"index\": _refusal(lambda: first[0]),\n"
     "            \"text\": [str(status), repr(status)],\n"
     "            \"argument\": vis.tools.svc.name(first),\n"
-    "            \"passed\": vis.tools.svc.page(first.id),\n"
-    "        }\n" "\n"
-    "    def loop(self) -> str:\n" "        \"Call this extension back through vis.tools.\"\n"
-    "        return _refusal(lambda: vis.tools.client.probe())\n" "\n"
-    "    def relay(self) -> str:\n" "        \"Call svc, which calls this extension back.\"\n"
-    "        return _refusal(lambda: vis.tools.svc.back())\n" "\n"
-    "    def unknown(self) -> str:\n" "        \"Call a misspelled tool.\"\n"
-    "        return _refusal(lambda: vis.tools.svc.reserv(\"x\"))\n" "\n"
-    "    def failing(self) -> str:\n" "        \"Call a tool that fails.\"\n"
-    "        return _refusal(lambda: vis.tools.svc.fail())\n" "\n"
+    "            \"nested\": vis.tools.svc.kinds([first.browser]),\n"
+    "            \"passed\": vis.tools.svc.page(first.id),\n" "        }\n"
+    "\n" "    def loop(self) -> str:\n"
+    "        \"Call this extension back through vis.tools.\"\n"
+    "        return _refusal(lambda: vis.tools.client.probe())\n"
+    "\n" "    def relay(self) -> str:\n"
+    "        \"Call svc, which calls this extension back.\"\n"
+    "        return _refusal(lambda: vis.tools.svc.back())\n"
+    "\n" "    def unknown(self) -> str:\n"
+    "        \"Call a misspelled tool.\"\n"
+    "        return _refusal(lambda: vis.tools.svc.reserv(\"x\"))\n"
+    "\n" "    def failing(self) -> str:\n"
+    "        \"Call a tool that fails.\"\n"
+    "        return _refusal(lambda: vis.tools.svc.fail())\n"
+    "\n" "    def shell_handle(self) -> dict:\n"
+    "        \"Run a command with the session shell tool and drive its handle.\"\n"
+    "        sh = vis.tools.shell({\"command\": \"echo handle\"})\n"
+    "        sh.wait(20)\n" "        slow = vis.tools.shell({\"command\": \"sleep 30\"})\n"
+    "        slow.stop()\n"
+    "        return {\"status\": sh[\"status\"], \"out\": sh[\"out\"], \"logs\": sh.logs()[\"out\"],\n"
+    "                \"stopped\": slow[\"status\"] != \"running\"}\n" "\n"
     "    def attach_probe(self) -> dict:\n" "        \"Store an artifact and read it back.\"\n"
     "        row = vis.attach(b\"a,b\\n1,2\\n\", \"totals.csv\", label=\"Totals\")\n"
     "        return {\n"
@@ -185,12 +203,27 @@
              "index" "TypeError: Reservation field name must be a string"
              "text" ["STATUS: DEV04" "Status(env='DEV04')"]
              "argument" "Reservation:r-x:chromium"
+             ;; Two classes fit the fields: the name that the record carries selects one (#427).
+             "nested" "Browser"
              "passed" {"__vis_object__" "Page"
                        "__vis_attrs__"
                        {"rows" [{"__vis_object__" "Browser" "__vis_attrs__" {"engine" "a"}}
                                 {"__vis_object__" "Browser" "__vis_attrs__" {"engine" "b"}}]}
                        "__vis_sequence_field__" "rows"}}
             (dissoc (call (exts "client") 'client.records) "op"))))))
+  (it "drives the process of a shell answer through its handle"
+      ;; The handle reads `_shell_wait` and `_shell_logs`, which only `python_execution` bound.
+      (foundation/register!)
+      (with-tools
+        (fn [exts]
+          (let [active (conj (vec (vals exts))
+                             (some #(when (= "foundation-core" (:ext/name %)) %)
+                                   (extension/registered-extensions)))]
+            (binding [extension/*current-environment* (assoc extension/*current-environment*
+                                                        :extensions (atom active)
+                                                        :active-extensions (atom active))]
+              (expect (= {"status" "exited" "out" "handle\n" "logs" "handle\n" "stopped" true}
+                         (dissoc (call (exts "client") 'client.shell_handle) "op"))))))))
   (it "shows each nested call as its own Activity under the calling tool"
       (with-tools (fn [exts]
                     (let [events (atom [])]
@@ -219,7 +252,7 @@
           (=
             (str
               "VisToolError: vis.tools: no active tool is named `svc.reserv` in this session; "
-              "similar: svc.back, svc.fail, svc.name, svc.page, svc.plain, svc.reserve, svc.status")
+              "similar: svc.back, svc.fail, svc.kinds, svc.name, svc.page, svc.plain, svc.reserve, svc.status")
             (call (exts "client") 'client.unknown)))
         (expect (= "VisToolError: ValueError: no browser available"
                    (call (exts "client") 'client.failing))))))

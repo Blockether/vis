@@ -8,9 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
-- Sandbox and extensions (#462): a typed tool result is a read-only dictionary of its fields. `json.dumps(r)` also works with your own `default=`, and `isinstance(r, Mapping)` is true. `vis.tools` in an extension answers the same record as `python_execution`. Three rules changed. Read a field that has the name of a dictionary method, such as `items`, as `r["items"]`. A record without a backing field iterates over its field names. A record is not hashable and is not a dataclass, and an assignment raises `AttributeError` or `TypeError`.
+- Sandbox and extensions (#462): a typed tool result is a read-only dictionary of its fields. `json.dumps(r)` also works with your own `default=`, and `isinstance(r, Mapping)` is true. `vis.tools` in an extension answers the same record as `python_execution`, and its `shell` answer is the same live handle. Three rules changed. Read a field that has the name of a dictionary method, such as `items`, as `r["items"]`. A record without a backing field iterates over its field names. A record is not hashable and is not a dataclass, and an assignment raises `AttributeError` or `TypeError`.
 
 ### Fixed
+- Extensions (#427): a record that an extension passes to `vis.tools` keeps its class name. Before, a parameter that takes one of two record classes with the same fields refused it with `dict fits ... and ...`, while the same call from `python_execution` worked.
 - Sandbox (#462): `json.dumps(r)` writes a typed tool result as the object of its fields, and `r.get(...)`, `r.items()` and `r.values()` read them, as `r.keys()` does. Before, `json.dumps` raised `TypeError` and the three methods raised `AttributeError`.
 - Council: `council.run` accepts a task title of up to 60 characters, as its documentation says. Before, a title of 41 to 60 characters failed with `SQLITE_CONSTRAINT_CHECK`. Existing databases get the new rule when Vis opens them.
 

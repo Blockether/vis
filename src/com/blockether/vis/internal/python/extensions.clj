@@ -441,12 +441,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 (defn- plainify
   "Deep-convert the `->clj` view of a Python value into plain EDN-printable
    Clojure data (ordered maps -> hash maps, seqs -> vectors) so `vis.state`
-   rows round-trip through `pr-str`/`edn/read-string`."
+   rows round-trip through `pr-str`/`edn/read-string`. A map keeps its metadata:
+   the class name of a record argument travels there (#427)."
   [x]
-  (cond (map? x) (into {}
-                       (map (fn [[k v]]
-                              [k (plainify v)]))
-                       x)
+  (cond (map? x) (with-meta (into {}
+                                  (map (fn [[k v]]
+                                         [k (plainify v)]))
+                                  x)
+                   (meta x))
         (sequential? x) (mapv plainify x)
         (set? x) (mapv plainify x)
         :else x))
