@@ -169,6 +169,7 @@ export function SettingsPanel({
   action,
   disclosure,
   defaultOpen,
+  isFoldable,
   children,
 }: {
   title: string;
@@ -181,6 +182,8 @@ export function SettingsPanel({
   disclosure?: HeaderDisclosure;
   /** The first state of the band's own fold, when the caller gives no `disclosure`. */
   defaultOpen?: boolean;
+  /** Folds a subsection too, so a long subsection starts folded under its band. */
+  isFoldable?: boolean;
   children: ReactNode;
 }) {
   // EVERY BAND WITH A BODY FOLDS, AND STARTS FOLDED. Settings opens as a short list
@@ -190,8 +193,8 @@ export function SettingsPanel({
   const isNested = useContext(SettingsNested);
   const [isOwnOpen, setOwnOpen] = useState(defaultOpen ?? bandsOpen);
   const hasBody = Children.toArray(children).length > 0;
-  // A subsection shows its rows under its band, so only the band folds.
-  const fold = isNested
+  // A subsection shows its rows under its band, so only the band folds, unless it asks to fold.
+  const fold = isNested && !isFoldable
     ? undefined
     : disclosure ??
       (hasBody

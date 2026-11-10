@@ -792,7 +792,7 @@ export function MachineSettings({
             <NotificationsPanel client={client} gateway={gateway} />
             <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
             {general?.toggles.some((toggle) => toggle.is_experimental) && (
-              <SettingsPanel title="Experimental">
+              <SettingsPanel title="Experimental" isFoldable>
                 {rowList(general.toggles.filter((toggle) => toggle.is_experimental))}
               </SettingsPanel>
             )}

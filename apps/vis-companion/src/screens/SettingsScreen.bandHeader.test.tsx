@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IconButton } from '../components/ui';
-import { SettingsBandsOpen, SettingsPanel } from './settings/SettingsLayout';
+import { SettingsBandsOpen, SettingsPanel, SettingsSection } from './settings/SettingsLayout';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -73,5 +73,25 @@ describe('every settings band with a body folds', () => {
     fireEvent.pointerUp(plus, { button: 0 });
     expect(added).toBe(1);
     expect(screen.getByText('Morning summary')).toBeVisible();
+  });
+
+  // Reported: Speech engines and Experimental stood open under the opened General band.
+  it('folds a subsection that asks for it and keeps other subsections open', () => {
+    render(
+      <SettingsSection title="General" defaultOpen>
+        <SettingsPanel title="Notifications">
+          <p>Turn finished</p>
+        </SettingsPanel>
+        <SettingsPanel title="Speech engines" isFoldable>
+          <p>Parakeet</p>
+        </SettingsPanel>
+      </SettingsSection>,
+    );
+    expect(screen.getByText('Turn finished')).toBeVisible();
+    expect(screen.queryByText('Parakeet')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show Speech engines' }));
+    expect(screen.getByText('Parakeet')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Speech engines' }));
+    expect(screen.queryByText('Parakeet')).toBeNull();
   });
 });

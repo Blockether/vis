@@ -1050,7 +1050,7 @@ export function SpeechEnginesPanel({
       : 'This device';
 
   return (
-    <SettingsPanel title="Speech engines">
+    <SettingsPanel title="Speech engines" isFoldable>
       <div className="divide-y divide-dialog-edge">
         {err && (
           <div className="p-3 sm:p-4">
