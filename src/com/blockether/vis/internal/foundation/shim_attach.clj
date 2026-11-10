@@ -278,12 +278,15 @@
                                            (str ": " p)))
                                     {:type ::reference-refused :status (:status refusal)})))
                   (let [absolute (.getPath file)
-                        {:keys [kind media-type]}
-                        (decide-attachment sandbox-door
-                                           kind
-                                           media-type
-                                           audience
-                                           #(attachments/attached-file-media-type file hint))
+                        {:keys [kind media-type]} (decide-attachment
+                                                    sandbox-door
+                                                    kind
+                                                    media-type
+                                                    audience
+                                                    #(attachments/attached-file-media-type
+                                                       file
+                                                       hint
+                                                       (or (blank->nil filename) (.getName file))))
                         recorded (mpl-capture/record-attachment!
                                    (cond-> {:kind kind
                                             :media-type media-type
@@ -359,7 +362,8 @@
                                                      #(attachments/attached-media-type
                                                         (.decode (java.util.Base64/getDecoder)
                                                                  (str b64))
-                                                        hint))]
+                                                        hint
+                                                        filename))]
     (record-attachment-call kind media-type b64 filename size audience label)))
 
 (defn- attachment-tool
@@ -459,11 +463,12 @@
                            (pr-str (opt "audience")))
                       {})))
     (let [{:keys [kind media-type]}
-          (decide-attachment extension-door
-                             (opt "kind")
-                             (opt "media_type")
-                             audience
-                             #(attachments/attached-media-type data (opt "media_type_hint")))]
+          (decide-attachment
+            extension-door
+            (opt "kind")
+            (opt "media_type")
+            audience
+            #(attachments/attached-media-type data (opt "media_type_hint") (opt "filename")))]
       (when (nil? mpl-capture/*attachment-sink*)
         (throw (ex-info "vis.attach: call it from a tool that python_execution runs." {})))
       (-> (record-attachment-call kind

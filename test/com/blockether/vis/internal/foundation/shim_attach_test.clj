@@ -1188,7 +1188,43 @@
    ["words" "b'just words'" "note" "text/plain"]
    ["binary" "bytes([0x00, 0x01, 0xFE, 0xFF])" "blob" "application/octet-stream"]
    ["page" "b'<!doctype html><html><svg width=\"1\"/></html>'" "report.html" "text/html"]
-   ["json" "b'{\"a\": 1}\\n'" "result.json" "application/json"]])
+   ["json" "b'{\"a\": 1}\\n'" "result.json" "application/json"]
+   ;; A text byte-order mark is not an MP3 frame: the filename names the type.
+   ["utf16" "'hello\\n'.encode('utf-16')" "notes.txt" "text/plain"]
+   ["utf16-csv" "'a,b\\n1,2\\n'.encode('utf-16')" "data.csv" "text/csv"]
+   ["utf32" "'hello\\n'.encode('utf-32')" "notes.txt" "text/plain"]
+   ["latin1" "b'\\xff\\xfe plain'" "notes.txt" "text/plain"]
+   ["utf16-svg" "'<svg xmlns=\"http://www.w3.org/2000/svg\"/>'.encode('utf-16')" "pic.svg"
+    "image/svg+xml"] ["mp3-fb" "bytes([0xFF, 0xFB, 0x90, 0x00])" nil "audio/mpeg"]
+   ;; An animated PNG is a PNG, with or without a name.
+   ["apng" "apng" "real.apng" "image/png"] ["apng-bare" "apng" nil "image/png"]
+   ;; HTML can omit the html tag.
+   ["html5" "b'<!doctype html>\\n<head><title>t</title></head><body>x</body>\\n'" nil "text/html"]
+   ;; One line of JSON is not JSON Lines, unless the name says so.
+   ["geojson" "b'{\"type\": \"FeatureCollection\", \"features\": []}\\n'" "map.geojson"
+    "text/plain"] ["notebook" "b'{\"cells\": [], \"nbformat\": 4}\\n'" "nb.ipynb" "text/plain"]
+   ["json-line" "b'{\"a\": 1}\\n'" nil "text/plain"]
+   ["jsonl-name" "b'{\"a\": 1}\\n'" "events.jsonl" "application/x-ndjson"]
+   ["ndjson-name" "b'{\"a\": 1}\\n'" "events.ndjson" "application/x-ndjson"]
+   ["jsonl-lines" "b'{\"a\": 1}\\n{\"a\": 2}\\n'" nil "application/x-ndjson"]
+   ;; A processing instruction can hold a `>`.
+   ["svg-pi" "svg_pi" nil "image/svg+xml"]
+   ;; Only the type of a ZIP-based format names ZIP bytes.
+   ["zip-txt" "pk" "notes.txt" "application/zip"] ["zip-png" "pk" "pic.png" "application/zip"]
+   ["zip-epub" "pk" "book.epub" "application/epub+zip"]])
+
+(def ^:private door-prelude
+  "Python names that the rows of [[door-cases]] use: `apng` is a real 1x1 PNG
+   with an `acTL` chunk after its header, `svg_pi` is an SVG with a `>` inside a
+   processing instruction and `pk` is the head of a ZIP archive."
+  (str
+    "import base64, binascii, mimetypes\n"
+    "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
+    "actl = b'acTL' + bytes([0, 0, 0, 1, 0, 0, 0, 0])\n"
+    "apng = png[:33] + (8).to_bytes(4, 'big') + actl + binascii.crc32(actl).to_bytes(4, 'big')"
+    " + png[33:]\n"
+    "svg_pi = (b'<?xml version=\"1.0\"?>\\n<?xml-stylesheet href=\"a>b.css\" type=\"text/css\"?>\\n'"
+    " + b'<svg xmlns=\"http://www.w3.org/2000/svg\"/>\\n')\n" "pk = b'PK\\x03\\x04' + bytes(20)\n"))
 
 (defdescribe
   attach-doors-media-type-test
@@ -1196,7 +1232,7 @@
     "gives the same bytes and filename the same media type at the sandbox door and the SDK door"
     (let [out
           (block (ctx-with-root (temp-root))
-                 (str "import base64, mimetypes\n"
+                 (str door-prelude
                       (str/join (for [[label data filename] door-cases]
                                   (str "d = "
                                        data
@@ -1207,19 +1243,20 @@
                                        "r = attach(d, n) if n else attach(d)\n"
                                        "h = mimetypes.guess_type(n)[0] if n else None\n"
                                        "print('CASE', " (pr-str label)
-                                       ", r['media_type'], r['kind'],"
+                                       ", r['media_type'], r['kind'], r['audience'],"
                                        " base64.b64encode(d).decode(), h or '-')\n")))))
 
           sandbox
           (into {}
-                (for [[_ label media-type kind b64 hint]
-                      (re-seq #"CASE (\S+) (\S+) (\S+) (\S+) (\S+)" (str (:stdout out)))]
-                  [label {:media-type media-type :kind kind :b64 b64 :hint hint}]))]
+                (for [[_ label media-type kind audience b64 hint]
+                      (re-seq #"CASE (\S+) (\S+) (\S+) (\S+) (\S+) (\S+)" (str (:stdout out)))]
+                  [label
+                   {:media-type media-type :kind kind :audience audience :b64 b64 :hint hint}]))]
 
       (expect (nil? (:error out)))
       (binding [mpl-capture/*attachment-sink* (atom [])]
         (doseq [[label _ filename expected] door-cases]
-          (let [{:keys [media-type kind b64 hint]} (get sandbox label)
+          (let [{:keys [media-type kind audience b64 hint]} (get sandbox label)
                 row (extension-attach (cond-> {"base64" b64}
                                         filename
                                         (assoc "filename" filename)
@@ -1229,7 +1266,37 @@
 
             (expect (= [label expected] [label media-type]))
             (expect (= [label expected] [label (get row "media-type")]))
-            (expect (= [label kind] [label (get row "kind")])))))))
+            (expect (= [label kind] [label (get row "kind")]))
+            (expect (= [label audience] [label (get row "audience")])))))))
+  (it "keeps the picture of an animated PNG and the audience of text and of one line of JSON"
+      (let [out
+            (block
+              (ctx-with-root (temp-root))
+              (str door-prelude
+                   "print('APNG', attach(apng, 'real.apng')['kind'])\n"
+                   "j = b'{\"type\": \"FeatureCollection\", \"features\": []}\\n'\n"
+                   "print('JSON', attach(j, 'map.geojson')['audience'],"
+                   " attach(j, 'model.geojson', audience='model')['audience'])\n"
+                   "print('WIDE', attach('hello\\n'.encode('utf-16'), 'notes.txt')['audience'])\n"))
+
+            so
+            (str (:stdout out))
+
+            geojson
+            (.encodeToString (java.util.Base64/getEncoder)
+                             (.getBytes "{\"type\": \"FeatureCollection\", \"features\": []}\n"
+                                        "UTF-8"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"APNG image" so))
+        (expect (re-find #"vis-image" so))
+        (expect (re-find #"JSON both model" so))
+        (expect (re-find #"WIDE both" so))
+        (binding [mpl-capture/*attachment-sink* (atom [])]
+          (expect (= "model"
+                     (get (extension-attach
+                            {"base64" geojson "filename" "map.geojson" "audience" "model"})
+                          "audience"))))))
   (it
     "lets an explicit media type win at both doors"
     (let
@@ -1249,37 +1316,44 @@
                    (get (extension-attach
                           {"base64" flac "filename" "a.flac" "media_type" "text/x-note"})
                         "media-type"))))))
-  (it "names a file above the limit from its first bytes, also when the cut splits a character"
-      (let [root
-            (.getCanonicalPath (java.io.File. (temp-root)))
+  (it
+    "names a file above the limit from its first bytes, also when the cut splits a character"
+    (let [root
+          (.getCanonicalPath (java.io.File. (temp-root)))
 
-            mp4
-            (byte-array
-              (concat [0 0 0 0x18] (.getBytes "ftypmp42" "US-ASCII") (repeat 6000 (byte 0))))
+          mp4
+          (byte-array
+            (concat [0 0 0 0x18] (.getBytes "ftypmp42" "US-ASCII") (repeat 6000 (byte 0))))
 
-            _
-            (with-open [out (java.io.FileOutputStream. (java.io.File. root "clip"))]
-              (.write out mp4))
+          _
+          (with-open [out (java.io.FileOutputStream. (java.io.File. root "clip"))]
+            (.write out mp4))
 
-            _
-            (spit (java.io.File. root "big.log")
-                  (str "a" (str/join (repeat 3000 "é")))
-                  :encoding
-                  "UTF-8")
+          _
+          (spit (java.io.File. root "big.log")
+                (str "a" (str/join (repeat 3000 "é")))
+                :encoding
+                "UTF-8")
 
-            out
-            (extension/with-context
-              {:env {:session-id (random-uuid) :workspace {:root root}}}
-              (binding [mpl-capture/*attachment-limit-bytes* 100]
-                (block (ctx-with-root root)
-                       (str "for n in ('clip', 'big.log'):\n"
-                            "    r = attach(" (pr-str (str root "/"))
-                            " + n)\n"
-                            "    print('REF', r['storage'], r['media_type'], r['kind'])\n"))))]
+          _
+          (with-open [out (java.io.FileOutputStream. (java.io.File. root "wide.txt"))]
+            (.write out (byte-array [0xff 0xfe]))
+            (.write out (.getBytes (str/join (repeat 2000 "hello\n")) "UTF-16LE")))
 
-        (expect (nil? (:error out)))
-        (expect (= [["reference" "video/mp4" "file"] ["reference" "text/plain" "file"]]
-                   (mapv (comp vec rest) (re-seq #"REF (\S+) (\S+) (\S+)" (str (:stdout out)))))))))
+          out
+          (extension/with-context
+            {:env {:session-id (random-uuid) :workspace {:root root}}}
+            (binding [mpl-capture/*attachment-limit-bytes* 100]
+              (block (ctx-with-root root)
+                     (str "for n in ('clip', 'big.log', 'wide.txt'):\n"
+                          "    r = attach(" (pr-str (str root "/"))
+                          " + n)\n"
+                          "    print('REF', r['storage'], r['media_type'], r['kind'])\n"))))]
+
+      (expect (nil? (:error out)))
+      (expect (= [["reference" "video/mp4" "file"] ["reference" "text/plain" "file"]
+                  ["reference" "text/plain" "file"]]
+                 (mapv (comp vec rest) (re-seq #"REF (\S+) (\S+) (\S+)" (str (:stdout out)))))))))
 
 (defn- app-block
   "Run `code` as one block of session `sid`, with view records in a temp root."

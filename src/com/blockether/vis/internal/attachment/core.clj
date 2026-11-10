@@ -190,8 +190,9 @@
 
 (def ^:private svg-root-pattern
   "An `<svg` ROOT element, after any processing instruction, comment or `svg`
-   doctype. The doctype can hold an internal subset in brackets."
-  #"(?s)^(?:(?:<\?[^>]*>|<!--.*?-->|<!doctype\s+svg(?:[^>\[]*\[.*?\]\s*>|[^>]*>))\s*)*<svg(?:[\s/>:]|$)")
+   doctype. A processing instruction ends at `?>`, so a `>` inside it is data. The
+   doctype can hold an internal subset in brackets."
+  #"(?s)^(?:(?:<\?.*?\?>|<!--.*?-->|<!doctype\s+svg(?:[^>\[]*\[.*?\]\s*>|[^>]*>))\s*)*<svg(?:[\s/>:]|$)")
 
 (defn- svg-markup?
   "True when the head reads as an SVG document: its ROOT element is `<svg`, after
@@ -267,7 +268,9 @@
    \"image/svg+xml\", or nil when the bytes are not a supported still image.
    BMP, HEIC, HEIF, AVIF and SVG are not wire-legal themselves — they are
    readable, and `image-convert` turns them into PNG before they are sent.
-   Animated PNGs and JPEG-LS return nil (provider-rejected shapes)."
+   Animated PNGs and JPEG-LS return nil: the answer is the type that an upload
+   or a path image takes to a provider, and providers reject those two shapes. A
+   tool that attaches one still stores a picture: see [[held-back-image-mime]]."
   [^bytes b]
   (cond (bytes-at? b 0 [0xff 0xd8 0xff]) (when-not (and (>= (alength b) 4) (= 0xf7 (u8 b 3)))
                                            "image/jpeg")
@@ -329,6 +332,27 @@
   [^bytes b]
   (and (>= (alength b) 2) (= 0xff (u8 b 0)) (= 0xf0 (bit-and (u8 b 1) 0xf6))))
 
+(defn- mpeg-audio-frame?
+  "True when the head is a valid MPEG Layer III or Layer II frame header without an
+   ID3 tag: the 11-bit syncword, a version that is not reserved, the layer bits,
+   and a bitrate and a sample rate that are not the forbidden index. The byte-order
+   mark of UTF-16 and UTF-32 text (`FF FE`) carries the syncword with the Layer I
+   bits, so Layer I is not accepted and text is never a frame."
+  [^bytes b]
+  (and (>= (alength b) 4)
+       (= 0xff (u8 b 0))
+       (let [b1
+             (u8 b 1)
+
+             b2
+             (u8 b 2)]
+
+         (and (= 0xe0 (bit-and b1 0xe0))
+              (not= 0x08 (bit-and b1 0x18))
+              (contains? #{0x02 0x04} (bit-and b1 0x06))
+              (not= 0xf0 (bit-and b2 0xf0))
+              (not= 0x0c (bit-and b2 0x0c))))))
+
 (defn detect-audio-mime
   "Sniff a supported audio MIME type from the leading bytes of a file.
    Returns \"audio/mpeg\" | \"audio/aac\" | \"audio/mp4\" | \"audio/wav\" |
@@ -343,7 +367,7 @@
   [^bytes b]
   (cond (ascii-at? b 0 "ID3") "audio/mpeg"
         (adts-aac? b) "audio/aac"
-        (and (>= (alength b) 2) (= 0xff (u8 b 0)) (= 0xe0 (bit-and (u8 b 1) 0xe0))) "audio/mpeg"
+        (mpeg-audio-frame? b) "audio/mpeg"
         (and (ascii-at? b 0 "RIFF") (ascii-at? b 8 "WAVE")) "audio/wav"
         (and (ascii-at? b 0 "FORM") (or (ascii-at? b 8 "AIFF") (ascii-at? b 8 "AIFC"))) "audio/aiff"
         (ascii-at? b 0 "caff") "audio/x-caf"
@@ -446,6 +470,11 @@
                (str/trim))]
     (contains? viewer-document-media-types mt)))
 
+(def ^:private html-start-pattern
+  "The start of an HTML page: its doctype or its `<html>` tag. HTML lets a page omit
+   the tag, so the doctype alone names a page."
+  #"(?s)^(?:<!doctype\s+html[^>]*>|<html(?:\s|>))")
+
 (defn detect-document-mime
   "Sniff a PDF, HTML or XHTML document from its bytes, never its extension."
   [^bytes b]
@@ -460,8 +489,7 @@
       (cond (and (re-find #"(?s)^(?:<\?xml[^>]*>\s*)?<html(?:\s|>)" start)
                  (str/includes? start "http://www.w3.org/1999/xhtml"))
             (:xhtml document-media-types)
-            (re-find #"(?s)^(?:<!doctype\s+html[^>]*>\s*)?<html(?:\s|>)" start)
-            (:html document-media-types)
+            (re-find html-start-pattern start) (:html document-media-types)
             :else nil))))
 
 (defn detect-gzip-mime
@@ -610,35 +638,87 @@
     (and (not (.isError result))
          (not (re-find #"[\x00-\x08\x0b\x0e-\x1a\x1c-\x1f\x7f]" (str (.flip out)))))))
 
+(defn- held-back-image-mime
+  "The type of a picture that [[detect-image-mime]] holds back from a provider: an
+   animated PNG or a JPEG-LS file. A tool that attaches one stores a picture for
+   people, and the send-time gate ([[wire-verdict]]) decides what a model gets."
+  [^bytes b]
+  (cond (and (bytes-at? b 0 png-signature) (png? b)) "image/png"
+        (bytes-at? b 0 [0xff 0xd8 0xff]) "image/jpeg"
+        :else nil))
+
+(defn- zip-format-media-type?
+  "True when `media-type` names a format that is a ZIP archive: an Office Open XML
+   or OpenDocument file, a macro-enabled Office file, a `+zip` type such as EPUB,
+   or a JAR, an APK or a KMZ file. Only such a type can name ZIP bytes."
+  [media-type]
+  (let [mt (str/lower-case (str media-type))]
+    (boolean (or (str/ends-with? mt "+zip")
+                 (str/starts-with? mt "application/vnd.openxmlformats-officedocument.")
+                 (str/starts-with? mt "application/vnd.oasis.opendocument.")
+                 (re-matches #"application/vnd\.ms-[a-z]+\..+" mt)
+                 (contains? #{"application/java-archive" "application/vnd.android.package-archive"
+                              "application/vnd.google-earth.kmz"}
+                            mt)))))
+
+(defn- json-lines?
+  "True when the first two lines of the head that are not blank are JSON objects.
+   One line of JSON is a JSON document, not JSON Lines."
+  [^bytes head]
+  (let [text
+        (String. head 0 (int (min (alength head) 4096)) StandardCharsets/UTF_8)
+
+        lines
+        (->> (str/split-lines (str/replace text "\uFEFF" ""))
+             (map str/trim)
+             (remove str/blank?)
+             (take 2))]
+
+    (and (= 2 (count lines))
+         (every? #(and (str/starts-with? % "{")
+                       (str/ends-with? % "}")
+                       (try (map? (json/read-json %)) (catch Exception _ false)))
+                 lines))))
+
 (defn- attached-type
   "The rule of [[attached-media-type]] for a `sniffed` signature type or nil."
-  [sniffed hint ^bytes head]
-  (let [hint (not-empty (str/trim (str hint)))]
+  [sniffed hint filename ^bytes head]
+  (let [named (if (re-find #"(?i)\.(?:jsonl|ndjson)$" (str/trim (str filename)))
+                "application/x-ndjson"
+                (not-empty (str/trim (str hint))))]
     (or
-      ;; A workbook, an EPUB and a JAR are ZIP archives too: the hint names which
-      ;; format the generic ZIP sniff stands for.
-      (if (and hint (= "application/zip" sniffed)) hint sniffed)
-      hint
-      (detect-jsonl-mime head)
+      ;; A workbook, an EPUB and a JAR are ZIP archives too: the filename type names
+      ;; which format the generic ZIP sniff stands for. No other type names ZIP bytes.
+      (if (and (= "application/zip" sniffed) named (zip-format-media-type? named)) named sniffed)
+      (held-back-image-mime head)
+      named
+      (when (json-lines? head) "application/x-ndjson")
       (when (utf8-text? head) "text/plain")
       "application/octet-stream")))
 
 (defn attached-media-type
   "The media type of bytes that a tool attaches without an explicit type. This is
-   the one rule for the sandbox `attach` and for `vis.attach` of an extension: a
-   signature sniff wins, then `hint` (the type that the file name suggests), then
-   the JSON Lines probe, then `text/plain` for text, then
-   `application/octet-stream`. A hint also names the format of a generic ZIP sniff."
-  [^bytes b hint]
-  (attached-type (detect-signature-mime b) hint b))
+   the one rule for the sandbox `attach` and for `vis.attach` of an extension, in
+   this order:
+
+   1. A signature or root-element sniff, also for a picture that
+      [[detect-image-mime]] holds back from a provider. For ZIP bytes, a filename
+      type of a ZIP-based format replaces `application/zip`.
+   2. The filename type: `application/x-ndjson` for a `.jsonl` or `.ndjson`
+      `filename`, else `hint`, the type that the caller reads from the name.
+   3. `application/x-ndjson` when the first two lines are JSON objects.
+   4. `text/plain` for UTF-8 text without binary control characters.
+   5. `application/octet-stream`."
+  [^bytes b hint filename]
+  (attached-type (detect-signature-mime b) hint filename b))
 
 (defn attached-file-media-type
   "[[attached-media-type]] for a file on disk, from its head only: a file that is
    larger than the attachment limit is never read whole."
-  [^File f hint]
+  [^File f hint filename]
   (let [head (file-head f)]
     ;; The registry of a Word document can be past this head: ask the file first.
-    (attached-type (or (detect-docx-file f head) (detect-signature-mime head)) hint head)))
+    (attached-type (or (detect-docx-file f head) (detect-signature-mime head)) hint filename head)))
 
 ;; Path-candidate extraction
 

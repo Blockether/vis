@@ -131,6 +131,17 @@
                  (attachments/detect-audio-mime (byte-array (concat [0xff 0xfb] (repeat 16 0))))))
       (expect (= "audio/mpeg"
                  (attachments/detect-audio-mime (byte-array (concat [0xff 0xfa] (repeat 16 0)))))))
+  (it "reads a bare frame as MPEG audio only when it is a valid Layer II or III header"
+      ;; `FF FE` is the byte-order mark of UTF-16 and UTF-32 text, and it is also
+      ;; the sync of a Layer I frame.
+      (expect (nil? (attachments/detect-audio-mime
+                      (byte-array (concat [0xff 0xfe] (.getBytes "hello\n" "UTF-16LE"))))))
+      (expect (nil? (attachments/detect-audio-mime (byte-array [0xff 0xfe 0 0 0x68 0 0 0]))))
+      (expect (nil? (attachments/detect-audio-mime (byte-array [0xff 0xfb 0xf0 0]))))
+      (expect (nil? (attachments/detect-audio-mime (byte-array [0xff 0xfb 0x0c 0]))))
+      (expect (= "audio/mpeg" (attachments/detect-audio-mime (byte-array [0xff 0xf3 0x90 0]))))
+      (expect (= "audio/mpeg" (attachments/detect-audio-mime (byte-array [0xff 0xfb 0x90 0]))))
+      (expect (= "audio/mpeg" (attachments/detect-audio-mime (byte-array [0xff 0xfd 0x90 0])))))
   (it "sniffs what the two phones record when they are not writing an m4a"
       (expect (= "audio/aiff"
                  (attachments/detect-audio-mime (byte-array (concat (.getBytes "FORM" "US-ASCII")
@@ -937,6 +948,19 @@
                     [{:base64 (str "data:image/svg+xml;base64," (b64 (.getBytes svg-doc "UTF-8")))
                       :filename "logo.svg"
                       :media-type "image/svg+xml"}])]
+          (expect (empty? (:skipped out)))
+          (expect (= ["image/svg+xml"] (mapv :media-type (:attached out))))))
+    (it "keeps an SVG upload that has a `>` inside a processing instruction"
+        (let [svg
+              (str "<?xml version=\"1.0\"?>\n"
+                   "<?xml-stylesheet href=\"a>b.css\" type=\"text/css\"?>\n"
+                   "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n")
+
+              out
+              (attachments/prepare-inline-attachments [{:base64 (b64 (.getBytes svg "UTF-8"))
+                                                        :filename "pi.svg"
+                                                        :media-type "image/svg+xml"}])]
+
           (expect (empty? (:skipped out)))
           (expect (= ["image/svg+xml"] (mapv :media-type (:attached out))))))
     (it "stores the SVG even when nothing can render it — the wire gate decides later"

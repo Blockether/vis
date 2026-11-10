@@ -1659,7 +1659,9 @@ document is for the user only. A script in an HTML page can still give the model
 TSV table shows as a table, and its rows do not go to the model.
 
 If you do not give `media_type`, Vis detects the type from the bytes, then from the filename.
-If both fail, text is `text/plain` and other bytes are `application/octet-stream`.
+For ZIP bytes, only the filename of a ZIP-based format, such as `.xlsx` or `.epub`, replaces `application/zip`.
+Without a filename type, two or more lines of JSON objects are `application/x-ndjson`.
+After that, UTF-8 text is `text/plain` and other bytes are `application/octet-stream`.
 The sandbox `attach` uses the same rule.
 
 The read functions take the same target: a filename, an `id` or a descriptor. A filename means
