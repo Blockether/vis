@@ -164,6 +164,14 @@ class LiveResult(_ViewRecord):
         return cls(**{**freeze(value), **picture})
 
 
+# The view schema definition of the payload of each View event, by event type.
+EVENT_DEFINITIONS = {
+    "view.open": "open_event",
+    "view.patch": "patch_event",
+    "view.close": "close_event",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ViewEvent:
     """Typed payload of view.open, view.patch or view.close, not its SSE envelope."""
@@ -187,12 +195,7 @@ class ViewEvent:
             KeyError: The event type is unsupported.
             ValueError: The payload, view identity or patch sequence is invalid.
         """
-        definition = {
-            "view.open": "open_event",
-            "view.patch": "patch_event",
-            "view.close": "close_event",
-        }[event_type]
-        validate("view", definition, value)
+        validate("view", EVENT_DEFINITIONS[event_type], value)
         payload: dict[str, Any]
         if event_type == "view.open":
             model = InputView if value["kind"] == "input" else LiveView

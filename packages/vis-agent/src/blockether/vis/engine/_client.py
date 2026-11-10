@@ -26,7 +26,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from blockether.vis._contracts import definition, schema, validate
 from blockether.vis.activity import ActivityProjection
 from blockether.vis.engine._models import Model, SessionModel
-from blockether.vis.views import InputView, LiveView, ViewEvent
+from blockether.vis.views import EVENT_DEFINITIONS, InputView, LiveView, ViewEvent
 
 if TYPE_CHECKING:
     from ._agent import ResponseModel
@@ -259,7 +259,7 @@ class Event:
         if activity is not None:
             envelope.add("activity")
         view = None
-        if event_type in {"view.open", "view.patch", "view.close"}:
+        if event_type in EVENT_DEFINITIONS:
             view_fields = {"kind", "view_id", "view", "patch", "result", "first_seq"}
             try:
                 view = ViewEvent.from_wire(
@@ -3626,14 +3626,24 @@ class Session:
         replies. The last iteration can run its tools, and then the limit blocks
         the next model request. Token usage is recorded only as a statistic.
         """
-        if not isinstance(objective, str) or not 1 <= len(objective.strip()) <= 44000:
-            raise ValueError("objective must contain 1–44000 characters")
-        if iteration_budget is not None and (
-            type(iteration_budget) is not int
-            or not 1 <= iteration_budget <= 9007199254740991
+        # The gateway schema owns the bounds of a goal.
+        rules = definition("gateway", "session_goal")["properties"]
+        text, budget = rules["objective"], rules["iteration_budget"]
+        if (
+            not isinstance(objective, str)
+            or not text["minLength"] <= len(objective.strip()) <= text["maxLength"]
         ):
             raise ValueError(
-                "iteration_budget must be an integer from 1 to 9007199254740991"
+                f"objective must contain {text['minLength']}–{text['maxLength']} "
+                "characters"
+            )
+        if iteration_budget is not None and (
+            type(iteration_budget) is not int
+            or not budget["minimum"] <= iteration_budget <= budget["maximum"]
+        ):
+            raise ValueError(
+                f"iteration_budget must be an integer from {budget['minimum']} to "
+                f"{budget['maximum']}"
             )
         if "token_budget" in options:
             raise TypeError(

@@ -44,6 +44,58 @@ def definition(name: str, key: str) -> dict[str, Any]:
     return schema(name)["$defs"][key]
 
 
+def rule(name: str, *path: str | int) -> Any:
+    """Read the rule at `path` below the `$defs` of a schema.
+
+    A `$ref` to the same schema gives the rule that it names.
+    """
+    root = schema(name)
+    node: Any = root["$defs"]
+    for key in path:
+        node = node[key]
+        while isinstance(node, dict) and str(node.get("$ref")).startswith("#/"):
+            target: Any = root
+            for part in node["$ref"][2:].split("/"):
+                target = target[int(part) if isinstance(target, list) else part]
+            node = target
+    return node
+
+
+def activity_block(kind: str) -> dict[str, Any]:
+    """The rule of each field of one Activity content block, by block type."""
+    return next(
+        branch["properties"]
+        for branch in rule("activity", "content", "items", "oneOf")
+        if branch["properties"]["type"]["const"] == kind
+    )
+
+
+def activity_text_bytes() -> int:
+    """The UTF-8 byte bound of an Activity headline, summary, outcome and aside."""
+    return rule("activity", "section", "properties", "summary")["x-vis-max-bytes"]
+
+
+def valid_handle_id(value: Any) -> bool:
+    """Whether `value` is the handle id of an Activity presentation."""
+    limits = definition("activity", "handle_id")
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= limits["maxLength"]
+        and len(value.encode("utf-8")) <= limits["x-vis-max-bytes"]
+        and not any(ord(c) < 32 or ord(c) in (127, 8232, 8233) for c in value)
+    )
+
+
+def api_styles() -> list[str]:
+    """Each name of a provider wire dialect that the config schema takes."""
+    return [
+        alias
+        for branch in definition("config", "apiStyle")["oneOf"]
+        for alias in branch["enum"]
+    ]
+
+
 def _button_branch() -> dict[str, Any]:
     return next(
         branch

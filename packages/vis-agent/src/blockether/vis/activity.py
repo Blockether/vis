@@ -13,20 +13,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from blockether.vis._contracts import definition, validate
+from blockether.vis._contracts import (
+    activity_text_bytes,
+    definition,
+    valid_handle_id,
+    validate,
+)
 
 from ._wire import freeze, to_wire
-
-
-def _valid_handle_id(value: str) -> bool:
-    limits = definition("activity", "handle_id")
-    return (
-        isinstance(value, str)
-        and bool(value.strip())
-        and len(value) <= limits["maxLength"]
-        and len(value.encode("utf-8")) <= limits["x-vis-max-bytes"]
-        and not any(ord(c) < 32 or ord(c) in (127, 8232, 8233) for c in value)
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,7 +253,7 @@ class ActivityProjection:
                 presentation = row.get("presentation")
                 for carrier in (row, presentation):
                     if carrier is not None and "handle_id" in carrier:
-                        if not _valid_handle_id(carrier["handle_id"]):
+                        if not valid_handle_id(carrier["handle_id"]):
                             raise ValueError("invalid Activity handle id")
                 sections = (
                     [presentation, *presentation.get("sections", [])]
@@ -269,14 +263,15 @@ class ActivityProjection:
                 content = [
                     block for section in sections for block in section["content"]
                 ]
+                byte_limit = activity_text_bytes()
                 if any(
-                    len(section[key].encode("utf-8")) > 512
+                    len(section[key].encode("utf-8")) > byte_limit
                     for section in sections
                     for key in ("headline", "summary")
                 ):
                     raise ValueError("activity headline or summary exceeds bound")
                 if presentation is not None and any(
-                    len(presentation[key].encode("utf-8")) > 512
+                    len(presentation[key].encode("utf-8")) > byte_limit
                     for key in ("outcome", "aside")
                     if key in presentation
                 ):

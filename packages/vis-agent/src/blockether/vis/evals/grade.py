@@ -1257,9 +1257,7 @@ def grade_trial(
         row for row in activity_rows if row.get("state") in {"failed", "cancelled"}
     ]
     incomplete_activities = [
-        row
-        for row in activity_rows
-        if row.get("state") not in {"succeeded", "failed", "cancelled"}
+        row for row in activity_rows if row.get("state") not in TERMINAL_ACTIVITY_STATES
     ]
     caught_failures = [
         row

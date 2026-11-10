@@ -370,6 +370,8 @@ def __getattr__(name: str) -> Any:
         return handle if name == "session" else handle.council()
     if name == "_APP_MEDIA_TYPE":
         return _app_media_type()
+    if name == "_SYMBOL_TAGS":
+        return _symbol_tags()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -513,6 +515,33 @@ def _bounded_text(value, limit, name):
         raise ValueError(f"{name} must be text of at most {limit} characters")
 
 
+def _one_of(names) -> str:
+    """The names as prose: `a, b or c`."""
+    names = [str(name) for name in names]
+    return " or ".join(filter(None, [", ".join(names[:-1]), names[-1]]))
+
+
+def _activity_rule(*path) -> Any:
+    """One rule of the activity schema. It owns each Activity vocabulary and bound."""
+    from blockether.vis import _contracts
+
+    return _contracts.rule("activity", *path)
+
+
+def _activity_text_bytes() -> int:
+    """The UTF-8 byte bound of an Activity headline, summary, outcome and aside."""
+    from blockether.vis import _contracts
+
+    return _contracts.activity_text_bytes()
+
+
+def _activity_block(kind) -> dict[str, Any]:
+    """The rule of each field of one Activity content block, from the activity schema."""
+    from blockether.vis import _contracts
+
+    return _contracts.activity_block(kind)
+
+
 def _wire_value(value) -> Any:
     if isinstance(value, Mapping):
         return {key: _wire_value(item) for key, item in value.items()}
@@ -593,7 +622,8 @@ class ActivityCode(ActivityText):
     def __post_init__(self):
         ActivityText.__post_init__(self)
         if self.language is not None:
-            _bounded_text(self.language, 256, "Activity language")
+            limit = _activity_block(self.type)["language"]["maxLength"]
+            _bounded_text(self.language, limit, "Activity language")
 
 
 @dataclass(frozen=True, slots=True)
@@ -650,10 +680,15 @@ class ActivityFile(_ActivityBlock):
     type: ClassVar[str] = "file"
 
     def __post_init__(self):
-        _bounded_text(self.attachment_id, 256, "Activity attachment id")
+        rules = _activity_block(self.type)
+        _bounded_text(
+            self.attachment_id,
+            rules["attachment_id"]["maxLength"],
+            "Activity attachment id",
+        )
         if not self.attachment_id.strip():
             raise ValueError("Activity attachment id must not be blank")
-        _bounded_text(self.label, 256, "Activity label")
+        _bounded_text(self.label, rules["label"]["maxLength"], "Activity label")
 
 
 @dataclass(frozen=True, slots=True)
@@ -687,7 +722,8 @@ class ActivityProgress(_ActivityBlock):
     type: ClassVar[str] = "progress"
 
     def __post_init__(self):
-        _bounded_text(self.label, 256, "Activity label")
+        limit = _activity_block(self.type)["label"]["maxLength"]
+        _bounded_text(self.label, limit, "Activity label")
         if self.value is None and self.total is None:
             return
         if (
@@ -726,9 +762,16 @@ class ActivityTerminalLine:
     stream: _ActivityStream = "stdout"
 
     def __post_init__(self):
-        _activity_line(self.text, 4096, "Activity terminal line", is_tab_allowed=True)
-        if self.stream not in get_args(_ActivityStream):
-            raise ValueError("Activity terminal stream must be stdout or stderr")
+        rules = _activity_block("terminal")["lines"]["items"]["properties"]
+        _activity_line(
+            self.text,
+            rules["text"]["maxLength"],
+            "Activity terminal line",
+            is_tab_allowed=True,
+        )
+        streams = rules["stream"]["enum"]
+        if self.stream not in streams:
+            raise ValueError(f"Activity terminal stream must be {_one_of(streams)}")
 
     def to_wire(self) -> dict[str, Any]:
         """Return a fresh terminal line in contract form."""
@@ -753,19 +796,26 @@ class ActivityTerminal(_ActivityBlock):
     type: ClassVar[str] = "terminal"
 
     def __post_init__(self):
+        rules = _activity_block(self.type)
+        stages, stage = rules["command"], rules["command"]["items"]
         if (
             not isinstance(self.command, (tuple, list))
-            or not 1 <= len(self.command) <= 32
+            or not stages["minItems"] <= len(self.command) <= stages["maxItems"]
             or any(
-                not isinstance(stage, str) or not stage or len(stage) > 4096
-                for stage in self.command
+                not isinstance(one, str)
+                or not stage["minLength"] <= len(one) <= stage["maxLength"]
+                for one in self.command
             )
         ):
             raise ValueError(
-                "Activity terminal command requires 1 to 32 nonempty stages"
+                f"Activity terminal command requires {stages['minItems']} to "
+                f"{stages['maxItems']} nonempty stages"
             )
-        if not isinstance(self.lines, (tuple, list)) or len(self.lines) > 400:
-            raise ValueError("Activity terminal lines must be at most 400 lines")
+        line_limit = rules["lines"]["maxItems"]
+        if not isinstance(self.lines, (tuple, list)) or len(self.lines) > line_limit:
+            raise ValueError(
+                f"Activity terminal lines must be at most {line_limit} lines"
+            )
         lines = tuple(
             ActivityTerminalLine(line) if isinstance(line, str) else line
             for line in self.lines
@@ -816,7 +866,26 @@ _ActivitySummaryFormat: TypeAlias = Literal["inline", "markdown"]
 _ActivityVerdict: TypeAlias = Literal["passed", "failed"]
 # The kind of work of one tool call. Annotate a tag in a variable with this type.
 SymbolTag: TypeAlias = Literal["observation", "mutation", "verification", "external"]
-_SYMBOL_TAGS = get_args(SymbolTag)
+# The tag of a tool that names none. The SDK import declares such tools, so this name
+# needs no schema read. A test compares it with the schema.
+_DEFAULT_SYMBOL_TAG: SymbolTag = "observation"
+
+
+def _symbol_tags() -> tuple[str, ...]:
+    """The kind of work of a tool call. The symbol schema owns the names."""
+    from blockether.vis import _contracts
+
+    return tuple(
+        _contracts.definition("symbol", "callable")["properties"]["tag"]["enum"]
+    )
+
+
+def _symbol_tag_names(tag) -> str | None:
+    """The tag names when `tag` is not one of them, else None."""
+    if isinstance(tag, str) and tag == _DEFAULT_SYMBOL_TAG:
+        return None
+    tags = _symbol_tags()
+    return None if tag in tags else ", ".join(tags)
 
 
 @dataclass(frozen=True, slots=True)
@@ -836,14 +905,17 @@ class ActivitySection:
     summary_format: _ActivitySummaryFormat | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
+        byte_limit = _activity_text_bytes()
         for name in ("headline", "summary"):
             value = getattr(self, name)
-            _bounded_text(value, 512, f"Activity {name}")
-            if len(value.encode("utf-8")) > 512 or any(
+            limit = _activity_rule("section", "properties", name)["maxLength"]
+            _bounded_text(value, limit, f"Activity {name}")
+            if len(value.encode("utf-8")) > byte_limit or any(
                 ord(c) < 32 or ord(c) in (127, 8232, 8233) for c in value
             ):
                 raise ValueError(
-                    f"Activity {name} must be one line of at most 512 UTF-8 bytes"
+                    f"Activity {name} must be one line of at most {byte_limit} "
+                    "UTF-8 bytes"
                 )
         if not self.headline:
             raise ValueError("Activity headline must not be empty")
@@ -852,8 +924,9 @@ class ActivitySection:
         ):
             raise TypeError("Activity content must contain typed blocks")
         object.__setattr__(self, "content", tuple(self.content))
-        if self.summary_format is not None and self.summary_format not in get_args(
-            _ActivitySummaryFormat
+        if (
+            self.summary_format is not None
+            and self.summary_format not in _activity_rule("text_format")["enum"]
         ):
             raise ValueError("Invalid Activity summary_format")
 
@@ -906,28 +979,33 @@ class ActivityPresentation(ActivitySection):
         if self.handle_id is not None:
             if not isinstance(self.handle_id, str):
                 raise TypeError("Activity handle_id must be a string")
-            if (
-                not self.handle_id.strip()
-                or len(self.handle_id) > 256
-                or len(self.handle_id.encode("utf-8")) > 512
-                or any(
-                    ord(c) < 32 or ord(c) in (127, 8232, 8233) for c in self.handle_id
-                )
-            ):
+            from blockether.vis import _contracts
+
+            if not _contracts.valid_handle_id(self.handle_id):
+                limits = _activity_rule("handle_id")
                 raise ValueError(
-                    "Activity handle_id must be one nonblank line of at most 512 UTF-8 bytes"
+                    "Activity handle_id must be one nonblank line of at most "
+                    f"{limits['maxLength']} characters and "
+                    f"{limits['x-vis-max-bytes']} UTF-8 bytes"
                 )
-        if self.verdict is not None and self.verdict not in get_args(_ActivityVerdict):
-            raise ValueError("Activity verdict must be passed or failed")
+        verdicts = _activity_rule("verdict")["enum"]
+        if self.verdict is not None and self.verdict not in verdicts:
+            raise ValueError(f"Activity verdict must be {_one_of(verdicts)}")
+        rules = _activity_rule("presentation", "properties")
+        byte_limit = _activity_text_bytes()
         if self.outcome is not None:
-            _activity_line(self.outcome, 512, "Activity outcome")
-            if len(self.outcome.encode("utf-8")) > 512:
-                raise ValueError("Activity outcome must be at most 512 UTF-8 bytes")
-        if self.aside is not None:
-            _activity_line(self.aside, 128, "Activity aside")
-            if not self.aside or len(self.aside.encode("utf-8")) > 512:
+            limit = _activity_rule("presentation", "properties", "outcome")["maxLength"]
+            _activity_line(self.outcome, limit, "Activity outcome")
+            if len(self.outcome.encode("utf-8")) > byte_limit:
                 raise ValueError(
-                    "Activity aside must be nonempty and at most 512 UTF-8 bytes"
+                    f"Activity outcome must be at most {byte_limit} UTF-8 bytes"
+                )
+        if self.aside is not None:
+            _activity_line(self.aside, rules["aside"]["maxLength"], "Activity aside")
+            if not self.aside or len(self.aside.encode("utf-8")) > byte_limit:
+                raise ValueError(
+                    f"Activity aside must be nonempty and at most {byte_limit} "
+                    "UTF-8 bytes"
                 )
 
     def to_wire(self) -> dict[str, Any]:
@@ -1008,16 +1086,36 @@ class Activity:
             presenters = _contracts.definition("activity", "presenter")["enum"]
             if self.presenter not in presenters:
                 raise ValueError("unknown Activity presenter")
-        if self.label is not None and (
-            not isinstance(self.label, str)
-            or not self.label.strip()
-            or len(self.label) > 96
-            or "\n" in self.label
-            or "\r" in self.label
-        ):
-            raise ValueError(
-                "Activity label must be one nonblank line of at most 96 characters"
-            )
+        if self.label is not None:
+            limit = _activity_rule("declaration", "properties", "label")["maxLength"]
+            if (
+                not isinstance(self.label, str)
+                or not self.label.strip()
+                or len(self.label) > limit
+                or "\n" in self.label
+                or "\r" in self.label
+            ):
+                raise ValueError(
+                    "Activity label must be one nonblank line of at most "
+                    f"{limit} characters"
+                )
+
+
+def _sdk_activity(label, render) -> Activity:
+    """The Activity of a quick read that the SDK declares itself.
+
+    The SDK import builds it, so it must read no schema. A test builds each one again
+    through `Activity`, which checks it against the schema.
+    """
+    activity = object.__new__(Activity)
+    for name, value in (
+        ("presenter", _DEFAULT_ACTIVITY_PRESENTER),
+        ("label", label),
+        ("render", render),
+        ("show_start", False),
+    ):
+        object.__setattr__(activity, name, value)
+    return activity
 
 
 def _activity_spec(activity):
@@ -2364,10 +2462,8 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None, *, qualified_name=None
         raise ValueError(
             f"vis.Symbol name must be a public Python identifier, got {public_name!r}"
         )
-    if tag not in _SYMBOL_TAGS:
-        raise ValueError(
-            f"vis.Symbol tag must be one of {', '.join(_SYMBOL_TAGS)}, got {tag!r}"
-        )
+    if names := _symbol_tag_names(tag):
+        raise ValueError(f"vis.Symbol tag must be one of {names}, got {tag!r}")
     doc = inspect.getdoc(fn)
     if not doc or not doc.strip():
         raise ValueError(
@@ -2507,10 +2603,8 @@ def method(
     assert tool.contract["members"][0]["name"] == "greeter.hello"
     ```
     """
-    if tag not in _SYMBOL_TAGS:
-        raise ValueError(
-            f"vis.method tag must be one of {', '.join(_SYMBOL_TAGS)}, got {tag!r}"
-        )
+    if names := _symbol_tag_names(tag):
+        raise ValueError(f"vis.method tag must be one of {names}, got {tag!r}")
     _activity_spec(activity)
 
     def _mark(actual: _Method) -> _Method:
@@ -2664,8 +2758,8 @@ class Symbol:
             return _symbol_spec(
                 self.fn, self.name, self.tag, self.is_hidden, self.activity
             )
-        if self.tag not in _SYMBOL_TAGS:
-            raise ValueError(f"vis.Symbol tag must be one of {', '.join(_SYMBOL_TAGS)}")
+        if names := _symbol_tag_names(self.tag):
+            raise ValueError(f"vis.Symbol tag must be one of {names}")
         if self.activity is not None:
             raise ValueError(
                 "declare object Activity on each vis.method(), not its namespace"
@@ -2871,11 +2965,7 @@ class Catalog:
             entries[name] for name in sorted(entries) if "." not in name
         )
 
-    @method(
-        activity=Activity(
-            label="Inspect tool catalog", show_start=False, render=_catalog_presentation
-        )
-    )
+    @method(activity=_sdk_activity("Inspect tool catalog", _catalog_presentation))
     def spec(
         self,
         name: Annotated[
@@ -2891,11 +2981,7 @@ class Catalog:
             raise ValueError(f"Unknown catalog name: {name!r}")
         return self._entries[name]
 
-    @method(
-        activity=Activity(
-            label="Read tool reference", show_start=False, render=_catalog_presentation
-        )
-    )
+    @method(activity=_sdk_activity("Read tool reference", _catalog_presentation))
     def help(
         self, name: Annotated[str, "Full public tool or namespace name."]
     ) -> HelpDocument:
@@ -3344,9 +3430,31 @@ def _provider_bool(value, name):
         raise TypeError(f"{name} must be a boolean")
 
 
-def _provider_enum(value, vocabulary, name):
+# The provider schema definition and field that own each provider vocabulary.
+_PROVIDER_ENUMS = {
+    "limits status": ("report", "status"),
+    "window kind": ("window", "kind"),
+    "window unit": ("window", "unit"),
+    "scope": ("limit_row", "scope"),
+    "kind": ("limit_row", "kind"),
+    "precision": ("limit_row", "precision"),
+    "source": ("limit_row", "source"),
+}
+
+
+def _provider_vocabulary(name) -> list[str]:
+    """The values of one provider vocabulary. The provider and config schemas own them."""
+    from blockether.vis import _contracts
+
+    if name == "api_style":
+        return _contracts.api_styles()
+    definition, field = _PROVIDER_ENUMS[name]
+    return _contracts.definition("provider", definition)["properties"][field]["enum"]
+
+
+def _provider_enum(value, name):
     if value is not None and (
-        not isinstance(value, str) or value not in get_args(vocabulary)
+        not isinstance(value, str) or value not in _provider_vocabulary(name)
     ):
         raise ValueError(
             f"invalid {name}"
@@ -3438,7 +3546,7 @@ class ProviderPreset(_ProviderValue):
     def __post_init__(self):
         _provider_text(self.base_url, "base_url")
         _provider_text(self.responses_path, "responses_path")
-        _provider_enum(self.api_style, ProviderAPIStyle, "api_style")
+        _provider_enum(self.api_style, "api_style")
         models = _provider_rows(self.default_models, str, "default_models")
         for model in models:
             _provider_text(model, "default_models", required=True)
@@ -3474,7 +3582,7 @@ class ProviderCredential(_ProviderValue):
         _provider_text(self.token, "token", required=True)
         for name in ("api_url", "responses_path", "source"):
             _provider_text(getattr(self, name), name)
-        _provider_enum(self.api_style, ProviderAPIStyle, "api_style")
+        _provider_enum(self.api_style, "api_style")
         object.__setattr__(
             self,
             "llm_headers",
@@ -3554,8 +3662,8 @@ class ProviderLimitWindow(_ProviderValue):
 
     def __post_init__(self):
         _provider_text(self.kind, "window kind", required=True)
-        _provider_enum(self.kind, ProviderWindowKind, "window kind")
-        _provider_enum(self.unit, ProviderWindowUnit, "window unit")
+        _provider_enum(self.kind, "window kind")
+        _provider_enum(self.unit, "window unit")
         _provider_number(self.size, "window size", integer=True, minimum=1)
         _provider_number(self.resets_at_ms, "resets_at_ms", integer=True)
 
@@ -3584,13 +3692,8 @@ class ProviderLimit(_ProviderValue):
     def __post_init__(self):
         for name in ("id", "label", "scope", "kind", "precision", "source"):
             _provider_text(getattr(self, name), name, required=True)
-        for name, vocabulary in (
-            ("scope", ProviderLimitScope),
-            ("kind", ProviderLimitKind),
-            ("precision", ProviderLimitPrecision),
-            ("source", ProviderLimitSource),
-        ):
-            _provider_enum(getattr(self, name), vocabulary, name)
+        for name in ("scope", "kind", "precision", "source"):
+            _provider_enum(getattr(self, name), name)
         _provider_bool(self.is_unlimited, "is_unlimited")
         for name in ("used", "limit", "remaining"):
             _provider_number(getattr(self, name), name)
@@ -3629,7 +3732,7 @@ class ProviderLimits(_ProviderValue):
 
     def __post_init__(self):
         _provider_text(self.status, "limits status", required=True)
-        _provider_enum(self.status, ProviderLimitStatus, "limits status")
+        _provider_enum(self.status, "limits status")
         object.__setattr__(
             self, "limits", _provider_rows(self.limits, ProviderLimit, "limits")
         )
@@ -5533,8 +5636,11 @@ class Log(_Node):
         Each argument is one stored line, not a raw byte fragment. A tone applies only
         to this call, and omitted tones are plain. Controls are displayed literally.
         """
-        if tone is not None and tone not in get_args(LogTone):
-            raise ValueError("log tone must be idle, running, ok, warn or error")
+        from blockether.vis import _contracts
+
+        tones = _contracts.definition("view", "tone")["enum"]
+        if tone is not None and tone not in tones:
+            raise ValueError(f"log tone must be {_one_of(tones)}")
         given = lines[0] if len(lines) == 1 and not isinstance(lines[0], str) else lines
         return self._op("append", lines=[_log_text(line) for line in given], tone=tone)
 
