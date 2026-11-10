@@ -186,6 +186,8 @@ CREATE TABLE session_agent (
   iterations_used  INTEGER NOT NULL DEFAULT 0 CHECK (iterations_used >= 0),
   inherited_turns  INTEGER NOT NULL,
   allowed_models   TEXT CHECK (allowed_models IS NULL OR json_valid(allowed_models)),
+  -- The {provider, model} that the child tries first when its model fails. NULL = none.
+  fallback_model   TEXT CHECK (fallback_model IS NULL OR json_valid(fallback_model)),
   -- Subagent file grant: {"write", "read_only", "deny"} rules, also for future files.
   files            TEXT CHECK (files IS NULL OR json_valid(files)),
   spawn_key        TEXT NOT NULL,

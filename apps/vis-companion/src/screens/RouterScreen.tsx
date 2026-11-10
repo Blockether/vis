@@ -21,6 +21,15 @@ interface Props {
   onClose: () => void;
   onPicked?: (pref: ModelPref) => void;
   /**
+   * Choose mode, for a model setting: a pick goes here instead of the session pin, and
+   * a first entry picks no model. Resolves true when the choice is saved.
+   */
+  onChoose?: (pref: ModelPref) => Promise<boolean>;
+  /** The saved choice in choose mode; `{}` is no model. */
+  chosen?: ModelPref;
+  /** The first entry of choose mode, which picks no model. */
+  noneLabel?: string;
+  /**
    * Jump to gateway settings, where provider accounts and OAuth live. A provider id
    * focuses that provider's row there (#406).
    */
@@ -42,11 +51,22 @@ function signInLabel(provider: RouterProvider): string {
  * a sign-in there is reflected here without a refetch, and a signed-out
  * provider is shown as such with a direct way over to fix it.
  */
-export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageProviders }: Props) {
+export function ProviderRouterDialog({
+  client,
+  sid,
+  onClose,
+  onPicked,
+  onManageProviders,
+  onChoose,
+  chosen,
+  noneLabel = 'Not set',
+}: Props) {
   // The session's project decides the providers that only projects register (#410).
   const fleet = useProviderFleet(client, sid);
   const { providers, err, note, pending, refresh } = fleet;
-  const [pref, setPref] = useState<ModelPref | null>(null);
+  const [pinned, setPref] = useState<ModelPref | null>(null);
+  const pref = onChoose ? (chosen ?? null) : pinned;
+  const canPick = Boolean(sid || onChoose);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
 
@@ -81,7 +101,17 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  async function choose(next: ModelPref, key: string) {
+    setPicking(key);
+    try {
+      if (await onChoose!(next)) onClose();
+    } finally {
+      setPicking(null);
+    }
+  }
+
   async function pick(provider: RouterProvider, model: string) {
+    if (onChoose) return choose({ provider: provider.id, model }, `${provider.id}:${model}`);
     if (!sid) return;
     setPicking(`${provider.id}:${model}`);
     try {
@@ -112,12 +142,13 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
     // in THAT session's pane (`within="session"`). Reported on a wide window: centred on
     // the whole application it straddled the session list beside the transcript, dimming
     // and covering a list this pick has nothing to do with.
-    <Modal size="fit" within="session" onDismiss={onClose}>
+    // A model setting belongs to no session, so its picker stands over the settings.
+    <Modal size="fit" within={onChoose ? 'app' : 'session'} onDismiss={onClose}>
       <DialogFrame
         title="Model"
         // The pin, and only the pin: `Current: ` said what standing under the title of a
         // model picker already says, in 54px this band does not have to give.
-        subtitle={pref?.model ? `${pref.provider ?? '?'}/${pref.model}` : 'No model pinned'}
+        subtitle={pref?.model ? `${pref.provider ?? '?'}/${pref.model}` : onChoose ? noneLabel : 'No model pinned'}
         closeLabel="Close model picker"
         onClose={onClose}
         actions={
@@ -143,6 +174,18 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
         <div className="space-y-3 p-3 sm:p-4">
           {err && <Banner kind="err">{err.text}</Banner>}
           {note && <Banner kind="ok">{note.text}</Banner>}
+
+          {onChoose && (
+            <ListRow
+              isFramed
+              isSelected={!pref?.model}
+              aria-pressed={!pref?.model}
+              disabled={picking === 'none'}
+              onClick={() => void choose({}, 'none')}
+            >
+              <span className="min-w-0 flex-1 truncate font-mono text-ui">{noneLabel}</span>
+            </ListRow>
+          )}
 
           {providers === null && (
             <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading models…</p>
@@ -192,7 +235,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                       </Button>
                     )}
 
-                    {sid && provider.models.length > 0 && (
+                    {canPick && provider.models.length > 0 && (
                       <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {preferredModelFirst(provider.models, provider.default_model).map(
                           (model) => {

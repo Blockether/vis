@@ -2363,6 +2363,16 @@
             }
           ]
         },
+        "fallback_model": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/fallback_model"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "routing_locked": {
           "anyOf": [
             {
@@ -3634,7 +3644,8 @@
             "network",
             "list",
             "tools",
-            "presets"
+            "presets",
+            "model"
           ]
         },
         "is_set": {
@@ -3702,7 +3713,7 @@
           }
         },
         "editor_options": {
-          "description": "Static data for the editor. A presets row carries presets_options.",
+          "description": "Static data for the editor. A presets row carries presets_options. A model row carries none: its choices are the chat models of GET /v1/models.",
           "type": "object"
         }
       }
@@ -4520,6 +4531,29 @@
             }
           }
         }
+      }
+    },
+    "model_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The value of a model row: a provider and one of its chat models. An empty object names no model, and the description of the row tells what applies then.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "dependentRequired": {
+        "provider": [
+          "model"
+        ],
+        "model": [
+          "provider"
+        ]
       }
     },
     "setting_preview": {

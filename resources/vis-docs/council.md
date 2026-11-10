@@ -17,6 +17,8 @@ threads, so later sessions can use what they learned.
   share results as they arrive.
 - **Findings should outlast the session that found them.** Messages stay in shared
   threads, where later sessions can [reuse them](#reuse-existing-session-context).
+- **Subagents should run on a cheaper or a specific model.** Set the
+  [subagent model](#choose-the-model-of-subagents).
 - **Your own program coordinates sessions.** Use [Council API](council-api.md).
 
 Every session in a group can read its messages, so keep credentials and private data
@@ -98,6 +100,28 @@ start managed helper agents for large independent parts of a task. The helpers w
 Council, so subagents are off while Council is off. Settings then hide the **Subagents** row until
 you turn Council on again. Turning off Subagents blocks new helper agents, wakes and further steps.
 To turn off only subagents, use Settings or set `subagents: false` under `toggles`.
+
+### Choose the model of subagents
+
+Three settings under **Subagents** decide the model of a new subagent. Set them in Settings, or for
+all sessions of a project in its `vis.yml`:
+
+```yaml
+toggles:
+  subagent_model: {provider: zai-coding-plan, model: glm-5.3}
+  subagent_fallback_model: {provider: anthropic-coding-plan, model: claude-sonnet-5}
+  subagent_model_only: true
+```
+
+- **Subagent model**: the model of a new subagent when its task names no model. When it is not set,
+  the subagent uses the model of the agent that starts it.
+- **Subagent fallback model**: the model that a subagent tries first when its model fails. It
+  applies only while automatic provider fallback is on.
+- **Only these models**: subagents run only on the two models above. Vis refuses a task that
+  names another model.
+
+A subagent keeps its model until it ends. You cannot change the model of a subagent that runs.
+The model must be one of the chat models that your providers offer.
 
 ## Sandbox calls
 

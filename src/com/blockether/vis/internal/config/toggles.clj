@@ -43,6 +43,7 @@
        user override survives a reload."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.sounds :as sounds]))
 
@@ -698,6 +699,13 @@
 ;; / `:reload`) idempotent: the live registry stays intact and any
 ;; user override in `state` survives.
 
+(defn- model-value-problem
+  "Nil when `value` is the value of a `model` editor: a provider and one of its models,
+   or an empty object for no model. Else a message for the person."
+  [value]
+  (when-let [explanation (document/explain "gateway" "model_value" value)]
+    (or (document/explain-text explanation value) "The value must name a provider and a model.")))
+
 (defonce
   ^{:doc
     "Sentinel that records whether the canonical internal toggles
@@ -907,6 +915,50 @@
        :owner :vis
        :group :council
        :parent "council"
+       :persist? true})
+    ;; A new subagent runs on the model of its task, else on `subagent_model`, else on the
+    ;; model of its parent (`gateway.state/agent-spawn`). It keeps that route until it ends.
+    (register-toggle!
+      {:id "subagent_model"
+       :label "Subagent model"
+       :description
+       "The model of a new subagent when its task names none. Empty uses the model of the agent that starts it."
+       :type :object
+       :editor "model"
+       :validate-fn model-value-problem
+       :default {}
+       :scopes ["global" "project"]
+       :owner :vis
+       :group :council
+       :parent "subagents"
+       :persist? true})
+    ;; The fallback stands first in the automatic provider fallback of the child
+    ;; (`agents/restrict-router`). With that fallback off, the child stays on its model.
+    (register-toggle!
+      {:id "subagent_fallback_model"
+       :label "Subagent fallback model"
+       :description
+       "The model that a subagent tries first when its model fails, while automatic provider fallback is on."
+       :type :object
+       :editor "model"
+       :validate-fn model-value-problem
+       :default {}
+       :scopes ["global" "project"]
+       :owner :vis
+       :group :council
+       :parent "subagents"
+       :persist? true})
+    (register-toggle!
+      {:id "subagent_model_only"
+       :label "Only these models"
+       :description
+       "Run subagents only on the subagent model and its fallback model. A task cannot name another model."
+       :type :boolean
+       :default false
+       :scopes ["global" "project"]
+       :owner :vis
+       :group :council
+       :parent "subagents"
        :persist? true})
     ;; Live apps declare where they show; these two turn a surface off for every app.
     ;; Each app with a key adds its own settings under them (`view.app-surfaces`).

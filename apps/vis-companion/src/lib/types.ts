@@ -448,7 +448,8 @@ export type SettingEditor =
   | 'list'
   | 'tools'
   | 'secret'
-  | 'presets';
+  | 'presets'
+  | 'model';
 
 /** One slot or one built-in preset of a presets row. */
 export type PresetsEntry = { id: string; label: string; description?: string };

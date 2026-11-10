@@ -61,6 +61,7 @@ import { ownsLegend, SettingField, SettingMachine } from './SettingField';
 import { machineLabel } from '../../lib/fleet';
 import { AutomationsPanel } from './AutomationsPanel';
 import { PresetsField } from './PresetsField';
+import { ModelField } from './ModelField';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
 export function EnumSetting({
@@ -539,6 +540,8 @@ export function SettingRow({ toggle, busy, head, error, onToggle, onPick, onInhe
           onSave={onPick} onRemove={isOwnSecret ? (onRemove ?? onInherit) : undefined} />
       ) : toggle.editor === 'presets' ? (
         <PresetsField toggle={toggle} busy={busy} disabled={lock !== null} error={error} onSave={onPick} />
+      ) : toggle.editor === 'model' ? (
+        <ModelField toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : toggle.type === 'string' ? (
         <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (

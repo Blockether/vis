@@ -71,6 +71,8 @@ class SubagentRecord:
     files: dict[str, list[str]] | None = None
     iteration_budget: int | None = None
     iterations_used: int | None = None
+    provider: str | None = None
+    model: str | None = None
     warning: str | None = None
     error: dict[str, Any] | None = None
     alternatives: list[dict[str, str]] | None = None

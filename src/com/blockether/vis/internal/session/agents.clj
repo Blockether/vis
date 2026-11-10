@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
+            [com.blockether.vis.internal.provider.service :as provider-service]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.session.iteration :as iteration]
@@ -958,6 +959,10 @@
       (:iterations_used row)
       (assoc :iterations_used (:iterations_used row))
 
+      :always
+      (merge (some-> (smodel/model-of db sid)
+                     (select-keys [:provider :model])))
+
       (:files row)
       (assoc :files (:files row))
 
@@ -1500,6 +1505,11 @@
 
    title is a short label for people: one line of 1 to 60 characters, such as \"Fix login test\".
    Without it, people see the child number, such as #2.
+
+   model and provider go together. Without them, the child runs on session[\"routing\"][\"subagents\"]
+   [\"model\"], else on your model. A child keeps its model until its task ends, and its fallback
+   model comes first when its model fails. When session[\"routing\"][\"subagents\"][\"only\"] is
+   True, a task can name only that model or the fallback model. Records show the model of each child.
 
    role is research, implement or verify. It is a label for people and sets no tool, file or model
    limit. Choose it by the result that you need: facts, changed files, or a pass or fail with
@@ -2151,7 +2161,7 @@
                                   params)))))
     (let
       [records
-       "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
+       "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `provider`, `model`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
       [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
        [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
         records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
@@ -2177,31 +2187,99 @@
     (when (and command (not= command before))
       {:preference (select-keys command [:provider :model]) :command command})))
 
+(defn- setting-pair
+  "The `{:provider :model}` that the model setting `id` holds in `values`, or nil when empty."
+  [values id]
+  (let [v
+        (get values id)
+
+        field
+        #(some-> (or (get v %) (get v (keyword %)))
+                 str
+                 str/trim
+                 not-empty)
+
+        provider
+        (field "provider")
+
+        model
+        (field "model")]
+
+    (when (and provider model) {:provider provider :model model})))
+
+(defn model-settings
+  "The subagent model settings where session `sid` runs now:
+   `{:model pair :fallback pair :only? boolean}`. An empty setting gives a nil pair."
+  [db sid]
+  (let [values (scoped/values db sid)]
+    {:model (setting-pair values "subagent_model")
+     :fallback (setting-pair values "subagent_fallback_model")
+     :only? (true? (get values "subagent_model_only"))}))
+
+(defn routing-view
+  "The subagent model settings of session `sid` as `session[\"routing\"][\"subagents\"]` shows
+   them in the sandbox: `model` and `fallback` are a provider and a model, or None when empty."
+  [db sid]
+  (let [{:keys [model fallback only?]}
+        (model-settings db sid)
+
+        shown
+        #(when % {"provider" (:provider %) "model" (:model %)})]
+
+    {"model" (shown model) "fallback" (shown fallback) "only" only?}))
+
+(defn- model-name [model] (if (map? model) (:name model) (str model)))
+
+(defn- fallback-first
+  "`router` with the provider of `fallback` first in priority and `fallback` as its root, so
+   automatic fallback tries that model before the rest of the fleet. A model that only the live
+   catalog of the provider lists joins its models. A provider outside `router` changes nothing."
+  [router {:keys [provider model]}]
+  (let [own? #(= provider (name (:id %)))]
+    (if-let [p (first (filter own? (:providers router)))]
+      (assoc router
+        :providers (provider-service/reprioritize-providers
+                     (cons (assoc p
+                             :models (cond-> (vec (:models p))
+                                       (not-any? #(= model (model-name %)) (:models p))
+                                       (conj {:name model}))
+                             :root model)
+                           (remove own? (:providers router)))))
+      router)))
+
 (defn restrict-router
   "Apply the routing limits of a subagent to every request and retry, including automatic
-   fallback. An inherited allowlist narrows the providers. A 429 ends the request at once, without
-   a wait or another provider: the parent chooses the next route from the record of the child."
+   fallback. The fallback model of the child comes first in automatic fallback, and an inherited
+   allowlist narrows the providers. A 429 ends the request at once, without a wait: it goes to
+   the fallback model of the child, else the parent chooses the next route from the child record."
   [env router]
   (if-let [child (info (:db-info env) (:session-id env))]
-    (cond-> (update router :rate-limit assoc :fail-fast? true :fallback-provider? false)
-      (seq (:allowed_models child))
-      (assoc :providers
-        (into []
-              (keep (fn [provider]
-                      (let [models (filterv (fn [model]
-                                              (some
-                                                #(and (= (name (:id provider)) (:provider %))
-                                                      (= (if (map? model) (:name model) (str model))
-                                                         (:model %)))
-                                                (:allowed_models child)))
-                                     (:models provider))]
-                        (when (seq models)
-                          (assoc provider
-                            :models models
-                            :root (if (some #(= (:root provider) (:name %)) models)
-                                    (:root provider)
-                                    (:name (first models))))))))
-              (:providers router))))
+    (let [fallback (:fallback_model child)]
+      (cond-> (update router
+                      :rate-limit assoc
+                      :fail-fast? true
+                      :fallback-provider? (some? fallback))
+        fallback
+        (fallback-first fallback)
+
+        (seq (:allowed_models child))
+        (as-> r (assoc r
+                  :providers
+                  (into []
+                        (keep (fn [provider]
+                                (let [models
+                                      (filterv (fn [model]
+                                                 (some #(and (= (name (:id provider)) (:provider %))
+                                                             (= (model-name model) (:model %)))
+                                                       (:allowed_models child)))
+                                        (:models provider))]
+                                  (when (seq models)
+                                    (assoc provider
+                                      :models models
+                                      :root (if (some #(= (:root provider) (:name %)) models)
+                                              (:root provider)
+                                              (:name (first models))))))))
+                        (:providers r))))))
     router))
 
 (def ^:private lead-guide

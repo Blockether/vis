@@ -7610,6 +7610,39 @@
     (or found
         (agents/fail! :invalid-request "Provider/model is not available on the shared router"))))
 
+(defn- setting-model!
+  "`pair` from the model setting `id` when the shared router offers it, else a refusal."
+  [router id pair]
+  (try (agent-model! router (:provider pair) (:model pair))
+       (catch clojure.lang.ExceptionInfo _
+         (agents/fail! :invalid-request
+                       (str "The "
+                            id
+                            " setting names "
+                            (:provider pair)
+                            "/"
+                            (:model pair)
+                            ", which the shared router does not offer. Change the setting.")))))
+
+(defn- only-agent-models
+  "The allowlist of a new subagent that starts on `pair`. With the `subagent_model_only` setting
+   it holds only `route`, the setting route, and `fallback`: a task allowlist can narrow it,
+   never widen it, and a task model must be one of them."
+  [settings route fallback task-allowed pair]
+  (if-not (:only? settings)
+    task-allowed
+    (let [only
+          (vec (distinct (remove nil? [route fallback])))
+
+          allowed
+          (if (seq task-allowed) (filterv (set only) task-allowed) only)]
+
+      (when-not (some #{pair} allowed)
+        (agents/fail! :model-not-allowed
+                      (str "Settings run subagents only on "
+                           (str/join " and " (map #(str (:provider %) "/" (:model %)) only)))))
+      allowed)))
+
 (defn- allowed-agent-model!
   [child pair]
   (when (and (seq (:allowed_models child))
@@ -7629,6 +7662,11 @@
         (when (persistance/db-routing-locked? db sid)
           (agents/fail! :routing-locked
                         "The human model pick is locked; only the user can clear it"))
+
+        ;; A subagent keeps the route that it started with until its task ends (#443).
+        _
+        (when (contains? #{"waiting" "queued" "running"} (:status (agents/info db sid)))
+          (agents/fail! :routing-locked "A subagent keeps its model until its task ends"))
 
         pair
         (agent-model! (loop-router/get-router) (:provider opts) (:model opts))]
@@ -7963,8 +8001,14 @@
               router
               (or (:router env) (loop-router/get-router))
 
+              settings
+              (agents/model-settings db sid)
+
+              ;; Without a task model, the `subagent_model` setting, then the route of the parent.
               inherited
-              (or (:route (ctx-loop/read-turn-state env))
+              (or (some->> (:model settings)
+                           (setting-model! router "subagent_model"))
+                  (:route (ctx-loop/read-turn-state env))
                   (smodel/model-of db sid)
                   (let [m (loop-router/resolve-effective-model router)]
                     {:provider (:provider m) :model (:name m)}))
@@ -7974,8 +8018,18 @@
                             (or (:provider opts) (:provider inherited))
                             (or (:model opts) (:model inherited)))
 
+              fallback
+              (some->> (:fallback settings)
+                       (setting-model! router "subagent_fallback_model"))
+
               allowed
-              (:allowed_models opts)
+              (only-agent-models settings
+                                 {:provider (some-> (:provider inherited)
+                                                    name)
+                                  :model (:model inherited)}
+                                 fallback
+                                 (:allowed_models opts)
+                                 pair)
 
               ;; A child gets the parent's conversation without its tool work.
               checkpoint
@@ -8030,6 +8084,7 @@
                              :title (:title opts)
                              :iteration_budget budget
                              :allowed_models allowed
+                             :fallback_model (when (not= fallback pair) fallback)
                              :files (not-empty files)
                              :spawn_key key
                              :spawn_fingerprint fingerprint

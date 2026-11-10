@@ -1307,7 +1307,15 @@
                                     (assoc "model" (str root-model))
 
                                     root-provider
-                                    (assoc "provider" (name root-provider))))))
+                                    (assoc "provider" (name root-provider)))))
+
+                        ;; A leader also sees the subagent model settings that its next spawn uses.
+                        (and (seq (:routing env))
+                             db-info
+                             (:session-id env)
+                             (nil? (agents/info db-info (:session-id env))))
+                        (update :routing assoc
+                                "subagents" (agents/routing-view db-info (:session-id env))))
           environment-id (:environment-id env)]
 
       {:cancel-token cancel-token

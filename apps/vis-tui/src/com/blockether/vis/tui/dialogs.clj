@@ -4508,9 +4508,15 @@
     (str toggle-value)
 
     :structured-setting
-    (if (= "presets" (get setting "editor"))
+    (case (get setting "editor")
+      "presets"
       (presets/preset-label (get setting "editor_options")
                             (presets/active (get setting "editor_options") toggle-value))
+
+      "model"
+      (let [{:strs [provider model]} toggle-value]
+        (if (and provider model) (str provider "/" model) "Not set"))
+
       (let [n (count toggle-value)]
         (when (pos? n)
           (str n
@@ -5474,6 +5480,27 @@
                                         nil)
               :else (recur value nil))))))
 
+(declare model-picker!)
+
+(defn- settings-model-editor!
+  "Pick the model of a `model` row from the session model picker. Its first row writes `{}`,
+   which names no model. Returns the new value, or nil on Esc or an unchanged choice."
+  [screen row]
+  (let [{:strs [provider model] :as current}
+        (or (:toggle-value row) {})
+
+        choice
+        (model-picker! screen
+                       (when (and provider model) {:provider provider :model model})
+                       {:title (:label row) :reset-label "Not set"})
+
+        value
+        (cond (nil? choice) nil
+              (:reset? choice) {}
+              :else {"provider" (:provider choice) "model" (:model choice)})]
+
+    (when (and (some? value) (not= value current)) value)))
+
 (defn- settings-structured-editor!
   [screen g region row]
   (case (get-in row [:setting "editor"])
@@ -5488,6 +5515,9 @@
 
     "presets"
     (settings-presets-editor! screen g region row)
+
+    "model"
+    (settings-model-editor! screen row)
 
     (do (mini-note! screen
                     g
@@ -9567,7 +9597,8 @@
    the active row exactly like the web picker. Returns the chosen item map
    — `{:reset? true}` for the router-default row, else `{:provider <str>
    :model <str>}` — or nil on Esc. Optional `opts` passes the pane's
-   `:column-offset` resolver to `list-dialog!`. Without it, the picker is global."
+   `:column-offset` resolver to `list-dialog!`. Without it, the picker is global.
+   `:title` and `:reset-label` replace the dialog title and the label of the first row."
   ([screen current] (model-picker! screen current {}))
   ([^TerminalScreen screen current opts]
    (let [providers
@@ -9604,15 +9635,15 @@
             :model nm})
 
          items
-         (vec (cons {:label "* router default"
+         (vec (cons {:label (:reset-label opts "* router default")
                      :hint (when (and (nil? cur-provider) (nil? cur-model)) "● current")
                      :reset? true}
                     model-rows))]
 
      (list-dialog! screen
-                   "Session model"
+                   (:title opts "Session model")
                    items
-                   (assoc opts
+                   (assoc (dissoc opts :title :reset-label)
                      :filter? true
                      :placeholder "Type to filter models…"
                      :enter-label "choose"

@@ -457,6 +457,10 @@
             "null"
           ]
         },
+        "fallback_model": {
+          "$comment": "The model that the agent tries first when its model fails. Absent when it has none.",
+          "$ref": "#/$defs/model_pair"
+        },
         "routing_locked": {
           "type": "boolean"
         },
@@ -816,6 +820,20 @@
             "message"
           ],
           "additionalProperties": false
+        },
+        "provider": {
+          "description": "The provider of the route of the child: its next request goes there.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model of the route of the child.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "alternatives": {
           "description": "Working provider and model routes for a new child, outside a rate-limit or authentication cooldown.",

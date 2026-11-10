@@ -5547,8 +5547,8 @@
 
 (def ^:private agent-columns
   [:session_id :parent_id :leader_id :team_id :task :role :status :iteration_budget :iterations_used
-   :inherited_turns :allowed_models :files :spawn_key :spawn_fingerprint :created_at :resumed_turns
-   :resumed_at :title :result :outcome :finished_at :ordinal :after :runs])
+   :inherited_turns :allowed_models :fallback_model :files :spawn_key :spawn_fingerprint :created_at
+   :resumed_turns :resumed_at :title :result :outcome :finished_at :ordinal :after :runs])
 
 (defn- agent-row
   [row]
@@ -5580,13 +5580,20 @@
                   (update :allowed_models
                           (fn [value]
                             (some->> (<-json value)
-                                     (mapv #(update-keys % keyword))))))
+                                     (mapv #(update-keys % keyword)))))
+                  (update :fallback_model
+                          #(some-> %
+                                   <-json
+                                   (update-keys keyword))))
         (nil? (:role row))
         (dissoc :role)
 
         ;; A child without a title, result, outcome or end time has no such key either.
         :always
-        (as-> r (apply dissoc r (filter #(nil? (get r %)) [:title :result :outcome :finished_at])))
+        (as-> r (apply dissoc
+                  r
+                  (filter #(nil? (get r %))
+                          [:title :result :outcome :finished_at :fallback_model])))
 
         files
         (assoc :files files)
@@ -6153,6 +6160,8 @@
                                       :depth 1
                                       :checkpoint (->blob (:checkpoint agent))
                                       :allowed_models (->json (:allowed_models agent))
+                                      :fallback_model (some-> (:fallback_model agent)
+                                                              ->json)
                                       :files (some-> (:files agent)
                                                      ->json)
                                       :created_at now)]}))

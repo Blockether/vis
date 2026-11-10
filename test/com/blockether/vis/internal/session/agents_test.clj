@@ -2736,3 +2736,103 @@
                                                      "Large"
                                                      {:timeout_secs 1})))
                   "A child can ask for more than 600"))))))
+
+(defdescribe
+  gateway-spawn-follows-subagent-model-settings-test
+  (it
+    "a spawn without a task model uses the project subagent model, its fallback and its only limit"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          project-id
+          (str (:id (ps/db-create-project! db
+                                           {:name "Model team"
+                                            :workspace-root (.getCanonicalPath
+                                                              (java.io.File.
+                                                                "/tmp/subagent-model-project"))})))
+
+          ;; The `toggles` of the project configuration files.
+          project-toggles
+          (atom {"subagent_model" {"provider" "p" "model" "large"}
+                 "subagent_fallback_model" {"provider" "q" "model" "mid"}})
+
+          router
+          {:providers [{:id :p :root "small" :models [{:name "small"} {:name "large"}]}
+                       {:id :q :root "big" :models [{:name "big"} {:name "mid"}]}]}
+
+          env
+          {:db-info db
+           :session-id leader
+           :router router
+           :turn-state-atom (atom {:agent-checkpoint [{:role :system :content "Rules"}
+                                                      {:role :user :content "Parent request"}]
+                                   :council {:activation-id "parent"}})
+           :security-policy {:process-jail {}}}
+
+          refusal
+          (fn [op opts]
+            (try (gateway/agents-operation! leader op opts)
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))
+
+          spawn!
+          (fn [opts]
+            (:session_id (gateway/agents-operation! leader :spawn opts)))]
+
+      (ps/db-set-session-project! db leader project-id)
+      (ps/db-store-session-turn!
+        db
+        {:parent-session-id leader :user-request "Parent task" :status :running})
+      (with-redefs-fn {#'lp/db-info (constantly db)
+                       #'config/load-project-tiers-raw (fn []
+                                                         {"toggles" @project-toggles})
+                       #'loop-router/get-router (constantly router)
+                       #'toggles/enabled? (constantly true)
+                       #'council/runtime (fn [_]
+                                           {leader {:activation-id "parent" :group-id project-id}})
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'live-env) (constantly
+                                                                                           env)
+                       (ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
+                       (atom {:eligible? (constantly true) :wake! (constantly true)})}
+        (fn []
+          (let [child
+                (spawn! {:task "Check on the setting model" :key "setting"})
+
+                tasked
+                (spawn! {:task "Check on the task model" :key "task" :provider "p" :model "small"})]
+
+            (expect (= {:provider "p" :model "large"} (smodel/model-of db child))
+                    "The subagent_model setting wins over the model of the parent")
+            (expect (= {:provider "p" :model "small"} (smodel/model-of db tasked))
+                    "A task model wins over the setting")
+            (expect (= {:provider "q" :model "mid"} (:fallback_model (agents/info db child))))
+            (expect (= [:q "mid"]
+                       ((juxt :id :root)
+                         (first (sort-by :priority
+                                         (:providers (agents/restrict-router {:db-info db
+                                                                              :session-id child}
+                                                                             router))))))
+                    "Automatic fallback of the child tries its fallback model first")
+            (expect (= :routing-locked
+                       (refusal :route {:session_id child :provider "p" :model "small"}))
+                    "A queued child keeps its model")
+            (expect (= {"provider" "p" "model" "large"}
+                       (select-keys (first (gateway/agents-operation! leader
+                                                                      :wait
+                                                                      {:session_ids [child]
+                                                                       :timeout_secs 1}))
+                                    ["provider" "model"]))
+                    "The wait record names the model of the child")
+            (swap! project-toggles assoc "subagent_model_only" true)
+            (expect (= :model-not-allowed
+                       (refusal
+                         :spawn
+                         {:task "Check elsewhere" :key "other" :provider "p" :model "small"}))
+                    "Only these models refuses another task model")
+            (expect
+              (= [{:provider "p" :model "large"} {:provider "q" :model "mid"}]
+                 (:allowed_models (agents/info db (spawn! {:task "Check inside" :key "inside"}))))
+              "Only these models limits the child to the setting model and its fallback")))))))
