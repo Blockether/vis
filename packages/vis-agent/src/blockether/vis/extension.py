@@ -365,38 +365,47 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _tool_data(value) -> Any:
+def _tool_data(value, path=()) -> Any:
     """One argument as JSON data.
 
     A dataclass instance travels as its class name and public fields, as from the
     sandbox. So does a record that a tool answered. A `types.SimpleNamespace` travels
-    as a dict of its public attributes.
+    as a dict of its public attributes. `path` holds the containers around `value`:
+    one that holds itself is refused with the text of `json`, as in the sandbox.
     """
+    if is_dataclass(value) or isinstance(
+        value, (Mapping, SimpleNamespace, list, tuple)
+    ):
+        if any(value is held for held in path):
+            raise ValueError("Circular reference detected")
+        path = (*path, value)
     name = getattr(type(value), "__vis_object__", None)
     if isinstance(name, str) and isinstance(value, dict):
         return {
             _RECORD_NAME: name,
-            _RECORD_FIELDS: {key: _tool_data(item) for key, item in value.items()},
+            _RECORD_FIELDS: {
+                key: _tool_data(item, path) for key, item in value.items()
+            },
         }
     if is_dataclass(value) and not isinstance(value, type):
         return {
             _RECORD_NAME: type(value).__name__,
             _RECORD_FIELDS: {
-                f.name: _tool_data(getattr(value, f.name))
+                f.name: _tool_data(getattr(value, f.name), path)
                 for f in fields(value)
                 if not f.name.startswith("_")
             },
         }
     if isinstance(value, SimpleNamespace):
         return {
-            key: _tool_data(item)
+            key: _tool_data(item, path)
             for key, item in vars(value).items()
             if not key.startswith("_")
         }
     if isinstance(value, Mapping):
-        return {key: _tool_data(item) for key, item in value.items()}
+        return {key: _tool_data(item, path) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_tool_data(item) for item in value]
+        return [_tool_data(item, path) for item in value]
     return value
 
 

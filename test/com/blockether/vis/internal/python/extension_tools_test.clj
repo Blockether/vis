@@ -60,12 +60,18 @@
 
 (def ^:private client-source
   (str
-    "from __future__ import annotations\n" "import collections.abc\n"
-    "import json\n" "import blockether.vis.extension as vis\n"
-    "\n" "\n"
-    "def _refusal(call):\n" "    try:\n"
-    "        call()\n" "    except Exception as error:\n"
-    "        return f\"{type(error).__name__}: {error}\"\n" "    return \"no refusal\"\n"
+    "from __future__ import annotations\n"
+    "import collections.abc\n" "import json\n"
+    "import blockether.vis.extension as vis\n" "\n"
+    "\n" "def _refusal(call):\n"
+    "    try:\n" "        call()\n"
+    "    except Exception as error:\n" "        return f\"{type(error).__name__}: {error}\"\n"
+    "    return \"no refusal\"\n" "\n"
+    "\n"
+    ;; An author can use these names: the shell handle must not read them.
+    "def _shell_wait(spec):\n"
+    "    return {\"taken\": \"_shell_wait\"}\n" "\n"
+    "\n" "_shell_logs = _shell_stop = _shell_type = _shell_wait\n"
     "\n" "\n"
     "class Client:\n" "    def probe(self) -> dict:\n"
     "        \"Call svc through vis.tools and describe the answers.\"\n"
@@ -107,6 +113,10 @@
     "\n" "    def failing(self) -> str:\n"
     "        \"Call a tool that fails.\"\n"
     "        return _refusal(lambda: vis.tools.svc.fail())\n"
+    "\n" "    def cyclic(self) -> str:\n"
+    "        \"Call a tool with a list that holds itself.\"\n" "        held = [1]\n"
+    "        held.append({\"again\": held})\n"
+    "        return _refusal(lambda: vis.tools.svc.name(held))\n"
     "\n" "    def shell_handle(self) -> dict:\n"
     "        \"Run a command with the session shell tool and drive its handle.\"\n"
     "        sh = vis.tools.shell({\"command\": \"echo handle\"})\n"
@@ -255,7 +265,10 @@
               "similar: svc.back, svc.fail, svc.kinds, svc.name, svc.page, svc.plain, svc.reserve, svc.status")
             (call (exts "client") 'client.unknown)))
         (expect (= "VisToolError: ValueError: no browser available"
-                   (call (exts "client") 'client.failing))))))
+                   (call (exts "client") 'client.failing)))
+        ;; The sandbox refuses the same argument with the same words.
+        (expect (= "ValueError: Circular reference detected"
+                   (call (exts "client") 'client.cyclic))))))
   (it "stores an extension artifact in the calling block and reads it back"
       (with-tools (fn [exts]
                     (let [sink (atom [])]

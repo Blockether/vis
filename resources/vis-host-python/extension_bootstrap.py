@@ -185,18 +185,19 @@ def __vis_typed__(call):
     return typed
 
 
-def __vis_handle_op__(tool):
-    """The session tool `tool` as the name that a shell handle calls.
+def __vis_shell_route__(call_tool):
+    """The transports of a shell handle in this worker.
 
     A shell answer of `vis.tools` is the live handle of the runtime. The handle
     drives its process with the private shell tools, which `python_execution`
-    binds as session names. Here each name calls that tool through `vis.tools`.
+    binds as session names. Here the handle calls each tool through `vis.tools`.
+    The module of an extension shares these globals, so no name of them is bound.
     """
 
-    def op(spec):
-        return _vis_host.call_tool(tool, [spec], {})
+    def route(tool, spec):
+        return call_tool(tool, [spec], {})
 
-    return op
+    return route
 
 
 # Every `__vis_host_*__` name the host injected becomes a member of `_host`,
@@ -214,9 +215,9 @@ _vis_host = _vis_types.SimpleNamespace(
     }
 )
 _vis_host.call_tool = __vis_typed__(_vis_host.call_tool)
-for _vis_name in __VisShell__.__vis_shell_ops__:  # noqa: F821 — a runtime global.
-    if _vis_name.startswith("_"):
-        globals().setdefault(_vis_name, __vis_handle_op__(_vis_name))
+__VisShell__.__vis_shell_route__ = __vis_shell_route__(  # noqa: F821 — a runtime global.
+    _vis_host.call_tool
+)
 _vis_mod = _vis_sdk.install(
     _vis_body,  # noqa: F821 — supplied by the host with the canonical SDK source.
     _vis_host,
