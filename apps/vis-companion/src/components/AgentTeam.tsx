@@ -501,6 +501,7 @@ const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_7
 const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_minmax(0,1fr)] sm:grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
 const LEGEND_KEY = 'max-sm:row-span-2';
 const LEGEND_NOTE = 'min-w-0 max-sm:col-span-2 max-sm:col-start-2';
+// On a phone the note runs under ROLE and TITLE, so no hairline stands after them.
 const LEGEND_LAST = 'max-sm:after:hidden';
 
 // The bar column of a chart row: the inset of the row, the KEY and one gap on the left; one gap,
@@ -747,7 +748,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
         {leader && (
           <li className={LEGEND_ROW} data-hover-note-frame>
             <span className={`font-bold ${LEGEND_KEY} ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
-            <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
+            <span className={`font-bold uppercase ${CELL_RULE} ${LEGEND_LAST} ${LEADER_INK}`}>{LEADER_ROLE}</span>
             <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE} ${LEGEND_LAST}`}>{leaderWait(times)}</span>
             <HoverNote className={LEGEND_NOTE} note={leader.note}>
               <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
@@ -760,7 +761,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           return (
             <li key={agent.session_id} className={LEGEND_ROW} data-hover-note-frame>
               <span className={`${LEGEND_KEY} ${CELL_RULE} ${role.ink}`}>{keys[index]}</span>
-              <span className={`uppercase ${CELL_RULE} ${role.ink}`}>{role.text}</span>
+              <span className={`uppercase ${CELL_RULE} ${LEGEND_LAST} ${role.ink}`}>{role.text}</span>
               <HoverNote className={`min-w-0 ${CELL_RULE} ${LEGEND_LAST}`} note={taskNote(agent.task)}>
                 <span className="font-bold [overflow-wrap:anywhere]">{agentLabel(agent, rows)}</span>
               </HoverNote>
