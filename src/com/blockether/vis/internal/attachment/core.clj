@@ -597,14 +597,16 @@
   (str media-type " is not a provider-supported image format (JPEG, PNG, GIF, WebP)"))
 
 (defn- file-head
-  "The first [[sniff-bytes]] bytes of `f`. The file is never read whole."
-  ^bytes [^File f]
-  (with-open [raf (RandomAccessFile. f "r")]
-    (let [n (int (min (.length raf) (long sniff-bytes)))
-          buf (byte-array n)]
+  "The first `limit` bytes of `f`, by default [[sniff-bytes]]. The file is never
+   read whole."
+  (^bytes [^File f] (file-head f sniff-bytes))
+  (^bytes [^File f limit]
+   (with-open [raf (RandomAccessFile. f "r")]
+     (let [n (int (min (.length raf) (long limit)))
+           buf (byte-array n)]
 
-      (.readFully raf buf)
-      buf)))
+       (.readFully raf buf)
+       buf))))
 
 (defn sniff-file-mime
   "Read a file head and return its sniffed attachment media type. nil on any
@@ -758,13 +760,19 @@
               (> (+ at (long n) 6) size) (pos? confirmed)
               :else (recur (+ at (long n)) (inc confirmed)))))))
 
+(def ^:private frame-run-bytes
+  "The bytes that [[frame-run?]] can read: two frames of the largest length, the
+   8191 bytes of ADTS, and the header of a third."
+  (+ 8191 8191 6))
+
 (defn- lone-frame?
   "True when the `sniffed` audio type comes from one bare frame header that no
-   second frame confirms."
-  [sniffed ^bytes head]
+   second frame confirms. `frames` is the start of the bytes, at least
+   [[frame-run-bytes]] of it when the source is that long."
+  [sniffed ^bytes frames]
   (boolean (and (contains? #{"audio/mpeg" "audio/aac"} sniffed)
-                (or (adts-aac? head) (mpeg-audio-frame? head))
-                (not (frame-run? head)))))
+                (or (adts-aac? frames) (mpeg-audio-frame? frames))
+                (not (frame-run? frames)))))
 
 (defn- control-free?
   "True when the head holds no binary control character. Text in an 8-bit encoding
@@ -777,38 +785,37 @@
                        (or (<= c 0x08) (= c 0x0b) (<= 0x0e c 0x1a) (<= 0x1c c 0x1f) (= c 0x7f))))
                    (range n)))))
 
-(defn- text-name-wins?
-  "True when the `text/*` filename type `named` replaces the `sniffed` signature
-   type. Text can start with the bytes of a signature: in Windows-1251, one letter
-   is the byte `FF`, the start of an audio frame header. So an audio or video
-   signature yields when the bytes read as text. A picture and a PDF keep their
-   signature type: the head of a small PDF is text too."
-  [sniffed named ^bytes head]
-  (boolean (and named
-                (str/starts-with? named "text/")
-                (or (audio-media-type? sniffed) (video-media-type? sniffed))
-                (control-free? head))))
+(defn- text-not-media?
+  "True when the `sniffed` audio or video signature stands at the start of text.
+   Text can start with the bytes of a signature: in Windows-1251, one letter is the
+   byte `FF`, the start of an audio frame header, and a line of fixed width can
+   repeat it at each frame length. The head of a recording holds binary control
+   characters; text holds none. A picture and a PDF keep their signature type: the
+   head of a small PDF is text too."
+  [sniffed ^bytes head]
+  (boolean (and (or (audio-media-type? sniffed) (video-media-type? sniffed)) (control-free? head))))
 
 (defn- attached-type
-  "The rule of [[attached-media-type]] for a `sniffed` signature type or nil."
-  [sniffed hint filename ^bytes head]
+  "The rule of [[attached-media-type]] for a `sniffed` signature type or nil.
+   `head` is the start of the bytes and `frames` the start that [[lone-frame?]]
+   reads."
+  [sniffed hint filename ^bytes head ^bytes frames]
   (let [sniffed
-        (when-not (lone-frame? sniffed head) sniffed)
+        (when-not (or (text-not-media? sniffed head) (lone-frame? sniffed frames)) sniffed)
 
         named
         (if (re-find #"(?i)\.(?:jsonl|ndjson)$" (str/trim (str filename)))
           "application/x-ndjson"
           (not-empty (str/trim (str hint))))]
 
-    (or (when (text-name-wins? sniffed named head) named)
-        ;; A workbook, an EPUB and a JAR are ZIP archives too: the filename type names
+    (or ;; A workbook, an EPUB and a JAR are ZIP archives too: the filename type names
         ;; which format the generic ZIP sniff stands for. No other type names ZIP bytes.
-        (if (and (= "application/zip" sniffed) named (zip-format-media-type? named)) named sniffed)
-        (held-back-image-mime head)
-        named
-        (when (json-lines? head) "application/x-ndjson")
-        (when (utf8-text? head) "text/plain")
-        "application/octet-stream")))
+      (if (and (= "application/zip" sniffed) named (zip-format-media-type? named)) named sniffed)
+      (held-back-image-mime head)
+      named
+      (when (json-lines? head) "application/x-ndjson")
+      (when (utf8-text? head) "text/plain")
+      "application/octet-stream")))
 
 (defn attached-media-type
   "The media type of bytes that a tool attaches without an explicit type. This is
@@ -817,25 +824,35 @@
 
    1. A signature or root-element sniff, also for a picture that
       [[detect-image-mime]] holds back from a provider. For ZIP bytes, a filename
-      type of a ZIP-based format replaces `application/zip`. A `text/*` filename
-      type replaces an audio or video signature when the bytes hold no binary
-      control character. A bare audio frame header is a signature only when a
-      second frame follows it at the frame length.
+      type of a ZIP-based format replaces `application/zip`. An audio or video
+      signature counts only when the bytes hold a binary control character: text
+      holds none. A bare audio frame header is a signature only when a second
+      frame follows it at the frame length.
    2. The filename type: `application/x-ndjson` for a `.jsonl` or `.ndjson`
       `filename`, else `hint`, the type that the caller reads from the name.
    3. `application/x-ndjson` when the first two lines are JSON objects.
    4. `text/plain` for UTF-8 text without binary control characters.
    5. `application/octet-stream`."
   [^bytes b hint filename]
-  (attached-type (detect-signature-mime b) hint filename b))
+  (attached-type (detect-signature-mime b) hint filename b b))
 
 (defn attached-file-media-type
-  "[[attached-media-type]] for a file on disk, from its head only: a file that is
-   larger than the attachment limit is never read whole."
+  "[[attached-media-type]] for a file on disk, from its start only: a file that is
+   larger than the attachment limit is never read whole. It reads the bytes that
+   decide the type of the whole file, so a file has one type at each size."
   [^File f hint filename]
-  (let [head (file-head f)]
+  (let [frames
+        (file-head f frame-run-bytes)
+
+        head
+        (Arrays/copyOf frames (int (min (alength frames) (long sniff-bytes))))]
+
     ;; The registry of a Word document can be past this head: ask the file first.
-    (attached-type (or (detect-docx-file f head) (detect-signature-mime head)) hint filename head)))
+    (attached-type (or (detect-docx-file f head) (detect-signature-mime head))
+                   hint
+                   filename
+                   head
+                   frames)))
 
 ;; Path-candidate extraction
 

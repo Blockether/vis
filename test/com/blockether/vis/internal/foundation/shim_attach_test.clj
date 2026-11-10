@@ -427,6 +427,50 @@
       (expect (re-find #"READ read_attachment: \"talk.mp3\" is a reference to .*talk\.mp3" so))
       (expect (str/includes? so "SMALL None"))
       (expect (some? (:base64 small)))))
+  ;; A file has one media type: the reference of a large file and the stored bytes
+  ;; of the same file agree, also when its first audio frame is longer than 4 kB.
+  (it
+    "names a file by the same rule as a reference and as bytes"
+    (let [root
+          (.getCanonicalPath (java.io.File. (temp-root)))
+
+          write!
+          (fn [filename data]
+            (let [file (java.io.File. root (str filename))]
+              (with-open [out (java.io.FileOutputStream. file)]
+                (.write out (byte-array (map unchecked-byte data))))
+              (.getPath file)))
+
+          clip
+          (write! "clip.dat"
+                  (apply concat
+                    (repeat 6 (concat [0xff 0xf1 0x4d 0xc2 0x32 0x9f 0xfc] (repeat 4493 0)))))
+
+          log
+          (write! "server.log"
+                  (apply concat
+                    (repeat 400 [0xff 0xe2 0xeb 0xe5 0xed 0xe8 0xe5 0x20 0x31 0x32 0x0a])))
+
+          run
+          (fn [limit]
+            (extension/with-context
+              {:env {:session-id (random-uuid) :workspace {:root root}}}
+              (binding [mpl-capture/*attachment-limit-bytes* limit]
+                (:stdout
+                  (block
+                    (ctx-with-root root)
+                    (str "for p in ("
+                         (pr-str clip)
+                         ", "
+                         (pr-str log)
+                         "):\n"
+                         "    d = attach(p)\n"
+                         "    print('TYPE', d.get('storage') or 'bytes', d['media_type'])\n"))))))]
+
+      (expect (= ["TYPE reference audio/aac" "TYPE reference application/octet-stream"]
+                 (re-seq #"TYPE .*" (str (run 100)))))
+      (expect (= ["TYPE bytes audio/aac" "TYPE bytes application/octet-stream"]
+                 (re-seq #"TYPE .*" (str (run 1000000)))))))
   (it "refuses in-memory bytes above the limit, because no file can be referenced"
       (let [out (binding [mpl-capture/*attachment-limit-bytes* 100]
                   (block (ctx-with-root (temp-root))
@@ -1234,7 +1278,14 @@
     "application/octet-stream"]
    ["frame-alone" "bytes([0xFF, 0xFB, 0x90, 0x64])" nil "application/octet-stream"]
    ["mp3-txt" "mp3" "song.txt" "audio/mpeg"] ["mp3-log" "mp3" "song.log" "audio/mpeg"]
-   ["aac" "aac" nil "audio/aac"] ["aac-txt" "aac" "song.txt" "audio/aac"]])
+   ["aac" "aac" nil "audio/aac"] ["aac-txt" "aac" "song.txt" "audio/aac"]
+   ;; A line of fixed width can put the same word at each frame length. Text holds no
+   ;; binary control character, so it is not media under any filename.
+   ["cp1251-lines" "bytes.fromhex('ffe2ebe5ede8e52031320a') * 400" "server.log"
+    "application/octet-stream"]
+   ["cp1251-lines-json" "bytes.fromhex('ffe2ebe5ede8e52031320a') * 400" "data.json"
+    "application/json"] ["flac-words-bare" "b'fLaC is a codec\\n'" nil "text/plain"]
+   ["flac-words-json" "b'fLaC is a codec\\n'" "data.json" "application/json"]])
 
 (def ^:private door-prelude
   "Python names that the rows of [[door-cases]] use: `apng` is a real 1x1 PNG
