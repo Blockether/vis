@@ -1,12 +1,12 @@
 import { useId, useState } from 'react';
 import { useCommands } from '../lib/commands';
 import type { Subagent } from '../lib/types';
-import { TeamLine, TimelineToggle, TurnAgents, dockTeams, hasTimeline, useWide, type TeamProps } from './AgentTeam';
+import { TeamLine, TimelineToggle, TurnAgents, dockTeams, hasTimeline, type TeamProps } from './AgentTeam';
 import { ChevronIcon, MARK_NUDGE } from './icons';
 
 /**
  * The subagents of the running turn, above the composer, folded to one line: the time of
- * the team and its counts by status. The line opens the table of the team. On a wide screen,
+ * the team and its counts by status. The line opens the table of the team.
  * Open timeline after the team word opens the table with the time bars of its agents. A team stays here while
  * one of its agents still works after its turn ended; then it stands in that turn of the
  * transcript.
@@ -20,7 +20,6 @@ export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<
   const [isTimeline, setTimeline] = useState(false);
   const body = useId();
   const line = useId();
-  const isWide = useWide();
   const teams = dockTeams(agents, sid, runningTurnId);
   // C-x b a folds the dock; C-x t t opens it.
   useCommands({
@@ -32,7 +31,7 @@ export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<
   // running turn heads it only when that turn started a team.
   const members = teams.flat();
   const head = teams.some((team) => team[0].team_id === runningTurnId) ? leader : undefined;
-  const toggle = isWide && hasTimeline(members, head) ? (
+  const toggle = hasTimeline(members, head) ? (
     <TimelineToggle
       isOn={open && isTimeline}
       onToggle={() => {

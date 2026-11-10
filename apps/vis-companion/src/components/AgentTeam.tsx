@@ -228,7 +228,7 @@ function useNow(ticking: boolean): number {
 }
 
 // A wide screen: the `sm` width of the theme. A row there shows the note of its agent beside its
-// title, and the team can show its timeline.
+// title.
 const WIDE = '(min-width: 640px)';
 
 export function useWide(): boolean {
@@ -533,16 +533,18 @@ interface TableProps {
   rows: readonly Subagent[];
   now: number;
   onSelect: (sid: string) => void;
-  /** A wide screen shows the time bars of the team instead of the notes. */
+  /** Show the time bars of the team instead of the notes. */
   isTimeline?: boolean;
   /** The leader turn, drawn as the first lane of the chart. */
   leader?: LeaderLane;
 }
 
 // The table of one team. A row opens the sheet of its agent. A wide screen shows the note of
-// each agent beside its title, or the time bars of the team on one axis.
+// each agent beside its title. The time bars of the team on one axis show on every screen.
 function AgentTable(props: TableProps) {
-  return useWide() ? <WideAgentTable {...props} /> : <PhoneAgentTable {...props} />;
+  const isWide = useWide();
+  if (props.isTimeline && hasTimeline(props.rows, props.leader)) return <TeamChart {...props} />;
+  return isWide ? <WideAgentTable {...props} /> : <PhoneAgentTable {...props} />;
 }
 
 // The leader row on a phone, in the shape of an agent row. It opens nothing: the leader is this session.
@@ -598,8 +600,7 @@ function PhoneAgentTable({ rows, now, onSelect, leader }: TableProps) {
 }
 
 function WideAgentTable(props: TableProps) {
-  const { rows, now, onSelect, isTimeline = false, leader } = props;
-  if (isTimeline && hasTimeline(rows, leader)) return <TeamChart {...props} />;
+  const { rows, now, onSelect, leader } = props;
   return (
     <div style={columnWidths(rows, leader)}>
       <ul>
@@ -652,9 +653,10 @@ function WideLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
   );
 }
 
-// The chart of a team on a wide screen: the time axis, the lane of the leader, then one lane for
-// each agent in spawn order, on one scale. A lane shows only its key; the legend under the rule
-// gives each key its role and title. An agent lane opens the sheet of its agent.
+// The chart of a team: the time axis, the lane of the leader, then one lane for each agent in
+// spawn order, on one scale. A lane shows only its key; the legend under the rule gives each key
+// its role and title. An agent lane opens the sheet of its agent. Its rows carry their own inset,
+// so on a phone it cancels the inset of the frame.
 function TeamChart({ rows, now, onSelect, leader }: TableProps) {
   const span = chartSpan(rows, now, leader);
   if (!span) return null;
@@ -669,7 +671,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
     '--key': `${Math.max(2, ...keys.map((key) => key.length))}ch`,
   } as CSSProperties;
   return (
-    <div style={widths} className="pb-1" data-team-chart>
+    <div style={widths} className="-mx-3 pb-1 sm:mx-0" data-team-chart>
       <div aria-hidden className={`pt-1 text-dialog-hint ${CHART_ROW}`}>
         <span className={CELL_RULE} />
         <span className="relative h-[calc(1lh+0.25rem)] border-b border-dialog-edge/50"><AxisLabels total={total} /></span>
@@ -773,12 +775,11 @@ export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', i
   isTimeline?: boolean;
 }) {
   const [isOwnTimeline, setOwnTimeline] = useState(false);
-  const isWide = useWide();
   const now = useNow(agents.some((agent) => agent.status === 'running') || (leader != null && leader.end == null));
   if (agents.length === 0) return null;
   const rows = spawnOrder(agents);
   const table = <AgentTable rows={rows} now={now} onSelect={onOpen} isTimeline={isTimeline ?? isOwnTimeline} leader={leader} />;
-  const toggle = isWide && hasTimeline(rows, leader)
+  const toggle = hasTimeline(rows, leader)
     ? <TimelineToggle isOn={isOwnTimeline} onToggle={() => setOwnTimeline((value) => !value)} />
     : undefined;
   return placement === 'transcript' ? (

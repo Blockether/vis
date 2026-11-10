@@ -32,7 +32,7 @@ const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: '
   provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 }, created_at: T0 };
 const props = { onOpen: vi.fn() };
 
-const rowTexts = () => screen.getAllByRole('button').map((row) => row.textContent);
+const rowTexts = () => screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row')).map((row) => row.textContent);
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -221,6 +221,22 @@ describe('agent rows', () => {
     expect(lanes).toEqual(['L leader30sdone', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
     const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
     expect(legend).toEqual(['Lleaderwaited 12s of 30sBoth reviews pass.', 'A1verifyCompanion reviewAll 12 keys pass', 'A2verifyTUI review']);
+  });
+
+  // User report 2026-11-10: a team finished on a phone, and the phone had no control to open its timeline.
+  it('opens the timeline of a team on a phone, in the transcript and in the dock', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+    const agents = [
+      { ...child, title: 'Companion review', status: 'completed' as const, finished_at: T0 + 9_000 },
+      { ...child, session_id: 'tui', title: 'TUI review', status: 'running' as const },
+    ];
+    const { unmount } = render(<TurnAgents {...props} agents={agents.map((agent) => ({ ...agent, status: 'completed' as const, finished_at: T0 + 9_000 }))} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    expect(within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem')).toHaveLength(2);
+    unmount();
+    render(<AgentDock sid="leader" runningTurnId="turn-1" onOpen={vi.fn()} agents={agents} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    expect(within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem')).toHaveLength(2);
   });
 
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {
