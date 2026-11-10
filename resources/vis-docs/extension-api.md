@@ -1118,10 +1118,13 @@ vis.OpHook(ops, fn, phase="before")
 `ops` names operations such as `"patch"`, `"shell"` or `"python_execution"`.
 A hook also works on a tool of another extension. Write the name that
 `python_execution` calls, for example `"clj.repl_start"`. The hook then receives
-that name as `call["op"]`.
-For such a tool, `args` holds the positional arguments, then one dict with the
-keyword arguments. The call `clj.repl_start("app", aliases=["dev"])` gives
-`["app", {"aliases": ["dev"]}]`.
+that name as `call["op"]`. For such a tool, `args` holds the positional
+arguments, then one dict with the keyword arguments. The call
+`clj.repl_start("app", aliases=["dev"])` gives `["app", {"aliases": ["dev"]}]`.
+
+A hook on a name that no loaded tool or operation has never runs. `vis-agent
+doctor` and the log then show a warning with the correct name, when Vis can find
+one.
 
 With `phase="before"`, `fn(call)` receives `{"op", "args"}`. Return `None` to
 allow the call or `vis.block(reason)` to refuse it. The model sees the reason

@@ -4132,6 +4132,35 @@ vis.register_extension(vis.Extension(name='name-hook', description='Name fixture
                  (hooked-ops ["nst.other"])))))
 
 (defdescribe
+  op-hook-target-doctor-test
+  ;; Issue #459: a hook whose op names no tool never ran, and nothing said so.
+  (it
+    "warns in doctor about a hook op that names no tool, with the correct name"
+    (with-fresh-loaded
+      {"ns_tool.py" python-name-tool-py
+       "name_hook.py"
+       "import blockether.vis.extension as vis
+
+def before(call):
+    return None
+
+vis.register_extension(vis.Extension(name='name-hook', description='Name fixture.',
+    op_hooks=[vis.OpHook(['nst.repl_start', 'nst/repl_start', 'nst.repl_strat', 'git/commit'], before)]))
+"}
+      (fn [_ _]
+        (expect
+          (=
+            [["`nst/repl_start`" "Write `nst.repl_start`, the name that python_execution calls."]
+             ["`nst.repl_strat`"
+              "Write the name that python_execution calls, or load the extension that owns the tool."]]
+            (for [{:keys [check-id message remediation]}
+                  (#'com.blockether.vis.internal.python.extensions/doctor-fn {})
+
+                  :when (= :com.blockether.vis.internal.python.extensions/op-hook-target check-id)]
+
+              [(re-find #"`[^`]+`" message) remediation])))))))
+
+(defdescribe
   code-quality-recipe-test
   (it
     "runs the documented hook after patches, plain writes and failed Python blocks"

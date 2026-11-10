@@ -4746,6 +4746,27 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (when (or (not prepare?) (contains? prepared project-root))
       (::scope-result (meta (get fingerprints project-root))))))
 
+(defn- unmatched-op-hook-findings
+  "Doctor rows for each op hook that names no loaded tool or host operation."
+  []
+  (for [{:keys [extension op suggestion]}
+        (distinct (extension/unmatched-op-hooks (extension/registered-extensions)))]
+
+    {:level :warn
+     :check-id ::op-hook-target
+     :message (str "Extension '" extension "' has an op hook on `" op
+                   "`, which names no loaded tool or host operation, so the hook never runs.")
+     :remediation (if suggestion
+                    (str "Write `" suggestion "`, the name that python_execution calls.")
+                    "Write the name that python_execution calls, or load the extension that owns the tool.")}))
+
+(defn- warn-unmatched-op-hooks!
+  "Log each op hook that never runs, after a load that changed the extensions."
+  [{:keys [changed?]}]
+  (when changed?
+    (doseq [{:keys [message remediation]} (unmatched-op-hook-findings)]
+      (tel/log! {:level :warn :id ::op-hook-target :msg (str message " " remediation)}))))
+
 (defn- load-scopes!
   [opts force?]
   (let [explicit?
@@ -4871,14 +4892,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    packages and missing environments are prepared before registration. Explicit
    `:dirs` loads an unmanaged catalog; `:project-root` scopes that catalog."
   ([] (load-python-extensions! nil))
-  ([opts] (load-scopes! opts true)))
+  ([opts] (doto (load-scopes! opts true) warn-unmatched-op-hooks!)))
 
 (defn ensure-python-extensions-loaded!
   "Admit each project's configuration and extension bytes once. Session cache misses
    and recycling reuse that project's admitted catalog; only explicit reload adopts edits.
    `:global-only?` admits the global catalog alone, for a process with no project bound."
   ([] (ensure-python-extensions-loaded! nil))
-  ([opts] (load-scopes! opts false)))
+  ([opts] (doto (load-scopes! opts false) warn-unmatched-op-hooks!)))
 
 (defn prepare-project!
   "Prepare a project's declared packages, dependencies and isolated extension catalog.
@@ -4916,7 +4937,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                                  (str "import package_paths; package_paths.refresh("
                                                       (python-string-literal (runtime/packages-dir))
                                                       ", reload=True)"))))
-                               (load-scopes! (assoc opts :force? true) true))))))))
+                               (doto (load-scopes! (assoc opts :force? true) true)
+                                 warn-unmatched-op-hooks!))))))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 
@@ -5347,6 +5369,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                      {:level :info
                       :check-id ::load
                       :message (str "Python extension '" ext-name "' loaded from " path)})
+                   (unmatched-op-hook-findings)
                    (sdk-version-messages (gateway-runtime/sdk-version)
                                          (editor-sdk-dirs (workspace/cwd-root))))))))
 

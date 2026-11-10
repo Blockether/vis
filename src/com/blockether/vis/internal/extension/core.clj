@@ -1376,11 +1376,34 @@
     (str alias "/" sym)
     (str sym)))
 
+(defn sym->py-name
+  "Clojure tool/binding symbol -> a Python-LEGAL global name. Purely mechanical:
+   `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
+   marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
+   `git/status` -> `git_status`, `git/commit!` -> `git_commit`, and `file-exists` ->
+   `file_exists`. FULL SNAKE:
+   this is how the agent reaches the tools — `git_status()` calls `git/status`."
+  ^String [sym]
+  (let [s
+        (str sym)
+
+        pred?
+        (str/ends-with? s "?")
+
+        base
+        (-> s
+            (str/replace "?" "")
+            (str/replace "!" "")
+            (str/replace "/" "_")
+            (str/replace "-" "_"))]
+
+    (if pred? (str "is_" base) base)))
+
 (defn- tool-op-keywords
   "Each operation name that an op hook can give for tool `sym` of `ext`: the
    operation name `alias/sym` and the name that `python_execution` calls."
   [ext sym]
-  (distinct [(keyword (tool-call-name ext sym)) (keyword (str (symbol-binding ext sym)))]))
+  (distinct [(keyword (tool-call-name ext sym)) (keyword (sym->py-name (symbol-binding ext sym)))]))
 
 (defn- tool-start-label
   "One-line human label for the PRIMARY argument of a tool call, so Activity can
@@ -3084,6 +3107,42 @@
                                      (set (map :ext/name extensions)))
     (swap! project-extensions assoc root extensions)
     extensions))
+
+(def host-operations
+  "Operations that are not tools but run op hooks: the Python block, the draft
+   lifecycle and each Git commit. With the tools and `gate-ops`, they are every
+   name that an op hook can match."
+  #{:python_execution :draft/create :draft/sync :draft/approve :draft/discard :git/commit})
+
+(defn unmatched-op-hooks
+  "One row for each op hook of `extensions` that names no tool of `extensions`, no
+   host operation and no gate: `{:extension :op :suggestion}`. A hook like that never
+   runs. `:suggestion` is the Python name of a tool that differs only in its
+   separators, or nil."
+  [extensions]
+  (let [tool-names
+        (for [ext extensions
+              entry (ext-symbols ext)]
+          [(tool-op-keywords ext (:ext.symbol/symbol entry))
+           (sym->py-name (symbol-binding ext (:ext.symbol/symbol entry)))])
+
+        known
+        (into (into host-operations (keys gate-ops)) (mapcat first) tool-names)
+
+        folded
+        #(str/replace (str %) #"[./-]" "_")]
+
+    (for [ext extensions
+          {:keys [op]} (:ext/op-hooks ext)
+          :let [op-kw (or (gate-op op) (keyword op))]
+          :when (not (contains? known op-kw))]
+
+      {:extension (:ext/name ext)
+       :op (subs (str op-kw) 1)
+       :suggestion (some (fn [[_ python-name]]
+                           (when (= (folded python-name) (folded (subs (str op-kw) 1)))
+                             python-name))
+                         tool-names)})))
 
 (defn registered-extensions
   "Native/global extensions plus a project's overrides, in registration order. Without

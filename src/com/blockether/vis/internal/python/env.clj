@@ -293,28 +293,8 @@
          ;; model never actually sees.
          :else (leaf->py x path))))
 
-(defn sym->py-name
-  "Clojure tool/binding symbol -> a Python-LEGAL global name. Purely mechanical:
-   `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
-   marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
-   `git/status` -> `git_status`, `git/commit!` -> `git_commit`, and `file-exists` ->
-   `file_exists`. FULL SNAKE:
-   this is how the agent reaches the tools — `git_status()` calls `git/status`."
-  ^String [sym]
-  (let [s
-        (str sym)
-
-        pred?
-        (str/ends-with? s "?")
-
-        base
-        (-> s
-            (str/replace "?" "")
-            (str/replace "!" "")
-            (str/replace "/" "_")
-            (str/replace "-" "_"))]
-
-    (if pred? (str "is_" base) base)))
+(def ^{:arglists '([sym]) :doc (:doc (meta #'extension/sym->py-name))} sym->py-name
+  extension/sym->py-name)
 
 (defn- python-string-literal
   ^String [x]
