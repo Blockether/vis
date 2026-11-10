@@ -287,19 +287,22 @@ def attach(options):
     if not data:
         raise RuntimeError("attach: empty payload.")
     name = options.get("filename") or "artifact"
-    media_type = str(
-        options.get("media_type")
+    # As in the engine, each given value counts as its text, and blank text is no value.
+    given = options.get("media_type")
+    media_type = (
+        ("" if given is None else str(given).strip())
         or options.get("media_type_hint")
         or "application/octet-stream"
     )
+    kind = options.get("kind")
     with _LOCK:
         row = {
-            "id": uuid.uuid4().hex,
+            "id": str(uuid.uuid4()),
             "source": "tool",
             "filename": name,
             "version": 1 + sum(1 for r in _ARTIFACTS if r["filename"] == name),
             "media_type": media_type,
-            "kind": options.get("kind")
+            "kind": ("" if kind is None else str(kind))
             or ("image" if media_type.startswith("image/") else "file"),
             "size": len(data),
             "is_pending": True,
@@ -326,8 +329,22 @@ def list_attachments():
         return json.dumps(_ARTIFACTS)
 
 
+# The engine quotes a name as Clojure `pr-str` does: each other character stays.
+_QUOTED = str.maketrans(
+    {
+        '"': '\\"',
+        "\\": "\\\\",
+        "\n": "\\n",
+        "\t": "\\t",
+        "\r": "\\r",
+        "\f": "\\f",
+        "\b": "\\b",
+    }
+)
+
+
 def _quoted(text):
-    return json.dumps(text, ensure_ascii=False)
+    return '"' + str(text).translate(_QUOTED) + '"'
 
 
 def _artifact(caller, target, version):

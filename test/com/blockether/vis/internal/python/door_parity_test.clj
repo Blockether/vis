@@ -65,6 +65,7 @@
     "            raise OSError(f'cannot write mode {self.mode} as JPEG')\n"
     "        if format == 'JPEG':\n"
     "            target.write(b'\\xff\\xd8\\xff\\xe0' + bytes(32))\n"
+    "        elif format == 'GIF':\n" "            target.write(b'GIF89a' + bytes(32))\n"
     "        else:\n" "            target.write(_png(3, 2))\n"))
 
 (def ^:private parity-source
@@ -106,33 +107,20 @@
   [;; -- attach: each shape of source --
    [:attach-path "out = attach(ROOT + '/notes.txt')"]
    [:attach-path-renamed "out = attach(ROOT + '/notes.txt', 'renamed.md', label='Two\\nlines')"]
-   [:attach-bytes-default-name "out = attach(b'plain words\\n')"]
    [:attach-figure "out = attach(Figure())"]
    [:attach-figure-named "out = attach(Figure(), 'plot.png', label='A plot')"]
    [:attach-image "out = attach(Picture(), 'crop.png')"]
    [:attach-image-default-name "out = attach(Picture())"]
    [:attach-rgba-jpeg "out = attach(Picture('RGBA'), 'shot.jpg')"]
+   [:attach-image-gif "out = attach(Picture(), 'anim.gif')"]
    [:attach-media-type "out = attach(b'fLaC' + bytes(4), 'a.flac', media_type='text/x-note')"]
    [:attach-pathlike "import pathlib\nout = attach(pathlib.Path(ROOT) / 'notes.txt')"]
    ;; -- attach: keyword aliases --
-   [:alias-name "out = attach(b'x\\n', name='n.txt')"]
-   [:alias-file-name "out = attach(b'x\\n', file_name='n.txt')"]
    [:alias-path "out = attach(path=ROOT + '/notes.txt')"]
    [:alias-file "out = attach(file=ROOT + '/notes.txt')"]
    [:alias-src "out = attach(src=ROOT + '/notes.txt')"]
-   [:alias-title "out = attach(b'x\\n', 'n.txt', title='T')"]
-   [:alias-caption "out = attach(b'x\\n', 'n.txt', caption='T')"]
-   [:alias-description "out = attach(b'x\\n', 'n.txt', description='T')"]
-   [:alias-alt "out = attach(b'x\\n', 'n.txt', alt='T')"]
-   [:alias-mime "out = attach(b'x\\n', 'n.txt', mime='text/x-note')"]
-   [:alias-mime-type "out = attach(b'x\\n', 'n.txt', mime_type='text/x-note')"]
-   [:alias-content-type "out = attach(b'x\\n', 'n.txt', content_type='text/x-note')"]
-   [:alias-type "out = attach(b'x\\n', 'n.txt', type='note')"]
    ;; -- attach: refusals --
-   [:attach-nothing "out = attach()"] [:attach-missing "out = attach(ROOT + '/absent.txt')"]
-   [:attach-directory "out = attach(ROOT)"] [:attach-wrong-source "out = attach(42)"]
-   [:attach-audience-case "out = attach(b'x\\n', 'n.txt', audience=' User ')"]
-   [:attach-document-for-model "out = attach(b'%PDF-1.4\\n', 'r.pdf', audience='model')"]
+   [:attach-missing "out = attach(ROOT + '/absent.txt')"] [:attach-directory "out = attach(ROOT)"]
    [:attach-document "out = attach(b'%PDF-1.4\\n', 'r.pdf')"]
    [:attach-for-model "out = attach(Figure(), 'plot.png', audience='model')"]
    ;; -- attach: a file above the limit stays on disk as a reference --
@@ -410,7 +398,15 @@
    three doors, so a change of the front changes each door equally: only a fixed
    value sees it. Of the JSON value, a row names the keys that it checks. Each row
    of [[verb-fixture]] has such an answer."
-  (into {:attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}}
+  (into {:attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}
+         :attach-image-gif {"json" {"media_type" "image/gif" "filename" "anim.gif"}}
+         :attach-figure {"json" {"media_type" "image/png" "filename" "figure.png"}}
+         :attach-image-default-name {"json" {"media_type" "image/png" "filename" "image.png"}}
+         :attach-path {"json" {"filename" "notes.txt"}}
+         :alias-path {"json" {"filename" "notes.txt"}}
+         :alias-file {"json" {"filename" "notes.txt"}}
+         :alias-src {"json" {"filename" "notes.txt"}}
+         :attach-directory {"error" "IsADirectoryError"}}
         (map (fn [row]
                [(keyword (get row "name")) (get row "expect")]))
         (get verb-fixture "cases")))

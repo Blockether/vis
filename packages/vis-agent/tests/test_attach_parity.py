@@ -110,3 +110,37 @@ def test_attach_stores_an_image_with_alpha_as_jpeg():
 
     assert row["media_type"] == "image/jpeg"
     assert vis.read_attachment(row).startswith(b"\xff\xd8\xff")
+
+
+def test_attach_names_a_directory(tmp_path):
+    with pytest.raises(IsADirectoryError) as refusal:
+        vis.attach(tmp_path)
+
+    assert str(refusal.value) == f"attach: {tmp_path} is a directory - attach one file"
+
+
+# A line break in a caption breaks the transcript fence of the attachment.
+def test_attach_sends_a_caption_of_one_line(monkeypatch):
+    sent = []
+    store = _outside.host.attach
+    monkeypatch.setattr(
+        _outside.host, "attach", lambda options: sent.append(options) or store(options)
+    )
+
+    vis.attach(b"x\n", "n.txt", label="Two\n  lines\t here ")
+
+    assert sent[0]["label"] == "Two lines here"
+
+
+def test_attach_writes_an_image_in_the_format_of_its_filename():
+    asked = []
+
+    class Recorder(Picture):
+        def save(self, target, format="PNG"):
+            asked.append(format)
+            super().save(target, format)
+
+    for name in ("a.gif", "a.webp", "a.bmp", "a.png", "a.jpeg"):
+        vis.attach(Recorder("RGB"), name)
+
+    assert asked == ["GIF", "WEBP", "BMP", "PNG", "JPEG"]

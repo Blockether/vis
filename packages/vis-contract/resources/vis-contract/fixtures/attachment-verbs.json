@@ -1,9 +1,10 @@
 {
-  "description": "Attachment verb rules. Each case runs `code` as Python with the five verbs `attach`, `list_attachments`, `get_attachment`, `read_attachment` and `show_attachment` in an empty store. The code needs bytes only and puts the result in `out`. `expect` is the answer of the engine. For a value, `json` holds the fields of `out` that the case fixes, and `keys` holds each key of `out`. For a refusal, `error` is the class name and `message` is its text. The engine test `door-parity-test` runs each case in `python_execution`, in a sandbox worker and in a real extension worker. The SDK test `test_attach_parity.py` runs each case on the host outside Vis. Where that host answers differently, the case has an `outside` object with a `reason` (a key of `exceptions`) and its own `expect`.",
+  "description": "Attachment verb rules. Each case runs `code` as Python with the five verbs `attach`, `list_attachments`, `get_attachment`, `read_attachment` and `show_attachment` in an empty store. The code needs bytes only, or the directory `.`, and puts the result in `out`. `expect` is the answer of the engine. For a value, `json` holds the fields of `out` that the case fixes, and `keys` holds each key of `out`. For a refusal, `error` is the class name and `message` is its text. The engine test `door-parity-test` runs each case in `python_execution`, in a sandbox worker and in a real extension worker. The SDK test `test_attach_parity.py` runs each case on the host outside Vis. Where that host answers differently, the case has an `outside` object with a `reason` (a key of `exceptions`) and its own `expect`.",
   "exceptions": {
     "audience": "Outside Vis, no rule keeps a document for the user only. The audience is the one that the call names, else `both`.",
     "position": "Outside Vis, the descriptor that a read verb returns has no `position` key.",
-    "error-class": "In Vis, a refusal of the engine is `VisToolError`, a `RuntimeError`. Outside Vis that class does not exist: the refusal is a `RuntimeError` with the same words."
+    "error-class": "In Vis, a refusal of the engine is `VisToolError`, a `RuntimeError`. Outside Vis that class does not exist: the refusal is a `RuntimeError` with the same words.",
+    "bytes": "Outside Vis, the bytes of a payload do not name its media type or its kind. The filename and the call name them."
   },
   "cases": [
     {
@@ -407,6 +408,357 @@
             ]
           ]
         }
+      }
+    },
+    {
+      "name": "alias-name",
+      "code": [
+        "out = attach(b'x\\n', name='n.txt')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt"
+        }
+      }
+    },
+    {
+      "name": "alias-file-name",
+      "code": [
+        "out = attach(b'x\\n', file_name='n.txt')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt"
+        }
+      }
+    },
+    {
+      "name": "alias-source-path",
+      "code": [
+        "out = attach(path=b'x\\n', filename='n.txt')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt",
+          "size": 2
+        }
+      }
+    },
+    {
+      "name": "alias-source-file",
+      "code": [
+        "out = attach(file=b'x\\n', filename='n.txt')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt",
+          "size": 2
+        }
+      }
+    },
+    {
+      "name": "alias-source-src",
+      "code": [
+        "out = attach(src=b'x\\n', filename='n.txt')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt",
+          "size": 2
+        }
+      }
+    },
+    {
+      "name": "alias-title",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', title='T')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt"
+        }
+      }
+    },
+    {
+      "name": "alias-caption",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', caption='T')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt"
+        }
+      }
+    },
+    {
+      "name": "alias-description",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', description='T')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt"
+        }
+      }
+    },
+    {
+      "name": "alias-alt",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', alt='T')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "n.txt"
+        }
+      }
+    },
+    {
+      "name": "alias-mime",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', mime='text/x-note')"
+      ],
+      "expect": {
+        "json": {
+          "media_type": "text/x-note"
+        }
+      }
+    },
+    {
+      "name": "alias-mime-type",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', mime_type='text/x-note')"
+      ],
+      "expect": {
+        "json": {
+          "media_type": "text/x-note"
+        }
+      }
+    },
+    {
+      "name": "alias-content-type",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', content_type='text/x-note')"
+      ],
+      "expect": {
+        "json": {
+          "media_type": "text/x-note"
+        }
+      }
+    },
+    {
+      "name": "alias-type",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', type='note')"
+      ],
+      "expect": {
+        "json": {
+          "kind": "note"
+        }
+      }
+    },
+    {
+      "name": "attach-nothing",
+      "code": [
+        "out = attach()"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "attach: source is required - a confined path, bytes, an image or a figure object (path=/file= reach it too)."
+      }
+    },
+    {
+      "name": "attach-wrong-source",
+      "code": [
+        "out = attach(42)"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "attach: source must be a path, bytes, an image or a figure object, got int"
+      }
+    },
+    {
+      "name": "attach-wrong-source-list",
+      "code": [
+        "out = attach([1], 'n.txt')"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "attach: source must be a path, bytes, an image or a figure object, got list"
+      }
+    },
+    {
+      "name": "attach-audience-case",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', audience=' User ')"
+      ],
+      "expect": {
+        "json": {
+          "audience": "user"
+        }
+      }
+    },
+    {
+      "name": "attach-bytes-default-name",
+      "code": [
+        "out = attach(b'plain words\\n')"
+      ],
+      "expect": {
+        "json": {
+          "filename": "artifact"
+        }
+      }
+    },
+    {
+      "name": "attach-kind-number",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', kind=5)"
+      ],
+      "expect": {
+        "json": {
+          "kind": "5"
+        }
+      }
+    },
+    {
+      "name": "attach-media-type-zero",
+      "code": [
+        "out = attach(b'x\\n', 'n.bin', media_type=0)"
+      ],
+      "expect": {
+        "json": {
+          "media_type": "0"
+        }
+      }
+    },
+    {
+      "name": "attach-media-type-blank",
+      "code": [
+        "out = attach(b'x\\n', 'n.csv', media_type='  ')"
+      ],
+      "expect": {
+        "json": {
+          "media_type": "text/csv"
+        }
+      }
+    },
+    {
+      "name": "attach-id-shape",
+      "code": [
+        "out = {'parts': [len(part) for part in attach(b'x\\n', 'n.txt')['id'].split('-')]}"
+      ],
+      "expect": {
+        "json": {
+          "parts": [
+            8,
+            4,
+            4,
+            4,
+            12
+          ]
+        }
+      }
+    },
+    {
+      "name": "attach-document-for-model",
+      "code": [
+        "out = attach(b'%PDF-1.4\\n', 'r.pdf', audience='model')"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "attach: documents require audience='user'; read_attachment(target) returns their bytes."
+      },
+      "outside": {
+        "reason": "audience",
+        "expect": {
+          "json": {
+            "audience": "model"
+          }
+        }
+      }
+    },
+    {
+      "name": "attach-document-bytes",
+      "code": [
+        "out = attach(b'%PDF-1.4\\n', 'r.bin')"
+      ],
+      "expect": {
+        "json": {
+          "kind": "doc",
+          "media_type": "application/pdf"
+        }
+      },
+      "outside": {
+        "reason": "bytes",
+        "expect": {
+          "json": {
+            "kind": "file",
+            "media_type": "application/octet-stream"
+          }
+        }
+      }
+    },
+    {
+      "name": "target-descriptor-id-first",
+      "code": [
+        "first = attach(b'one\\n', 'a.txt')",
+        "attach(b'two!\\n', 'b.txt')",
+        "out = get_attachment({'id': first['id'], 'filename': 'b.txt'})"
+      ],
+      "expect": {
+        "json": {
+          "filename": "a.txt",
+          "size": 4
+        }
+      }
+    },
+    {
+      "name": "list-by-name",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "attach(b'x\\n', 'm.txt')",
+        "attach(b'two!\\n', 'n.txt')",
+        "out = {'rows': [[r['filename'], r['version']] for r in list_attachments('n.txt')]}"
+      ],
+      "expect": {
+        "json": {
+          "rows": [
+            [
+              "n.txt",
+              1
+            ],
+            [
+              "n.txt",
+              2
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "name": "get-unknown-quote",
+      "code": [
+        "out = get_attachment('a\"b\\x01.txt')"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "get_attachment: unknown id or filename \"a\\\"b\u0001.txt\"; use list_attachments()."
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "get_attachment: unknown id or filename \"a\\\"b\u0001.txt\"; use list_attachments()."
+        }
+      }
+    },
+    {
+      "name": "attach-directory-here",
+      "code": [
+        "out = attach('.')"
+      ],
+      "expect": {
+        "error": "IsADirectoryError",
+        "message": "attach: . is a directory - attach one file"
       }
     }
   ]
