@@ -18,7 +18,9 @@ exec("\n".join(TABLE["runner"]), RUNNER)
 
 
 @pytest.mark.parametrize("case", TABLE["cases"], ids=lambda case: case["name"])
-def test_the_outside_shell_gives_the_engine_answer(case):
+def test_the_outside_shell_gives_the_engine_answer(case, tmp_path, monkeypatch):
+    (tmp_path / "src").mkdir()
+    monkeypatch.chdir(tmp_path)
     # A named exception holds the answer of this host; each other case holds the
     # answer of the engine.
     expect = case.get("outside", case)["expect"]
