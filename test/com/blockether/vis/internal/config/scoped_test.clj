@@ -978,6 +978,9 @@
       (let [db
             (h/store)
 
+            project
+            (store/db-create-project! db {:name "Titles"})
+
             sid
             (h/store-session! db {:title "Titles"})
 
@@ -993,18 +996,33 @@
                       discovery/all-skills
                       (constantly [])]
 
-          (let [groups
-                (-> (#'settings-api/list-settings-handler
-                     {:query-params {"scope" "session" "target_id" (str sid)}})
-                    :body
-                    json/read-json
-                    (get "groups"))
+          (let [catalog
+                #(-> (#'settings-api/list-settings-handler {:query-params %})
+                     :body
+                     json/read-json
+                     (get "groups"))
+
+                groups
+                (catalog {"scope" "session" "target_id" (str sid)})
 
                 titles
-                (into {} (map (juxt #(get % "id") #(get % "title"))) groups)]
+                (into {} (map (juxt #(get % "id") #(get % "title"))) groups)
+
+                general-ids
+                (fn [groups]
+                  (set (map #(get % "id")
+                            (get (first (filter #(= "general" (get % "id")) groups)) "toggles"))))]
 
             (expect (not (contains? titles "engines")))
-            (expect (= "Response" (get titles "providers")))
+            ;; User report: response rows stood in their own Response section, apart from
+            ;; General, and the footer controls (Fast mode) showed again in session settings.
+            (expect (not (contains? titles "providers")))
+            (expect (contains? (general-ids groups) "provider_fallback"))
+            (expect (not (contains? (general-ids groups) "verbosity")))
+            ;; A project can still set the default that the footer starts each session with.
+            (expect (contains? (general-ids (catalog {"scope" "project"
+                                                      "target_id" (str (:id project))}))
+                               "verbosity"))
             ;; Voice rows stand in General.
             (expect (= "General" (get titles "general")))
             (expect (not (contains? titles "voice")))

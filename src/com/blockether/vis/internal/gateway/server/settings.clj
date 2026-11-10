@@ -159,12 +159,6 @@
    [:providers "Providers" [:provider]] [:permissions "Permissions" [:sandbox]]
    [:tools "Tools" [:skills]]])
 
-(defn- section-title
-  "The heading clients show for a section. Outside global settings the providers section
-   holds only response options, because providers are global."
-  [id title local?]
-  (if (and local? (= :providers id)) "Response" title))
-
 (defn- group-title [group] (str/capitalize (str/replace (name group) #"[-_]+" " ")))
 
 (defn- request-target
@@ -356,30 +350,34 @@
         ;; An inherited extension row shows read-only where an ancestor scope decides it (#373).
         ;; An engine row shows only where its extension is loaded.
         rows
-        (filter #(and
-                   (or (some #{(:scope target)} (:scopes %))
-                       (and local? (owners (:id %)) (decided-in target lineage %)))
-                   (case (:group %)
-                     :skills
-                     (resources (:id %))
+        (filter
+          #(and (or (some #{(:scope target)} (:scopes %))
+                    (and local? (owners (:id %)) (decided-in target lineage %)))
+                (case (:group %)
+                  :skills
+                  (resources (:id %))
 
-                     :mcp
-                     false
+                  :mcp
+                  false
 
-                     :engines
-                     (owners (:id %))
+                  :engines
+                  (owners (:id %))
 
-                     true)
-                   (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
-                   (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
-                (map (fn [row]
-                       (cond-> row
-                         (get change-errors (:id row))
-                         (assoc :change-error (get change-errors (:id row)))
+                  true)
+                (cond (not local?) (and (not (false? (:settings? %))) (toggles/toggle-visible? %))
+                      ;; A session control with its own place, such as Fast mode in the footer,
+                      ;; does not show again in session settings. A project or group sets its default.
+                      (= "session" (:scope target)) (not (false? (:settings? %)))
+                      :else true)
+                (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
+          (map (fn [row]
+                 (cond-> row
+                   (get change-errors (:id row))
+                   (assoc :change-error (get change-errors (:id row)))
 
-                         (not (some #{(:scope target)} (:scopes row)))
-                         (assoc :decided-in (decided-in target lineage row))))
-                     (one-thinking-control (scoped/settings (lp/db-info) target))))
+                   (not (some #{(:scope target)} (:scopes row)))
+                   (assoc :decided-in (decided-in target lineage row))))
+               (one-thinking-control (scoped/settings (lp/db-info) target))))
 
         ;; Everything an extension contributes is configured in that extension's section.
         section
@@ -420,9 +418,17 @@
                    (fn [id groups]
                      (case id
                        ;; The agent name stands first. Experimental switches stand last.
+                       ;; Below global, no provider accounts show, so the response rows of the
+                       ;; providers section stand in General, before the experimental switches.
                        :general
                        (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
-                               (mapcat rows groups))
+                               (mapcat rows
+                                       (cond->> groups
+                                         local?
+                                         (mapcat #(if (= :experimental %) [:provider %] [%])))))
+
+                       :providers
+                       (when-not local? (mapcat rows groups))
 
                        :permissions
                        (concat (access-settings target) (rows :sandbox))
@@ -436,9 +442,7 @@
                  (concat
                    (keep (fn [[id title groups]]
                            (when-let [toggles (seq (section-rows id groups))]
-                             {:id (name id)
-                              :title (section-title id title local?)
-                              :toggles (nest-rows toggles)}))
+                             {:id (name id) :title title :toggles (nest-rows toggles)}))
                          sections)
                    (keep
                      (fn [[[kind group] specs]]
