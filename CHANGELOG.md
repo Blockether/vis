@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Sandbox: an `ls` page has the paging of a `grep` page. `page.all(max_pages=N)` stops after N pages and says so, `page.pages(0)` gives one page, and `page.get(...)` answers `None` as on each text result. `page.all()` is plain text: it has no `next_offset` and no `is_capped`.
 - Sandbox and extensions (#462): a typed tool result is a read-only dictionary of its fields. `json.dumps(r)` also works with your own `default=`, and `isinstance(r, Mapping)` is true. `vis.tools` in an extension answers the same record as `python_execution`, and its `shell` answer is the same live handle. Three rules changed. Read a field that has the name of a dictionary method, such as `items`, as `r["items"]`. A record without a backing field iterates over its field names. A record is not hashable and is not a dataclass, and an assignment raises `AttributeError` or `TypeError`.
 
 ### Fixed

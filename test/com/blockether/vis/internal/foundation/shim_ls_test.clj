@@ -600,6 +600,36 @@
       (expect
         (=
           "[4, 4] [None, None] d  2d 1f  5-8 of 8\nd  2d 1f  · offset 9 is past the last entry (8)\nls: limit must be an int >= 1 or None, got 0\nls: offset must be an int >= 0, got -1\n"
+          (out ctx code)))))
+  (it
+    "answers the result probe and bounds a page walk as a grep page does"
+    ;; Audit of the paging protocol: `page.get("op")` raised AttributeError,
+    ;; `page.pages(None)` and `page.all(max_pages=2)` raised TypeError.
+    (let
+      [ctx
+       (sandbox)
+
+       code
+       (str
+         "import json\n"
+         "g = globals()\n" "saved = g[\"__vis_list_directories__\"]\n"
+         "def tree():\n"
+         "    return [{\"name\": \"%02d\" % i, \"type\": \"file\", \"size\": 1} for i in range(12)]\n"
+         "g[\"__vis_list_directories__\"] = lambda a: json.dumps(\n"
+         "    [{\"path\": p, \"entries\": tree()} for p in json.loads(a)[\"paths\"]])\n"
+         "try:\n" "    page = ls(\"d\", limit=1)\n"
+         "    print(page.get(\"op\"), page.keys(), [len(list(page.pages(n))) for n in (None, 0, 12)])\n"
+         "    two, every = page.all(max_pages=2), page.all()\n"
+         "    print(two.startswith(ls(\"d\", limit=2) + \"\\n\"), two.split(\"\\n\")[-1])\n"
+         "    print(every == ls(\"d\", limit=None), page.all(max_pages=12) == every, type(every).__name__)\n"
+         "finally:\n" "    g[\"__vis_list_directories__\"] = saved\n")]
+
+      (expect
+        (=
+          (str
+            "None [] [10, 1, 12]\n"
+            "True … stopped after 2 pages — more entries remain: ls(…, offset=2), a higher max_pages, or limit=None.\n"
+            "True True __VisResultStr__\n")
           (out ctx code))))))
 
 ;; `as_paths` answers the same walk as the flat list the next call actually needs.

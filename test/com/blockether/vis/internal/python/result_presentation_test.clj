@@ -116,7 +116,13 @@
         (expect (< (count out) 5000))
         (doseq [text ["exit=1" "first diagnostic" "last diagnostic" "omitted" "['out']"]]
           (expect (str/includes? out text)))
-        (expect (not (str/includes? out "r['out']"))))))
+        (expect (not (str/includes? out "r['out']")))))
+  (it "prints every result that the runtime types as a shell handle"
+      ;; The op names were a second literal here, so an op added in the runtime printed as a raw dict.
+      (expect (= "shell demo: running\n"
+                 (check-result {"op" "_shell_resize" "id" "demo" "status" "running"}
+                               (str "__VisShell__.__vis_shell_ops__ |= {'_shell_resize'}\n"
+                                    "print(await fixture())"))))))
 
 (defdescribe
   compact-session-result-test

@@ -183,11 +183,11 @@ def __vis_install_ls__():
             raise RuntimeError("ls: listing bridge not bound in this sandbox")
         return _decoded(bridge(_json.dumps({"paths": specs, **shared})))
 
-    class _LsPage(str):
+    class _LsPage(__VisGrep__):  # noqa: F821 - the runtime defines it in the session globals
         """A listing page that continues itself, with the paging protocol of grep.
 
-        `__iter__` stays the str's own, so `"".join(page)` and `list(page)` keep their
-        meaning. Pages are walked by name: `next(page)`, `page.pages()`, `page.all()`."""
+        The runtime class gives `page.get`, `page.keys` and `page.pages()`. A listing
+        continues from its own offsets, so only `next(page)` and `page.all()` are here."""
 
         def __reduce__(self):
             # The session snapshot keeps the text. The page class is local to the shim.
@@ -206,17 +206,21 @@ def __vis_install_ls__():
                 self._one,
             )
 
-        def pages(self, max_pages=10):
-            """This page, then each following page, lazily, at most `max_pages`."""
-            page, count = self, 0
-            while page is not None and count < int(max_pages):
-                yield page
-                count += 1
-                page = next(page, None)
-
-        def all(self):
-            """This page and every later page of the listing, as ONE unpaged page."""
-            return _page(self._specs, self._shared, self._starts, None, self._one)
+        def all(self, max_pages=None):
+            """This page and every later page as ONE text. `max_pages` bounds it, and the last line says so."""
+            limit = None
+            if max_pages is not None and self._limit is not None:
+                limit = self._limit * max(int(max_pages), 1)
+            page = _page(self._specs, self._shared, self._starts, limit, self._one)
+            text = str(page)
+            if page.is_capped:
+                call = "ls(…, offset=%d), " % page.next_offset if self._one else ""
+                text += (
+                    "\n… stopped after %d pages — more entries remain: "
+                    "%sa higher max_pages, or limit=None."
+                    % (limit // self._limit, call)
+                )
+            return __VisResultStr__(text)  # noqa: F821
 
     def _page(specs, shared, offsets, limit, one):
         """Walk `specs` and render each directory from its own offset."""

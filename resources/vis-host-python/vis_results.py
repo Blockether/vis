@@ -1,7 +1,7 @@
 """Model-facing views of Vis results. Mappings and JSON keep every original field.
 
 Only presentation lives here. The runtime still owns result identity, shell handles,
-paging and execution. Installation changes the session-local result class, never
+paging and execution. Installation changes the session-local result classes, never
 builtins.dict or a process-global runtime class. Unknown operations keep dict repr. Use
 the variable holding a result to inspect keys, or pass it to dict()/json.dumps().
 """
@@ -193,11 +193,6 @@ def _result_repr(result):
     """Render known model-facing results without changing their underlying data."""
     op = result.get("op")
     try:
-        if (
-            op in ("shell", "_shell_logs", "_shell_wait", "_shell_type", "_shell_stop")
-            and "id" in result
-        ):
-            return _shell(result)
         if op == "read_session":
             return _session(result)
         if op in ("council.publish", "council.get", "council.read", "council.threads"):
@@ -208,6 +203,15 @@ def _result_repr(result):
     return dict.__repr__(result)
 
 
+def _shell_repr(result):
+    """Render a shell handle. The runtime decides which results are shell handles."""
+    try:
+        return _shell(result)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return dict.__repr__(result)
+
+
 def install(namespace):
-    """Attach host presentation to this session's runtime-owned result class."""
+    """Attach host presentation to this session's runtime-owned result classes."""
     namespace["__VisResult__"].__repr__ = _result_repr
+    namespace["__VisShell__"].__repr__ = _shell_repr
