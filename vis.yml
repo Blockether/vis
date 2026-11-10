@@ -100,8 +100,8 @@ extensions:
     version: "1.20.13"
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
-    version: "1.16.7"
+    version: "1.16.8"
   vis-spel:
     source: https://github.com/Blockether/spel
     subdirectory: extensions/vis-spel
-    version: "0.1.27"
+    version: "0.1.28"
