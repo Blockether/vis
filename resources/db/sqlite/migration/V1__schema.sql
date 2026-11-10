@@ -176,7 +176,8 @@ CREATE TABLE session_agent (
   -- A label for people from the agents contract, for example research. It sets no limit.
   role             TEXT,
   -- A short one-line label for people from council.run. NULL = people see the child number.
-  title            TEXT CHECK (title IS NULL OR length(title) BETWEEN 1 AND 40),
+  -- The agents contract owns its length, so this table does not repeat it.
+  title            TEXT CHECK (title IS NULL OR trim(title) <> ''),
   -- waiting = a task in after did not end yet; blocked = a task in after did not complete.
   status           TEXT NOT NULL DEFAULT 'queued'
                    CHECK (status IN ('waiting', 'queued', 'running', 'completed', 'failed', 'cancelled',

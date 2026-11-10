@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Sandbox (#462): `json.dumps(r)` writes a typed tool result as the object of its fields, and `r.get(...)`, `r.items()` and `r.values()` read them, as `r.keys()` does. Before, `json.dumps` raised `TypeError` and the three methods raised `AttributeError`.
+- Council: `council.run` accepts a task title of up to 60 characters, as its documentation says. Before, a title of 41 to 60 characters failed with `SQLITE_CONSTRAINT_CHECK`. Existing databases get the new rule when Vis opens them.
 
 ## [v0.5.11] - 2026-11-10
 

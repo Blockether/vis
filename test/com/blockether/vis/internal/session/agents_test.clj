@@ -2241,6 +2241,21 @@
       (expect (document/valid-json? "agents" "result" {"text" "All pass" "outcome" "passed"}))
       (expect (not (document/valid-json? "agents" "result" {"text" "All pass" "outcome" "maybe"})))
       (expect (not (document/valid-json? "agents" "result" {"text" "a\nb"}))))
+  (it "stores each title that the agents contract accepts"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            longest
+            (get-in (document/schema-document "agents")
+                    ["$defs" "spawn" "properties" "title" "maxLength"])
+
+            title
+            (apply str (repeat longest "x"))]
+
+        (expect (= title (:title (agents/info db (child! db leader {:title title})))))))
   (it
     "stores council.result and else the first line of the answer, and a resume clears it"
     (let [db
