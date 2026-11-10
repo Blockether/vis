@@ -483,7 +483,7 @@
        `os.popen` is called;
      - a live handle that cannot be driven (`__VisShell__.__vis_op__` in
        `vis-python/async_runtime.py`);
-     - the corpus entry named `shell` (`env-python/create-python-context`), when the
+     - the corpus entry named `shell` (`shell-off-doc`), when the
        shell tools are off and `apropos(\"shell\")` / `doc(\"shell\")` would otherwise
        answer with silence.
 
@@ -512,6 +512,10 @@
                     "its own trusted process boundary. Its code can still call "
                     "`vis.shell({'command': 'npm test'})`, which starts a process and returns "
                     "the same handle.")})
+
+(def ^:private shell-off-doc
+  "What `apropos(\"shell\")` and `doc(\"shell\")` say while `shell` is not bound."
+  (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension")))
 
 (def AUTO_IMPORTED_PYTHON_NAMES
   "Python names installed into builtins for every `python_execution` context.
@@ -713,7 +717,9 @@
           "        globals().pop(__vis_n__, None)\n"
           "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__', '__vis_results__', '__vis_eager__'):\n"
           "        globals().get(__vis_table__, {}).pop(__vis_n__, None)\n"
-          "del __vis_n__, __vis_table__")))
+          "del __vis_n__, __vis_table__"))
+      ;; An unbound `shell` keeps its discovery page, so `apropos` does not go silent.
+      (when (some #{"shell"} names) (update-json! session "__vis_docs__" {"shell" shell-off-doc})))
     nil))
 
 (defn remove-python-binding!
@@ -1484,8 +1490,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                     (or custom-bindings {}))
       (seed-json! session
                   "__vis_docs__"
-                  {"shell"
-                   (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension"))}))
+                  {"shell" shell-off-doc}))
     (perf/timed :sandbox/shims (install-shims! session))
     (perf/timed :sandbox/introspection (install-introspection! session))
     (perf/timed :sandbox/results

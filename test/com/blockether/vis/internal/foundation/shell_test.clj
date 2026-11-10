@@ -2418,6 +2418,9 @@
         (try (toggles/set-enabled! "shell" false)
              (loop-env/sync-active-extension-symbols! env)
              (expect (false? (boolean (py c "'shell' in globals()"))))
+             ;; Discovery still names the tool and says why it is off.
+             (expect (= ["shell"] (py c "[i.name for i in apropos('^shell$')]")))
+             (expect (str/includes? (str (py c "str(doc('shell'))")) (get ep/PROCESS_SURFACE "off")))
              (finally (toggles/set-enabled! "shell" before)))))
   ;; Regression, issue #106: turning Shell commands back ON from a settings
   ;; dialog left every session that was already open without the `shell` global
