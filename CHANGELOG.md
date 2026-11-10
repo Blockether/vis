@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.9] - 2026-11-10
+
+### Added
+- Extensions: a `before` op hook can return `vis.with_env(variables)`. This allows the call and gives the variables to it. `vis.call_env()` gives them to the tool. `clj.repl_start` (vis-lang-clojure 1.20.12 and later) starts the REPL with them. Map a name to `None` to unset a variable.
+- Automations (#456): `vis-agent automations list|show|create|run|pause|resume|delete` manages automations from the command line. The automations of an extension follow its project: a moved project takes them along, a deleted project deletes them, and a full load that no longer finds the extension removes them. A load with a failed file keeps them. The gateway loads the extensions of archived projects at start, and the extensions of a new or moved project in the background.
+- Companion: a bar separates the connection state from the goal in the session header.
+
+### Changed
+- Shell: the stdin of a command is now empty by default, so a program that reads stdin gets end of input at once. Before, it waited for hours. `{"stdin": "tty"}` keeps the terminal for a program that reads `sh.type`. `sh.wait` returns early with `waiting_for_input` when a process blocks in a read on its terminal (Linux only). A wait of 30 s or more with no output and almost no CPU adds a note.
+- Shell: `sh.wait`, `sh.type` and `sh.stop` now refresh the handle that you hold, in the sandbox and in the extension SDK. A log page stays a separate object.
+- Extensions: vis-lang-clojure 1.20.13, vis-lang-python 1.16.8 and vis-spel 0.1.28.
+
+### Fixed
+- Op hooks (#459): a hook on a tool of another extension now runs when you write the name that `python_execution` calls, for example `"clj.repl_start"`. The form `"clj/repl_start"` also works. Before, the hook never ran and nothing told you. Vis now logs a warning, and `vis-agent doctor` shows a row, for a hook whose operation name matches no tool. The row names the tool that you probably meant.
+- Shell: on Linux, the "No output and almost no CPU" note now uses the CPU time of the wait. Before, Linux `ps` gave an average over the whole life of the process, so a command that worked first and then waited never got the note.
+- Fork: a fork of a session, or a fork at a turn, now starts with the Python sandbox state of that turn. Before, it started with an empty sandbox and lost the helpers and variables of the source. Each turn state has the name of its turn id, and one lock for each session covers the snapshot, the turn state, the fork and the delete.
+- Sandbox: Vis keeps the turn states of the last 50 turns of a session, and the newest state before them. Archiving a session or a group deletes its turn states, and deleting a session deletes its sandbox state. Old temp files of killed writes are deleted once a day. `vis-agent doctor` counts a hard-linked file once.
+- CLI: `vis-agent sessions delete` and `vis-agent projects delete --with-sessions` now send the delete to the gateway. Before, a gateway that had the session loaded kept it, and a running turn wrote the sandbox files of the deleted session again.
+- Council: the end of a subagent turn now stops the background shells of that subagent before the leader gets the result. Before, they stayed and held the shared uv cache lock for hours.
+
 ## [v0.5.8] - 2026-11-09
 
 ### Added
