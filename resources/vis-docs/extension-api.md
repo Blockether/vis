@@ -1194,29 +1194,38 @@ tool reads the variables with `vis.call_env()` and gives them to the processes
 that it starts. Other calls do not get them. Outside Vis, `vis.call_env()`
 returns an empty dict.
 
-`clj.repl_start` gives these variables to the REPL JVM that it starts:
+The Clojure and Python language tools give these variables to the processes of
+their tests and REPLs. `clj.run_tests` and `py.run_tests` give them to the test
+process. `clj.repl_start` and `py.repl_start` give them to the REPL that they
+start:
 
 ```python
 import blockether.vis.extension as vis
 
 
-def repl_env(call):
-    return vis.with_env({"AWS_PROFILE": "dev", "JAVA_TOOL_OPTIONS": "-Xmx4g"})
+def dev_env(call):
+    return vis.with_env({"AWS_PROFILE": "dev", "HEADLESS": "true"})
 
 
 vis.register_extension(
     vis.Extension(
-        name="repl-env",
-        description="Start each project REPL with the dev AWS profile.",
-        op_hooks=[vis.OpHook(["clj.repl_start"], repl_env)],
+        name="dev-env",
+        description="Run tests and REPLs with the dev AWS profile.",
+        op_hooks=[
+            vis.OpHook(
+                ["clj.run_tests", "clj.repl_start", "py.run_tests", "py.repl_start"],
+                dev_env,
+            )
+        ],
     )
 )
 ```
 
-A REPL that runs already keeps its environment. If the variables differ,
-`clj.repl_start` fails and names the variables, never their values. Stop the
-REPL with `clj.repl_stop`, then start it again. Do not set one variable in two
-hooks, because the order of the hooks is not fixed.
+A REPL that runs already keeps its environment. If the variables differ, the
+REPL start fails and names the variables, never their values. Stop the REPL,
+then start it again. `clj.run_tests` uses a live REPL only when that REPL has
+the same variables. If it does not, the tests run in a new JVM. Do not set one
+variable in two hooks, because the order of the hooks is not fixed.
 
 ### Ask the person in a hook
 
