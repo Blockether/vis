@@ -3085,10 +3085,12 @@
                   str/trim
                   not-empty)
 
-          ;; The budget the wait really gets, clamped like the wait itself.
           secs
-          (try (clamp-timeout-secs (opt input :seconds) "seconds")
-               (catch Throwable _ rt/DEFAULT_SHELL_TIMEOUT_SECS))
+          (or (some-> (opt input :seconds)
+                      str
+                      str/trim
+                      not-empty)
+              (str rt/DEFAULT_SHELL_TIMEOUT_SECS))
 
           ;; The spawn KNOWS its command — it is right there in the call — while a
           ;; lifecycle stage has to look up the shell it acts on.
@@ -3304,10 +3306,7 @@
       "file and data work in Python.\n"
       "- `sh = await shell(cmd, cwd=dir)` starts one `bash -lc` command and returns its handle at "
       "once, while the program runs.\n"
-      "- `sh.wait(300)` waits up to 300 s; one wait lasts at most "
-      (quot (long max-timeout-secs) 60)
-      " min. "
-      "`sh.logs(-50)` gives the last 50 lines, `sh.type(text)` "
+      "- `sh.wait(300)` waits up to 300 s, `sh.logs(-50)` gives the last 50 lines, `sh.type(text)` "
       "sends input to a command started with `stdin=\"tty\"` and `sh.stop()` stops it. Each returns the handle with `status`, `exit` and "
       "`out`.\n"
       "- Example: `print((await shell(\"npm test\")).wait(300).out)`. `doc(\"shell\")` gives the rest.")))

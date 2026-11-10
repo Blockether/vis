@@ -675,21 +675,6 @@
                              (recur end)))))))
                  terminal-markers)))
 
-(defn- tail-text
-  "The COMPLETE lines in the last `n` bytes of `f`. A line cut by the window's
-   start and a trailing line without a newline are dropped."
-  ^String [^File f ^long n]
-  (with-open [raf (RandomAccessFile. f "r")]
-    (let [len (.length raf)
-          n (long (min len n))
-          buf (byte-array n)
-          got (read-at! raf (- len n) buf n)
-          whole (whole-bytes (if (== got n) buf (java.util.Arrays/copyOf buf (int got))))
-          text (String. buf 0 (int whole) StandardCharsets/UTF_8)]
-
-      ;; The window's first line is whole only when the window is the whole file.
-      (if (< n len) (subs text (inc (.indexOf text "\n"))) text))))
-
 (defn- terminal-tail?
   "True when a COMPLETE line in the last `TAIL_SCAN_BYTES` of `f` is a terminal
    event - the cheap answer to the question [[hydrate!]] asks first.
@@ -704,54 +689,20 @@
    over - 82 ms for a 7 MB session, under the sid's tail lock, once per
    subscriber per session - for a fact the last few lines already state."
   [^File f]
-  (try (terminal-line? (tail-text f TAIL_SCAN_BYTES))
+  (try (with-open [raf (RandomAccessFile. f "r")]
+         (let [len (.length raf)
+               n (long (min len (long TAIL_SCAN_BYTES)))
+               buf (byte-array n)
+               got (read-at! raf (- len n) buf n)
+               whole (whole-bytes (if (== got n) buf (java.util.Arrays/copyOf buf (int got))))
+               text (String. buf 0 (int whole) StandardCharsets/UTF_8)
+               ;; The window's first line is whole only when the window is the whole file.
+               text (if (< n len) (subs text (inc (.indexOf text "\n"))) text)]
+
+           (terminal-line? text)))
        (catch Throwable t
          (tel/log! :debug ["gateway-bus: terminal tail scan failed" (str f) (ex-message t)])
          false)))
-
-(def ^:private ^:const BLOCK_TAIL_SCAN_BYTES
-  "How much of a journal's END [[block-started-ms]] reads. A `block.started` line
-   holds the code of its block, so it gets more room than a terminal."
-  262144)
-
-(def ^:private BLOCK_END_TYPES
-  "Types that end the newest block of a turn."
-  (into #{"block.output" "iteration.completed"} TERMINAL_TYPES))
-
-(def ^:private block-markers
-  "Each block type as it stands quoted in a journal line. Only lines that hold one are parsed."
-  (mapv #(str "\"" % "\"") (conj BLOCK_END_TYPES "block.started")))
-
-(defn block-started-ms
-  "Epoch milliseconds when the Python block that turn `turn-id` of `sid` still
-   runs started, or nil. A block runs while its `block.started` line is newer
-   than each `block.output`, `iteration.completed` and terminal line of the turn.
-   nil also when the journal is unreadable or the start is outside the tail."
-  [sid turn-id]
-  (try (let [f
-             (session-file sid)
-
-             tid
-             (str turn-id)]
-
-         (when (.isFile f)
-           (first (some (fn [^String line]
-                          (when (some #(str/includes? line %) block-markers)
-                            (let [event
-                                  (wire/parse-json line)
-
-                                  type
-                                  (get event "type")]
-
-                              (when (= tid (str (get event "turn_id")))
-                                (cond (= "block.started" type)
-                                      [(let [ms (get event "started_at_ms" (get event "ts"))]
-                                         (when (integer? ms) (long ms)))]
-                                      (contains? BLOCK_END_TYPES type) [nil])))))
-                        (rseq (str/split-lines (tail-text f BLOCK_TAIL_SCAN_BYTES)))))))
-       (catch Throwable t
-         (tel/log! :debug ["gateway-bus: block tail scan failed" (str sid) (ex-message t)])
-         nil)))
 
 (defn- journal-head
   "[[read-head!]] for a file the caller has not opened. nil when unreadable."

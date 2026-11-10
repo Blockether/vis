@@ -23,8 +23,6 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.config.runtime-settings :as rt]
-            [com.blockether.vis.internal.gateway.bus :as gateway-bus]
             [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.channel.header :as header]
@@ -863,9 +861,7 @@
 (defn- hung-turns
   "Turns that stopped making progress in the gateway. A turn qualifies when a
    watchdog saved a hang report for it, or when it still runs without a new
-   iteration for [[STALE_RUNNING_TURN_MS]]. A Python block that still runs is
-   work, such as a 30-minute shell wait: its turn qualifies only after the eval
-   watchdog ceiling plus that time. The caller's own live turn is skipped."
+   iteration for [[STALE_RUNNING_TURN_MS]]. The caller's own live turn is skipped."
   [env session-id turns]
   (let [reports
         (group-by :turn-id (gateway-diagnostics/session-reports session-id))
@@ -882,24 +878,13 @@
               (let [turn-reports
                     (mapv #(dissoc % :turn-id) (get reports (str (:id turn))))
 
-                    watched?
-                    (and (= :running (:status turn)) (not= own-turn (:id turn)))
-
-                    block-since
-                    (when watched? (gateway-bus/block-started-ms session-id (:id turn)))
-
                     idle-ms
-                    (when watched?
-                      (some->> (or block-since (last-progress-ms (:db-info env) turn))
+                    (when (and (= :running (:status turn)) (not= own-turn (:id turn)))
+                      (some->> (last-progress-ms (:db-info env) turn)
                                (- now)))
 
-                    stale-ms
-                    (cond-> (long STALE_RUNNING_TURN_MS)
-                      block-since
-                      (+ (long rt/MAX_EVAL_TIMEOUT_MS)))
-
                     stale?
-                    (boolean (and idle-ms (>= (long idle-ms) stale-ms)))]
+                    (boolean (and idle-ms (>= (long idle-ms) (long STALE_RUNNING_TURN_MS))))]
 
                 (when (or (seq turn-reports) stale?)
                   (cond-> {:turn-id (:id turn)
