@@ -507,6 +507,12 @@
           (expect (not-any? #(extension/symbol-active? % {}) introspection/all-symbols)))
         (with-redefs [toggles/enabled? (constantly true)]
           (expect (every? #(extension/symbol-active? % {}) introspection/all-symbols)))))
+  (it "keeps the session symbols and prompt out of a one-shot :cli run, also with the toggle on"
+      (with-redefs [toggles/enabled? (constantly true)]
+        (expect (not-any? #(extension/symbol-active? % {:channel :cli}) introspection/all-symbols))
+        (expect (nil? (introspection/prompt {:channel :cli})))
+        (expect (every? #(extension/symbol-active? % {:channel :tui}) introspection/all-symbols))
+        (expect (some? (introspection/prompt {:channel :tui})))))
   (it "keeps gateway-event and read_session guidance out of the static core prompt"
       (let [text
             (with-redefs [toggles/enabled? (constantly true)]

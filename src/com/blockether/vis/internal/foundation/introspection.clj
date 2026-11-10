@@ -16,7 +16,8 @@
    call cannot break iteration execution.
 
    Gated: the extension registered at the bottom of this namespace binds its
-   symbols and prompt only while the `introspection` toggle is ON (default OFF)."
+   symbols and prompt only while the `introspection` toggle is ON (default OFF),
+   and never in a one-shot `:cli` run."
   (:require [charred.api :as json]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
@@ -28,6 +29,7 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.provider.error :as perr]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.util :as util]))
 
@@ -1624,8 +1626,11 @@
        "field.")}))
 
 ;; Session introspection is part of foundation-core, but its callable symbols and
-;; prompt guidance remain behind the default-off `introspection` toggle.
-(defn introspection-enabled? [_env] (toggles/enabled? "introspection"))
+;; prompt guidance remain behind the default-off `introspection` toggle. A one-shot `:cli`
+;; run has no person to ask about past sessions, so it never gets them.
+(defn introspection-enabled?
+  [env]
+  (and (agents/interactive? env) (toggles/enabled? "introspection")))
 
 (def all-symbols
   (mapv #(assoc % :ext.symbol/active-fn introspection-enabled?)
@@ -1655,4 +1660,4 @@
     "- A session id copied from the TUI or the companion app has the form `vis_session_id#<uuid>`, which marks a Vis session. Pass it unchanged, or the bare id, to `read_session` or `get_session`.\n"
     "- Filter in `python_execution`; print the fields the question needs.\n"))
 
-(defn prompt [_env] (when (toggles/enabled? "introspection") INTROSPECTION_PROMPT))
+(defn prompt [env] (when (introspection-enabled? env) INTROSPECTION_PROMPT))

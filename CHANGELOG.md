@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- One-shot runs: a `vis-agent -- "task"` run no longer gets session introspection (`read_session`, `get_session`, `list_sessions` and their prompt section), also when the `introspection` toggle is on. Nobody can refer to a past session in such a run. Before, the toggle alone decided.
+
 ## [v0.5.9] - 2026-11-10
 
 ### Added
