@@ -508,7 +508,12 @@ class _Run:
             if isinstance(command, (list, tuple))
             else ["/bin/sh", "-c", command],
             cwd=self.cwd,
-            env={**os.environ, **(env or {})},
+            # A name mapped to None is unset for the child, as in the engine.
+            env={
+                name: value
+                for name, value in {**os.environ, **(env or {})}.items()
+                if value is not None
+            },
             # Empty stdin unless asked, as in the engine: a program that reads stdin
             # must not wait for bytes that nothing types.
             stdin=subprocess.PIPE if stdin == "tty" else subprocess.DEVNULL,

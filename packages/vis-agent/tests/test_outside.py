@@ -467,7 +467,11 @@ def test_shell_log_paths_survive_utc_midnight_without_overwriting(monkeypatch):
     assert third.logs()["out"] == "third"
 
 
-@pytest.mark.parametrize("environment", [None, {}, {"VIS_SHELL_OVERRIDE": "child"}])
+# A name mapped to None is unset for the child, as in the engine's shell.
+@pytest.mark.parametrize(
+    "environment",
+    [None, {}, {"VIS_SHELL_OVERRIDE": "child"}, {"VIS_SHELL_OVERRIDE": None}],
+)
 def test_shell_environment_overlays_the_parent_without_mutating_it(
     monkeypatch, environment
 ):
