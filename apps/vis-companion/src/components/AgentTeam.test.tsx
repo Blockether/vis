@@ -180,10 +180,10 @@ describe('agent rows', () => {
       { ...child, session_id: 'done', status: 'completed', finished_at: T0 + 9_000 },
     ]} />);
     expect(screen.getByText('Reading the routes')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     // User report: the timeline lost the newest notes. The legend keeps them.
     expect(within(screen.getByRole('list', { name: 'Legend' })).getByText('Reading the routes')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Close timeline' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Timeline' })).toHaveAttribute('aria-pressed', 'true');
     const [, done] = screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row'));
     fireEvent.click(done);
     expect(onOpen).toHaveBeenCalledWith('done');
@@ -216,7 +216,7 @@ describe('agent rows', () => {
       { ...child, title: 'Companion review', role: 'verify', status: 'completed', finished_at: T0 + 9_000, result: 'All **12** keys pass' },
       { ...child, session_id: 'tui', title: 'TUI review', role: 'verify', status: 'completed', finished_at: T0 + 15_000 },
     ]} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent);
     expect(lanes).toEqual(['L leader30sdone', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
     const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
@@ -231,11 +231,11 @@ describe('agent rows', () => {
       { ...child, session_id: 'tui', title: 'TUI review', status: 'running' as const },
     ];
     const { unmount } = render(<TurnAgents {...props} agents={agents.map((agent) => ({ ...agent, status: 'completed' as const, finished_at: T0 + 9_000 }))} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     expect(within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem')).toHaveLength(2);
     unmount();
     render(<AgentDock sid="leader" runningTurnId="turn-1" onOpen={vi.fn()} agents={agents} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     expect(within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem')).toHaveLength(2);
   });
 
@@ -260,7 +260,7 @@ describe('agent rows', () => {
       { ...child, session_id: 'late', created_at: T0 + 5, pending_input: true },
       { ...child, session_id: 'early', created_at: T0 + 1, status: 'completed' },
     ]} />);
-    expect(rowTexts()).toEqual([expect.stringMatching(/^agent#1done$/), expect.stringMatching(/^agent#2Verify the contract.*running\d+[hms]/)]);
+    expect(rowTexts()).toEqual([expect.stringMatching(/^agent#1done$/), expect.stringMatching(/^agent#2Verify the contract.*\d+[hms]running$/)]);
   });
 
   // A form of a subagent opens in the form prompt of the leader session, like any
@@ -320,9 +320,9 @@ describe('team line', () => {
     vi.useFakeTimers({ now: T0 + 200_000 });
     render(<TurnAgents {...props} agents={[{ ...child, role: 'research' }]} />);
     const line = () => screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]');
-    expect(line()).toHaveTextContent(/^team3m 20s1 running$/);
+    expect(line()).toHaveTextContent(/^team3m 20s1 run/);
     act(() => { vi.advanceTimersByTime(2000); });
-    expect(line()).toHaveTextContent(/^team3m 22s1 running$/);
+    expect(line()).toHaveTextContent(/^team3m 22s1 run/);
     vi.useRealTimers();
   });
 
@@ -376,7 +376,7 @@ describe('leader row', () => {
     expect(rows).toHaveLength(3);
     expect(rows[0]).toMatch(/^leaderwaited 12s of 30s(Both reviews pass\.done30s|Both reviews pass\.30sdone)$/);
     expect(rows[1]).toMatch(/^verifyCompanion review/);
-    expect(screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]')).toHaveTextContent(/2 done$/);
+    expect(screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]')).toHaveTextContent(/2 done/);
     expect(document.querySelector('[data-leader-row]')?.closest('button')).toBeNull();
   });
 
@@ -419,7 +419,7 @@ describe('leader row', () => {
     const early = [1, 2, 3, 4].map((n) => ({ ...child, session_id: `r${n}`, id: `a${n}`, team_id: 'turn-0', role: 'research', title: `Read ${n}`, created_at: T0 - 7_000_000 + n }));
     const late = [5, 6].map((n) => ({ ...child, session_id: `i${n}`, id: `a${n}`, role: 'implement', title: `Write ${n}`, created_at: T0 - 9_000 + n }));
     render(<AgentDock sid="leader" runningTurnId="turn-1" onOpen={vi.fn()} leader={leader} agents={[...early, ...late]} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent?.split(' ')[0]);
     expect(lanes).toEqual(['L', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6']);
     const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
@@ -495,7 +495,7 @@ describe('agent team reader', () => {
     hub = stream.hub;
     render(<Team client={fakeClient()} sid="leader" hub={hub} />);
     stream.emit(ready([child]));
-    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(rowTexts()).toEqual([expect.stringMatching(/running$/)]);
     stream.emit({ type: 'session.team_updated', session_id: 'leader', team: { active: 1, total: 2 },
       agents: [{ ...child, session_id: 'second', status: 'queued' }] });
     expect(rowTexts().filter((text) => text?.startsWith('agent#'))).toHaveLength(2);
@@ -516,6 +516,6 @@ describe('agent team reader', () => {
     render(<Team client={fakeClient({ cachedAgents })} sid="leader" stored={[{ ...child, status: 'completed' }]} hub={hub} />);
     expect(screen.getByText('done')).toBeInTheDocument();
     stream.emit(ready([{ ...child, status: 'running' }]));
-    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(rowTexts()).toEqual([expect.stringMatching(/running$/)]);
   });
 });

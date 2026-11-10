@@ -16,7 +16,7 @@ import { SessionEventsContext } from '../lib/session-events';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
 export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
-import { Button, HoverNote } from './ui';
+import { Chip, HoverNote } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
@@ -162,11 +162,22 @@ function Divider() {
   return <span aria-hidden="true" className="h-3 w-px shrink-0 bg-dialog-edge" data-team-divider />;
 }
 
-function Counts({ counts, id }: { counts: readonly TeamCount[]; id?: string }) {
+// The short status words of the team line on a phone. A screen reader still reads the whole word.
+const SHORT_STATUS: Readonly<Record<string, string>> = { running: 'run', failed: 'fail' };
+
+function Counts({ counts, id, isShort }: { counts: readonly TeamCount[]; id?: string; isShort: boolean }) {
   return (
     <span id={id} className="flex flex-wrap gap-x-3">
       {counts.map(({ text, count, ink }) => (
-        <span key={text} className={`whitespace-nowrap uppercase tabular-nums ${ink}`}>{`${count} ${text}`}</span>
+        <span key={text} className={`whitespace-nowrap uppercase tabular-nums ${ink}`}>
+          {`${count} `}
+          {isShort && SHORT_STATUS[text] ? (
+            <>
+              <span aria-hidden="true">{SHORT_STATUS[text]}</span>
+              <span className="sr-only">{text}</span>
+            </>
+          ) : text}
+        </span>
       ))}
     </span>
   );
@@ -174,26 +185,26 @@ function Counts({ counts, id }: { counts: readonly TeamCount[]; id?: string }) {
 
 /**
  * A team on one line: its time, then its counts by status: `TEAM | 3m 20s  1 RUNNING  2 DONE`.
- * `action` stands right before the counts. `labelId` names the word, the time and the counts
+ * A phone shortens the status words. `action` stands at the end of the line. `labelId` names the word, the time and the counts
  * `${labelId}-team`, `${labelId}-time` and `${labelId}-counts`, so a control can take them as its name.
  */
 export function TeamLine({ agents, action, labelId }: { agents: readonly Subagent[]; action?: ReactNode; labelId?: string }) {
   const now = useNow(agents.some(isLive));
   const time = teamTime(agents, now);
+  const isWide = useWide();
   return (
-    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 sm:min-h-5" data-team-line>
-      <span id={labelId && `${labelId}-team`} className="font-bold uppercase text-white">team</span>
-      {time !== undefined && <Divider />}
-      {time !== undefined && (
-        <span id={labelId && `${labelId}-time`} className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>
-          {formatAgentTime(time)}
-        </span>
-      )}
-      <span className="flex flex-wrap items-center gap-x-3 sm:ml-auto">
-        {action}
-        {action && <Divider />}
-        <Counts counts={teamCounts(agents)} id={labelId && `${labelId}-counts`} />
+    <span className="flex min-w-0 flex-1 items-center gap-x-3 sm:min-h-5" data-team-line>
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3">
+        <span id={labelId && `${labelId}-team`} className="font-bold uppercase text-white">team</span>
+        {time !== undefined && <Divider />}
+        {time !== undefined && (
+          <span id={labelId && `${labelId}-time`} className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>
+            {formatAgentTime(time)}
+          </span>
+        )}
+        <Counts counts={teamCounts(agents)} id={labelId && `${labelId}-counts`} isShort={!isWide} />
       </span>
+      {action}
     </span>
   );
 }
@@ -209,9 +220,9 @@ export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): b
 /** The control that swaps the notes of a team for its timeline, and back. */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
-    <Button variant="secondary" density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto">
-      {isOn ? 'Close timeline' : 'Open timeline'}
-    </Button>
+    <Chip isOn={isOn} onClick={onToggle} className="pointer-events-auto">
+      Timeline
+    </Chip>
   );
 }
 
@@ -453,9 +464,9 @@ function StatusWord({ status }: { status: { text: string; ink: string } }) {
   return <span className={`whitespace-nowrap uppercase ${status.ink}`}>{status.text}</span>;
 }
 
-// The columns of a team on a phone: ROLE, TITLE and STATUS, then UPDATE and TIME on the second
-// line. ROLE fits the longest role word of the contract.
-const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1 text-left';
+// The lines of a team row on a phone: ROLE, then TIME and STATUS at the end; the TITLE; then the
+// UPDATE. Each line takes the whole width.
+const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 py-1 text-left';
 
 // The columns of a team on a wide screen: ROLE, TITLE, then the NOTE, or the time bar while the
 // timeline shows, then TIME and STATUS. A hairline stands after ROLE, TITLE, NOTE and TIME.
@@ -486,7 +497,11 @@ function columnWidths(rows: readonly Subagent[], leader?: LeaderLane): CSSProper
 // The columns of the chart of a team: the KEY of each lane, its time BAR, its TIME and its
 // STATUS. The legend under the chart gives each KEY its ROLE, TITLE and the NOTE of its row.
 const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_7ch] items-baseline gap-x-3 px-3';
-const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
+// On a phone the note goes under the role and the title.
+const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_minmax(0,1fr)] sm:grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
+const LEGEND_KEY = 'max-sm:row-span-2';
+const LEGEND_NOTE = 'min-w-0 max-sm:col-span-2 max-sm:col-start-2';
+const LEGEND_LAST = 'max-sm:after:hidden';
 
 // The bar column of a chart row: the inset of the row, the KEY and one gap on the left; one gap,
 // TIME, one gap, STATUS and the inset on the right. The grid lines stand there behind the bars.
@@ -547,6 +562,16 @@ function AgentTable(props: TableProps) {
   return isWide ? <WideAgentTable {...props} /> : <PhoneAgentTable {...props} />;
 }
 
+// The end of the first line of a phone row: the time, then the status.
+function PhoneEnd({ status, time }: { status: { text: string; ink: string }; time?: string }) {
+  return (
+    <span className="order-3 whitespace-nowrap text-right">
+      {time && <span className="mr-2 text-dialog-hint tabular-nums">{time}</span>}
+      <span className={`uppercase ${status.ink}`}>{status.text}</span>
+    </span>
+  );
+}
+
 // The leader row on a phone, in the shape of an agent row. It opens nothing: the leader is this session.
 function PhoneLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
   const times = leaderTimes(leader, now);
@@ -554,14 +579,13 @@ function PhoneLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
   return (
     <li className={PHONE_ROW} data-leader-row data-hover-note-frame>
       <span className={`order-1 font-bold uppercase ${LEADER_INK}`}>{LEADER_ROLE}</span>
-      <span className="order-2 min-w-0 text-dialog-hint [overflow-wrap:anywhere]">{leaderWait(times)}</span>
+      <span className="order-4 col-span-2 min-w-0 text-dialog-hint [overflow-wrap:anywhere]">{leaderWait(times)}</span>
       {leader.note && (
-        <HoverNote className="order-4 col-span-2 min-w-0" note={leader.note}>
+        <HoverNote className="order-5 col-span-2 min-w-0" note={leader.note}>
           <span className="line-clamp-2 text-dialog-hint [overflow-wrap:anywhere]">{leader.note}</span>
         </HoverNote>
       )}
-      <span className={`order-3 whitespace-nowrap text-right uppercase ${status.ink}`}>{status.text}</span>
-      <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums">{formatAgentTime(times.total)}</span>
+      <PhoneEnd status={status} time={formatAgentTime(times.total)} />
     </li>
   );
 }
@@ -579,18 +603,15 @@ function PhoneAgentTable({ rows, now, onSelect, leader }: TableProps) {
           <li key={agent.session_id}>
             <button type="button" data-agent-row={agent.session_id} onClick={() => onSelect(agent.session_id)} className={`group ${FOCUS} ${PHONE_ROW}`}>
               <span className={`order-1 uppercase ${role.ink}`}>{role.text}</span>
-              <HoverNote className="order-2 min-w-0" note={taskNote(agent.task)}>
+              <HoverNote className="order-4 col-span-2 min-w-0" note={taskNote(agent.task)}>
                 <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
               </HoverNote>
               {update && (
-                <HoverNote className="order-4 col-span-2 min-w-0" note={update}>
+                <HoverNote className="order-5 col-span-2 min-w-0" note={update}>
                   <span className="line-clamp-2 text-dialog-hint [overflow-wrap:anywhere]">{update}</span>
                 </HoverNote>
               )}
-              <span className={`order-3 whitespace-nowrap text-right uppercase ${status.ink}`}>{status.text}</span>
-              <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums">
-                {time === undefined ? '' : formatAgentTime(time)}
-              </span>
+              <PhoneEnd status={status} time={time === undefined ? undefined : formatAgentTime(time)} />
             </button>
           </li>
         );
@@ -725,10 +746,10 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
       <ul aria-label="Legend" className="border-t border-dialog-edge pt-1">
         {leader && (
           <li className={LEGEND_ROW} data-hover-note-frame>
-            <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
+            <span className={`font-bold ${LEGEND_KEY} ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
             <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
-            <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE}`}>{leaderWait(times)}</span>
-            <HoverNote className="min-w-0" note={leader.note}>
+            <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE} ${LEGEND_LAST}`}>{leaderWait(times)}</span>
+            <HoverNote className={LEGEND_NOTE} note={leader.note}>
               <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>
           </li>
@@ -738,12 +759,12 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           const update = agentUpdate(agent);
           return (
             <li key={agent.session_id} className={LEGEND_ROW} data-hover-note-frame>
-              <span className={`${CELL_RULE} ${role.ink}`}>{keys[index]}</span>
+              <span className={`${LEGEND_KEY} ${CELL_RULE} ${role.ink}`}>{keys[index]}</span>
               <span className={`uppercase ${CELL_RULE} ${role.ink}`}>{role.text}</span>
-              <HoverNote className={`min-w-0 ${CELL_RULE}`} note={taskNote(agent.task)}>
+              <HoverNote className={`min-w-0 ${CELL_RULE} ${LEGEND_LAST}`} note={taskNote(agent.task)}>
                 <span className="font-bold [overflow-wrap:anywhere]">{agentLabel(agent, rows)}</span>
               </HoverNote>
-              <HoverNote className="min-w-0" note={update}>
+              <HoverNote className={LEGEND_NOTE} note={update}>
                 <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{update ?? ''}</span>
               </HoverNote>
             </li>

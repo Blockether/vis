@@ -46,7 +46,7 @@ const LEADER = {
   note: 'Five agents work. I wait for the native tests, then I read the contract result.',
 };
 
-/** Open timeline keys each lane, L for the leader and A1, A2 for the agents. The legend explains each key. */
+/** Timeline keys each lane, L for the leader and A1, A2 for the agents. The legend explains each key. */
 export const LeaderChart: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   args: { agents: STORY_LIVE_TEAM, leader: LEADER },
