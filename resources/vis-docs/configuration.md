@@ -282,7 +282,8 @@ has the old name and the new name, the new name wins. Vis writes only the new
 names.
 
 Models are offered in the order you list them. Models discovered from the
-provider are appended after them.
+provider are appended after them. Vis does not offer or save image, video, speech or embedding
+models, because they cannot answer a turn.
 
 ### Set verified limits for a model
 

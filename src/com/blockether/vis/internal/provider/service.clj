@@ -1588,7 +1588,8 @@
   "Refresh existing model metadata and append new live ids, preserving explicit config
    and order, except that saved models svar leaves out of this provider's model lists
    are dropped (`svar/provider-model-visible?`: stealth models, previews and outdated
-   versions). Managed providers cannot add undeclared models. The learned snapshot
+   versions, and models that cannot chat). New live ids pass the same filter, so a
+   repeated refresh saves the same list. Managed providers cannot add undeclared models. The learned snapshot
    is account/endpoint-scoped and stored separately.
    Partial replies retain last good fields for that identity; failure changes nothing.
    Returns appended names, [] for metadata-only/no change, nil for a failed probe."
@@ -1601,7 +1602,8 @@
              preset (into {}
                           (map (juxt :name identity))
                           (default-model-configs (catalog/template provider-id)))
-             live (vec (distinct (map :name (:models catalog))))
+             listed? (every-pred allowed? (partial catalog/model-visible? provider-id))
+             live (vec (distinct (filter listed? (map :name (:models catalog)))))
              unknown (fn [entry]
                        (let [known (into #{} (keep config/model-name) (:models entry))]
                          (filterv (complement known) live)))
@@ -1620,12 +1622,7 @@
                             (-> entry
                                 (assoc :model-metadata (merge-catalog entry))
                                 (update :models
-                                        #(into (filterv (comp (every-pred allowed?
-                                                                          (partial
-                                                                            catalog/model-visible?
-                                                                            provider-id))
-                                                              config/model-name)
-                                                 %)
+                                        #(into (filterv (comp listed? config/model-name) %)
                                                (map (fn [id]
                                                       (or (preset id) {:name id})))
                                                (unknown entry)))))

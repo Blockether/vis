@@ -903,24 +903,24 @@
                       providers/fetch-model-catalog
                       (constantly {:identity "test-account"
                                    :models [{:name "kimi-k3"} {:name "glm-5.3"}
-                                            {:name "minimax-m2.5"} {:name "minimax-m2.5"}]})
+                                            {:name "minimax-m2.7"} {:name "minimax-m2.7"}]})
 
                       catalog/template
                       (constantly {:id :fake
                                    :default-models ["glm-5.3"
-                                                    {:name "minimax-m2.5" :api-style :anthropic}]})
+                                                    {:name "minimax-m2.7" :api-style :anthropic}]})
 
                       providers/update-config-provider!
                       (fn [provider-id f source]
                         (reset! written [provider-id (f entry) source]))]
 
           (let [added (providers/refresh-models! :fake :test)]
-            (expect (= ["glm-5.3" "minimax-m2.5"] added)
+            (expect (= ["glm-5.3" "minimax-m2.7"] added)
                     "only the live ids config did not already name")
             (expect (= [:fake :test] [(first @written) (last @written)]))
             (expect
               (= [{:name "kimi-k3"} {:name "kimi-k2.6"} {:name "glm-5.3"}
-                  {:name "minimax-m2.5" :api-style :anthropic}]
+                  {:name "minimax-m2.7" :api-style :anthropic}]
                  (:models (second @written)))
               "configured models keep their order; a new one carries the preset's own map"))))))
 
@@ -954,6 +954,27 @@
           (expect
             (= [{:name "glm-5.3"} {:name "mimo-v2.6-pro"}] (:models (second @written)))
             "stealth, preview and outdated models leave the saved list; the rest keep order")))))
+
+;; A discovery saved `wan3.0-video` and `qwen-image-3.0-pro` of an Alibaba plan to
+;; state.yml. The next refresh dropped them and the refresh after it saved them again.
+(defdescribe
+  refreshing-models-never-saves-a-model-that-cannot-chat
+  (it "refreshing models never saves an image or video model, also when repeated"
+      (let [entry (atom {:id :fake :models [{:name "glm-5.3"}]})]
+        (with-redefs [providers/configured-providers (fn []
+                                                       [@entry])
+                      providers/fetch-model-catalog
+                      (constantly {:identity "test-account"
+                                   :models [{:name "glm-5.3"} {:name "wan3.0-video"}
+                                            {:name "qwen-image-3.0-pro"} {:name "kimi-k3"}]})
+                      catalog/template (constantly {:id :fake :default-models []})
+                      providers/update-config-provider! (fn [_ f _]
+                                                          (swap! entry f))]
+
+          (expect (= ["kimi-k3"] (providers/refresh-models! :fake :test)))
+          (expect (= [{:name "glm-5.3"} {:name "kimi-k3"}] (:models @entry)))
+          (expect (= [] (providers/refresh-models! :fake :test)) "a repeated refresh adds nothing")
+          (expect (= [{:name "glm-5.3"} {:name "kimi-k3"}] (:models @entry)))))))
 
 (defdescribe
   refreshing-a-local-provider-keeps-its-saved-models
