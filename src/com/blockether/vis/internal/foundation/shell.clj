@@ -2272,6 +2272,15 @@
         acc
         (capped-capture max-sync-head-chars max-sync-tail-chars)
 
+        ;; The CPU time of the tree at the first poll, from the JDK: no `ps` fork. The
+        ;; quiet note judges the CPU that the wait itself saw. Linux `ps` gives `pcpu`
+        ;; as an average over the whole life of a process, so a command that worked
+        ;; first and then waited for input stayed above 1 % for minutes and never got
+        ;; the note. Where the JDK cannot read a child (macOS), `ps` gives a recent
+        ;; share, and the note uses `cpu_percent`.
+        cpu-start
+        (volatile! ::unsampled)
+
         finish
         (fn [res nxt reader]
           (let [snap
@@ -2295,9 +2304,12 @@
                      (= "running" (get res "status"))
                      (str/blank? (:text snap))
                      (>= elapsed-ms (long quiet-note-ms))
-                     (some-> (get res "cpu_percent")
-                             double
-                             (< 1.0)))
+                     (if-let [cpu-end (when (number? @cpu-start)
+                                        (tree-cpu-ms (tree-handles (get res "pid"))))]
+                       (< (* 100 (- (long cpu-end) (long @cpu-start))) elapsed-ms)
+                       (some-> (get res "cpu_percent")
+                               double
+                               (< 1.0))))
 
                 res
                 (cond-> res
@@ -2366,6 +2378,10 @@
                                        :sample-usage? false
                                        ;; Terminal controls and CR redraws can span reads.
                                        ::raw-output? true}))
+
+            _
+            (when (= ::unsampled @cpu-start)
+              (vreset! cpu-start (tree-cpu-ms (tree-handles (get res "pid")))))
 
             text
             (or (get res "out") "")

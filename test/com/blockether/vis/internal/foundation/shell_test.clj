@@ -1504,13 +1504,19 @@
         (let [sid "shell-stdin-quiet"
               env {:session-id sid}]
 
-          (try (shell* env {"command" "sleep 30" "id" "quiet" "timeout_secs" 1})
-               (with-redefs-fn {#'shell/quiet-note-ms 500}
-                 (fn []
-                   (let [r (wait* env "quiet" 2)]
-                     (expect (true? (get r "timed_out")))
-                     (expect (str/includes? (str (get r "note")) "No output")))))
-               (finally (resources/stop-all! sid)))))))
+          ;; Linux `ps` gives `pcpu` as an average over the life of the process, so
+          ;; the CPU that the command used before the wait hid the note there.
+          (doseq [[command settle-secs] [["sleep 30" 0]
+                                         ["i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; sleep 30" 3]]]
+            (try (shell* env {"command" command "id" "quiet" "timeout_secs" 1})
+                 ;; The first wait lets the work end; the second one sees only the sleep.
+                 (when (pos? settle-secs) (wait* env "quiet" settle-secs))
+                 (with-redefs-fn {#'shell/quiet-note-ms 500}
+                   (fn []
+                     (let [r (wait* env "quiet" 2)]
+                       (expect (true? (get r "timed_out")))
+                       (expect (str/includes? (str (get r "note")) "No output") command))))
+                 (finally (resources/stop-all! sid))))))))
 
 (defdescribe
   shell-bg-lifecycle-op-test
