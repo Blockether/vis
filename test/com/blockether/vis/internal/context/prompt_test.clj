@@ -475,10 +475,12 @@
              ;; User decision after a CTB round: the EDIT patch rule, the CHECK evidence rule and
              ;; the signature rule grew it to 5600. The CHECK margin rule grew it to 5700.
              ;; The reported-symptom, reachable-service and change-limit rules grew it to 5900.
+             ;; A CTB A/B run showed no gain from the long REPRODUCE and CHECK rules, so
+             ;; they became one sentence each and the budget fell to 5000.
              (it "keeps the core prompt under its fixed size budget"
                  (let [text (var-get (ns-resolve 'com.blockether.vis.internal.context.prompt
                                                  'CORE_SYSTEM_PROMPT))]
-                   (expect (< (count text) 5900))))
+                   (expect (< (count text) 5000))))
              (it "bans subprocess either way and names the shell verb only when shell is active"
                  ;; User review: the shell routing rules live in `shell/prompt`, with the tool.
                  (let [text
