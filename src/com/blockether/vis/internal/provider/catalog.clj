@@ -187,6 +187,12 @@
   [provider-id model-id]
   (boolean (svar/provider-model-visible? provider-id model-id)))
 
+(defn chat-model?
+  "True unless svar marks this model as one that cannot answer an agent turn, such as an image,
+   video, speech or embedding model. Pickers never offer such a model, also not a configured one."
+  [provider-id model-id]
+  (boolean (svar/chat-model? provider-id model-id)))
+
 (defn model-allowlist
   "Model ids declared by a managed provider's preset, or nil for other providers.
    An empty or missing managed declaration allows no models. Neither discovery

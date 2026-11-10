@@ -716,6 +716,26 @@
                      (providers/configured-model-names provider))
                   "configured names come straight off the provider map, in its order")))))
 
+(defdescribe
+  model-options-leaves-out-media-models
+  ;; A model refresh saved Alibaba image and video models in state.yml, and every picker
+  ;; offered them, although they cannot answer an agent turn.
+  (it "never offers or saves an image or video model, also a configured one"
+      (with-redefs [providers/fetch-models
+                    (constantly ["wan2.7-image-pro"])
+
+                    catalog/template
+                    (constantly nil)]
+
+        (let [provider {:id :alibaba-token-plan
+                        :models [{:name "qwen3.8-flash"} {:name "wan2.7-image"}
+                                 {:name "wan3.0-video"}]}]
+          (expect (= ["qwen3.8-flash"]
+                     (:models (providers/model-options provider
+                                                       (providers/default-model-names provider)
+                                                       true))))
+          (expect (= #{"qwen3.8-flash"} (#'providers/selectable-model-names provider)))))))
+
 (defdescribe model-options-accepts-mapped-provider-defaults
              (it "model options accepts mapped provider defaults"
                  (with-redefs [providers/fetch-models

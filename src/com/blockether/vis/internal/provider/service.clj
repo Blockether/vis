@@ -93,12 +93,6 @@
 
 ;;; ── Model fetching ──────────────────────────────────────────────────────────
 
-(def ^:private non-chat-pattern
-  "Regex matching model IDs that aren't chat/completion models."
-  #"(?i)^(whisper|eleven|text-embedding|tts|dall-e|stable-diffusion|wav2vec|canary|speech)")
-
-(defn- chat-model? [id] (not (re-find non-chat-pattern id)))
-
 (defn fetch-model-catalog
   "Fetch normalized live models and their credential-safe account/endpoint identity.
    Managed providers learn metadata only for their declared models. Missing fields
@@ -124,13 +118,11 @@
 
           models
           (->> (svar/models! router)
-               (keep (fn [m]
-                       (let [id (if (string? m) m (or (:id m) (:name m)))]
-                         (when (and (string? id)
-                                    (allowed? id)
-                                    (chat-model? id)
-                                    (catalog/model-visible? provider-id id))
-                           (config/->svar-model (assoc (if (map? m) m {}) :name id))))))
+               (keep
+                 (fn [m]
+                   (let [id (if (string? m) m (or (:id m) (:name m)))]
+                     (when (and (string? id) (allowed? id) (catalog/model-visible? provider-id id))
+                       (config/->svar-model (assoc (if (map? m) m {}) :name id))))))
                (reduce (fn [acc m]
                          (assoc acc (:name m) m))
                        (sorted-map))
@@ -218,7 +210,7 @@
          (filterv #(catalog/model-visible? provider-id %) (or default-models []))
 
          all-ids
-         (filterv allowed?
+         (filterv (every-pred allowed? (partial catalog/chat-model? provider-id))
            (svar/sort-models provider-id
                              (into configured
                                    (->> (concat fetched defaults)
@@ -1344,9 +1336,10 @@
    the default AWAY from what config already names. Degrades to the configured
    catalog when the live fetch is unavailable."
   [provider]
-  (into (set (provider-model-names provider))
-        (try (:models (model-options provider (default-model-names provider) true))
-             (catch Throwable _ nil))))
+  (into
+    (into #{} (filter (partial catalog/chat-model? (:id provider))) (provider-model-names provider))
+    (try (:models (model-options provider (default-model-names provider) true))
+         (catch Throwable _ nil))))
 
 (defn- save-selection!
   "Validate one provider/model pair against the live fleet and persist it under

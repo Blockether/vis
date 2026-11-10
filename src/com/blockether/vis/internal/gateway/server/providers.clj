@@ -17,13 +17,16 @@
   "The models of `provider` with svar metadata, without credentials or a provider probe."
   [provider]
   (when (seq (:models provider))
-    (catalog/normalize-models 0
-                              {:id (:id provider)
-                               :base-url (config/provider-base-url provider)
-                               :api-style (config/effective-api-style
-                                            {:declared (config/provider-api-style provider)
-                                             :responses-path (:responses-path provider)})
-                               :models (into [] (keep config/->svar-model) (:models provider))})))
+    (catalog/normalize-models
+      0
+      {:id (:id provider)
+       :base-url (config/provider-base-url provider)
+       :api-style (config/effective-api-style {:declared (config/provider-api-style provider)
+                                               :responses-path (:responses-path provider)})
+       :models (into []
+                     (comp (filter #(catalog/chat-model? (:id provider) (config/model-name %)))
+                           (keep config/->svar-model))
+                     (:models provider))})))
 
 (def ^:private rate-keys
   "Catalog rate names and the svar keys for each, in order of preference."
