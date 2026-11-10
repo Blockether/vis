@@ -206,6 +206,15 @@ Extension tools answer with records built from their public fields, not with the
 Python objects. For example, a `PageList` result has `r.results` or `r["results"]` and `r.total`,
 but none of the original methods.
 
+You can also read a record as a mapping. `r.get("total")`, `r.keys()`, `r.items()` and `r.values()`
+read its fields. `dict(r)` gives the fields as a dictionary. `json.dumps(r)` writes them, also for
+a record inside a record. A field wins over a mapping method of the same name: on a record with an
+`items` field, `r.items` is that field.
+
+Two limits apply. If you give `json.dumps` your own `default=`, that function gets the record, and
+`default=dict` writes its fields. A record is not a `collections.abc.Mapping`, because only a
+backing field iterates.
+
 A name that is not a field raises an error:
 
 - `r["methods"]` raises `KeyError`. Its message lists the fields that the record has.

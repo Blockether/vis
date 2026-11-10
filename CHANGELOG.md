@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Sandbox (#462): `json.dumps(r)` writes a typed tool result as the object of its fields, and `r.get(...)`, `r.items()` and `r.values()` read them, as `r.keys()` does. Before, `json.dumps` raised `TypeError` and the three methods raised `AttributeError`.
+
 ## [v0.5.11] - 2026-11-10
 
 The release runs of v0.5.9 and v0.5.10 failed a test, so these versions were not published. v0.5.11 contains their changes.
