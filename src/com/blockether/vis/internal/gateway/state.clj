@@ -1156,11 +1156,12 @@
 (defn- hydrate-foreign-turn!
   "Mirror a turn running in a SIBLING process into this registry: at most one
    hydrate in flight per session, and none at all while this process is already
-   tracking a live turn. A session with a parked turn is not hydrated: the journal
-   of the stopped gateway is not an orphan, because a gateway start resumes that turn."
+   tracking a live turn. A session with a parked turn of a stopped process is not
+   hydrated: its journal is not an orphan, because a gateway start resumes that turn."
   [sid]
   (when (claim-hydrate! sid)
-    (try (when-not (some #(= (str sid) (str (:session-id %))) (resumable-parked-rows (lp/db-info)))
+    (try (when-not (some #(= (str sid) (str (:session-id %)))
+                         (remove bus/stamp-alive? (resumable-parked-rows (lp/db-info))))
            (bus/hydrate! sid))
          (finally (update-existing-session! sid
                                             (fn [entry]
@@ -5004,28 +5005,36 @@
                         "queue send-now: event publication failed; messages still delivered"})))
       (mapv queued-turn-input @taken))))
 
-(defn- park-turn!
-  "Keep the running turn `tid` for the next gateway process and release its run.
-   The stored row holds the turn record, the `launch` inputs and `clean?`. A clean
-   turn stopped at an iteration boundary. The run gives up its terminal, so no
-   watchdog or backstop lands one. If the row write fails, the turn stays running
-   and the next gateway marks it interrupted."
+(defn- store-resume-row!
+  "Store the row that lets the next gateway process resume the running turn `tid`:
+   the turn record, the `launch` inputs, `clean?` and the resume count. A clean turn
+   stopped at an iteration boundary."
   [sid tid launch clean?]
   (let [turn (turn-record sid tid)]
-    (try
-      (persistance/db-store-parked-turn!
-        (lp/db-info)
-        sid
-        {:turn-id tid
-         :payload {:turn (turn-payload (apply dissoc turn ::resumes turn-execution-keys))
-                   :launch (turn-payload (update launch :engine-opts dissoc :resume :hooks))
-                   :clean? (boolean clean?)
-                   :resumes (long (or (::resumes turn) 0))}}
-        (bus/process-stamp))
-      (tel/log! :info ["gateway: turn parked for the next gateway" tid {:clean? (boolean clean?)}])
-      (catch Throwable t
-        (tel/log! :error
-                  ["gateway: turn not parked; the next gateway interrupts it" tid (ex-message t)])))
+    (persistance/db-store-parked-turn!
+      (lp/db-info)
+      sid
+      {:turn-id tid
+       :payload {:turn (turn-payload (apply dissoc turn ::resumes turn-execution-keys))
+                 :launch (turn-payload (update launch :engine-opts dissoc :resume :hooks))
+                 :clean? (boolean clean?)
+                 :resumes (long (or (::resumes turn) 0))}}
+      (bus/process-stamp))))
+
+(defn- park-turn!
+  "Keep the running turn `tid` for the next gateway process and release its run.
+   The run gives up its terminal, so no watchdog or backstop lands one. If the row
+   write fails, the row from the start of the turn stays, and the next gateway
+   resumes the turn as a forced stop."
+  [sid tid launch clean?]
+  (let [turn (turn-record sid tid)]
+    (try (store-resume-row! sid tid launch clean?)
+         (tel/log! :info
+                   ["gateway: turn parked for the next gateway" tid {:clean? (boolean clean?)}])
+         (catch Throwable t
+           (tel/log! :error
+                     ["gateway: turn not parked; the next gateway resumes it as a forced stop" tid
+                      (ex-message t)])))
     (update-existing-session!
       sid
       (fn [entry]
@@ -5039,14 +5048,13 @@
                        ["gateway: cancel hook of a parked turn not disposed" tid
                         (ex-message t)]))))))
 
-(defn- forget-resumed-turn!
-  "Delete the parked row of the resumed turn `tid` once it ends in this process."
+(defn- forget-resume-row!
+  "Delete the resume row of the turn `tid` once it ends in this process."
   [sid tid]
   (when-not (get-in (session-entry sid) [:turns tid ::parked?])
     (try (persistance/db-delete-pending-turn! (lp/db-info) tid)
          (catch Throwable t
-           (tel/log! :warn
-                     ["gateway: parked row of a resumed turn not deleted" tid (ex-message t)])))))
+           (tel/log! :warn ["gateway: resume row of a turn not deleted" tid (ex-message t)])))))
 
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
@@ -5209,6 +5217,12 @@
               (catch Throwable t
                 (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)])))))]
 
+    ;; A crash keeps this row, so the next gateway resumes the turn as a forced stop.
+    ;; A resumed turn already has its row.
+    (when-not (:resume engine-opts)
+      (try (store-resume-row! sid tid launch false)
+           (catch Throwable t
+             (tel/log! :warn ["gateway: resume row of a turn not stored" tid (ex-message t)]))))
     (try
       (let [opts
             (cond-> (assoc (or engine-opts {})
@@ -5509,7 +5523,7 @@
                 sid
                 tid
                 {:failed? (not user-cancel?) :cancel-token cancel-token :stalled? stalled?})))))
-      (finally (when (:resume engine-opts) (forget-resumed-turn! sid tid))))))
+      (finally (forget-resume-row! sid tid)))))
 
 (def ^:private WATCHDOG_CANCEL_REASONS
   "Cancel reasons that mean \"nobody ever ran this turn\", never \"the user stopped

@@ -119,12 +119,13 @@ Know these limits before you rely on a drain:
 
 - A turn stopped inside a step can have run part of a tool call. The model gets a note to check the
   current state before it repeats a change. Vis does not repeat or undo the tool call itself.
-- A turn in the `running` count ends as interrupted.
+- A turn in the `running` count also continues in the next gateway, as a turn stopped inside a step.
 - A turn that stops in three gateways in a row ends as interrupted.
 - You cannot cancel a drain. Stop the gateway after it.
 
-A gateway that ends without a drain keeps its queue too. Its running turns end as interrupted, and
-the queue behind them stays held until you resume it.
+A gateway that ends without a drain, for example after a crash, keeps its running turns and its
+queue too. The next gateway continues each running turn as a turn stopped inside a step, then runs
+the queue.
 
 ## Connect from another machine
 

@@ -8894,6 +8894,94 @@
               (expect (= [] (mapv #(get % "type") (:events (get @reg sid)))))
               (forget-session! sid)))
           (finally (sqlite/db-close! store)))))
+  (it "keeps a resume row while a fresh turn runs, so a crash does not lose the turn"
+      ;; `kill -9` of the gateway during a fresh turn left no row, and the next
+      ;; gateway marked the turn interrupted instead of continuing it.
+      (let [store
+            (sqlite/db-open! :memory)
+
+            token
+            (cancellation/cancellation-token)
+
+            during
+            (atom nil)]
+
+        (try (let [sid (str (h/store-session! store {:channel :api}))]
+               (with-redefs [lp/db-info (constantly store)
+                             lp/by-id (constantly {:id sid})
+                             lp/send! (fn [_ _ _]
+                                        (reset! during (mapv (juxt :turn-id
+                                                                   #(get-in % [:payload :clean?])
+                                                                   #(get-in % [:payload :resumes]))
+                                                             (:turns
+                                                               (persistance/db-list-pending-turns
+                                                                 store))))
+                                        {:status :ok :answer nil})]
+
+                 (#'state/update-session! sid (constantly (running-entry sid token)))
+                 (#'state/run-turn! sid "r1" "busy" {:cancel-token token :engine-opts {}})
+                 (expect (= [["r1" false 0]] @during))
+                 (expect (empty? (:turns (persistance/db-list-pending-turns store))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it
+    "hydrates a session whose turn a live process runs"
+    (let [store
+          (sqlite/db-open! :memory)
+
+          tmp
+          (java.nio.file.Files/createTempDirectory "live-hydrate"
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+
+          parent
+          (.get (.parent (java.lang.ProcessHandle/current)))
+
+          reg
+          @#'state/registry]
+
+      (try
+        (let [sid
+              (str (h/store-session! store {:channel :api}))
+
+              tid
+              (str (persistance/db-store-session-turn! store
+                                                       {:parent-session-id sid
+                                                        :user-request "busy"}))]
+
+          (persistance/db-store-parked-turn!
+            store
+            sid
+            {:turn-id tid
+             :payload {:turn {:request "busy"} :launch {:request "busy"} :clean? false :resumes 0}}
+            {:owner_pid (.pid parent)
+             :owner_started_at (some-> (.orElse (.startInstant (.info parent)) nil)
+                                       .toEpochMilli)})
+          (with-redefs [lp/db-info
+                        (constantly store)
+
+                        bus/events-dir
+                        (fn []
+                          tmp)]
+
+            (spit (#'bus/session-file sid)
+                  (str (wire/json-str {:_producer "sibling"
+                                       :_pid (.pid parent)
+                                       :_store true
+                                       :schema 1
+                                       :seq 5
+                                       :type "turn.started"
+                                       :turn_id tid
+                                       :session_id sid
+                                       :request "busy"})
+                       "\n"))
+            (state/subscribe! sid
+                              "sub-1"
+                              (fn [_])
+                              0)
+            (expect (= ["turn.started"] (mapv #(get % "type") (:events (get @reg sid)))))
+            (forget-session! sid)))
+        (finally (sqlite/db-close! store)))))
   (it "lands no terminal for a turn that the engine parks"
       (let [store
             (sqlite/db-open! :memory)
