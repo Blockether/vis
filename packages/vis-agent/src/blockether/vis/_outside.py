@@ -518,11 +518,10 @@ def _start_log_sweeper(log_root):
 
 
 class _Run:
-    def __init__(self, command, cwd, timeout_secs, env, stdin=None):
+    def __init__(self, command, cwd, env, stdin=None):
         self.id = "sh-" + secrets.token_hex(4)
         self.command = command
         self.cwd = str(Path(cwd).expanduser()) if cwd else os.getcwd()
-        self.timeout_secs = timeout_secs
         self.started_at = time.time()
         home = os.environ.get("VIS_OUTSIDE_HOME")
         log_root = (Path(home) if home else Path.home() / ".vis") / "logs"
@@ -531,8 +530,7 @@ class _Run:
         log_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = str(log_dir / f"shell-{self.id}.log")
         self.finished_at = None
-        self.timed_out = False
-        self.stopped = False
+        self.is_stopped = False
         self._sink = open(self.log_path, "wb")
         self.process = subprocess.Popen(
             command
@@ -562,15 +560,8 @@ class _Run:
                 self._sink.close()
             except OSError:
                 pass
-        if (
-            code is None
-            and self.timeout_secs
-            and (time.time() - self.started_at) > float(self.timeout_secs)
-        ):
-            self.timed_out = True
-            self.kill()
-            return self.process.poll()
-        return code
+        # A shell reports an end by signal N as exit 128 + N, and so does the engine.
+        return 128 - code if code is not None and code < 0 else code
 
     def signal_group(self, sig):
         # The command leads its own session, so its process group holds every process
@@ -594,57 +585,137 @@ class _Run:
                 pass
         self.poll()
 
-    def read(self, offset=None, limit=None, lines=None):
-        # The line rules of the engine. A NEGATIVE offset reads the last n LINES; a
-        # positive one is a byte cursor. `lines` is the line window: the last n lines
-        # without an offset, the next n lines from an offset, and the n lines that
-        # end at the offset when it is negative. `limit` cuts the bytes of one read.
-        # Without an offset and a line window, this host reads the whole log.
+    def log(self):
         try:
-            raw = Path(self.log_path).read_bytes()
+            return Path(self.log_path).read_bytes()
         except OSError:
-            raw = b""
-        size = len(raw)
-        offset = None if offset is None else int(offset)
-        count = abs(int(lines or 0))
-        is_backward = int(lines or 0) < 0
-        end = size
-        if is_backward:
-            end = size if offset is None or offset < 0 else min(offset, size)
-            start = _tail_start(raw, end, count)
-        elif offset is None:
-            start = _tail_start(raw, size, count) if count else 0
-        elif offset < 0:
-            start = _tail_start(raw, size, -offset)
-        else:
-            start = min(offset, size)
-        chunk = raw[start:end]
-        if count and not is_backward:
-            # A line ends at its newline, so the last line of the window is whole.
-            index = -1
-            for _ in range(count):
-                index = chunk.find(b"\n", index + 1)
-                if index < 0:
-                    break
-            if index >= 0:
-                chunk = chunk[: index + 1]
-        omitted = start if offset is not None and offset < 0 else 0
-        if limit is not None and len(chunk) > int(limit):
-            omitted = len(chunk) - int(limit)
-            chunk = chunk[: int(limit)]
-        text = chunk.decode("utf-8", "replace")
-        return text, start, start + len(chunk), omitted, size
+            return b""
 
 
-def _tail_start(raw, end, count):
-    # The byte where the last `count` lines before `end` start. A newline at `end`
-    # closes the last line; it does not start an empty line.
+# The bounds of the engine's log reader (`internal.foundation.shell-log`) and of its
+# wait answer. The contract has no schema for them. The `shell-handle` fixture pins
+# each of them against the engine.
+_LOG_PAGE_BYTES = 16384
+_LOG_PAGE_CAP_BYTES = 262144
+_WAIT_HEAD_CHARS = 100000
+_WAIT_TAIL_CHARS = 300000
+_WAIT_MAX_SECS = 1800
+
+
+def _tail_start(raw, end, limit, count):
+    # The byte where the last `count` lines before `end` start, inside the last
+    # `limit` bytes. A newline at `end` closes the last line; it does not start an
+    # empty line. A window with fewer lines starts at its first byte.
+    base = end - min(end, limit)
     index = end - 1 if raw[end - 1 : end] == b"\n" else end
     for _ in range(count):
-        index = raw.rfind(b"\n", 0, index)
+        index = raw.rfind(b"\n", base, index)
         if index < 0:
-            return 0
+            return base
     return index + 1
+
+
+def _split_bytes(buf, is_cut):
+    # The bytes of a split UTF-8 character at the start of `buf` and, when the log
+    # continues after `buf`, at its end. A read never answers a part of a character.
+    head = 0
+    while head < min(len(buf), 3) and buf[head] & 0xC0 == 0x80:
+        head += 1
+    tail = 0
+    index = len(buf) - 1
+    while is_cut and index >= 0 and len(buf) - index <= 4:
+        byte = buf[index]
+        if byte & 0xC0 != 0x80:
+            width = (
+                2
+                if byte & 0xE0 == 0xC0
+                else 3
+                if byte & 0xF0 == 0xE0
+                else 4
+                if byte & 0xF8 == 0xF0
+                else 1
+            )
+            if len(buf) - index < width:
+                tail = len(buf) - index
+            break
+        index -= 1
+    return head, tail
+
+
+def _read_log(raw, offset, limit, lines):
+    """Answer one log window as `(text, start, next)` with the rules of the engine.
+
+    A negative offset reads the last n lines; a positive offset is a byte cursor.
+    `lines` is the line window: the last n lines without an offset, the next n lines
+    from an offset, and the n lines that end at the offset when it is negative.
+    `limit` is the byte size of one read. Without an offset, the read ends at the
+    end of the log.
+    """
+    size = len(raw)
+    cap = min(max(_LOG_PAGE_BYTES if limit is None else limit, 1), _LOG_PAGE_CAP_BYTES)
+    count = lines or 0
+    anchor = size if offset is None or offset < 0 else min(offset, size)
+    if count < 0:
+        start = _tail_start(raw, anchor, cap, -count)
+    elif offset is None:
+        start = _tail_start(raw, size, cap, count) if count else max(0, size - cap)
+    elif offset < 0:
+        start = _tail_start(raw, size, cap, -offset)
+    else:
+        start = anchor
+    buf = raw[start : start + cap]
+    head, tail = _split_bytes(buf, start + len(buf) < size)
+    keep = max(0, len(buf) - head - tail)
+    if count:
+        # A line ends at its newline, so the last line of the window is whole.
+        end = head
+        for _ in range(abs(count)):
+            newline = buf.find(b"\n", end, head + keep)
+            if newline < 0:
+                end = head + keep
+                break
+            end = newline + 1
+        keep = end - head
+    if count < 0:
+        keep = min(keep, max(0, anchor - start - head))
+    text = buf[head : head + keep].decode("utf-8", "replace")
+    return text, start + head, start + head + keep
+
+
+def _wait_text(raw, offset):
+    """Answer the log text from `offset` and the count of the characters left out."""
+    text = raw[offset:].decode("utf-8", "replace")
+    omitted = len(text) - _WAIT_HEAD_CHARS - _WAIT_TAIL_CHARS
+    if omitted <= 0:
+        return text, 0
+    marker = f"\n\n…[{omitted} chars omitted]…\n\n"
+    return text[:_WAIT_HEAD_CHARS] + marker + text[-_WAIT_TAIL_CHARS:], omitted
+
+
+def _whole(value, what):
+    # The number rules of the engine, with its words.
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        shown = (
+            json.dumps(value, ensure_ascii=False) if isinstance(value, str) else value
+        )
+        raise Refused(f"{what} must be a number, got {shown}.")
+    if value != value or value in (float("inf"), float("-inf")):
+        raise Refused(f"{what} must be a finite number, got {value}.")
+    if value != int(value):
+        raise Refused(
+            f"{what} must be a whole number, got {value} — a fraction rounds into "
+            "a different value."
+        )
+    return int(value)
+
+
+def _not_negative(value, what):
+    value = _whole(value, what)
+    if value is not None and value < 0:
+        raise Refused(f"{what} must not be negative, got {value}.")
+    return value
 
 
 def _shell_option(opts, *names):
@@ -652,30 +723,19 @@ def _shell_option(opts, *names):
     return next((opts[name] for name in names if opts.get(name) is not None), None)
 
 
-def _result(run, stage, **extra):
+def _result(run, stage, **fields):
+    # The answer of one op. Only a log read and a wait answer log text and its
+    # cursor, as in the engine; `fields` holds them.
     code = run.poll()
     now = time.time()
     result: dict[str, Any] = dict.fromkeys(_SHELL_RESULT_KEYS)
-    out, offset, next_offset, omitted, size = run.read(
-        extra.pop("_offset", None), extra.pop("_limit", None), extra.pop("_lines", None)
-    )
-    # Only a log read answers the cursor of its window, as in the engine.
-    is_log_read = stage == "logs"
     result.update(
         {
             "stage": stage,
             "id": run.id,
             "cwd": run.cwd,
             "command": run.command,
-            "status": (
-                "running"
-                if code is None
-                else (
-                    "stopped"
-                    if run.stopped
-                    else ("timed_out" if run.timed_out else "exited")
-                )
-            ),
+            "status": "running" if code is None else "exited",
             "pid": run.process.pid,
             "exit": code,
             "duration_ms": int(((run.finished_at or now) - run.started_at) * 1000),
@@ -683,21 +743,21 @@ def _result(run, stage, **extra):
             "started_at": int(run.started_at * 1000),
             "finished_at": int(run.finished_at * 1000) if run.finished_at else None,
             "log_path": run.log_path,
-            "timed_out": run.timed_out,
-            "timeout_secs": run.timeout_secs,
+            "timed_out": False,
+            "timeout_secs": None,
             "waiting_for_input": False,
-            "out": out,
-            "out_omitted_chars": omitted,
-            "offset": offset if is_log_read else 0,
-            "next_offset": next_offset,
-            "is_eof": next_offset >= size if is_log_read else code is not None,
+            "out": "",
+            "out_omitted_chars": 0,
+            "offset": 0,
+            "next_offset": 0,
+            "is_eof": code is not None,
             "attach": None,
             "already_running": False,
             "keys": None,
             "note": "vis-agent outside a Vis session: a local subprocess, no jail",
         }
     )
-    result.update(extra)
+    result.update(fields)
     return result
 
 
@@ -714,25 +774,49 @@ def _shell_vocabulary():
     return ", ".join(names[:-1]) + " or " + names[-1]
 
 
+def _known_run(opts, op):
+    # The run that a handle op names, or the refusal of the engine in its words.
+    run_id = opts.get("id")
+    if run_id is None or not str(run_id).strip():
+        raise Refused("shell: id required; use the handle returned by shell().")
+    run = _RUNS.get(run_id)
+    if op in ("logs", "wait"):
+        if run is None:
+            raise Refused(
+                f"shell: unknown id {run_id!r}; use the handle returned by shell()."
+            )
+        return run
+    if run is None or run.is_stopped:
+        advice = (
+            "nothing to stop."
+            if op == "stop"
+            else 'start one with await shell({"command": "…", "wait": 0, "id": id}).'
+        )
+        raise Refused(f"No background shell {run_id!r} in this session — {advice}")
+    return run
+
+
 def shell(opts):
     """Start a process, or drive one this host already started.
 
     Spawn operations create a process. Handle operations use the process ID that the
-    host keeps.
+    host keeps. The answers follow the engine; the `shell-handle` contract fixture
+    holds the cases and names each difference.
     """
     opts = dict(opts or {})
     op = str(opts.get("op") or "run").strip()
     if op in _SPAWN_OPS:
+        command = opts.get("command")
+        if not command or (isinstance(command, str) and not command.strip()):
+            raise Refused("shell: command required; use shell(command).")
+        if not isinstance(command, (str, list, tuple)):
+            raise Refused(
+                "shell `command` must be a string — one /bin/sh -c command line."
+            )
         stdin = opts.get("stdin")
         if stdin not in (None, "null", "tty"):
-            raise Refused(f'shell `stdin` is "tty" or "null", not {stdin!r}.')
-        run = _Run(
-            opts.get("command"),
-            opts.get("cwd"),
-            opts.get("timeout_secs"),
-            opts.get("env"),
-            stdin,
-        )
+            raise Refused(f'shell `stdin` is "tty" or "null", not {json.dumps(stdin)}.')
+        run = _Run(command, opts.get("cwd"), opts.get("env"), stdin)
         # A named spawn (the engine's `background`) keeps the id it was given, so
         # the same name reaches the same process on the next call.
         if opts.get("id"):
@@ -746,17 +830,16 @@ def shell(opts):
             time.sleep(0.01)
         return _result(run, op)
     if op not in _HANDLE_OPS:
-        raise Refused(f"Unknown shell op {op!r} — use {_shell_vocabulary()}.")
-    run = _RUNS.get(opts.get("id"))
-    if run is None:
-        raise Refused("no such shell in this process: {!r}".format(opts.get("id")))
+        raise Refused(f"Unknown shell op {json.dumps(op)} — use {_shell_vocabulary()}.")
+    run = _known_run(opts, op)
     if op == "logs":
+        offset = _whole(_shell_option(opts, "offset", "start"), "offset")
+        lines = _whole(_shell_option(opts, "lines", "n", "tail"), "lines")
+        limit = _not_negative(_shell_option(opts, "limit", "bytes"), "limit")
+        raw = run.log()
+        out, start, end = _read_log(raw, offset, limit, lines)
         return _result(
-            run,
-            "logs",
-            _offset=_shell_option(opts, "offset", "start"),
-            _limit=_shell_option(opts, "limit", "bytes"),
-            _lines=_shell_option(opts, "lines", "n", "tail"),
+            run, "logs", out=out, offset=start, next_offset=end, is_eof=end >= len(raw)
         )
     if op == "send":
         text = str(opts.get("text", ""))
@@ -774,15 +857,36 @@ def shell(opts):
             pass
         return _result(run, "send")
     if op == "stop":
-        run.stopped = True
         run.kill()
-        return _result(run, "stop")
+        # A stopped run still answers `logs` and `wait`; `send` and a second `stop`
+        # refuse it, as in the engine.
+        run.is_stopped = True
+        return _result(run, "stop", status="stopped", is_eof=True)
     if op == "wait":
-        seconds = _shell_option(opts, "seconds", "secs", "timeout")
-        deadline = time.time() + float(120 if seconds is None else seconds)
-        while time.time() < deadline and run.poll() is None:
+        seconds = _not_negative(
+            _shell_option(opts, "seconds", "secs", "timeout"), "seconds"
+        )
+        seconds = min(
+            max(_WAIT_MAX_SECS if seconds is None else seconds, 1), _WAIT_MAX_SECS
+        )
+        offset = _not_negative(_shell_option(opts, "offset", "start"), "offset") or 0
+        deadline = time.time() + seconds
+        while run.poll() is None and time.time() < deadline:
             time.sleep(0.05)
-        return _result(run, "wait")
+        raw = run.log()
+        start = min(offset, len(raw))
+        out, omitted = _wait_text(raw, start)
+        return _result(
+            run,
+            "wait",
+            timed_out=run.poll() is None,
+            timeout_secs=seconds,
+            out=out,
+            out_omitted_chars=omitted,
+            offset=start,
+            next_offset=len(raw),
+            is_eof=True,
+        )
     # Reached only when the contract declares a handle op this host never grew a
     # branch for: say so, instead of blaming the caller for the engine's vocabulary.
     raise Refused(f"shell op {op!r} is declared in the contract but unimplemented here")

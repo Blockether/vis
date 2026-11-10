@@ -1705,19 +1705,23 @@ Methods, native pointers and object identity stay in the trusted process. Explic
 [field-backed sequences](#field-backed-sequences) add only local collection operations.
 Expose other operations as declared tools rather than methods on returned objects.
 
-`subprocess`, `os.system` and `vis.shell({...})` run without the jail. Output
-not read by the extension is captured in its log. Child processes receive
-pipes rather than a terminal. Output is drained into an 8 MiB buffer per
-stream, including while the extension waits for the child to exit.
+`subprocess`, `os.system` and `vis.shell(...)` run without the jail. A child of
+`subprocess` or `os.system` receives pipes, not a terminal. Vis drains its output into an
+8 MiB buffer per stream, also while the extension waits for the child to exit. Output that the
+extension does not read goes to the extension log.
 
-To confine a child, use `vis.jailed_shell({...})`. It applies the jail policy from the
+To confine a child, use `vis.jailed_shell(...)`. It applies the jail policy from the
 merged configuration on disk, re-read at every spawn, and works with or without a session.
-`vis.shell({...})` applies no jail at all.
+`vis.shell(...)` applies no jail at all.
+
+Both calls take a command with keyword options, or one options map. So
+`vis.shell("npm test", cwd="app")` and `vis.shell({"command": "npm test", "cwd": "app"})`
+start the same process. The child runs under a terminal, and Vis keeps its output in a log.
 
 Both calls return the same live handle: `sh.logs()`, `sh.wait(30)`, `sh.type("y")` and
 `sh.stop()` drive the process you started. The stdin of the child is empty, so a program that
 reads it gets end of input at once. To answer a prompt with `sh.type("y")`, add
-`"stdin": "tty"` to the call.
+`stdin="tty"` to the call. [Read the shell log](#read-the-shell-log) gives the calls of the handle.
 
 A jailed child sees the session's roots and the egress proxy, which is rarely everything a
 language runtime needs. Two options on `vis.jailed_shell` add exactly what you created for
@@ -1740,6 +1744,42 @@ sh = vis.jailed_shell({
 Use them when the child must talk back to the extension. A shell child runs under a real terminal,
 so its merged output cannot carry a request/response protocol. Give the child a rendezvous endpoint
 instead. When the jail is disabled, Vis ignores both options.
+
+### Read the shell log
+
+`sh.logs()` answers one page of the log. A page is a dictionary with `out`, `offset`,
+`next_offset` and `is_eof`. The offsets count bytes.
+
+| Call | Page |
+| --- | --- |
+| `sh.logs()` | the end of the log |
+| `sh.logs(-20)` or `sh.logs(lines=20)` | the last 20 lines |
+| `sh.logs(0, 100)` or `sh.logs(0, lines=100)` | the first 100 lines from byte 0 |
+| `sh.logs(offset, -20)` | the 20 lines that end at the byte `offset` |
+| `sh.logs(0, limit=4096)` | at most 4096 bytes from byte 0 |
+
+`limit` is the byte size of a page. The default is 16384 bytes and the maximum is 262144 bytes.
+A page never holds a part of a character. `n` and `tail` mean `lines`, `start` means `offset`
+and `bytes` means `limit`.
+
+`next(page)` answers the page that follows, and `next(page, None)` answers `None` after the last
+page. `page.pages()` gives the pages from this page to the end of the log. `sh.wait(30)` waits
+for the exit for at most 30 seconds, and `secs` and `timeout` mean `seconds`.
+
+Read a field of the handle by key, such as `sh["exit"]`. A field is also an attribute, such as
+`sh.exit`, when no dictionary method has its name. So read the `keys` field with `sh["keys"]`.
+
+### The shell outside Vis
+
+Outside Vis, for example in a plain unit test, the SDK starts the command itself. The handle takes
+the same calls and gives the same answers, with these differences:
+
+- The child has pipes and no terminal. In Vis, a terminal writes two bytes at the end of a line.
+  Outside Vis, the log has one, so the byte offsets of the same output differ.
+- The log does not show the text that you type, and `sh.type()` needs `stdin="tty"`.
+- The command runs with `/bin/sh -c`, not with `bash -lc`.
+- `vis.jailed_shell` raises an error, because no jail exists there.
+- The keys of the handle have a different order.
 
 ### Toolchain grants
 

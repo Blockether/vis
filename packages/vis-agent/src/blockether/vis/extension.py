@@ -4036,11 +4036,23 @@ def write_private_file(path: str | PathLike[str], text: str) -> None:
         raise
 
 
-def _shell_options(name, opts):
-    if not isinstance(opts, dict):
+def _shell_options(name, args, options):
+    # ONE options map from the arguments, with the rule of the sandbox `shell`: a
+    # command, then an options map, then keyword options. A later source wins.
+    opts = {}
+    rest = list(args)
+    if rest and not isinstance(rest[0], dict):
+        if rest[0] is not None:
+            opts["command"] = rest[0]
+        rest = rest[1:]
+    if len(rest) > 1 or not all(isinstance(item, dict) for item in rest):
         raise TypeError(
-            f"{name} takes one options map — use {name}({{'command': 'ls'}})"
+            f"{name} takes a command and one options map — use {name}('ls'), "
+            f"{name}('ls', cwd='src') or {name}({{'command': 'ls'}})"
         )
+    for item in rest:
+        opts.update(item)
+    opts.update(options)
     return opts
 
 
@@ -4158,8 +4170,12 @@ class Shell(dict):
                 "sliceable or positional — use list(d), d.items(), or a string key. "
                 f"Keys: {self._vis_keys_text('(no keys)')}"
             )
+        # The runtime handle names a result by its tool. Use the same names, so that
+        # the two handles say the same words.
+        stage = dict.get(self, "stage")
+        tool = "shell" if stage in (None, "run", "background") else f"_shell_{stage}"
         raise KeyError(
-            f"{key!r} is not a key of this shell result. "
+            f"{key!r} is not a key of {tool!r} result. "
             f"Keys: {self._vis_keys_text('(no keys)')}.{_shell_name_tip(self, key)} "
             "Read the keys it returned instead of guessing another name; use "
             ".get(k, default) when the field is optional."
@@ -4181,17 +4197,17 @@ class Shell(dict):
                 return getattr(out, name)
         if name in self:
             return dict.__getitem__(self, name)
-        example = next(
-            (
-                f"r[{key!r}] is r.{key}"
-                for key in self
-                if isinstance(key, str) and key.isidentifier()
-            ),
-            "r[key] is r.key",
-        )
+        fields = [
+            key
+            for key in self
+            if isinstance(key, str) and key.isidentifier() and not hasattr(dict, key)
+        ]
+        example = "exit" if "exit" in fields else next(iter(fields), None)
+        example = f"r[{example!r}] is r.{example}" if example else "r[key] is r.key"
         raise AttributeError(
-            f"{name!r} is not a field of this shell result. Every field answers by "
-            f"key AND by attribute: {example}. Keys: {self._vis_keys_text('(none)')}."
+            f"{name!r} is not a field of this shell result. A field answers by key, "
+            f"and by attribute when no dict method has its name: {example}. "
+            f"Keys: {self._vis_keys_text('(none)')}."
             f"{_shell_name_tip(self, name)} "
             "Methods: logs(offset, lines), wait(secs), type(text), stop()."
         )
@@ -4308,21 +4324,27 @@ class Shell(dict):
 
 def _shell_call(name):
     def call(opts):
-        return getattr(_host, name)(_shell_options(name, opts))
+        return getattr(_host, name)(opts)
 
     return call
 
 
-def shell(opts):
+def shell(*args, **options):
+    """Start one command and answer its handle.
+
+    Give the command as text with keyword options, or give one options map:
+    `shell("ls", cwd="src")` is `shell({"command": "ls", "cwd": "src"})`.
+    """
     # Trusted extensions get the same unrestricted process boundary as subprocess.
     call = _shell_call("shell")
-    return Shell(call(opts), call)
+    return Shell(call(_shell_options("shell", args, options)), call)
 
 
-def jailed_shell(opts):
+def jailed_shell(*args, **options):
+    """Start one command in the jail and answer its handle. See `shell`."""
     # Strictly re-read the latest merged on-disk config at each process spawn.
     call = _shell_call("jailed_shell")
-    return Shell(call(opts), call)
+    return Shell(call(_shell_options("jailed_shell", args, options)), call)
 
 
 class _Fs:

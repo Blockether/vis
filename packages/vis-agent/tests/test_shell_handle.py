@@ -89,9 +89,59 @@ def test_a_field_answers_by_attribute_and_a_miss_names_the_fields():
         str(sh.outp)
     assert "'outp' is not a field of this shell result" in str(attribute.value)
     assert "Did you mean 'out'?" in str(attribute.value)
+    # `keys` is a dict method, so the text must not say that each field is an attribute.
+    assert "when no dict method has its name: r['exit'] is r.exit." in str(
+        attribute.value
+    )
     with pytest.raises(KeyError) as key:
         sh["nope"]
-    assert "'nope' is not a key of this shell result. Keys: 'id'" in str(key.value)
+    assert "'nope' is not a key of 'shell' result. Keys: 'id'" in str(key.value)
+    with pytest.raises(KeyError) as key:
+        sh.logs()["nope"]
+    assert "'nope' is not a key of '_shell_logs' result." in str(key.value)
+
+
+def test_type_and_stop_answer_the_handle():
+    sh, sent = _handle()
+    assert sh.type("y", is_enter=False) is sh
+    assert sent[-1] == {"op": "send", "id": "s1", "text": "y", "is_enter": False}
+    assert sh["stage"] == "send"
+    assert sh.stop() is sh
+
+
+class _OptionsHost:
+    """A host that keeps the options of each shell call."""
+
+    def __init__(self):
+        self.sent = []
+
+    def shell(self, options):
+        self.sent.append(dict(options))
+        return {"id": "s1", "stage": "run"}
+
+    jailed_shell = shell
+
+
+@pytest.mark.parametrize("door", ["shell", "jailed_shell"])
+def test_a_command_string_and_keyword_options_make_one_options_map(door, monkeypatch):
+    host = _OptionsHost()
+    monkeypatch.setattr(vis, "_host", host)
+    start = getattr(vis, door)
+    start("ls")
+    start("ls", cwd="src")
+    start("ls", {"cwd": "src"}, stdin="tty")
+    start(command="ls", cwd="src")
+    start({"command": "ls"})
+    assert host.sent == [
+        {"command": "ls"},
+        {"command": "ls", "cwd": "src"},
+        {"command": "ls", "cwd": "src", "stdin": "tty"},
+        {"command": "ls", "cwd": "src"},
+        {"command": "ls"},
+    ]
+    with pytest.raises(TypeError, match=f"{door} takes a command and one options map"):
+        start("ls", "src")
+    assert len(host.sent) == 5
 
 
 def test_a_log_page_walks_forward_by_lines(four_lines):

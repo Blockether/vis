@@ -530,17 +530,15 @@ def _ends(pid):
     return False
 
 
-# Report 2026-11-10: a stopped or timed-out shell left the children of its command
-# running under init, because only the command itself got the signal.
-@pytest.mark.parametrize("ending", ["stop", "timeout"])
-def test_ending_a_shell_ends_the_processes_its_command_started(ending):
-    opts = {"command": "sleep 30 & echo $!; wait"}
-    if ending == "timeout":
-        opts["timeout_secs"] = 1
-    run = vis.shell(opts)
+# Report 2026-11-10: a stopped shell left the children of its command running under
+# init, because only the command itself got the signal. The start option
+# `timeout_secs` is only a wait, as in the engine, so the run with it ends at `stop` too.
+@pytest.mark.parametrize("start", [{}, {"timeout_secs": 1}])
+def test_ending_a_shell_ends_the_processes_its_command_started(start):
+    run = vis.shell({"command": "sleep 30 & echo $!; wait", **start})
     pid = _started_pid(run)
-    ended = run.stop() if ending == "stop" else run.wait(10)
-    assert ended["status"] != "running"
+    assert run.wait(2)["status"] == "running"
+    assert run.stop()["status"] == "stopped"
     assert _ends(pid)
 
 
@@ -605,10 +603,20 @@ def test_an_op_no_engine_speaks_is_refused_by_the_whole_vocabulary():
         assert f'"{op}"' in said
 
 
-@pytest.mark.parametrize("op", ["logs", "wait", "send", "stop"])
-def test_a_handle_op_names_the_handle_it_cannot_find(op):
-    with pytest.raises(_outside.Refused, match="no such shell"):
+@pytest.mark.parametrize(
+    ("op", "words"),
+    [
+        ("logs", "shell: unknown id 'never-started'; use the handle returned by"),
+        ("wait", "shell: unknown id 'never-started'; use the handle returned by"),
+        ("send", "No background shell 'never-started' in this session — start one"),
+        ("stop", "No background shell 'never-started' in this session — nothing to"),
+    ],
+)
+def test_a_handle_op_names_the_handle_it_cannot_find(op, words):
+    # The words of the engine, so that one message is true in both hosts.
+    with pytest.raises(_outside.Refused) as refusal:
         vis.shell({"op": op, "id": "never-started"})
+    assert words in str(refusal.value)
 
 
 # -- Asking a human ------------------------------------------------------------
