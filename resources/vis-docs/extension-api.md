@@ -1681,10 +1681,11 @@ raise an error. Outside Vis, for example in plain unit tests, they keep the file
 memory. A test can then attach a file and read it back. Outside Vis there is no size limit and no
 reference: the functions read each file whole.
 
-Outside Vis, some answers are not the answers of Vis. The bytes do not name the type or the kind,
-so the kind is `doc` only when the call gives it. The filename or `media_type` names the type by
-the rule of Python `mimetypes`, else it is `application/octet-stream`. A document keeps the
-audience that you give. A descriptor from a read function has no `position` key. Where Vis raises
+Outside Vis, some answers are not the answers of Vis. The bytes do not name the media type: the
+filename or `media_type` names it by the rule of Python `mimetypes`, else it is
+`application/octet-stream`. No rule knows a document, so the kind is `doc` only when the call
+gives it. The audience is the one that the call gives, else `both`, also for a document that Vis
+keeps for the user. A descriptor from a read function has no `position` key. Where Vis raises
 `VisToolError`, the refusal is a `RuntimeError`, with the same words for the calls of the contract
 fixture.
 

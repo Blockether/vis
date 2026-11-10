@@ -396,8 +396,8 @@
 (def ^:private fixed-answers
   "The fields of the sandbox answer that some rows must hold. One front runs at the
    three doors, so a change of the front changes each door equally: only a fixed
-   value sees it. Of the JSON value, a row names the keys that it checks. Each row
-   of [[verb-fixture]] has such an answer."
+   value sees it. Of the JSON value, a row of the engine names the keys that it
+   checks. Each row of [[verb-fixture]] has such an answer, and holds the whole value."
   (into {:attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}
          :attach-image-gif {"json" {"media_type" "image/gif" "filename" "anim.gif"}}
          :attach-figure {"json" {"media_type" "image/png" "filename" "figure.png"}}
@@ -412,7 +412,8 @@
         (get verb-fixture "cases")))
 
 (defn- fixed-view
-  "The fields of `answer` that `expected` names. `keys` is each key of the JSON value."
+  "The fields of `answer` that `expected` names. `value` is the whole JSON value and
+   `keys` is each of its keys."
   [expected answer]
   (let [value (some-> (get answer "json")
                       json/read-json)]
@@ -420,6 +421,9 @@
           (map (fn [[field wanted]]
                  [field
                   (case field
+                    "value"
+                    value
+
                     "json"
                     (select-keys value (keys wanted))
 

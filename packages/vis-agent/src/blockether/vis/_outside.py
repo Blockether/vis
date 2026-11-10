@@ -281,20 +281,31 @@ _ARTIFACTS = []
 _ARTIFACT_BYTES = {}
 
 
+# The characters that Python reads as a space and the engine does not.
+_NO_ENGINE_SPACE = "\x85\u00a0\u2007\u202f"
+
+
+def _option_text(value):
+    # A given option as the engine reads it: its text, and no value for None, for
+    # False and for blank text. The text keeps its spaces.
+    if value is None or value is False:
+        return None
+    text = "true" if value is True else str(value)
+    is_blank = all(ch.isspace() and ch not in _NO_ENGINE_SPACE for ch in text)
+    return None if is_blank else text
+
+
 def attach(options):
     """Store one artifact in memory and return its descriptor as JSON."""
     data = base64.b64decode(options.get("base64") or "")
     if not data:
         raise RuntimeError("attach: empty payload.")
     name = options.get("filename") or "artifact"
-    # As in the engine, each given value counts as its text, and blank text is no value.
-    given = options.get("media_type")
     media_type = (
-        ("" if given is None else str(given).strip())
+        _option_text(options.get("media_type"))
         or options.get("media_type_hint")
         or "application/octet-stream"
     )
-    kind = options.get("kind")
     with _LOCK:
         row = {
             "id": str(uuid.uuid4()),
@@ -302,7 +313,7 @@ def attach(options):
             "filename": name,
             "version": 1 + sum(1 for r in _ARTIFACTS if r["filename"] == name),
             "media_type": media_type,
-            "kind": ("" if kind is None else str(kind))
+            "kind": _option_text(options.get("kind"))
             or ("image" if media_type.startswith("image/") else "file"),
             "size": len(data),
             "is_pending": True,
@@ -350,6 +361,8 @@ def _quoted(text):
 def _artifact(caller, target, version):
     # The same addressing as the engine: an id, or a filename with an optional
     # version, where a negative version counts back from the latest one.
+    if version is not None and not -(2**63) <= version < 2**63:
+        raise RuntimeError(f"Value out of range for long: {version}")
     with _LOCK:
         if version is None:
             for row in _ARTIFACTS:

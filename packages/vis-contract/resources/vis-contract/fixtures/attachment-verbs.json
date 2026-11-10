@@ -1,10 +1,11 @@
 {
-  "description": "Attachment verb rules. Each case runs `code` as Python with the five verbs `attach`, `list_attachments`, `get_attachment`, `read_attachment` and `show_attachment` in an empty store. The code needs bytes only, or the directory `.`, and puts the result in `out`. `expect` is the answer of the engine. For a value, `json` holds the fields of `out` that the case fixes, and `keys` holds each key of `out`. For a refusal, `error` is the class name and `message` is its text. The engine test `door-parity-test` runs each case in `python_execution`, in a sandbox worker and in a real extension worker. The SDK test `test_attach_parity.py` runs each case on the host outside Vis. Where that host answers differently, the case has an `outside` object with a `reason` (a key of `exceptions`) and its own `expect`.",
+  "description": "Attachment verb rules. Each case runs `code` as Python with the five verbs `attach`, `list_attachments`, `get_attachment`, `read_attachment` and `show_attachment` in an empty store. The code needs bytes only, or the directory `.`, and puts the result in `out`. `expect` is the answer of the engine. For a value, `value` is the whole JSON value of `out`, with each attachment id written as `<id>`. For a refusal, `error` is the class name and `message` is its text. The engine test `door-parity-test` runs each case in `python_execution`, in a sandbox worker and in a real extension worker. The SDK test `test_attach_parity.py` runs each case on the host outside Vis. Where that host answers differently, the case has an `outside` object with a `reason` (a key of `exceptions`) and its own `expect`.",
   "exceptions": {
     "audience": "Outside Vis, no rule keeps a document for the user only. The audience is the one that the call names, else `both`.",
     "position": "Outside Vis, the descriptor that a read verb returns has no `position` key.",
     "error-class": "In Vis, a refusal of the engine is `VisToolError`, a `RuntimeError`. Outside Vis that class does not exist: the refusal is a `RuntimeError` with the same words.",
-    "bytes": "Outside Vis, the bytes of a payload do not name its media type or its kind. The filename and the call name them."
+    "bytes": "Outside Vis, the bytes of a payload do not name its media type: the filename and the call name it. The kind and the audience follow as `document` and `audience` say.",
+    "document": "Outside Vis, no rule gives the kind `doc`. The kind is the one that the call names, else `file`, and the audience is the one that the call names, else `both`."
   },
   "cases": [
     {
@@ -13,52 +14,32 @@
         "out = attach(b'a,b\\n1,2\\n', 'totals.csv', label='Totals')"
       ],
       "expect": {
-        "json": {
+        "value": {
           "audience": "user",
           "filename": "totals.csv",
+          "id": "<id>",
           "is_pending": true,
           "kind": "file",
           "media_type": "text/csv",
           "size": 8,
           "source": "tool",
           "version": 1
-        },
-        "keys": [
-          "audience",
-          "filename",
-          "id",
-          "is_pending",
-          "kind",
-          "media_type",
-          "size",
-          "source",
-          "version"
-        ]
+        }
       },
       "outside": {
         "reason": "audience",
         "expect": {
-          "json": {
+          "value": {
             "audience": "both",
             "filename": "totals.csv",
+            "id": "<id>",
             "is_pending": true,
             "kind": "file",
             "media_type": "text/csv",
             "size": 8,
             "source": "tool",
             "version": 1
-          },
-          "keys": [
-            "audience",
-            "filename",
-            "id",
-            "is_pending",
-            "kind",
-            "media_type",
-            "size",
-            "source",
-            "version"
-          ]
+          }
         }
       }
     },
@@ -68,10 +49,16 @@
         "out = attach(b'words\\n', 'w.txt', kind='note')"
       ],
       "expect": {
-        "json": {
+        "value": {
           "audience": "both",
+          "filename": "w.txt",
+          "id": "<id>",
+          "is_pending": true,
           "kind": "note",
-          "media_type": "text/plain"
+          "media_type": "text/plain",
+          "size": 6,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -81,10 +68,16 @@
         "out = attach(b'words\\n', 'w.txt', 'note', 'text/x-note', 'Cap', 'user')"
       ],
       "expect": {
-        "json": {
+        "value": {
           "audience": "user",
+          "filename": "w.txt",
+          "id": "<id>",
+          "is_pending": true,
           "kind": "note",
-          "media_type": "text/x-note"
+          "media_type": "text/x-note",
+          "size": 6,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -94,9 +87,16 @@
         "out = attach(b'x\\n', 'n.bin', media_type=5)"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
+          "filename": "n.bin",
+          "id": "<id>",
+          "is_pending": true,
           "kind": "file",
-          "media_type": "5"
+          "media_type": "5",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -106,8 +106,16 @@
         "out = attach(b'x\\n', fname='n.txt')"
       ],
       "expect": {
-        "json": {
-          "filename": "n.txt"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -176,41 +184,33 @@
         "out = get_attachment('n.txt', 1)"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
           "size": 4,
+          "source": "tool",
           "version": 1
-        },
-        "keys": [
-          "audience",
-          "filename",
-          "id",
-          "is_pending",
-          "kind",
-          "media_type",
-          "position",
-          "size",
-          "source",
-          "version"
-        ]
+        }
       },
       "outside": {
         "reason": "position",
         "expect": {
-          "json": {
+          "value": {
+            "audience": "both",
+            "filename": "n.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
             "size": 4,
+            "source": "tool",
             "version": 1
-          },
-          "keys": [
-            "audience",
-            "filename",
-            "id",
-            "is_pending",
-            "kind",
-            "media_type",
-            "size",
-            "source",
-            "version"
-          ]
+          }
         }
       }
     },
@@ -222,9 +222,33 @@
         "out = get_attachment('n.txt', -2)"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
           "size": 4,
+          "source": "tool",
           "version": 1
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
+            "size": 4,
+            "source": "tool",
+            "version": 1
+          }
         }
       }
     },
@@ -235,8 +259,33 @@
         "out = get_attachment('n.txt', '1')"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
+          "size": 4,
+          "source": "tool",
           "version": 1
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
+            "size": 4,
+            "source": "tool",
+            "version": 1
+          }
         }
       }
     },
@@ -247,8 +296,33 @@
         "out = get_attachment('n.txt', True)"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
+          "size": 4,
+          "source": "tool",
           "version": 1
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
+            "size": 4,
+            "source": "tool",
+            "version": 1
+          }
         }
       }
     },
@@ -260,8 +334,33 @@
         "out = get_attachment('n.txt', decimal.Decimal(1))"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
+          "size": 4,
+          "source": "tool",
           "version": 1
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
+            "size": 4,
+            "source": "tool",
+            "version": 1
+          }
         }
       }
     },
@@ -330,7 +429,7 @@
         "out = {'text': read_attachment('n.txt', -2).decode()}"
       ],
       "expect": {
-        "json": {
+        "value": {
           "text": "one\n"
         }
       }
@@ -394,7 +493,7 @@
         "out = {'rows': [[r['filename'], r['version'], r['size']] for r in list_attachments()]}"
       ],
       "expect": {
-        "json": {
+        "value": {
           "rows": [
             [
               "n.txt",
@@ -416,8 +515,16 @@
         "out = attach(b'x\\n', name='n.txt')"
       ],
       "expect": {
-        "json": {
-          "filename": "n.txt"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -427,8 +534,16 @@
         "out = attach(b'x\\n', file_name='n.txt')"
       ],
       "expect": {
-        "json": {
-          "filename": "n.txt"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -438,9 +553,16 @@
         "out = attach(path=b'x\\n', filename='n.txt')"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
           "filename": "n.txt",
-          "size": 2
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -450,9 +572,16 @@
         "out = attach(file=b'x\\n', filename='n.txt')"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
           "filename": "n.txt",
-          "size": 2
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -462,9 +591,16 @@
         "out = attach(src=b'x\\n', filename='n.txt')"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
           "filename": "n.txt",
-          "size": 2
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -474,8 +610,16 @@
         "out = attach(b'x\\n', 'n.txt', title='T')"
       ],
       "expect": {
-        "json": {
-          "filename": "n.txt"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -485,8 +629,16 @@
         "out = attach(b'x\\n', 'n.txt', caption='T')"
       ],
       "expect": {
-        "json": {
-          "filename": "n.txt"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -496,8 +648,16 @@
         "out = attach(b'x\\n', 'n.txt', description='T')"
       ],
       "expect": {
-        "json": {
-          "filename": "n.txt"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -507,8 +667,16 @@
         "out = attach(b'x\\n', 'n.txt', alt='T')"
       ],
       "expect": {
-        "json": {
-          "filename": "n.txt"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -518,8 +686,16 @@
         "out = attach(b'x\\n', 'n.txt', mime='text/x-note')"
       ],
       "expect": {
-        "json": {
-          "media_type": "text/x-note"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/x-note",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -529,8 +705,16 @@
         "out = attach(b'x\\n', 'n.txt', mime_type='text/x-note')"
       ],
       "expect": {
-        "json": {
-          "media_type": "text/x-note"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/x-note",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -540,8 +724,16 @@
         "out = attach(b'x\\n', 'n.txt', content_type='text/x-note')"
       ],
       "expect": {
-        "json": {
-          "media_type": "text/x-note"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/x-note",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -551,8 +743,16 @@
         "out = attach(b'x\\n', 'n.txt', type='note')"
       ],
       "expect": {
-        "json": {
-          "kind": "note"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "note",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -592,8 +792,16 @@
         "out = attach(b'x\\n', 'n.txt', audience=' User ')"
       ],
       "expect": {
-        "json": {
-          "audience": "user"
+        "value": {
+          "audience": "user",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -603,8 +811,32 @@
         "out = attach(b'plain words\\n')"
       ],
       "expect": {
-        "json": {
-          "filename": "artifact"
+        "value": {
+          "audience": "both",
+          "filename": "artifact",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 12,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "bytes",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "artifact",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "application/octet-stream",
+            "size": 12,
+            "source": "tool",
+            "version": 1
+          }
         }
       }
     },
@@ -614,8 +846,16 @@
         "out = attach(b'x\\n', 'n.txt', kind=5)"
       ],
       "expect": {
-        "json": {
-          "kind": "5"
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "5",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -625,8 +865,16 @@
         "out = attach(b'x\\n', 'n.bin', media_type=0)"
       ],
       "expect": {
-        "json": {
-          "media_type": "0"
+        "value": {
+          "audience": "both",
+          "filename": "n.bin",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "0",
+          "size": 2,
+          "source": "tool",
+          "version": 1
         }
       }
     },
@@ -636,8 +884,32 @@
         "out = attach(b'x\\n', 'n.csv', media_type='  ')"
       ],
       "expect": {
-        "json": {
-          "media_type": "text/csv"
+        "value": {
+          "audience": "user",
+          "filename": "n.csv",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/csv",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "audience",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.csv",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/csv",
+            "size": 2,
+            "source": "tool",
+            "version": 1
+          }
         }
       }
     },
@@ -647,7 +919,7 @@
         "out = {'parts': [len(part) for part in attach(b'x\\n', 'n.txt')['id'].split('-')]}"
       ],
       "expect": {
-        "json": {
+        "value": {
           "parts": [
             8,
             4,
@@ -670,8 +942,16 @@
       "outside": {
         "reason": "audience",
         "expect": {
-          "json": {
-            "audience": "model"
+          "value": {
+            "audience": "model",
+            "filename": "r.pdf",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "application/pdf",
+            "size": 9,
+            "source": "tool",
+            "version": 1
           }
         }
       }
@@ -682,17 +962,31 @@
         "out = attach(b'%PDF-1.4\\n', 'r.bin')"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "user",
+          "filename": "r.bin",
+          "id": "<id>",
+          "is_pending": true,
           "kind": "doc",
-          "media_type": "application/pdf"
+          "media_type": "application/pdf",
+          "size": 9,
+          "source": "tool",
+          "version": 1
         }
       },
       "outside": {
         "reason": "bytes",
         "expect": {
-          "json": {
+          "value": {
+            "audience": "both",
+            "filename": "r.bin",
+            "id": "<id>",
+            "is_pending": true,
             "kind": "file",
-            "media_type": "application/octet-stream"
+            "media_type": "application/octet-stream",
+            "size": 9,
+            "source": "tool",
+            "version": 1
           }
         }
       }
@@ -705,9 +999,33 @@
         "out = get_attachment({'id': first['id'], 'filename': 'b.txt'})"
       ],
       "expect": {
-        "json": {
+        "value": {
+          "audience": "both",
           "filename": "a.txt",
-          "size": 4
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
+          "size": 4,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "a.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
+            "size": 4,
+            "source": "tool",
+            "version": 1
+          }
         }
       }
     },
@@ -720,7 +1038,7 @@
         "out = {'rows': [[r['filename'], r['version']] for r in list_attachments('n.txt')]}"
       ],
       "expect": {
-        "json": {
+        "value": {
           "rows": [
             [
               "n.txt",
@@ -759,6 +1077,609 @@
       "expect": {
         "error": "IsADirectoryError",
         "message": "attach: . is a directory - attach one file"
+      }
+    },
+    {
+      "name": "get-version-list",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', [1])"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "get_attachment: version must be an integer, got [1]"
+      }
+    },
+    {
+      "name": "read-version-fraction",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = read_attachment('n.txt', 1.5)"
+      ],
+      "expect": {
+        "error": "ValueError",
+        "message": "read_attachment: version must be an integer, got 1.5"
+      }
+    },
+    {
+      "name": "show-version-word",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = show_attachment('n.txt', 'first')"
+      ],
+      "expect": {
+        "error": "ValueError",
+        "message": "show_attachment: version must be an integer, got 'first'"
+      }
+    },
+    {
+      "name": "get-version-infinite",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', float('inf'))"
+      ],
+      "expect": {
+        "error": "ValueError",
+        "message": "get_attachment: version must be an integer, got inf"
+      }
+    },
+    {
+      "name": "get-version-bytes",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', b'1')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
+          "size": 4,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
+            "size": 4,
+            "source": "tool",
+            "version": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "attach-memoryview",
+      "code": [
+        "out = attach(memoryview(b'x\\n'), 'n.txt')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "attach-bytearray",
+      "code": [
+        "out = attach(bytearray(b'x\\n'), 'n.txt')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "target-descriptor-filename",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment({'filename': 'n.txt'})"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "position": 0,
+          "size": 4,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.txt",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/plain",
+            "size": 4,
+            "source": "tool",
+            "version": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "attach-audience-none",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', audience=None)"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "list-name-part",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = {'rows': list_attachments('n')}"
+      ],
+      "expect": {
+        "value": {
+          "rows": []
+        }
+      }
+    },
+    {
+      "name": "list-name-empty",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = {'rows': list_attachments('')}"
+      ],
+      "expect": {
+        "value": {
+          "rows": []
+        }
+      }
+    },
+    {
+      "name": "list-all",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "attach(b'x\\n', 'm.txt')",
+        "out = {'rows': list_attachments()}"
+      ],
+      "expect": {
+        "value": {
+          "rows": [
+            {
+              "audience": "both",
+              "filename": "n.txt",
+              "id": "<id>",
+              "is_pending": true,
+              "kind": "file",
+              "media_type": "text/plain",
+              "position": 0,
+              "size": 4,
+              "source": "tool",
+              "version": 1
+            },
+            {
+              "audience": "both",
+              "filename": "m.txt",
+              "id": "<id>",
+              "is_pending": true,
+              "kind": "file",
+              "media_type": "text/plain",
+              "position": 1,
+              "size": 2,
+              "source": "tool",
+              "version": 1
+            }
+          ]
+        }
+      },
+      "outside": {
+        "reason": "position",
+        "expect": {
+          "value": {
+            "rows": [
+              {
+                "audience": "both",
+                "filename": "n.txt",
+                "id": "<id>",
+                "is_pending": true,
+                "kind": "file",
+                "media_type": "text/plain",
+                "size": 4,
+                "source": "tool",
+                "version": 1
+              },
+              {
+                "audience": "both",
+                "filename": "m.txt",
+                "id": "<id>",
+                "is_pending": true,
+                "kind": "file",
+                "media_type": "text/plain",
+                "size": 2,
+                "source": "tool",
+                "version": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "alias-unknown-first",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', zeta=1, colour=2)"
+      ],
+      "expect": {
+        "error": "TypeError",
+        "message": "attach: no keyword 'colour'. Keywords: source, filename, kind, media_type, label, audience."
+      }
+    },
+    {
+      "name": "media-type-true",
+      "code": [
+        "out = attach(b'x\\n', 'n.csv', media_type=True)"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.csv",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "true",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "media-type-false",
+      "code": [
+        "out = attach(b'x\\n', 'n.csv', media_type=False)"
+      ],
+      "expect": {
+        "value": {
+          "audience": "user",
+          "filename": "n.csv",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/csv",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "audience",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "n.csv",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/csv",
+            "size": 2,
+            "source": "tool",
+            "version": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "media-type-spaces",
+      "code": [
+        "out = attach(b'x\\n', 'n.csv', media_type=' text/x-note ')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.csv",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": " text/x-note ",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "media-type-image-spaces",
+      "code": [
+        "out = attach(b'x\\n', 'n.csv', media_type=' image/png ')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.csv",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": " image/png ",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "media-type-nbsp",
+      "code": [
+        "out = attach(b'x\\n', 'n.csv', media_type='\\u00a0')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.csv",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "\u00a0",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "kind-blank",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', kind=' ')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "kind-true",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', kind=True)"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "true",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "kind-false",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', kind=False)"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "kind-spaces",
+      "code": [
+        "out = attach(b'x\\n', 'n.txt', kind=' note ')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "both",
+          "filename": "n.txt",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": " note ",
+          "media_type": "text/plain",
+          "size": 2,
+          "source": "tool",
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "version-huge",
+      "code": [
+        "attach(b'one\\n', 'n.txt')",
+        "out = get_attachment('n.txt', 2**63)"
+      ],
+      "expect": {
+        "error": "VisToolError",
+        "message": "Value out of range for long: 9223372036854775808"
+      },
+      "outside": {
+        "reason": "error-class",
+        "expect": {
+          "error": "RuntimeError",
+          "message": "Value out of range for long: 9223372036854775808"
+        }
+      }
+    },
+    {
+      "name": "show-image",
+      "code": [
+        "attach(b'\\x89PNG\\r\\n\\x1a\\n' + bytes(8), 'p.png', media_type='image/png')",
+        "out = show_attachment('p.png')"
+      ],
+      "expect": {
+        "value": {
+          "filename": "p.png",
+          "id": "<id>",
+          "media_type": "image/png",
+          "size": 16
+        }
+      }
+    },
+    {
+      "name": "attach-document-name",
+      "code": [
+        "out = attach(b'%PDF-1.4\\n', 'r.pdf')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "user",
+          "filename": "r.pdf",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "doc",
+          "media_type": "application/pdf",
+          "size": 9,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "document",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "r.pdf",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "application/pdf",
+            "size": 9,
+            "source": "tool",
+            "version": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "attach-document-type",
+      "code": [
+        "out = attach(b'words\\n', 'r.bin', media_type='application/pdf')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "user",
+          "filename": "r.bin",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "doc",
+          "media_type": "application/pdf",
+          "size": 6,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "document",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "r.bin",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "application/pdf",
+            "size": 6,
+            "source": "tool",
+            "version": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "attach-document-default",
+      "code": [
+        "out = attach(b'# Title\\n', 'notes.md')"
+      ],
+      "expect": {
+        "value": {
+          "audience": "user",
+          "filename": "notes.md",
+          "id": "<id>",
+          "is_pending": true,
+          "kind": "file",
+          "media_type": "text/markdown",
+          "size": 8,
+          "source": "tool",
+          "version": 1
+        }
+      },
+      "outside": {
+        "reason": "audience",
+        "expect": {
+          "value": {
+            "audience": "both",
+            "filename": "notes.md",
+            "id": "<id>",
+            "is_pending": true,
+            "kind": "file",
+            "media_type": "text/markdown",
+            "size": 8,
+            "source": "tool",
+            "version": 1
+          }
+        }
       }
     }
   ]
