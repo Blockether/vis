@@ -849,6 +849,8 @@
    live-turn iterations opt in. Missing ownership is never replay consent."
   [trailer-iters target]
   (let [{target-provider :provider target-model :model} target]
+    (if (System/getenv "VIS_EXP_NO_REASONING_REPLAY")
+      []
     (filterv (fn [[_
                    {:keys [assistant-message llm-provider llm-model]
                     replay? :preserved-thinking/replay?}]]
@@ -857,7 +859,7 @@
                     (= target-provider llm-provider)
                     (= target-model llm-model)
                     (assistant-message-compatible-with-replay-target? target assistant-message)))
-      (or trailer-iters []))))
+      (or trailer-iters [])))))
 
 (defn iteration-record-scope
   "Use an input-only iteration's scope without inventing a tool form."

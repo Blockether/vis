@@ -448,10 +448,20 @@
                           (when proj-dir
                             (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
 
+(defn- lean-states
+  "Experiment: REPRODUCE and CHECK without their verification rules."
+  [prompt]
+  (-> prompt
+      (str/replace #"(?s)- REPRODUCE: .*?Exit: EDIT\.\n"
+                   "- REPRODUCE: Reproduce the reported bug before you edit. Exit: EDIT.\n")
+      (str/replace #"(?s)- CHECK: .*?else FINISH\.\n"
+                   "- CHECK: Run the affected tests and compare the result with the task. Exit: EDIT on a failure, else FINISH.\n")))
+
 (defn- core-system-prompt
   "The core rules. A non-interactive run gets them without the progress-note rules."
   [interactive?]
-  (if interactive? CORE_SYSTEM_PROMPT (str/replace CORE_SYSTEM_PROMPT PROGRESS_NOTE_RULES "")))
+  (let [base (cond-> CORE_SYSTEM_PROMPT (System/getenv "VIS_EXP_LEAN_PROMPT") lean-states)]
+    (if interactive? base (str/replace base PROGRESS_NOTE_RULES ""))))
 
 (defn- system-prompt-blocks
   "Send-order pieces of the system prompt: the base text, whether a user file or
