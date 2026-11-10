@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.10] - 2026-11-10
+
+### Changed
+- Extensions: Vis pins vis-lang-interface 3.3.3, vis-lang-clojure 1.20.14 and vis-lang-python 1.16.9.
+
 ### Fixed
+- Syntax guards: the Clojure and Python guards repair again the files that a Python block wrote before it failed. In v0.5.9, the check after the block ran git from a background thread, the host refused it, and no file was repaired.
 - One-shot runs: a `vis-agent -- "task"` run no longer gets session introspection (`read_session`, `get_session`, `list_sessions` and their prompt section), also when the `introspection` toggle is on. Nobody can refer to a past session in such a run. Before, the toggle alone decided.
 - Usage: a turn now counts the tokens and cost of a response whose code failed after the provider answered, for example when the Python worker stopped. Before, the turn total and the trace lost that response. A failed response that carried its own usage added its cost but not its tokens.
 
