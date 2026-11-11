@@ -190,11 +190,30 @@ function percentRemaining(row: ProviderLimitRow): number | null {
   return null;
 }
 
-function hasQuotaValue(row: ProviderLimitRow): boolean {
-  if (row.is_unlimited) return true;
-  if (percentRemaining(row) !== null) return true;
-  if (typeof row.used === 'number' && typeof row.limit === 'number' && row.limit > 0) return true;
-  return quotaNote(row) !== null;
+/**
+ * Percent of a metered window that is still left. A count window (GitHub Copilot
+ * premium requests: `remaining` 300 of `limit` 1500) has no 0-100 scale, so it
+ * reads `remaining` against `limit`.
+ */
+function percentLeft(row: ProviderLimitRow): number | null {
+  const percent = percentRemaining(row);
+  if (percent !== null) return percent;
+  if (row.is_unlimited || typeof row.limit !== 'number' || row.limit <= 0) return null;
+  if (typeof row.remaining !== 'number') return null;
+  return Math.round((Math.max(0, row.remaining) / row.limit) * 100);
+}
+
+/**
+ * Summary order, as the engine's `limit-row-pressure` ranks it: 0 for a window
+ * with a number, 1 for an unlimited window, 2 for an unreported window. An
+ * unlimited window rejects no request, so it must not take the place of one
+ * that does.
+ */
+function limitRowRank(row: ProviderLimitRow): number {
+  if (row.is_unlimited) return 1;
+  if (percentRemaining(row) !== null) return 0;
+  if (typeof row.used === 'number' && typeof row.limit === 'number' && row.limit > 0) return 0;
+  return quotaNote(row) !== null ? 0 : 2;
 }
 
 /**
@@ -221,16 +240,16 @@ function limitRowText(row: ProviderLimitRow): string | null {
  * 7d 66%`. The report is the raw provider payload (`dynamic.limits`), so a
  * provider that reports nothing yields null rather than an empty shell.
  *
- * Windows that actually carry a number are shown FIRST: a provider that sends
- * one unreported window ahead of two real ones must not spend the summary on
- * the empty one.
+ * Windows that actually carry a number are shown FIRST, unlimited windows next
+ * and unreported windows last: GitHub Copilot sends two unlimited windows ahead
+ * of its premium request quota, and the summary must not spend itself on them.
  */
 export function providerLimitsLine(provider: RouterProvider): string | null {
   const report = provider.limits;
   if (report?.error?.message) return report.error.message;
   const rows = report?.dynamic?.limits;
   if (!rows?.length) return null;
-  const ranked = [...rows].sort((a, b) => Number(hasQuotaValue(b)) - Number(hasQuotaValue(a)));
+  const ranked = [...rows].sort((a, b) => limitRowRank(a) - limitRowRank(b));
   const text = ranked.slice(0, 2).map(limitRowText).filter(Boolean).join(' · ');
   return text || null;
 }
@@ -239,7 +258,7 @@ export function providerLimitsLine(provider: RouterProvider): string | null {
 function providerQuotaMark(provider: RouterProvider): string | null {
   const rows = provider.limits?.dynamic?.limits;
   if (!rows?.length) return null;
-  const left = rows.map(percentRemaining).filter((value): value is number => value !== null);
+  const left = rows.map(percentLeft).filter((value): value is number => value !== null);
   return left.length ? `${Math.min(...left)}%` : null;
 }
 

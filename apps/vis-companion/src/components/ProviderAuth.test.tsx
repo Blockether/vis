@@ -20,6 +20,7 @@ import {
   isProviderAuthed,
   ProviderNotice,
   ProviderRows,
+  providerLimitsLine,
   providerThinkingChoices,
   providerStatusMark,
   unscopedMessage,
@@ -469,5 +470,42 @@ describe('ProviderRows', () => {
     expect(removed).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: 'Yes, sign out' }));
     expect(removed).toEqual([row]);
+  });
+});
+
+describe('providerLimitsLine', () => {
+  // GitHub Copilot sends `chat` and `completions` (unlimited) before the one
+  // bucket that rejects requests. The summary showed only the two unlimited ones.
+  const row = { scope: 'account', kind: 'requests', precision: 'exact', source: 'provider-api' };
+  const copilot = (): RouterProvider => ({
+    ...provider('github-copilot'),
+    status: { is_authenticated: true, auth_state: 'verified', label: 'signed-in session' },
+    limits: {
+      status: 'ok',
+      dynamic: {
+        limits: [
+          { ...row, id: 'chat', label: 'Chat', is_unlimited: true },
+          { ...row, id: 'completions', label: 'Completions', is_unlimited: true },
+          {
+            ...row,
+            id: 'premium_interactions',
+            label: 'Premium interactions',
+            is_unlimited: false,
+            used: 1200,
+            limit: 1500,
+            remaining: 300,
+          },
+        ],
+      },
+    } as ProviderLimits,
+  });
+
+  it('leads with the metered window when unlimited windows come first', () => {
+    expect(providerLimitsLine(copilot())).toBe('Premium interactions 80% used · Chat unlimited');
+  });
+
+  it('marks the collapsed row with what is left of a count quota', () => {
+    render(<ProviderRows auth={state({ providers: [copilot()] })} />);
+    expect(screen.getByText('20%')).toBeVisible();
   });
 });
