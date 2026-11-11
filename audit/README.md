@@ -187,7 +187,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `org.commonmark/commonmark-ext-gfm-tables` | `0.29.0` | BSD-2-Clause | 23 KB | 3rd-party |
 | `org.flywaydb/flyway-core` | `12.11.0` | Apache-2.0 | 791 KB | 3rd-party |
 | `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
-| `org.xerial/sqlite-jdbc` | `3.53.4.0` | Apache-2.0 | 11.4 MB | 3rd-party |
+| `org.xerial/sqlite-jdbc` | `3.54.1.0` | Apache-2.0 | 11.6 MB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.21` | MIT | 28 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
@@ -302,7 +302,7 @@ Direct artifacts of at least 1 MB:
 |---|---|---|
 | `com.microsoft.onnxruntime/onnxruntime` | `1.30.0` | 53.0 MB |
 | `ai.djl.huggingface/tokenizers` | `0.38.0` | 17.3 MB |
-| `org.xerial/sqlite-jdbc` | `3.53.4.0` | 11.4 MB |
+| `org.xerial/sqlite-jdbc` | `3.54.1.0` | 11.6 MB |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |
 | `org.clojure/clojure` | `1.12.6` | 4.0 MB |
 | `org.jcodec/jcodec` | `0.2.5` | 2.0 MB |

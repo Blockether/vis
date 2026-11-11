@@ -76,7 +76,7 @@
         ;; flyway-core; without it Flyway does not recognize a `jdbc:sqlite:` URL.
         org.flywaydb/flyway-core {:mvn/version "12.11.0"}
         org.flywaydb/flyway-database-nc-sqlite {:mvn/version "12.11.0"}
-        org.xerial/sqlite-jdbc {:mvn/version "3.53.4.0"}
+        org.xerial/sqlite-jdbc {:mvn/version "3.54.1.0"}
         org.yamlstar/yamlstar {:mvn/version "0.1.21"}
         ring/ring-core {:mvn/version "1.15.5"}
         ;; CVE pin over Flyway's tools.jackson jackson-databind 3.1.4 (CVE-2026-59889).
