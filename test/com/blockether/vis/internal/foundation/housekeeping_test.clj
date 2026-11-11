@@ -1032,7 +1032,34 @@
         (expect (.isFile kept)))
       (expect (pos? (long (swept (+ now (long housekeeping/day-ms))))))
       (orphan)
-      (expect (pos? (long (swept (- now 3600000))))))))
+      (expect (pos? (long (swept (- now 3600000)))))))
+  ;; Regression, user report in this Vis session: the store reached 42 GB. A walk takes
+  ;; minutes, and a short-lived command that claimed it exited mid-walk, so no process
+  ;; walked the store again for a day.
+  (it "walks the bytecode store again soon when the process that claimed it stopped mid-walk"
+      (let [python
+            (tmp-dir "vis-hk-pycache-cut")
+
+            cache
+            (tmp-dir "vis-hk-pycache-cut-cache")
+
+            now
+            (System/currentTimeMillis)
+
+            gone
+            (touch! python "pycache/no/such/source/gone.cpython-314.pyc" 0 "bytecode")]
+
+        (with-homes {:python python :cache cache}
+                    (fn []
+                      (with-redefs-fn {#'housekeeping/sweep-pycache!
+                                       (fn [& _]
+                                         (throw (ex-info "process exited mid-walk" {})))}
+                        #(try (housekeeping/sweep-stale! {:now-ms now})
+                              (catch clojure.lang.ExceptionInfo _ nil)))
+                      (let [row (target (housekeeping/sweep-stale! {:now-ms (+ now 3600000)})
+                                        :python-pycache)]
+                        (expect (pos? (long (:deleted row))))
+                        (expect (not (.exists gone)))))))))
 
 ;; Regression, user report in this Vis session: only `vis-agent doctor --purge` removed
 ;; the temp files of killed snapshot writes, and only at the top of the folder.

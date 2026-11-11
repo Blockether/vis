@@ -482,24 +482,41 @@
   ^File [^String id]
   (io/file (cache-dir "housekeeping") (str id ".stamp")))
 
+(def ^:private ^:const sweep-lease-ms
+  "How long a claimed walk keeps other processes off its root. A walk of a large
+   store takes minutes on a daemon thread, and a short-lived command exits before
+   it ends; only a FINISHED walk holds the root for its full interval."
+  (* 10 60 1000))
+
 (defn- claim-sweep!
-  "Whether this process walks the root of `stamp` now, re-stamping it when it does.
+  "Whether this process walks the root of `stamp` now, leasing it when it does.
 
    Every Vis process sweeps at startup, and a live store holds hundreds of
    thousands of entries. The stamp is shared, so a machine walks each root once
-   per `interval-ms`, not once per process start. A stamp from the future counts
-   as stale, so a clock moved back cannot stop the sweep."
+   per `interval-ms`, not once per process start. The claim holds the root for
+   `sweep-lease-ms` only; [[finish-sweep!]] stamps the full interval when the walk
+   ends. A stamp from the future counts as stale, so a clock moved back cannot
+   stop the sweep."
   [^File stamp ^long now ^long interval-ms]
   (let [age (- now (.lastModified stamp))]
     (when (or (neg? age) (>= age interval-ms))
       (try
         (.mkdirs (.getParentFile stamp))
         (.createNewFile stamp)
-        (.setLastModified stamp now)
+        (.setLastModified stamp (- now (max 0 (- interval-ms (long sweep-lease-ms)))))
         (catch Throwable e
           (tel/log!
             {:level :warn :id ::sweep-stamp-not-written :data {:stamp (.getPath stamp)} :error e})))
       true)))
+
+(defn- finish-sweep!
+  "Stamp the walk of `stamp` that started at `now` as done, and answer `result`."
+  [^File stamp ^long now result]
+  (try (.setLastModified stamp now)
+       (catch Throwable e
+         (tel/log!
+           {:level :warn :id ::sweep-stamp-not-written :data {:stamp (.getPath stamp)} :error e})))
+  result)
 
 (defn- sweep-pycache!
   "Reclaim compiled bytecode whose source is gone.
@@ -708,12 +725,14 @@
                        (when budget-bytes
                          (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
 
-                   (merge base
-                          swept
-                          (when trimmed
-                            {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
-                             :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
-                             :over-budget-deleted (:deleted trimmed)}))))))
+                   (cond->> (merge base
+                                   swept
+                                   (when trimmed
+                                     {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
+                                      :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
+                                      :over-budget-deleted (:deleted trimmed)}))
+                     (= :logs id)
+                     (finish-sweep! (sweep-stamp "logs") now))))))
            sweep-targets)
 
          ^File guest-root
@@ -735,7 +754,9 @@
          (merge {:id :python-pycache :root (canonical pycache-root)}
                 (if (and (.isDirectory pycache-root)
                          (claim-sweep! (sweep-stamp "pycache") now day-ms))
-                  (sweep-pycache! pycache-root (canonical pycache-root))
+                  (finish-sweep! (sweep-stamp "pycache")
+                                 now
+                                 (sweep-pycache! pycache-root (canonical pycache-root)))
                   {:deleted 0 :bytes 0}))
 
          versions
@@ -752,7 +773,9 @@
                  :cutoff-ms store-cutoff}
                 (if (and (.isDirectory sandbox-root)
                          (claim-sweep! (sweep-stamp "sandbox") now day-ms))
-                  (sweep-sandbox-temps! sandbox-root store-cutoff)
+                  (finish-sweep! (sweep-stamp "sandbox")
+                                 now
+                                 (sweep-sandbox-temps! sandbox-root store-cutoff))
                   {:deleted 0 :bytes 0}))
 
          all
@@ -775,7 +798,9 @@
     (if (claim-sweep! (sweep-stamp "logs")
                       now
                       (long (or interval-ms default-log-sweep-interval-ms)))
-      (sweep-files! dir (canonical dir) (- now (* window (long day-ms))))
+      (finish-sweep! (sweep-stamp "logs")
+                     now
+                     (sweep-files! dir (canonical dir) (- now (* window (long day-ms)))))
       {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})))
 
 (defn sweep-stale-async!
@@ -798,7 +823,8 @@
                           (when-not (.isInterrupted (Thread/currentThread))
                             (try (if initial? (sweep-stale! opts) (sweep-logs! opts))
                                  (catch InterruptedException e (throw e))
-                                 (catch Throwable _ nil))
+                                 (catch Throwable e
+                                   (tel/log! {:level :warn :id ::sweep-failed :error e})))
                             (Thread/sleep interval-ms)
                             (recur false)))
                         (catch InterruptedException _ (.interrupt (Thread/currentThread)))))]
