@@ -10,6 +10,7 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.channel.form :as form]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.state :as gw]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]])
@@ -58,7 +59,8 @@
             (str (apply str (repeat 6000 "source path: \"quoted\"\n")) "LAST")
 
             projected
-            (form/clip-to-wire body f)]
+            (with-redefs [toggles/enabled? #(= "introspection" %)]
+              (form/clip-to-wire body f))]
 
         (expect (str/starts-with? projected "source"))
         (expect (str/ends-with? projected "LAST"))
@@ -73,10 +75,29 @@
             {:scope "t1/i2/f1" :svar/tool-call-id "call_A" :llm-model "glm-5.3"}
 
             projected
-            (form/clip-to-wire body live)]
+            (with-redefs [toggles/enabled? #(= "introspection" %)]
+              (form/clip-to-wire body live))]
 
         (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
         (expect (not (str/includes? projected "b.get(\"scope\") == \"t1/i2/f1\"")))))
+  (it "names read_session in the recovery hint only while the session has it"
+      ;; Regression: with introspection off, every clipped result told the model to call
+      ;; `read_session()`, which then failed with NameError.
+      (let [f
+            {:scope "t1/i3" :svar/tool-call-id "call_off" :llm-model "glm-5.3"}
+
+            body
+            (apply str (repeat 6000 "printed token "))
+
+            off
+            (with-redefs [toggles/enabled? (constantly false)]
+              (form/clip-to-wire body f))]
+
+        (expect (not (str/includes? off "read_session")))
+        (expect (str/includes? off "slice or filter the result"))
+        (expect (str/includes? (with-redefs [toggles/enabled? #(= "introspection" %)]
+                                 (form/clip-to-wire body f))
+                               "r = await read_session()"))))
   (it "does not let an oversized call id exceed the whole token ceiling"
       (let [body
             (apply str (repeat 6000 "printed token "))

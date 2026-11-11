@@ -4,6 +4,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.channel.form :as form]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [lazytest.core :refer [defdescribe expect it]])
@@ -206,17 +207,18 @@
                 [4096 1024]]
 
           (with-redefs [form/MAX_FORM_OUTPUT_TOKENS ceiling]
-            (let [expected (#'form/clip-stdout
-                            text
-                            (:llm-model f)
-                            (:scope f)
-                            (:svar/tool-call-id f)
-                            ceiling
-                            32768)
-                  actual (form/clip-to-wire text f)]
+            (binding [toggles/*overrides* {"introspection" true}]
+              (let [expected (#'form/clip-stdout
+                              text
+                              (:llm-model f)
+                              (:scope f)
+                              (:svar/tool-call-id f)
+                              ceiling
+                              32768)
+                    actual (form/clip-to-wire text f)]
 
-              (expect (= expected actual))
-              (expect (<= (svar/count-tokens (:llm-model f) actual) ceiling)))))
+                (expect (= expected actual))
+                (expect (<= (svar/count-tokens (:llm-model f) actual) ceiling))))))
         (expect (= body (:stdout record)))))
   (it "separates tokenizer options, changed content and image geometry across counters"
       (let [messages [{:role "user" :content "Zażółć 中 with code = 42"}
@@ -252,23 +254,25 @@
 
 (defdescribe
   stdout-cache-test
-  (it "separates colliding large inputs and preserves Unicode head and tail output"
-      (let [prefix
-            (str "HEAD 😀 中 " (apply str (repeat 17000 "x")))
+  (it
+    "separates colliding large inputs and preserves Unicode head and tail output"
+    (let [prefix
+          (str "HEAD 😀 中 " (apply str (repeat 17000 "x")))
 
-            a
-            (str prefix "Aa😀TAIL\n")
+          a
+          (str prefix "Aa😀TAIL\n")
 
-            b
-            (str prefix "BB😀TAIL\n")
+          b
+          (str prefix "BB😀TAIL\n")
 
-            record
-            {:llm-model model :scope "t23/i102" :svar/tool-call-id "call_collision"}
+          record
+          {:llm-model model :scope "t23/i102" :svar/tool-call-id "call_collision"}
 
-            calls
-            (atom 0)]
+          calls
+          (atom 0)]
 
-        (expect (= (.hashCode ^String a) (.hashCode ^String b)))
+      (expect (= (.hashCode ^String a) (.hashCode ^String b)))
+      (binding [toggles/*overrides* {"introspection" true}]
         (with-redefs [svar/count-tokens (fn [_ text]
                                           (swap! calls inc)
                                           (count text))]
@@ -284,7 +288,7 @@
             (expect (= actual-a (form/clip-to-wire a record)))
             (expect (= after-misses @calls))
             (expect (.startsWith ^String actual-a "HEAD 😀 中 "))
-            (expect (.endsWith ^String actual-a "Aa😀TAIL")))))))
+            (expect (.endsWith ^String actual-a "Aa😀TAIL"))))))))
 
 (defdescribe
   iteration-and-request-share-message-counts-test

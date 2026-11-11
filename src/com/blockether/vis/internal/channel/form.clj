@@ -14,6 +14,7 @@
    they are NOT in this set."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.python.format :as pyfmt]
             [com.blockether.vis.internal.util :as util]))
 
@@ -194,8 +195,11 @@
    (let [s
          (str (or s ""))
 
+         ;; The recovery hint calls `read_session()`, which exists only while the
+         ;; `introspection` toggle is on. Without a scope the hint says to slice instead.
          scope
-         (when (string? (:scope form)) (str/replace (:scope form) #"/f[1-9]\d*$" ""))
+         (when (and (string? (:scope form)) (toggles/enabled? "introspection"))
+           (str/replace (:scope form) #"/f[1-9]\d*$" ""))
 
          call-id
          (:svar/tool-call-id form)

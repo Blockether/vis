@@ -7691,7 +7691,7 @@
                   [:content 0]))]
 
     (it "keeps the same head and tail in model, card and gateway with a real budget"
-        (with-redefs [toggles/enabled? (constantly false)]
+        (with-redefs [toggles/enabled? #(= "introspection" %)]
           (let [model (:content (render f nil))
                 projected (form/clip-to-wire stdout f)
                 display (:body (form/stdout-display f))]
@@ -7717,8 +7717,9 @@
                {:id "call_B|fc_456" :name "python_execution"}]
 
               [a b]
-              (:content (#'transcript/iteration-results-message
-                         {:llm-model "glm-5.3" :tool-calls calls :forms-vec [f other]}))]
+              (binding [toggles/*overrides* {"introspection" true}]
+                (:content (#'transcript/iteration-results-message
+                           {:llm-model "glm-5.3" :tool-calls calls :forms-vec [f other]})))]
 
           (expect (str/includes? (:content a) "call_A|fc_123"))
           (expect (not (str/includes? (:content a) "SECOND-ONLY")))

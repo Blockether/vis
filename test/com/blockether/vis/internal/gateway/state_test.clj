@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.svar.core :as svar]
@@ -1105,15 +1106,16 @@
             (apply str (repeat 6000 "printed token "))
 
             [_ _ payload]
-            (#'state/chunk->event
-             {:phase :form-result
-              :iteration 3
-              :position 0
-              :scope "t1/i3/f1"
-              :svar/tool-call-id "call_A"
-              :llm-model "glm-5.3"
-              :code "print(1)"
-              :stdout printed})]
+            (binding [toggles/*overrides* {"introspection" true}]
+              (#'state/chunk->event
+               {:phase :form-result
+                :iteration 3
+                :position 0
+                :scope "t1/i3/f1"
+                :svar/tool-call-id "call_A"
+                :llm-model "glm-5.3"
+                :code "print(1)"
+                :stdout printed}))]
 
         (expect (str/includes? (:stdout payload) "b.get(\"scope\") == \"t1/i3\""))
         (expect (str/includes? (:stdout payload) "b.get(\"svar_tool_call_id\") == \"call_A\""))
