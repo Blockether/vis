@@ -2408,9 +2408,12 @@
         (let [{:keys [server port asked]} (start-stub-provider! "Native context complete.")]
           (try
             (.mkdirs (io/file dir ".vis"))
+            ;; The exact-stdout recovery hint names `read_session()`, which needs the
+            ;; `introspection` toggle.
             (spit (io/file dir ".vis/config.yml")
                   (json/write-json-str {:default_provider "stub-local"
                                         :default_model model
+                                        :toggles {:introspection true}
                                         :providers
                                         [{:id "stub-local"
                                           :base_url (str "http://127.0.0.1:" port "/v1")
