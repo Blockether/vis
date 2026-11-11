@@ -16,8 +16,7 @@
    call cannot break iteration execution.
 
    Gated: the extension registered at the bottom of this namespace binds its
-   symbols and prompt only while the `introspection` toggle is ON (default OFF),
-   and never in a one-shot `:cli` run."
+   symbols and prompt only while the `introspection` toggle is ON (default OFF)."
   (:require [charred.api :as json]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
@@ -30,7 +29,6 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.provider.error :as perr]
-            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.util :as util]))
 
@@ -1653,10 +1651,9 @@
 
 ;; Session introspection is part of foundation-core, but its callable symbols and
 ;; prompt guidance remain behind the default-off `introspection` toggle. A one-shot `:cli`
-;; run has no person to ask about past sessions, so it never gets them.
-(defn introspection-enabled?
-  [env]
-  (and (agents/interactive? env) (toggles/enabled? "introspection")))
+;; run gets them too: a clipped result tells the model to recover its own stdout with
+;; `read_session()`.
+(defn introspection-enabled? [_env] (toggles/enabled? "introspection"))
 
 (def all-symbols
   (mapv #(assoc % :ext.symbol/active-fn introspection-enabled?)
