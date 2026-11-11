@@ -749,10 +749,11 @@
                   "The leader row comes first")
           (expect (nil? (:session-id (first (:rows card)))) "The leader row opens nothing")
           (expect (some? leader))
-          (expect (str/includes? leader "waited 1m 00s of 3m 20s"))
+          (expect (not (str/includes? leader "waited 1m 00s of"))
+                  "The wait stands after the time, not in the title")
           (expect (str/includes? leader "Shipped the fix"))
           (expect (not (str/includes? leader "**")))
-          (expect (re-find #"DONE +│ +3m 20s" leader))
+          (expect (re-find #"DONE +│ +3m 20s \(waited 1m 00s\)" leader))
           (expect (< (.indexOf ^java.util.List text leader)
                      (.indexOf ^java.util.List text
                                (first (filter #(str/includes? % "Read docs") text)))))))))
@@ -768,9 +769,8 @@
                    row (nth text 4)]
 
                (expect (str/includes? row "LEADER"))
-               (expect (str/includes? row "waited 30s of 1m 30s"))
                (expect (str/includes? row "Waiting for the parser fix"))
-               (expect (re-find #"RUNNING +│ +1m 30s" row))
+               (expect (re-find #"RUNNING +│ +1m 30s \(waited 30s\)" row))
                (expect (str/includes? (first text) "3 RUNNING") "The summary counts agents only")
                (expect (str/includes? (nth text 5) "Map the gateway routes"))
                (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1))

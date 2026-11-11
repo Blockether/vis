@@ -395,11 +395,11 @@
 
 (defn- leader? [row] (= "leader" (:role-key row)))
 
-(def ^:private leader-label-sample
-  "The widest title cell of a leader row, so the title column does not change while it counts."
-  "waited 59m 59s of 59m 59s")
+(def ^:private leader-time-sample
+  "The widest time cell of a leader row, so the time column does not change while it counts."
+  "59m 59s (waited 59m 59s)")
 
-(defn- label-sample [row] (if (leader? row) leader-label-sample (:label row)))
+(defn- time-sample [row] (if (leader? row) leader-time-sample ""))
 
 (def ^:private waits-for-agents
   "A leader step that waits for its agents: `council.run` and `council.wait` return only when an
@@ -438,7 +438,7 @@
       {:n 0
        :role "LEADER"
        :role-key "leader"
-       :label "waited"
+       :label ""
        :status word
        :tone (tone word)
        :now (leader-note steps answer ended?)
@@ -479,27 +479,26 @@
             (< s 3600) (format "%dm %02ds" (quot s 60) (rem s 60))
             :else (format "%dh %02dm" (quot s 3600) (quot (rem s 3600) 60))))))
 
+(defn- leader-time
+  "The time cell of a leader row at `now-ms`: its own time, then the part of it that it waited
+   for its agents, such as `3m 20s (waited 1m 10s)`."
+  [{:keys [waited-ms wait-starts start end]} now-ms]
+  (let [total
+        (max 0 (- (long (or end now-ms)) (long start)))
+
+        waited
+        (reduce + (long waited-ms) (map #(max 0 (- (long now-ms) (long %))) wait-starts))]
+
+    (str (duration-text total) " (waited " (duration-text (min total waited)) ")")))
+
 (defn row-time
   "The time of a row: the elapsed time while the agent works or waits, the duration of its
-   task when it ended, nil while queued or without times."
-  [{:keys [start end active? status]} now-ms]
+   task when it ended, nil while queued or without times. A leader row adds its wait."
+  [{:keys [start end active? status] :as row} now-ms]
   (cond (nil? start) nil
+        (leader? row) (leader-time row now-ms)
         end (duration-text (- (long end) (long start)))
         (and active? (not= "QUEUED" status)) (duration-text (- (long now-ms) (long start)))))
-
-(defn row-label
-  "The title cell of `row` at `now-ms`. The leader row writes the time that it waited for its
-   agents out of its own time, such as `waited 1m 10s of 3m 20s`."
-  [{:keys [label waited-ms wait-starts start end] :as row} now-ms]
-  (if (leader? row)
-    (let [total
-          (max 0 (- (long (or end now-ms)) (long start)))
-
-          waited
-          (reduce + (long waited-ms) (map #(max 0 (- (long now-ms) (long %))) wait-starts))]
-
-      (str "waited " (duration-text (min total waited)) " of " (duration-text total)))
-    label))
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 
@@ -509,12 +508,13 @@
   (widest (map #(str/upper-case (str (get % "const"))) (roles))))
 
 (defn row-columns
-  "The cell widths of the role, title and status columns, so every row lines up. The role width
-   is the same for every team."
+  "The cell widths of the role, title, status and time columns, so every row lines up. The role
+   width is the same for every team."
   [rows]
   {:role (role-width)
-   :label (min (title-width) (long (widest (map label-sample rows))))
-   :status (widest (map :status rows))})
+   :label (min (title-width) (long (widest (map :label rows))))
+   :status (widest (map :status rows))
+   :time (max (long time-width) (long (widest (map time-sample rows))))})
 
 (defn- pad
   "`text` with spaces to `width` cells."
@@ -545,8 +545,11 @@
         time
         (or (row-time row now-ms) "")
 
+        time-w
+        (long (or (:time columns) time-width))
+
         time-col
-        (- width (long time-width))
+        (- width time-w)
 
         two-lines?
         (= 2 (row-line-count row width))
@@ -575,11 +578,11 @@
           (conj [0 (:role row) :role])
 
           true
-          (conj [label-col (p/ellipsize (row-label row now-ms) label-w) :label]
+          (conj [label-col (p/ellipsize (:label row) label-w) :label]
                 [status-col (:status row) :status]))
 
         time-part
-        [(+ time-col (- (long time-width) (long (p/display-width time)))) time :time]]
+        [(+ time-col (- time-w (long (p/display-width time)))) time :time]]
 
     (if two-lines?
       (let [role
@@ -715,13 +718,15 @@
         {:key :role :w (max (role-width) (count (:role table-heads)))}
 
         label
-        (update (fixed :label (map label-sample rows)) :w min (title-width))
+        (update (fixed :label (map :label rows)) :w min (title-width))
 
         status
         (fixed :status (map :status rows))
 
         time
-        {:key :time :w (max (long time-width) (count (:time table-heads)))}
+        {:key :time
+         :w
+         (max (long time-width) (count (:time table-heads)) (long (widest (map time-sample rows))))}
 
         with-detail
         (fn [columns]
@@ -805,9 +810,6 @@
     (case column-key
       :time
       (or (row-time row now-ms) "")
-
-      :label
-      (str (row-label row now-ms))
 
       (str (get row column-key)))))
 

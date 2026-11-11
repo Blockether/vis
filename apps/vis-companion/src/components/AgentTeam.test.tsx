@@ -218,9 +218,9 @@ describe('agent rows', () => {
     ]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent);
-    expect(lanes).toEqual(['L leader30sdone', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
+    expect(lanes).toEqual(['L leader30s (waited 12s)done', 'A1 Companion review9sdone', 'A2 TUI review15sdone']);
     const legend = within(screen.getByRole('list', { name: 'Legend' })).getAllByRole('listitem').map((row) => row.textContent);
-    expect(legend).toEqual(['Lleaderwaited 12s of 30sBoth reviews pass.', 'A1verifyCompanion reviewAll 12 keys pass', 'A2verifyTUI review']);
+    expect(legend).toEqual(['Lleader(waited 12s)Both reviews pass.', 'A1verifyCompanion reviewAll 12 keys pass', 'A2verifyTUI review']);
   });
 
   // User report 2026-11-10: a team finished on a phone, and the phone had no control to open its timeline.
@@ -374,7 +374,7 @@ describe('leader row', () => {
     render(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('done'))} />);
     const rows = tableRows();
     expect(rows).toHaveLength(3);
-    expect(rows[0]).toMatch(/^leaderwaited 12s of 30s(Both reviews pass\.done30s|Both reviews pass\.30sdone)$/);
+    expect(rows[0]).toMatch(/^leaderBoth reviews pass\.30s \(waited 12s\)done$/);
     expect(rows[1]).toMatch(/^verifyCompanion review/);
     expect(screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]')).toHaveTextContent(/2 done/);
     expect(document.querySelector('[data-leader-row]')?.closest('button')).toBeNull();
@@ -401,13 +401,13 @@ describe('leader row', () => {
       { start: 1794213410289 - 36, end: 1794213410289 },
     ]);
     render(<TurnAgents {...props} agents={team} leader={leader} />);
-    expect(tableRows()[0]).toBe('leaderwaited 3s of 12sBoth subagents finished, and each replied with the text it was given:12sdone');
+    expect(tableRows()[0]).toBe('leaderBoth subagents finished, and each replied with the text it was given:12s (waited 3s)done');
   });
 
   it('marks the leader of a stored turn that ended in an error or a stop as failed', () => {
     wide(true);
     render(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('interrupted'))} />);
-    expect(document.querySelector('[data-leader-row]')).toHaveTextContent(/30sfailed$/);
+    expect(document.querySelector('[data-leader-row]')).toHaveTextContent(/30s \(waited 12s\)failed$/);
   });
 
   // Regression, issue #460: four children of an earlier turn and two of the running turn split the
@@ -442,7 +442,7 @@ describe('leader row', () => {
       agents={[child, { ...child, session_id: 'old', team_id: 'turn-0' }]} />);
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(tableRows()).toEqual([
-      'leaderwaited 0s of 15sI wait for the reviews.15srunning',
+      'leaderI wait for the reviews.15s (waited 0s)running',
       expect.stringMatching(/^agent#1/),
       expect.stringMatching(/^agent#1/),
     ]);

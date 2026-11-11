@@ -222,10 +222,13 @@ export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): b
   return (agents.length > 1 || (agents.length > 0 && leader != null)) && !!chartSpan(agents, Date.now(), leader);
 }
 
-/** The control that swaps the notes of a team for its timeline, and back. */
+/**
+ * The control that swaps the notes of a team for its timeline, and back. It wears the amber of a
+ * chosen chip while it opens the timeline, and the page ink while it closes it (user decision).
+ */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
-    <Chip isOn={isOn} onClick={onToggle} className="pointer-events-auto">
+    <Chip isOn={!isOn} aria-pressed={isOn} onClick={onToggle} className={`pointer-events-auto ${isOn ? 'text-white!' : ''}`}>
       Timeline
     </Chip>
   );
@@ -442,7 +445,7 @@ const LEADER_KEY = 'L';
 /** The role word of the leader and its ink, in the team chart and the header path. */
 export const LEADER_ROLE = 'leader';
 export const LEADER_INK = 'text-role-leader';
-const LEADER_WAIT_WIDTH = 'waited 59m 59s of 59m 59s'.length;
+const LEADER_TIME_WIDTH = '59m 59s (waited 59m 59s)'.length;
 
 /** The status word of a leader with its ink: running while its turn runs, then done, or failed after an error or a stop. */
 export function leaderStatus(leader: LeaderLane): { text: string; ink: string } {
@@ -455,7 +458,9 @@ function leaderTimes(leader: LeaderLane, now: number): { waited: number; total: 
   return { waited, total: Math.max(0, (leader.end ?? now) - leader.start) };
 }
 
-const leaderWait = ({ waited, total }: { waited: number; total: number }) => `waited ${formatAgentTime(waited)} of ${formatAgentTime(total)}`;
+// The time of a leader, then the part of it that it waited for its agents.
+const leaderWaited = ({ waited }: { waited: number }) => `(waited ${formatAgentTime(waited)})`;
+const leaderTime = (times: { waited: number; total: number }) => `${formatAgentTime(times.total)} ${leaderWaited(times)}`;
 
 // The bar ink of each status word.
 const BAR_INK: Record<string, string> = {
@@ -475,10 +480,10 @@ const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-base
 
 // The columns of a team on a wide screen: ROLE, TITLE, then the NOTE, or the time bar while the
 // timeline shows, then TIME and STATUS. A hairline stands after ROLE, TITLE, NOTE and TIME.
-// TIME fits `59m 59s` and STATUS fits `running`, so a ticking time never moves a column. TITLE takes at most a third
+// TIME fits `59m 59s`, or the leader time with its wait, and STATUS fits `running`, so a ticking time never moves a column. TITLE takes at most a third
 // of the row; a longer title wraps. A wide row carries the frame's own inset, so its hover fills
 // the frame and its text lines up with the team line.
-const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_7ch] items-baseline gap-x-3 px-3';
+const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_var(--time)_7ch] items-baseline gap-x-3 px-3';
 
 // The hairline after a cell: in the middle of the gap, through the row inset, so the rows join it.
 const CELL_RULE = 'relative self-stretch after:absolute after:-inset-y-1 after:-right-1.5 after:w-px after:bg-dialog-edge';
@@ -489,19 +494,22 @@ const TIME_RULES = `${CELL_RULE} before:absolute before:-inset-y-1 before:-left-
 const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
 // The widths of the columns, in `ch` of the monospace font. ROLE is the same for every team. TITLE
-// fits the team: its heading is the least width, and the bold title gets one more `ch`. The leader
-// line `waited 59m 59s of 59m 59s` keeps one width while its clock ticks.
+// fits the team: its heading is the least width, and the bold title gets one more `ch`. TIME fits
+// `59m 59s (waited 59m 59s)` when a leader row shows, so it keeps one width while its clock ticks.
 function columnWidths(rows: readonly Subagent[], leader?: LeaderLane): CSSProperties {
   const widest = (least: string, words: string[]) => Math.max(least.length, ...words.map((word) => word.length));
   return {
     '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ROLE_WIDTH)}ch`,
-    '--title': `${Math.max(widest('title', rows.map((agent) => agentLabel(agent, rows))) + 1, leader ? LEADER_WAIT_WIDTH : 0)}ch`,
+    '--title': `${widest('title', rows.map((agent) => agentLabel(agent, rows))) + 1}ch`,
+    '--time': `${leader ? LEADER_TIME_WIDTH : 7}ch`,
   } as CSSProperties;
 }
 
 // The columns of the chart of a team: the KEY of each lane, its time BAR, its TIME and its
-// STATUS. The legend under the chart gives each KEY its ROLE, TITLE and the NOTE of its row.
-const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_7ch] items-baseline gap-x-3 px-3';
+// STATUS. The legend under the chart gives each KEY its ROLE, TITLE and the NOTE of its row. A phone
+// keeps TIME at `59m 59s` so the bars keep their room; the legend gives the wait of the leader.
+const CHART_TIME = 'max-sm:[--time:7ch]';
+const CHART_ROW = `grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_var(--time)_7ch] items-baseline gap-x-3 px-3 ${CHART_TIME}`;
 // A phone legend has one line for each lane and no note: the rows of the team show the notes.
 const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_minmax(0,1fr)] max-sm:py-0.5 sm:grid-cols-[var(--key)_var(--role)_min(var(--title),32%)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
 const LEGEND_NOTE = 'min-w-0 max-sm:hidden';
@@ -510,7 +518,7 @@ const LEGEND_LAST = 'max-sm:after:hidden';
 
 // The bar column of a chart row: the inset of the row, the KEY and one gap on the left; one gap,
 // TIME, one gap, STATUS and the inset on the right. The grid lines stand there behind the bars.
-const BAR_COLUMN: CSSProperties = { left: 'calc(1.5rem + var(--key))', right: 'calc(2.25rem + 14ch)' };
+const BAR_COLUMN: CSSProperties = { left: 'calc(1.5rem + var(--key))', right: 'calc(2.25rem + var(--time) + 7ch)' };
 
 // The time axis above the bars: a label at each mark.
 function AxisLabels({ total }: { total: number }) {
@@ -584,13 +592,12 @@ function PhoneLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
   return (
     <li className={PHONE_ROW} data-leader-row data-hover-note-frame>
       <span className={`order-1 font-bold uppercase ${LEADER_INK}`}>{LEADER_ROLE}</span>
-      <span className="order-4 col-span-2 min-w-0 text-dialog-hint [overflow-wrap:anywhere]">{leaderWait(times)}</span>
       {leader.note && (
         <HoverNote className="order-5 col-span-2 min-w-0" note={leader.note}>
           <span className="line-clamp-2 text-dialog-hint [overflow-wrap:anywhere]">{leader.note}</span>
         </HoverNote>
       )}
-      <PhoneEnd status={status} time={formatAgentTime(times.total)} />
+      <PhoneEnd status={status} time={leaderTime(times)} />
     </li>
   );
 }
@@ -662,18 +669,19 @@ function WideAgentTable(props: TableProps) {
   );
 }
 
-// The leader row on a wide screen, in the columns of an agent row: the time that it waited for its
-// agents, its newest line, its time and its status. It opens nothing: the leader is this session.
+// The leader row on a wide screen, in the columns of an agent row: no title, its newest line, its
+// time with the part that it waited for its agents, and its status. It opens nothing: the leader
+// is this session.
 function WideLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
   const times = leaderTimes(leader, now);
   return (
     <li className={`py-1 ${WIDE_ROW}`} data-leader-row data-hover-note-frame>
       <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
-      <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE}`}>{leaderWait(times)}</span>
+      <span className={CELL_RULE} />
       <HoverNote className={`min-w-0 ${CELL_RULE}`} note={leader.note}>
         <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
       </HoverNote>
-      <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${CELL_RULE}`}>{formatAgentTime(times.total)}</span>
+      <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${CELL_RULE}`}>{leaderTime(times)}</span>
       <StatusWord status={leaderStatus(leader)} />
     </li>
   );
@@ -703,7 +711,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
         <span className="relative h-[calc(1lh+0.25rem)] border-b border-dialog-edge/50"><AxisLabels total={total} /></span>
         <span className={TIME_RULES} />
       </div>
-      <div className="relative">
+      <div className={`relative ${CHART_TIME}`}>
         <GridLines total={total} />
         <ul aria-label="Timeline">
           {leader && (
@@ -714,7 +722,10 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
                   <LanePart key={part.start} bar={{ start: share(part.start), end: share(part.end), isWaiting: part.isWaiting }} ink="bg-white" />
                 ))}
               </span>
-              <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>{formatAgentTime(times.total)}</span>
+              <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>
+                {formatAgentTime(times.total)}
+                <span className="max-sm:hidden"> {leaderWaited(times)}</span>
+              </span>
               <StatusWord status={leaderStatus(leader)} />
             </li>
           )}
@@ -753,7 +764,9 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           <li className={LEGEND_ROW} data-hover-note-frame>
             <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
             <span className={`font-bold uppercase ${CELL_RULE} ${LEGEND_LAST} ${LEADER_INK}`}>{LEADER_ROLE}</span>
-            <span className={`whitespace-nowrap text-dialog-hint ${CELL_RULE} ${LEGEND_LAST}`}>{leaderWait(times)}</span>
+            <span className={`${CELL_RULE} ${LEGEND_LAST}`}>
+              <span className="whitespace-nowrap text-dialog-hint sm:hidden">{leaderWaited(times)}</span>
+            </span>
             <HoverNote className={LEGEND_NOTE} note={leader.note}>
               <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>
