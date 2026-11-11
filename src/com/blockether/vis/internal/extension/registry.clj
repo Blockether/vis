@@ -169,6 +169,7 @@
        (optional-valid? x :cmd/usage util/non-blank-string?)
        (optional-valid? x :cmd/run-fn ifn?)
        (optional-valid? x :cmd/owns-tty? boolean?)
+       (optional-valid? x :cmd/raw-args? boolean?)
        (optional-valid? x :cmd/internal? boolean?)
        (optional-valid? x :cmd/parent #(and (vector? %) (every? string? %)))
        (optional-valid? x :cmd/args #(and (vector? %) (every? arg? %)))
@@ -398,6 +399,7 @@
    :cmd/doc (:channel/doc c)
    :cmd/usage (or (:channel/usage c) (str "vis-agent channels " (:channel/cmd c)))
    :cmd/owns-tty? (boolean (:channel/owns-tty? c))
+   :cmd/raw-args? true
    :cmd/subcommands #(let [s (:channel/subcommands c) direct
                            (cond (nil? s) []
                                  (ifn? s) (vec (s))

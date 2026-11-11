@@ -2749,6 +2749,7 @@
       "vis-agent python --version" "echo 'print(1 + 1)' | vis-agent python"
       "vis-agent python   # interactive REPL"]
      :cmd/owns-tty? true
+     :cmd/raw-args? true
      :cmd/run-fn cli-python!}]]
   (registry/register-cmd! spec))
 

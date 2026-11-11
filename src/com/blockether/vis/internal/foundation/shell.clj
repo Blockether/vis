@@ -3350,6 +3350,8 @@
       "Join a background shell's PTY in your terminal; Ctrl-] detaches (child keeps running)."
       :cmd/usage "vis-agent extension shell attach <id> [--socket PATH]"
       :cmd/owns-tty? true
+      :cmd/args [{:name "id" :kind :positional :type :string :doc "Background shell id."}
+                 {:name "socket" :kind :flag :type :string :doc "Attach to this socket path."}]
       :cmd/examples ["vis-agent extension shell attach slack-auth"
                      "vis-agent extension shell attach dev-server"]
       :cmd/run-fn #'shell-attach-command}]}])

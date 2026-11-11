@@ -38,6 +38,40 @@
                    (expect (= :help (:status result)))
                    (expect (str/includes? @printed "vis-agent providers list")))))
 
+(defdescribe
+  dispatch-refusal-test
+  (it "refuses a word under a parent that has no run-fn"
+      (doseq [args [["vis-agent" "providers" "missing"] ["vis-agent" "channels" "nope"]]]
+        (let [root (update (sample-root)
+                           :cmd/subcommands
+                           conj
+                           {:cmd/name "channels" :cmd/doc "channels" :cmd/subcommands []})
+              result (commandline/dispatch! root args {:print-fn nil})]
+
+          (expect (= :error (:status result)) (pr-str args))
+          (expect (str/starts-with? (:error result) "Unknown command:")))))
+  (it "refuses a flag that a command without flags does not declare"
+      (let [result (commandline/dispatch! (sample-root)
+                                          ["vis-agent" "providers" "list" "--json"]
+                                          {:print-fn nil})]
+        (expect (= :error (:status result)))
+        (expect (str/starts-with? (:error result) "Unknown flag: --json"))))
+  (it "passes every token to a raw-args command"
+      (let [root
+            {:cmd/name "vis-agent"
+             :cmd/doc "root"
+             :cmd/subcommands [{:cmd/name "python"
+                                :cmd/doc "python"
+                                :cmd/raw-args? true
+                                :cmd/run-fn (fn [_ residual]
+                                              residual)}]}
+
+            result
+            (commandline/dispatch! root ["vis-agent" "python" "-c" "x" "--any"] {:print-fn nil})]
+
+        (expect (= :ok (:status result)))
+        (expect (= ["-c" "x" "--any"] (vec (:result result)))))))
+
 ;; Help rendering -- split COMMANDS / EXTENSION COMMANDS + extra sections.
 
 (defn- mixed-children-cmd

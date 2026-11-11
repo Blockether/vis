@@ -411,6 +411,30 @@
                      (thrown #(mcp/save-gateway-server! "team" (first ["not-an-object"])))))
           (expect (= :mcp/not-found (thrown #(mcp/set-gateway-server-enabled! "absent" false))))
           (expect (= :mcp/not-found (thrown #(mcp/delete-gateway-server! "absent"))))))))
+  (it "refuses to sign out of a server that it does not know and that has no tokens"
+      (let [forgotten
+            (atom [])
+
+            merged
+            {"mcp" {"servers" {"team" {"transport" "stdio" "command" "echo"}}}}
+
+            tokens
+            {"stale" {"is_authorized" true}}]
+
+        (with-redefs-fn {#'config/load-global-config-raw (constantly {})
+                         #'config/load-global-yaml-config-raw (constantly merged)
+                         #'oauth/token-status (fn [server]
+                                                (get tokens server {"is_authorized" false}))
+                         #'oauth/forget! #(swap! forgotten conj %)}
+          (fn []
+            (expect (= :mcp/not-found
+                       (try (mcp/logout-gateway-server-auth! "absent")
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            (expect (= [] @forgotten))
+            ;; A configured server, and the tokens of a removed one, are signed out.
+            (mcp/logout-gateway-server-auth! "team")
+            (mcp/logout-gateway-server-auth! "stale")
+            (expect (= ["team" "stale"] @forgotten))))))
   (it "carries the non-secret rest of a spec so a client can edit it without losing it"
       (let [machine {"mcp" {"servers" {"owned" {"transport" "stdio"
                                                 "command" "npx"

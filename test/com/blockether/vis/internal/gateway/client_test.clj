@@ -1875,7 +1875,10 @@
             calls
             (atom 0)]
 
-        (with-redefs-fn {(rv 'list-resources) (fn [_sid]
+        ;; A long TTL: a pause past a real 750 ms TTL made a poll start a third fetch.
+        ;; Staleness comes only from the entries this test writes.
+        (with-redefs-fn {(rv 'resources-cache-ttl-ms) 60000
+                         (rv 'list-resources) (fn [_sid]
                                                 (swap! calls inc)
                                                 (Thread/sleep slow-ms)
                                                 [{"id" "bg"}])}
@@ -1930,7 +1933,9 @@
             calls
             (atom 0)]
 
-        (with-redefs-fn {(rv 'session-model) (fn [_sid]
+        ;; A long TTL: see `list-resources-cached-never-blocks-the-caller`.
+        (with-redefs-fn {(rv 'session-model-cache-ttl-ms) 60000
+                         (rv 'session-model) (fn [_sid]
                                                (swap! calls inc)
                                                (Thread/sleep slow-ms)
                                                {:provider "anthropic" :model "opus"})}

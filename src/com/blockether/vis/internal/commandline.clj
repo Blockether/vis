@@ -571,7 +571,10 @@
            children (registry/resolve-subcommands command)
            unresolved-before-help (take-while #(not (#{"--help" "-h"} %)) residual)]
 
-       (cond (and help? (seq children) (seq unresolved-before-help))
+       ;; A parent without its own run-fn takes no words: anything left over is a
+       ;; typo of a subcommand, not a request for help, so it must not exit 0.
+       (cond (and (seq unresolved-before-help)
+                  (or (nil? (:cmd/run-fn command)) (and help? (seq children))))
              (let [err (str "Unknown command: " (str/join " " (concat path unresolved-before-help)))
                    help (str err "\n\n" (render-command command path))]
 
@@ -584,15 +587,12 @@
              (nil? (:cmd/run-fn command))
              {:status :help :command command :help-text (render-command command path)}
              :else
-             ;; Strict-flag check fires only when the command actually
-             ;; declares flags. Commands without `:cmd/args` (or with only
-             ;; positionals) keep the loose, layer-your-own-flags posture
-             ;; - `vis-agent providers status <provider>` and similar bespoke
-             ;; handlers stay working without forcing every command to
-             ;; declare its full surface up front.
+             ;; Every command refuses a flag it does not declare, also one that
+             ;; declares no flags: a silently ignored `--json` looks like it
+             ;; worked. Only a pass-through command (`:cmd/raw-args?`) hands its
+             ;; tokens on unchecked.
              (let [arg-specs (:cmd/args command)
-                   has-flags? (some #(= :flag (:kind %)) arg-specs)
-                   unknown (when has-flags? (unknown-flags arg-specs residual))]
+                   unknown (when-not (:cmd/raw-args? command) (unknown-flags arg-specs residual))]
 
                (cond (seq unknown) (let [err (format-unknown-flags-error arg-specs unknown)
                                          help (str err "\n\n" (render-command command path))]

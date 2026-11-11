@@ -481,6 +481,7 @@
   [{:cmd/name "tui"
     :cmd/parent ["gateway"]
     :cmd/doc "Run the terminal client with a local gateway lease (used by the launcher)."
+    :cmd/raw-args? true
     :cmd/run-fn (fn [_ args]
                   (let [exit (gateway-client/run-tui! (vec (drop-while #{"--"} args)))]
                     (shutdown-agents)
@@ -489,6 +490,7 @@
     :cmd/parent ["gateway"]
     :cmd/doc
     "Open the desktop app with a local gateway that stays up while the app runs (used by the launcher)."
+    :cmd/raw-args? true
     :cmd/run-fn (fn [_ args]
                   (let [exit (gateway-client/run-desktop! (vec (drop-while #{"--"} args)))]
                     (shutdown-agents)

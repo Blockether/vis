@@ -1118,7 +1118,17 @@
   "Forget the persisted OAuth tokens for `name` and drop the connection that was
    using them."
   [name]
-  (let [name (server-name name)]
+  (let [name
+        (server-name name)
+
+        tokens
+        (mcp-oauth/token-status name)]
+
+    ;; Tokens of a removed server may still be on file; forgetting them stays allowed.
+    (when-not (or (get (raw-servers) name)
+                  (get tokens "is_authorized")
+                  (get tokens "has_refresh_token"))
+      (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
     (mcp-oauth/forget! name)
     (disconnect! name)
     (clear-auth-backoff! name)
