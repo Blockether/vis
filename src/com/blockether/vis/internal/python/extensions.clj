@@ -1589,7 +1589,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (str "__import__('vis_runtime').exec_module(globals(), 'extension', "
        "__import__('json').loads(" (python-string-literal (json/write-json-str source))
        "), __file__, flags=__import__('__future__').annotations.compiler_flag, "
-       "attributes={'__vis_ext_dir__': __vis_ext_dir__})"))
+       "attributes={'__vis_ext_dir__': __vis_ext_dir__, **__import__('json').loads("
+       (python-string-literal (json/write-json-str (python-runtime/version-globals)))
+       ")})"))
 
 (defn- evaluate-extension!
   "Evaluate admitted extension `source` in the open namespace `ctx`.

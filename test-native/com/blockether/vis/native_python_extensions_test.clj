@@ -192,8 +192,7 @@
                  "assert hashlib.sha256(Path(package_paths.__file__).read_bytes()).hexdigest() == "
                  (pr-str (util/sha256-hex (slurp (io/resource "vis-python/package_paths.py"))))
                  ", package_paths.__file__\n"
-                 "import blockether.vis.extension as vis\n"
-                 "assert VIS_VERSION != 'dev'\n"
+                 "import blockether.vis.extension as vis\n" "assert VIS_VERSION != 'dev'\n"
                  "# A release bundles VIS_VERSION; any other build bundles a dev release.\n"
                  "major, minor, patch = map(int, VIS_VERSION.split('.'))\n"
                  "dev = rf'{major}\\.{minor}\\.{patch + 1}\\.dev[0-9]+(\\+dirty)?'\n"
@@ -202,13 +201,13 @@
                  "assert re.fullmatch(r'[0-9a-f]{40}(-dirty)?', VIS_SHA_RELEASE)\n"
                  "assert VIS_PYTHON_RUNTIME_VERSION == "
                  (pr-str (str/trim (slurp (io/resource "vis-python-runtime/VERSION"))))
-                 "\n"
-                 "assert callable(__vis_registration__) and callable(__vis_host_live__)\n"
+                 "\n" "assert '__vis_registration__' not in globals()\n"
+                 "assert '__vis_host_live__' not in globals()\n"
                  "contexts = getattr(package_paths, '_test_extension_contexts', [])\n"
                  "contexts.append(sys.modules[__name__])\n"
                  "package_paths._test_extension_contexts = contexts\n"
                  "assert all(sys.modules.get(ctx.__name__) is ctx for ctx in contexts)\n"
-                 "assert all(callable(ctx.__vis_registration__) for ctx in contexts)\n"
+                 "assert all(ctx.VIS_VERSION == VIS_VERSION for ctx in contexts)\n"
                  "vis.register_extension(vis.Extension(name=" (pr-str name)
                  ", description='Native editable SDK fixture'))\n"
                  "Path(__file__).with_suffix('.loaded').write_text('registered')\n")))
