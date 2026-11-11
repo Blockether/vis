@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { useRef } from 'react';
+import { createRoot } from 'react-dom/client';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,9 +11,12 @@ import {
   EDGE_PULL_SPEED,
   LIFT_DELAY_MS,
   LIFT_SLOP_PX,
+  beginLift,
+  carryOver,
   dropTargetAt,
   edgePull,
   movedBeyond,
+  releaseLift,
   useSessionDropTarget,
   useSessionLift,
 } from './session-drag';
@@ -270,5 +274,56 @@ describe('picking a session row up with a finger', () => {
     expect(row.dataset.carried).toBe('no');
     expect(copiesInTheAir()).toBe(0);
     expect(document.querySelectorAll(`[${DROP_TARGET_ATTRIBUTE}]`).length).toBe(0);
+  });
+});
+
+// Regression: Android CI dropped a carried row on a band that had just appeared. The
+// place wore its drop mark one commit before it could take a row, and the native
+// `touchend` listener does not wait for React's passive effects.
+describe('a place that takes a carried session', () => {
+  function Place({ take, version }: { take: (sid: string) => void; version: number }) {
+    const { targetProps } = useSessionDropTarget(take);
+    return <div data-version={version} {...targetProps} />;
+  }
+
+  /** Release over the place in the microtask after the commit that shows `version`. */
+  function releaseOn(host: HTMLElement, version: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const observer = new MutationObserver(() => {
+        const place = host.querySelector(`[data-version="${version}"]`);
+        if (!place) return;
+        observer.disconnect();
+        beginLift(SESSION);
+        carryOver(place.getAttribute(DROP_TARGET_ATTRIBUTE));
+        resolve(releaseLift());
+      });
+      observer.observe(host, { subtree: true, childList: true, attributes: true });
+    });
+  }
+
+  it('takes a release with its current verb in the commit that shows its mark', async () => {
+    const scope = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const actEnvironment = scope.IS_REACT_ACT_ENVIRONMENT;
+    scope.IS_REACT_ACT_ENVIRONMENT = false;
+    const host = document.body.appendChild(document.createElement('div'));
+    const root = createRoot(host);
+    const first = vi.fn();
+    const second = vi.fn();
+    try {
+      let landed = releaseOn(host, 1);
+      root.render(<Place take={first} version={1} />);
+      expect(await landed).toBe(true);
+      expect(first).toHaveBeenCalledWith(SESSION);
+
+      landed = releaseOn(host, 2);
+      root.render(<Place take={second} version={2} />);
+      expect(await landed).toBe(true);
+      expect(second).toHaveBeenCalledWith(SESSION);
+      expect(first).toHaveBeenCalledTimes(1);
+    } finally {
+      root.unmount();
+      host.remove();
+      scope.IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+    }
   });
 });

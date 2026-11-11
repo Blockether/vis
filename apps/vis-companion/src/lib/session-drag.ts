@@ -19,7 +19,7 @@
  * `touchmove` stutters on exactly the phones this gesture exists for.
  */
 
-import { useEffect, useId, useRef, useState, type RefObject } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 
 /** A finger, in client coordinates. */
 export interface LiftPoint {
@@ -416,12 +416,14 @@ export function useSessionDropTarget(onDropSession?: (sid: string) => void): {
   const key = useId();
   const [isOver, setIsOver] = useState(false);
   const take = useRef(onDropSession);
-  useEffect(() => {
+  // Layout effects, so the place takes a row in the commit that shows its mark: the
+  // native `touchend` listener does not wait for React's passive effects.
+  useLayoutEffect(() => {
     take.current = onDropSession;
   });
 
   const canTake = Boolean(onDropSession);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!canTake) return;
     const withdraw = offerLift(key, (sid) => take.current?.(sid));
     const stopWatching = watchLift(() => setIsOver(liftedSession()?.over === key));
