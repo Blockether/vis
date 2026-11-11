@@ -24,7 +24,6 @@
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
-            [com.blockether.vis.internal.gateway.bus :as gateway-bus]
             [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.channel.header :as header]
@@ -835,6 +834,17 @@
   "A running turn with no new iteration for this long is a suspected hang."
   (* 5 60 1000))
 
+(defonce ^:private block-clock (atom nil))
+
+(defn install-block-clock!
+  "Install the function of a session id and a turn id that gives the epoch
+   milliseconds when the turn's running Python block started, or nil. It reads
+   the gateway journal in `gateway.bus`, a higher layer, so the process wiring
+   installs it. Without it, [[hung-turns]] counts from the newest iteration."
+  [f]
+  (reset! block-clock f)
+  nil)
+
 (def ^:private HUNG_TURN_ACTION
   "A turn hung in the gateway. It is not a failure of your code. Read hung_turns[].reports[].path for the thread stacks and phase for the step that waited. Resubmit the request if you still need it.")
 
@@ -886,7 +896,8 @@
                     (and (= :running (:status turn)) (not= own-turn (:id turn)))
 
                     block-since
-                    (when watched? (gateway-bus/block-started-ms session-id (:id turn)))
+                    (when-let [clock (when watched? @block-clock)]
+                      (clock session-id (:id turn)))
 
                     idle-ms
                     (when watched?

@@ -11,6 +11,7 @@
    wiring live."
   (:require [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as automation-runner]
@@ -95,6 +96,8 @@
     ;; Events tailed from sibling processes reach this registry, and the tailer
     ;; drains only the journals of sessions this process tracks.
     (bus/set-deliver-fn! #'state/ingest-mirrored-event!)
+    ;; The hang diagnosis of `read_session` skips a turn whose block still runs.
+    (introspection/install-block-clock! #'bus/block-started-ms)
     (bus/set-relevant-sid-fn! #'state/session-known?)
     (bus/set-relevant-sids-fn! #'state/tracked-session-ids)
     ;; A native image starts the tailer on its first publish instead; see `bus/publish!`.

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.wiring-test
   (:require [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -33,6 +34,7 @@
       (expect (identical? #'test-runner/test-slash (slot #'python-extensions/test-slash-fn)))
       (expect (identical? #'state/ingest-mirrored-event! (slot #'bus/deliver-fn)))
       (expect (identical? #'state/session-known? (slot #'bus/relevant-sid-fn)))
+      (expect (identical? #'bus/block-started-ms (slot #'introspection/block-clock)))
       (expect (identical? #'state/tracked-session-ids (slot #'bus/relevant-sids-fn))))
   (it "installs once, so a second call leaves the slots as they are"
       (wiring/install!)

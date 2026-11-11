@@ -1224,8 +1224,13 @@
           (persistance/db-create-connection! :memory)
 
           journal
-          (java.io.File/createTempFile "vis-journal-" ".ndjson")]
+          (java.io.File/createTempFile "vis-journal-" ".ndjson")
 
+          clock
+          @@#'introspection/block-clock]
+
+      ;; The gateway wiring fills this slot in a running process.
+      (introspection/install-block-clock! #'bus/block-started-ms)
       (try
         (with-redefs [introspection/STALE_RUNNING_TURN_MS
                       0
@@ -1270,7 +1275,9 @@
                                                {:session-id "other-session" :db-info s}
                                                cid))
                                      ["diagnosis" "hung_turns"]))))))
-        (finally (persistance/db-dispose-connection! s) (.delete journal))))))
+        (finally (introspection/install-block-clock! clock)
+                 (persistance/db-dispose-connection! s)
+                 (.delete journal))))))
 
 (defdescribe
   read-session-fork-origin-test
