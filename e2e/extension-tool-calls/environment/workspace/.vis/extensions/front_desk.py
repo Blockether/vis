@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,7 +31,7 @@ def journal_call(row):
 def is_frozen(value):
     try:
         value.guest = "changed"
-    except dataclasses.FrozenInstanceError:
+    except AttributeError:
         return True
     return False
 
@@ -56,9 +56,9 @@ class FrontDesk:
             "operation": "front_desk.book",
             "hold_class": type(hold).__name__,
             "seat_class": type(hold.seat).__name__,
-            "dataclass": dataclasses.is_dataclass(hold),
+            "mapping": isinstance(hold, Mapping),
             "frozen": is_frozen(hold),
-            "fields": sorted(field.name for field in dataclasses.fields(hold)),
+            "fields": sorted(hold),
             "item_access": hold["section"] == hold.section == section,
         }
         journal_call(evidence)

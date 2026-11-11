@@ -29,7 +29,7 @@
         "operation": "front_desk.book",
         "hold_class": "Hold",
         "seat_class": "Seat",
-        "dataclass": true,
+        "mapping": true,
         "frozen": true,
         "fields": [
           "guest",
@@ -43,7 +43,7 @@
         "operation": "front_desk.book",
         "hold_class": "Hold",
         "seat_class": "Seat",
-        "dataclass": true,
+        "mapping": true,
         "frozen": true,
         "fields": [
           "guest",
