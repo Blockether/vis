@@ -72,8 +72,9 @@
   "A Python extension with one tool. `parity.run(code, root)` runs the code of a
    row with the verbs of the SDK and describes its `out`."
   (str
-    "from __future__ import annotations\n"
-    "import ast as _parity_ast\n" "import blockether.vis.extension as vis\n"
+    "from __future__ import annotations\n" "import ast as _parity_ast\n"
+    "import blockether.vis.extension as vis\n"
+    "def grep(*args, **kwargs):\n    raise AssertionError('extension grep must not run')\n"
     "\n" describe-source
     "\n" picture-source
     "\n" "\n"
@@ -188,6 +189,19 @@
    ;; -- pages of ls and grep --
    [:ls-pages
     "page = await tool('ls', ROOT, limit=1)\nout = [type(page).__name__, str(page), str(next(page, None)), str(page.all()), [str(p) for p in page.pages()]]"]
+   [:text-probes
+    "r = await tool('svc.reserve', 'x')\ns = await tool('svc.name', r)\nout = [s.get('missing', 'fallback'), list(s.keys())]"]
+   [:session-summary
+    "s = await settle(read_session())\nout = [s.get('op'), str(s).startswith('read_session '), s.session.title]"]
+   [:session-missing-key "s = await settle(read_session())\nout = s['bad_field']"]
+   [:sessions-empty
+    "rows = await settle(list_sessions('no-such-title-zzzz'))\nout = [type(rows).__name__, len(rows), rows.get('missing', 'fallback')]"]
+   [:grep-capped
+    "p = await tool('grep', {'query':['BMW'], 'paths':[ROOT + '/paging.txt'], 'limit':1})\nq = next(p)\nout = [p.next_offset, q.next_offset, 'BMW two' in q, str(next(p)) == str(q), 'BMW three' in p.all(), 'stopped after 1' in p.all(max_pages=1)]"]
+   [:grep-keywords
+    "p = await tool('grep', query=['BMW'], paths=[ROOT + '/paging.txt'], limit=1)\nout = ['BMW two' in next(p), 'BMW three' in p.all()]"]
+   [:grep-empty
+    "p = await tool('grep', {'query':['no-such-text-zzzz'], 'paths':[ROOT + '/paging.txt'], 'limit':1})\nout = [next(p, None), next(p, None), str(p.all()) == str(p)]"]
    [:grep-pages
     "page = await tool('grep', {'query': ['BMW'], 'paths': [ROOT]})\nout = [type(page).__name__, str(page), str(next(page, None)), str(page.all())]"]])
 
@@ -277,6 +291,7 @@
       (spit (io/file dir "svc.py") @#'tools-test/svc-source)
       (spit (io/file dir "parity.py") parity-source)
       (spit (io/file root "notes.txt") "BMW sales rose 4% in Q3\n")
+      (spit (io/file root "paging.txt") "BMW one\nBMW two\nBMW three\n")
       (with-open [out (java.io.FileOutputStream. (io/file root "big.mp4"))]
         (.write out
                 (byte-array
@@ -333,11 +348,6 @@
                (doseq [file (concat (reverse (file-seq dir)) (reverse (file-seq (io/file root))))]
                  (io/delete-file file true))))))
 
-(def ^:private session-result-reason
-  (str "The sandbox wraps the answer of a session tool in `__VisResult__` or "
-       "`__VisResultList__`, which adds the `op` key and a summary as its text. The verb "
-       "of the SDK gives the plain `dict` or `list` of the engine."))
-
 (def ^:private documented-differences
   "Each difference between a door and the sandbox that stays, with its reason. The
    expected answer of the door is the answer of the sandbox with `:fields` put in,
@@ -349,38 +359,13 @@
                  "`python_execution`. A tool of an extension has no channel into the output "
                  "of the block that called it, so the same code prints nothing there.")}
    {:door :extension
-    :rows #{:record-as-argument :record-nested-argument}
-    :fields {"type" "str" "fields" nil}
-    :reason (str "The sandbox wraps a text answer of a tool in `__VisResultStr__`, which "
-                 "answers `.get` with a hint. `vis.tools` gives the plain `str`.")}
-   {:door :extension
-    :rows #{:read-session}
-    :fields {"json" "[\"dict\", false, \"Parity\", \"session\"]"
-             "str" "['dict', False, 'Parity', 'session']"
-             "repr" "['dict', False, 'Parity', 'session']"}
-    :reason session-result-reason}
-   {:door :extension
-    :rows #{:read-session-unknown}
-    :fields
-    {"json" "[\"dict\", null, null]" "str" "['dict', None, None]" "repr" "['dict', None, None]"}
-    :reason session-result-reason}
-   {:door :extension
-    :rows #{:list-sessions}
-    :fields
-    {"json" "[\"list\", [\"Parity\"]]" "str" "['list', ['Parity']]" "repr" "['list', ['Parity']]"}
-    :reason session-result-reason}
-   {:door :extension
     :rows #{:ls-pages}
     :answer {"error" "VisToolError"
              "message" (str "vis.tools: no active tool is named `ls` in this session; pass the "
                             "name python_execution calls, such as `alias_name` or `alias.method`")
              "printed" ""}
-    :reason "`ls` is a shim of the sandbox, not a tool of the session, so `vis.tools` has no `ls`."}
-   {:door :extension
-    :rows #{:grep-pages}
-    :answer {"error" "TypeError" "message" "'str' object is not an iterator" "printed" ""}
-    :reason (str "The sandbox wraps the text of `grep` in a page that `next` and `all` walk. "
-                 "`vis.tools.grep` gives the text of the first page as a plain `str`.")}])
+    :reason
+    "`ls` is a shim of the sandbox, not a tool of the session, so `vis.tools` has no `ls`."}])
 
 (defn- expected-at
   "The answer that `door` must give for row `id`, from the answer of the sandbox."
@@ -398,7 +383,13 @@
    three doors, so a change of the front changes each door equally: only a fixed
    value sees it. Of the JSON value, a row of the engine names the keys that it
    checks. Each row of [[verb-fixture]] has such an answer, and holds the whole value."
-  (into {:attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}
+  (into {:text-probes {"value" ["fallback" []]}
+         :session-summary {"value" ["read_session" true "Parity"]}
+         :sessions-empty {"value" ["__VisResultList__" 0 "fallback"]}
+         :grep-capped {"value" [1 2 true true true true]}
+         :grep-keywords {"value" [true true]}
+         :grep-empty {"value" [nil nil true]}
+         :attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}
          :attach-image-gif {"json" {"media_type" "image/gif" "filename" "anim.gif"}}
          :attach-figure {"json" {"media_type" "image/png" "filename" "figure.png"}}
          :attach-image-default-name {"json" {"media_type" "image/png" "filename" "image.png"}}

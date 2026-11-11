@@ -1623,7 +1623,7 @@
                           {:session-id sid :db-info store}]
 
                   (expect (false? (toggles/enabled? "introspection")))
-                  (json/read-json (door arg))))
+                  (door arg)))
 
               data
               (call read-door nil)]

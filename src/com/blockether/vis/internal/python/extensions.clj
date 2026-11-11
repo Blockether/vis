@@ -853,7 +853,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (vswap! g assoc n f))
 
 (defn- session-read
-  "Run one canonical session read for `vis.<verb>` and answer its data as JSON.
+  "Run one canonical session read for `vis.<verb>` and answer its public data.
    It is the sandbox read without the `introspection` toggle: extensions are trusted
    code, and the toggle gates only the model's tools."
   [verb read arg]
@@ -863,7 +863,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (let [envelope (read env arg)]
       (when-not (:success? envelope)
         (throw (ex-info (str "vis." verb " failed") {:error :session-read-failed})))
-      (wire/json-str (:result envelope)))))
+      (wire/->wire (:result (extension/stamp-public-result-op envelope))))))
 
 (defn ^:no-doc entry-project-path
   "The project of one extension entry inside `root` (#399): the nearest ancestor
@@ -4037,7 +4037,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "The digest of the Python that turns an extension file into its registration data."
   (delay (util/sha256-hex (str bootstrap-python
                                (classpath-src "vis-host-python/vis_sdk.py")
-                               (classpath-src "vis-host-python/vis_code.py")))))
+                               (classpath-src "vis-host-python/vis_code.py")
+                               (classpath-src "vis-host-python/vis_results.py")))))
 
 (defn- manifest-file
   "The saved registration of the extension file `path` in `project-root`."

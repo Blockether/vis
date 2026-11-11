@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import blockether.vis.extension as vis
 import pytest
 from blockether.vis import _outside
@@ -18,7 +16,7 @@ def test_answers_the_host_read_as_one_string_keyed_dict(monkeypatch):
 
     def read_session(target):
         targets.append(target)
-        return json.dumps(data)
+        return data
 
     monkeypatch.setattr(vis._host, "read_session", read_session)
     assert vis.read_session() == data
@@ -35,7 +33,7 @@ def test_answers_the_host_search_rows_in_their_rank_order(monkeypatch):
 
     def list_sessions(search):
         searches.append(search)
-        return json.dumps(rows)
+        return rows
 
     monkeypatch.setattr(vis._host, "list_sessions", list_sessions)
     assert vis.list_sessions() == rows

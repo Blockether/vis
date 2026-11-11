@@ -1480,7 +1480,9 @@ environment. Outside a Vis process, the function returns `project`.
 
 Call `vis.list_sessions(search=…)` to find a conversation, and `vis.read_session(id)` to read it.
 For example, your extension can turn a failed turn into a test case. Both functions return the
-same string-keyed data as the sandbox tools with the same names.
+same string-keyed data and result types as the sandbox tools with the same names.
+A session read includes `op="read_session"` and prints a summary. Its full data stays available by key.
+A missing field names the available keys.
 
 ```python
 import blockether.vis.extension as vis
@@ -1607,6 +1609,8 @@ Results arrive in the same shape the model sees:
   as `items`, with `result["items"]`.
 - Other results are JSON data. Objects become dicts that also allow attribute
   access, such as `page.meta.total`, and lists stay lists.
+- Text and list answers support `.get()` and `.keys()`, as sandbox results do.
+- Search pages support `next(page)`, `page.pages()` and `page.all()`. Each next page calls the host with the original search options.
 - The answer of `vis.tools.shell(...)` is the live handle that `python_execution` gets:
   `sh.wait()`, `sh.logs()` and `sh.stop()` control the process.
 

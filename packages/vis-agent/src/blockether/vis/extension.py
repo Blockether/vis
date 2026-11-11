@@ -181,12 +181,12 @@ class Host(Protocol):
         """Run one active session tool by the name `python_execution` calls."""
         ...
 
-    def read_session(self, target: str | None) -> str:
-        """Read one whole session as the sandbox `read_session` does. Return JSON."""
+    def read_session(self, target: str | None) -> Mapping[str, Any]:
+        """Read one whole session as the sandbox `read_session` does."""
         ...
 
-    def list_sessions(self, search: str | None) -> str:
-        """List sessions as the sandbox `list_sessions` does. Return JSON."""
+    def list_sessions(self, search: str | None) -> Sequence[Mapping[str, Any]]:
+        """List sessions as the sandbox `list_sessions` does."""
         ...
 
     def attach(self, options: Mapping[str, Any]) -> str:
@@ -5329,7 +5329,7 @@ def read_session(target=None):
     Returns the same string-keyed dict: session, current_turn, failures, diagnosis,
     session_forks, turn_retries, usage and transcript.
     """
-    return json.loads(_host.read_session(None if target is None else str(target)))
+    return _host.read_session(None if target is None else str(target))
 
 
 def list_sessions(search=None):
@@ -5342,7 +5342,7 @@ def list_sessions(search=None):
     Returns string-keyed rows: id, channel, title, goal, turn_count, created_at and
     modified_at. A match adds rank, the is_in_* flags and optional snippets.
     """
-    return json.loads(_host.list_sessions(None if search is None else str(search)))
+    return _host.list_sessions(None if search is None else str(search))
 
 
 # -- Live views ---------------------------------------------------------------

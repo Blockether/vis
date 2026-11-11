@@ -61,6 +61,8 @@ def __vis_seal__(value):
         return markers
     if isinstance(value, (list, tuple)):
         return [__vis_seal__(v) for v in value]
+    if isinstance(value, str):
+        return str(value)
     if _vis_dataclasses.is_dataclass(value) and not isinstance(value, type):
         attrs = {f.name: getattr(value, f.name) for f in _vis_dataclasses.fields(value)}
     else:
@@ -173,26 +175,17 @@ def __vis_member__(op):
 
 
 def __vis_typed__(call):
-    """Answer a tool result with the records and maps that `python_execution` builds.
+    """Use the runtime result types and paging rules at the extension door."""
 
-    The runtime owns those types, so the SDK has no copy of them. Text, numbers and
-    lists stay built-in values.
-    """
-
-    def typed(*args):
-        return __vis_typed_value__(call(*args))  # noqa: F821 — a runtime global.
+    def typed(tool, args, kwargs):
+        paging = __vis_paged_spec__(tool, args, kwargs)  # noqa: F821
+        return __vis_as_result__(call(tool, args, kwargs), paging)  # noqa: F821
 
     return typed
 
 
-def __vis_shell_route__(call_tool):
-    """The transports of a shell handle in this worker.
-
-    A shell answer of `vis.tools` is the live handle of the runtime. The handle
-    drives its process with the private shell tools, which `python_execution`
-    binds as session names. Here the handle calls each tool through `vis.tools`.
-    The module of an extension shares these globals, so no name of them is bound.
-    """
+def __vis_tool_route__(call_tool):
+    """Route handles and pages without binding names in the extension module."""
 
     def route(tool, spec):
         return call_tool(tool, [spec], {})
@@ -215,9 +208,22 @@ _vis_host = _vis_types.SimpleNamespace(
     }
 )
 _vis_host.call_tool = __vis_typed__(_vis_host.call_tool)
-__VisShell__.__vis_shell_route__ = __vis_shell_route__(  # noqa: F821 — a runtime global.
-    _vis_host.call_tool
-)
+__VisShell__.__vis_shell_route__ = __vis_tool_route__(_vis_host.call_tool)  # noqa: F821
+__VisGrep__.__vis_page_route__ = __vis_tool_route__(_vis_host.call_tool)  # noqa: F821
+
+
+def __vis_session_result__(call):
+    """Convert a session read without changing its host authorization."""
+
+    def read(arg):
+        return __vis_as_result__(call(arg))  # noqa: F821
+
+    return read
+
+
+_vis_host.read_session = __vis_session_result__(_vis_host.read_session)
+_vis_host.list_sessions = __vis_session_result__(_vis_host.list_sessions)
+__import__("vis_results").install(globals())
 _vis_mod = _vis_sdk.install(
     _vis_body,  # noqa: F821 — supplied by the host with the canonical SDK source.
     _vis_host,

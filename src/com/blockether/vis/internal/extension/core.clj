@@ -1506,7 +1506,7 @@
         (str/replace "-" "_")
         (str/replace #"[?!]$" ""))))
 
-(defn- stamp-public-result-op
+(defn ^:no-doc stamp-public-result-op
   "Public Python value is the envelope's `:result`, not the envelope. If the
    payload is a map, stamp the canonical tool op — as the STRING key `\"op\"`
    with a STRING value (strings-only boundary) — so extension implementations
