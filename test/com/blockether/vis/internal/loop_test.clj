@@ -683,7 +683,7 @@
   (it
     "prices turn start and persisted health with the routed window and the family budget"
     (doseq [[model limits expected-limit expected-budget]
-            [["claude-opus-5-5" {:context 1000000 :output-limit 128000} 872000 350000]
+            [["claude-opus-5-5" {:context 1000000 :output-limit 128000} 872000 250000]
              ["gpt-6-sol" {:context 272000 :input-limit 272000 :output-limit 128000} 204000
               183600]]]
       (let [router (svar/make-router [{:id :lmstudio
@@ -9424,7 +9424,7 @@
         (expect (= 230000 (fold-budget 794000 "gpt-6-sol")))
         (expect (= 229999 (fold-budget 255555 "gpt-6-sol")))
         (expect (= 230000 (fold-budget 255556 "gpt-6-sol")))
-        (expect (= 350000 (fold-budget 872000 "claude-opus-5-5")))
+        (expect (= 250000 (fold-budget 872000 "claude-opus-5-5")))
         (expect (= 135000 (fold-budget 150000 "claude-opus-4-5"))))
     (it "names the budget's model with the same precedence as its window"
         (expect (= "routed" (model-of {:name "served"} {:name "pinned"} {:model "routed"})))
@@ -9435,7 +9435,7 @@
                                      nil
                                      {:name "gpt-6-sol"}
                                      {:model "gpt-6-sol" :max-input-tokens 204000})))
-        (expect (= 350000
+        (expect (= 250000
                    (iteration-budget nil
                                      {:name "claude-opus-5-5" :input-limit 1000000}
                                      {:name "gpt-6-sol"}))))

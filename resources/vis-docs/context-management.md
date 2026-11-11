@@ -122,11 +122,10 @@ iterations. The refusal names the key for every earlier turn.
   it gives the exact key that folds every earlier turn that is not folded yet, so your earlier gists
   stay. A fold that covers an earlier fold replaces its gist.
 
-The soft budget depends on the model. Claude Opus 5.5 and Claude Fable models get 350k tokens. Other
-Claude Opus models get 250k, GPT models get 230k and other models get 200k. The budget is never more
-than 90% of a known input limit, so smaller windows get a lower budget. For example, a 204k input
-limit gives a GPT model a budget of 183,600 tokens. When the input limit is unknown, the soft budget
-is 200k.
+The soft budget depends on the model. Claude Opus and Claude Fable models get 250k tokens. GPT
+models get 230k and other models get 200k. The budget is never more than 90% of a known input
+limit, so smaller windows get a lower budget. For example, a 204k input limit gives a GPT model a
+budget of 183,600 tokens. When the input limit is unknown, the soft budget is 200k.
 
 A fold receipt estimates the removed text locally. The next provider response measures the input
 change for the **whole request**, not only the savings of the fold. This needs no extra call. New
