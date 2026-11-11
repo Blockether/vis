@@ -582,8 +582,11 @@ The command stops the gateway and closes the desktop app. Then it removes these 
 
 It keeps the PATH line when other commands share the folder. A launcher in a source checkout stays,
 because Git owns that file. A desktop app that you installed from a `.deb` or `.msi` package stays.
-Remove it with your package manager. A script or CI job must give `--yes`, because no terminal can
-confirm.
+Remove it with your package manager.
+
+A gateway service that you set up, for example a systemd unit, also stays. Disable it and remove its
+unit file, or it fails at the next start. A script or CI job must give `--yes`, because no terminal
+can confirm.
 
 ## Files
 

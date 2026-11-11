@@ -268,6 +268,10 @@
   (let [path (str (audio-file! (or (get parsed "file") (first residual))))]
     (cli-out! (str/trim (str (gateway-client/transcribe-audio! nil path {}))))))
 
+(def ^:private say-text-arg
+  "Every word that is not a flag belongs to the line to say."
+  {:name "text" :kind :positional :type :string :required true :variadic true :doc "What to say."})
+
 (def command
   {:cmd/name "speech"
    :cmd/doc "Manage the gateway's built-in local speech models and voices."
@@ -328,8 +332,7 @@
      :cmd/doc "Synthesize a line in the gateway."
      :cmd/usage
      "vis-agent speech say <text> [--voice ID] [--pocket-tts|--vibevoice|--qwen] [--out FILE.wav]"
-     :cmd/args [{:name "text" :kind :positional :type :string :required true :doc "What to say."}
-                {:name "voice" :kind :flag :type :string :doc "Voice id."}
+     :cmd/args [say-text-arg {:name "voice" :kind :flag :type :string :doc "Voice id."}
                 {:name "pocket-tts" :kind :flag :type :boolean :doc "Use pocket-tts."}
                 {:name "vibevoice" :kind :flag :type :boolean :doc "Use VibeVoice."}
                 {:name "qwen" :kind :flag :type :boolean :doc "Use Qwen3-TTS."}

@@ -70,7 +70,41 @@
             (commandline/dispatch! root ["vis-agent" "python" "-c" "x" "--any"] {:print-fn nil})]
 
         (expect (= :ok (:status result)))
-        (expect (= ["-c" "x" "--any"] (vec (:result result)))))))
+        (expect (= ["-c" "x" "--any"] (vec (:result result))))))
+  (it "refuses a word after the declared positionals"
+      (let [root
+            {:cmd/name "vis-agent"
+             :cmd/doc "root"
+             :cmd/subcommands [{:cmd/name "show"
+                                :cmd/doc "show"
+                                :cmd/args [{:name "id" :kind :positional :type :string}
+                                           {:name "out" :kind :flag :type :string}]
+                                :cmd/run-fn (fn [parsed _]
+                                              parsed)}]}
+
+            result
+            (commandline/dispatch! root ["vis-agent" "show" "a" "--out" "f" "b"] {:print-fn nil})]
+
+        (expect (= :error (:status result)))
+        (expect (= "Unexpected argument: b" (:error result)))))
+  (it "gives every word to a variadic positional"
+      (let [root
+            {:cmd/name "vis-agent"
+             :cmd/doc "root"
+             :cmd/subcommands [{:cmd/name "say"
+                                :cmd/doc "say"
+                                :cmd/args [{:name "text" :kind :positional :variadic true}
+                                           {:name "voice" :kind :flag :type :string}]
+                                :cmd/run-fn (fn [parsed _]
+                                              parsed)}]}
+
+            result
+            (commandline/dispatch! root
+                                   ["vis-agent" "say" "hello" "--voice" "v" "big" "world"]
+                                   {:print-fn nil})]
+
+        (expect (= :ok (:status result)))
+        (expect (= {"text" "hello big world" "voice" "v"} (:result result))))))
 
 ;; Help rendering -- split COMMANDS / EXTENSION COMMANDS + extra sections.
 

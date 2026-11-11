@@ -443,6 +443,7 @@
     :cmd/parent ["providers"]
     :cmd/doc "Show provider rate-limit metadata and any dynamic quota report."
     :cmd/usage "vis-agent providers limits [provider]"
+    :cmd/args [{:name "provider" :kind :positional :type :string :doc "Registered provider id."}]
     :cmd/examples ["vis-agent providers limits" "vis-agent providers limits openai-codex"
                    "vis-agent providers limits ollama"]
     :cmd/run-fn cli-providers-limits!}

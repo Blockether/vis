@@ -159,6 +159,7 @@
        (contains? #{:flag :positional} (:kind x))
        (optional-valid? x :type #{:string :int :boolean :file})
        (optional-valid? x :required boolean?)
+       (optional-valid? x :variadic boolean?)
        (optional-valid? x :doc string?)))
 
 (defn command?

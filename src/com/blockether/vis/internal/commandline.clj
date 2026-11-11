@@ -144,7 +144,12 @@
               (recur more pos-idx result))
             (if (< pos-idx (count positional))
               (let [spec (nth positional pos-idx)]
-                (recur more (inc pos-idx) (assoc result (:name spec) (coerce arg spec))))
+                (if (:variadic spec)
+                  ;; The last positional takes every remaining word, joined by spaces.
+                  (recur more
+                         pos-idx
+                         (update result (:name spec) #(if % (str % " " arg) (coerce arg spec))))
+                  (recur more (inc pos-idx) (assoc result (:name spec) (coerce arg spec)))))
               (recur more pos-idx result))))))))
 
 (defn validate-args
@@ -194,6 +199,36 @@
                 (let [spec (get flags a)]
                   (if (= :boolean (:type spec)) (recur more unknown) (recur (next more) unknown)))
                 :else (recur more (conj unknown a))))))))
+
+(defn extra-positionals
+  "Return a vector of the words in `raw-args` after the positionals that `arg-specs`
+   declares. A `:variadic` positional takes every word, so nothing is extra. Walks
+   the args like `unknown-flags`: the value of a declared non-boolean flag is not a
+   word. Pure; no side effects."
+  [arg-specs raw-args]
+  (let [positional
+        (filter #(= :positional (:kind %)) arg-specs)
+
+        takes-value
+        (into #{}
+              (keep #(when (and (= :flag (:kind %)) (not= :boolean (:type %)))
+                       (str "--" (:name %))))
+              arg-specs)]
+
+    (if (some :variadic positional)
+      []
+      (loop [args
+             (seq raw-args)
+
+             words
+             []]
+
+        (if-not args
+          (vec (drop (count positional) words))
+          (let [a (first args)]
+            (cond (contains? takes-value a) (recur (next (next args)) words)
+                  (flag-arg? a) (recur (next args) words)
+                  :else (recur (next args) (conj words a)))))))))
 
 (defn- format-unknown-flags-error
   "Render the user-facing error string for one or more unknown flags.
@@ -587,28 +622,29 @@
              (nil? (:cmd/run-fn command))
              {:status :help :command command :help-text (render-command command path)}
              :else
-             ;; Every command refuses a flag it does not declare, also one that
-             ;; declares no flags: a silently ignored `--json` looks like it
-             ;; worked. Only a pass-through command (`:cmd/raw-args?`) hands its
-             ;; tokens on unchecked.
+             ;; Every command refuses a flag or a word it does not declare, also one
+             ;; that declares no arguments: a silently ignored `--json` or a dropped
+             ;; second word looks like it worked. Only a pass-through command
+             ;; (`:cmd/raw-args?`) hands its tokens on unchecked.
              (let [arg-specs (:cmd/args command)
-                   unknown (when-not (:cmd/raw-args? command) (unknown-flags arg-specs residual))]
+                   raw? (:cmd/raw-args? command)
+                   unknown (when-not raw? (unknown-flags arg-specs residual))
+                   extra (when-not raw? (extra-positionals arg-specs residual))
+                   refusal (cond (seq unknown) (format-unknown-flags-error arg-specs unknown)
+                                 (and (seq extra) (seq children))
+                                 (str "Unknown command: " (str/join " " (concat path extra)))
+                                 (seq extra) (str (if (= 1 (count extra))
+                                                    "Unexpected argument: "
+                                                    "Unexpected arguments: ")
+                                                  (str/join " " extra)))
+                   parsed (when-not refusal (parse-args arg-specs residual))
+                   err (or refusal (validate-args arg-specs parsed))]
 
-               (cond (seq unknown) (let [err (format-unknown-flags-error arg-specs unknown)
-                                         help (str err "\n\n" (render-command command path))]
-
-                                     (when print-fn (print-fn help))
-                                     {:status :error :command command :error err :help-text help})
-                     :else (let [parsed (parse-args arg-specs residual)
-                                 err (validate-args arg-specs parsed)]
-
-                             (if err
-                               (let [help (str err "\n\n" (render-command command path))]
-                                 (when print-fn (print-fn help))
-                                 {:status :error :command command :error err :help-text help})
-                               {:status :ok
-                                :command command
-                                :result ((:cmd/run-fn command) parsed residual)}))))))
+               (if err
+                 (let [help (str err "\n\n" (render-command command path))]
+                   (when print-fn (print-fn help))
+                   {:status :error :command command :error err :help-text help})
+                 {:status :ok :command command :result ((:cmd/run-fn command) parsed residual)}))))
      {:status :no-match :args args})))
 
 ;; Terminal output

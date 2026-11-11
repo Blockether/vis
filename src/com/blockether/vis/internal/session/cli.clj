@@ -673,6 +673,7 @@
     :cmd/args [{:name "query"
                 :kind :positional
                 :type :string
+                :variadic true
                 :doc "Words to search for (case-insensitive token prefixes, as in the TUI)."}
                {:name "limit" :kind :flag :type :string :doc "Max hits to print (default 25)."}]
     :cmd/examples ["vis-agent sessions search \"provider credentials\""
