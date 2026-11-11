@@ -253,48 +253,69 @@
 
 (defn- capture-diagnostics!
   "Keep a bounded, redacted tail. Discard oversized lines whole, never expose a
-   credential fragment created by truncation. Also flush a final partial line."
-  [^java.io.Reader reader tail]
-  (let [line
-        (StringBuilder.)
+   credential fragment created by truncation. Also flush a final partial line.
+   After each read, put the redacted partial line in `pending`: a reader that a
+   detached child blocks on Linux never sees the end of its input."
+  ([reader tail] (capture-diagnostics! reader tail (atom "")))
+  ([^java.io.Reader reader tail pending]
+   (let [line
+         (StringBuilder.)
 
-        private-key?
-        (volatile! false)
+         private-key?
+         (volatile! false)
 
-        emit!
-        (fn [overflow?]
-          (let [raw
-                (str line)
+         render
+         (fn [overflow?]
+           (let [raw
+                 (str line)
 
-                hidden?
-                (or @private-key? (re-find #"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----" raw))
+                 hidden?
+                 (or @private-key? (re-find #"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----" raw))]
 
-                text
-                (cond hidden? "[REDACTED]"
-                      overflow? "[installer output line exceeded limit; omitted]"
-                      :else (redact-installer-text raw))]
+             [raw hidden?
+              (cond hidden? "[REDACTED]"
+                    overflow? "[installer output line exceeded limit; omitted]"
+                    :else (redact-installer-text raw))]))
 
-            (vreset! private-key?
-                     (and (boolean hidden?)
-                          (not (re-find #"-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----" raw))))
-            (swap! tail (fn [previous]
-                          (let [text (str previous text "\n")]
-                            (subs text (max 0 (- (count text) (long diagnostic-limit)))))))
-            (.setLength line 0)))]
+         emit!
+         (fn [overflow?]
+           (let [[raw hidden? text] (render overflow?)]
+             (vreset! private-key?
+                      (and (boolean hidden?)
+                           (not (re-find #"-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----" raw))))
+             (swap! tail (fn [previous]
+                           (let [text (str previous text "\n")]
+                             (subs text (max 0 (- (count text) (long diagnostic-limit)))))))
+             (reset! pending "")
+             (.setLength line 0)))
 
-    (with-open [reader (java.io.BufferedReader. reader)]
-      (try (loop [overflow? false]
-             (let [c (.read reader)]
-               (cond (= -1 c) (when (or overflow? (pos? (.length line))) (emit! overflow?))
-                     (= 10 c) (do (emit! overflow?) (recur false))
-                     :else (if (or overflow? (>= (.length line) diagnostic-limit))
-                             (recur true)
-                             (do (.append line (char c)) (recur false))))))
-           (catch java.io.IOException e
-             ;; A closed pipe must not drop the partial line already read.
-             (when (pos? (.length line)) (emit! false))
-             (throw e))))
-    @tail))
+         buffer
+         (char-array 8192)]
+
+     (with-open [reader (java.io.BufferedReader. reader)]
+       (try (loop [overflow? false]
+              (let [n (.read reader buffer)]
+                (if (= -1 n)
+                  (when (or overflow? (pos? (.length line))) (emit! overflow?))
+                  (let [overflow? (loop [i 0
+                                         overflow? overflow?]
+
+                                    (if (= i n)
+                                      overflow?
+                                      (let [c (aget buffer i)]
+                                        (cond (= \newline c) (do (emit! overflow?)
+                                                                 (recur (inc i) false))
+                                              (or overflow? (>= (.length line) diagnostic-limit))
+                                              (recur (inc i) true)
+                                              :else (do (.append line c) (recur (inc i) false))))))]
+                    (when (or overflow? (pos? (.length line)))
+                      (reset! pending (nth (render overflow?) 2)))
+                    (recur overflow?)))))
+            (catch java.io.IOException e
+              ;; A closed pipe must not drop the partial line already read.
+              (when (pos? (.length line)) (emit! false))
+              (throw e))))
+     @tail)))
 
 (defn installer-error
   "A safe installation failure for CLI/UI boundaries. Keep only the verdict and
@@ -412,18 +433,25 @@
          tail
          (atom "")
 
+         pending
+         (atom "")
+
          output
-         (future (capture-diagnostics! (io/reader (.getInputStream ^Process process)) tail))]
+         (future
+           (capture-diagnostics! (io/reader (.getInputStream ^Process process)) tail pending))]
 
      (try (.close (.getOutputStream ^Process process))
           (let [finished? (.waitFor ^Process process (long timeout-ms) TimeUnit/MILLISECONDS)]
             (when-not finished? (kill-installer! process))
             (let [capture-error (try (when (= ::unfinished (deref output 2000 ::unfinished))
-                                       ;; A detached child holds the pipe. Close it, so the
-                                       ;; reader keeps the partial line that it already read.
+                                       ;; A detached child holds the pipe. On macOS, the close
+                                       ;; ends the read; on Linux, the read stays blocked, so
+                                       ;; take the partial line that the reader put in `pending`.
                                        (.close (.getInputStream ^Process process))
                                        (try (deref output 2000 nil) (catch Exception _ nil))
-                                       "Installer output did not close")
+                                       (let [partial @pending]
+                                         (str (when (seq partial) (str partial "\n"))
+                                              "Installer output did not close")))
                                      (catch Exception e (redact-installer-text (.getMessage e))))
                   exit (when finished? (.exitValue ^Process process))]
 

@@ -154,13 +154,20 @@
 (defdescribe installer-timeout-keeps-partial-line-of-detached-child-test
              (it "keeps the partial line when a detached child holds the output pipe"
                  (with-uv-fixture
-                   (str "printf 'UV_DETACHED_MARKER: waiting' >&2\n( /bin/sleep 20 & )\n"
+                   (str "printf 'UV_DETACHED_MARKER: waiting' >&2\n"
+                        "( /bin/sleep 20 & echo $! > \"$(dirname \"$0\")/detached\" )\n"
                         ": > \"$(dirname \"$0\")/printed\"\n/bin/sleep 30\n")
                    (fn [dir uv]
-                     (let [data (timeout-after-printed dir uv 0)]
-                       (expect (true? (:timeout? data)))
-                       (expect (str/includes? (str (:diagnostics data)) "UV_DETACHED_MARKER")
-                               (pr-str data)))))))
+                     (try (let [data (timeout-after-printed dir uv 0)]
+                            (expect (true? (:timeout? data)))
+                            (expect (str/includes? (str (:diagnostics data)) "UV_DETACHED_MARKER")
+                                    (pr-str data)))
+                          (finally (let [pid (io/file dir "detached")]
+                                     (when (.exists pid)
+                                       (let [handle (ProcessHandle/of (parse-long (str/trim
+                                                                                    (slurp pid))))]
+                                         (when (.isPresent handle)
+                                           (.destroyForcibly ^ProcessHandle (.get handle))))))))))))
 
 (defdescribe installer-closed-pipe-keeps-partial-line-test
              (it "installer closed pipe keeps partial line"
@@ -187,6 +194,48 @@
                                                   (java.io.InputStreamReader. in)
                                                   tail))))
                    (expect (str/includes? @tail "UV_PARTIAL_MARKER")))))
+
+(defdescribe
+  installer-blocked-pipe-shows-partial-line-test
+  (it
+    "shows the partial line while a held pipe blocks the read"
+    ;; Linux CI: a detached child held the pipe, and close did not end the read.
+    (let [release
+          (java.util.concurrent.CountDownLatch. 1)
+
+          sent
+          (atom false)
+
+          in
+          (proxy [java.io.InputStream] []
+            (read
+              ([] -1)
+              ([^bytes b off len]
+               (if @sent
+                 (do (.await release) -1)
+                 (let [marker (.getBytes "UV_BLOCKED_MARKER: waiting")]
+                   (System/arraycopy marker 0 b (int off) (alength marker))
+                   (reset! sent true)
+                   (alength marker))))))
+
+          tail
+          (atom "")
+
+          pending
+          (atom "")
+
+          reader
+          (future
+            (#'python-runtime/capture-diagnostics! (java.io.InputStreamReader. in) tail pending))]
+
+      (try
+        (loop [attempts 0]
+          (when (and (empty? @pending) (< attempts 500)) (Thread/sleep 10) (recur (inc attempts))))
+        (expect (= "UV_BLOCKED_MARKER: waiting" @pending))
+        (expect (= "" @tail))
+        (finally (.countDown release)))
+      (expect (= "UV_BLOCKED_MARKER: waiting\n" (deref reader 5000 ::blocked)))
+      (expect (= "" @pending)))))
 
 (defdescribe automatic-preparation-preserves-safe-cause-test
              (it "automatic preparation preserves safe cause"
