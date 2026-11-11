@@ -51,19 +51,18 @@ class Picture:
         target.write(b"\xff\xd8\xff\xe0" + bytes(32))
 
 
-def _answer(code, expect):
-    """Run the code of one case and return the fields that `expect` names.
+def _answer(code):
+    """Run the code of one case and return its whole answer, in the form of `expect`.
 
-    `value` is the whole JSON value of `out`, with each attachment id as `<id>`.
+    `value` is the whole JSON value of `out`, with each attachment id as `<id>`. A
+    refusal is its class name and its text.
     """
     scope = {verb: getattr(vis, verb) for verb in VERBS}
     try:
         exec("\n".join(code), scope)
     except Exception as error:
-        refusal = {"error": type(error).__name__, "message": str(error)}
-        return {field: refusal.get(field) for field in expect}
-    out = json.loads(_ID.sub("<id>", json.dumps(scope["out"])))
-    return {field: out if field == "value" else None for field in expect}
+        return {"error": type(error).__name__, "message": str(error)}
+    return {"value": json.loads(_ID.sub("<id>", json.dumps(scope["out"])))}
 
 
 @pytest.mark.parametrize("case", TABLE["cases"], ids=lambda case: case["name"])
@@ -71,7 +70,7 @@ def test_the_outside_verbs_give_the_engine_answer(case):
     # A named exception holds the answer of this host; each other case holds the
     # answer of the engine.
     expect = case.get("outside", case)["expect"]
-    assert _answer(case["code"], expect) == expect
+    assert _answer(case["code"]) == expect
 
 
 def test_each_exception_names_its_reason_and_is_a_real_difference():

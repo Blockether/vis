@@ -2389,6 +2389,11 @@
             nxt
             (long (or (get res "next_offset") off))
 
+            ;; A read past the end answers the end of the log as `next_offset`. Before
+            ;; the first byte that end is 0, so the cursor must not follow it back.
+            cursor
+            (max off nxt)
+
             idle
             (if (= "" text) idle 0)
 
@@ -2408,15 +2413,15 @@
 
         ((:append! acc) text)
         (cond (>= (util/now-ms) deadline) (finish res nxt nil)
-              (not (get res "is_eof")) (recur nxt 0 exit-seen? false)
+              (not (get res "is_eof")) (recur cursor 0 exit-seen? false)
               (and reader reader-seen?) (finish res nxt reader)
               (= "running" (get res "status"))
-              (recur nxt (inc idle) (await-exit env id (wait-idle-poll-ms idle)) seen?)
+              (recur cursor (inc idle) (await-exit env id (wait-idle-poll-ms idle)) seen?)
               ;; Exited: one more read, with no sleep, unless this read already
               ;; started after the exit. A silent command no longer waits out a
               ;; drain window that only guessed when the pump was done.
               exit-seen? (finish res nxt nil)
-              :else (recur nxt (inc idle) true seen?))))))
+              :else (recur cursor (inc idle) true seen?))))))
 
 (def ^:private control-key-names
   "Human names for the control characters `send` writes into a PTY, so its factual

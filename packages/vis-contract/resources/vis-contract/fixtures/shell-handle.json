@@ -2095,6 +2095,56 @@
       }
     },
     {
+      "name": "wait from an offset before the first byte",
+      "args": [
+        {
+          "command": "sleep 0.3; printf abcdef"
+        }
+      ],
+      "steps": [
+        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 3, 'seconds': 5}))"
+      ],
+      "expect": [
+        "def",
+        3,
+        6,
+        true,
+        0
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": {
+          "error": "shell: command required; use shell(command).",
+          "is_runtime_error": true
+        }
+      }
+    },
+    {
+      "name": "wait from an offset after the end before the first byte",
+      "args": [
+        {
+          "command": "sleep 0.3; printf abcdef"
+        }
+      ],
+      "steps": [
+        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 99, 'seconds': 5}))"
+      ],
+      "expect": [
+        "",
+        99,
+        6,
+        true,
+        0
+      ],
+      "tools": {
+        "reason": "raw-op",
+        "expect": {
+          "error": "shell: command required; use shell(command).",
+          "is_runtime_error": true
+        }
+      }
+    },
+    {
       "name": "a file as cwd is refused",
       "args": [
         {

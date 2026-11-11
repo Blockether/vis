@@ -139,12 +139,13 @@
     "attach(b'one\\n', 'n.txt')\nattach(b'two!\\n', 'n.txt')\nout = read_attachment('n.txt', -2)"]
    [:read-version-wrong "attach(b'one\\n', 'n.txt')\nout = read_attachment('n.txt', 'first')"]
    [:read-reference "out = read_attachment(attach(ROOT + '/big.mp4'))"]
-   [:show-image "out = show_attachment(attach(Figure(), 'plot.png', audience='user'))"]
+   [:show-figure "out = show_attachment(attach(Figure(), 'plot.png', audience='user'))"]
    [:show-by-filename
     "attach(Figure(), 'plot.png', audience='user')\nout = show_attachment('plot.png')"]
    [:show-version-wrong "attach(Figure(), 'plot.png')\nout = show_attachment('plot.png', 'first')"]
    [:show-reference "out = show_attachment(attach(ROOT + '/big.mp4'))"]
-   [:list-all "attach(b'one\\n', 'n.txt')\nattach(Figure())\nout = {'rows': list_attachments()}"]
+   [:list-all-with-figure
+    "attach(b'one\\n', 'n.txt')\nattach(Figure())\nout = {'rows': list_attachments()}"]
    [:list-one-name
     "attach(b'one\\n', 'n.txt')\nattach(b'two!\\n', 'n.txt')\nattach(Figure())\nout = {'rows': list_attachments('n.txt')}"]
    [:list-unknown-name "out = {'rows': list_attachments('absent.txt')}"]
@@ -379,28 +380,25 @@
           documented-differences))
 
 (def ^:private fixed-answers
-  "The fields of the sandbox answer that some rows must hold. One front runs at the
-   three doors, so a change of the front changes each door equally: only a fixed
-   value sees it. Of the JSON value, a row of the engine names the keys that it
-   checks. Each row of [[verb-fixture]] has such an answer, and holds the whole value."
-  (into {:text-probes {"value" ["fallback" []]}
-         :session-summary {"value" ["read_session" true "Parity"]}
-         :sessions-empty {"value" ["__VisResultList__" 0 "fallback"]}
-         :grep-capped {"value" [1 2 true true true true]}
-         :grep-keywords {"value" [true true]}
-         :grep-empty {"value" [nil nil true]}
-         :attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}
-         :attach-image-gif {"json" {"media_type" "image/gif" "filename" "anim.gif"}}
-         :attach-figure {"json" {"media_type" "image/png" "filename" "figure.png"}}
-         :attach-image-default-name {"json" {"media_type" "image/png" "filename" "image.png"}}
-         :attach-path {"json" {"filename" "notes.txt"}}
-         :alias-path {"json" {"filename" "notes.txt"}}
-         :alias-file {"json" {"filename" "notes.txt"}}
-         :alias-src {"json" {"filename" "notes.txt"}}
-         :attach-directory {"error" "IsADirectoryError"}}
-        (map (fn [row]
-               [(keyword (get row "name")) (get row "expect")]))
-        (get verb-fixture "cases")))
+  "The fields of the sandbox answer that some rows of the engine must hold. One front
+   runs at the three doors, so a change of the front changes each door equally: only
+   a fixed value sees it. Of the JSON value, a row names the keys that it checks. Each
+   row of [[verb-fixture]] has a whole fixed answer; see [[whole-view]]."
+  {:text-probes {"value" ["fallback" []]}
+   :session-summary {"value" ["read_session" true "Parity"]}
+   :sessions-empty {"value" ["__VisResultList__" 0 "fallback"]}
+   :grep-capped {"value" [1 2 true true true true]}
+   :grep-keywords {"value" [true true]}
+   :grep-empty {"value" [nil nil true]}
+   :attach-rgba-jpeg {"json" {"media_type" "image/jpeg" "filename" "shot.jpg"}}
+   :attach-image-gif {"json" {"media_type" "image/gif" "filename" "anim.gif"}}
+   :attach-figure {"json" {"media_type" "image/png" "filename" "figure.png"}}
+   :attach-image-default-name {"json" {"media_type" "image/png" "filename" "image.png"}}
+   :attach-path {"json" {"filename" "notes.txt"}}
+   :alias-path {"json" {"filename" "notes.txt"}}
+   :alias-file {"json" {"filename" "notes.txt"}}
+   :alias-src {"json" {"filename" "notes.txt"}}
+   :attach-directory {"error" "IsADirectoryError"}})
 
 (defn- fixed-view
   "The fields of `answer` that `expected` names. `value` is the whole JSON value and
@@ -426,6 +424,14 @@
 
                     (get answer field))]))
           expected)))
+
+(defn- whole-view
+  "The answer of a row in the form of `expect` in [[verb-fixture]]: the whole JSON
+   value, or the class and the text of the refusal. A failed block stays as it is."
+  [answer]
+  (cond (contains? answer "error") (select-keys answer ["error" "message"])
+        (contains? answer "json") {"value" (json/read-json (get answer "json"))}
+        :else answer))
 
 (def ^:private twin-verbs-code
   "A row that sets `out` to each public verb of the SDK that the sandbox also binds."
@@ -456,17 +462,21 @@
               known
               (set (map first cases))
 
+              sandbox
+              (into {}
+                    (map (fn [[id code]]
+                           [id (run :sandbox code)]))
+                    cases)
+
               differences
               (vec (for [[id code]
                          cases
 
-                         :let [sandbox
-                               (run :sandbox code)]
                          door
                          [:worker :extension]
 
                          :let [expected
-                               (expected-at door id sandbox)
+                               (expected-at door id (sandbox id))
 
                                got
                                (run door code)]
@@ -474,23 +484,36 @@
 
                      {:row id :door door :expected expected :got got}))
 
-              code-of
-              (into {} cases)
-
               fixed
               (vec (for [[id expected]
                          fixed-answers
 
                          :let [got
-                               (fixed-view expected (run :sandbox (code-of id)))]
+                               (fixed-view expected (sandbox id))]
                          :when (not= expected got)]
 
-                     {:row id :expected expected :got got}))]
+                     {:row id :expected expected :got got}))
 
+              fixture
+              (vec (for [row
+                         (get verb-fixture "cases")
+
+                         :let [id
+                               (keyword (get row "name"))
+
+                               got
+                               (whole-view (sandbox id))]
+                         :when (not= (get row "expect") got)]
+
+                     {:row id :expected (get row "expect") :got got}))]
+
+          ;; A row id names one row, so that no answer replaces another.
+          (expect (= (count cases) (count known)))
           ;; Each public verb of the SDK with a twin in the sandbox has a row.
           (expect (seq verbs) (pr-str twins))
           (expect (= [] (remove called? verbs)))
           (expect (= [] (remove known (mapcat :rows documented-differences))))
           (expect (= [] (remove known (keys fixed-answers))))
           (expect (= [] fixed))
+          (expect (= [] fixture))
           (expect (= [] differences)))))))
