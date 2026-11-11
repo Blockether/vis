@@ -5453,6 +5453,46 @@
              (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe
+  output-budget-recovery-budget-test
+  ;; Issue #464: the compact recovery request sent the budget that a gateway default
+  ;; had already exhausted, so it stopped at the same cap.
+  (it
+    "asks for the larger budget Svar names and names the cap in the final error"
+    (let [environment
+          (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+          tid
+          (persistance/db-store-session-turn! (:db-info environment)
+                                              {:parent-session-id (:session-id environment)
+                                               :user-request "write the module"})
+
+          requests
+          (atom [])
+
+          cap-data
+          {:type :svar.llm/max-tokens-exceeded
+           :max-output-tokens 4096
+           :next-output-budget 8192
+           :output-budget-resends 1
+           :api-usage {:output-tokens 2048}}]
+
+      (try
+        (let [result
+              (with-redefs [svar/session-capability (constantly nil)
+                            svar/ask-code! (fn [_ opts]
+                                             (swap! requests conj (:extra-body opts))
+                                             (throw (ex-info "Output budget exhausted" cap-data)))]
+
+                (iteration/iteration-loop environment "write the module" {:session-turn-id tid}))]
+          (expect (= 2 (count @requests)))
+          (expect (nil? (get (first @requests) "max_tokens")))
+          (expect (= 8192 (get (second @requests) "max_tokens")))
+          (expect (= :error (:status result)))
+          (expect (str/includes? (get (first (:answer result)) "message")
+                                 "stopped at 2048 output tokens; the request budget was 4096")))
+        (finally (loop-env/dispose-environment! environment))))))
+
+(defdescribe
   responses-output-budget-svar-boundary-test
   ;; Issue #296: exercise the actual Svar stream error and the next request's wire budget.
   (it
@@ -13922,6 +13962,50 @@
             (expect (nil? (:tokenizer model)))
             (expect (= 100000 (:context model)))
             (expect (= 20000 (:output-limit model)))))))
+  ;; Issue #463: a refreshed token dropped the extension's per-model api_style and
+  ;; limits, so Claude went to /responses with a 2048 default budget.
+  (it
+    "keeps the model facts a provider extension enriched when credentials change"
+    (let [provider
+          {:id :managed
+           :api-key "account-a"
+           :base-url "https://gateway.example.com/v1"
+           :api-style :openai-compatible-responses
+           :models [{:name "claude-sonnet-5-5"}]}
+
+          catalog
+          {:identity (svar/model-catalog-identity (config/->svar-provider provider))
+           :models [{:name "claude-sonnet-5-5" :input-limit 70000}]}
+
+          enriched
+          (#'python-extensions/->svar-model
+           {"name" "claude-sonnet-5-5"
+            "context" 1000000
+            "is_tool_calls_supported" true
+            "api_style" "anthropic"
+            "output_limit" 128000})
+
+          token
+          (atom nil)
+
+          hooks
+          {:provider/enrich-models-fn (fn [_ _]
+                                        [enriched])
+           :provider/get-token-fn (fn []
+                                    (some->> @token
+                                             (hash-map :token)))}]
+
+      (with-redefs [registry/provider-by-id (fn [id]
+                                              (when (= :managed id) hooks))]
+        (let [router (loop-router/build-router {:providers [(assoc provider
+                                                              :model-metadata catalog)]})]
+          (expect (= 70000 (get-in router [:providers 0 :models 0 :input-limit])))
+          (reset! token "account-b")
+          (let [model (get-in (hydrate-router-credentials router) [:providers 0 :models 0])]
+            (expect (nil? (:input-limit model)))
+            (expect (= :anthropic (:api-style model)))
+            (expect (= 1000000 (:context model)))
+            (expect (= 128000 (:output-limit model))))))))
   (it "uses the routed input budget once, bounded by an optional caller ceiling"
       (let [limit
             @#'loop-router/iteration-context-limit

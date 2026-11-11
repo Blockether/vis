@@ -409,7 +409,13 @@
                      true)))
          (keep
            (fn [p]
-             (letfn [(build [] (enrich-provider-models (config/->svar-provider p) ropts))]
+             ;; Enrich the configured models, then put learned metadata under them.
+             ;; The enriched rows hold no account data, so `build-router` keeps them
+             ;; as the fallback when a credential changes (#463).
+             (letfn [(build []
+                       (-> (config/->svar-provider (dissoc p :model-metadata))
+                           (enrich-provider-models ropts)
+                           (config/apply-model-metadata (:model-metadata p))))]
                (try (build)
                     (catch Throwable t
                       ;; Before dropping an auth-failed provider, try to HEAL it:

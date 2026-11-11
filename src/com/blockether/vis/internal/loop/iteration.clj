@@ -1317,8 +1317,8 @@
 
 (defn- output-budget-exhausted?
   "True when the iteration failed on Svar's canonical output-budget signal. Svar
-   raises it after its own larger-budget re-send, so only a smaller next iteration
-   can recover."
+   raises it after its own larger-budget re-send, so a smaller next iteration
+   recovers, with the larger budget that Svar names when one exists."
   [iteration-error-data]
   (loop-errors/output-budget-exhausted-data? (:data iteration-error-data)))
 
@@ -1339,11 +1339,15 @@
 
      message
      (if output-budget?
-       (str "Provider stopped the response at its output budget (" (or output-tokens "?")
-            " output tokens, " (or reasoning-tokens "?")
+       (str "Provider stopped the response at its output budget ("
+            (or output-tokens "?")
+            " output tokens, "
+            (or reasoning-tokens "?")
             " of them hidden reasoning)."
             (when (pos? (long (or (:output-budget-resends data) 0)))
-              " Svar already re-sent the request once with a larger budget."))
+              " Svar already re-sent the request once with a larger budget.")
+            (when-let [budget (:next-output-budget data)]
+              (str " The next request asks for " budget " output tokens.")))
        (str "LLM call failed: " (:message iteration-error-data)))
 
      hint
@@ -1362,8 +1366,31 @@
         output-tokens :reasoning-tokens
         reasoning-tokens)
 
+      (and output-budget? (:next-output-budget data))
+      (assoc :next-output-budget (:next-output-budget data))
+
       (and (not output-budget?) (:type iteration-error-data))
       (assoc :source-type (:type iteration-error-data)))))
+
+(defn- output-budget-evidence
+  "Names the output tokens of the failed reply and the budget its request sent, so
+   a person can tell a gateway cap from the model's limit (#464). Nil when the
+   provider billed no output tokens."
+  [data]
+  (let [used
+        (get-in data [:api-usage :output-tokens])
+
+        sent
+        (:max-output-tokens data)]
+
+    (when (pos-int? used)
+      (str " The reply stopped at "
+           used
+           " output tokens; the request "
+           (if (pos-int? sent)
+             (str "budget was " sent)
+             "sent no budget, so a provider or gateway default applied")
+           "."))))
 
 (defn- iteration-error-feedback
   [iteration iteration-error-data user-request]
@@ -2610,8 +2637,16 @@
         reasoning-level
         (loop-router/casual-reasoning-level pre-resolved-model user-request raw-reasoning-level)
 
+        next-output-budget
+        (get-in llm-provider [:error :next-output-budget])
+
+        ;; The compact recovery after an output-budget failure asks for the larger
+        ;; budget that Svar named, so the cap that stopped the failed request
+        ;; cannot stop it again (#464).
         iteration-extra-body
-        (request-extra-body extra-body pre-resolved-model)
+        (cond-> (request-extra-body extra-body pre-resolved-model)
+          next-output-budget
+          (assoc "max_tokens" next-output-budget))
 
         ;; The window the NEXT request is actually measured against —
         ;; the rescued peer's when this turn moved, else the pin's.
@@ -3340,8 +3375,9 @@
                  [(content/error
                     "output_budget_exhausted"
                     (str
-                      "The provider exhausted its output budget again after a compact recovery request. "
-                      "Try a smaller task or another model. No partial tool call was executed.")
+                      "The provider exhausted its output budget again after a compact recovery request."
+                      (output-budget-evidence err-data)
+                      " Try a smaller task or another model. No partial tool call was executed.")
                     false)])
                (some-> (:error trace-entry)
                        loop-errors/python-error-content)
