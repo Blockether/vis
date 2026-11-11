@@ -70,7 +70,15 @@
   (it "names a path that is not a file only in the file check"
       (let [value {"active" "A" "custom" [{"name" "A" "slots" {"finish" "/no/such/sound.wav"}}]}]
         (expect (nil? (sounds/problem value)))
-        (expect (= "Preset A: no sound file at /no/such/sound.wav." (sounds/file-problem value))))))
+        (expect (= "Preset A: no sound file at /no/such/sound.wav." (sounds/file-problem value)))))
+  (it "names a missing file under home with ~ in the messages that the person reads"
+      (let [path (str (System/getProperty "user.home") "/vis-no-such-sound.wav")]
+        (expect (= "Preset A: no sound file at ~/vis-no-such-sound.wav."
+                   (sounds/file-problem {"active" "A"
+                                         "custom" [{"name" "A" "slots" {"finish" path}}]})))
+        (expect (=
+                  "Sound file not found: ~/vis-no-such-sound.wav"
+                  (try (sounds/slot-file "finish" path) nil (catch Exception e (ex-message e))))))))
 
 (defdescribe preview-test
              (it "plays a slot value before a save and refuses an unknown slot"

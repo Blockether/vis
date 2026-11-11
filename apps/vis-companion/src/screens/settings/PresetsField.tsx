@@ -1,6 +1,7 @@
 import { useContext, useId, useState } from 'react';
 import { Button, ConfirmRow, IconButton, Input, Select, Text } from '../../components/ui';
 import { PencilIcon, PlayIcon, PlusIcon, TrashIcon } from '../../components/icons';
+import { homeifyPath } from '../../lib/path';
 import type { CustomPreset, PresetsOptions, PresetsValue, SettingValue, Toggle } from '../../lib/types';
 import { SettingMachine } from './SettingField';
 import { FormLabel } from './SettingsLayout';
@@ -94,7 +95,7 @@ export function PresetsField({
   const slotText = (text: string) => {
     if (!text) return 'No sound';
     const preset = options.builtin.find((one) => one.id === text);
-    return preset ? `${preset.label} (built in)` : text;
+    return preset ? `${preset.label} (built in)` : homeifyPath(text);
   };
 
   async function play(key: string, slot: string, text: string) {

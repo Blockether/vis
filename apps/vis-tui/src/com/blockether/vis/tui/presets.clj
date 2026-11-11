@@ -5,7 +5,8 @@
    that the editor writes whole, and the gateway checks it."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.tui.client :as vis])
+            [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.paths :as paths])
   (:import [java.net URLEncoder]
            [java.nio.charset StandardCharsets]))
 
@@ -60,7 +61,7 @@
   (let [text (str slot-value)]
     (cond (str/blank? text) "No sound"
           (builtin options text) (str (preset-label options text) " (built in)")
-          :else text)))
+          :else (paths/abbreviate-home text))))
 
 (defn help
   "How to fill in a slot value, with the built-in preset ids of `options`."

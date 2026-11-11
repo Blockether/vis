@@ -15,13 +15,13 @@ type Call = { method: string; path: string; body: Record<string, unknown> };
 let calls: Call[] = [];
 let refusal: string | null = null;
 
-function settingsWith(enabled: boolean) {
+function settingsWith(enabled: boolean, toggle: Toggle = row) {
   return {
     revision: 'presets-1',
     groups: [{
       id: 'sounds',
       title: 'Sounds',
-      toggles: [{ id: 'sounds', label: 'Sounds', type: 'boolean' as const, enabled, children: [row] }],
+      toggles: [{ id: 'sounds', label: 'Sounds', type: 'boolean' as const, enabled, children: [toggle] }],
     }],
   };
 }
@@ -56,6 +56,14 @@ async function open() {
 }
 const writes = () => calls.filter((call) => call.path === '/v1/settings' && call.method === 'POST');
 const user = () => userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+
+it('shows a sound file under home with ~', async () => {
+  const value = { active: 'My mix', custom: [{ name: 'My mix', slots: { finish: '/Users/ana/Sounds/done.wav' } }] };
+  vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue(settingsWith(true, { ...row, value }));
+  await open();
+  const slots = screen.getByRole('list', { name: 'Sounds of My mix' });
+  expect(within(slots).getByText('~/Sounds/done.wav')).toBeVisible();
+});
 
 it('shows the active preset, each slot with what it plays, and previews a slot as the contract says', async () => {
   const picker = await open();

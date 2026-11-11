@@ -99,6 +99,11 @@
           (expect (str/includes? frame "Glass (built in)"))
           (expect (str/includes? frame "~/Sounds/done.wav"))
           (expect (str/includes? frame "No sound"))))
+    (it "shows a sound file under home with ~"
+        (expect (= "~/Sounds/done.wav"
+                   (presets/slot-meaning (get catalog-row "editor_options")
+                                         (str (System/getProperty "user.home")
+                                              "/Sounds/done.wav")))))
     (it "picks among built-in presets first, then custom presets"
         (let [frame
               (some #(when (str/includes? % "Built-in presets") %)

@@ -107,7 +107,7 @@
                   (when-not (or (str/blank? v)
                                 (builtin-ids v)
                                 (.isFile (io/file (paths/expand-home v))))
-                    (str "Preset " name ": no sound file at " v ".")))
+                    (str "Preset " name ": no sound file at " (paths/abbreviate-home v) ".")))
                 preset-slots))
         (get value "custom")))
 
@@ -151,7 +151,7 @@
           (builtin-ids value) (bundled-file value slot)
           :else (let [file (io/file (paths/expand-home value))]
                   (when-not (.isFile file)
-                    (throw (ex-info (str "Sound file not found: " value)
+                    (throw (ex-info (str "Sound file not found: " (paths/abbreviate-home value))
                                     {:type :vis.sounds/missing-file :slot slot :path value})))
                   file))))
 
