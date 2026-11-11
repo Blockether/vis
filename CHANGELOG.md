@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.15] - 2026-11-11
+
+### Added
+- CLI: `vis-agent uninstall` removes Vis. It stops the gateway and the desktop app. Then it removes the command and its runtime, the desktop app copies and their data, the installer `PATH` line and `~/.vis`. `--keep-data` keeps the data, and `--dry-run` changes nothing. A run without a terminal needs `--yes`.
+- Providers: GitHub Copilot has the model `claude-fable-5.2`, with plan pricing and a 1M input and 128K output limit. This comes from svar 0.7.234.
+
+### Fixed
+- Providers (#463): after a token refresh, the router no longer loses the model facts that a provider extension adds. Before, Claude then went to `/responses` with a small default output budget.
+- Loop (#464): the recovery iteration sends the larger output budget that svar names. The final error shows the used tokens and the sent budget. This comes from svar 0.7.233.
+- CLI: `vis-agent speech say hello world` speaks all the words, and `vis-agent sessions search foo bar` searches for all the words. Before, each used only the first word.
+- CLI: each command refuses a flag that it does not declare and a word after its arguments, with exit status 2. A parent command refuses a word that is not a subcommand: `vis-agent extension bogus` exits 2 and does not show the help with exit status 0. `gateway mcp auth-logout` refuses a server that is not configured and has no saved tokens.
+- CLI: a refusal prints one sentence with exit status 2, not a fatal error with Java class names. This applies to extension package refusals, gateway 4xx answers, speech errors, missing audio files, bad whole-number flags and MCP flag errors.
+- Housekeeping: a short command that stopped during a cleanup walk no longer stops every walk of that folder for one day. On one computer, the bytecode store grew to 42 GB. A walk now holds a 10-minute lease, and only a finished walk stamps the full interval.
+- Python extensions: when `uv` reaches its timeout, Vis stops the full process tree, also a child that `uv` starts during the stop. The installer error keeps the last partial output line, also when a detached child holds the output pipe on Linux.
+- Companion: a session row that you drop on a group or on the Sessions area just after the drop mark shows goes to that place. Before, a fast release on a touch screen sometimes did nothing.
+
+### Documentation
+- Gateway service: the systemd example has `SuccessExitStatus=143`. On SIGTERM, the gateway exits with status 143, and without this line each `systemctl stop` or `restart` marked the service as failed. "Removing Vis" tells you to remove a gateway service unit that you set up yourself.
+
 ## [v0.5.14] - 2026-11-11
 
 ### Fixed
