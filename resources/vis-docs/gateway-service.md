@@ -236,11 +236,15 @@ ExecStart=/home/visgw/.local/bin/vis-agent gateway start --host 127.0.0.1 --port
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
+SuccessExitStatus=143
 UMask=0077
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+On SIGTERM, the gateway shuts down and exits with status 143. The
+`SuccessExitStatus=143` line tells systemd that this stop is not a failure.
 
 Enable it only when you are ready to start a persistent service:
 
