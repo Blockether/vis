@@ -56,6 +56,17 @@
               str/trim
               not-empty)))
 
+(defn- data-provider-message
+  "The provider's own words in error data `data`: its body, else the message that svar read
+   from a stream event. A stream error has no body."
+  [data]
+  (or (provider-body-message (some-> (:body data)
+                                     str))
+      (some-> (:provider-message data)
+              str
+              str/trim
+              not-empty)))
+
 (defn generic-wrapper-message?
   "True when the svar wrapper message is just a status echo (e.g.
    `Exceptional status code: 400`) that adds nothing beyond the HTTP row."
@@ -596,15 +607,11 @@
         data
         (or (:data err) (ex-data err) err)
 
-        body-raw
-        (some-> (:body data)
-                str)
-
         status
         (:status data)
 
         provider-message
-        (provider-body-message body-raw)
+        (data-provider-message data)
 
         schema-rejection?
         (tool-schema-rejection-message? (str provider-message "\n" message))
@@ -1274,10 +1281,6 @@
         ;; the same lookup every other fn in this ns already does.
         (or (:data err) (ex-data err))
 
-        body-raw
-        (some-> (:body data)
-                str)
-
         status
         (:status data)
 
@@ -1285,7 +1288,7 @@
         (:request-id data)
 
         provider-message
-        (provider-body-message body-raw)]
+        (data-provider-message data)]
 
     {:kind (provider-error-kind err)
      :title (provider-error-title err)

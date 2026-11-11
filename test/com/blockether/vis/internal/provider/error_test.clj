@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.provider.error-test
   "Provider-error presentation and canonical typed error content."
-  (:require [com.blockether.vis.contract.content :as content-contract]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.content :as content-contract]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.provider.error :as perr]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -60,6 +61,26 @@
                      (expect (not-any? #(= "Log id" (first %)) (perr/provider-error-facts err)))
                      (expect (not (contains? (first (perr/provider-error-content err))
                                              "log_id")))))))
+
+;; A Codex stream error has no body: svar keeps the provider's words in :provider-message. The
+;; error block said only "rejected the request as invalid", without the reason.
+(defdescribe
+  provider-stream-error-message-test
+  (it "keeps the reason of a stream error that has no body"
+      (let [reason
+            "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account."
+
+            err
+            (ex-info reason
+                     {:type :svar.session/server-error
+                      :source :provider
+                      :stream? true
+                      :code "invalid_request_error"
+                      :provider-message reason
+                      :status 400})]
+
+        (expect (= reason (:provider-message (perr/provider-error-info err))))
+        (expect (str/includes? (get (first (perr/provider-error-content err)) "message") reason)))))
 
 (defdescribe
   provider-error-attempts-test

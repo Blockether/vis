@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- One-shot runs: `vis-agent --persist --trajectory` again includes each Council child of the session and its cost. Since v0.2.38 the run wrote `the trajectory has no Council children: Unknown subagent operation list` and left out all children.
+- Provider errors: when a streaming provider rejects a request, the error block shows the message of the provider, such as `The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.` Before, it said only that the provider rejected the request as invalid.
+
 ## [v0.5.13] - 2026-11-11
 
 ### Fixed
