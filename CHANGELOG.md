@@ -7,18 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
-- Sandbox: when Vis clips a long result, the hint names `read_session()` only while the `introspection` toggle is on. With the toggle off (the default), the hint says to slice or filter the result. Before, it always named `read_session()`, and the call failed with `NameError`.
-
-### Changed
-- One-shot runs: a `vis-agent -- "task"` run gets session introspection when the `introspection` toggle is on, as other sessions do. Then the run can read the full saved output of a clipped result. This undoes the v0.5.10 change. The `stdout-*` end-to-end tasks turn the toggle on in their `vis.yml`.
-
 ## [v0.5.14] - 2026-11-11
 
 ### Fixed
 - One-shot runs: `vis-agent --persist --trajectory` again includes each Council child of the session and its cost. Since v0.2.38 the run wrote `the trajectory has no Council children: Unknown subagent operation list` and left out all children.
 - Provider errors: when a streaming provider rejects a request, the error block shows the message of the provider, such as `The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.` Before, it said only that the provider rejected the request as invalid.
 - Providers: an Anthropic or Gemini provider with no API key no longer fails with the error message `value`. The request goes out without a key header, and the provider answers with its own error, such as `x-api-key header is required`. This comes from svar 0.7.232.
+- Sandbox: when Vis clips a long result, the hint names `read_session()` only while the `introspection` toggle is on. With the toggle off (the default), the hint says to slice or filter the result. Before, it always named `read_session()`, and the call failed with `NameError`.
+
+### Changed
+- One-shot runs: a `vis-agent -- "task"` run gets session introspection when the `introspection` toggle is on, as other sessions do. Then the run can read the full saved output of a clipped result. This undoes the v0.5.10 change. The `stdout-*` end-to-end tasks turn the toggle on in their `vis.yml`.
 
 ## [v0.5.13] - 2026-11-11
 
