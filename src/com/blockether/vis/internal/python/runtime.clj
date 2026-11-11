@@ -329,16 +329,36 @@
       (throw (ex-info "Bundled uv is missing or not executable; reinstall the Vis Python runtime"
                       {:type ::bundled-uv-missing}))))
 
+(defn- signal!
+  "Send `signal` to `handles` with the system `kill` command. Without the command, they keep running."
+  [signal handles]
+  (when (seq handles)
+    (try (-> (ProcessBuilder.
+               ^java.util.List
+               (into ["kill" (str "-" signal)] (map #(str (.pid ^ProcessHandle %))) handles))
+             (.redirectErrorStream true)
+             (.redirectOutput ProcessBuilder$Redirect/DISCARD)
+             (.start)
+             (.waitFor 5 TimeUnit/SECONDS))
+         (catch java.io.IOException _ nil))))
+
 (defn- kill-installer!
+  "Kill the installer and all its descendants. First stop the tree from the root down:
+   a stopped process cannot fork, so no child starts after its parent's children are read."
   [^Process process]
-  (with-open [children (.descendants process)]
-    (.forEach children
-              (reify
-                java.util.function.Consumer
-                  (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
-  ;; Process/destroyForcibly also closes stdout on Linux, so the reader loses unread
-  ;; output. Kill through the handle and let the reader drain the pipe to EOF.
-  (.destroyForcibly (.toHandle process))
+  (let [tree (loop [level [(.toHandle process)]
+                    tree []]
+
+               (if (seq level)
+                 (do (signal! "STOP" level)
+                     (recur (mapcat #(.toList ^java.util.stream.Stream (.children ^ProcessHandle %))
+                                    level)
+                            (into tree level)))
+                 tree))]
+    ;; Process/destroyForcibly also closes stdout on Linux, so the reader loses unread
+    ;; output. Kill through the handle and let the reader drain the pipe to EOF.
+    (doseq [^ProcessHandle handle (rseq tree)]
+      (.destroyForcibly handle)))
   (.waitFor process 5 TimeUnit/SECONDS))
 
 (def ^:dynamic ^:private *extension-preparation?* false)
@@ -399,6 +419,10 @@
           (let [finished? (.waitFor ^Process process (long timeout-ms) TimeUnit/MILLISECONDS)]
             (when-not finished? (kill-installer! process))
             (let [capture-error (try (when (= ::unfinished (deref output 2000 ::unfinished))
+                                       ;; A detached child holds the pipe. Close it, so the
+                                       ;; reader keeps the partial line that it already read.
+                                       (.close (.getInputStream ^Process process))
+                                       (try (deref output 2000 nil) (catch Exception _ nil))
                                        "Installer output did not close")
                                      (catch Exception e (redact-installer-text (.getMessage e))))
                   exit (when finished? (.exitValue ^Process process))]

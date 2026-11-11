@@ -6,6 +6,7 @@
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.blockether.vispython Interpreter Locations]
+           [java.lang ProcessHandle]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -103,6 +104,63 @@
             (expect (true? (:timeout? data)))
             (expect (str/includes? (str (:diagnostics data)) "UV_PARTIAL_MARKER")
                     (pr-str data)))))))
+
+(defn- timeout-after-printed
+  "Run uv with a timeout, but kill it only after the script creates `printed`.
+   A loaded CI can start the script after the timeout. Then wait `settle-ms` more."
+  [dir uv settle-ms]
+  (let [kill!
+        @#'python-runtime/kill-installer!
+
+        printed
+        (io/file dir "printed")]
+
+    (with-redefs-fn {#'python-runtime/kill-installer! (fn [process]
+                                                        (loop [attempts 0]
+                                                          (when (and (not (.exists printed))
+                                                                     (< attempts 3000))
+                                                            (Thread/sleep 10)
+                                                            (recur (inc attempts))))
+                                                        (Thread/sleep (long settle-ms))
+                                                        (kill! process))}
+      #(ex-data (failure (fn []
+                           (#'python-runtime/run-uv! dir [uv "lock"] {:timeout-ms 200})))))))
+
+(defdescribe
+  installer-timeout-kills-children-forked-during-kill-test
+  (it "leaves no child that the installer forks while it is killed"
+      ;; macOS CI: a child forked after the descendant snapshot outlived the kill.
+      (let [tag
+            (str "40." (System/nanoTime))
+
+            sleepers
+            (fn []
+              (->> (iterator-seq (.iterator (ProcessHandle/allProcesses)))
+                   (filter #(= [tag]
+                               (vec (.orElse (.arguments (.info ^ProcessHandle %))
+                                             (make-array String 0)))))
+                   vec))]
+
+        (with-uv-fixture
+          (str ": > \"$(dirname \"$0\")/printed\"\nwhile :; do /bin/sleep " tag " & done\n")
+          (fn [dir uv]
+            ;; Let the fork loop run, so the kill meets a fork in progress.
+            (try (expect (true? (:timeout? (timeout-after-printed dir uv 300))))
+                 (Thread/sleep 300)
+                 (expect (empty? (sleepers)))
+                 (finally (doseq [^ProcessHandle handle (sleepers)]
+                            (.destroyForcibly handle)))))))))
+
+(defdescribe installer-timeout-keeps-partial-line-of-detached-child-test
+             (it "keeps the partial line when a detached child holds the output pipe"
+                 (with-uv-fixture
+                   (str "printf 'UV_DETACHED_MARKER: waiting' >&2\n( /bin/sleep 20 & )\n"
+                        ": > \"$(dirname \"$0\")/printed\"\n/bin/sleep 30\n")
+                   (fn [dir uv]
+                     (let [data (timeout-after-printed dir uv 0)]
+                       (expect (true? (:timeout? data)))
+                       (expect (str/includes? (str (:diagnostics data)) "UV_DETACHED_MARKER")
+                               (pr-str data)))))))
 
 (defdescribe installer-closed-pipe-keeps-partial-line-test
              (it "installer closed pipe keeps partial line"
