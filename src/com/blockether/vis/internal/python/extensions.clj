@@ -1502,26 +1502,6 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (doseq [^File f (reverse (file-seq dir))]
       (.delete f))))
 
-(defn- extension-module
-  "The `sys.modules` name of the module that runs the source of extension context
-   `ctx`. The source runs there and not in the session globals, which hold the runtime
-   and the bootstrap: a top-level name of the extension cannot replace one of theirs."
-  [ctx]
-  (str ctx "__extension"))
-
-(defn- extension-module-python
-  "Python that opens the module of extension context `ctx` as `__vis_extension__`. It
-   runs after the preamble of `evaluate-extension!`, which binds `__vis_pathsys__`,
-   `__file__` and `__vis_ext_dir__`. The marker `__vis_ext_dir__` keeps the module out
-   of the stale-module sweep."
-  [ctx]
-  (str "__vis_extension__ = type(__vis_pathsys__)("
-       (python-string-literal (extension-module ctx))
-       ")\n"
-       "__vis_extension__.__file__ = __file__\n" "__vis_extension__.__cached__ = None\n"
-       "__vis_extension__.__vis_ext_dir__ = __vis_ext_dir__\n"
-       "__vis_pathsys__.modules[__vis_extension__.__name__] = __vis_extension__\n"))
-
 (defn- discard-context!
   ([ctx] (discard-context! ctx true))
   ([ctx close-in-worker?]
@@ -1542,17 +1522,6 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
              (swap! context-lifecycle dissoc ctx)
              (try (python-host/forget-session! ctx) (catch Throwable _ nil))
              (when (and close-in-worker? opened? (pyext/worker-live? worker))
-               ;; Closing the session does not drop the extension module.
-               (when snapshot
-                 (try (pyext/exec! worker
-                                   ctx
-                                   (str "__import__('sys').modules.pop("
-                                        (python-string-literal (extension-module ctx))
-                                        ", None)\n"))
-                      (catch Throwable t
-                        (tel/log! {:level :debug
-                                   :id ::extension-module-drop-failed
-                                   :data {:context ctx :error (ex-message t)}}))))
                (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))
              (stop-unused-worker! worker)
              (when (and snapshot
@@ -1601,27 +1570,26 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    surrogate pair as two characters, while `json.loads` rejoins it. `flags` is a
    Python expression for the compiler flags."
   [source filename flags namespace]
-  (str "exec(__import__('vis_code').code(__import__('json').loads("
+  (str "__import__('vis_runtime').exec_source("
+       namespace
+       ", __import__('json').loads("
        (python-string-literal (json/write-json-str source))
        "), "
        (python-string-literal filename)
-       ", "
+       ", flags="
        flags
-       "), "
-       namespace
        ")"))
 
 (defn- postponed-annotations-python
   "Python that executes extension `source` as if the file began with
    `from __future__ import annotations`. Python 3.14 otherwise defers annotations
    into functions that the SDK does not evaluate, so `doc()` lost every type.
-   `<string>` is the file name the interpreter gives code it executes directly.
-   The source runs in the module that `evaluate-extension!` opens."
+   The runtime owns the source module and closes it with its session."
   [source]
-  (cached-exec-python source
-                      "<string>"
-                      "__import__('__future__').annotations.compiler_flag"
-                      "__vis_extension__.__dict__"))
+  (str "__import__('vis_runtime').exec_module(globals(), 'extension', "
+       "__import__('json').loads(" (python-string-literal (json/write-json-str source))
+       "), __file__, flags=__import__('__future__').annotations.compiler_flag, "
+       "attributes={'__vis_ext_dir__': __vis_ext_dir__})"))
 
 (defn- evaluate-extension!
   "Evaluate admitted extension `source` in the open namespace `ctx`.
@@ -1660,7 +1628,6 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                  "__vis_source_sha__ = "
                  (python-string-literal (util/sha256-hex source))
                  "\n"
-                 (extension-module-python ctx)
                  "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                  "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
                  "__vis_packages__ = "
@@ -4077,7 +4044,6 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "The digest of the Python that turns an extension file into its registration data."
   (delay (util/sha256-hex (str bootstrap-python
                                (classpath-src "vis-host-python/vis_sdk.py")
-                               (classpath-src "vis-host-python/vis_code.py")
                                (classpath-src "vis-host-python/vis_results.py")))))
 
 (defn- manifest-file

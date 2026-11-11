@@ -141,8 +141,7 @@
                         [name (slurp resource)])))
                (concat (map (fn [name]
                               [name (str "vis-host-python/" name)])
-                            ["vis_code.py" "vis_introspection.py" "vis_results.py" "vis_sdk.py"
-                             "vis_snapshot.py"])
+                            ["vis_introspection.py" "vis_results.py" "vis_sdk.py"])
                        engine-sources))))
 
 (defonce ^:private staged-guest-dirs
