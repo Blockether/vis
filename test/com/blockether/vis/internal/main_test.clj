@@ -7,12 +7,15 @@
             [com.blockether.vis.internal.gateway.cli :as gateway-cli]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -1358,6 +1361,46 @@
 
         (expect (= 1 exit))
         (expect (some #(str/starts-with? % "vis-agent: cannot write the trajectory: ") err))))
+  ;; The trajectory asked Council for a :list operation that it does not have, so each persisted
+  ;; run lost its children with a warning.
+  (it
+    "embeds each persisted Council child of the session"
+    (let [db (ps/db-create-connection! :memory)]
+      (try
+        (let [leader (str (h/store-session! db {:channel :api}))
+              turn (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Parent"})
+              child (str (h/fork-session-at-turn! db
+                                                  leader
+                                                  {:through-turn-id turn
+                                                   :agent {:parent_id leader
+                                                           :leader_id leader
+                                                           :team_id (str turn)
+                                                           :task "Check evidence"
+                                                           :status "completed"
+                                                           :iteration_budget 4
+                                                           :spawn_key (str (random-uuid))
+                                                           :spawn_fingerprint "f"
+                                                           :checkpoint [{:role :user
+                                                                         :content "Context"}]}}))
+              path (str (java.nio.file.Files/createTempDirectory
+                          "vis-trajectory"
+                          (make-array java.nio.file.attribute.FileAttribute 0))
+                        "/run.json")
+              {:keys [err exit]} (with-redefs-fn {#'lp/db-info (constantly db)
+                                                  #'trajectory/run-secrets (fn []
+                                                                             [])}
+                                   #(run-cli ["--persist" "--trajectory" path "--" "Delegate."]
+                                             {:session-id leader
+                                              :content
+                                              [{"id" "block_1" "type" "prose" "markdown" "Done."}]
+                                              :trace [{:iteration 0 :final? true :blocks []}]}))]
+
+          (expect (= [] err))
+          (expect (nil? exit))
+          (expect (= [child]
+                     (mapv #(get % "session_id")
+                           (get (json/read-json (slurp path)) "subagent_trajectories")))))
+        (finally (ps/db-dispose-connection! db)))))
   (it "reads the usage and the saved goal of a persisted session"
       (with-redefs [gateway-state/session-usage-info
                     (fn [sid]

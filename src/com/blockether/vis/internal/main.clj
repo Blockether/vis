@@ -1969,7 +1969,7 @@
                                                            (or (get turn "turn_id")
                                                                (get turn "id")))))
                                              (gateway-state/list-turns child)))))))
-                 (gateway-state/agents-operation! (str sid) :list {})))
+                 (gateway-state/agent-rows sid)))
          (catch Exception e
            (commandline/stderr! (str "vis-agent: the trajectory has no Council children: "
                                      (ex-message e)))
