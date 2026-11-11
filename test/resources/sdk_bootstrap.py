@@ -1,54 +1,44 @@
-"""Issue #253: bundled declarations share a loader, never an implicit host."""
+"""Issue #253: bundled declarations share a loader, never an implicit host.
+
+Run by sdk-bootstrap-test in a real trusted runtime worker, not the SDK wheel.
+"""
 
 import importlib
-import importlib.util
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
-import pytest
+import vis_sdk
 
-REPOSITORY = Path(__file__).resolve().parents[3]
-SOURCE = (REPOSITORY / "packages/vis-agent/src/blockether/vis/extension.py").read_text()
-
-
-@pytest.fixture
-def bootstrap(monkeypatch):
-    parent = importlib.import_module("blockether.vis")
-    monkeypatch.setattr(parent, "extension", parent.extension)
-    monkeypatch.setitem(
-        sys.modules, "blockether.vis.extension", sys.modules["blockether.vis.extension"]
-    )
-    monkeypatch.delitem(sys.modules, "blockether.vis._outside")
-    # Write no __pycache__ into resources/: the engine's `ls` test lists that directory.
-    monkeypatch.setattr(sys, "dont_write_bytecode", True)
-    # The engine stages each guest module next to vis_sdk.py, so its imports resolve.
-    monkeypatch.syspath_prepend(str(REPOSITORY / "resources/vis-host-python"))
-    spec = importlib.util.spec_from_file_location(
-        "vis_sdk", REPOSITORY / "resources/vis-host-python/vis_sdk.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.install
+bootstrap = vis_sdk.install
 
 
-def test_bundled_module_replaces_installed_sdk_but_preserves_packages(
-    bootstrap, monkeypatch
-):
+@contextmanager
+def raises(message):
+    try:
+        yield
+    except RuntimeError as error:
+        assert message in str(error), str(error)
+    else:
+        raise AssertionError("Expected RuntimeError: " + message)
+
+
+def test_bundled_module_replaces_installed_sdk_but_preserves_packages(source):
     parent = importlib.import_module("blockether.vis")
     namespace = importlib.import_module("blockether")
     search_path = list(parent.__path__)
     sibling = ModuleType("blockether.sibling")
-    monkeypatch.setitem(sys.modules, sibling.__name__, sibling)
+    sys.modules[sibling.__name__] = sibling
     installed = sys.modules["blockether.vis.extension"]
 
-    sdk = bootstrap(SOURCE)
+    sdk = bootstrap(source)
 
     assert sdk is not installed
     assert importlib.import_module("blockether.vis.extension") is sdk
     assert parent.extension is sdk
     assert sys.modules["blockether"] is namespace
-    staged = str(REPOSITORY / "resources/vis-host-python/vis_engine/blockether/vis")
+    staged = str(Path(vis_sdk.__file__).parent / "vis_engine/blockether/vis")
     assert list(parent.__path__) == [staged, *search_path]
     assert sys.modules[sibling.__name__] is sibling
     assert "blockether.vis._outside" not in sys.modules
@@ -60,52 +50,51 @@ def test_bundled_module_replaces_installed_sdk_but_preserves_packages(
     }
 
 
-def test_explicit_extension_host_is_not_reused_by_sandbox(bootstrap):
+def test_explicit_extension_host_is_not_reused_by_sandbox(source):
     host = SimpleNamespace(
         declare_env=lambda _: "{}", state_get=lambda key: "trusted " + key
     )
-    extension = bootstrap(SOURCE, host)
+    extension = bootstrap(source, host)
     extension.register_extension(
         extension.Extension(name="trusted", description="Explicit host")
     )
     assert extension._registration["spec"]["name"] == "trusted"
     assert extension.state["key"] == "trusted key"
 
-    sandbox = bootstrap(SOURCE)
+    sandbox = bootstrap(source)
 
     for name in dir(sandbox.Host):
         if not name.startswith("_"):
-            with pytest.raises(RuntimeError, match="unavailable in python_execution"):
+            with raises("unavailable in python_execution"):
                 getattr(sandbox._host, name)
     assert sandbox._registration["spec"] is None
     assert "blockether.vis._outside" not in sys.modules
     assert extension.state["key"] == "trusted key"
 
 
-def test_sandbox_installs_share_one_module_for_one_source(bootstrap):
+def test_sandbox_installs_share_one_module_for_one_source(source):
     # Each sandbox session installs the SDK. Executing the body each time cost
     # about 15 ms for each new session.
     parent = importlib.import_module("blockether.vis")
-    sandbox = bootstrap(SOURCE)
-    hosted = bootstrap(SOURCE, SimpleNamespace())
+    sandbox = bootstrap(source)
+    hosted = bootstrap(source, SimpleNamespace())
 
-    again = bootstrap(SOURCE)
+    again = bootstrap(source)
 
     assert hosted is not sandbox
     assert again is sandbox
     assert sys.modules["blockether.vis.extension"] is sandbox
     assert parent.extension is sandbox
-    assert bootstrap(SOURCE + "\n") is not sandbox
+    assert bootstrap(source + "\n") is not sandbox
 
 
-@pytest.mark.parametrize("previous", [True, False])
-def test_failed_load_restores_previous_module(bootstrap, monkeypatch, previous):
+def test_failed_load_restores_previous_module(source, previous):
     parent = importlib.import_module("blockether.vis")
     installed = parent.extension
     if not previous:
-        monkeypatch.delitem(sys.modules, "blockether.vis.extension")
+        del sys.modules["blockether.vis.extension"]
 
-    with pytest.raises(RuntimeError, match="broken source"):
+    with raises("broken source"):
         bootstrap("raise RuntimeError('broken source')")
 
     assert parent.extension is installed
