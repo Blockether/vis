@@ -298,11 +298,17 @@
                                  (mapv (juxt :filename :label :audience) @sink)))))))
   (it "drops the module of each unloaded extension"
       ;; A kept module keeps the objects and open files of an unloaded extension.
-      (let [loaded (atom nil)]
+      ;; Other tests can leave their own extensions loaded in the shared worker.
+      (let [before
+            (extension-modules)
+
+            loaded
+            (atom nil)]
+
         (with-tools (fn [_]
-                      (reset! loaded (extension-modules))))
+                      (reset! loaded (remove (set before) (extension-modules)))))
         (expect (= 2 (count @loaded)))
-        (expect (= [] (extension-modules)))))
+        (expect (= before (extension-modules)))))
   (it "refuses a call without a bound session"
       (let [call-tool (get (pyx/host-doors nil "test" nil) "__vis_host_call_tool__")]
         (expect (= :session-not-bound
