@@ -890,7 +890,10 @@
 
 (defn- install-sdk-packages!
   "Install the SDK runtime packages into `python/lib/vis-sdk-packages` of the staged interpreter.
-   `vis_sdk.install` adds that directory last to `sys.path`, so installed packages take precedence."
+   `vis_sdk.install` adds that directory last to `sys.path`, so installed packages take precedence.
+   `-B` and `--no-compile` keep pip from writing bytecode into the shipped tree: pip's own run
+   compiled the standard library it imported and every installed package (675 `.pyc` files in
+   v0.5.12). The runtime gives each user a `pycache_prefix`, so bytecode beside a source is unused."
   []
   (let [python
         (io/file python-sidecar-dir "python" "bin" "python3")
@@ -903,12 +906,12 @@
 
     (when-not (.canExecute python)
       (throw (ex-info "The CPython sidecar has no interpreter." {:dir python-sidecar-dir})))
-    (let [{:keys [exit]} (b/process {:command-args (into [(str python) "-m" "pip" "install"
-                                                          "--disable-pip-version-check" "--no-input"
-                                                          "--no-warn-script-location"
-                                                          "--only-binary=:all:" "--target"
-                                                          (str target)]
-                                                         specs)})]
+    (let [{:keys [exit]} (b/process {:command-args (into
+                                                     [(str python) "-B" "-m" "pip" "install"
+                                                      "--no-compile" "--disable-pip-version-check"
+                                                      "--no-input" "--no-warn-script-location"
+                                                      "--only-binary=:all:" "--target" (str target)]
+                                                     specs)})]
       (when-not (zero? exit)
         (throw (ex-info "Could not install the SDK packages into the CPython sidecar."
                         {:specs specs :exit exit}))))

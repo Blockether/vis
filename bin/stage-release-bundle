@@ -94,6 +94,12 @@ for license in uv-LICENSE-APACHE uv-LICENSE-MIT; do
   [[ -f "$bundle/vis-agent-python/licenses/$license" ]] || \
     die "sidecar is missing licenses/$license"
 done
+# The runtime keeps bytecode under a pycache_prefix of each user, so bytecode in
+# the tree is dead weight that also breaks the "shipped tree never changes" rule.
+bytecode="$(find "$bundle/vis-agent-python" \( -name '*.pyc' -o -name __pycache__ \) -print -quit)"
+[[ -z "$bytecode" ]] || \
+  die "sidecar carries Python bytecode, such as $bytecode" \
+      "Run pip with -B and --no-compile when the build installs packages into it."
 
 tar -C "$bundle" -czf "$asset" .
 printf 'stage-release-bundle: %s (%s)\n' "$asset" "$(du -sh "$asset" | cut -f1)"

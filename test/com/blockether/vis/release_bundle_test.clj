@@ -1092,6 +1092,17 @@
              (let [file (io/file from-dir "vis-agent-python/licenses" license)]
                (io/make-parents file)
                (spit file "license\n")))
+           ;; v0.5.12 shipped 675 `.pyc` files that `pip` wrote into the sidecar. The
+           ;; runtime keeps bytecode under a `pycache_prefix`, so it never read them.
+           (let [pyc (io/file from-dir
+                              "vis-agent-python/python/lib/re/__pycache__/x.cpython-314.pyc")]
+             (io/make-parents pyc)
+             (spit pyc "bytecode\n")
+             (let [{:keys [exit output]} (stage!)]
+               (expect (not= 0 exit) output)
+               (expect (str/includes? output "bytecode") output)
+               (expect (not (.isFile asset)) "no asset may survive a rejected bundle"))
+             (delete-tree! (.getParentFile pyc)))
            (let [{:keys [exit output]} (stage!)]
              (expect (= 0 exit) output)
              (expect (.isFile asset) output)
