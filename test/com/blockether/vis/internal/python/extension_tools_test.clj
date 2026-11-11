@@ -73,6 +73,14 @@
     "    return {\"taken\": \"_shell_wait\"}\n" "\n"
     "\n" "_shell_logs = _shell_stop = _shell_type = _shell_wait\n"
     "\n" "\n"
+    ;; The runtime and the bootstrap names must stay theirs too.
+    "def __vis_typed_value__(value):\n" "    return {\"hijacked\": value}\n"
+    "\n" "\n"
+    "__vis_record__ = __vis_typed_result__ = __vis_seal__ = __vis_settle__ = __vis_typed_value__\n"
+    "_vis_json = _vis_callables = _vis_mod = None\n"
+    "\n" "\n"
+    "def list(*args):\n" "    raise RuntimeError(\"the extension's own list\")\n"
+    "\n" "\n"
     "class Client:\n" "    def probe(self) -> dict:\n"
     "        \"Call svc through vis.tools and describe the answers.\"\n"
     "        first = vis.tools.svc.reserve(\"x-login\", profile=\"x-com\")\n"
@@ -178,6 +186,14 @@
                                    []
                                    extension/*current-environment*))
 
+(defn- extension-modules
+  "The names of the extension modules that the shared worker still holds."
+  []
+  (let [ctx (pyx/build-context "modules")]
+    (try
+      (#'pyx/run-in ctx "sorted(k for k in __import__('sys').modules if k.endswith('__extension'))")
+      (finally (#'pyx/discard-context! ctx)))))
+
 (defdescribe
   extension-tool-call-test
   (it "answers another extension's objects as read-only records of the same name"
@@ -280,6 +296,13 @@
                                    (dissoc (call (exts "client") 'client.attach_probe) "op"))))
                       (expect (= [["totals.csv" "Totals" "user"]]
                                  (mapv (juxt :filename :label :audience) @sink)))))))
+  (it "drops the module of each unloaded extension"
+      ;; A kept module keeps the objects and open files of an unloaded extension.
+      (let [loaded (atom nil)]
+        (with-tools (fn [_]
+                      (reset! loaded (extension-modules))))
+        (expect (= 2 (count @loaded)))
+        (expect (= [] (extension-modules)))))
   (it "refuses a call without a bound session"
       (let [call-tool (get (pyx/host-doors nil "test" nil) "__vis_host_call_tool__")]
         (expect (= :session-not-bound
