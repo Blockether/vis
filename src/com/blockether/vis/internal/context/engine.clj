@@ -21,7 +21,9 @@
    provider spellings such as `anthropic/claude-opus-4.5`,
    `anthropic.claude-opus-4-5-20251101-v1:0` and `azure/gpt-5.5`. The routed input
    window still caps every budget — see `loop.router/context-fold-budget`."
-  [[#"(?i)claude-(?:[0-9.]+-)*opus" 250000] [#"(?i)(?:^|[^a-z0-9])(?:chat)?gpt-" 230000]])
+  [[#"(?i)claude-(?:opus-5[.-]5|5[.-]5-opus)(?![0-9])" 350000]
+   [#"(?i)claude-(?:[0-9.]+-)*fable" 350000] [#"(?i)claude-(?:[0-9.]+-)*opus" 250000]
+   [#"(?i)(?:^|[^a-z0-9])(?:chat)?gpt-" 230000]])
 
 (defn prompt-budget-tokens
   "Operating budget for the model named `model` before any input-window cap:

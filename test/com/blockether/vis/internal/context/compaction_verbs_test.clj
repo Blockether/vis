@@ -1138,19 +1138,24 @@
         (expect (nil? (cr/render-ctx-delta (delta-map with-summary) (delta-map grown))))
         (expect (not (contains? (cr/project-ctx (eng/session-view grown)) "utilization"))))))
 
-(defdescribe prompt-budget-tokens-test
-             (it "gives the Opus family its budget across provider spellings"
-                 (doseq [model ["claude-opus-5-5" "anthropic/claude-opus-4.5"
-                                "anthropic.claude-opus-4-5-20251101-v1:0"
-                                "anthropic--claude-4.5-opus"]]
-                   (expect (= 250000 (eng/prompt-budget-tokens model)))))
-             (it "gives the GPT family its budget across provider spellings"
-                 (doseq [model ["gpt-6-sol" "GPT-6-Sol" "azure/gpt-5.5" "databricks-gpt-5-4"
-                                "chatgpt-4o-latest"]]
-                   (expect (= 230000 (eng/prompt-budget-tokens model)))))
-             (it "keeps the default for other and unnamed models"
-                 (doseq [model ["claude-sonnet-5" "gemini-3-pro" "o3" "mygpt-x" nil]]
-                   (expect (= eng/DEFAULT_PROMPT_BUDGET_TOKENS (eng/prompt-budget-tokens model))))))
+(defdescribe
+  prompt-budget-tokens-test
+  (it "gives Opus 5.5 and the Fable family their budget across provider spellings"
+      (doseq [model ["claude-opus-5-5" "anthropic/claude-opus-5.5"
+                     "anthropic.claude-opus-5-5-20261101-v1:0" "anthropic--claude-5.5-opus"
+                     "claude-fable-5-2" "github-copilot/claude-fable-5.2"]]
+        (expect (= 350000 (eng/prompt-budget-tokens model)))))
+  (it "gives the other Opus models their budget across provider spellings"
+      (doseq [model ["claude-opus-5-55" "anthropic/claude-opus-4.5"
+                     "anthropic.claude-opus-4-5-20251101-v1:0" "anthropic--claude-4.5-opus"]]
+        (expect (= 250000 (eng/prompt-budget-tokens model)))))
+  (it "gives the GPT family its budget across provider spellings"
+      (doseq [model ["gpt-6-sol" "GPT-6-Sol" "azure/gpt-5.5" "databricks-gpt-5-4"
+                     "chatgpt-4o-latest"]]
+        (expect (= 230000 (eng/prompt-budget-tokens model)))))
+  (it "keeps the default for other and unnamed models"
+      (doseq [model ["claude-sonnet-5" "gemini-3-pro" "o3" "mygpt-x" nil]]
+        (expect (= eng/DEFAULT_PROMPT_BUDGET_TOKENS (eng/prompt-budget-tokens model))))))
 
 (defdescribe
   over-budget-hint-test
