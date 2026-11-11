@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.12] - 2026-11-11
+
 ### Changed
 - Python runtime: the runtime now owns source-module creation and cleanup, compilation caches and snapshot helpers. Vis supplies extension policy and host calls instead of a second module lifecycle. Closing a session during a module load no longer leaves that module registered. Code caches keep separate entries for normal, `-O` and `-OO` execution. Extension tracebacks now name the source file instead of `<string>`.
 - Extensions (#462): `vis.tools` now uses the sandbox result types for text, lists and search pages. `next(page)`, `page.pages()` and `page.all()` fetch further search results through the host, even when the extension defines its own `grep`. Text results support `.get()` and `.keys()`. `vis.read_session` and `vis.list_sessions` use the sandbox result types and field hints. A session read includes `op` and prints its summary. Shell and Council results use the same presentation as the sandbox. Exact type checks and printed representations can change; JSON text and list shapes stay the same. The internal session host methods now return data, not JSON strings.
