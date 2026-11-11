@@ -359,7 +359,12 @@
              (assoc parsed
                :http-status status
                :vis/user-error true))
-           (ex-info (or reason (str "gateway HTTP " status)) (assoc parsed :http-status status)))))
+           ;; Any other 4xx is the gateway refusing THIS request with a sentence for
+           ;; the person (unknown MCP server, invalid configuration, ...); a 5xx is a fault.
+           (ex-info (or reason (str "gateway HTTP " status))
+                    (cond-> (assoc parsed :http-status status)
+                      (< status 500)
+                      (assoc :vis/user-error true))))))
      parsed)))
 
 (defn- probe-entry?
@@ -2724,11 +2729,17 @@
 
 (defn- parsed-response!
   [response]
-  (let [body (wire/parse-json (response-text (:body response)))]
-    (when-not (< (long (:status response)) 400)
-      (throw (ex-info (or (get-in body ["error" "message"])
-                          (str "gateway HTTP " (:status response)))
-                      {:http-status (:status response) :body body})))
+  (let [body
+        (wire/parse-json (response-text (:body response)))
+
+        status
+        (long (:status response))]
+
+    (when-not (< status 400)
+      (throw (ex-info (or (get-in body ["error" "message"]) (str "gateway HTTP " status))
+                      (cond-> {:http-status status :body body}
+                        (< status 500)
+                        (assoc :vis/user-error true)))))
     body))
 
 (defn- speech-query

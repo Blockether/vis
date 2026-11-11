@@ -3310,10 +3310,23 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           slurp
           str/trim))
 
+(def ^:private package-refusal
+  "The Python errors that `extension_package.py` raises to refuse a request. Their
+   sentence is for the person; the class name is not."
+  #"^(?:ValueError|FileExistsError|TimeoutError):\s+")
+
 (defn- package-operation
   [operation arguments]
-  (package-call
-    (str operation "(**json.loads(" (python-string-literal (json/write-json-str arguments)) "))")))
+  (try
+    (package-call
+      (str operation "(**json.loads(" (python-string-literal (json/write-json-str arguments)) "))"))
+    (catch clojure.lang.ExceptionInfo e
+      (let [message (str (ex-message e))]
+        (if (and (= ::python-raised (:type (ex-data e))) (re-find package-refusal message))
+          (throw (ex-info (str/replace-first message package-refusal "")
+                          {:vis/user-error true :type ::package-refused}
+                          e))
+          (throw e))))))
 
 (defn install-package!
   "Install a source; with save, persist its declaration and transfer management to sync.
@@ -3395,7 +3408,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    Never imports package entrypoints or reloads a live gateway. Dry-run is inert.
    A prepared result names its environment's `site_packages` for the loader to reuse."
   [{:keys [trust refresh prune dry-run project global]}]
-  (when (and project global) (throw (ex-info "Choose --project or --global, not both" {})))
+  (when (and project global)
+    (throw (ex-info "Choose --project or --global, not both" {:vis/user-error true})))
   (let [scopes (cond->> (config/extension-package-scopes)
                  project
                  (filter #(= "project" (:scope %)))

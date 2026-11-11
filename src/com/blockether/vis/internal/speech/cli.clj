@@ -29,9 +29,36 @@
          (or (wire/parse-json (response-text (:body response))) {})]
 
      (when (>= (long (:status response)) 400)
-       (throw (ex-info (or (get body "error") (str "gateway HTTP " (:status response)))
-                       {:http-status (:status response) :body body})))
+       ;; The gateway answers `{"error": {"type" .., "message" ..}}`; older routes send
+       ;; the sentence as the whole `error` value.
+       (let [error
+             (get body "error")
+
+             status
+             (long (:status response))]
+
+         (throw (ex-info (or (not-empty (if (map? error)
+                                          (get error "message")
+                                          (some-> error
+                                                  str)))
+                             (str "gateway HTTP " status))
+                         (cond-> {:http-status status :body body}
+                           (< status 500)
+                           (assoc :vis/user-error true))))))
      body)))
+
+(defn- audio-file!
+  "The readable audio file at `path`, or a refusal that names the path."
+  ^java.io.File [path]
+  (let [file (some-> path
+                     str
+                     not-empty
+                     io/file)]
+    (cond (nil? file) (throw (ex-info "Give the path of a WAV audio file" {:vis/user-error true}))
+          (not (.isFile file)) (throw (ex-info (str "No audio file at " path)
+                                               {:vis/user-error true}))
+          (not (.canRead file)) (throw (ex-info (str "Cannot read " path) {:vis/user-error true}))
+          :else file)))
 
 (def ^:private model-targets
   {:parakeet {:direction :transcribe :engine-id "parakeet-local" :label "Parakeet ASR model"}
@@ -175,7 +202,7 @@
 
 (defn- raw-upload!
   [path file]
-  (with-open [in (io/input-stream (io/file file))]
+  (with-open [in (io/input-stream (audio-file! file))]
     (response-json!
       :post
       path
@@ -238,7 +265,7 @@
 (defn- speech-transcribe-command
   [parsed residual]
   (config/init-cli!)
-  (let [path (or (get parsed "file") (first residual))]
+  (let [path (str (audio-file! (or (get parsed "file") (first residual))))]
     (cli-out! (str/trim (str (gateway-client/transcribe-audio! nil path {}))))))
 
 (def command

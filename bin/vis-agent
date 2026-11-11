@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # vis-agent — the one public Vis command.
 #
-# It does three things and nothing else:
+# It does four things and nothing else:
 #   1. run Vis,
 #   2. update Vis — and this command with it — (`vis-agent update`),
-#   3. select which published Vis runs (`vis-agent switch`).
+#   3. select which published Vis runs (`vis-agent switch`),
+#   4. remove Vis from this computer (`vis-agent uninstall`).
 #
 # Desktop follows the selected track: release and beta download; dev builds from source.
 # Release and beta install native engine, Python and TUI bundles. Dev follows main
@@ -2081,6 +2082,220 @@ vis_install_native_web() {
   rm -rf "$staging"
 }
 
+# ── Uninstall. Remove everything that the installer, `update` and `desktop` put
+# on this computer. Stop first, then remove, so no Vis process writes again. ───
+vis_desktop_bundle_ids="com.blockether.viscompanion.desktop com.blockether.viscompanion.desktop.dev"
+
+vis_uninstall_usage() {
+  cat >&2 <<'EOF'
+Usage: vis-agent uninstall [--yes] [--keep-data] [--dry-run]
+         Remove Vis from this computer. It stops the gateway and the desktop app,
+         then removes the vis-agent command and its runtime, the desktop app copies
+         in Applications, the desktop app data, the PATH line that the installer
+         added, and ~/.vis (sessions, configuration and credentials).
+         --yes        do not ask first. A run without a terminal needs it.
+         --keep-data  keep ~/.vis data and the desktop app data. Remove only the
+                      installation (the command, its runtime, ~/.vis/install).
+         --dry-run    show what the command removes, and change nothing.
+         A launcher in a source checkout stays: git owns that file.
+EOF
+}
+
+# The profile text without the PATH block that `install-vis-agent` added for the
+# command folder: the `# Vis Agent command` line, its export line and the blank
+# line before. The installer wrote the folder as it was given, so match it both
+# as invoked and with symlinks resolved.
+vis_profile_without_path_block() {
+  local profile="$1" quoted invoked home_bin lines="" dir
+  invoked="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || printf '%s' "$bin_dir")"
+  for dir in "$bin_dir" "$invoked"; do
+    printf -v quoted '%q' "$dir"
+    lines+="export PATH=$quoted:\$PATH"$'\n'
+  done
+  home_bin="$(cd -P "$HOME/.local/bin" 2>/dev/null && pwd || true)"
+  [[ "$home_bin" != "$bin_dir" ]] || lines+='export PATH="$HOME/.local/bin:$PATH"'$'\n'
+  VIS_PATH_LINES="$lines" awk '
+    BEGIN { n = split(ENVIRON["VIS_PATH_LINES"], ours, "\n"); for (k = 1; k <= n; k++) if (ours[k] != "") ok[ours[k]] = 1 }
+    { line[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++)
+        if (line[i] == "# Vis Agent command" && ((i + 1) in line) && (line[i + 1] in ok)) {
+          drop[i] = 1; drop[i + 1] = 1
+          if (i > 1 && line[i - 1] == "") drop[i - 1] = 1
+        }
+      for (i = 1; i <= NR; i++) if (!(i in drop)) print line[i]
+    }' "$profile"
+}
+
+vis_uninstall_remove() {
+  local path="$1"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then return 0; fi
+  rm -rf -- "$path" 2>/dev/null || { chmod -R u+w -- "$path" 2>/dev/null; rm -rf -- "$path" 2>/dev/null; } || true
+  if [[ -e "$path" || -L "$path" ]]; then
+    warn "uninstall: could not remove $path"
+    uninstall_failed=1
+  else
+    say "removed $path"
+  fi
+}
+
+vis_do_uninstall() {
+  local assume_yes=0 keep_data=0 dry_run=0 arg id name target app_id profile entry answer native
+  local -a remove=() profiles=() kept=()
+  local uninstall_failed=0 home_real vis_home_real
+  while (( $# )); do
+    arg="$1"
+    case "$arg" in
+      --yes|-y) assume_yes=1 ;;
+      --keep-data) keep_data=1 ;;
+      --dry-run) dry_run=1 ;;
+      -h|--help) vis_uninstall_usage; exit 0 ;;
+      *) vis_uninstall_usage; die "uninstall: unknown argument: $arg" ;;
+    esac
+    shift
+  done
+
+  # Never remove a home folder or the file system root as "Vis state".
+  home_real="$(cd -P "${HOME:-/}" 2>/dev/null && pwd || printf '%s' "${HOME:-/}")"
+  vis_home_real="$(cd -P "$vis_home" 2>/dev/null && pwd || printf '%s' "$vis_home")"
+  if [[ -z "$vis_home" || "$vis_home_real" == "/" || "$vis_home_real" == "$home_real" ]]; then
+    die "uninstall: VIS_HOME is $vis_home, which is not a Vis folder" "Set VIS_HOME to the Vis state folder, or unset it."
+  fi
+
+  # 1. The command and its runtime, unless git owns the launcher.
+  if (( ! launcher_is_git_owned )); then
+    [[ ! -L "${BASH_SOURCE[0]}" ]] || remove+=("${BASH_SOURCE[0]}")
+    # `bin_dir` is resolved; `launcher_path` keeps the spelling it was run with.
+    remove+=("$bin_dir/${launcher_path##*/}")
+    for entry in vis-agent-native vis-agent-native.build vis-agent-python vis-tui \
+                 libjsound.dylib libjsound.so vis-web install-vis-agent; do
+      remove+=("$bin_dir/$entry")
+    done
+  fi
+
+  # 2. Desktop app copies in Applications. Only bundles with a Vis identifier.
+  if [[ -n "$vis_applications_dir" ]]; then
+    for name in "Vis.app" "Vis Beta.app" "Vis Dev.app"; do
+      target="$vis_applications_dir/$name"
+      [[ -d "$target" ]] || continue
+      app_id="$(plutil -extract CFBundleIdentifier raw -o - "$target/Contents/Info.plist" 2>/dev/null)" || app_id=""
+      if [[ "$app_id" == com.blockether.viscompanion.desktop* ]]; then
+        remove+=("$target")
+      else
+        kept+=("$target (another app)")
+      fi
+    done
+  fi
+
+  # 3. Desktop app data, which the app keeps under its bundle identifier.
+  if (( ! keep_data )); then
+    for id in $vis_desktop_bundle_ids; do
+      remove+=("$HOME/Library/Application Support/$id" "$HOME/Library/Caches/$id" \
+               "$HOME/Library/WebKit/$id" "$HOME/Library/HTTPStorages/$id" \
+               "$HOME/Library/Preferences/$id.plist" \
+               "$HOME/Library/Saved Application State/$id.savedState" \
+               "${XDG_DATA_HOME:-$HOME/.local/share}/$id" "${XDG_CONFIG_HOME:-$HOME/.config}/$id" \
+               "${XDG_CACHE_HOME:-$HOME/.cache}/$id")
+    done
+  fi
+
+  # 4. Vis state.
+  if (( keep_data )); then remove+=("$vis_install_dir"); else remove+=("$vis_home"); fi
+
+  # 5. The installer's PATH line. Keep it while the folder holds other commands.
+  if (( ! launcher_is_git_owned )); then
+    local others=0 skip
+    local -a seen=()
+    for entry in "$bin_dir"/* "$bin_dir"/.[!.]*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      skip=0
+      for target in "${remove[@]}"; do [[ "$entry" != "$target" ]] || skip=1; done
+      (( skip )) || others=1
+    done
+    for profile in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"; do
+      [[ -f "$profile" ]] || continue
+      skip=0
+      for entry in ${seen[@]+"${seen[@]}"}; do [[ "$entry" != "$profile" ]] || skip=1; done
+      (( ! skip )) || continue
+      seen+=("$profile")
+      if ! vis_profile_without_path_block "$profile" | cmp -s - "$profile"; then
+        if (( others )); then
+          kept+=("the PATH line in $profile ($bin_dir holds other commands)")
+        else
+          profiles+=("$profile")
+        fi
+      fi
+    done
+  fi
+
+  local -a present=()
+  for target in "${remove[@]}"; do
+    [[ ! -e "$target" && ! -L "$target" ]] || present+=("$target")
+  done
+  if (( ${#present[@]} == 0 && ${#profiles[@]} == 0 )); then
+    say "uninstall: Vis is not installed here; nothing to remove"
+    exit 0
+  fi
+  say "uninstall removes:"
+  for target in ${present[@]+"${present[@]}"}; do printf '  %s\n' "$(tilde_home "$target")"; done
+  for profile in ${profiles[@]+"${profiles[@]}"}; do printf '  %s\n' "$(tilde_home "the PATH line in $profile")"; done
+  if (( ${#kept[@]} )); then
+    say "uninstall keeps:"
+    for target in "${kept[@]}"; do printf '  %s\n' "$(tilde_home "$target")"; done
+  fi
+  if (( launcher_is_git_owned )); then say "the source checkout $launcher_parent stays; git owns it"; fi
+  if (( dry_run )); then say "uninstall: dry run; nothing was changed"; exit 0; fi
+  if (( ! assume_yes )); then
+    if [[ -t 0 && -t 2 ]]; then
+      printf 'Remove Vis? [y/N] ' >&2
+      read -r answer || answer=""
+      [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]] || die "uninstall: stopped; nothing was changed"
+    else
+      die "uninstall: give --yes to remove Vis without a terminal; nothing was changed"
+    fi
+  fi
+
+  # Stop what runs from these files before removing them.
+  local source_root stop_out="" gateway_pid attempt
+  native="$(find_native 2>/dev/null || true)"
+  source_root="$(find_jvm_source 2>/dev/null || true)"
+  if [[ -n "$native" ]]; then
+    stop_out="$("$native" "-Duser.home=${HOME:-$vis_home}" gateway stop 2>&1)" || warn "uninstall: could not stop the gateway"
+  elif [[ -n "$source_root" ]] && command -v clojure >/dev/null 2>&1; then
+    stop_out="$(cd "$source_root" && clojure -M:vis gateway stop 2>&1)" || warn "uninstall: could not stop the gateway"
+  fi
+  [[ -z "$stop_out" ]] || printf '%s\n' "$stop_out"
+  # A draining gateway still writes to Vis state. Wait for it, so it cannot
+  # create that state again after the removal.
+  if [[ "$stop_out" =~ \(pid\ ([0-9]+)\) ]]; then
+    gateway_pid="${BASH_REMATCH[1]}"
+    for attempt in $(seq 1 60); do
+      kill -0 "$gateway_pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    if kill -0 "$gateway_pid" 2>/dev/null; then
+      warn "uninstall: the gateway (pid $gateway_pid) is still running"
+      uninstall_failed=1
+    fi
+  fi
+  vis_close_other_desktops "/dev/null/no-app-stays"
+
+  for target in ${present[@]+"${present[@]}"}; do vis_uninstall_remove "$target"; done
+  for profile in ${profiles[@]+"${profiles[@]}"}; do
+    if entry="$(vis_profile_without_path_block "$profile")" && printf '%s\n' "$entry" > "$profile"; then
+      say "removed the PATH line from $profile"
+    else
+      warn "uninstall: could not change $profile"
+      uninstall_failed=1
+    fi
+  done
+  if (( uninstall_failed )); then
+    die "uninstall: some files stayed; see the lines above" "Remove them by hand, or run vis-agent uninstall again."
+  fi
+  say "Vis is removed. Open a new shell to clear the vis-agent command from it."
+  exit 0
+}
+
 # ── Wrapper-owned commands. The Vis app never sees these. ────────────────────
 case "${1:-}" in
   runtime) die "unknown command: runtime" "Run: vis-agent update --help" ;;
@@ -2104,6 +2319,10 @@ case "${1:-}" in
       "Use: vis-agent switch dev"
     configure_system_trust "$(runtime_effective)" 1
     vis_do_switch "$@"
+    ;;
+  uninstall)
+    shift
+    vis_do_uninstall "$@"
     ;;
 esac
 

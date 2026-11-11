@@ -14,6 +14,8 @@
             [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.internal.foundation.mcp.cli :as mcp-cli]
+            [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -1494,3 +1496,95 @@
                   (expect (= :vis.cli/invalid-toggle (:type (ex-data e))))
                   (expect (not (re-find #"kb-token" (str (ex-message e) (pr-str (ex-data e))))))))
            (finally (toggles/unregister-toggle! "main_test_secret")))))
+
+;; A refusal reaches the person as one sentence (exit 2). A fault prints sentences
+;; too, never a Java class name: `vis-agent extension versions` printed
+;; `caused by: clojure.lang.ExceptionInfo: ...`, `speech forget` a ClassCastException.
+(defn- cli-error
+  "Run `thunk` and print its failure the way `-main` does; answer what the person sees."
+  [thunk]
+  (let [err
+        (atom [])
+
+        exit
+        (atom nil)]
+
+    (with-redefs [commandline/stderr!
+                  #(swap! err conj %)
+
+                  shutdown-agents
+                  (fn []
+                    nil)
+
+                  main/exit-process!
+                  (fn [code]
+                    (reset! exit code))]
+
+      (try (thunk)
+           (catch Throwable t
+             (if-let [user (#'main/user-error-ex t)]
+               (#'main/exit-with-user-error! user)
+               (#'main/exit-with-fatal-error! t)))))
+    {:err @err :exit @exit}))
+
+(defdescribe
+  cli-error-text-test
+  (it "names the flag of a value that is not a whole number"
+      (expect (= {:err ["vis-agent: --days expects a whole number, got: abc"] :exit 2}
+                 (cli-error #(commandline/parse-args [{:name "days" :kind :flag :type :int}]
+                                                     ["--days" "abc"])))))
+  (it "gives the reason of an extension package refusal without the Python class"
+      (expect (= {:err ["vis-agent: No approved releases for example/missing"] :exit 2}
+                 (cli-error
+                   #(with-redefs-fn
+                      {#'python-extensions/package-call
+                       (fn [_]
+                         (throw (ex-info
+                                  "ValueError: No approved releases for example/missing"
+                                  {:type
+                                   :com.blockether.vis.internal.python.extensions/python-raised})))}
+                      (fn []
+                        (python-extensions/package-versions "example/missing" {})))))))
+  (it
+    "gives the gateway's reason for a refused speech request"
+    (expect
+      (=
+        {:err ["vis-agent: Voice not found: nope"] :exit 2}
+        (cli-error
+          #(with-redefs
+             [config/init-cli! (fn []) gateway-client/request!
+              (fn [& _]
+                {:status 404
+                 :body
+                 "{\"error\":{\"type\":\"voice-not-found\",\"message\":\"Voice not found: nope\"}}"})]
+             (#'speech-cli/voice-forget-command {"name" "nope"} []))))))
+  (it "names a missing audio file before any upload"
+      (expect (= {:err ["vis-agent: No audio file at /nonexistent/recording.wav"] :exit 2}
+                 (cli-error #(with-redefs [config/init-cli! (fn [])]
+                               (#'speech-cli/speech-transcribe-command
+                                {"file" "/nonexistent/recording.wav"}
+                                []))))))
+  (it "gives the gateway's reason for a refused request"
+      (expect (= {:err ["vis-agent: Unknown MCP server: nope"] :exit 2}
+                 (cli-error #(with-redefs-fn
+                               {#'gateway-client/gw-send!
+                                (fn [& _]
+                                  {:status 404
+                                   :body "{\"error\":{\"message\":\"Unknown MCP server: nope\"}}"})}
+                               (fn []
+                                 (#'gateway-client/send-json-with-entry!
+                                  {}
+                                  "POST"
+                                  "/v1/mcp/servers/actions/kill"
+                                  {:name "nope"})))))))
+  (it "asks for a transport before an MCP server reaches the gateway"
+      (expect (= 2 (:exit (cli-error #(#'mcp-cli/mcp-spec-from-parsed {"name" "nope"}))))))
+  (it "prints a fault without Java class names"
+      (let [{:keys [err exit]} (cli-error #(throw (RuntimeException. "outer step failed"
+                                                                     (ClassCastException.
+                                                                       "inner step failed"))))]
+        (expect (= 1 exit))
+        (expect (= ["vis-agent: fatal error - outer step failed" "  caused by: inner step failed"]
+                   (butlast err))
+                err)
+        (expect (not-any? #(re-find #"java\.|clojure\.lang" %) err) err))))

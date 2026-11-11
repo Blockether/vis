@@ -2822,7 +2822,8 @@
      :doc "Save the installed package in configuration for extension sync."}]
    :cmd/run-fn (fn [{:strs [source trust subdirectory revision version project global save]} _]
                  (when (and project global)
-                   (throw (ex-info "Choose --project or --global, not both" {})))
+                   (throw (ex-info "Choose --project or --global, not both"
+                                   {:vis/user-error true})))
                  (print-package-result "Installed"
                                        (python-extensions/install-package!
                                          source
@@ -2896,7 +2897,8 @@
               " failed." (when-not dry-run
                            " Run /reload to use prepared extensions in existing sessions.")))
        (when (pos? failed)
-         (throw (ex-info "Extension sync did not complete for every package" {:failed failed})))
+         (throw (ex-info "Extension sync did not complete for every package"
+                         {:vis/user-error true :failed failed})))
        results))})
 
 (registry/register-cmd!
@@ -3142,8 +3144,10 @@
      (help-row "--track release|beta|dev" "Release, green-CI native beta, or main on JVM.")
      (help-row "vis-agent switch list" "Show the installed build and every version you can select.")
      (help-row "vis-agent switch <identifier>"
-               "Install and run that release, beta or dev build from now on.") "" "CONFIGURATION"
-     (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
+               "Install and run that release, beta or dev build from now on.")
+     (help-row "vis-agent uninstall"
+               "Remove Vis, its data and the desktop app (--keep-data keeps data).") ""
+     "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
      (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"
@@ -3284,7 +3288,7 @@
    engine directly, or a launcher too old to know the word — and without this
    set it would become a PROMPT: `vis-agent upgrade` silently spent a turn
    asking a model about the word \"upgrade\" instead of updating anything."
-  #{"update" "upgrade" "switch" "desktop" "runtime"})
+  #{"update" "upgrade" "switch" "desktop" "runtime" "uninstall"})
 
 (defn- wrapper-owned-invocation?
   "True for EXACTLY one bare wrapper word. Deliberately not for longer argument
@@ -3338,21 +3342,27 @@
   (let [rc
         (root-cause t)
 
-        same?
-        (identical? rc t)]
+        message
+        (or (not-empty (ex-message t))
+            (not-empty (ex-message rc))
+            "the command stopped unexpectedly")
 
-    (commandline/stderr! (str "vis-agent: fatal error - " (or (ex-message t) (.getName (class t)))))
+        cause
+        (not-empty (ex-message rc))
+
+        debug?
+        (some-> (System/getenv "VIS_DEBUG")
+                (.equalsIgnoreCase "1"))]
+
+    ;; The log keeps the throwable with its classes and frames. The terminal gets
+    ;; only sentences: a Java class name tells the person nothing they can act on.
+    (tel/log! {:level :error :id ::fatal-error :error t} "Command failed")
+    (commandline/stderr! (str "vis-agent: fatal error - " message))
     ;; ExceptionInInitializerError etc. carry no message; surface the root cause
     ;; so failures (incl. native-image runtime class-init) are diagnosable.
-    (when-not same?
-      (commandline/stderr! (str "  caused by: "
-                                (.getName (class rc))
-                                (when-let [m (ex-message rc)]
-                                  (str ": " m)))))
+    (when (and cause (not= cause message)) (commandline/stderr! (str "  caused by: " cause)))
     ;; full trace when VIS_DEBUG is set — invaluable for native-image triage
-    (when (some-> (System/getenv "VIS_DEBUG")
-                  (.equalsIgnoreCase "1"))
-      (.printStackTrace t))
+    (when debug? (.printStackTrace t))
     (commandline/stderr! (str "See " (config/log-path) " for details.")))
   (shutdown-agents)
   (exit-process! 1))

@@ -28,6 +28,10 @@
    `url` implies Streamable HTTP; `command` implies stdio -- exactly what
    `mcp.core/transport-of` infers when no explicit `transport` is given."
   [parsed]
+  (when (every? #(str/blank? (str (get parsed %))) ["url" "command"])
+    (throw (ex-info
+             "Give --url URL for a Streamable HTTP server or --command COMMAND for a stdio server."
+             {:vis/user-error true})))
   (cond-> {"transport" (if (get parsed "url") "streamable_http" "stdio")
            "enabled" (not (boolean (get parsed "disabled")))}
     (get parsed "url")
@@ -65,7 +69,8 @@
         id
         (get parsed "target-id")]
 
-    (when (and id (nil? scope)) (throw (ex-info "--target-id requires --scope" {})))
+    (when (and id (nil? scope))
+      (throw (ex-info "--target-id requires --scope" {:vis/user-error true})))
     (when scope {:scope scope :target-id id})))
 
 (defn- cli-mcp-list!

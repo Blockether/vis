@@ -1503,7 +1503,7 @@
   (extension/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "MCP client. One gateway-wide pool connects every enabled (`:mcp :servers`) stdio or Streamable HTTP server, checks its health on the daemon clock and reconciles it on `/reload`. The inventory is in ctx under `env.mcp`, so the single verb `mcp__call` reaches every session, and there is no per-session connect or disconnect. A call with only a server lists its schemas. It supports remote OAuth 2.1 discovery with PKCE (2025-06-18). It is always on and active when servers exist."
+     "MCP client. One pool in the gateway connects each enabled MCP server (`mcp.servers` in config.yml), stdio or Streamable HTTP. It checks their health and reconnects them on `/reload`. Each session calls them with one verb, `mcp_call`; a call with only a server name lists its tools. It supports remote OAuth 2.1 sign-in with PKCE. It is active when servers are configured."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

@@ -31,9 +31,9 @@
                                         "hello")]
 
                           (#'speech/speech-say-command {"text" "hello"} [])
-                          (#'speech/speech-transcribe-command {"file" "recording.wav"} [])
+                          (#'speech/speech-transcribe-command {"file" (str audio)} [])
                           (expect (= [[:say nil "hello" {:engine-id "piper-local" :voice-id nil}]
-                                      [:transcribe nil "recording.wav" {}]]
+                                      [:transcribe nil (str audio) {}]]
                                      @calls)))
                         (finally (.delete audio))))))
 

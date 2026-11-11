@@ -84,14 +84,17 @@
 (defn- flag-arg? [s] (str/starts-with? (str s) "--"))
 
 (defn- coerce
-  [value type]
+  [value {:keys [type kind] :as spec}]
   (case (or type :string)
     :string
     value
 
     :int
     (or (parse-long (str value))
-        (throw (ex-info (str "Expected integer, got: " value) {:value value})))
+        (throw (ex-info (str (if (= :flag kind) (str "--" (:name spec)) (:name spec))
+                             " expects a whole number, got: "
+                             (if (some? value) value "nothing"))
+                        {:vis/user-error true :value value})))
 
     :boolean
     (contains? #{"true" "1" "yes"} (str/lower-case (str value)))
@@ -137,13 +140,11 @@
             (if-let [spec (get flags arg)]
               (if (= :boolean (:type spec))
                 (recur more pos-idx (assoc result (:name spec) true))
-                (recur (next more)
-                       pos-idx
-                       (assoc result (:name spec) (coerce (first more) (:type spec)))))
+                (recur (next more) pos-idx (assoc result (:name spec) (coerce (first more) spec))))
               (recur more pos-idx result))
             (if (< pos-idx (count positional))
               (let [spec (nth positional pos-idx)]
-                (recur more (inc pos-idx) (assoc result (:name spec) (coerce arg (:type spec)))))
+                (recur more (inc pos-idx) (assoc result (:name spec) (coerce arg spec))))
               (recur more pos-idx result))))))))
 
 (defn validate-args

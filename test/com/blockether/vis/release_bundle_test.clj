@@ -5002,3 +5002,120 @@
              (expect (str/includes? output "pinned-native") output)
              (expect (str/includes? output "stdio") output))
            (finally (delete-tree! root))))))
+
+;; `vis-agent uninstall` removes what the installer, `update` and `desktop` put on
+;; the computer, and nothing that belongs to another program.
+(defn- with-uninstall-fixture
+  "Run `vis-agent uninstall ARGS` from an installed copy in a temporary home and call
+   `f` with the run result and the fixture paths. `other-tool?` puts an unrelated
+   command beside vis-agent."
+  [{:keys [args other-tool?]} f]
+  (let [root
+        (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-uninstall"
+                                                               (make-array FileAttribute 0))))
+
+        home
+        (io/file root "home")
+
+        bin
+        (io/file home ".local/bin")
+
+        tools
+        (io/file root "tools")
+
+        apps
+        (io/file root "Applications")
+
+        calls
+        (io/file root "native-calls")
+
+        support
+        (io/file home "Library/Application Support/com.blockether.viscompanion.desktop")
+
+        profile
+        (io/file home ".zshrc")]
+
+    (try (doseq [dir [(io/file bin "vis-agent-python/lib") (io/file bin "vis-web") tools
+                      (io/file home ".vis/install") (io/file home ".vis/sessions") support
+                      (io/file apps "Vis.app/Contents") (io/file apps "Vis Beta.app/Contents")]]
+           (.mkdirs ^File dir))
+         (write-executable! (io/file bin "vis-agent") (slurp "bin/vis-agent"))
+         (write-executable!
+           (io/file bin "vis-agent-native")
+           (str "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '" calls "'\necho 'gateway stopped'\n"))
+         (doseq [name ["vis-agent-native.build" "vis-tui" "libjsound.so"]]
+           (spit (io/file bin name) "x"))
+         (when other-tool? (spit (io/file bin "other-tool") "x"))
+         (spit (io/file home ".vis/sessions/db") "data")
+         (spit profile
+               (str "alias ll=\"ls -l\"\n\n# Vis Agent command\n"
+                    "export PATH=\"$HOME/.local/bin:$PATH\"\nexport EDITOR=vi\n"))
+         (spit (io/file apps "Vis.app/Contents/Info.plist") "com.blockether.viscompanion.desktop")
+         (spit (io/file apps "Vis Beta.app/Contents/Info.plist") "com.example.other")
+         ;; The fake plutil prints the plist file, which holds only the identifier.
+         (write-executable! (io/file tools "plutil") "#!/bin/bash\ncat \"${@: -1}\"\n")
+         (f (run-bash (into [(str (io/file bin "vis-agent")) "uninstall"] args)
+                      {"HOME" (str home)
+                       "VIS_HOME" (str (io/file home ".vis"))
+                       "ZDOTDIR" (str home)
+                       "XDG_DATA_HOME" (str (io/file home ".local/share"))
+                       "XDG_CONFIG_HOME" (str (io/file home ".config"))
+                       "XDG_CACHE_HOME" (str (io/file home ".cache"))
+                       "VIS_APPLICATIONS_DIR" (str apps)
+                       "PATH" (str tools ":/usr/bin:/bin")})
+            {:home home
+             :bin bin
+             :apps apps
+             :support support
+             :profile profile
+             :calls (when (.exists calls) (slurp calls))})
+         (finally (delete-tree! root)))))
+
+(defdescribe
+  uninstall-test
+  (it "removes the command, its runtime, Vis state, desktop data and the PATH line"
+      (with-uninstall-fixture
+        {:args ["--yes"]}
+        (fn [{:keys [exit output]} {:keys [home bin apps support profile calls]}]
+          (expect (zero? exit) output)
+          (expect (= "-Duser.home=" (subs (str calls) 0 12)) (str calls))
+          (expect (str/includes? (str calls) "gateway stop") (str calls))
+          (expect (empty? (.list ^File bin)) (vec (.list ^File bin)))
+          (expect (not (.exists (io/file home ".vis"))))
+          (expect (not (.exists ^File support)))
+          (expect (not (.exists (io/file apps "Vis.app"))))
+          ;; Another app with the same name is not ours to remove.
+          (expect (.exists (io/file apps "Vis Beta.app")))
+          (expect (= "alias ll=\"ls -l\"\nexport EDITOR=vi\n" (slurp profile))))))
+  (it "changes nothing without --yes when no terminal can confirm"
+      (with-uninstall-fixture {:args []}
+                              (fn [{:keys [exit output]} {:keys [home bin profile]}]
+                                (expect (= 1 exit) output)
+                                (expect (str/includes? output "give --yes") output)
+                                (expect (.exists (io/file bin "vis-agent-native")))
+                                (expect (.exists (io/file home ".vis/sessions/db")))
+                                (expect (str/includes? (slurp profile) "# Vis Agent command")))))
+  (it "changes nothing on a dry run"
+      (with-uninstall-fixture {:args ["--dry-run"]}
+                              (fn [{:keys [exit output]} {:keys [home bin calls]}]
+                                (expect (zero? exit) output)
+                                (expect (str/includes? output "~/.vis\n") output)
+                                (expect (nil? calls) (str calls))
+                                (expect (.exists (io/file bin "vis-agent")))
+                                (expect (.exists (io/file home ".vis/sessions/db"))))))
+  (it "keeps sessions and desktop data with --keep-data"
+      (with-uninstall-fixture {:args ["--yes" "--keep-data"]}
+                              (fn [{:keys [exit output]} {:keys [home bin support]}]
+                                (expect (zero? exit) output)
+                                (expect (not (.exists (io/file bin "vis-agent-native"))))
+                                (expect (not (.exists (io/file home ".vis/install"))))
+                                (expect (= "data" (slurp (io/file home ".vis/sessions/db"))))
+                                (expect (.exists ^File support)))))
+  (it "keeps the PATH line and other commands that share the folder"
+      (with-uninstall-fixture {:args ["--yes"] :other-tool? true}
+                              (fn [{:keys [exit output]} {:keys [bin profile]}]
+                                (expect (zero? exit) output)
+                                (expect (= ["other-tool"] (vec (.list ^File bin))))
+                                (expect (str/includes? (slurp profile)
+                                                       "export PATH=\"$HOME/.local/bin:$PATH\"")
+                                        (slurp profile))))))

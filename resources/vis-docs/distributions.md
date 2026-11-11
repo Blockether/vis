@@ -27,6 +27,7 @@ the same gateway from Windows, macOS or Linux.
   app](#beta-the-newest-published-beta), which stays separate from your stable app.
 - **You want Vis in a browser.** [Open the web app](#open-the-web-app) that your gateway
   serves.
+- **You want to remove Vis from a computer.** See [Removing Vis](#removing-vis).
 
 To add Java or Clojure code inside the engine, see [Native builds for Java and
 Clojure extensions](jvm-native-image.md).
@@ -556,6 +557,33 @@ has an immutable `beta-<commit>` tag. Its prerelease stays a draft until two con
 
 A failed or cancelled build cannot replace the last published beta. A beta never becomes the latest
 stable release on GitHub, and it does not publish mobile apps.
+
+## Removing Vis
+
+`vis-agent uninstall` removes Vis from this computer. First it shows the list of what it removes.
+
+```bash
+vis-agent uninstall --dry-run     # show the list and change nothing
+vis-agent uninstall               # show the list, then ask before it removes
+vis-agent uninstall --keep-data   # remove the installation, keep sessions and settings
+```
+
+Without `--keep-data`, it also removes `~/.vis`. That folder holds your sessions, configuration and
+provider credentials, and you cannot get them back. Copy `~/.vis` first if you want to keep them.
+
+The command stops the gateway and closes the desktop app. Then it removes these items:
+
+- the `vis-agent` command and the runtime beside it
+- the desktop app copies in `/Applications` that are Vis apps
+- the desktop app data in `~/Library` on macOS, or under `~/.local/share`, `~/.config` and
+  `~/.cache` on Linux
+- the PATH line that the installer added to your shell profile
+- `~/.vis`, or only `~/.vis/install` with `--keep-data`
+
+It keeps the PATH line when other commands share the folder. A launcher in a source checkout stays,
+because Git owns that file. A desktop app that you installed from a `.deb` or `.msi` package stays.
+Remove it with your package manager. A script or CI job must give `--yes`, because no terminal can
+confirm.
 
 ## Files
 
