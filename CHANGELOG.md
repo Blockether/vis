@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.13] - 2026-11-11
+
 ### Fixed
 - Release: the `vis-agent` archives no longer ship Python bytecode. The build ran `pip` in the bundled interpreter, and `pip` wrote 675 `.pyc` files beside the standard library and the SDK packages (12.8 MB in the Linux x64 archive). The runtime keeps bytecode in a cache folder of each user, so it never read these files.
 
