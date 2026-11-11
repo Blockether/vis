@@ -3121,8 +3121,12 @@
    separators, or nil."
   [extensions]
   (let [tool-names
-        (for [ext extensions
-              entry (ext-symbols ext)]
+        (for [ext
+              extensions
+
+              entry
+              (ext-symbols ext)]
+
           [(tool-op-keywords ext (:ext.symbol/symbol entry))
            (sym->py-name (symbol-binding ext (:ext.symbol/symbol entry)))])
 
@@ -3132,9 +3136,14 @@
         folded
         #(str/replace (str %) #"[./-]" "_")]
 
-    (for [ext extensions
-          {:keys [op]} (:ext/op-hooks ext)
-          :let [op-kw (or (gate-op op) (keyword op))]
+    (for [ext
+          extensions
+
+          {:keys [op]}
+          (:ext/op-hooks ext)
+
+          :let [op-kw
+                (or (gate-op op) (keyword op))]
           :when (not (contains? known op-kw))]
 
       {:extension (:ext/name ext)

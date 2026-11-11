@@ -8,11 +8,10 @@ response contract gives. `VisShortcutsCoreTests` checks the Swift contract again
 
 import json
 from pathlib import Path
-from typing import Literal, Optional
-
-from pydantic import BaseModel, Field
+from typing import Literal
 
 from blockether.vis.engine._agent import _problem_lines, _ResponseContract
+from pydantic import BaseModel, Field
 
 
 class Item(BaseModel):
@@ -24,7 +23,7 @@ class Order(BaseModel):
     id: int
     status: Literal["open", "closed"]
     items: list[Item]
-    note: Optional[str] = None
+    note: str | None = None
     tags: list[str] = Field(default_factory=list, max_length=3)
     price: float = Field(gt=0)
 
@@ -48,7 +47,7 @@ ANSWERS = {
         '{"cents": 1e400, "express": true}',
         '{"cents": 1.0, "express": true}',
         '{"cents": 1.5, "express": true}',
-        '[1, 2]',
+        "[1, 2]",
         '{"cents": 1,\n "express": }',
         "",
         None,
@@ -59,7 +58,7 @@ ANSWERS = {
         '{"id": 1, "status": "open", "items": [{"count": 1}], "note": 5, "price": 1, '
         '"tags": ["a", "b", "c", "d"]}',
         '{"id": true, "status": "open", "items": "none", "price": 1}',
-        '{}',
+        "{}",
     ],
 }
 
@@ -88,9 +87,17 @@ def main():
                 "answers": rows,
             }
         )
-    many = [{"path": f"$.f{n}", "message": "bad", "source": "schema"} for n in range(12)]
-    fixture = {"cases": cases, "problem_lines": {"problems": many, "text": _problem_lines(many)}}
-    target = Path(__file__).resolve().parents[1] / "Tests/VisShortcutsCoreTests/Fixtures/sdk-parity.json"
+    many = [
+        {"path": f"$.f{n}", "message": "bad", "source": "schema"} for n in range(12)
+    ]
+    fixture = {
+        "cases": cases,
+        "problem_lines": {"problems": many, "text": _problem_lines(many)},
+    }
+    target = (
+        Path(__file__).resolve().parents[1]
+        / "Tests/VisShortcutsCoreTests/Fixtures/sdk-parity.json"
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(fixture, ensure_ascii=False, indent=2) + "\n")
     print(f"wrote {target}")

@@ -509,7 +509,8 @@ def check_resize(binary, home, gateway, mode=None):
             os.write(master, b"responsive-marker")
             await_bottom(2, text=b"responsive-marker")
             print(
-                f"C-x m {model_key}: input responsive during slow model HTTP", flush=True
+                f"C-x m {model_key}: input responsive during slow model HTTP",
+                flush=True,
             )
     finally:
         os.close(master)

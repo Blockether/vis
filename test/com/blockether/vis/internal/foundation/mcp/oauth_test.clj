@@ -269,23 +269,20 @@
     (cond
       (str/ends-with? uri "/.well-known/oauth-protected-resource")
       {:status 200
-       :body "{\"resource\":\"https://mcp.example.test/mcp\",\"authorization_servers\":[\"https://auth.example.test\"]}"}
-
+       :body
+       "{\"resource\":\"https://mcp.example.test/mcp\",\"authorization_servers\":[\"https://auth.example.test\"]}"}
       (str/ends-with? uri "/.well-known/oauth-authorization-server")
       {:status 200
-       :body (str "{\"authorization_endpoint\":\"https://auth.example.test/authorize\","
-                  "\"token_endpoint\":\"https://auth.example.test/token\","
-                  "\"registration_endpoint\":\"https://auth.example.test/register\","
-                  "\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\",\"client_secret_post\"]}")}
-
-      (str/ends-with? uri "/register")
-      {:status register-status :body "Forbidden"}
-
-      (str/ends-with? uri "/token")
-      {:status 200 :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
-
-      :else
-      {:status 404 :body ""})))
+       :body
+       (str
+         "{\"authorization_endpoint\":\"https://auth.example.test/authorize\","
+         "\"token_endpoint\":\"https://auth.example.test/token\","
+         "\"registration_endpoint\":\"https://auth.example.test/register\","
+         "\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\",\"client_secret_post\"]}")}
+      (str/ends-with? uri "/register") {:status register-status :body "Forbidden"}
+      (str/ends-with? uri "/token") {:status 200
+                                     :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
+      :else {:status 404 :body ""})))
 
 (defdescribe
   sign-in-refusal-test
@@ -303,20 +300,27 @@
           (expect (str/includes? (:message data)
                                  "HTTP 403 from https://auth.example.test/register")))))
   (it "signs in with a pre-registered client and secret, without registration"
-      (let [seen (atom [])
-            file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]
+      (let [seen
+            (atom [])
+
+            file
+            (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]
+
         (try (with-redefs-fn {#'http/request (authorization-server 403 seen)
                               #'oauth/token-file (constantly file)}
                (fn []
-                 (let [flow (oauth/start-authorization! "figma"
-                                                        "https://mcp.example.test/mcp"
-                                                        {:auth-hint {:client-id "vis-test"
-                                                                     :client-secret "s3cret"}})
-                       state (second (re-find #"[?&]state=([^&]+)" (get flow "url")))]
-                   (oauth/complete-authorization! (get flow "flow_id")
-                                                  (str (get flow "redirect_uri")
-                                                       "?code=test-code&state="
-                                                       state))
+                 (let [flow
+                       (oauth/start-authorization! "figma"
+                                                   "https://mcp.example.test/mcp"
+                                                   {:auth-hint {:client-id "vis-test"
+                                                                :client-secret "s3cret"}})
+
+                       state
+                       (second (re-find #"[?&]state=([^&]+)" (get flow "url")))]
+
+                   (oauth/complete-authorization!
+                     (get flow "flow_id")
+                     (str (get flow "redirect_uri") "?code=test-code&state=" state))
                    (let [token (first (filter #(str/ends-with? (:uri %) "/token") @seen))]
                      (expect (not-any? #(str/ends-with? (:uri %) "/register") @seen))
                      (expect (str/includes? (get flow "url") "client_id=vis-test"))

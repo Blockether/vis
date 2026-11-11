@@ -303,7 +303,8 @@
                 (reload-release)
                 (expect (= "1.0.0" (active-version)))
                 ;; Issue #444: sync --prune in another process keeps a snapshot that this one loaded.
-                (expect (= :held (paths/claim-state (io/file directory "vis-release-fixture" "1.0.0"))))
+                (expect (= :held
+                           (paths/claim-state (io/file directory "vis-release-fixture" "1.0.0"))))
                 (let [status (pyx/package-versions "Example/Extensions" {:directory directory})]
                   (expect (= "1.0.0" (get status "installed")))
                   (expect (= "1.1.0" (get status "latest")))

@@ -1488,9 +1488,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     (when-not (some (fn [[sym _]]
                       (= "shell" (sym->py-name sym)))
                     (or custom-bindings {}))
-      (seed-json! session
-                  "__vis_docs__"
-                  {"shell" shell-off-doc}))
+      (seed-json! session "__vis_docs__" {"shell" shell-off-doc}))
     ;; The runtime says these sentences from a handle that outlived its tool.
     (seed-json! session "__vis_process_surface__" PROCESS_SURFACE)
     (perf/timed :sandbox/shims (install-shims! session))

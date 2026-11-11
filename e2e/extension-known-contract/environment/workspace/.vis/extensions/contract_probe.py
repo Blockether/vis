@@ -57,7 +57,9 @@ class ContractProbe:
     def __init__(self) -> None:
         self._records = 0
         self._total = 0
-        self._ledger = Path(__file__).resolve().parents[1] / "calls" / "contract-receipts.jsonl"
+        self._ledger = (
+            Path(__file__).resolve().parents[1] / "calls" / "contract-receipts.jsonl"
+        )
 
     @vis.method(
         tag="mutation",

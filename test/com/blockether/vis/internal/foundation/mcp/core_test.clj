@@ -238,9 +238,13 @@
   mcp-sign-in-backoff-test
   (it "asks an OAuth server that nobody signed in to once per backoff, not on every connect"
       ;; Regression #458: 45 `HTTP 401 on initialize` connects in two minutes of turns.
-      (let [requests (atom 0)
-            missing (java.io.File. (System/getProperty "java.io.tmpdir")
-                                   (str "vis-mcp-none-" (random-uuid) ".edn"))]
+      (let [requests
+            (atom 0)
+
+            missing
+            (java.io.File. (System/getProperty "java.io.tmpdir")
+                           (str "vis-mcp-none-" (random-uuid) ".edn"))]
+
         (with-redefs-fn {#'oauth/token-file (constantly missing)
                          #'http/request (fn [_]
                                           (swap! requests inc)
@@ -248,8 +252,9 @@
                                            :headers {"www-authenticate" "Bearer realm=\"mcp\""}
                                            :body ""})
                          #'config/load-global-config-raw
-                         (constantly {"mcp" {"servers" {"remote" {"transport" "streamable_http"
-                                                                  "url" "https://mcp.example.test/mcp"}}}})}
+                         (constantly {"mcp" {"servers" {"remote"
+                                                        {"transport" "streamable_http"
+                                                         "url" "https://mcp.example.test/mcp"}}}})}
           (fn []
             (#'mcp/reset-server-cache!)
             (try (dotimes [_ 3]
@@ -275,7 +280,8 @@
                  (expect (= {"figma-dev" {"transport" "stdio" "command" "true"}}
                             (get-in @store ["mcp" "servers"])))
                  (expect (= :mcp/invalid-name
-                            (try (mcp/save-gateway-server! " \n- " {"transport" "stdio" "command" "true"})
+                            (try (mcp/save-gateway-server! " \n- "
+                                                           {"transport" "stdio" "command" "true"})
                                  nil
                                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
                  (finally (#'mcp/reset-server-cache!))))))))

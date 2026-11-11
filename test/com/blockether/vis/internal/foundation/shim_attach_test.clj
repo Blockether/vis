@@ -498,15 +498,19 @@
               (.write out pk)))
 
           out
-          (extension/with-context
-            {:env {:session-id (random-uuid) :workspace {:root root}}}
-            (binding [mpl-capture/*attachment-limit-bytes* 100]
-              (block (ctx-with-root root)
-                     (str "pk = b'PK\\x03\\x04' + bytes(20)\n"
-                          "print('MT', attach(pk, 'small.xlsx')['media_type'])\n"
-                          "print('MT', attach(pk, 'bundle.zip')['media_type'])\n"
-                          "print('MT', attach(" (pr-str (str root "/big.xlsx")) ")['media_type'])\n"
-                          "print('MT', attach(" (pr-str (str root "/big.docx")) ")['media_type'])\n"))))
+          (extension/with-context {:env {:session-id (random-uuid) :workspace {:root root}}}
+                                  (binding [mpl-capture/*attachment-limit-bytes* 100]
+                                    (block (ctx-with-root root)
+                                           (str
+                                             "pk = b'PK\\x03\\x04' + bytes(20)\n"
+                                             "print('MT', attach(pk, 'small.xlsx')['media_type'])\n"
+                                             "print('MT', attach(pk, 'bundle.zip')['media_type'])\n"
+                                             "print('MT', attach("
+                                             (pr-str (str root "/big.xlsx"))
+                                             ")['media_type'])\n"
+                                             "print('MT', attach("
+                                             (pr-str (str root "/big.docx"))
+                                             ")['media_type'])\n"))))
 
           so
           (str (:stdout out))]

@@ -365,7 +365,8 @@
         ;; The first plain sync proved the `-main` dispatch; this repair skips its engine load.
         (let [result (run-uv-cli dir
                                  environment
-                                 ["--shared" "uv" "sync" "--project" (.getPath project) "--offline"])]
+                                 ["--shared" "uv" "sync" "--project" (.getPath project)
+                                  "--offline"])]
           (expect (= 0 (:exit result)) (:output result)))
         (let [result (sync! "--check")]
           (expect (= 0 (:exit result)) (:output result)))

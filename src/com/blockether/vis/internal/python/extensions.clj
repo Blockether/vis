@@ -1587,7 +1587,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    The runtime owns the source module and closes it with its session."
   [source]
   (str "__import__('vis_runtime').exec_module(globals(), 'extension', "
-       "__import__('json').loads(" (python-string-literal (json/write-json-str source))
+       "__import__('json').loads("
+       (python-string-literal (json/write-json-str source))
        "), __file__, flags=__import__('__future__').annotations.compiler_flag, "
        "attributes={'__vis_ext_dir__': __vis_ext_dir__, **__import__('json').loads("
        (python-string-literal (json/write-json-str (python-runtime/version-globals)))
@@ -2289,7 +2290,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             (and (map? res) (= "repair" (get res "marker")))
             (run-repaired-op env op-kw args preview res next-fn)
             (and (map? res) (= "env" (get res "marker")))
-            (binding [*call-env* (merge *call-env* (update-vals (get res "env") #(some-> % str)))]
+            (binding [*call-env* (merge *call-env*
+                                        (update-vals (get res "env")
+                                                     #(some-> %
+                                                              str)))]
               (next-fn args))
             :else (next-fn args)))))
 
@@ -3860,14 +3864,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    (#444). Only a snapshot with an install receipt next to a `current` link gets a
    claim; a local source project gets no claim file."
   [^File project]
-  (when-let [^File snapshot
-             (paths/nearest-ancestor (fn [^File dir]
-                                       (and (.isFile (io/file dir "receipt.json"))
-                                            (some-> (.getParentFile dir)
-                                                    (io/file "current")
-                                                    .toPath
-                                                    Files/isSymbolicLink)))
-                                     (.getCanonicalFile project))]
+  (when-let [^File snapshot (paths/nearest-ancestor (fn [^File dir]
+                                                      (and (.isFile (io/file dir "receipt.json"))
+                                                           (some-> (.getParentFile dir)
+                                                                   (io/file "current")
+                                                                   .toPath
+                                                                   Files/isSymbolicLink)))
+                                                    (.getCanonicalFile project))]
     (try (paths/with-claim-lock (.getParentFile (.getParentFile snapshot))
                                 #(paths/claim-dir! snapshot))
          (catch Throwable t
@@ -3887,43 +3890,43 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                             (when-let [^File root (if (instance? File roots) roots (last roots))]
                               (.getName root))
                             #(freeze-root! roots))]
-    (try
-      (some-> project claim-package-snapshot!)
-      (let [prepare? (or automatic? sync-projects?)
-            packages (when project
-                       (timed-phase :environment
-                                    (.getName ^File project)
-                                    #(or (get site-packages (.getCanonicalPath ^File project))
-                                         (cond (shared-environment? project-root project)
-                                               (str ((if prepare?
-                                                       python-runtime/ensure-shared-project!
-                                                       python-runtime/prepared-shared-project)
-                                                      project))
-                                               (or sync-projects?
-                                                   (python-runtime/project-environment-exists?
-                                                     project))
-                                               (str ((if prepare?
-                                                       python-runtime/ensure-project!
-                                                       python-runtime/prepared-project)
-                                                      project))))))]
+    (try (some-> project
+                 claim-package-snapshot!)
+         (let [prepare? (or automatic? sync-projects?)
+               packages (when project
+                          (timed-phase :environment
+                                       (.getName ^File project)
+                                       #(or (get site-packages (.getCanonicalPath ^File project))
+                                            (cond (shared-environment? project-root project)
+                                                  (str ((if prepare?
+                                                          python-runtime/ensure-shared-project!
+                                                          python-runtime/prepared-shared-project)
+                                                         project))
+                                                  (or sync-projects?
+                                                      (python-runtime/project-environment-exists?
+                                                        project))
+                                                  (str ((if prepare?
+                                                          python-runtime/ensure-project!
+                                                          python-runtime/prepared-project)
+                                                         project))))))]
 
-        (when (and (not project) (seq dependencies))
-          (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
-                                                          :upgrade? true}
-                                                         dependencies)
-                            (catch Throwable t
-                              (throw (python-runtime/installer-error "pip"
-                                                                     :install
-                                                                     (assoc (ex-data t)
-                                                                       :out (.getMessage t))))))]
-            (when-not (zero? (long (or (:exit result) 1)))
-              (throw (python-runtime/installer-error "pip" :install result)))))
-        (assoc frozen
-          :roots roots
-          :packages packages
-          :project-root project-root
-          :package-metadata package-metadata))
-      (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
+           (when (and (not project) (seq dependencies))
+             (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
+                                                             :upgrade? true}
+                                                            dependencies)
+                               (catch Throwable t
+                                 (throw (python-runtime/installer-error "pip"
+                                                                        :install
+                                                                        (assoc (ex-data t)
+                                                                          :out (.getMessage t))))))]
+               (when-not (zero? (long (or (:exit result) 1)))
+                 (throw (python-runtime/installer-error "pip" :install result)))))
+           (assoc frozen
+             :roots roots
+             :packages packages
+             :project-root project-root
+             :package-metadata package-metadata))
+         (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
 
 (defn ^:no-doc close-context!
   "Retire a registration after admitted calls drain. Session realizations remain
@@ -4760,16 +4763,19 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 (defn- unmatched-op-hook-findings
   "Doctor rows for each op hook that names no loaded tool or host operation."
   []
-  (for [{:keys [extension op suggestion]}
-        (distinct (extension/unmatched-op-hooks (extension/registered-extensions)))]
-
+  (for [{:keys [extension op suggestion]} (distinct (extension/unmatched-op-hooks
+                                                      (extension/registered-extensions)))]
     {:level :warn
      :check-id ::op-hook-target
-     :message (str "Extension '" extension "' has an op hook on `" op
+     :message (str "Extension '"
+                   extension
+                   "' has an op hook on `"
+                   op
                    "`, which names no loaded tool or host operation, so the hook never runs.")
-     :remediation (if suggestion
-                    (str "Write `" suggestion "`, the name that python_execution calls.")
-                    "Write the name that python_execution calls, or load the extension that owns the tool.")}))
+     :remediation
+     (if suggestion
+       (str "Write `" suggestion "`, the name that python_execution calls.")
+       "Write the name that python_execution calls, or load the extension that owns the tool.")}))
 
 (defn- warn-unmatched-op-hooks!
   "Log each op hook that never runs, after a load that changed the extensions."
@@ -4934,22 +4940,21 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    Only new, changed and failed extension files load again; `{:all? true}` loads all (#393)."
   ([] (reload-python-extensions! nil))
   ([opts]
-   (with-reload-phases (fn []
-                         (let [requested (System/nanoTime)]
-                           (with-load-lock
-                             (fn []
-                               (record-phase! :lock-wait nil requested)
-                               (when (pyext/worker-live? pyext/shared-key)
-                                 (timed-phase :package-paths
-                                              nil
-                                              #(pyext/exec!
-                                                 pyext/shared-key
-                                                 runtime/default-session
-                                                 (str "import package_paths; package_paths.refresh("
-                                                      (python-string-literal (runtime/packages-dir))
-                                                      ", reload=True)"))))
-                               (doto (load-scopes! (assoc opts :force? true) true)
-                                 warn-unmatched-op-hooks!))))))))
+   (with-reload-phases
+     (fn []
+       (let [requested (System/nanoTime)]
+         (with-load-lock
+           (fn []
+             (record-phase! :lock-wait nil requested)
+             (when (pyext/worker-live? pyext/shared-key)
+               (timed-phase :package-paths
+                            nil
+                            #(pyext/exec! pyext/shared-key
+                                          runtime/default-session
+                                          (str "import package_paths; package_paths.refresh("
+                                               (python-string-literal (runtime/packages-dir))
+                                               ", reload=True)"))))
+             (doto (load-scopes! (assoc opts :force? true) true) warn-unmatched-op-hooks!))))))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 

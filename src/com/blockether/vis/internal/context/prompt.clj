@@ -322,8 +322,7 @@
    It is a state machine: each state names its rules and its exit."
   (str
     "Work in states. In each state, obey its rules, then take its exit. The Always rules apply in every state.\n"
-    "\n"
-    "## States\n"
+    "\n" "## States\n"
     "- ANSWER: For a question, an analysis or a diff preview, change no files. Use tools only to get missing "
     "facts. Exit: FINISH.\n"
     "- ORIENT: Read the files that the task names. For an unknown path, `ls` the nearest known parent. Read only "

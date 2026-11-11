@@ -2945,21 +2945,21 @@
                     (contains? opts :workspace-root)
                     (assoc :workspace_root workspace-root))]
       (when (seq set-map)
-        (sqlite-write-tx!
-          db-info
-          (fn [tx-info]
-            (let [where [:= :id (->id project-id)]
-                  from (when (contains? opts :workspace-root)
-                         (:workspace_root
-                           (query-one! tx-info
-                                       {:select [:workspace_root] :from :project :where where})))]
+        (sqlite-write-tx! db-info
+                          (fn [tx-info]
+                            (let [where [:= :id (->id project-id)]
+                                  from (when (contains? opts :workspace-root)
+                                         (:workspace_root (query-one! tx-info
+                                                                      {:select [:workspace_root]
+                                                                       :from :project
+                                                                       :where where})))]
 
-              (execute! tx-info {:update :project :set set-map :where where})
-              (when (and (not (str/blank? (str from)))
-                         (not (str/blank? (str workspace-root)))
-                         (not= from (str workspace-root)))
-                (move-project-workspaces! tx-info from (str workspace-root) repo-id)
-                (move-owned-automations! tx-info from (str workspace-root))))))
+                              (execute! tx-info {:update :project :set set-map :where where})
+                              (when (and (not (str/blank? (str from)))
+                                         (not (str/blank? (str workspace-root)))
+                                         (not= from (str workspace-root)))
+                                (move-project-workspaces! tx-info from (str workspace-root) repo-id)
+                                (move-owned-automations! tx-info from (str workspace-root))))))
         (db-get-project db-info project-id)))))
 
 (defn db-delete-project!
