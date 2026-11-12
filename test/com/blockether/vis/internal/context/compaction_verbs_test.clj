@@ -13,6 +13,7 @@
      4. Session-bag reflection — fold counts and the diagnostic ledger are not
         echoed in the per-iteration model-facing utilization delta."
   (:require [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.renderer :as cr]
@@ -1267,7 +1268,7 @@
             (form-wire-text form)]
 
         (expect (str/starts-with? text (filler 300)))
-        (expect (< (count text) 33000))
+        (expect (< (count text) (+ 1000 (var-get #'form/MAX_FORM_PREVIEW_CHARS))))
         (expect (= (+ 250 (svar/count-tokens "unknown" (str (:thinking rec) "\n" text)))
                    (weight-of rec)))))
   (it "includes errors and excludes a fold breadcrumb"
