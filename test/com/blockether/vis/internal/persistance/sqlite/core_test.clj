@@ -2245,7 +2245,101 @@
         (Thread/sleep 200)
         (.countDown release)
         @holder
-        (expect (= "held" @reader))))))
+        (expect (= "held" @reader)))))
+  ;; Regression #468: an Activity page read ran inside the Vis write transaction, so each
+  ;; live snapshot of a running block waited for every write of every other session.
+  (it
+    "reads an Activity page while another thread holds a Vis write on a disk store"
+    (let [root
+          (fs/create-temp-dir {:prefix "vis-activity-read-"})
+
+          s
+          (persistance/db-create-connection! (str (fs/path root "store")))]
+
+      (try
+        (let [sid
+              (h/store-session! s {:channel :cli})
+
+              aid
+              (str (random-uuid))
+
+              ctx
+              (event/context)
+
+              inv
+              (event/invocation ctx nil)
+
+              details
+              {:operation :read-record
+               :presenter :generic
+               :args [{:path "record-1"}]
+               :activity {:headline "Read record"}}
+
+              write-tx!
+              (private-core-fn "sqlite-write-tx!")
+
+              held
+              (CountDownLatch. 1)
+
+              release
+              (CountDownLatch. 1)]
+
+          (persistance/db-activity-apply! s sid aid (event/start-event ctx inv details))
+          (persistance/db-activity-apply! s
+                                          sid
+                                          aid
+                                          (event/terminal-event ctx
+                                                                inv
+                                                                (assoc details
+                                                                  :outcome :succeeded
+                                                                  :started-at-ms
+                                                                  (System/currentTimeMillis))))
+          (let [holder (future (write-tx! s
+                                          (fn [tx]
+                                            (jdbc/execute! (:datasource tx)
+                                                           (sql/format {:update :session_state
+                                                                        :set {:title "held"}
+                                                                        :where [:= :session_soul_id
+                                                                                (str sid)]}))
+                                            (.countDown held)
+                                            (.await release 10 TimeUnit/SECONDS))))]
+            (try (expect (true? (.await held 5 TimeUnit/SECONDS)))
+                 (let [page
+                       (deref (future (persistance/db-activity-page s sid aid {})) 3000 ::blocked)]
+                   (expect (= [(:invocation-id inv)] (mapv :id (:rows page)))))
+                 (finally (.countDown release) @holder))))
+        (finally (persistance/db-dispose-connection! s) (fs/delete-tree root)))))
+  ;; Regression #468: a write slept between busy retries while it held the Vis write lock,
+  ;; so every other write of the process stalled for the whole retry schedule.
+  (it "lets another Vis write run while a write waits between busy retries"
+      (let [s
+            (h/store)
+
+            write-tx!
+            (private-core-fn "sqlite-write-tx!")
+
+            first-try
+            (CountDownLatch. 1)
+
+            other-done
+            (promise)
+
+            retrying
+            (future (write-tx! s
+                               (fn [_]
+                                 (.countDown first-try)
+                                 (if (realized? other-done)
+                                   :ok
+                                   (throw (RuntimeException.
+                                            "[SQLITE_BUSY] database is locked"))))))]
+
+        (expect (true? (.await first-try 5 TimeUnit/SECONDS)))
+        (expect (= :other
+                   (write-tx! s
+                              (fn [_]
+                                (deliver other-done true)
+                                :other))))
+        (expect (= :ok (try @retrying (catch Exception e (ex-message e))))))))
 
 ;; Session
 

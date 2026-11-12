@@ -330,29 +330,53 @@
                       :revision (:revision history)
                       :total (reduce + 0 (vals (:counts metadata)))
                       :after after
-                      :next-after (when more? (:sequence (peek selected)))}))]
+                      :next-after (when more? (:sequence (peek selected)))}))
 
-    (loop [selected (vec (take limit records))]
-      (let [projection (page selected (> (count records) (count selected)))]
-        ;; A single invocation is indivisible: byte targets only split between records.
-        (if (or (<= (count selected) 1)
-                (<= (activity/byte-size projection) (long activity-contract/page-byte-target)))
-          projection
-          (recur (pop selected)))))))
+        total
+        (count records)
 
-(defn- activity-history-page
-  "One bounded keyset page of the Activity `history` row, without an owner check."
+        n
+        (min (long limit) total)
+
+        prefix
+        (fn [k]
+          (page (into [] (take k) records) (> total (long k))))
+
+        fits?
+        (fn [projection]
+          (<= (activity/byte-size projection) (long activity-contract/page-byte-target)))
+
+        whole
+        (prefix n)]
+
+    ;; A single invocation is indivisible: byte targets only split between records.
+    ;; The longest prefix that fits, found by halving: one projection per probe, where
+    ;; dropping one record at a time projected the page again for each record.
+    (if (or (<= n 1) (fits? whole))
+      whole
+      (loop [lo
+             1
+
+             hi
+             n]
+
+        (if (<= (- hi lo) 1)
+          (prefix lo)
+          (let [mid (quot (+ lo hi) 2)]
+            (if (fits? (prefix mid)) (recur mid hi) (recur lo mid))))))))
+
+(defn- activity-page-rows
+  "The stored rows of one bounded keyset page of the Activity `history` row, without an
+   owner check. Holds one row past `limit`, which only marks more pages."
   [db history {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit}}]
-  (let [rows (query! db
-                     {:select [:payload]
-                      :from [:activity_invocation]
-                      :where (cond-> [:and [:= :history_id (:id history)] [:> :sequence after]
-                                      [:= :visible 1]]
-                               (not (str/blank? q))
-                               (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
-                      :order-by [[:sequence :asc]]
-                      :limit (inc (long limit))})]
-    (activity-page-projection history (mapv #(<-blob (:payload %)) rows) after limit)))
+  (query! db
+          {:select [:payload]
+           :from [:activity_invocation]
+           :where (cond-> [:and [:= :history_id (:id history)] [:> :sequence after] [:= :visible 1]]
+                    (not (str/blank? q))
+                    (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
+           :order-by [[:sequence :asc]]
+           :limit (inc (long limit))}))
 
 (def ^:private activity-first-records-sql
   "The visible records of each history up to one past the page row limit, in order.
@@ -1180,25 +1204,53 @@
    starts an immediate SQLite transaction, and retries the whole operation on
    stale WAL snapshots / busy lock failures. Retry must happen outside the
    transaction because SQLITE_BUSY_SNAPSHOT poisons the current transaction's
-   snapshot."
+   snapshot. Each attempt holds the Vis write lock; the wait between attempts
+   does not, so other writes of this process run while this one waits (#468)."
   [db-info f]
   (if (:sqlite-write-tx? db-info)
     (f db-info)
-    (locking sqlite-write-lock
-      (loop [attempt
-             0
+    (loop [delays sqlite-write-retry-delays-ms]
+      (let [result (locking sqlite-write-lock
+                     (try {:success? true :value (sqlite-write-attempt! db-info f)}
+                          (catch Throwable t {:success? false :throwable t})))]
+        (if (:success? result)
+          (:value result)
+          (let [t (:throwable result)]
+            (if (and (sqlite-busy? t) (seq delays))
+              (do (Thread/sleep (long (first delays))) (recur (rest delays)))
+              (throw t))))))))
 
-             delays
-             sqlite-write-retry-delays-ms]
+(defn- sqlite-read-snapshot!
+  "Run the read `f` in one DEFERRED transaction on a pooled connection. The connection
+   config makes every JDBC transaction IMMEDIATE, which reserves the SQLite writer, so
+   this transaction starts by hand. In WAL mode it reads one snapshot and waits for no
+   writer."
+  [db-info f]
+  (let [source (ds db-info)]
+    (with-open [^java.sql.Connection conn (jdbc/get-connection source)]
+      (jdbc/execute! conn ["BEGIN DEFERRED"])
+      (try (let [value (f (assoc db-info
+                            :datasource conn
+                            :conn conn))]
+             (jdbc/execute! conn ["COMMIT"])
+             value)
+           (catch Throwable t
+             (try (jdbc/execute! conn ["ROLLBACK"])
+                  (catch Throwable rollback
+                    ;; A pooled connection left inside a transaction fails its next writer.
+                    (.addSuppressed t rollback)
+                    (when (instance? HikariDataSource source)
+                      (.evictConnection ^HikariDataSource source conn))))
+             (throw t))))))
 
-        (let [result (try {:success? true :value (sqlite-write-attempt! db-info f)}
-                          (catch Throwable t {:success? false :throwable t}))]
-          (if (:success? result)
-            (:value result)
-            (let [t (:throwable result)]
-              (if (and (sqlite-busy? t) (seq delays))
-                (do (Thread/sleep (long (first delays))) (recur (inc attempt) (rest delays)))
-                (throw t)))))))))
+(defn- sqlite-read-tx!
+  "Run the read `f` on one consistent snapshot, without the Vis write lock on a WAL
+   file. A shared-cache memory store has no WAL, so there the read keeps the lock, as
+   in [[run-statement!]]. Inside a write transaction `f` reads that transaction."
+  [db-info f]
+  (cond (:sqlite-write-tx? db-info) (f db-info)
+        (= :memory (:mode db-info)) (locking sqlite-write-lock (sqlite-read-snapshot! db-info f))
+        :else (sqlite-read-snapshot! db-info f)))
 
 ;; Workspace - trunk-native work units
 
@@ -7916,15 +7968,19 @@
             (not (<= 1 (long limit) (long activity-contract/page-row-limit)))
             (and q (> (count q) 512)))
     (throw (ex-info "Invalid Activity page parameters" {:type :activity/invalid-page})))
-  ;; One transaction keeps metadata/revision and its bounded row page consistent.
-  (sqlite-write-tx! db
-                    (fn [db]
-                      (when-let [history (query-one! db
-                                                     {:select [:*]
-                                                      :from [:activity_history]
-                                                      :where [:and [:= :id (str aid)]
-                                                              [:= :session_soul_id (str sid)]]})]
-                        (activity-history-page db history opts)))))
+  ;; One read snapshot keeps metadata/revision and its bounded row page consistent. It
+  ;; takes no write lock, and the decoding and the byte trim run after it (#468).
+  (when-let [[history rows] (sqlite-read-tx! db
+                                             (fn [db]
+                                               (when-let [history (query-one!
+                                                                    db
+                                                                    {:select [:*]
+                                                                     :from [:activity_history]
+                                                                     :where [:and [:= :id (str aid)]
+                                                                             [:= :session_soul_id
+                                                                              (str sid)]]})]
+                                                 [history (activity-page-rows db history opts)])))]
+    (activity-page-projection history (mapv #(<-blob (:payload %)) rows) after limit)))
 
 ;; Automations
 
