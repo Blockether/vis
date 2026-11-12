@@ -89,6 +89,18 @@
   []
   (pyext/worker-pids))
 
+(defn python-worker-processes
+  "The live worker of `session` and each live descendant of it, also one that left
+   the process group. Empty when `session` has no worker process."
+  [session]
+  (if-let [handle (some-> (worker-of session)
+                          pyext/worker-pid
+                          (java.lang.ProcessHandle/of)
+                          (.orElse nil))]
+    (with-open [descendants (.descendants ^java.lang.ProcessHandle handle)]
+      (into [handle] (iterator-seq (.iterator descendants))))
+    []))
+
 (defn python-context-pid
   "PID of the process that runs `session`: its live worker, or this process for a
    session that it runs itself. Nil when the worker is gone."

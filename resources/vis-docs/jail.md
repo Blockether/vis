@@ -284,17 +284,24 @@ Tests often start a server on a loopback port and connect to it. A jailed comman
 directly, without the proxy. The rules depend on the host:
 
 - On macOS, direct loopback connections are allowed only when the proxy also allows loopback. So
-  there is no `allowed_domains` list, or the list includes `localhost` and `127.0.0.1`. Also, no
-  project network filter is registered. The gateway control port and the proxy ports of all sessions
-  stay closed. In all other cases, loopback connections go through the proxy and its rules.
+  there is no `allowed_domains` list, or the list includes `localhost` and `127.0.0.1`. No denied
+  domain, rule or project network filter limits those names when the command starts. The gateway
+  control port and the proxy ports of all sessions stay closed. In all other cases, loopback
+  connections go through the proxy and its rules.
+- On macOS, the system cannot separate loopback from the other addresses of your computer. So a
+  direct connection can also reach `::1`. It can also reach a service that listens only on another
+  address of your computer, such as a LAN or VPN address. Other computers stay blocked.
 - On Linux, each command has its own network namespace. A server and a client in the same command
   connect directly. A service on the loopback interface of the host is available only through the
   proxy.
 - Windows has no supported process jail.
 
-A jailed command can send signals to the processes that it started and to their children. It cannot
-send signals to other processes. On macOS, `ps` does not run in the jail, because it is a setuid
-program. To find out if a process that you started still runs, use `kill -0 <pid>`.
+On macOS, a jailed command can send signals to the processes that it started and to their children.
+It cannot send signals to other processes. On Linux, the jail has no process namespace, so a jailed
+command can send signals to all processes of your user
+([#471](https://github.com/Blockether/vis/issues/471)). On macOS, `ps` does not run in the jail,
+because it is a setuid program. To find out if a process that you started still runs, use
+`kill -0 <pid>`.
 
 ### Project network filters
 

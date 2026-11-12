@@ -87,17 +87,22 @@
   token)
 
 (defn unregister-session!
-  "Drop a session's policy and stop its optional session front door.
-   Idempotent; the shared proxy + CA remain gateway-owned."
-  [token]
-  (when token
-    (locking session-proxy-lock
-      (when-let [slot (get @session-proxy-states token)]
-        (reset! (:token slot) nil)
-        (reset! (:released slot) (System/nanoTime)))
-      (swap! session-proxy-states dissoc token))
-    (swap! registry dissoc token))
-  nil)
+  "Drop a session's policy and close its optional session front door: the door then
+   refuses every request. `holders` are the `ProcessHandle`s that may still use the
+   door, such as the children that a sleeping worker keeps. No other session gets the
+   door while one of them is alive. Idempotent; the shared proxy + CA remain
+   gateway-owned."
+  ([token] (unregister-session! token nil))
+  ([token holders]
+   (when token
+     (locking session-proxy-lock
+       (when-let [slot (get @session-proxy-states token)]
+         (reset! (:token slot) nil)
+         (reset! (:holders slot) (vec holders))
+         (reset! (:released slot) (System/nanoTime)))
+       (swap! session-proxy-states dissoc token))
+     (swap! registry dissoc token))
+   nil))
 
 (defn registered?
   "True when `token` maps to a live session policy fn."
@@ -179,6 +184,7 @@
     {:port (.getLocalPort server)
      :server server
      :token token
+     :holders (atom [])
      :released (atom 0)
      :proxy (delay (egress/start! {:server server
                                    :policy-fn (fn [_]
@@ -186,6 +192,11 @@
                                    :on-log log-egress-decision!
                                    :mitm (fn []
                                            @ca-state)}))}))
+
+(defn- free-front-door?
+  "True when `slot` serves no session and no process of its last session is alive."
+  [slot]
+  (and (nil? @(:token slot)) (not-any? #(.isAlive ^java.lang.ProcessHandle %) @(:holders slot))))
 
 (defn- ensure-front-doors!
   "Reserve every front-door port at once, before any child can read the deny list."
@@ -202,8 +213,9 @@
    proxy implementation. Unknown/disposed sessions fail closed. Returns its port,
    or nil when every reserved front door is taken.
 
-   A session takes the slot that was released longest ago, so a process that
-   outlived an earlier session is least likely to find a new owner on its port."
+   A session takes only a free slot (see `unregister-session!`), the one released
+   longest ago, so a process that left its worker's tree is least likely to find a
+   new owner on its port."
   [token]
   (when-not (registered? token)
     (throw (ex-info "Managed language proxy denied: session is not registered"
@@ -212,7 +224,7 @@
       (locking session-proxy-lock
         (or (get-in @session-proxy-states [token :port])
             (if-let [slot (->> (ensure-front-doors!)
-                               (filter #(nil? @(:token %)))
+                               (filter free-front-door?)
                                (sort-by #(deref (:released %)))
                                first)]
               (do (reset! (:token slot) token)

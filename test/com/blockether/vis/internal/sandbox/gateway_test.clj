@@ -226,4 +226,20 @@
                               (expect (str/includes? (get-status port (:port origin) nil) "200"))
                               (gs/unregister-session! tok)
                               (expect (str/includes? (get-status port (:port origin) nil) "407")))
-                            (finally ((:stop! origin)) (gs/shutdown!))))))))
+                            (finally ((:stop! origin)) (gs/shutdown!)))))))
+             (it "no other session gets a front door while a process of its last session lives"
+                 (let [^Process kept (.start (ProcessBuilder. ["sleep" "30"]))]
+                   (try (gs/register-session! "old" (constantly nil))
+                        (let [port (gs/ensure-session-proxy! "old")
+                              take! (fn [token]
+                                      (gs/register-session! token (constantly nil))
+                                      (let [p (gs/ensure-session-proxy! token)]
+                                        (gs/unregister-session! token)
+                                        p))]
+
+                          (gs/unregister-session! "old" [(.toHandle kept)])
+                          (expect (not-any? #{port} (mapv #(take! (str "new" %)) (range 40))))
+                          (.destroyForcibly kept)
+                          (.waitFor kept)
+                          (expect (some #{port} (mapv #(take! (str "later" %)) (range 40)))))
+                        (finally (.destroyForcibly kept) (gs/shutdown!))))))

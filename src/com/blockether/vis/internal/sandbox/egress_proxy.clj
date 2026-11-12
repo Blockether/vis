@@ -434,8 +434,9 @@
 (defn loopback-direct?
   "True when a confined child may connect to loopback without the proxy (#469): the
    proxy already passes every request to `localhost` and `127.0.0.1`. So no allowlist
-   or deny entry stops those names, no rule narrows their methods, paths or ports, and
-   no Tier-2 filter would inspect the traffic. The reserved gateway ports stay closed
+   or deny entry stops those names, no denied name resolves to a loopback address, no
+   rule narrows their methods, paths or ports, and no Tier-2 filter would inspect the
+   traffic. The reserved gateway ports stay closed
    on both paths; the jail denies them by port."
   [policy]
   (and (not (:deny-all? policy))
@@ -444,6 +445,8 @@
                       (let [rule (rule-for-host (:rules policy) host)]
                         (or (nil? rule) (unrestricted-rule? rule)))))
                ["localhost" "127.0.0.1"])
+       (not-any? #(.isLoopbackAddress (InetAddress/getByName %))
+                 (denied-address-set (:denied-domains policy)))
        (empty? (policy-network-filters policy))))
 
 (defn- headers->map

@@ -1170,6 +1170,7 @@
       (expect (not (ep/loopback-direct? (ep/compile-policy {:allowed-domains ["pypi.org"
                                                                               "localhost"]}))))
       (expect (not (ep/loopback-direct? (ep/compile-policy {:denied-domains ["localhost"]}))))
+      (expect (not (ep/loopback-direct? (ep/compile-policy {:denied-domains ["::1"]}))))
       (expect (not (ep/loopback-direct? {:deny-all? true}))))
   (it "a rule that narrows loopback methods or ports keeps the proxy as the only door"
       (expect (not (ep/loopback-direct? (ep/compile-policy {:rules [{:host "127.0.0.1"
