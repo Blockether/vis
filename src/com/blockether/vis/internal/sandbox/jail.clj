@@ -51,7 +51,10 @@
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
-  (:import (java.nio.file FileSystems Path PathMatcher Paths)
+  (:import (java.io File)
+           (java.lang ProcessHandle)
+           (java.nio.file FileSystems Path PathMatcher Paths)
+           (java.time Instant)
            (java.util HashMap)))
 
 (defn unenforceable-reason
@@ -306,6 +309,79 @@
          (boolean (some (fn [source]
                           (not-any? #(beneath? source %) protected))
                         (draft-source-roots env))))))
+
+;; ── Processes that outlive their gateway ───────────────────────────────────
+;; A confined process can leave its spawner's tree (a double fork, a crashed worker)
+;; and outlive the process that started it. Its profile denies only the ports of ITS
+;; gateway, so it could reach the session ports of the next run (#469). Each Vis process
+;; marks what it confines with its own owner. A gateway ends its own processes when it
+;; stops, and those of each ended Vis process when it starts.
+
+(defonce ^:private run-owner
+  ;; Written only by `claim-owner!`, under its lock.
+  (atom nil))
+
+(defn- owners-dir ^File [] (File. (paths/vis-home) "gateway/jail-owners"))
+
+(defn- process-owner
+  "A process as an owner: its pid and start time, which no later process has."
+  ^String [^ProcessHandle handle]
+  (when-let [^Instant start (.orElse (.startInstant (.info handle)) nil)]
+    (str (.pid handle) "-" (.toEpochMilli start))))
+
+(defn- live-owner?
+  [owner]
+  (let [^ProcessHandle handle
+        (.orElse (ProcessHandle/of (parse-long (first (str/split owner #"-")))) nil)]
+    (boolean (and handle (.isAlive handle) (= owner (process-owner handle))))))
+
+(defn- claim-owner!
+  "This process as the owner of what it confines, recorded at the first use, so that a
+   later gateway start ends what this process left. Each Vis process confines, not
+   only the gateway: a one-shot prompt does too."
+  ^String []
+  (or @run-owner
+      (locking run-owner
+        (or @run-owner
+            (let [dir
+                  (owners-dir)
+
+                  own
+                  (or (process-owner (ProcessHandle/current))
+                      (throw (ex-info "This process has no start time to name its jail owner" {})))]
+
+              ;; Without the record the mark still works: a gateway stop ends them.
+              (try (.mkdirs dir)
+                   (.createNewFile (File. ^File dir ^String own))
+                   (catch java.io.IOException _ nil))
+              (reset! run-owner own))))))
+
+(defn start-owner-run!
+  "Mark each process that this gateway confines from now on, and end the processes of
+   each ended Vis process: a crash or a kill skips its own sweep. The record of an
+   ended process goes after its sweep, so an interrupted start sweeps it again.
+   Returns how many processes ended."
+  []
+  (let [dir (owners-dir)]
+    (claim-owner!)
+    (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
+    (transduce (comp (filter #(re-matches #"\d+-\d+" (.getName ^File %)))
+                     (remove #(live-owner? (.getName ^File %)))
+                     (map (fn [^File file]
+                            (let [ended (python-runtime/end-confined-processes! (.getName file))]
+                              (.delete file)
+                              ended))))
+               +
+               0
+               (.listFiles dir))))
+
+(defn end-owner-run!
+  "End every process that this run confined, also a detached one. Its record stays:
+   a process confined after this sweep is ended by the next start. Returns how many
+   ended, or nil when no run started."
+  []
+  (some-> @run-owner
+          python-runtime/end-confined-processes!))
 
 (defn runtime-policy
   "The platform-neutral confinement VALUE the runtime compiles, from a session
@@ -667,16 +743,16 @@
      ;; not necessarily one that ever started an interpreter. Ensuring is a no-op
      ;; once it resolves.
      (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
-     (python-runtime/spawn-process! (mapv str argv)
-                                    {:environment
-                                     (or environment (process-environment policy extra-environment))
-                                     :directory (some-> directory
-                                                        str)
-                                     :policy (when confined? (runtime-policy policy))
-                                     :pty? (boolean pty?)
-                                     :merge-stderr? (boolean merge-stderr?)
-                                     :rows (int (or rows 0))
-                                     :columns (int (or columns 0))}))))
+     (python-runtime/spawn-process!
+       (mapv str argv)
+       {:environment (or environment (process-environment policy extra-environment))
+        :directory (some-> directory
+                           str)
+        :policy (when confined? (assoc (runtime-policy policy) :owner (claim-owner!)))
+        :pty? (boolean pty?)
+        :merge-stderr? (boolean merge-stderr?)
+        :rows (int (or rows 0))
+        :columns (int (or columns 0))}))))
 
 ;; ── ONE call's own environment ──────────────────────────────────────────────
 ;; `environment:` says what EVERY child of Vis gets. A verb that SPAWNS also

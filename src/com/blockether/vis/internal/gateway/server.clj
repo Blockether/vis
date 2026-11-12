@@ -56,6 +56,8 @@
     [com.blockether.vis.internal.gateway.server.views :as views-api]
     [com.blockether.vis.internal.gateway.server.web :as web]
     [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
+    [com.blockether.vis.internal.sandbox.jail :as process-jail]
+    [com.blockether.vis.internal.python.worker :as python-worker]
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.gateway.stdio :as stdio]
@@ -2559,6 +2561,16 @@
         auto-host
         (when (and pair? (str/blank? host)) (pairing/pair-bind-host))
 
+        ;; Before the first confined spawn, so each one carries this run's owner.
+        _
+        (try (let [ended (process-jail/start-owner-run!)]
+               (when (pos? ended)
+                 (tel/log! :info ["gateway: ended" ended "confined process(es) of an ended run"])))
+             (catch Throwable t
+               (tel/log! :warn
+                         ["gateway: could not end confined processes of an ended run"
+                          (ex-message t)])))
+
         _
         (reset! extension-startup {:stage "initializing"})
 
@@ -2630,7 +2642,15 @@
                                    (when culprit
                                      ["- exit called on thread" (get culprit "thread")
                                       (str/join " <- " (get culprit "frames"))]))))
-                 (stop!))
+                 ;; Last: the workers are confined by this run too, and the sweep
+                 ;; kills without the graceful stop that `python-worker/stop!` gives.
+                 (try (stop!)
+                      (python-worker/stop!)
+                      (finally (try (process-jail/end-owner-run!)
+                                    (catch Throwable t
+                                      (tel/log! :warn
+                                                ["gateway: could not end confined processes"
+                                                 (ex-message t)]))))))
                "vis-gateway-shutdown"))
     (prepare-startup-extensions!)
     @serve-exit
