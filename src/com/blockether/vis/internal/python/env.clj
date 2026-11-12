@@ -1623,9 +1623,11 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
   "Can the loop still run guest code in this environment?
 
    Called between turns. False once the session was disposed or its worker was
-   retired, when the environment carries no sandbox, or when its existing worker
-   cannot enter Python within its readiness budget. A live process alone is not
-   enough: background native Python code can hold the GIL after a block finishes.
+   retired, when the environment carries no sandbox, when its existing worker
+   cannot enter Python within its readiness budget, or when the worker of its
+   trusted extensions was lost (#465): every extension hook would fail. A live
+   process alone is not enough: background native Python code can hold the GIL
+   after a block finishes.
 
    An environment whose sandbox is not built YET is enterable: entering is what
    builds it. A sandbox whose initialization failed is not enterable. Answering
@@ -1637,7 +1639,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
       (and (not (contains? @disposed-sessions session))
            (not retired?)
            (if-let [worker (worker-of session)]
-             (pyext/worker-ready? worker session)
+             (and (not (pyext/worker-lost? (pyext/extension-worker-key worker)))
+                  (pyext/worker-ready? worker session))
              true))
       (boolean (and (:python-sandbox environment)
                     (not (realized? @(:python-sandbox environment)))

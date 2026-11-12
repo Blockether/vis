@@ -7,10 +7,29 @@
   (:import (java.io BufferedReader BufferedWriter InputStreamReader OutputStreamWriter)
            (java.nio.channels Channels SocketChannel)
            (java.nio.charset StandardCharsets)
-           (java.util.concurrent Executors ExecutorService)
+           (java.util.concurrent ExecutionException
+                                 Executors
+                                 ExecutorService
+                                 Future
+                                 LinkedBlockingQueue
+                                 ThreadPoolExecutor
+                                 TimeUnit)
            (java.util.concurrent.atomic AtomicLong)))
 
 (set! *warn-on-reflection* true)
+
+(defn- write-executor
+  "One thread owns every socket write of a peer. An interrupt of a blocked channel
+   write closes the channel, and the worker exits on that EOF (#465). The caller's
+   interrupt therefore never reaches the channel. The thread stops when idle."
+  ^ExecutorService []
+  (doto (ThreadPoolExecutor. 1
+                             1
+                             30
+                             TimeUnit/SECONDS
+                             (LinkedBlockingQueue.)
+                             (util/daemon-thread-factory "vis-python-worker-write"))
+    (.allowCoreThreadTimeOut true)))
 
 (defn peer-over
   "A peer over `channel`: what to read, what to write, who is waiting for a
@@ -25,17 +44,39 @@
    :serving (atom {})
    :rpc-state (atom {})
    :seq (AtomicLong. 0)
-   :workers (Executors/newCachedThreadPool (util/daemon-thread-factory "vis-python-worker"))})
+   :workers (Executors/newCachedThreadPool (util/daemon-thread-factory "vis-python-worker"))
+   :writes (write-executor)})
 
 (defn send-line!
-  "Write one message. Synchronized because both a reply and a fresh request can
-   be written from different threads and a torn line is unparseable."
+  "Write one message on the peer's write thread and wait until it is written.
+   The single thread keeps each line whole. An interrupt does not stop the wait:
+   a closed channel ends the write, and the interrupt stays set for the caller."
   [peer message]
-  (let [^BufferedWriter writer (:writer peer)]
-    (locking writer
-      (.write writer ^String (util/json-str message))
-      (.write writer "\n")
-      (.flush writer))))
+  (let [^BufferedWriter writer
+        (:writer peer)
+
+        line
+        (util/json-str message)
+
+        ^Future written
+        (.submit ^ExecutorService (:writes peer)
+                 ^Callable
+                 (fn []
+                   (.write writer ^String line)
+                   (.write writer "\n")
+                   (.flush writer)
+                   nil))]
+
+    (loop [interrupted? false]
+      (let [outcome (try (.get written)
+                         ::written
+                         (catch InterruptedException _ ::interrupted)
+                         (catch ExecutionException error
+                           (when interrupted? (.interrupt (Thread/currentThread)))
+                           (throw (.getCause error))))]
+        (if (identical? ::interrupted outcome)
+          (recur true)
+          (when interrupted? (.interrupt (Thread/currentThread))))))))
 
 (defn- begin-rpc!
   [peer direction message]
@@ -153,7 +194,8 @@
                   (doseq [[id waiting] pending]
                     (finish-rpc! peer :outbound id :closed)
                     (deliver waiting {"error" (reason)})))
-                (.shutdownNow ^ExecutorService (:workers peer)))))
+                (.shutdownNow ^ExecutorService (:workers peer))
+                (.shutdown ^ExecutorService (:writes peer)))))
 
 (defn claim-reply!
   "True exactly once per served request `id`: whoever answers it first — the tool

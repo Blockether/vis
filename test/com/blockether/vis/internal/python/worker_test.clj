@@ -1020,7 +1020,7 @@ print(worker_value)"))))
                            (->json-data [_] (throw (ex-info "fixture conversion failed" {}))))]
 
                    (with-open [writer (java.io.BufferedWriter. out)]
-                     (let [peer {:writer writer}
+                     (let [peer {:writer writer :writes (#'worker-peer/write-executor)}
                            messages (mapv (fn [id]
                                             {"id" id "value" "Zażółć / 😀\na second line"})
                                           (range 32))]
@@ -1058,7 +1058,7 @@ print(worker_value)"))))
                    (let [enabled? (.isThreadAllocatedMemoryEnabled bean)]
                      (try (.setThreadAllocatedMemoryEnabled bean true)
                           (with-open [writer (java.io.BufferedWriter. (java.io.Writer/nullWriter))]
-                            (let [peer {:writer writer}]
+                            (let [peer {:writer writer :writes (#'worker-peer/write-executor)}]
                               (dotimes [_ 2000]
                                 (worker-peer/send-line! peer message))
                               (let [before (.getThreadAllocatedBytes bean tid)]
@@ -1079,7 +1079,8 @@ print(worker_value)"))))
                   :rpc-state (atom {})
                   :seq (AtomicLong. 0)
                   :reader (java.io.BufferedReader. (java.io.StringReader. reply-line))
-                  :workers (java.util.concurrent.Executors/newSingleThreadExecutor)}]
+                  :workers (java.util.concurrent.Executors/newSingleThreadExecutor)
+                  :writes (#'worker-peer/write-executor)}]
 
         (try (with-redefs [worker-peer/send-line! (fn [_ _]
                                                     (deliver sent true))]
@@ -1320,6 +1321,38 @@ print(worker_value)"))))
   (it "refuses an environment whose worker was retired"
       (expect (false? (env/context-enterable? {:python-context "retired-session"
                                                :python-context-retired-atom (atom true)}))))
+  (it "keeps the worker when an interrupted thread writes to it (#465)"
+      (with-worker-context
+        (fn [session]
+          (expect (= "1\n" (:stdout (env/run-python-block session "print(1)"))))
+          (let [k
+                (#'env/worker-of session)
+
+                peer
+                (:peer (get @@#'worker/workers k))
+
+                sent
+                @(future (.interrupt (Thread/currentThread))
+                         (try (worker-peer/send-line!
+                                peer
+                                {"id" -1 "op" "eval" "session" session "code" "1"})
+                              (.isInterrupted (Thread/currentThread))
+                              (catch Throwable error (class error))))]
+
+            (expect (true? sent))
+            (expect (worker/worker-live? k))
+            (expect (= "2\n" (:stdout (env/run-python-block session "print(2)"))))))))
+  (it "refuses an environment whose extension worker exited (#465)"
+      (with-worker-context
+        (fn [session]
+          (expect (= "1\n" (:stdout (env/run-python-block session "print(1)"))))
+          (let [extension-key (worker/extension-worker-key (#'env/worker-of session))]
+            (worker/start-worker! extension-key)
+            (expect (true? (env/context-enterable? {:python-context session})))
+            (let [^Process process (:process (get @@#'worker/workers extension-key))]
+              (.destroyForcibly process)
+              (.waitFor process))
+            (expect (false? (env/context-enterable? {:python-context session})))))))
   (it "confines a session worker before its first interpreter operation"
       (with-worker-context
         (fn [session]

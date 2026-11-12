@@ -909,6 +909,14 @@
   [k]
   (boolean (alive? (get @workers k))))
 
+(defn worker-lost?
+  "True when `k` was retired, or its started worker exited; never starts one.
+   A key that never started a worker is not lost."
+  [k]
+  (boolean (or (contains? @retired-workers k)
+               (when-let [state (get @workers k)]
+                 (not (alive? state))))))
+
 (def ^:private READY_REPLY_MS
   "Maximum between-turn wait for an existing worker to enter its Python namespace."
   5000)
