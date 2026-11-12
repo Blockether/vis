@@ -4,13 +4,18 @@
    or absent token), then one hermetic in-process wire round-trip proves a registered
    token is attributed to its session's policy while an unknown/missing token is denied
    \u2014 one shared listener, many sessions, no external network."
-  (:require [clojure.string :as str]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.sandbox.egress-proxy :as ep]
-            [com.blockether.vis.internal.sandbox.gateway :as gs])
+            [com.blockether.vis.internal.sandbox.gateway :as gs]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail])
   (:import (java.io BufferedReader InputStreamReader)
            (java.net InetSocketAddress ServerSocket Socket)
+           (java.nio.file Files)
+           (java.nio.file.attribute FileAttribute)
            (java.util Base64)))
 
 (defn- run-wire-test
@@ -289,3 +294,95 @@
                    (gs/unregister-session! "new-env")
                    (expect (str/includes? (status port) "407")))
                  (finally ((:stop! origin)) (gs/shutdown!))))))))
+
+;; Another gateway (#473) — a child never reaches a port that another live Vis process holds
+
+(defn- jailed-curl-status
+  "The HTTP status that a confined curl with jail `owner` gets from `origin-port` through
+   the proxy on `proxy-port`, or 000 when the proxy answers nothing."
+  [owner proxy-port origin-port]
+  (let [root
+        (.toFile (Files/createTempDirectory "vis-door" (make-array FileAttribute 0)))
+
+        ^Process p
+        (runtime/spawn-process!
+          ["/usr/bin/curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" "-m" "10" "-x"
+           (str "http://127.0.0.1:" proxy-port) (str "http://localhost:" origin-port "/")]
+          {:environment {"PATH" "/usr/bin:/bin" "HOME" (str root) "TMPDIR" (str root)}
+           :directory (str root)
+           :policy {:read-write [(str root)] :network {:proxy proxy-port} :owner owner}})
+
+        out
+        (future (slurp (.getInputStream p)))]
+
+    (.waitFor p)
+    @out))
+
+(defdescribe door-serves-only-its-own-jailed-children
+             ;; #473: a jailed child of another gateway used a session door of this one.
+             (it "a door refuses a jailed child of another Vis process and serves its own"
+                 (when (= "Mac OS X" (System/getProperty "os.name"))
+                   (run-wire-test
+                     (fn []
+                       (let [origin
+                             (start-origin!)
+
+                             tok
+                             (str (java.util.UUID/randomUUID))]
+
+                         (try (gs/register-session!
+                                tok
+                                (constantly (ep/compile-policy {:allowed-domains ["localhost"]})))
+                              (let [door (gs/ensure-session-proxy! tok tok)]
+                                (expect (= "200"
+                                           (jailed-curl-status (process-jail/claim-owner!)
+                                                               door
+                                                               (:port origin))))
+                                (expect (= "000" (jailed-curl-status "1-1" door (:port origin)))))
+                              (finally ((:stop! origin)) (gs/shutdown!)))))))))
+
+(defdescribe
+  other-process-ports-stay-closed
+  (it
+    "a port that another live Vis process publishes is blocked, also after the policy exists"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-live-ports" (make-array FileAttribute 0)))
+
+          other
+          (.start (ProcessBuilder. ["sleep" "30"]))
+
+          owner
+          (#'process-jail/process-owner (.toHandle other))
+
+          tok
+          (str (java.util.UUID/randomUUID))]
+
+      (with-redefs-fn {#'gs/live-ports-dir (constantly dir)}
+        (fn []
+          (try
+            (gs/register-session! tok (constantly (ep/compile-policy {:allowed-domains ["*"]})))
+            (let [port
+                  (gs/ensure-proxy!)
+
+                  blocked?
+                  #(:blocked (ep/safe-upstream-address "127.0.0.1" 4711 (gs/resolve-policy tok)))]
+
+              (expect (= [port] (edn/read-string (slurp (io/file dir (process-jail/claim-owner!)))))
+                      "this process publishes its own ports for the others")
+              (expect (not (blocked?)))
+              (spit (io/file dir owner) (pr-str [4711]))
+              (expect (blocked?) "the other process started after the policy was read")
+              (.destroyForcibly other)
+              (.waitFor other)
+              (expect (not (blocked?)) "the ports of an ended process are free again")
+              (expect (not (.exists (io/file dir owner)))))
+            (finally (.destroyForcibly other) (gs/shutdown!)))))))
+  (it "a stopped process removes its published ports"
+      (let [dir (.toFile (Files/createTempDirectory "vis-live-ports" (make-array FileAttribute 0)))]
+        (with-redefs-fn {#'gs/live-ports-dir (constantly dir)}
+          (fn []
+            (try (gs/ensure-proxy!)
+                 (expect (.exists (io/file dir (process-jail/claim-owner!))))
+                 (gs/shutdown!)
+                 (expect (not (.exists (io/file dir (process-jail/claim-owner!)))))
+                 (finally (gs/shutdown!))))))))

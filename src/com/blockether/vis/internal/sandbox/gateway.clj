@@ -22,9 +22,17 @@
 
    Lazy: the proxy listener and the CA keygen happen only on first `ensure-proxy!` /
    `ensure-ca!` — a gateway that never jails a shell child opens neither."
-  (:require [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [com.blockether.vis-python-runtime :as python-runtime]
+            [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+            [com.blockether.vis.internal.python.runtime :as vis-python-runtime]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.tls-mitm :as tls-mitm]
-            [taoensso.telemere :as tel]))
+            [taoensso.telemere :as tel])
+  (:import (java.io File)
+           (java.net Socket)
+           (java.nio.file CopyOption Files StandardCopyOption)))
 
 ;; token -> {:policy-fn <0-arg fn: the session's compiled policy value, or nil>
 ;;           :order <registration number, larger is newer>}
@@ -70,23 +78,102 @@
 ;; own port is reserved automatically at resolve time. Set by the gateway server at startup.
 (defonce ^:private extra-reserved-ports (atom #{}))
 
+;; The reserved ports of each Vis process of this user (#473): one EDN file for each
+;; process, named by its jail owner. The folder does not follow VIS_HOME, so gateways with
+;; different homes see each other, and no jail write root holds it. The proxy reads it for
+;; each request, so a child cannot reach a gateway that starts after the child.
+
+(def ^:private live-ports-lock (Object.))
+
+(defn- live-ports-dir
+  ^File []
+  (io/file (System/getProperty "user.home") ".vis" "gateway" "live-ports"))
+
+(defn- own-reserved-ports
+  []
+  (into @extra-reserved-ports
+        (concat (when-let [p (:port @proxy-state)]
+                  [p])
+                (map :port @front-doors))))
+
+(defn- publish-ports!
+  "Write the reserved ports of this process for the other Vis processes. The file is
+   replaced whole, so a reader never sees a part of it."
+  []
+  (locking live-ports-lock
+    (try (let [dir
+               (live-ports-dir)
+
+               ports
+               (vec (sort (own-reserved-ports)))
+
+               file
+               (io/file dir (process-jail/claim-owner!))]
+
+           (if (empty? ports)
+             (.delete file)
+             (let [_
+                   (.mkdirs dir)
+
+                   tmp
+                   (File/createTempFile ".ports" ".tmp" dir)]
+
+               (spit tmp (pr-str ports))
+               (Files/move (.toPath tmp)
+                           (.toPath file)
+                           (into-array CopyOption
+                                       [StandardCopyOption/ATOMIC_MOVE
+                                        StandardCopyOption/REPLACE_EXISTING])))))
+         (catch Exception e
+           (tel/log! {:level :warn :id ::live-ports-publish-failed :error e}
+                     "Vis could not publish its gateway ports to other Vis processes")))))
+
+(defn- unpublish-ports!
+  []
+  (locking live-ports-lock
+    (try (.delete (io/file (live-ports-dir) (process-jail/claim-owner!)))
+         (catch Exception e
+           (tel/log! {:level :warn :id ::live-ports-unpublish-failed :error e}
+                     "Vis could not remove its published gateway ports")))))
+
+(defn- other-process-ports
+  "The reserved ports of each other live Vis process. The file of an ended process goes."
+  []
+  (let [own (process-jail/claim-owner!)]
+    (into #{}
+          (comp (filter #(re-matches #"\d+-\d+" (.getName ^File %)))
+                (remove #(= own (.getName ^File %)))
+                (filter (fn [^File file]
+                          (or (process-jail/live-owner? (.getName file))
+                              (do (.delete file) false))))
+                (mapcat (fn [^File file]
+                          (try (edn/read-string (slurp file))
+                               (catch Exception e
+                                 (tel/log! {:level :warn
+                                            :id ::live-ports-unreadable
+                                            :error e
+                                            :data {:file (.getName file)}}
+                                           "Vis could not read the ports of another Vis process")
+                                 nil))))
+                (filter integer?))
+          (.listFiles (live-ports-dir)))))
+
 (defn set-reserved-ports!
   "Register loopback ports a jailed child must never reach (the gateway's own control
    plane) even though loopback is allowed by default. The shared proxy's own port is
    reserved automatically. Idempotent."
   [ports]
   (reset! extra-reserved-ports (set (filter integer? ports)))
+  (publish-ports!)
   nil)
 
 (defn- reserved-loopback-ports
   "All loopback ports off-limits to a jailed child: the shared authenticated
-   proxy, every front-door slot, and gateway control-plane
-   ports. A proxy can therefore never pivot into another proxy listener."
+   proxy, every front-door slot, and gateway control-plane ports, of this process
+   and of each other live Vis process. A proxy can therefore never pivot into another
+   proxy listener, and a child never reaches another gateway (#473)."
   []
-  (into @extra-reserved-ports
-        (concat (when-let [p (:port @proxy-state)]
-                  [p])
-                (map :port @front-doors))))
+  (into (own-reserved-ports) (other-process-ports)))
 
 (defn register-session!
   "Register `policy-fn` (0-arg → the session's compiled policy value or nil) under
@@ -175,7 +262,39 @@
                                       :mitm (fn []
                                               @ca-state)})]
               (reset! proxy-state srv)
+              (publish-ports!)
               (:port srv))))))
+
+;; A door attributes a request by its port, and loopback has no authentication by default.
+;; So both must know who connects: a jailed child of another Vis process must reach neither
+;; (#473). Its own profile cannot deny them, because they can start after it.
+
+(defn- peer-confined?
+  "True when a process that a Vis jail confined, with an owner other than `owner` (nil: any
+   owner), holds the client end of the loopback connection from `peer-port` to `server-port`.
+   `fallback` when the runtime cannot tell."
+  [server-port peer-port owner fallback]
+  (try (python-runtime/loopback-peer-confined? server-port peer-port owner)
+       (catch Throwable e
+         (tel/log! {:level :warn
+                    :id ::peer-check-failed
+                    :error e
+                    :data {:server-port server-port :fallback fallback}}
+                   "Vis could not tell whether a jailed process opened a loopback connection")
+         fallback)))
+
+(defn jailed-peer?
+  "True when a jailed child of any Vis process opened the loopback connection from
+   `peer-port` to the gateway API on `server-port`. A child of this process cannot connect
+   at all. False when the runtime cannot tell, so local clients keep their gateway."
+  [server-port peer-port]
+  (peer-confined? server-port peer-port nil false))
+
+(defn- door-admits?
+  "A front door serves only the processes of this Vis process. It refuses when the runtime
+   cannot tell."
+  [^Socket client]
+  (not (peer-confined? (.getLocalPort client) (.getPort client) (process-jail/claim-owner!) true)))
 
 (defn- front-door
   "One reserved front-door slot: a bound loopback port that serves the newest live token
@@ -194,6 +313,7 @@
      :owner (atom nil)
      :tokens tokens
      :proxy (delay (egress/start! {:server server
+                                   :admit? door-admits?
                                    :policy-fn (fn [_]
                                                 (resolve-policy (peek @tokens)))
                                    :on-log log-egress-decision!
@@ -206,11 +326,23 @@
   (or (some #(when (= owner @(:owner %)) %) slots) (some #(when (nil? @(:owner %)) %) slots)))
 
 (defn- ensure-front-doors!
-  "Reserve every front-door port at once, before any child can read the deny list."
+  "Reserve every front-door port at once, before any child can read the deny list. The
+   runtime library comes first: without it a door cannot tell who connects and refuses."
   []
   (or @front-doors
       (locking session-proxy-lock
-        (or @front-doors (reset! front-doors (vec (repeatedly front-door-count front-door)))))))
+        (or @front-doors
+            (let [_
+                  (try (vis-python-runtime/ensure-library!)
+                       (catch Throwable e
+                         (tel/log! {:level :warn :id ::runtime-library-missing :error e}
+                                   "Vis has no runtime library, so its front doors refuse")))
+
+                  slots
+                  (reset! front-doors (vec (repeatedly front-door-count front-door)))]
+
+              (publish-ports!)
+              slots)))))
 
 (defn ensure-session-proxy!
   "Give `token` of session `owner` a session-attributed compatibility front door for
@@ -283,4 +415,5 @@
       (try (close!) (catch Throwable _ nil)))
     (reset! ca-state nil))
   (reset! registry {})
+  (unpublish-ports!)
   nil)

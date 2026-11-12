@@ -299,6 +299,8 @@ directly, without the proxy. The rules depend on the host:
   domain, rule or project network filter limits those names when the command starts. The gateway
   control port and the proxy ports of all sessions stay closed. In all other cases, loopback
   connections go through the proxy and its rules.
+- The ports of other Vis gateways on your computer also stay closed, also of a gateway that starts
+  after the command. This applies to direct connections and to connections through the proxy.
 - On macOS, the system cannot separate loopback from the other addresses of your computer. So a
   direct connection can also reach `::1`. It can also reach a service that listens only on another
   address of your computer, such as a LAN or VPN address. Other computers stay blocked.
@@ -307,12 +309,13 @@ directly, without the proxy. The rules depend on the host:
   proxy.
 - Windows has no supported process jail.
 
-On macOS, a jailed command can send signals to the processes that it started and to their children.
-It cannot send signals to other processes. On Linux, the jail has no process namespace, so a jailed
-command can send signals to all processes of your user
-([#471](https://github.com/Blockether/vis/issues/471)). On macOS, `ps` does not run in the jail,
-because it is a setuid program. To find out if a process that you started still runs, use
-`kill -0 <pid>`.
+A jailed command can send signals to the processes that it started and to their children. It cannot
+send signals to other processes. On Linux, this limit needs kernel 6.12 or later (Landlock ABI 6).
+On an older kernel, a jailed command can send signals to all processes of your user. The gateway
+log then shows a warning when it starts.
+
+On macOS, `ps` does not run in the jail, because it is a setuid program. To find out if a process
+that you started still runs, use `kill -0 <pid>`.
 
 ### Project network filters
 

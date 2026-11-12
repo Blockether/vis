@@ -1292,8 +1292,11 @@
    TLS-terminated so method+path are enforced; otherwise CONNECT is a raw tunnel.
 
    `:server` (optional) is a bound `ServerSocket` to serve instead of a new one, for
-   a port that had to be reserved before the proxy starts."
-  [{:keys [policy-fn on-log mitm server]}]
+   a port that had to be reserved before the proxy starts.
+
+   `:admit?` (optional) is a 1-arg fn of the accepted `Socket`. A false answer closes
+   the connection before the proxy reads from it."
+  [{:keys [policy-fn on-log mitm server admit?]}]
   (let [on-log
         (or on-log
             (fn [_]
@@ -1326,11 +1329,12 @@
                                   (try (Thread/sleep 50) (catch InterruptedException _ nil)))
                                 nil))]
               (when client
-                (.submit
-                  pool
-                  ^Runnable
-                  (fn []
-                    (handle-client pool client (or policy-fn (constantly nil)) mitm on-log)))))))]
+                (.submit pool
+                         ^Runnable
+                         (fn []
+                           (if (or (nil? admit?) (admit? client))
+                             (handle-client pool client (or policy-fn (constantly nil)) mitm on-log)
+                             (try (.close ^Socket client) (catch Throwable _ nil)))))))))]
 
     (doto (Thread. ^Runnable accept "vis-egress-accept") (.setDaemon true) (.start))
     {:port port

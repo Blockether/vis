@@ -81,12 +81,13 @@
     [ring.middleware.multipart-params.byte-array :as multipart-ba]
     [taoensso.telemere :as tel])
   (:import [java.io OutputStream]
-           [java.net BindException]
+           [java.net BindException InetSocketAddress]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.util.concurrent ArrayBlockingQueue TimeUnit]
            [java.util.zip GZIPOutputStream]
+           [org.eclipse.jetty.io Connection Connection$Listener EndPoint]
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
             Server ServerConnector]
            [org.eclipse.jetty.server.handler.gzip GzipHandler]))
@@ -2060,6 +2061,31 @@
     (.setMinGzipSize (int GZIP_MIN_BYTES))
     (.addExcludedMimeTypes (into-array String ["text/event-stream"]))))
 
+(def ^:private jailed-peer-guard
+  "Closes a loopback connection that a jailed child of any Vis process opens (#473). A child
+   of this gateway cannot connect at all; a child of another gateway can, and loopback has
+   no authentication by default."
+  (reify
+    Connection$Listener
+      (onOpened [_ connection]
+        (let [^EndPoint endpoint
+              (.getEndPoint ^Connection connection)
+
+              remote
+              (.getRemoteSocketAddress endpoint)
+
+              local
+              (.getLocalSocketAddress endpoint)]
+
+          (when (and (instance? InetSocketAddress remote)
+                     (instance? InetSocketAddress local)
+                     (some-> (.getAddress ^InetSocketAddress remote)
+                             .isLoopbackAddress)
+                     (gateway-sandbox/jailed-peer? (.getPort ^InetSocketAddress local)
+                                                   (.getPort ^InetSocketAddress remote)))
+            (.close endpoint))))
+      (onClosed [_ _connection] nil)))
+
 (defn- gateway-configurator
   "The adapter's `:configurator` — the seam for `Server` tuning no Ring option
    expresses. A nil `mirror-port` skips the loopback mirror above.
@@ -2075,7 +2101,9 @@
     (fn [^Server server]
       (.setStopAtShutdown server false)
       (.insertHandler server (gzip-handler))
-      (when mirror (mirror server)))))
+      (when mirror (mirror server))
+      (doseq [^ServerConnector connector (.getConnectors server)]
+        (.addEventListener connector jailed-peer-guard)))))
 
 (defn- preload-voice-model!
   "Load the installed transcription model on a BACKGROUND thread, so the first
@@ -2570,6 +2598,12 @@
                (tel/log! :warn
                          ["gateway: could not end confined processes of an ended run"
                           (ex-message t)])))
+
+        _
+        (try (when-let [gap (process-jail/signal-scope-gap)]
+               (tel/log! :warn ["gateway: jail limit:" gap]))
+             (catch Throwable t
+               (tel/log! :warn ["gateway: could not read the jail signal scope" (ex-message t)])))
 
         _
         (reset! extension-startup {:stage "initializing"})

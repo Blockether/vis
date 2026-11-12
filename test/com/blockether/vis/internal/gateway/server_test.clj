@@ -39,6 +39,9 @@
     [com.blockether.vis.internal.gateway.state :as state]
     [com.blockether.vis.internal.gateway.view :as gw-view]
     [com.blockether.vis.internal.gateway.wiring :as wiring]
+    [com.blockether.vis-python-runtime :as python-runtime]
+    [com.blockether.vis.internal.python.runtime :as vis-python-runtime]
+    [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
     [com.blockether.vis.internal.persistance.core :as persistance]
@@ -4123,6 +4126,51 @@
       (try (expect (false? (.getStopAtShutdown ^org.eclipse.jetty.server.Server server)))
            (expect (= "ok" (slurp (str "http://127.0.0.1:" port "/"))))
            (finally (.stop ^org.eclipse.jetty.server.Server server))))))
+
+(defdescribe
+  gateway-api-refuses-jailed-children
+  ;; #473: a jailed child of another gateway reached this API, which has no authentication on loopback.
+  (it
+    "a connection that a jailed process opens is closed; an unjailed client is served"
+    (when (= "Mac OS X" (System/getProperty "os.name"))
+      ;; As at gateway start: the check needs the runtime library.
+      (vis-python-runtime/ensure-library!)
+      (let [server
+            (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
+                             {:port 0
+                              :host "127.0.0.1"
+                              :join? false
+                              :configurator ((rv 'gateway-configurator) nil)})
+
+            port
+            (bound-port server)
+
+            root
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-api-peer"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            jailed-status
+            (fn [owner]
+              (let [^Process p
+                    (python-runtime/spawn-process!
+                      ["/usr/bin/curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" "-m" "10"
+                       (str "http://127.0.0.1:" port "/")]
+                      {:environment {"PATH" "/usr/bin:/bin" "HOME" (str root) "TMPDIR" (str root)}
+                       :directory (str root)
+                       :policy {:read-write [(str root)] :network {:proxy port} :owner owner}})
+
+                    out
+                    (future (slurp (.getInputStream p)))]
+
+                (.waitFor p)
+                @out))]
+
+        (try (expect (= "000" (jailed-status "1-1")) "a child of another Vis process")
+             (expect (= "000" (jailed-status (process-jail/claim-owner!)))
+                     "a child of this process")
+             (expect (= "ok" (slurp (str "http://127.0.0.1:" port "/"))))
+             (finally (.stop ^org.eclipse.jetty.server.Server server)))))))
 
 (defdescribe
   a-flushed-frame-reaches-the-socket-before-the-body-returns

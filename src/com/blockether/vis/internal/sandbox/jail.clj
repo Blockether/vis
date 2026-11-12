@@ -73,6 +73,16 @@
 
 (defn supported? "True when this host can confine a child at all." [] (nil? (unenforceable-reason)))
 
+(defn signal-scope-gap
+  "Nil when a confined child can signal only the processes of its own jail, else why not
+   (#471). Linux needs the Landlock signal scope; Seatbelt always has it."
+  []
+  (when (and (str/starts-with? (str (System/getProperty "os.name")) "Linux")
+             (supported?)
+             (not (python-runtime/jail-signal-scoped?)))
+    (str "this Linux kernel has no Landlock signal scope (ABI 6, kernel 6.12), so a jailed"
+         " process can signal every process of this user")))
+
 (defn- enforcing?
   "True when `policy` will actually confine the child: enabled, and either this
    process is itself already confined (the child inherits) or the host can
@@ -329,13 +339,14 @@
   (when-let [^Instant start (.orElse (.startInstant (.info handle)) nil)]
     (str (.pid handle) "-" (.toEpochMilli start))))
 
-(defn- live-owner?
+(defn live-owner?
+  "True while the process that `owner` names runs."
   [owner]
   (let [^ProcessHandle handle
         (.orElse (ProcessHandle/of (parse-long (first (str/split owner #"-")))) nil)]
     (boolean (and handle (.isAlive handle) (= owner (process-owner handle))))))
 
-(defn- claim-owner!
+(defn claim-owner!
   "This process as the owner of what it confines, recorded at the first use, so that a
    later gateway start ends what this process left. Each Vis process confines, not
    only the gateway: a one-shot prompt does too."
