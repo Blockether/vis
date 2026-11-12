@@ -443,10 +443,75 @@
                           (when proj-dir
                             (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
 
+(def ^:private PYTHON_IO_CALLS
+  "Experiment: the read and write rules of a sandbox without `cat` and `patch`."
+  (str
+    "- There is no read tool and no edit tool. Read and write files with plain Python and `Path`.\n"
+    "- Read: `text = path.read_text()`. Print only the part that you need, with line numbers: `rows = "
+    "text.splitlines(); print(\"\\n\".join(f\"{n}: {row}\" for n, row in enumerate(rows[39:80], 40)))`. A "
+    "printed result over 8192 tokens loses its middle: print a large file in parts.\n"
+    "- Edit: replace exact text, and stop when it does not occur one time. Example: `text = "
+    "path.read_text(); assert text.count(old) == 1, text.count(old); path.write_text(text.replace(old, "
+    "new))`. Make all edits of one file on one `text`, then write one time. After a failed assert, print "
+    "the lines again and retry.\n"
+    "- New file: `path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)`. After a write, "
+    "print only the changed lines to check them.\n"))
+
+(defn- replace-once
+  "Replace `old` in `s`. Refuse a text that does not occur one time."
+  [s old new]
+  (let [parts (str/split s (re-pattern (java.util.regex.Pattern/quote old)) -1)]
+    (when-not (= 2 (count parts))
+      (throw (ex-info "The experiment prompt edit does not match one time." {:old old})))
+    (str (first parts) new (second parts))))
+
+(defn- python-io-prompt
+  "Experiment: the core rules of a sandbox without `cat` and `patch`."
+  [prompt]
+  (let [from
+        (str/index-of prompt "- `cat(path, start=None, end=None)`")
+
+        grep-from
+        (str/index-of prompt "- `grep({")
+
+        patch-from
+        (str/index-of prompt "- `patch(path, edits, version=None)`")
+
+        context-from
+        (str/index-of prompt "\n## Context\n")]
+
+    (when-not
+      (and from grep-from patch-from context-from (< from grep-from patch-from context-from))
+      (throw (ex-info "The experiment prompt does not find the Calls bullets." {})))
+    (->
+      (str (subs prompt 0 from)
+           (subs prompt grep-from patch-from)
+           PYTHON_IO_CALLS
+           (subs prompt context-from))
+      (replace-once
+        (str
+          "Change an existing file only with `patch`, and only the lines that change; `write_text` only "
+          "creates a file. Never edit with `str.replace`: it is silent when nothing matches. ")
+        (str
+          "Change an existing file with plain Python, and only the lines that change. `str.replace` is "
+          "silent when nothing matches: assert the match before you write. "))
+      (replace-once "After a refused patch, read the named lines again and retry. " "")
+      (replace-once
+        (str
+          "- `ls`, `cat`, `grep` and `patch` return text (a `str`), not a map with fields; only `ls(..., "
+          "as_paths=True)` returns a list. Print the whole result; to see less, narrow the call. A refused "
+          "`patch` raises an error.\n")
+        (str
+          "- `ls` and `grep` return text (a `str`), not a map with fields; only `ls(..., as_paths=True)` "
+          "returns a list. Print the whole result; to see less, narrow the call.\n")))))
+
 (defn- core-system-prompt
   "The core rules. A non-interactive run gets them without the progress-note rules."
   [interactive?]
-  (if interactive? CORE_SYSTEM_PROMPT (str/replace CORE_SYSTEM_PROMPT PROGRESS_NOTE_RULES "")))
+  (let [base (cond-> CORE_SYSTEM_PROMPT
+               (System/getenv "VIS_EXP_PYTHON_IO")
+               python-io-prompt)]
+    (if interactive? base (str/replace base PROGRESS_NOTE_RULES ""))))
 
 (defn- system-prompt-blocks
   "Send-order pieces of the system prompt: the base text, whether a user file or

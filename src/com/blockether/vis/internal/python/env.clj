@@ -2024,11 +2024,13 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
               (and denied-write? (contains? @write-grants session))
               (str (process-jail/grant-refusal (get @write-grants session)) " Runtime: ")
               denied-root?
-              (str "Sandbox policy denied "
-                   (if denied-write? "file-write" "file-read")
+              (str "Sandbox policy denied " (if denied-write? "file-write" "file-read")
                    ": the resource is outside approved filesystem roots. "
-                   "Use grep({\"query\": q, \"context\": 3}) or cat(path, start, end) to read, "
-                   "patch(path, edits) to edit, "
+                   (if (System/getenv "VIS_EXP_PYTHON_IO")
+                     "Read and write only inside the approved roots, "
+                     (str
+                       "Use grep({\"query\": q, \"context\": 3}) or cat(path, start, end) to read, "
+                       "patch(path, edits) to edit, "))
                    "or ask the USER to add the path to workspace.filesystem in vis.yml "
                    "and run /reload. Original error: ")
               ;; A refusal names its problem instead.

@@ -145,7 +145,16 @@
      :ext/prompt-fn combined-prompt
      :ext/doctor-fn lazy-doctor-fn}))
 
-(defn register! [] (extension/register-extension! vis-extension))
+(defn register!
+  "Register the kernel. Experiment: `VIS_EXP_PYTHON_IO` removes `cat` and `patch`."
+  []
+  (extension/register-extension!
+    (if (System/getenv "VIS_EXP_PYTHON_IO")
+      (update-in vis-extension
+                 [:ext/engine :ext.engine/symbols]
+                 (fn [symbols]
+                   (vec (remove #(contains? #{'cat 'patch} (:ext.symbol/symbol %)) symbols))))
+      vis-extension)))
 
 ;; The documents this entry owns are read lazily and cached; `/reload` is what makes
 ;; an edited page visible again in a development JVM.

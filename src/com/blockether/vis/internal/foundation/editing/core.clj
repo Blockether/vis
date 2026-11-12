@@ -3461,7 +3461,10 @@
                           near
                           (assoc :nearest near))))))
     (when-not (.isDirectory f)
-      (throw (ex-info (str "ls: `" (rel-path f) "` is a file; use `cat`.")
+      (throw (ex-info (str "ls: `" (rel-path f)
+                           "` is a file; " (if (System/getenv "VIS_EXP_PYTHON_IO")
+                                             "read it with `open`."
+                                             "use `cat`."))
                       {:type :ext.foundation.editing/ls-on-file :path path})))
     (let [pattern
           (get spec "pattern")
