@@ -572,8 +572,8 @@ turn, so a long task can run for up to three hours.
 
 A history of 300,000 tokens is larger than the context budget of current models. Vis computes this
 budget for each model and shows it as `auto_compress_above` in the session context. It is 250,000
-tokens for Claude Opus, 230,000 for GPT models and 200,000 for other models. The budget is never
-more than 90% of the context window of the provider.
+tokens for Claude Opus, Claude Fable and Claude Sonnet, 230,000 for GPT models and 200,000 for other
+models. The budget is never more than 90% of the context window of the provider.
 For example, `anthropic-coding-plan` gives Claude Haiku 4.5 a window of 150,000 tokens, so its
 budget is about 135,000.
 
