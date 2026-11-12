@@ -1,24 +1,16 @@
 (ns com.blockether.vis.internal.gateway.session-recency-test
   (:require [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.server.sessions :as sessions]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [lazytest.core :refer [defdescribe describe it expect]])
   (:import [java.io ByteArrayInputStream]
            [java.util Date]))
 
-(defn- clock-ms
-  "Epoch ms of the `:latest-turn-at` clock in turn stats `st`, or nil."
-  [st]
-  (some-> ^Date (:latest-turn-at st)
-          .getTime))
-
-(defn- with-registry
-  "Run `f` with the gateway registry replaced by `entries`."
-  [entries f]
-  (with-redefs-fn {#'state/registry (atom entries)} f))
-
 ;; Regression: opening a session from the list moved it to the top of the recents.
-;; Recency must follow the newest sent message alone.
+;; Recency must follow the newest agent reply alone.
 (defdescribe
   session-recency-test
   (describe "conversation activity"
@@ -28,37 +20,43 @@
                        {"id" "opened" "modified_at" (Date. 1000) "last_opened_at" (Date. 5000)}]]
                   (expect (= ["newer" "opened"]
                              (mapv #(get % "id") (#'state/order-session-summaries rows))))))
-            (it "ranks a stored session by its newest turn, else by its creation"
+            (it "ranks a stored session by its newest agent reply, else by its creation"
                 (expect (= 2000
                            (#'state/record-recency-ms
                             {:created-at (Date. 1000) :last-opened-at (Date. 5000)}
                             {:latest-turn-at (Date. 2000)})))
                 (expect (= 1000 (#'state/record-recency-ms {:created-at (Date. 1000)} nil)))))
-  (describe
-    "a sent message"
-    (it "moves the session at the send, before the worker stores its turn row"
-        (with-registry {"running" {:turns {"t1" {:status "running" :started_at 9000}}}
-                        "queued" {:turns {"t0" {:status "completed" :started_at 1500}
-                                          "t2" {:status "queued" :queued_at 7000}}}
-                        "settled" {:turns {"t3" {:status "completed" :started_at 9999}}}}
-                       (fn []
-                         (let [stats (#'state/with-sent-turns
-                                      {"running" {:latest-turn-at (Date. 2000) :turn-count 3}
-                                       "settled" {:latest-turn-at (Date. 3000) :turn-count 1}})]
-                           (expect (= 9000 (clock-ms (get stats "running"))))
-                           (expect (= 3 (:turn-count (get stats "running"))))
-                           (expect (= 7000 (clock-ms (get stats "queued"))))
-                           (expect (= 7000
-                                      (#'state/record-recency-ms
-                                       {:created-at (Date. 1000)}
-                                       (get stats "queued"))))
-                           (expect (= 3000 (clock-ms (get stats "settled"))))))))
-    (it "keeps the send time of a queued turn after it starts"
-        (expect (= 7000
-                   (#'state/sent-turn-ms
-                    {:turns {"t2" {:status "running" :queued_at 7000 :started_at 8000}}}))))
-    (it "keeps a stored turn that is newer than the send"
-        (expect (= 9000 (clock-ms (#'state/with-sent-turn {:latest-turn-at (Date. 9000)} 7000)))))))
+  ;; Regression, user report (paraphrased: "sort by the newest AGENT REPLY, not by our
+  ;; own interaction"): a queued message lifted its session over one the agent had
+  ;; answered later.
+  (describe "a sent message"
+            (it "leaves the session where its newest agent reply put it"
+                (with-redefs [state/registry
+                              (atom {"sent" {:turns {"t1" {:status "queued" :queued_at 9000}}}})
+
+                              lp/db-info
+                              (constantly nil)
+
+                              persistance/db-session-turn-stats
+                              (constantly nil)
+
+                              lp/by-channel
+                              (constantly [{:id "sent" :title "sent" :created-at 3000}
+                                           {:id "answered" :title "answered" :created-at 5000}])
+
+                              bus/live-turns
+                              (constantly {})
+
+                              bus/waiting-requests
+                              (constantly {})
+
+                              state/soul
+                              (fn [sid]
+                                {"id" (str sid)})]
+
+                  (expect (= ["answered" "sent"]
+                             (mapv #(get % "id")
+                                   (:sessions (state/list-sessions-page :all {})))))))))
 
 (defn- patch-session
   [sid body]

@@ -6210,6 +6210,46 @@
           {:parent-session-id sid :user-request "resumed" :status :success})
         (expect (false? (:latest-turn-failed? (persistance/db-session-turn-stats s sid)))))))
 
+;; Regression, user report (paraphrased: "the session list must sort by the newest
+;; AGENT REPLY, not by our own interaction"): a session moved to the top when the
+;; person sent a message, before any agent answered it.
+(defdescribe
+  session-reply-recency-test
+  (it
+    "dates a session by the end of its newest agent reply, never by a send"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          answered
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id sid :user-request "answered" :status :success})
+
+          _
+          (h/store-iteration! s {:session-turn-id answered :status :done :code "print(1)"})
+
+          waiting
+          (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "waiting"})
+
+          at
+          (fn [table id ms]
+            (raw-query s {:update table :set {:created_at ms} :where [:= :id (str id)]}))]
+
+      (at :session_turn_soul answered 1000)
+      (raw-query s {:update :session_turn_iteration :set {:created_at 5000 :finished_at 5000}})
+      (at :session_turn_soul waiting 9000)
+      (expect (= 5000
+                 (.getTime ^java.util.Date
+                           (:latest-turn-at (persistance/db-session-turn-stats s sid)))))
+      (expect (= 5000
+                 (.getTime ^java.util.Date
+                           (get-in (persistance/db-session-turn-stats s)
+                                   [(str sid) :latest-turn-at]))))
+      (expect (= 5000 (get (#'sqlite-core/session-activity-at s [(str sid)]) (str sid)))))))
+
 ;; Regression, this Vis session (paraphrased: "the same conversation is NEW on
 ;; one surface and read on another"): every client kept a private watermark, so
 ;; a session a device had never listed had no reading position at all. The store

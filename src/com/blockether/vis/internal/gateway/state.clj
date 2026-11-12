@@ -7231,51 +7231,9 @@
             (.remove ^java.util.concurrent.ConcurrentHashMap session-creates idempotency-key entry)
             (throw t)))))))
 
-(def ^:private registry-in-flight-statuses
-  "Registry turn statuses of a turn that has not ended, so its turn row can still be
-   missing from the store."
-  #{"queued" "running" "cancelling"})
-
-(defn- sent-turn-ms
-  "Epoch ms of the newest message in registry `entry` whose turn is still in flight,
-   or 0. The worker stores the turn row after the permit and the engine start, so
-   recency follows the send and not that later write."
-  [entry]
-  (transduce (keep (fn [turn]
-                     (when (contains? registry-in-flight-statuses (:status turn))
-                       (or (:queued_at turn) (:started_at turn)))))
-             (completing (fn [newest at]
-                           (max (long newest) (long at))))
-             0
-             (vals (:turns entry))))
-
-(defn- with-sent-turn
-  "Turn stats `st` with `:latest-turn-at` raised to `sent-ms`, a send whose turn row
-   has not landed yet. A newer stored turn keeps its own clock."
-  [st sent-ms]
-  (let [sent
-        (long sent-ms)
-
-        ^java.util.Date stored
-        (:latest-turn-at st)]
-
-    (if (and (pos? sent) (or (nil? stored) (< (.getTime stored) sent)))
-      (assoc st :latest-turn-at (java.util.Date. sent))
-      st)))
-
-(defn- with-sent-turns
-  "Grouped turn stats `stats`, keyed by session id, with every in-flight send of the
-   registry applied. The ranking and the row dates then agree on one recency."
-  [stats]
-  (reduce-kv (fn [acc sid entry]
-               (let [sent (sent-turn-ms entry)]
-                 (if (pos? (long sent)) (update acc sid with-sent-turn sent) acc)))
-             stats
-             @registry))
-
 (def ^:dynamic ^:private *turn-stats*
-  "Request-local store-wide turn stats of a listing, by session id, with the
-   registry sends applied; nil outside listings."
+  "Request-local store-wide turn stats of a listing, by session id; nil outside
+   listings."
   nil)
 
 (def ^:dynamic ^:private *page-facts*
@@ -7338,11 +7296,10 @@
           ;; query; a query per row doubled the page cost.
           stats (if (some? *turn-stats*)
                   (get *turn-stats* (str sid))
-                  (with-sent-turn (read-or {:read :session-turn-stats :session-id (str sid)}
-                                           nil
-                                           #(some-> (lp/db-info)
-                                                    (persistance/db-session-turn-stats sid)))
-                                  (sent-turn-ms entry)))
+                  (read-or {:read :session-turn-stats :session-id (str sid)}
+                           nil
+                           #(some-> (lp/db-info)
+                                    (persistance/db-session-turn-stats sid))))
           ;; EVERY payload a session reaches a client in carries its path, so no
           ;; answer can produce a row a client cannot key to its project
           ;; (`lean-workspace`). Resolved once here, which is also why the list
@@ -8397,9 +8354,9 @@
         :else 0))
 
 (defn- session-recency-ms
-  "Last conversation activity, for ordering only: the newest message sent to the
-   session. Opening or reading a session, registry touches and gateway hydration
-   never advance it."
+  "Last conversation activity, for ordering only: the end of the newest agent reply.
+   A sent message, opening or reading a session, registry touches and gateway
+   hydration never advance it."
   [session]
   (->epoch-ms (or (get session "modified_at") (get session "created_at"))))
 
@@ -8428,7 +8385,7 @@
 (def ^:private rest-band "Idle sessions, most recent first." 3)
 
 (def ^:private recent-band
-  "The one band of recency order: the newest message sent to each session."
+  "The one band of recency order: the end of the newest agent reply in each session."
   0)
 
 (defn- session-listed?
@@ -8764,8 +8721,7 @@
 
          ;; ONE grouped query serves BOTH the ordering and the page's decorations.
          stats
-         (with-sent-turns
-           (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {}))
+         (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {})
 
          reader-id
          (or (not-empty (str reader)) default-reader-id)
@@ -9062,8 +9018,7 @@
 
          stats
          (or (:stats facts)
-             (with-sent-turns
-               (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {})))
+             (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {}))
 
          live
          (or (:live facts) (read-or {:read :live-turns} {} bus/live-turns))

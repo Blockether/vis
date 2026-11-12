@@ -2111,13 +2111,27 @@
    them said."
   {:title 0 :request 1 :reply 2 :thinking 3})
 
+(def ^:private turn-reply-at-sql
+  "SQL for the end of the agent's reply to turn soul `ts`, epoch ms, or NULL.
+
+   The reply is the newest state of the turn, once it has settled; it ends with its
+   last iteration. An iteration row is written once, when the iteration ends, so its
+   `created_at` is that end, read through the `(session_turn_state_id, created_at)`
+   index. A turn that still runs, or that ended before any iteration, has no reply
+   yet: a sent message never moves a session."
+  (str "(SELECT MAX(i.created_at) FROM session_turn_state f "
+       "JOIN session_turn_iteration i ON i.session_turn_state_id = f.id "
+       "WHERE f.session_turn_soul_id = ts.id AND f.status <> 'running' "
+       "AND f.version = (SELECT MAX(v.version) FROM session_turn_state v "
+       "WHERE v.session_turn_soul_id = ts.id))"))
+
 (defn- session-activity-at
   "When each of `sids` LAST MOVED, epoch ms, keyed by soul-id string.
 
    The same instant a list read reports as `modified_at` (`db-session-turn-stats`
-   `:latest-turn-at`): the newest turn across every state of the soul, falling
-   back to the soul's own creation for a session nothing has ever run in. Search
-   ORDERS by this (`search-rows->sessions`), which is why it must come from the
+   `:latest-turn-at`): the end of the newest agent reply (`turn-reply-at-sql`),
+   falling back to the soul's own creation for a session nothing has answered in.
+   Search ORDERS by this (`search-rows->sessions`), which is why it must come from the
    same place the row's own date does — an order computed from anything else
    paints a list whose dates do not descend.
 
@@ -2126,8 +2140,8 @@
   [db-info sids]
   (if (empty? sids)
     {}
-    (let [sql (str "SELECT cs.id AS sid, MAX(COALESCE(ts.created_at, cs.created_at)) AS at "
-                   "FROM session_soul cs "
+    (let [sql (str "SELECT cs.id AS sid, COALESCE(MAX(" turn-reply-at-sql
+                   "), cs.created_at) AS at " "FROM session_soul cs "
                    "LEFT JOIN session_state ss ON ss.session_soul_id = cs.id "
                    "LEFT JOIN session_turn_soul ts ON ts.session_state_id = ss.id "
                    "WHERE cs.id IN (" (str/join "," (repeat (count sids) "?"))
@@ -2311,21 +2325,24 @@
    :limit 1})
 
 (def ^:private all-session-turn-stats-sql
-  "The all-session turn stats in one pass. Each turn reads its newest state once
+  "The all-session turn stats in one pass. Each turn reads its newest state
    through the `(session_turn_soul_id, version)` index, and the grouped facts and
    the newest human turn's status read that one materialized set. It answers
    what [[human-answer-expression]] and [[latest-turn-status-expression]] answer
    per session. Their correlated MAX(version) lookups cost about 70 ms over 18,000
-   turns; this costs about 45 ms. Bind the settled statuses, in order."
+   turns; this costs about 50 ms. `latest` is the end of the newest agent reply
+   (`turn-reply-at-sql`), which adds about 45 ms over 680,000 iterations. Bind the
+   settled statuses, in order."
   (str "WITH t AS MATERIALIZED ("
        "SELECT ss.session_soul_id AS sid, ts.request_kind AS kind, ts.created_at AS created_at, "
        "ts.position AS position, "
        "(SELECT f.status FROM session_turn_state f WHERE f.session_turn_soul_id = ts.id "
-       "ORDER BY f.version DESC LIMIT 1) AS status "
+       "ORDER BY f.version DESC LIMIT 1) AS status, " turn-reply-at-sql
+       " AS replied_at "
        "FROM session_turn_soul ts JOIN session_state ss ON ss.id = ts.session_state_id), "
        "agg AS (SELECT sid, COUNT(*) AS n, "
        "SUM(CASE WHEN kind = 'user' AND status IN (?, ?, ?) THEN 1 ELSE 0 END) AS answers, "
-       "MAX(created_at) AS latest FROM t GROUP BY sid), "
+       "MAX(replied_at) AS latest FROM t GROUP BY sid), "
        "lastu AS (SELECT sid, status FROM (SELECT sid, status, ROW_NUMBER() OVER "
        "(PARTITION BY sid ORDER BY created_at DESC, position DESC) AS rn "
        "FROM t WHERE kind = 'user' AND status IS NOT NULL) WHERE rn = 1) "
@@ -2342,7 +2359,8 @@
      :latest-turn-at (->date (:latest row))}))
 
 (defn db-session-turn-stats
-  "Counts, clocks, and the newest turn's verdict. answer-count counts settled
+  "Counts, clocks, and the newest turn's verdict. `:latest-turn-at` is the end of the
+   newest agent reply, nil before any reply. answer-count counts settled
    human turns (done, error, or interrupted), excluding Council, in-flight turns
    and superseded retries. The newest human turn's persisted status distinguishes
    failed and interrupted runs from ordinary idle sessions. The all-session arity
@@ -2364,7 +2382,7 @@
      (when-let [row (query-one! db-info
                                 {:select [[[:count :ts.id] :n] [human-answer-expression :answers]
                                           [latest-turn-status-expression :last_status]
-                                          [[:max :ts.created_at] :latest]]
+                                          [[:max [:raw turn-reply-at-sql]] :latest]]
                                  :from [[:session_turn_soul :ts]]
                                  :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
                                  :where [:= :ss.session_soul_id (->ref session-id)]})]
