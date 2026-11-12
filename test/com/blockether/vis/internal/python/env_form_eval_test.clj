@@ -502,8 +502,9 @@
 
 (defdescribe
   directory-traversal-budget-test
-  ;; #279: a resource refusal is a normal tool failure, not an env_context_retired.
-  (it "keeps the Python session usable after exhausting traversal in local and worker contexts"
+  ;; #279: a spent traversal budget returns partial results with one note, and the
+  ;; Python session stays usable.
+  (it "returns partial walks and keeps the Python session in local and worker contexts"
       (doseq [worker? [false true]]
         (let [dir (.toFile (java.nio.file.Files/createTempDirectory
                              "vis-scan-budget"
@@ -514,19 +515,21 @@
             (spit entry "")
             (tpc/with-own
               [ctx {} nil {:worker? worker?}]
-              (let [failure (ep/run-python-block ctx
-                                                 (str "scan_kept = 279\n"
-                                                      "scan_root = Path("
-                                                      (pr-str (str dir))
-                                                      ")\n"
-                                                      "for _ in range(10001):\n"
-                                                      "    list(scan_root.rglob('*.missing'))"))
-                    message (get-in failure [:error :message])
+              (let [walked (ep/run-python-block ctx
+                                                (str "scan_kept = 279\n"
+                                                     "scan_root = Path("
+                                                     (pr-str (str dir))
+                                                     ")\n"
+                                                     "for _ in range(10001):\n"
+                                                     "    list(scan_root.rglob('*.missing'))"))
                     recovered
                     (ep/run-python-block ctx "print(scan_kept, len(list(scan_root.iterdir())))")]
 
-                (expect (str/includes? (str message) "10000"))
-                (expect (not (str/includes? (str failure) "env_context_retired")))
+                (expect (nil? (:error walked)) (pr-str walked))
+                (expect (= 1
+                           (count (re-seq #"Directory walks stopped after 10000 entries"
+                                          (str (:stdout walked)))))
+                        (pr-str walked))
                 (expect (nil? (:error recovered)) (pr-str recovered))
                 (expect (= "279 1" (out recovered)))))
             (finally (.delete entry) (.delete dir))))))
