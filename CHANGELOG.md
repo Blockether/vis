@@ -7,11 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.16] - 2026-11-12
+
+### Added
+- Context: Claude Opus 5.5, Claude Fable and Claude Sonnet have a soft context budget of 250k tokens. The input window of the route still caps it.
+
 ### Changed
 - Sandbox: a directory walk that reaches the limit of 10,000 entries in one block returns what it found, and the block output shows one note that the result is partial. Before, the walk raised an error and lost every entry that it had found. The Python runtime is now 0.5.28.
 - Sandbox: the agent has no `cat` and no `patch`. It reads and edits files with plain Python, and the core prompt shows how: print only the lines that you need, and assert that the old text occurs one time before you write. In an A/B test with GPT on the 12 benchmark tasks, the arm without the two tools passed 7 tasks and the arm with them passed 5, at 3% less cost. Vis no longer depends on `java-diff-utils`.
-- Sandbox: a printed result keeps the file windows of `cat` whole, up to one full 50 KiB window for each result. Before, the 4096-token clip of a printed result also cut the middle of a file read, and the model read one large file in three requests. The clip does not keep the rows of `grep` whole.
 - Sandbox: a printed result shows up to 8192 estimated tokens before Vis clips it. Before, the limit was 4096.
+- Goals: the goal rules are a short decision list: complete the goal, continue with tools, or set `blocked` in the iteration that finds no authorized action. Before, the model waited for 3 continuations before it set `blocked`. A fold no longer removes the goal objective from the model input.
+- Providers: the model lists show a preview that is newer than the current model of its line, such as `qwen4-max-preview`, and hide a model that a current model replaces, such as `glm-5.2`. This comes from svar 0.7.235.
+- Extensions: vis-spel 0.1.29 puts the browser workflow in the extension prompt.
+
+### Fixed
+- Python (#465): a turn cancel no longer stops the Python worker of the session. Before, each later call failed with "worker was retired (exited unexpectedly)". A cancel also no longer cancels the context hooks of the extensions.
+- Python (#472): the next turn makes a new environment for a session whose trusted-extension worker is dead or holds its GIL. A hung worker holds the next turn for 5 seconds at most.
+- Jail (#469, #470): on macOS, a jailed command can stop its own children and connect to a server that the same jail started. Each front door has one owner session for the life of the gateway, so a process that leaves its worker cannot use the rules of a different session. A gateway start and a gateway stop end the jailed processes that ended runs left. On macOS, this includes detached processes.
+- Jail (#473): a jailed child of another Vis process cannot connect to the gateway API or to a front door on loopback.
+- Jail (#471): on Linux with kernel 6.12 or later (Landlock ABI 6), a jailed command can send signals only to the processes that it started. On an older kernel, the gateway log shows a warning when it starts.
+- Sandbox (#467): the memory gate follows physical memory: a third of it, at least 5120 MB and at most three quarters. Before, a fixed budget of 3072 MB stopped idle sandboxes before their idle time ended. On Linux, an LXC guest uses its own memory limit.
+- Activity (#468): a live snapshot reads Activity pages outside the write lock, so it does not wait for the writes of all sessions.
+- Docs (#466): `apropos` also finds a tool by the start of its row, for example an extension tool by its description.
+- Goals: a new goal objective and a one-shot session keep the provider prompt cache.
+- Configuration: a session that starts with `--no-global` uses its saved configuration tiers on every thread. Before, a resumed turn could read the global tier and lose the prompt cache.
+- Companion: the provider summary shows the GitHub Copilot premium request quota. Before, it showed only the unlimited chat and completions windows.
+- Companion: in the live view dialog, Interrupt is on the left, under a leading status line or progress bar.
+- TUI and Companion: the leader row shows its wait after its time, such as `22m 05s (waited 8m 52s)`.
+
+### Package
+- sqlite-jdbc 3.54.1.0 bundles SQLite 3.54.1, which fixes 11 SQLite CVEs.
 
 ## [v0.5.15] - 2026-11-11
 
