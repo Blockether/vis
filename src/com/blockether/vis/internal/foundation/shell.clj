@@ -2871,7 +2871,8 @@
                        ;; Resolved per spawn: a `.env` edit lands on the next child.
                        :env-values (config/child-environment-values)
                        ::environment latest-env
-                       ::cleanup cleanup}))
+                       ::cleanup cleanup}
+                      (gateway-sandbox/loopback-grant compiled-network-policy)))
              (catch Throwable t (cleanup) (throw t)))))))
 
 (defn jailed-shell

@@ -175,3 +175,55 @@
                 ;; missing token ⇒ fail-closed auth challenge (407)
                 (expect (str/includes? (get-status port (:port origin) nil) "407"))
                 (finally ((:stop! origin)) (gs/shutdown!)))))))))
+
+;; Direct loopback (#469) — the deny list must hold every port a later session takes
+
+(defdescribe loopback-grant-denies-later-front-doors
+             (it "a front door that a later session takes is already in an earlier deny list"
+                 (try (gs/register-session! "early" (constantly nil))
+                      (let [deny (set (:loopback-deny-ports (gs/loopback-grant nil)))]
+                        (expect (contains? deny (gs/proxy-port)))
+                        (gs/register-session! "late" (constantly nil))
+                        (expect (contains? deny (gs/ensure-session-proxy! "late"))))
+                      (finally (gs/shutdown!))))
+             (it "no grant when the allowlist does not already pass loopback"
+                 (try (expect (nil? (gs/loopback-grant (ep/compile-policy {:allowed-domains
+                                                                           ["example.com"]}))))
+                      (expect (some? (gs/loopback-grant (ep/compile-policy {:allowed-domains
+                                                                            ["example.com"
+                                                                             "localhost"
+                                                                             "127.0.0.1"]}))))
+                      (finally (gs/shutdown!))))
+             (it "a session past the reserved front doors gets none, not a port outside the list"
+                 (try (let [deny
+                            (set (:loopback-deny-ports (gs/loopback-grant nil)))
+
+                            ports
+                            (mapv (fn [i]
+                                    (let [token (str "s" i)]
+                                      (gs/register-session! token (constantly nil))
+                                      (gs/ensure-session-proxy! token)))
+                                  (range 33))]
+
+                        (expect (every? deny (butlast ports)))
+                        (expect (nil? (last ports))))
+                      (finally (gs/shutdown!)))))
+
+(defdescribe released-front-door-fails-closed
+             (it "a front door stops serving when its session is gone"
+                 (run-wire-test
+                   (fn []
+                     (let [origin
+                           (start-origin!)
+
+                           tok
+                           (str (java.util.UUID/randomUUID))]
+
+                       (try (gs/register-session! tok
+                                                  (constantly (ep/compile-policy {:allowed-domains
+                                                                                  ["localhost"]})))
+                            (let [port (gs/ensure-session-proxy! tok)]
+                              (expect (str/includes? (get-status port (:port origin) nil) "200"))
+                              (gs/unregister-session! tok)
+                              (expect (str/includes? (get-status port (:port origin) nil) "407")))
+                            (finally ((:stop! origin)) (gs/shutdown!))))))))

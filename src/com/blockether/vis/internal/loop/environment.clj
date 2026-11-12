@@ -734,7 +734,9 @@
                             :proxy-token (when proxy? sandbox-token)
                             :java-trust-store (:java-trust-store java-trust)
                             :java-trust-store-password (:java-trust-store-password java-trust)
-                            :ca-file ca-file})
+                            :ca-file ca-file}
+                           ;; Read at every spawn, after this session took its front door (#469).
+                           (when proxy? (gateway-sandbox/loopback-grant compiled-network-policy)))
                     draft-env))))
             network-opts {;; The worker launch reads this policy before its first
                           ;; interpreter request; the same snapshot configures its

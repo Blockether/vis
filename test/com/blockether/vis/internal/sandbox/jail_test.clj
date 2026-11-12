@@ -74,6 +74,11 @@
                  (:network (pj/runtime-policy {:proxy-port 4321 :net-enabled? true}))))
       (expect (= :open (:network (pj/runtime-policy {:net-enabled? true}))))
       (expect (= :off (:network (pj/runtime-policy {:net-enabled? false})))))
+  (it "a direct loopback grant travels with the proxy port and its denied ports (#469)"
+      (expect (= {:proxy 4321 :loopback? true :loopback-deny [4321 7890]}
+                 (:network (pj/runtime-policy {:proxy-port 4321
+                                               :loopback-direct? true
+                                               :loopback-deny-ports [4321 7890]})))))
   (it "inbound is the managed listener port plus the configured ports, sanitized"
       (expect (= [54321 5273 4200]
                  (:inbound (pj/runtime-policy {:loopback-port 54321

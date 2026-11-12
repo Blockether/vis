@@ -1157,3 +1157,28 @@
                                           "the origin's write was not torn down by the proxy"))))
                             (finally ((:stop! proxy)))))
                      (finally ((:stop! origin)))))))))))
+
+(defdescribe
+  loopback-direct-only-when-the-proxy-already-passes-it
+  (it "no policy, or an allowlist that names both loopback names, passes loopback (#469)"
+      (expect (ep/loopback-direct? nil))
+      (expect (ep/loopback-direct? (ep/compile-policy {:denied-domains ["blocked.example"]})))
+      (expect (ep/loopback-direct? (ep/compile-policy {:allowed-domains ["pypi.org" "localhost"
+                                                                         "127.0.0.1"]}))))
+  (it "an allowlist without loopback, or a loopback deny, keeps the proxy as the only door"
+      (expect (not (ep/loopback-direct? (ep/compile-policy {:allowed-domains ["pypi.org"]}))))
+      (expect (not (ep/loopback-direct? (ep/compile-policy {:allowed-domains ["pypi.org"
+                                                                              "localhost"]}))))
+      (expect (not (ep/loopback-direct? (ep/compile-policy {:denied-domains ["localhost"]}))))
+      (expect (not (ep/loopback-direct? {:deny-all? true}))))
+  (it "a rule that narrows loopback methods or ports keeps the proxy as the only door"
+      (expect (not (ep/loopback-direct? (ep/compile-policy {:rules [{:host "127.0.0.1"
+                                                                     :access "read-only"}]}))))
+      (expect (not (ep/loopback-direct? (ep/compile-policy {:rules [{:host "localhost"
+                                                                     :access "full"
+                                                                     :ports [80]}]}))))
+      (expect (ep/loopback-direct? (ep/compile-policy {:rules [{:host "api.example.com"
+                                                                :access "read-only"}]}))))
+  (it "a Tier-2 filter would not see direct traffic, so it keeps the proxy as the only door"
+      (expect (not (ep/loopback-direct? {:network-filters-fn (constantly [(fn [_]
+                                                                            nil)])})))))

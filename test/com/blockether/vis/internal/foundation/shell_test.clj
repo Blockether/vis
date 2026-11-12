@@ -2155,6 +2155,63 @@
                       (io/delete-file secret true)
                       (io/delete-file ws true))))))
 
+(defdescribe
+  macos-jailed-process-control-e2e-test
+  (it
+    "signals its own child and reaches its own listener, but not a gateway port (#469, #470)"
+    {:skip (or (not (str/starts-with? (System/getProperty "os.name" "") "Mac"))
+               (not (process-jail/supported?))
+               (runtime/jailed?)
+               (not (.canExecute (io/file "/usr/bin/nc"))))}
+    (let [ws
+          (doto (io/file (System/getProperty "java.io.tmpdir")
+                         (str "vis-control-e2e-" (System/nanoTime)))
+            (.mkdirs))
+
+          loopback
+          (java.net.InetAddress/getLoopbackAddress)
+
+          proxy
+          (java.net.ServerSocket. 0 1 loopback)
+
+          gateway
+          (java.net.ServerSocket. 0 1 loopback)
+
+          own-port
+          (with-open [s (java.net.ServerSocket. 0 1 loopback)]
+            (.getLocalPort s))
+
+          env
+          {:session-id (str "control-e2e-" (System/nanoTime))
+           :jail-policy-fn (constantly {:roots-fn (constantly [(.getPath ws)])
+                                        :proxy-port (.getLocalPort proxy)
+                                        :loopback-direct? true
+                                        :loopback-deny-ports [(.getLocalPort gateway)]})}
+
+          cmd
+          (str "sleep 30 & kill -TERM $! && echo killed=ok; "
+               "/usr/bin/nc -l 127.0.0.1 "
+               own-port
+               " </dev/null >got 2>/dev/null & "
+               "for i in $(seq 50); do exec 3<>/dev/tcp/127.0.0.1/"
+               own-port
+               " 2>/dev/null && break; sleep 0.1; done; "
+               "echo hello >&3; exec 3>&-; "
+               "for i in $(seq 50); do [ -s got ] && break; sleep 0.1; done; echo own=$(cat got); "
+               "if exec 4<>/dev/tcp/127.0.0.1/"
+               (.getLocalPort gateway)
+               " 2>/dev/null; then echo gateway=escaped; else echo gateway=blocked; fi")]
+
+      (try (binding [workspace/*workspace-root* (.getCanonicalPath ws)]
+             (let [out (str (get (shell-run* env cmd) "out"))]
+               (expect (str/includes? out "killed=ok"))
+               (expect (str/includes? out "own=hello"))
+               (expect (str/includes? out "gateway=blocked"))))
+           (finally (.close proxy)
+                    (.close gateway)
+                    (resources/stop-all! (:session-id env))
+                    (run! #(io/delete-file % true) (reverse (file-seq ws))))))))
+
 ;; The PYTHON SANDBOX surface — `python_execution` is the model's one call, so
 ;; shell must be usable directly from ordinary Python.
 

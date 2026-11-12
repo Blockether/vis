@@ -32,10 +32,20 @@
 ;; {:port <int> :stop! (fn [])} | nil — the ONE shared proxy
 (defonce ^:private proxy-state (atom nil))
 
-;; token -> {:port <int> :stop! fn}; compatibility front doors for managed
+;; token -> front-door slot; compatibility front doors for managed
 ;; language processes whose HTTP stacks cannot attach Proxy-Authorization.
 ;; They share the policy engine + CA; only attribution moves from header to port.
 (defonce ^:private session-proxy-states (atom {}))
+
+;; Vector of front-door slots {:port :server :token (atom token-or-nil) :proxy (delay)},
+;; reserved together on first use, or nil. A slot serves only the token it holds.
+(defonce ^:private front-doors (atom nil))
+
+(def ^:private front-door-count
+  "Front doors reserved at once. A child with direct loopback denies every gateway port
+   that exists at its spawn, so a session that starts later may only take a reserved
+   port. When all are taken, a session's workers use the shared authenticated proxy."
+  32)
 
 (def ^:private session-proxy-lock (Object.))
 
@@ -61,13 +71,13 @@
 
 (defn- reserved-loopback-ports
   "All loopback ports off-limits to a jailed child: the shared authenticated
-   proxy, every session-attributed front door, and gateway control-plane
+   proxy, every front-door slot, and gateway control-plane
    ports. A proxy can therefore never pivot into another proxy listener."
   []
   (into @extra-reserved-ports
         (concat (when-let [p (:port @proxy-state)]
                   [p])
-                (keep :port (vals @session-proxy-states)))))
+                (map :port @front-doors))))
 
 (defn register-session!
   "Register `policy-fn` (0-arg → the session's compiled policy value or nil) under
@@ -82,8 +92,9 @@
   [token]
   (when token
     (locking session-proxy-lock
-      (when-let [stop! (get-in @session-proxy-states [token :stop!])]
-        (try (stop!) (catch Throwable _ nil)))
+      (when-let [slot (get @session-proxy-states token)]
+        (reset! (:token slot) nil)
+        (reset! (:released slot) (System/nanoTime)))
       (swap! session-proxy-states dissoc token))
     (swap! registry dissoc token))
   nil)
@@ -153,12 +164,46 @@
               (reset! proxy-state srv)
               (:port srv))))))
 
+(defn- front-door
+  "One reserved front-door slot: a bound loopback port that serves the token it holds,
+   and fails closed while it holds none."
+  []
+  (let [server
+        (doto (java.net.ServerSocket.)
+          (.setReuseAddress true)
+          (.bind (java.net.InetSocketAddress. (java.net.InetAddress/getByName "127.0.0.1") 0)))
+
+        token
+        (atom nil)]
+
+    {:port (.getLocalPort server)
+     :server server
+     :token token
+     :released (atom 0)
+     :proxy (delay (egress/start! {:server server
+                                   :policy-fn (fn [_]
+                                                (resolve-policy @token))
+                                   :on-log log-egress-decision!
+                                   :mitm (fn []
+                                           @ca-state)}))}))
+
+(defn- ensure-front-doors!
+  "Reserve every front-door port at once, before any child can read the deny list."
+  []
+  (or @front-doors
+      (locking session-proxy-lock
+        (or @front-doors (reset! front-doors (vec (repeatedly front-door-count front-door)))))))
+
 (defn ensure-session-proxy!
-  "Lazily start a session-attributed compatibility front door for managed language
+  "Give `token` a session-attributed compatibility front door for managed language
    processes whose HTTP stacks do not reliably send Proxy-Authorization from URL
    userinfo (notably urllib and JVM dependency resolvers). The listener is bound to
    loopback, resolves exactly `token`'s live policy, and shares the gateway CA and
-   proxy implementation. Unknown/disposed sessions fail closed. Returns its port."
+   proxy implementation. Unknown/disposed sessions fail closed. Returns its port,
+   or nil when every reserved front door is taken.
+
+   A session takes the slot that was released longest ago, so a process that
+   outlived an earlier session is least likely to find a new owner on its port."
   [token]
   (when-not (registered? token)
     (throw (ex-info "Managed language proxy denied: session is not registered"
@@ -166,13 +211,29 @@
   (or (get-in @session-proxy-states [token :port])
       (locking session-proxy-lock
         (or (get-in @session-proxy-states [token :port])
-            (let [srv (egress/start! {:policy-fn (fn [_]
-                                                   (resolve-policy token))
-                                      :on-log log-egress-decision!
-                                      :mitm (fn []
-                                              @ca-state)})]
-              (swap! session-proxy-states assoc token srv)
-              (:port srv))))))
+            (if-let [slot (->> (ensure-front-doors!)
+                               (filter #(nil? @(:token %)))
+                               (sort-by #(deref (:released %)))
+                               first)]
+              (do (reset! (:token slot) token)
+                  (force (:proxy slot))
+                  (swap! session-proxy-states assoc token slot)
+                  (:port slot))
+              (do (tel/log! {:level :warn :id ::front-doors-taken :data {:count front-door-count}}
+                            "Every session front door is taken; workers use the shared proxy")
+                  nil))))))
+
+(defn loopback-grant
+  "Jail policy keys that let a confined child connect to loopback directly, or nil
+   (#469). Granted only when `network-policy` already passes all loopback traffic
+   through the proxy. The deny list holds every gateway port a child must never reach:
+   the control plane, the shared proxy and each front door, also one that a later
+   session takes, because all front doors are reserved before the list is read."
+  [network-policy]
+  (when (egress/loopback-direct? network-policy)
+    (ensure-proxy!)
+    (ensure-front-doors!)
+    {:loopback-direct? true :loopback-deny-ports (vec (sort (reserved-loopback-ports)))}))
 
 (defn proxy-port
   "The running shared proxy's port, or nil if it was never started."
@@ -184,8 +245,10 @@
    clear all session policy state. Idempotent."
   []
   (locking session-proxy-lock
-    (doseq [{:keys [stop!]} (vals @session-proxy-states)]
-      (when stop! (try (stop!) (catch Throwable _ nil))))
+    (doseq [{:keys [proxy ^java.net.ServerSocket server]} @front-doors]
+      (try (when (realized? proxy) ((:stop! @proxy))) (catch Throwable _ nil))
+      (try (.close server) (catch Throwable _ nil)))
+    (reset! front-doors nil)
     (reset! session-proxy-states {}))
   (locking proxy-lock
     (when-let [stop! (:stop! @proxy-state)]

@@ -22,6 +22,8 @@
       :keychain?        <bool>               ; the OS credential store is reachable
       :inbound-ports    [<int> …]            ; ports a child may ACCEPT on from
                                              ; other hosts (loopback is always open)
+      :loopback-direct? <bool>               ; connect to loopback without the proxy
+      :loopback-deny-ports [<int> …]         ; gateway ports that stay closed then
       :env-values       {<NAME> <value>}     ; RESOLVED project env (`.env` +
                                              ; `environment:`) with ONE call's own
                                              ; `env` delta merged on, per spawn
@@ -309,7 +311,8 @@
   "The platform-neutral confinement VALUE the runtime compiles, from a session
    policy: the LIVE session roots via `:roots-fn` plus `:allow-read-write` are
    read-write, `:allow-read` read-only, the deny lists win, `:unix-connect` names
-   exact local control sockets, egress is the session proxy when one is up, otherwise
+   exact local control sockets, egress is the session proxy when one is up (plus direct
+   loopback when `:loopback-direct?` grants it), otherwise
    open or off with `:net-enabled?`, and inbound is the managed listener port plus
    `:inbound-ports`. Called per spawn, so each child gets the CURRENT live roots
    without re-reading model-writable config.
@@ -320,7 +323,7 @@
    from one shared walk, because it cannot compile a pattern (#396)."
   [{:keys [roots-fn net-enabled? allow-read-write allow-read deny-write deny-read deny-exec
            deny-read-rules deny-write-rules write-rules write-limited? proxy-port loopback-port
-           keychain? unix-connect]
+           keychain? unix-connect loopback-direct? loopback-deny-ports]
     :as policy}]
   (let [session-roots
         (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
@@ -343,7 +346,11 @@
      :deny-read closed
      :deny-exec (vec deny-exec)
      :unix-connect (vec unix-connect)
-     :network (cond proxy-port {:proxy proxy-port}
+     :network (cond proxy-port (cond-> {:proxy proxy-port}
+                                 loopback-direct?
+                                 (assoc :loopback?
+                                   true :loopback-deny
+                                   (vec loopback-deny-ports)))
                     net-enabled? :open
                     :else :off)
      :inbound (inbound-ports (cons loopback-port (:inbound-ports policy)))

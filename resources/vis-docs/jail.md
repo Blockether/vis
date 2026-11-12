@@ -19,6 +19,8 @@ The [Python sandbox](python-sandbox.md) also has its own permission checks.
   port](#method-path-and-port-rules).
 - **A development server inside the jail must accept connections.** Open [inbound
   development ports](#inbound-development-ports).
+- **Tests start a local server or stop their own child processes.** Read [local servers and
+  child processes](#local-servers-and-child-processes).
 - **You run Vis inside your own sandbox, which denies `/tmp`.** [Set a task runtime
   directory](#run-vis-inside-your-own-sandbox).
 - **A command is blocked and you need to know why.** [Diagnose the effective
@@ -275,6 +277,24 @@ jail:
   network:
     inbound_ports: [5273]
 ```
+
+### Local servers and child processes
+
+Tests often start a server on a loopback port and connect to it. A jailed command can do this
+directly, without the proxy. The rules depend on the host:
+
+- On macOS, direct loopback connections are allowed only when the proxy also allows loopback. So
+  there is no `allowed_domains` list, or the list includes `localhost` and `127.0.0.1`. Also, no
+  project network filter is registered. The gateway control port and the proxy ports of all sessions
+  stay closed. In all other cases, loopback connections go through the proxy and its rules.
+- On Linux, each command has its own network namespace. A server and a client in the same command
+  connect directly. A service on the loopback interface of the host is available only through the
+  proxy.
+- Windows has no supported process jail.
+
+A jailed command can send signals to the processes that it started and to their children. It cannot
+send signals to other processes. On macOS, `ps` does not run in the jail, because it is a setuid
+program. To find out if a process that you started still runs, use `kill -0 <pid>`.
 
 ### Project network filters
 

@@ -424,6 +424,28 @@
     (filters-fn)
     (registered-network-filters)))
 
+(defn- unrestricted-rule?
+  "True when `rule` narrows no method, path or port, so direct traffic loses nothing."
+  [rule]
+  (and (empty? (get rule "ports"))
+       (or (and (empty? (get rule "methods")) (empty? (get rule "allow")))
+           (contains? (get rule "methods") "*"))))
+
+(defn loopback-direct?
+  "True when a confined child may connect to loopback without the proxy (#469): the
+   proxy already passes every request to `localhost` and `127.0.0.1`. So no allowlist
+   or deny entry stops those names, no rule narrows their methods, paths or ports, and
+   no Tier-2 filter would inspect the traffic. The reserved gateway ports stay closed
+   on both paths; the jail denies them by port."
+  [policy]
+  (and (not (:deny-all? policy))
+       (every? (fn [host]
+                 (and (host-ok? policy host)
+                      (let [rule (rule-for-host (:rules policy) host)]
+                        (or (nil? rule) (unrestricted-rule? rule)))))
+               ["localhost" "127.0.0.1"])
+       (empty? (policy-network-filters policy))))
+
 (defn- headers->map
   "Raw header lines `[\"Name: value\" …]` -> a lower-cased name->value map."
   [headers]
@@ -1264,17 +1286,21 @@
 
    `:mitm` (optional) a 0-arg fn returning a `tls-mitm/create!` capability (or nil).
    When present AND the per-connection policy carries `:mitm?`, HTTPS CONNECT is
-   TLS-terminated so method+path are enforced; otherwise CONNECT is a raw tunnel."
-  [{:keys [policy-fn on-log mitm]}]
+   TLS-terminated so method+path are enforced; otherwise CONNECT is a raw tunnel.
+
+   `:server` (optional) is a bound `ServerSocket` to serve instead of a new one, for
+   a port that had to be reserved before the proxy starts."
+  [{:keys [policy-fn on-log mitm server]}]
   (let [on-log
         (or on-log
             (fn [_]
               nil))
 
-        server
-        (doto (ServerSocket.)
-          (.setReuseAddress true)
-          (.bind (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0)))
+        ^ServerSocket server
+        (or server
+            (doto (ServerSocket.)
+              (.setReuseAddress true)
+              (.bind (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0))))
 
         port
         (.getLocalPort server)
