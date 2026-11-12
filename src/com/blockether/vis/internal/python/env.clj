@@ -1309,17 +1309,27 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 (defn install-extension-hooks!
   "Install the trusted-extension operations this namespace calls but cannot
    require, because `python.extensions` requires it: `:net-probe-report` answers
-   the sandbox `network_probe` tool and `:close-session-contexts!` stops a
-   session's trusted extension worker. The process wiring installs both; without
-   them a sandbox has no network probe and disposal skips the extension worker."
+   the sandbox `network_probe` tool, `:close-session-contexts!` stops a session's
+   trusted extension worker and `:session-contexts-ready?` tells if that worker can
+   enter Python. The process wiring installs all three; without them a sandbox has
+   no network probe, disposal skips the extension worker and the readiness check
+   does not probe it."
   [hooks]
-  (reset! extension-hooks (select-keys hooks [:net-probe-report :close-session-contexts!]))
+  (reset! extension-hooks (select-keys hooks
+                                       [:net-probe-report :close-session-contexts!
+                                        :session-contexts-ready?]))
   nil)
 
 (defn- close-extension-contexts!
   [session]
   (when-let [close-extensions (:close-session-contexts! @extension-hooks)]
     (try (close-extensions session) (catch Throwable _ nil))))
+
+(defn- extension-contexts-ready?
+  [session]
+  (if-let [ready? (:session-contexts-ready? @extension-hooks)]
+    (ready? session)
+    true))
 
 (defn- install-network-probe!
   "The dev network-filter loop: `network_probe([method,] url)` and
@@ -1625,9 +1635,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    Called between turns. False once the session was disposed or its worker was
    retired, when the environment carries no sandbox, when its existing worker
    cannot enter Python within its readiness budget, or when the worker of its
-   trusted extensions was lost (#465): every extension hook would fail. A live
-   process alone is not enough: background native Python code can hold the GIL
-   after a block finishes.
+   trusted extensions was lost (#465) or cannot enter Python (#472): every
+   extension hook would fail or wait. A live process alone is not enough:
+   background native Python code can hold the GIL after a block finishes.
 
    An environment whose sandbox is not built YET is enterable: entering is what
    builds it. A sandbox whose initialization failed is not enterable. Answering
@@ -1640,7 +1650,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
            (not retired?)
            (if-let [worker (worker-of session)]
              (and (not (pyext/worker-lost? (pyext/extension-worker-key worker)))
-                  (pyext/worker-ready? worker session))
+                  (pyext/worker-ready? worker session)
+                  (extension-contexts-ready? worker))
              true))
       (boolean (and (:python-sandbox environment)
                     (not (realized? @(:python-sandbox environment)))

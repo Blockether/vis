@@ -3957,6 +3957,30 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                    (and (= worker k) (view/owner-context-open? (:context row))))
                  @session-contexts)))
 
+(defn ^:no-doc session-contexts-ready?
+  "True when each live trusted worker of sandbox `worker` can enter one of its open
+   extension namespaces within the readiness budget. A live process can still hold
+   its GIL in native code, and then each extension call of the session waits (#472).
+   A worker without an open namespace has nothing to enter. The shared registration
+   worker is not of this session. Never starts a worker."
+  [worker]
+  (every? (fn [[extension-worker ctx]]
+            (pyext/worker-ready? extension-worker ctx))
+          (into {}
+                (keep (fn [[[k _] row]]
+                        (let [ctx
+                              (:context row)
+
+                              extension-worker
+                              (worker-for ctx)]
+
+                          (when (and (= worker k)
+                                     (not= pyext/shared-key extension-worker)
+                                     (not (pending-context? ctx))
+                                     (pyext/worker-live? extension-worker))
+                            [extension-worker ctx]))))
+                @session-contexts)))
+
 (defn ^:no-doc close-session-contexts!
   "Stop the session's separate trusted extension worker and forget its namespaces.
    Teardown does not enter an interpreter that may be blocked in native code."
