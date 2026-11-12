@@ -193,4 +193,7 @@
                           :shim/bindings ls-bridge-bindings
                           :shim/source "vis-host-python/ls.py"}]}))
 
-(defn register! [] (extension/register-extension! vis-extension))
+(defn register!
+  "Register the shim. Experiment: `VIS_EXP_NO_LS` leaves the sandbox without `ls`."
+  []
+  (when-not (System/getenv "VIS_EXP_NO_LS") (extension/register-extension! vis-extension)))

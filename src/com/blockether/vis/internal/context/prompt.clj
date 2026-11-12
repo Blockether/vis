@@ -446,10 +446,40 @@
                           (when proj-dir
                             (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
 
+(defn- replace-once
+  "Replace `old` in `s`. Refuse a text that does not occur one time."
+  [s old new]
+  (let [parts (str/split s (re-pattern (java.util.regex.Pattern/quote old)) -1)]
+    (when-not (= 2 (count parts))
+      (throw (ex-info "The experiment prompt edit does not match one time." {:old old})))
+    (str (first parts) new (second parts))))
+
+(defn- no-ls-prompt
+  "Experiment: the core rules of a sandbox without `ls`."
+  [prompt]
+  (-> prompt
+      (replace-once "For an unknown path, `ls` the nearest known parent. "
+                    "For an unknown path, list the nearest known parent with plain Python. ")
+      (replace-once
+        (str "- `ls` and `grep` return text (a `str`), not a map with fields; only `ls(..., as_paths=True)` "
+             "returns a list. Print the whole result; to see less, narrow the call.\n")
+        (str "- `grep` returns text (a `str`), not a map with fields. Print the whole result; to see less, "
+             "narrow the call.\n"))
+      (replace-once "The text of `ls` or `grep` is one page" "The text of `grep` is one page")
+      (replace-once
+        (str "- `ls(paths=\".\", depth=1, *, pattern=None)` lists a directory tree as text. Example: "
+             "`print(ls(project_root_path / \"src\", depth=2))`.\n")
+        (str "- There is no listing tool. List a directory with plain Python: `sorted(p.name for p in "
+             "path.iterdir())`, or `sorted(path.glob(\"src/**/*.py\"))` for a tree. In a deep walk, skip "
+             "`.git`, `node_modules` and build output: `os.walk` lets you prune `dirs`.\n"))))
+
 (defn- core-system-prompt
   "The core rules. A non-interactive run gets them without the progress-note rules."
   [interactive?]
-  (if interactive? CORE_SYSTEM_PROMPT (str/replace CORE_SYSTEM_PROMPT PROGRESS_NOTE_RULES "")))
+  (let [base (cond-> CORE_SYSTEM_PROMPT
+               (System/getenv "VIS_EXP_NO_LS")
+               no-ls-prompt)]
+    (if interactive? base (str/replace base PROGRESS_NOTE_RULES ""))))
 
 (defn- system-prompt-blocks
   "Send-order pieces of the system prompt: the base text, whether a user file or
@@ -809,7 +839,9 @@
            ;; The limit is `VIS_PY_SCAN_ENTRIES` in vis-python-runtime `vispython.c`.
            "\nDirectory walks in one block (`pathlib`, `glob`, `os.walk`, `os.listdir`) stop "
            "after 10,000 entries and return a partial result with a note. For a large tree such as "
-           "`~/.vis`, use `ls` or `grep` on a narrow path."
+           (if (System/getenv "VIS_EXP_NO_LS")
+             "`~/.vis`, use `grep` or walk a narrow path."
+             "`~/.vis`, use `ls` or `grep` on a narrow path.")
            "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
