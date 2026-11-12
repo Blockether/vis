@@ -634,6 +634,44 @@
           (expect (not-any? retired? (scoped/settings db (scoped/target db scope id)))))
         (expect (not (contains? (scoped/values db sid) "plans")))))))
 
+;; A session started with `--no-global` once took the global settings again on a
+;; thread without the tier binding. Its system prompt then changed between turns.
+(defdescribe
+  session-config-tiers
+  (it "reads the tiers that the session was created with, whatever the caller has bound"
+      (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                           "vis-session-tiers"
+                           (make-array java.nio.file.attribute.FileAttribute 0)))]
+        (toggles/register-toggle! {:id "session_tier_probe"
+                                   :label "Tier"
+                                   :default false
+                                   :scopes contract/scopes
+                                   :persist? true})
+        (try (with-redefs [config/config-dir (constantly (.getCanonicalPath dir))
+                           config/state-path (constantly (str (io/file dir "state.yml")))
+                           config/load-global-yaml-config-raw (constantly {})]
+
+               (config/update-machine-config! #(assoc-in % ["toggles" "session_tier_probe"] true))
+               (config/invalidate-config-cache!)
+               (let [db (h/store)
+                     project-only (h/store-session! db {:title "Project only"})
+                     every-tier (h/store-session! db {:title "Every tier"})
+                     probe #(get (scoped/values db %) "session_tier_probe")]
+
+                 (store/db-set-scoped-setting! db
+                                               "session"
+                                               project-only
+                                               workspace/config-sources-setting
+                                               ["project"])
+                 (expect (false? (probe project-only)))
+                 (expect (true? (probe every-tier)))
+                 (binding [workspace/*config-sources* #{"project"}]
+                   (expect (false? (probe project-only)))
+                   (expect (true? (probe every-tier))))))
+             (finally (config/invalidate-config-cache!)
+                      (doseq [file (reverse (file-seq dir))]
+                        (io/delete-file file true)))))))
+
 (defdescribe
   provider-thinking-defaults
   (it

@@ -148,26 +148,27 @@
         (get raw "toggles")))
 
 (defn layers
-  "Read ancestors afresh, including memberships and project configuration."
+  "Read ancestors afresh, including memberships and project configuration. A session
+   reads the configuration tiers that it was created with, on every thread."
   [db {:keys [scope target-id root group-id]}]
-  (let [global
-        (merge (raw-toggles root (config/load-global-yaml-config-raw))
-               (raw-toggles root (config/load-global-config-raw)))
+  (binding [workspace/*config-sources* (if (= scope "session")
+                                         (workspace/session-config-sources db target-id)
+                                         workspace/*config-sources*)]
+    (let [global (merge (raw-toggles root (config/load-global-yaml-config-raw))
+                        (raw-toggles root (config/load-global-config-raw)))
+          project (when root
+                    (binding [workspace/*workspace-root* root]
+                      (raw-toggles root (config/load-project-tiers-raw))))]
 
-        project
-        (when root
-          (binding [workspace/*workspace-root* root]
-            (raw-toggles root (config/load-project-tiers-raw))))]
+      (cond-> [{:scope "global" :values global}]
+        root
+        (conj {:scope "project" :values project})
 
-    (cond-> [{:scope "global" :values global}]
-      root
-      (conj {:scope "project" :values project})
+        group-id
+        (conj {:scope "group" :values (store/db-scoped-settings db "group" group-id)})
 
-      group-id
-      (conj {:scope "group" :values (store/db-scoped-settings db "group" group-id)})
-
-      (= scope "session")
-      (conj {:scope "session" :values (store/db-scoped-settings db "session" target-id)}))))
+        (= scope "session")
+        (conj {:scope "session" :values (store/db-scoped-settings db "session" target-id)})))))
 
 (defn- toggle-values
   "The `toggles` map of one raw config tier, or nil when it is absent or not a map."
