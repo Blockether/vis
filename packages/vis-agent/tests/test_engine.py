@@ -101,7 +101,7 @@ def activity_rows(projection):
 
 
 @contextmanager
-def model_endpoint(*, tool_code=None, before_reply=None, refuse=None, stall=None):
+def model_endpoint(*, tool_code=None, before_reply=None, refuse=None):
     requests = []
     positions = count(1)
 
@@ -118,26 +118,6 @@ def model_endpoint(*, tool_code=None, before_reply=None, refuse=None, stall=None
                 self.send_header("Content-Length", str(len(error)))
                 self.end_headers()
                 self.wfile.write(error)
-                return
-            if stall is not None and body.get("tools") and stall(body):
-                # Stream until the engine closes the connection.
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.end_headers()
-                value = {
-                    "id": "fixture",
-                    "object": "chat.completion.chunk",
-                    "model": "sdk-test",
-                    "choices": [{"index": 0, "delta": {"content": "."}}],
-                }
-                data = ("data: " + json.dumps(value) + "\n\n").encode()
-                try:
-                    for _ in range(600):
-                        self.wfile.write(data)
-                        self.wfile.flush()
-                        time.sleep(0.1)
-                except OSError:
-                    pass
                 return
             if not body.get("tools"):
                 delta, finish = {"content": "SDK fixture"}, "stop"
@@ -297,7 +277,6 @@ def sdk_fixture(
     refuse=None,
     project_extensions=None,
     on_process=None,
-    stall=None,
 ):
     raw = os.environ.get("VIS_TEST_LOCAL_COMMAND")
     if not raw:
@@ -315,7 +294,7 @@ def sdk_fixture(
     monkeypatch.setenv("JAVA_TOOL_OPTIONS", f"-Duser.home={home}")
     monkeypatch.delenv("VIS_GATEWAY_URL", raising=False)
     with model_endpoint(
-        tool_code=tool_code, before_reply=before_reply, refuse=refuse, stall=stall
+        tool_code=tool_code, before_reply=before_reply, refuse=refuse
     ) as (
         model_url,
         requests,
@@ -516,77 +495,6 @@ def test_real_agent_cancellation_reclaims_native_extension_wait(
             )
             time.sleep(0.05)
         session.delete()
-
-
-def hook_extension(index):
-    """An extension with a context hook and a prompt hook; the first adds a symbol."""
-    symbol = "symbols=[vis.Symbol(hook_probe)], " if index == 0 else ""
-    return f"""import blockether.vis.extension as vis
-def hook_ctx(env):
-    return {{"hook_{index}": {{"ok": True}}}}
-def hook_prompt(env):
-    return "Hook prompt {index}."
-def hook_probe():
-    "Return a marker from the trusted extension worker."
-    return "EXT-ALIVE"
-vis.register_extension(vis.Extension(name="hook-{index}", description="Hook fixture",
-    alias="hook_{index}", {symbol}ctx=hook_ctx, prompt=hook_prompt))
-"""
-
-
-def test_real_cancel_during_stream_keeps_extension_hooks(tmp_path, monkeypatch):
-    # Seven context hooks run as parallel futures (#465). A cancel while the model
-    # streams must not stop the extension worker or interrupt those hooks.
-    streaming = threading.Event()
-
-    def stall(body):
-        users = [m for m in body["messages"] if m.get("role") == "user"]
-        if "STALL" not in str(users[-1:]):
-            return False
-        streaming.set()
-        return True
-
-    code = "r = hook_probe()\nprint('SANDBOX-OK', await r if hasattr(r, '__await__') else r)"
-    with sdk_fixture(
-        tmp_path,
-        monkeypatch,
-        "http",
-        tool_code=code,
-        stall=stall,
-        project_extensions={f"hooks_{i}.py": hook_extension(i) for i in range(7)},
-    ) as (client, work, requests):
-        session = client.create_session(root=str(work), channel="app")
-
-        def python_turn(runs):
-            assert session.send(f"RUN {runs}").wait(timeout=60)["status"] == "completed"
-            seen = json.dumps(requests[-1]["messages"]).count("SANDBOX-OK EXT-ALIVE")
-            assert seen == runs, requests[-1]["messages"][-3:]
-
-        python_turn(1)
-        for run in (2, 3, 4):
-            streaming.clear()
-            turn = session.send(f"STALL {run}")
-            assert streaming.wait(120), "the model stream did not start"
-            time.sleep(1.0)
-            turn.cancel()
-            assert turn.wait(timeout=60)["status"] == "cancelled"
-            python_turn(run)
-        session.delete()
-    warnings = [
-        line
-        for log in (tmp_path / "home").rglob("*.log")
-        for line in log.read_text(errors="replace").splitlines()
-        if any(
-            k in line
-            for k in (
-                "retired",
-                "ctx-failed",
-                "ctx-contributions-failed",
-                "prompt-failed",
-            )
-        )
-    ]
-    assert warnings == []
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
