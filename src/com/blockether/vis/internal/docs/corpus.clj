@@ -403,11 +403,12 @@
   []
   (filterv #(= "doc" (:kind %)) (whole-entries)))
 
-;; Search — one regular expression over names and page outlines
+;; Search — one regular expression over names and outlines
 
 (def ^:private outlined-kinds
-  "The kinds `search` also finds by their outline. A callable is found by its name
-   alone, so a word its contract happens to use never floods a search."
+  "The kinds `search` finds by their whole outline. A callable's outline is only
+   the opening its `apropos` row shows, so a word deeper in its contract never
+   floods a search."
   #{"doc" "skill"})
 
 (defn- problems
@@ -421,13 +422,13 @@
         (rest (str/split (str/join "\n" lines) #"(?m)^[ \t]*[-*+][ \t]+"))))
 
 (defn outline
-  "The phrases a documentation page or skill is found by besides its name: its
-   opening paragraph, every heading outside fenced code — the title included —
-   and the bold problem statements its `When to use` section lists. Other kinds
-   have no outline."
+  "The phrases an entry is found by besides its name. A documentation page or
+   skill: its opening paragraph, every heading outside fenced code — the title
+   included — and the bold problem statements its `When to use` section lists. A
+   callable: the `body-text` its `apropos` row shows."
   [{:keys [kind text]}]
   (if-not (contains? outlined-kinds (str kind))
-    []
+    (into [] (remove str/blank?) [(body-text text)])
     (loop [lines
            (str/split-lines (str text))
 
@@ -487,8 +488,8 @@
                                                       java.util.regex.Pattern/UNICODE_CASE)))))
 
 (defn search
-  "Return entries `pattern` finds, preserving corpus order: a match in one of the
-   `name-forms` or in one phrase of a page's or skill's `outline`. A string pattern
+  "Return entries `pattern` finds: first a match in one of the `name-forms`, then
+   a match in one phrase of the `outline`, each group in corpus order. A string pattern
    ignores case; a compiled `Pattern` keeps its own flags. A blank string lists
    every entry. Invalid regular expressions are errors."
   [es pattern]
@@ -496,9 +497,12 @@
         (search-pattern pattern)
 
         found?
-        #(some? (re-find re (str %)))]
+        #(some? (re-find re (str %)))
 
-    (into [] (filter #(or (some found? (name-forms %)) (some found? (outline %)))) es)))
+        {named true others false}
+        (group-by #(boolean (some found? (name-forms %))) es)]
+
+    (into (vec named) (filter #(some found? (outline %))) others)))
 
 ;; The curated index — `doc()` with no argument
 

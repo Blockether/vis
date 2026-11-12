@@ -1280,36 +1280,35 @@
    Reads the conn's CACHED listing ONLY: assembling the corpus must never cost
    an RPC, so a server nobody has listed yet contributes nothing until it does."
   []
-  (into []
-        (mapcat
-          (fn [[server _spec]]
-            (let [cached (or (some-> (:tools (conn-of server))
-                                     deref)
-                             [])]
-              (keep
-                (fn [t]
-                  (when-let [nm (not-empty (str (get t "name")))]
-                    {:name (str server "/" nm)
-                     :kind "tool"
-                     :call
-                     (str "await " sandbox-verb "(" (pr-str (str server)) ", " (pr-str nm) ", {})")
-                     :text (str "MCP tool `"
-                                nm
-                                "` on server `"
-                                server
-                                "` - call `await "
-                                sandbox-verb
-                                "("
-                                (pr-str (str server))
-                                ", "
-                                (pr-str nm)
-                                ", {})`."
-                                (when-let [d (not-empty (str (get t "description")))]
-                                  (str "\n\n" d))
-                                (when-let [sch (get t "inputSchema")]
-                                  (str "\n\nInput schema: " (pr-str sch))))}))
-                cached))))
-        (visible-servers (:session-id extension/*current-environment*))))
+  (into
+    []
+    (mapcat
+      (fn [[server _spec]]
+        (let [cached (or (some-> (:tools (conn-of server))
+                                 deref)
+                         [])]
+          (keep
+            (fn [t]
+              (when-let [nm (not-empty (str (get t "name")))]
+                (let [call
+                      (str "await " sandbox-verb "(" (pr-str (str server)) ", " (pr-str nm) ", {})")
+                      about (str "MCP tool `" nm "` on server `" server "`.")
+                      ;; The server's own words open the row, after the call form,
+                      ;; so `apropos` finds the tool by what it does.
+                      description (not-empty (str/trim (str (get t "description"))))]
+
+                  {:name (str server "/" nm)
+                   :kind "tool"
+                   :call call
+                   :text (str "`"
+                              call
+                              "` - "
+                              (or description about)
+                              (when description (str "\n\n" about))
+                              (when-let [sch (get t "inputSchema")]
+                                (str "\n\nInput schema: " (pr-str sch))))})))
+            cached))))
+    (visible-servers (:session-id extension/*current-environment*))))
 
 (doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
 

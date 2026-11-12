@@ -32,8 +32,9 @@ bug](reporting-bugs.md).
    and that a same-named project extension has not overridden the global one.
 2. Run `/reload`, then check discovery on the next turn. `Symbol.name` determines
    the public tool name. `Extension.alias` does not prefix it.
-3. Search the **public name**, for example `apropos(r"^greet\.")`, not a phrase from
-   the description. `apropos()` does not search document bodies.
+3. Search the **public name**, for example `apropos(r"^greet\.")`. `apropos()` also
+   searches the first sentence of the docstring, which its row shows, but not the
+   rest of the docstring.
 4. Check `is_hidden` and the extension's `activation` callback. If the tool is visible
    but the agent does not choose it, name it explicitly and inspect `doc(name)`.
    Improve its first-line summary and [short prompt](extension-api.md#prompts-and-discovery),

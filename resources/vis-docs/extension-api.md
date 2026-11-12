@@ -744,9 +744,10 @@ at registration. A prompt callable computes text each turn. It should not log in
 start background work or repeat the entire API. `description` supplies the extension
 summary even when `prompt` is omitted.
 
-`apropos(pattern)` filters public symbol names by regular expression, ignoring case. A bundled skill
-also matches by its description and headings. `doc(name)` or `doc(hit)` reads the complete matching
-document.
+`apropos(pattern)` filters public symbols by regular expression, ignoring case. A tool matches by its
+name or by the first sentence of its docstring, which its row shows. Name matches come first. A
+bundled skill also matches by its description and headings. `doc(name)` or `doc(hit)` reads the
+complete matching document.
 
 Signatures and resolved annotations supply call structure. Short docstrings and `Annotated`
 descriptions supply semantics, not duplicate signatures or schemas. Keep a useful first-line summary

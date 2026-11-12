@@ -135,8 +135,8 @@ print(await hello("Ada"))
 print(await hello("Ada", uppercase=True))
 ```
 
-The two calls print `Hello, Ada!` and `HELLO, ADA!`. `apropos()` searches public names, not
-descriptions. `doc()` shows the signature, types and defaults together with your docstring, so the
+The two calls print `Hello, Ada!` and `HELLO, ADA!`. `apropos()` searches public names and the
+first sentence of each docstring, not the rest of it. `doc()` shows the signature, types and defaults together with your docstring, so the
 docstring does not need to repeat them. `hello.contract` gives the same data as a structure.
 
 A displayed default of `...` means an optional argument's value was withheld,

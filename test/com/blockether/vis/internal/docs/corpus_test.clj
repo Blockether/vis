@@ -89,9 +89,10 @@ Whole skill body."}
 
 (defdescribe
   search-test
-  "`apropos` is one regular expression that ignores case: over the names of
-   callables and over the outline of pages and skills. It preserves corpus order,
-   never reads a callable's contract or a page's body prose, and ranks nothing."
+  "`apropos` is one regular expression that ignores case: over every name, the
+   outline of pages and skills and the opening a callable's row shows. Name
+   matches come first, then the others, each in corpus order. It never reads the
+   rest of a callable's contract or a page's body prose."
   (let [es [{:name "numpy" :kind "module" :text "Array module."}
             {:name "numpy.linalg.solve" :kind "function" :text "Solve a matrix equation."}
             {:name "pandas.read_csv" :kind "function" :text "Read comma-separated data."}
@@ -110,9 +111,26 @@ Whole skill body."}
         (let [pages [{:name "human-input" :kind "doc" :text "Ask for a value."}]]
           (expect (= ["human-input"] (mapv :name (dc/search pages "human input"))))
           (expect (= ["human-input"] (mapv :name (dc/search pages "HUMAN-INPUT"))))))
-    (it "never searches a callable's contract or a page's body prose"
-        (expect (empty? (dc/search es "matrix")))
+    (it "finds a callable by the opening its row shows"
+        ;; #466: `apropos("github")` missed the tool that files GitHub issues.
+        (let [tools [{:name "tickets.create"
+                      :kind "tool"
+                      :text "Create an issue in a GitHub repository.\n\nThe body is Markdown."}]]
+          (expect (= ["tickets.create"] (mapv :name (dc/search tools "issue|github"))))
+          (expect (= ["numpy.linalg.solve"] (mapv :name (dc/search es "matrix"))))))
+    (it "never searches the rest of a callable's contract or a page's body prose"
+        (let [tools [{:name "t" :kind "tool" :text (str (apply str (repeat 30 "word ")) "zebra.")}]]
+          (expect (empty? (dc/search tools "zebra"))))
+        (expect (empty? (dc/search (conj es {:name "t" :kind "tool" :text "Do it.\n\nUses LAPACK."})
+                                   "lapack")))
         (expect (empty? (dc/search es "fenced heading"))))
+    (it "lists name matches before opening matches, each in corpus order"
+        (let [tools [{:name "notes.share" :kind "tool" :text "Post a note to GitHub."}
+                     {:name "github.login" :kind "tool" :text "Sign in."}
+                     {:name "vc.search" :kind "tool" :text "Search GitHub code."}
+                     {:name "github.runs" :kind "tool" :text "List runs."}]]
+          (expect (= ["github.login" "github.runs" "notes.share" "vc.search"]
+                     (mapv :name (dc/search tools "github"))))))
     (it "treats a blank pattern as a listing"
         (expect (= (mapv :name es) (mapv :name (dc/search es "")))))
     (it "refuses an invalid regular expression"

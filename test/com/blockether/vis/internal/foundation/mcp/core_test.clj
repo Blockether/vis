@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.context.renderer :as renderer]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
@@ -62,7 +63,20 @@
             ;; call form has to live there and not below the description.
             (expect (str/includes? (first (str/split-lines (:text entry)))
                                    "await mcp_call(\"linear\", \"save_issue\", {})"))
-            (expect (not (str/includes? (str (:call entry) (:text entry)) "mcp__call"))))))))
+            (expect (not (str/includes? (str (:call entry) (:text entry)) "mcp__call")))))))
+  (it "lets apropos find a tool by the server's description"
+      ;; #466: the server's description sat below a template that every MCP tool
+      ;; shares, so a search by intent missed it.
+      (with-redefs-fn {#'mcp/visible-servers (constantly {"linear" {}})
+                       #'mcp/conn-of (fn [& _]
+                                       {:tools (atom [{"name" "save_issue"
+                                                       "description" "Create or update a ticket."}
+                                                      {"name" "list_teams"
+                                                       "description" "List teams."}])})}
+        (fn []
+          (let [es (#'mcp/doc-corpus-entries)]
+            (expect (= ["linear/save_issue"] (mapv :name (doc-corpus/search es "ticket"))))
+            (expect (empty? (doc-corpus/search es "server"))))))))
 
 (defdescribe
   mcp-call-env-injection-test

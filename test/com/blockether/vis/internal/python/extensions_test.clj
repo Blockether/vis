@@ -9819,6 +9819,34 @@ vis.register_extension(vis.Extension(
               (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
+  apropos-finds-extension-tools-by-intent-test
+  ;; Issue #466: `apropos("issue|github")` missed the extension tool that files
+  ;; GitHub issues, because a callable matched by its name alone.
+  (it "matches a loaded tool by the opening of its docstring, names first"
+      (let [source (second (re-find #"(?s)```python\n# counter.py\n(.*?)\n```"
+                                    (slurp "resources/vis-docs/extension-design.md")))]
+        (with-fresh-loaded
+          {"catalog_recipe.py" source}
+          (fn [loaded _]
+            (expect (= 1 (:loaded loaded)))
+            (let [ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                  env {:python-context ctx :extensions (atom []) :active-extensions (atom [])}
+                  ext (registered "counter-example")]
+
+              (try (reset! (:extensions env) [ext])
+                   (loop-env/sync-active-extension-symbols! env [ext])
+                   (let [answer (ep/run-python-block
+                                  ctx
+                                  (str "print([r.name for r in apropos('CALLER-OWNED FILE')])\n"
+                                       "print([r.name for r in apropos('raises TypeError')])\n"
+                                       "print([r.name for r in apropos('count')][:2])"))]
+                     (expect (nil? (:error answer)) (pr-str answer))
+                     (expect (= ["['counter.write']" "[]" "['counter.read', 'counter.write']"]
+                                (str/split-lines (str (:stdout answer))))
+                             (pr-str answer)))
+                   (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
   package-owned-skills-test
   ;; Issue #176: package procedures follow the same successful reload as code.
   (it
