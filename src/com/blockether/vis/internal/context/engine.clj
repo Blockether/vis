@@ -213,8 +213,8 @@
   "EXACT set of `session_*` keys the model is meant to see. Security access is
    included as an environment-derived value; engine bookkeeping remains hidden."
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_access" "session_env"
-   "session_routing" "session_symbols" "session_council" "session_goal_status" "session_apps"
-   "session_agent" "session_extension_context"])
+   "session_routing" "session_symbols" "session_council" "session_goal_status"
+   "session_goal_objective" "session_apps" "session_agent" "session_extension_context"])
 
 (defn- digits-end
   "Index after the ASCII digits of `s` that start at `start`, before `end`."

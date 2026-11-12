@@ -46,7 +46,7 @@
 (def ^:private reserved-context-keys
   "Core fields cannot be replaced by custom extension keys."
   #{"id" "turn" "scope" "workspace" "access" "env" "routing" "symbols" "council" "agent"
-    "goal_status" "apps" "utilization"})
+    "goal_status" "goal_objective" "apps" "utilization"})
 
 (defn- extension-context
   [view]
@@ -72,6 +72,9 @@
 
      (get view "session_goal_status")
      (assoc "goal_status" (get view "session_goal_status"))
+
+     (get view "session_goal_objective")
+     (assoc "goal_objective" (get view "session_goal_objective"))
 
      (get view "session_apps")
      (assoc "apps" (get view "session_apps"))
@@ -186,6 +189,9 @@
       (get view "session_goal_status")
       (assoc "goal_status" (get view "session_goal_status"))
 
+      (get view "session_goal_objective")
+      (assoc "goal_objective" (get view "session_goal_objective"))
+
       (get view "session_apps")
       (assoc "apps" (get view "session_apps"))
 
@@ -201,7 +207,9 @@
    The goal status rides here for the same reason: `/goal` persists AFTER the frozen
    standing block was rendered, so without this line the very turn that sets a
    goal shows the model a session without one. When the goal leaves the view and
-   `baseline` still holds its status, the boundary removes it.
+   `baseline` still holds its status, the boundary removes it. The goal objective rides
+   with the status: each user message states it again, so a fold of the turn that set the
+   goal cannot remove it, and a new objective never changes the cached prefix.
 
    The app notes ride here too: the newest note of each app and HTML page reaches
    the model with every user message. When the notes are gone and `baseline`
@@ -220,6 +228,9 @@
         goal-status
         (get view "session_goal_status")
 
+        goal-objective
+        (get view "session_goal_objective")
+
         apps
         (get view "session_apps")]
 
@@ -230,6 +241,9 @@
                 (cond goal-status (str "\nsession[\"goal_status\"] = "
                                        (env/ctx->python-line goal-status))
                       (contains? baseline "goal_status") "\ndel session[\"goal_status\"]")
+                (cond goal-objective (str "\nsession[\"goal_objective\"] = "
+                                          (env/ctx->python-line goal-objective))
+                      (contains? baseline "goal_objective") "\ndel session[\"goal_objective\"]")
                 (cond apps (str "\nsession[\"apps\"] = " (env/ctx->python-line apps))
                       (contains? baseline "apps") "\ndel session[\"apps\"]"))
      :baseline (cond-> baseline
@@ -238,6 +252,12 @@
 
                  (not goal-status)
                  (dissoc "goal_status")
+
+                 goal-objective
+                 (assoc "goal_objective" goal-objective)
+
+                 (not goal-objective)
+                 (dissoc "goal_objective")
 
                  apps
                  (assoc "apps" apps)

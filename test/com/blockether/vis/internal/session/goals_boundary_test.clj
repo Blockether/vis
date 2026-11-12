@@ -290,7 +290,8 @@
                 (expect (= question (count @requests)))
                 (if (= "budget_limited" status)
                   (expect (= (system-text active-request) (system-text later-request)))
-                  (expect (not (str/includes? (system-text later-request) "<goal_objective>"))))
+                  (expect (not (str/includes? (system-text later-request)
+                                              "take the first rule that applies"))))
                 ;; A complete goal leaves the session view; a budget-limited goal keeps its status.
                 (if (= "budget_limited" status)
                   (expect (str/includes? boundary
@@ -615,4 +616,31 @@
                (expect (= "complete" (get (goals/check-goal env) "status")))
                (expect (str/includes? (nth @messages 3) "Earlier work is settled"))
                (expect (str/includes? (nth @messages 3) "Ship the lighthouse report")))
+             (finally (loop-env/dispose-environment! env))))))
+
+(defdescribe
+  goal-change-keeps-the-system-prefix-test
+  (it "a new goal objective keeps the system prefix"
+      ;; User report: the objective was in the system message, so a new /goal changed the prefix
+      ;; and the provider wrote its cache of the whole conversation again.
+      (let [env
+            (environment)
+
+            requests
+            (atom [])
+
+            system-text
+            #(filterv (fn [m]
+                        (= "system" (:role m)))
+               %)]
+
+        (try (with-redefs [svar/ask-code! (fn [_ opts]
+                                            (swap! requests conj (:messages opts))
+                                            {:stop-reason :end :content "Progress so far."})]
+               (turn/run-turn! env "/goal --budget 1 Ship the lighthouse report" {})
+               (turn/run-turn! env "/goal --budget 1 Ship the harbor report" {})
+               (expect (= 2 (count @requests)))
+               (expect (= "Ship the harbor report" (get (goals/check-goal env) "objective")))
+               (expect (= (system-text (first @requests)) (system-text (last @requests))))
+               (expect (str/includes? (pr-str (last (last @requests))) "Ship the harbor report")))
              (finally (loop-env/dispose-environment! env))))))

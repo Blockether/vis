@@ -38,7 +38,7 @@
 
 (defdescribe
   goal-status-view-test
-  (it "shows the model only the status, and only while the goal can still direct work"
+  (it "shows the model the status and the objective only while the goal can still direct work"
       (doseq [[setup status] [[(fn [_ _]) "active"]
                               [(fn [env _]
                                  (goals/control! (:db-info env) (:session-id env) :pause)) "paused"]
@@ -57,7 +57,11 @@
               goal (goals/set-goal! db-info session-id "Ship the parser" 1)]
 
           (setup env goal)
-          (expect (= {"session_goal_status" status} (goals/context env)) (str status))))))
+          (expect (= (cond-> {"session_goal_status" status}
+                       status
+                       (assoc "session_goal_objective" "Ship the parser"))
+                     (goals/context env))
+                  (str status))))))
 
 (defdescribe
   stored-goal-reason-test
