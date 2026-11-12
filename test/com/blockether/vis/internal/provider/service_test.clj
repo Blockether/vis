@@ -892,7 +892,7 @@
   refreshing-models-appends-only-what-config-does-not-name
   (it "refreshing models appends only what config does not name"
       (let [entry
-            {:id :fake :models [{:name "kimi-k3"} {:name "kimi-k2.6"}]}
+            {:id :fake :models [{:name "kimi-k3"} {:name "kimi-k2.7-code"}]}
 
             written
             (atom nil)]
@@ -902,25 +902,25 @@
 
                       providers/fetch-model-catalog
                       (constantly {:identity "test-account"
-                                   :models [{:name "kimi-k3"} {:name "glm-5.3"}
-                                            {:name "minimax-m2.7"} {:name "minimax-m2.7"}]})
+                                   :models [{:name "kimi-k3"} {:name "glm-5.3"} {:name "minimax-m3"}
+                                            {:name "minimax-m3"}]})
 
                       catalog/template
                       (constantly {:id :fake
                                    :default-models ["glm-5.3"
-                                                    {:name "minimax-m2.7" :api-style :anthropic}]})
+                                                    {:name "minimax-m3" :api-style :anthropic}]})
 
                       providers/update-config-provider!
                       (fn [provider-id f source]
                         (reset! written [provider-id (f entry) source]))]
 
           (let [added (providers/refresh-models! :fake :test)]
-            (expect (= ["glm-5.3" "minimax-m2.7"] added)
+            (expect (= ["glm-5.3" "minimax-m3"] added)
                     "only the live ids config did not already name")
             (expect (= [:fake :test] [(first @written) (last @written)]))
             (expect
-              (= [{:name "kimi-k3"} {:name "kimi-k2.6"} {:name "glm-5.3"}
-                  {:name "minimax-m2.7" :api-style :anthropic}]
+              (= [{:name "kimi-k3"} {:name "kimi-k2.7-code"} {:name "glm-5.3"}
+                  {:name "minimax-m3" :api-style :anthropic}]
                  (:models (second @written)))
               "configured models keep their order; a new one carries the preset's own map"))))))
 
@@ -929,9 +929,9 @@
   (it "refreshing models drops saved models svar hides"
       (let [entry
             {:id :fake
-             :models [{:name "glm-5.3"} {:name "omen-alpha"} "mimo-v2.5-pro" {:name "hy4-preview"}
-                      {:name "glm-4.7"} {:name "claude-haiku-4-5-20251001"}
-                      {:name "mimo-v2.6-pro"}]}
+             :models [{:name "glm-5.3"} {:name "omen-alpha"} "mimo-v2.5-pro"
+                      {:name "qwen3.8-max-preview"} {:name "glm-4.7"}
+                      {:name "claude-haiku-4-5-20251001"} {:name "mimo-v2.6-pro"}]}
 
             written
             (atom nil)]
