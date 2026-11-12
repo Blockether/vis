@@ -269,6 +269,11 @@ stops, also after the session ends. One gateway run has 256 of these ports. When
 the Python workers of new sessions use the shared proxy. Then these clients get a 407 error until
 you restart the gateway.
 
+When the gateway stops, it ends the programs that it started in the jail. On macOS, this includes a
+program that left its parent process, for example a server that a script started in the background.
+If the gateway ended without a stop, for example after a crash, the next gateway start ends these
+programs. So a program from an earlier gateway run cannot use the proxy ports of the new run.
+
 ### Inbound development ports
 
 A confined server accepts connections on a port listed in `jail.network.inbound_ports`. On macOS,

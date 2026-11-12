@@ -11,7 +11,8 @@
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.sandbox.jail :as pj]
-            [com.blockether.vis.internal.sandbox.policy :as security-policy]))
+            [com.blockether.vis.internal.sandbox.policy :as security-policy])
+  (:import (java.lang ProcessHandle)))
 
 (defdescribe automatic-java-process-boundary
              (it "automatic java process boundary"
@@ -182,6 +183,102 @@
              (finally (when (.exists outside) (io/delete-file outside true))
                       (doseq [file (reverse (file-seq root))]
                         (io/delete-file file true))))))))
+
+(defn- detached-sleeper
+  "Spawn a confined shell that leaves one detached sleeper, and return its pid."
+  [root policy]
+  (let [file (io/file root (str "sleeper-" (System/nanoTime)))]
+    (run-process ["/bin/sh" "-c"
+                  (str "/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > " file)]
+                 root
+                 policy)
+    (parse-long (str/trim (slurp file)))))
+
+(defn- alive?
+  [pid]
+  (boolean (some-> (.orElse (ProcessHandle/of (long pid)) nil)
+                   (ProcessHandle/.isAlive))))
+
+(defn- ends?
+  [pid]
+  (loop [n 0]
+    (cond (not (alive? pid)) true
+          (= n 100) false
+          :else (do (Thread/sleep 50) (recur (inc n))))))
+
+(defdescribe
+  confined-processes-end-with-their-gateway-run
+  ;; #469: a jailed process that left its tree outlived the gateway. Its profile did not
+  ;; deny the session ports of the next run, so it could use the policy of another session.
+  (it
+    "a start ends the detached processes of an ended run, and a stop those of its own run"
+    (when (and (sandbox-applicable?) (pattern-enforcing-host?))
+      (let [home
+            (doto (io/file (System/getProperty "java.io.tmpdir")
+                           (str "vis-home-owners-" (System/nanoTime)))
+              (.mkdirs))
+
+            root
+            (doto (io/file home "work") (.mkdirs))
+
+            owners
+            (io/file home "gateway/jail-owners")
+
+            previous
+            (System/getProperty "vis.home")
+
+            run-owner
+            @#'pj/run-owner
+
+            policy
+            {:roots-fn (constantly [(.getPath root)]) :net-enabled? false}
+
+            ;; pid 1 never started at epoch millisecond 1: a run that ended.
+            ended-run
+            "1-1"
+
+            live-run
+            (let [parent (.get (.parent (ProcessHandle/current)))]
+              (str (.pid parent) "-" (.toEpochMilli (.get (.startInstant (.info parent))))))
+
+            own-run
+            (let [self (ProcessHandle/current)]
+              (str (.pid self) "-" (.toEpochMilli (.get (.startInstant (.info self))))))
+
+            pids
+            (atom [])]
+
+        (System/setProperty "vis.home" (.getPath home))
+        (reset! run-owner nil)
+        (try
+          (.mkdirs owners)
+          (.createNewFile (io/file owners ended-run))
+          (.createNewFile (io/file owners live-run))
+          (reset! run-owner ended-run)
+          (let [old (detached-sleeper root policy)]
+            (swap! pids conj old)
+            (expect (alive? old) "the sleeper outlived the shell that started it")
+            ;; A one-shot prompt confines without a gateway run.
+            (reset! run-owner nil)
+            (swap! pids conj (detached-sleeper root policy))
+            (expect (.exists (io/file owners own-run)) "the first confined spawn records its owner")
+            (expect (= 1 (pj/start-owner-run!)))
+            (expect (ends? old) "the next start ends the process of the ended run")
+            (expect (not (.exists (io/file owners ended-run))))
+            (expect (.exists (io/file owners live-run)) "a live run keeps its record"))
+          (let [mine (detached-sleeper root policy)]
+            (swap! pids conj mine)
+            (expect (= 2 (pj/end-owner-run!)))
+            (expect (every? ends? (rest @pids)) "a stop ends each detached process of its own run")
+            (expect (= 0 (pj/end-owner-run!)) "a second stop finds nothing"))
+          (finally
+            (reset! run-owner nil)
+            (if previous (System/setProperty "vis.home" previous) (System/clearProperty "vis.home"))
+            (doseq [pid @pids]
+              (some-> (.orElse (ProcessHandle/of (long pid)) nil)
+                      (.destroyForcibly)))
+            (doseq [file (reverse (file-seq home))]
+              (io/delete-file file true))))))))
 
 (defdescribe proxy-env-vars
              (it ":proxy-port sets both-case proxy vars, and NO CA vars without a :ca-file"
