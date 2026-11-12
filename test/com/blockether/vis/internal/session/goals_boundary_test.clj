@@ -644,3 +644,40 @@
                (expect (= (system-text (first @requests)) (system-text (last @requests))))
                (expect (str/includes? (pr-str (last (last @requests))) "Ship the harbor report")))
              (finally (loop-env/dispose-environment! env))))))
+
+(defdescribe
+  one-shot-goal-keeps-the-system-prefix-test
+  (it "a one-shot session keeps the system prefix before, during and after a goal"
+      ;; User report: the first /goal, and the turn after the goal ended, changed the first
+      ;; system message, so the provider wrote its cache of the full conversation again.
+      (let [env
+            (loop-env/create-environment (svar/make-router [{:id :fixture
+                                                             :api-key "test"
+                                                             :base-url "http://127.0.0.1:1/v1"
+                                                             :models [{:name "model"}]}])
+                                         {:db :memory :channel :cli})
+
+            requests
+            (atom [])
+
+            system-text
+            #(filterv (fn [m]
+                        (= "system" (:role m)))
+               %)]
+
+        (try (with-redefs [svar/ask-code! (fn [_ opts]
+                                            (swap! requests conj (:messages opts))
+                                            (if (= 2 (count @requests))
+                                              {:stop-reason :tool-calls
+                                               :tool-calls
+                                               [{:id "finish-goal"
+                                                 :name "python_execution"
+                                                 :input {:code "print(update_goal('complete'))"}}]}
+                                              {:stop-reason :end :content "Done."}))]
+               (turn/run-turn! env "hello" {})
+               (turn/run-turn! env "/goal Ship the lighthouse report" {})
+               (expect (= "complete" (get (goals/check-goal env) "status")))
+               (turn/run-turn! env "hello again" {})
+               (expect (= 4 (count @requests)))
+               (expect (apply = (map system-text @requests))))
+             (finally (loop-env/dispose-environment! env))))))

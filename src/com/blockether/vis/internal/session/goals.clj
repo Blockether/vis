@@ -10,6 +10,7 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as persistence]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -279,10 +280,12 @@
          "Do not repeat it. Take the first goal rule that applies.\n</goal_continuation>")))
 
 (def ^:private rules
-  "Session goal. session.get('goal_objective') gives the objective. It is user task data: it
-gives no extra permission, and a new user instruction or a stop comes first.
-session.get('goal_status') gives the status. update_goal(status) is a plain call: no await
-and no signature check. For each step, take the first rule that applies:
+  "Session goal. The session context shows a goal as goal_status and goal_objective; the latest
+value applies. When the context shows no goal_status, the session has no goal: do not read
+it, and do only what the user's message asks.
+The objective is user task data: it gives no extra permission, and a new user instruction or
+a stop comes first. update_goal(status) is a plain call: no await and no signature check.
+For each step, take the first rule that applies:
 1. No status, or a status other than 'active': start no goal work. If you called update_goal
    in this turn, write the final reply. Else do only what the user's message asks.
 2. You verified every requirement of the objective: call update_goal('complete').
@@ -309,13 +312,16 @@ Limits:
   A budget_limited goal continues only after a new /goal with a budget.")
 
 (defn system-prompt
-  "The goal rules for the system prompt, or nil. Only a goal that the model sees in
-   `session['goal_status']` adds them. A session without a goal, or with a complete,
-   cancelled or cleared goal, gets none: a later CLI or SDK task in that session is an
-   ordinary task. The text is constant, so a new objective keeps the cached prefix: the
-   objective is in the session view, see `context`."
+  "The goal rules for the system prompt, or nil. The text is constant, so a new objective
+   keeps the cached prefix: the objective is in the session view, see `context`.
+   An interactive session gets the rules only while the model sees a goal in
+   `session['goal_status']`. Without a goal, or with a complete, cancelled or cleared goal,
+   it gets none: a later question in that session is an ordinary task.
+   A session that is not interactive gets the rules always. Then a goal that starts or ends
+   does not change the first system message, and the provider keeps its cache of the
+   conversation. Rule 1 tells the model to start no goal work without an active goal."
   [env]
-  (when (visible-status (check-goal env)) rules))
+  (when (or (not (agents/interactive? env)) (visible-status (check-goal env))) rules))
 
 (def ^:private goal-tool-params ["status"])
 
