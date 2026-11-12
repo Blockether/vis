@@ -13306,6 +13306,83 @@
   ;; A completed block can leave background native code holding the GIL. PID
   ;; liveness must not let the next turn park before its first provider request.
   (it
+    "replaces the context when only its extension worker holds the GIL (#472)"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-readiness-"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          trigger
+          (java.io.File. dir "start")
+
+          entered
+          (java.io.File. dir "entered")]
+
+      (try
+        (tpc/with-own
+          [ctx {} (constantly [(.getCanonicalPath dir)])
+           {:worker? true :jail-enabled? true :enabled? false}]
+          (let [answer
+                (env/run-python-block ctx "print('sandbox')")
+
+                extension-worker
+                (python-worker/extension-worker-key ctx)
+
+                id
+                "wedge-test/extension-gil"
+
+                k
+                (cache-key id)
+
+                retired
+                (atom false)
+
+                entry
+                (new-cache-entry {:python-context ctx :python-context-retired-atom retired})
+
+                opened
+                (atom 0)]
+
+            (expect (= "sandbox\n" (:stdout answer)) (pr-str answer))
+            (python-worker/start-worker! extension-worker)
+            (python-worker/exec! extension-worker
+                                 "occupy"
+                                 (str
+                                   "import threading, time\nfrom pathlib import Path\n"
+                                   "def occupy_guest():\n"
+                                   "    while not Path("
+                                   (env/py-json-literal (str trigger))
+                                   ").exists():\n"
+                                   "        time.sleep(0.005)\n"
+                                   "    Path("
+                                   (env/py-json-literal (str entered))
+                                   ").write_text('ready')\n"
+                                   "    sum(range(1000000000000000000))\n"
+                                   "threading.Thread(target=occupy_guest, daemon=True).start()\n"))
+            (spit trigger "start")
+            (expect (loop [remaining 200]
+                      (cond (.exists entered) true
+                            (zero? remaining) false
+                            :else (do (Thread/sleep 5) (recur (dec remaining))))))
+            (Thread/sleep 50)
+            (expect (python-worker/worker-live? extension-worker))
+            (swap! env-cache assoc k entry)
+            (try (with-redefs-fn {#'python-worker/READY_REPLY_MS 100
+                                  #'loop-env/open-env! (fn [_ _]
+                                                         (swap! opened inc)
+                                                         {:marker :fresh})}
+                   (fn []
+                     (let [fresh (acquire-turn-lock! id)]
+                       (try (expect (= {:marker :fresh} (:environment fresh)))
+                            (expect (= 1 @opened))
+                            (expect @retired)
+                            (expect (not (python-worker/worker-live? extension-worker)))
+                            (finally (.unlock ^java.util.concurrent.locks.ReentrantLock
+                                              (:lock fresh)))))))
+                 (finally (swap! env-cache dissoc k)))))
+        (finally (doseq [file [trigger entered dir]]
+                   (clojure.java.io/delete-file file true))))))
+  (it
     "replaces the unresponsive interpreter once and releases its process"
     (let [dir
           (.toFile (java.nio.file.Files/createTempDirectory

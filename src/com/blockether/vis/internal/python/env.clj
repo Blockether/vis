@@ -1309,27 +1309,17 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 (defn install-extension-hooks!
   "Install the trusted-extension operations this namespace calls but cannot
    require, because `python.extensions` requires it: `:net-probe-report` answers
-   the sandbox `network_probe` tool, `:close-session-contexts!` stops a session's
-   trusted extension worker and `:session-contexts-ready?` tells if that worker can
-   enter Python. The process wiring installs all three; without them a sandbox has
-   no network probe, disposal skips the extension worker and the readiness check
-   does not probe it."
+   the sandbox `network_probe` tool and `:close-session-contexts!` stops a
+   session's trusted extension worker. The process wiring installs both; without
+   them a sandbox has no network probe and disposal skips the extension worker."
   [hooks]
-  (reset! extension-hooks (select-keys hooks
-                                       [:net-probe-report :close-session-contexts!
-                                        :session-contexts-ready?]))
+  (reset! extension-hooks (select-keys hooks [:net-probe-report :close-session-contexts!]))
   nil)
 
 (defn- close-extension-contexts!
   [session]
   (when-let [close-extensions (:close-session-contexts! @extension-hooks)]
     (try (close-extensions session) (catch Throwable _ nil))))
-
-(defn- extension-contexts-ready?
-  [session]
-  (if-let [ready? (:session-contexts-ready? @extension-hooks)]
-    (ready? session)
-    true))
 
 (defn- install-network-probe!
   "The dev network-filter loop: `network_probe([method,] url)` and
@@ -1629,6 +1619,12 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 ;; Session lifecycle the loop drives (dispose / probe / drain / interrupt)
 ;; =============================================================================
 
+(def ^:private extension-readiness-ns
+  "The namespace that the readiness check enters in the trusted extension worker.
+   The first check makes it, and later checks use it again. An extension namespace
+   can close at any time, and a check in it would make it again."
+  "__vis_readiness__")
+
 (defn context-enterable?
   "Can the loop still run guest code in this environment?
 
@@ -1649,9 +1645,11 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
       (and (not (contains? @disposed-sessions session))
            (not retired?)
            (if-let [worker (worker-of session)]
-             (and (not (pyext/worker-lost? (pyext/extension-worker-key worker)))
-                  (pyext/worker-ready? worker session)
-                  (extension-contexts-ready? worker))
+             (let [extension-worker (pyext/extension-worker-key worker)]
+               (and (not (pyext/worker-lost? extension-worker))
+                    (pyext/workers-ready? (cond-> [[worker session]]
+                                            (pyext/worker-live? extension-worker)
+                                            (conj [extension-worker extension-readiness-ns])))))
              true))
       (boolean (and (:python-sandbox environment)
                     (not (realized? @(:python-sandbox environment)))

@@ -86,10 +86,9 @@
     ;; Session settings take the thinking default of the provider that the session's
     ;; model choice names, also before the debounced write saves that choice.
     (scoped/set-session-model-fn! #'smodel/model-of)
-    (python-env/install-extension-hooks!
-      {:net-probe-report #'python-extensions/net-probe-report
-       :close-session-contexts! #'python-extensions/close-session-contexts!
-       :session-contexts-ready? #'python-extensions/session-contexts-ready?})
+    (python-env/install-extension-hooks! {:net-probe-report #'python-extensions/net-probe-report
+                                          :close-session-contexts!
+                                          #'python-extensions/close-session-contexts!})
     (python-extensions/install-test-slash! #'test-runner/test-slash)
     ;; `/export` draws a session with the gateway's web transcript page.
     (session-slashes/install-transcript-renderers! {:md #'transcript-export/md

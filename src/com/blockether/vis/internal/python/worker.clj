@@ -921,29 +921,61 @@
   "Maximum between-turn wait for an existing worker to enter its Python namespace."
   5000)
 
-(defn worker-ready?
-  "Can the existing worker enter `session` before a new turn starts?
+(defn- start-ready-probe
+  "Start one readiness request to the existing worker of `k` in namespace `session`.
+   Nil when `k` has no live worker that is not retired."
+  [k session]
+  (when-let [state (get @workers k)]
+    (when (and (alive? state) (not (contains? @retired-workers k)))
+      {:k k
+       :state state
+       :reply
+       (cancellation/worker-future
+         "vis-python-readiness"
+         (bound-fn [] (child/request! (:peer state) {"op" "eval" "session" session "code" "True"}))
+         {:platform? true})})))
+
+(defn workers-ready?
+  "Can each existing worker in `probes`, pairs of a worker key and a namespace,
+   enter its namespace before a new turn starts?
 
    Process liveness alone does not prove the interpreter can acquire its GIL.
-   Bound the entire exchange, including a blocked socket write. Only call between
-   turns: a running block may legitimately occupy the interpreter for minutes.
-   Never starts or replaces a worker; the engine owns recovery after a false result.
-   Caller cancellation propagates instead of declaring a healthy worker broken."
-  [k session]
-  (boolean (when-let [state (get @workers k)]
-             (when (and (alive? state) (not (contains? @retired-workers k)))
-               (let [peer (:peer state)
-                     probe (cancellation/worker-future
-                             "vis-python-readiness"
-                             (bound-fn
-                               []
-                               (child/request! peer {"op" "eval" "session" session "code" "True"}))
-                             {:platform? true})]
+   The requests run at the same time under one deadline, so two workers wait no
+   longer than one. Bound the entire exchange, including a blocked socket write.
+   Only call between turns: a running block may legitimately occupy the
+   interpreter for minutes. Never starts or replaces a worker; the engine owns
+   recovery after a false result. Caller cancellation propagates instead of
+   declaring a healthy worker broken."
+  [probes]
+  (let [started
+        (mapv (fn [[k session]]
+                (start-ready-probe k session))
+              probes)
 
-                 (try (and (= "True" (deref probe READY_REPLY_MS ::not-ready))
-                           (identical? state (get @workers k)))
-                      (catch ExecutionException _ false)
-                      (finally (future-cancel probe))))))))
+        deadline
+        (+ (long (util/now-ms)) (long READY_REPLY_MS))]
+
+    (try (every? (fn [probe]
+                   (boolean (when probe
+                              (try (and (= "True"
+                                           (deref (:reply probe)
+                                                  (max 0 (- deadline (long (util/now-ms))))
+                                                  ::not-ready))
+                                        (identical? (:state probe) (get @workers (:k probe))))
+                                   (catch ExecutionException _ false)))))
+                 started)
+         (finally (doseq [probe
+                          started
+
+                          :when probe]
+
+                    (future-cancel (:reply probe)))))))
+
+(defn worker-ready?
+  "Can the existing worker of `k` enter `session` before a new turn starts? See
+   [[workers-ready?]]."
+  [k session]
+  (workers-ready? [[k session]]))
 
 (defn worker-pids
   "PIDs of every live session or shared Python worker this process owns."
