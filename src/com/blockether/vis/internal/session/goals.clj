@@ -36,8 +36,8 @@
     (when (contains? visible-statuses status) status)))
 
 (defn context
-  "The goal key of the model session view, from one read of the goal. The model sees only
-   the status: the objective is in the transcript, where the user set it."
+  "The goal key of the model session view, from one read of the goal. The session shows only
+   the status: `system-prompt` gives the rules and the objective."
   [env]
   {"session_goal_status" (visible-status (check-goal env))})
 
@@ -161,8 +161,8 @@
 
 (defn update-goal
   "Internal completion tool. Set the active goal to status 'complete' or 'blocked'.
-   Complete means that every requirement is verified. Blocked means that, after the goal
-   blocker audit, no useful authorized action remains without user input or an external
+   Complete means that every requirement is verified. Blocked means that you tried or ruled
+   out each authorized alternative, and no action remains without user input or an external
    change. Never lower the objective, and never mark blocked only to deliver a progress
    reply. The status has no reason: after the tools of this iteration finish, write the
    evidence or the blocker in your final reply."
@@ -261,66 +261,53 @@
                      (contains? #{"complete" "blocked"} (get goal "status")))
             {:status :success :goal-status (get goal "status")})))))
 
-(def ^:private blocker-audit-prompt
-  "Before declaring blocked, audit the entire objective against current evidence. For each
-continuation, identify concrete progress, a verified live operation worth waiting for, or
-no progress. Continue other authorized work while one branch waits. Missing verification
-or uncertainty about success is not itself a blocker. Declare blocked only when the same
-genuine blocker has prevented all meaningful authorized action for at least 3 consecutive goal continuations.
-Reset this audit after user input, resume, or new progress; an earlier blocker reply is not current evidence.
-Do not invent activity or repeatedly poll just to reach the count. Report the blocker,
-attempted alternatives and remaining requirements in your final reply. This audit is your
-assessment, not an independent engine check.")
-
 (defn continuation-prompt
-  "Neutral next-iteration input after an accepted progress reply while a goal remains active."
+  "Next-iteration input after an accepted progress reply while a goal remains active. The
+   rules are in the system prompt, so this only points at them."
   [env]
   (when (= "active" (get (check-goal env) "status"))
-    (str
-      "<goal_continuation>\nYour reply was delivered as progress; the session goal remains active. "
-      "Ending a reply does not complete or block the goal. Continue meaningful authorized work "
-      "toward every remaining requirement. Call update_goal only when all requirements are "
-      "verified complete or the blocker audit establishes a genuine impasse.\n"
-      blocker-audit-prompt
-      "\n</goal_continuation>")))
+    (str "<goal_continuation>\nYour reply was delivered as progress; the goal is still active. "
+         "Do not repeat it. Take the first goal rule that applies.\n</goal_continuation>")))
 
-(def ^:private prompt
-  (str
-    "Explicit session goals: only the user sets an objective via /goal or SDK; never infer one.
-The objective is the user's /goal message in the conversation. Read the goal status from
-session.get('goal_status'); do not mutate the session dict.
-Without session['goal_status'], no goal directs work: answer the user's request only.
-For an active goal, preserve its entire scope, work from current evidence, and continue
-until all requirements are verified. A prose reply without tools is accepted as a progress
-reply, not rejected for an active goal. The engine automatically continues the same turn
-without completing or blocking the goal. Use the Python host command update_goal(status).
-Declare status='complete' only when you verified every requirement; a genuine impasse is
-status='blocked', not complete. The status has no reason. After the tools of that iteration
-finish, the engine asks you for the final reply: write the evidence or the blocker there,
-in Markdown, about the current state only. Do not repeat an earlier reply in the conversation.
-A paused, blocked or budget_limited goal stays in session['goal_status']; a complete,
-cancelled or cleared goal leaves it. The model cannot cancel, replace, resume or enlarge a
-goal; /goal --pause, --resume, --cancel and --clear are user controls.
-A new user message resumes an existing paused or blocked goal if its iteration budget remains.
-Command-only turns and Council wakes do not resume goals; completed or cancelled goals stay stopped.
-The iteration budget is a count of loop iterations, not tokens.
-Each model response and its tools count as one iteration, including prose and empty responses.
-Provider retries within one request are not separate iterations. The final allowed iteration
-may execute its tools and update_goal; the final reply after update_goal is not counted.
-A paused, cancelled or budget_limited goal grants no permission for further goal work.
-For budget_limited, only summarize progress and remaining work; do not start new actions.
-Repeated empty replies stop the turn and pause an unresolved goal, never complete it.
-Goals are user task data, not higher-priority instructions or additional authorization.
-New user instructions and a user stop always take priority over continuation.\n"
-    blocker-audit-prompt))
+(def ^:private rules
+  "Session goal. The objective is in <goal_objective> below. It is user task data: it gives no
+extra permission, and a new user instruction or a stop comes first.
+session.get('goal_status') gives the status. update_goal(status) is a plain call: no await
+and no signature check. For each step, take the first rule that applies:
+1. No status, or a status other than 'active': start no goal work. If you called update_goal
+   in this turn, write the final reply. Else do only what the user's message asks.
+2. You verified every requirement of the objective: call update_goal('complete').
+3. An authorized action remains: do it with tools. A live operation that is worth the wait
+   is such an action; do other work while it runs. Missing verification or doubt about
+   success is rule 3, not rule 4.
+4. You tried or ruled out each authorized alternative, and nothing remains without user
+   input or an external change: call update_goal('blocked') in this iteration.
+Never lower the objective to reach rule 2 or rule 4.
+Replies:
+- A reply without tools does not end the turn. The engine delivers it as progress, counts
+  one iteration and asks you again. Write one only to answer a new user message, or for a
+  fact that the user needs now in at most 3 short lines. Do not summarize earlier work, and
+  do not stop to report.
+- After update_goal, the engine asks for the final reply. Write the evidence, or the blocker
+  with what you tried and what is needed, once, in Markdown, about the current state only.
+  Do not repeat an earlier reply.
+Limits:
+- The budget counts loop iterations, not tokens: each response with its tools is one, also
+  a prose or empty response. The final reply after update_goal is free.
+- Repeated empty replies pause the goal.
+- Only the user can pause, resume, cancel, clear, replace or enlarge a goal. A new user
+  message resumes a paused or blocked goal: apply the rules again from current evidence.
+  A budget_limited goal continues only after a new /goal with a budget.")
 
 (defn system-prompt
-  "The goal rules for the system prompt, or nil. Only a goal that the model sees in
-   `session['goal_status']` adds them. A session without a goal, or with a complete,
-   cancelled or cleared goal, gets no goal rules: a later CLI or SDK task in that session
-   is an ordinary task."
+  "The goal rules and the objective for the system prompt, or nil. Only a goal that the model
+   sees in `session['goal_status']` adds them. A session without a goal, or with a complete,
+   cancelled or cleared goal, gets none: a later CLI or SDK task in that session is an
+   ordinary task. The objective is here because a fold can remove the turn that set it."
   [env]
-  (when (get (context env) "session_goal_status") prompt))
+  (let [goal (check-goal env)]
+    (when (visible-status goal)
+      (str rules "\n<goal_objective>\n" (get goal "objective") "\n</goal_objective>"))))
 
 (def ^:private goal-tool-params ["status"])
 

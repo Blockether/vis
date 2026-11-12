@@ -787,8 +787,8 @@
                                               (when (string? content)
                                                 (subs content 0 (min 300 (count content))))}))
                                          requests))))
-              (expect (str/includes? (:body (first requests)) "3 consecutive goal continuations")
-                      "The linked image must include the current model-assessed blocker audit")
+              (expect (str/includes? (:body (first requests)) "take the first rule that applies")
+                      "The linked image must include the current goal rules")
               (when resolution
                 ;; #216: after the terminal tools, the model writes the final reply once.
                 (expect (str/includes? output "Native goal resolved.") output)

@@ -290,8 +290,7 @@
                 (expect (= question (count @requests)))
                 (if (= "budget_limited" status)
                   (expect (= (system-text active-request) (system-text later-request)))
-                  (expect (not (str/includes? (system-text later-request)
-                                              "Explicit session goals"))))
+                  (expect (not (str/includes? (system-text later-request) "<goal_objective>"))))
                 ;; A complete goal leaves the session view; a budget-limited goal keeps its status.
                 (if (= "budget_limited" status)
                   (expect (str/includes? boundary
@@ -569,4 +568,51 @@
                             (:assistant-prose (first (:trace result)))))
                  (expect (empty? (:blocks (first (:trace result)))))
                  (expect (str/includes? (str (:answer result)) "iteration budget reached"))))
+             (finally (loop-env/dispose-environment! env))))))
+
+(defdescribe
+  goal-objective-survives-fold-test
+  (it "goal objective survives a fold of the turn that set it"
+      ;; The model reads the objective to continue. A fold of the earlier turns must not remove it.
+      (let [env
+            (environment)
+
+            requests
+            (atom 0)
+
+            messages
+            (atom [])
+
+            python
+            (fn [id code]
+              {:stop-reason :tool-calls
+               :tool-calls [{:id id :name "python_execution" :input {:code code}}]})]
+
+        (try (with-redefs [svar/ask-code!
+                           (fn [_ opts]
+                             (swap! messages conj (str (:messages opts)))
+                             (case (swap! requests inc)
+                               1
+                               (python "block" "print(update_goal('blocked'))")
+
+                               2
+                               {:stop-reason :end :content "The access is missing."}
+
+                               3
+                               (python "fold"
+                                       "print(fold_session('t1', 'Earlier work is settled'))")
+
+                               4
+                               (python "finish" "print(update_goal('complete'))")
+
+                               5
+                               {:stop-reason :end :content "The report is ready."}
+
+                               (throw (AssertionError. "Unexpected request"))))]
+               (turn/run-turn! env "/goal Ship the lighthouse report" {})
+               (turn/run-turn! env "The access is ready now" {})
+               (expect (= 5 @requests))
+               (expect (= "complete" (get (goals/check-goal env) "status")))
+               (expect (str/includes? (nth @messages 3) "Earlier work is settled"))
+               (expect (str/includes? (nth @messages 3) "Ship the lighthouse report")))
              (finally (loop-env/dispose-environment! env))))))
