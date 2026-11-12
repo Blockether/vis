@@ -299,28 +299,22 @@
    ;; recycle. Worker teardown is therefore a `finally`, and a failure is LOGGED
    ;; rather than dropped, because a leak nothing reports is one nobody can find.
    (try
-     (doseq [[step run!] [[:egress-proxy
-                           ;; The worker is still alive here. Its tree holds the front door until it
-                           ;; ends: children that a sleep keeps still use that port.
-                           #(when-let [tok (:sandbox-token environment)]
-                              (gateway-sandbox/unregister-session!
-                                tok
-                                (some-> (env/python-context-if-built environment)
-                                        env/python-worker-processes)))]
-                          [:prompt-cache-warmer
-                           #(cache-warmer/stop! (:prompt-cache-warmer environment))]
-                          [:llm-session
-                           #(when-let [a (:llm-session-atom environment)]
-                              (locking a (transcript/close-llm-session! a)))]
-                          ;; BEFORE the context goes: the session's helper-source memo outlives
-                          ;; both the context and the engine, and nothing else ever drops it
-                          ;; (see `env-python/forget-session-defs!`).
-                          [:session-defs
-                           #(when-let [sid (:session-id environment)] (env/forget-session-defs!
-                                                                        sid))]
-                          [:file-grant
-                           #(process-jail/release-grants! (:session-id environment)
-                                                          (:grant-owner environment))]]]
+     (doseq [[step run!]
+             [[:egress-proxy
+               #(when-let [tok (:sandbox-token environment)] (gateway-sandbox/unregister-session!
+                                                               tok))]
+              [:prompt-cache-warmer #(cache-warmer/stop! (:prompt-cache-warmer environment))]
+              [:llm-session
+               #(when-let [a (:llm-session-atom environment)] (locking a
+                                                                (transcript/close-llm-session! a)))]
+              ;; BEFORE the context goes: the session's helper-source memo outlives
+              ;; both the context and the engine, and nothing else ever drops it
+              ;; (see `env-python/forget-session-defs!`).
+              [:session-defs
+               #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]
+              [:file-grant
+               #(process-jail/release-grants! (:session-id environment)
+                                              (:grant-owner environment))]]]
        (try (run!)
             (catch Throwable t
               (tel/log! :warn
@@ -723,7 +717,8 @@
                       ca-file (when proxy? (gateway-sandbox/ensure-ca!))
                       java-trust (when proxy? (gateway-sandbox/ensure-java-trust!))
                       worker-proxy-port (when proxy?
-                                          (gateway-sandbox/ensure-session-proxy! sandbox-token))]
+                                          (gateway-sandbox/ensure-session-proxy! sandbox-token
+                                                                                 session-id))]
 
                   (process-jail/draft-policy
                     (merge (live-jail-config)

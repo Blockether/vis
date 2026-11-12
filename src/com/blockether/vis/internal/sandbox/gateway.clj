@@ -26,8 +26,11 @@
             [com.blockether.vis.internal.sandbox.tls-mitm :as tls-mitm]
             [taoensso.telemere :as tel]))
 
-;; token -> 0-arg policy fn (returns the session's compiled policy value, or nil)
+;; token -> {:policy-fn <0-arg fn: the session's compiled policy value, or nil>
+;;           :order <registration number, larger is newer>}
 (defonce ^:private registry (atom {}))
+
+(defonce ^:private registrations (atom 0))
 
 ;; {:port <int> :stop! (fn [])} | nil — the ONE shared proxy
 (defonce ^:private proxy-state (atom nil))
@@ -37,17 +40,23 @@
 ;; They share the policy engine + CA; only attribution moves from header to port.
 (defonce ^:private session-proxy-states (atom {}))
 
-;; Vector of front-door slots {:port :server :token (atom token-or-nil) :proxy (delay)},
-;; reserved together on first use, or nil. A slot serves only the token it holds.
+;; Vector of front-door slots {:port :server :owner (atom id-or-nil) :tokens (atom [token ...])
+;; :proxy (delay)}, reserved together on first use, or nil. `:tokens` are the live tokens of
+;; the one owner session, oldest registration first; a slot serves only the newest.
 (defonce ^:private front-doors (atom nil))
 
 (def ^:private front-door-count
   "Front doors reserved at once. A child with direct loopback denies every gateway port
    that exists at its spawn, so a session that starts later may only take a reserved
-   port. When all are taken, a session's workers use the shared authenticated proxy."
-  32)
+   port. A door serves one session only, because a process of that session can outlive
+   it outside every tracked process tree. When all are owned, a new session's workers
+   use the shared authenticated proxy until the gateway restarts."
+  256)
 
 (def ^:private session-proxy-lock (Object.))
+
+;; True after the log that every front door has an owner, once per gateway run.
+(defonce ^:private front-doors-full-logged? (atom false))
 
 ;; tls-mitm capability {:ca-file :ctx-for :close! …} | nil — the ONE shared CA
 (defonce ^:private ca-state (atom nil))
@@ -83,26 +92,25 @@
   "Register `policy-fn` (0-arg → the session's compiled policy value or nil) under
    `token`. The shared proxy resolves this session's policy from here per request."
   [token policy-fn]
-  (when (and token policy-fn) (swap! registry assoc token policy-fn))
+  (when (and token policy-fn)
+    (swap! registry assoc token {:policy-fn policy-fn :order (swap! registrations inc)}))
   token)
 
 (defn unregister-session!
-  "Drop a session's policy and close its optional session front door: the door then
-   refuses every request. `holders` are the `ProcessHandle`s that may still use the
-   door, such as the children that a sleeping worker keeps. No other session gets the
-   door while one of them is alive. Idempotent; the shared proxy + CA remain
+  "Drop a session's policy. Its optional session front door then serves the newest
+   other live token of the same session, or refuses every request until that session
+   registers again; no other session gets it. Idempotent; the shared proxy + CA remain
    gateway-owned."
-  ([token] (unregister-session! token nil))
-  ([token holders]
-   (when token
-     (locking session-proxy-lock
-       (when-let [slot (get @session-proxy-states token)]
-         (reset! (:token slot) nil)
-         (reset! (:holders slot) (vec holders))
-         (reset! (:released slot) (System/nanoTime)))
-       (swap! session-proxy-states dissoc token))
-     (swap! registry dissoc token))
-   nil))
+  [token]
+  (when token
+    (locking session-proxy-lock
+      (some-> (get @session-proxy-states token)
+              :tokens
+              (swap! (fn [tokens]
+                       (filterv #(not= token %) tokens))))
+      (swap! session-proxy-states dissoc token)
+      (swap! registry dissoc token)))
+  nil)
 
 (defn registered?
   "True when `token` maps to a live session policy fn."
@@ -114,7 +122,7 @@
    session's compiled policy, or a `:deny-all?` sentinel when the token is absent or
    unregistered (FAIL-CLOSED — an unattributable request reaches nothing)."
   [token]
-  (if-let [pf (and token (get @registry token))]
+  (if-let [pf (and token (:policy-fn (get @registry token)))]
     (try (let [p (pf)]
            (assoc (if (map? p) p {}) :reserved-loopback-ports (reserved-loopback-ports)))
          (catch Throwable _ {:deny-all? true :reason "vis-agent: session policy error"}))
@@ -170,33 +178,32 @@
               (:port srv))))))
 
 (defn- front-door
-  "One reserved front-door slot: a bound loopback port that serves the token it holds,
-   and fails closed while it holds none."
+  "One reserved front-door slot: a bound loopback port that serves the newest live token
+   of its owner, and fails closed while it has none."
   []
   (let [server
         (doto (java.net.ServerSocket.)
           (.setReuseAddress true)
           (.bind (java.net.InetSocketAddress. (java.net.InetAddress/getByName "127.0.0.1") 0)))
 
-        token
-        (atom nil)]
+        tokens
+        (atom [])]
 
     {:port (.getLocalPort server)
      :server server
-     :token token
-     :holders (atom [])
-     :released (atom 0)
+     :owner (atom nil)
+     :tokens tokens
      :proxy (delay (egress/start! {:server server
                                    :policy-fn (fn [_]
-                                                (resolve-policy @token))
+                                                (resolve-policy (peek @tokens)))
                                    :on-log log-egress-decision!
                                    :mitm (fn []
                                            @ca-state)}))}))
 
-(defn- free-front-door?
-  "True when `slot` serves no session and no process of its last session is alive."
-  [slot]
-  (and (nil? @(:token slot)) (not-any? #(.isAlive ^java.lang.ProcessHandle %) @(:holders slot))))
+(defn- front-door-for
+  "The slot of `owner`, else a slot that no session has owned, else nil."
+  [slots owner]
+  (or (some #(when (= owner @(:owner %)) %) slots) (some #(when (nil? @(:owner %)) %) slots)))
 
 (defn- ensure-front-doors!
   "Reserve every front-door port at once, before any child can read the deny list."
@@ -206,34 +213,38 @@
         (or @front-doors (reset! front-doors (vec (repeatedly front-door-count front-door)))))))
 
 (defn ensure-session-proxy!
-  "Give `token` a session-attributed compatibility front door for managed language
-   processes whose HTTP stacks do not reliably send Proxy-Authorization from URL
-   userinfo (notably urllib and JVM dependency resolvers). The listener is bound to
-   loopback, resolves exactly `token`'s live policy, and shares the gateway CA and
-   proxy implementation. Unknown/disposed sessions fail closed. Returns its port,
-   or nil when every reserved front door is taken.
+  "Give `token` of session `owner` a session-attributed compatibility front door for
+   managed language processes whose HTTP stacks do not reliably send Proxy-Authorization
+   from URL userinfo (notably urllib and JVM dependency resolvers). The listener is bound
+   to loopback, resolves exactly `token`'s live policy, and shares the gateway CA and
+   proxy implementation. Unknown/disposed sessions fail closed. Returns its port, or nil
+   when every reserved front door has another owner.
 
-   A session takes only a free slot (see `unregister-session!`), the one released
-   longest ago, so a process that left its worker's tree is least likely to find a
-   new owner on its port."
-  [token]
-  (when-not (registered? token)
-    (throw (ex-info "Managed language proxy denied: session is not registered"
+   A door has one owner for the gateway's life: a new environment of the same session
+   gets it again, and a process that outlives its session never finds another session
+   on its port. While two environments of the session live, the door serves the newer."
+  [token owner]
+  (when (nil? owner)
+    (throw (ex-info "Managed language proxy denied: no owner session"
                     {:type ::session-proxy-missing :token token})))
   (or (get-in @session-proxy-states [token :port])
       (locking session-proxy-lock
+        (when-not (registered? token)
+          (throw (ex-info "Managed language proxy denied: session is not registered"
+                          {:type ::session-proxy-missing :token token})))
         (or (get-in @session-proxy-states [token :port])
-            (if-let [slot (->> (ensure-front-doors!)
-                               (filter free-front-door?)
-                               (sort-by #(deref (:released %)))
-                               first)]
-              (do (reset! (:token slot) token)
+            (if-let [slot (front-door-for (ensure-front-doors!) owner)]
+              (do (reset! (:owner slot) owner)
+                  (swap! (:tokens slot) (fn [tokens]
+                                          (vec (sort-by #(get-in @registry [% :order])
+                                                        (conj tokens token)))))
                   (force (:proxy slot))
                   (swap! session-proxy-states assoc token slot)
                   (:port slot))
-              (do (tel/log! {:level :warn :id ::front-doors-taken :data {:count front-door-count}}
-                            "Every session front door is taken; workers use the shared proxy")
-                  nil))))))
+              (when (compare-and-set! front-doors-full-logged? false true)
+                (tel/log!
+                  {:level :warn :id ::front-doors-taken :data {:count front-door-count}}
+                  "Every session front door has an owner; workers use the shared proxy")))))))
 
 (defn loopback-grant
   "Jail policy keys that let a confined child connect to loopback directly, or nil
@@ -261,6 +272,7 @@
       (try (when (realized? proxy) ((:stop! @proxy))) (catch Throwable _ nil))
       (try (.close server) (catch Throwable _ nil)))
     (reset! front-doors nil)
+    (reset! front-doors-full-logged? false)
     (reset! session-proxy-states {}))
   (locking proxy-lock
     (when-let [stop! (:stop! @proxy-state)]

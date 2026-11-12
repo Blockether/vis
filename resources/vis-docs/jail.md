@@ -263,6 +263,12 @@ store. Raw TCP uses SOCKS5 on the same proxy port, with host and port checks
 but no HTTP method or path checks. Programs that ignore proxy variables, such
 as `ssh`, require explicit proxy configuration.
 
+Some clients do not send the proxy credentials, for example the Java HTTP clients. So the Python
+worker of each session gets its own proxy port. A port belongs to one session until the gateway
+stops, also after the session ends. One gateway run has 256 of these ports. When all have an owner,
+the Python workers of new sessions use the shared proxy. Then these clients get a 407 error until
+you restart the gateway.
+
 ### Inbound development ports
 
 A confined server accepts connections on a port listed in `jail.network.inbound_ports`. On macOS,

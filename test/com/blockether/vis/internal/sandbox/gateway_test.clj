@@ -92,7 +92,7 @@
                                                        nil)})]
                      (try (gs/register-session! token (constantly nil))
                           (gs/ensure-proxy!)
-                          (gs/ensure-session-proxy! token)
+                          (gs/ensure-session-proxy! token token)
                           (expect (= 2 (count @started)))
                           (expect (every? (comp fn? :on-log) @started))
                           (finally (gs/shutdown!)))))))
@@ -184,7 +184,7 @@
                       (let [deny (set (:loopback-deny-ports (gs/loopback-grant nil)))]
                         (expect (contains? deny (gs/proxy-port)))
                         (gs/register-session! "late" (constantly nil))
-                        (expect (contains? deny (gs/ensure-session-proxy! "late"))))
+                        (expect (contains? deny (gs/ensure-session-proxy! "late" "late"))))
                       (finally (gs/shutdown!))))
              (it "no grant when the allowlist does not already pass loopback"
                  (try (expect (nil? (gs/loopback-grant (ep/compile-policy {:allowed-domains
@@ -199,47 +199,93 @@
                             (set (:loopback-deny-ports (gs/loopback-grant nil)))
 
                             ports
-                            (mapv (fn [i]
-                                    (let [token (str "s" i)]
-                                      (gs/register-session! token (constantly nil))
-                                      (gs/ensure-session-proxy! token)))
-                                  (range 33))]
+                            (->> (range)
+                                 (map (fn [i]
+                                        (let [token (str "s" i)]
+                                          (gs/register-session! token (constantly nil))
+                                          (gs/ensure-session-proxy! token token))))
+                                 (take 1000)
+                                 (take-while some?)
+                                 vec)]
 
-                        (expect (every? deny (butlast ports)))
-                        (expect (nil? (last ports))))
+                        (expect (seq ports))
+                        (expect (every? deny ports))
+                        (gs/register-session! "past" (constantly nil))
+                        (expect (nil? (gs/ensure-session-proxy! "past" "past"))))
                       (finally (gs/shutdown!)))))
 
-(defdescribe released-front-door-fails-closed
-             (it "a front door stops serving when its session is gone"
-                 (run-wire-test
-                   (fn []
-                     (let [origin
-                           (start-origin!)
+(defdescribe
+  released-front-door-fails-closed
+  (it "a front door stops serving when its session is gone"
+      (run-wire-test (fn []
+                       (let [origin
+                             (start-origin!)
 
-                           tok
-                           (str (java.util.UUID/randomUUID))]
+                             tok
+                             (str (java.util.UUID/randomUUID))]
 
-                       (try (gs/register-session! tok
-                                                  (constantly (ep/compile-policy {:allowed-domains
-                                                                                  ["localhost"]})))
-                            (let [port (gs/ensure-session-proxy! tok)]
-                              (expect (str/includes? (get-status port (:port origin) nil) "200"))
-                              (gs/unregister-session! tok)
-                              (expect (str/includes? (get-status port (:port origin) nil) "407")))
-                            (finally ((:stop! origin)) (gs/shutdown!)))))))
-             (it "no other session gets a front door while a process of its last session lives"
-                 (let [^Process kept (.start (ProcessBuilder. ["sleep" "30"]))]
-                   (try (gs/register-session! "old" (constantly nil))
-                        (let [port (gs/ensure-session-proxy! "old")
-                              take! (fn [token]
-                                      (gs/register-session! token (constantly nil))
-                                      (let [p (gs/ensure-session-proxy! token)]
-                                        (gs/unregister-session! token)
-                                        p))]
+                         (try (gs/register-session!
+                                tok
+                                (constantly (ep/compile-policy {:allowed-domains ["localhost"]})))
+                              (let [port (gs/ensure-session-proxy! tok tok)]
+                                (expect (str/includes? (get-status port (:port origin) nil) "200"))
+                                (gs/unregister-session! tok)
+                                (expect (str/includes? (get-status port (:port origin) nil) "407")))
+                              (finally ((:stop! origin)) (gs/shutdown!)))))))
+  (it "a front door never serves a second session, also after its session ends"
+      (try (let [take!
+                 (fn [token]
+                   (gs/register-session! token (constantly nil))
+                   (let [p (gs/ensure-session-proxy! token token)]
+                     (gs/unregister-session! token)
+                     p))
 
-                          (gs/unregister-session! "old" [(.toHandle kept)])
-                          (expect (not-any? #{port} (mapv #(take! (str "new" %)) (range 40))))
-                          (.destroyForcibly kept)
-                          (.waitFor kept)
-                          (expect (some #{port} (mapv #(take! (str "later" %)) (range 40)))))
-                        (finally (.destroyForcibly kept) (gs/shutdown!))))))
+                 ports
+                 (vec (take-while some? (map #(take! (str "s" %)) (range 1000))))]
+
+             (expect (seq ports))
+             (expect (= (count ports) (count (set ports)))))
+           (finally (gs/shutdown!))))
+  (it "a session that its environment builds again keeps its one front door"
+      (try (let [build!
+                 (fn [token]
+                   (gs/register-session! token (constantly nil))
+                   (gs/ensure-session-proxy! token "sleeper"))
+
+                 port
+                 (build! "wake0")
+
+                 wakes
+                 (mapv #(do (gs/unregister-session! (str "wake" (dec %))) (build! (str "wake" %)))
+                       (range 1 1000))]
+
+             (expect (every? #{port} wakes))
+             (gs/register-session! "other" (constantly nil))
+             (expect (not= port (gs/ensure-session-proxy! "other" "other"))))
+           (finally (gs/shutdown!))))
+  (it "a door serves the newer of two live environments of one session"
+      (run-wire-test
+        (fn []
+          (let [origin
+                (start-origin!)
+
+                status
+                #(get-status % (:port origin) nil)]
+
+            (try (gs/register-session! "old-env"
+                                       (constantly (ep/compile-policy {:allowed-domains
+                                                                       ["example.com"]})))
+                 (gs/register-session! "new-env"
+                                       (constantly (ep/compile-policy {:allowed-domains
+                                                                       ["localhost"]})))
+                 (let [port (gs/ensure-session-proxy! "old-env" "same")]
+                   (expect (str/includes? (status port) "403"))
+                   (expect (= port (gs/ensure-session-proxy! "new-env" "same")))
+                   (expect (str/includes? (status port) "200"))
+                   (gs/ensure-session-proxy! "old-env" "same")
+                   (expect (str/includes? (status port) "200"))
+                   (gs/unregister-session! "old-env")
+                   (expect (str/includes? (status port) "200"))
+                   (gs/unregister-session! "new-env")
+                   (expect (str/includes? (status port) "407")))
+                 (finally ((:stop! origin)) (gs/shutdown!))))))))
