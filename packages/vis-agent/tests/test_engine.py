@@ -571,22 +571,19 @@ def test_real_cancel_during_stream_keeps_extension_hooks(tmp_path, monkeypatch):
             turn.cancel()
             assert turn.wait(timeout=60)["status"] == "cancelled"
             python_turn(run)
+        # Read the log before the delete: closing a session stops hooks that still run.
+        keys = ("retired", "ctx-failed", "ctx-contributions-failed", "prompt-failed")
+        warnings = []
+        for log in (tmp_path / "home").rglob("*.log"):
+            lines = log.read_text(errors="replace").splitlines()
+            # Keep the data and ctx lines and the events just before each warning.
+            warnings += [
+                "\n".join(lines[max(0, i - 6) : i + 3])
+                for i, line in enumerate(lines)
+                if any(k in line for k in keys)
+            ]
+        assert not warnings, "\n----\n".join(warnings)
         session.delete()
-    warnings = [
-        line
-        for log in (tmp_path / "home").rglob("*.log")
-        for line in log.read_text(errors="replace").splitlines()
-        if any(
-            k in line
-            for k in (
-                "retired",
-                "ctx-failed",
-                "ctx-contributions-failed",
-                "prompt-failed",
-            )
-        )
-    ]
-    assert warnings == []
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
