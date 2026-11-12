@@ -2057,7 +2057,8 @@ export function LiveViewPanel({
   const canInterrupt = !isSettled && Boolean(onInterrupt) && !isArmed;
   const isCard = !embedded && !inDialog;
   // In the dialog the band names the run, so the stop stands under the headline
-  // instead of on an empty header row above it.
+  // instead of on an empty header row above it. Without a headline it leads the
+  // body on the left, not alone at the far edge (user report).
   const headlineHoldsStop = inDialog && canInterrupt && view.nodes[0]?.type === 'status';
   // An app's own chrome names its lifecycle once (#430), so its panel adds no verdict.
   const showsVerdict = isSettled && !app;
@@ -2091,7 +2092,7 @@ export function LiveViewPanel({
             embedded
               ? 'flex min-h-9 min-w-0 items-center gap-2 mouse:min-h-7'
               : inDialog
-                ? 'flex min-w-0 flex-row-reverse items-center justify-between gap-2 px-(--live-view-inset) pb-2'
+                ? `flex min-w-0 items-center gap-2 px-(--live-view-inset) pb-2 ${showsVerdict ? 'justify-end' : ''}`
                 : 'flex items-start gap-2 border-b border-dialog-edge px-(--live-view-inset) py-2.5'
           }
         >
