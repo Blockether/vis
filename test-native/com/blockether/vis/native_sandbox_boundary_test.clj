@@ -50,8 +50,8 @@
            "assert 'default.clj' in str(file_hit), str(file_hit)\n"
            "assert 'example.clj' in str(dir_hit), str(dir_hit)\n"
            "print('NATIVE_FFF_READY')\n"
-           ;; #279: let the refusal escape this tool call; the next model step must
-           ;; still see the same session, rather than an env_context_retired.
+           ;; #279: a spent walk budget returns partial results with a note; the next
+           ;; model step must still see the same session, rather than an env_context_retired.
            "scan_kept = 279\nscan_root = project_root_path / 'scan-budget'\n"
            "scan_root.mkdir()\n(scan_root / 'entry').touch()\n"
            "for _ in range(10001):\n    list(scan_root.rglob('*.missing'))")
@@ -174,8 +174,9 @@
 
                              (expect (= 0 (.exitValue process)) output)
                              (expect (>= @calls 3) output)
-                             (expect (str/includes? (pr-str tool-results) "10000") output)
-                             (expect (str/includes? (pr-str tool-results) "grep/ls") output)
+                             (expect (str/includes? (pr-str tool-results)
+                                                    "Directory walks stopped after 10000 entries")
+                                     output)
                              (doseq [marker ["NATIVE_KEYWORDS_READY" "NATIVE_PROCESS_CLEANUP_READY"
                                              "NATIVE_COLD_LISTING_READY" "NATIVE_FFF_READY"
                                              "NATIVE_TRAVERSAL_RECOVERED"]]

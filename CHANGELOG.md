@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Sandbox: a directory walk that reaches the limit of 10,000 entries in one block returns what it found, and the block output shows one note that the result is partial. Before, the walk raised an error and lost every entry that it had found. The Python runtime is now 0.5.28.
 - Sandbox: the agent has no `cat` and no `patch`. It reads and edits files with plain Python, and the core prompt shows how: print only the lines that you need, and assert that the old text occurs one time before you write. In an A/B test with GPT on the 12 benchmark tasks, the arm without the two tools passed 7 tasks and the arm with them passed 5, at 3% less cost. Vis no longer depends on `java-diff-utils`.
 - Sandbox: a printed result keeps the file windows of `cat` whole, up to one full 50 KiB window for each result. Before, the 4096-token clip of a printed result also cut the middle of a file read, and the model read one large file in three requests. The clip does not keep the rows of `grep` whole.
 - Sandbox: a printed result shows up to 8192 estimated tokens before Vis clips it. Before, the limit was 4096.
