@@ -329,7 +329,7 @@
              ;; last N bytes: the caller counted lines, so the read starts on one.
              (and (nil? offset) want-lines) (tail-line-offset file len lim want-lines)
              (nil? offset) (max 0 (- len lim))
-             ;; NEGATIVE: the last `n` LINES, the same reading `cat(path, -50)` has.
+             ;; NEGATIVE: the last `n` LINES, the same reading `tail -n 50` has.
              ;; A line count is the unit a caller actually holds; a byte offset for
              ;; it is only knowable after reading the file, which is the read they
              ;; were trying to make.

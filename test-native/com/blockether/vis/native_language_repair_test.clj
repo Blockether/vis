@@ -44,32 +44,19 @@
 
        fixtures
        ["print('Native block repair verified'"
-        (str "import re\n"
-             "for name, replacement, expected in ["
-             "('sample.py', 'value = [1, 2', 'value = [1, 2]'), "
-             "('sample.clj', '(def value [1 2', '(def value [1 2])')]:\n"
-             "    path = project_root_path / name\n"
-             "    version = (await cat(path)).splitlines()[0].rsplit(' @', 1)[1]\n"
-             "    print(await patch(path, [{'from': 1, 'new': replacement}], version))\n"
-             "    assert path.read_text().strip() == expected, path.read_text()\n"
-             "print('Native patch repair verified')")
+        (str "(project_root_path / 'sample.py').write_text('value = [1, 2\\n')\n"
+             "(project_root_path / 'sample.clj').write_text('(def value [1 2\\n')\n"
+             "print('Native write repair queued')")
         (str "(project_root_path / 'late.py').write_text('value = [3, 4\\n')\n"
              "(project_root_path / 'late.clj').write_text('(def late [3 4]\\n')\n"
              "raise ValueError('failure after writes')")
         (str
           "assert (project_root_path / 'late.py').read_text().strip() == 'value = [3, 4]'\n"
           "assert (project_root_path / 'late.clj').read_text().strip() == '(def late [3 4])'\n"
+          "assert (project_root_path / 'sample.py').read_text().strip() == 'value = [1, 2]'\n"
+          "assert (project_root_path / 'sample.clj').read_text().strip() == '(def value [1 2])'\n"
           "assert session.get('python_syntax_repairs')\n"
           "assert session.get('clojure_syntax_repairs')\n"
-          "for name, replacement in [('sample.py', 'value = if'), ('sample.clj', '{:a 1 :a 2}')]:\n"
-          "    path = project_root_path / name\n"
-          "    before = path.read_text()\n"
-          "    version = (await cat(path)).splitlines()[0].rsplit(' @', 1)[1]\n"
-          "    try:\n" "        await patch(path, [{'from': 1, 'new': replacement}], version)\n"
-          "    except Exception as error:\n"
-          "        assert 'unparseable, so nothing was written' in str(error), str(error)\n"
-          "    else:\n" "        raise AssertionError('invalid patch was accepted')\n"
-          "    assert path.read_text() == before\n"
           "formatted = project_root_path / 'formatted.clj'\n"
           "formatted.write_text('(def formatted [1 2])  \\n')\n"
           "layout = await clj.format_code(paths=[str(formatted)], cwd=str(project_root_path),"
@@ -134,8 +121,8 @@
                                              "\n"
                                              (take-last 30 (str/split-lines (slurp file)))))))))
                         (doseq [marker ["Vis repaired this block before running it."
-                                        "Native block repair verified"
-                                        "Native patch repair verified" "failure after writes"
+                                        "Native block repair verified" "Native write repair queued"
+                                        "failure after writes"
                                         "Native file repair and reader validation verified"
                                         "line 1, column 5: '(' is never closed"]]
                           (expect (some #(str/includes? % marker) tools)

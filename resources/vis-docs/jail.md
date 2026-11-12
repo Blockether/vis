@@ -155,7 +155,7 @@ normalized path, with symlinks resolved. So a denied file stays denied when you 
 another root, a relative path or a link. `deny_read` blocks both reading and writing. `deny_write`
 blocks writing only.
 
-The same rules cover host tools (`cat`, `ls`, `grep`, `patch` and the other readers and
+The same rules cover host tools (`ls`, `grep` and the other readers and
 writers), `python_execution` and every child process Vis starts. A call that touches
 several paths is refused whole: no path in the batch is read or written.
 

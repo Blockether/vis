@@ -50,13 +50,6 @@
            "assert 'default.clj' in str(file_hit), str(file_hit)\n"
            "assert 'example.clj' in str(dir_hit), str(dir_hit)\n"
            "print('NATIVE_FFF_READY')\n"
-           ;; An anchored write is the editing path the agent depends on most.
-           "edit_target = project_root_path / 'edit.txt'\n"
-           "edit_target.write_text('alpha\\nbeta\\n')\n"
-           "version = cat(str(edit_target)).splitlines()[0].rsplit(' @', 1)[1]\n"
-           "patch(str(edit_target), [{'from': 2, 'new': 'gamma'}], version)\n"
-           "assert edit_target.read_text() == 'alpha\\ngamma\\n', edit_target.read_text()\n"
-           "print('NATIVE_PATCH_READY')\n"
            ;; #279: let the refusal escape this tool call; the next model step must
            ;; still see the same session, rather than an env_context_retired.
            "scan_kept = 279\nscan_root = project_root_path / 'scan-budget'\n"
@@ -185,7 +178,7 @@
                              (expect (str/includes? (pr-str tool-results) "grep/ls") output)
                              (doseq [marker ["NATIVE_KEYWORDS_READY" "NATIVE_PROCESS_CLEANUP_READY"
                                              "NATIVE_COLD_LISTING_READY" "NATIVE_FFF_READY"
-                                             "NATIVE_PATCH_READY" "NATIVE_TRAVERSAL_RECOVERED"]]
+                                             "NATIVE_TRAVERSAL_RECOVERED"]]
                                (expect (str/includes? (pr-str tool-results) marker) output))
                              (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                              (expect (every? #(= model

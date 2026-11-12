@@ -1355,15 +1355,13 @@
         (expect (re-find #"BAD=\[\]" out) out)))
     (it "apropos('') lists real tools but not builtins or the asyncio shim"
         (let [out (run (str "a=[i.name for i in apropos('')]\n"
-                            "print('asyncio='+str('asyncio' in a),"
-                            "'len='+str('len' in a)," "'ls='+str('ls' in a),"
-                            "'grep='+str('grep' in a)," "'patch='+str('patch' in a))"))]
+                            "print('asyncio='+str('asyncio' in a)," "'len='+str('len' in a),"
+                            "'ls='+str('ls' in a)," "'grep='+str('grep' in a))"))]
           (expect (re-find #"asyncio=False" out))
           (expect (re-find #"len=False" out))
           (expect (re-find #"ls=True" out))
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
-          (expect (re-find #"grep=True" out))
-          (expect (re-find #"patch=True" out))))
+          (expect (re-find #"grep=True" out))))
     (it "finds callables by name or row opening and documentation pages by their outline"
         (let [out (run (str "print('body='+str(len(apropos('TUPLE UNPACKING'))))\n"
                             "print('exact='+apropos(r'^grep$')[0].name)\n"
@@ -1382,7 +1380,7 @@
     (it "answers each hit with its type, name and opening body"
         (let [out (run (str
                          "def local_helper():\n"
-                         "    return 1\n" "item = apropos(r'^patch$')[0]\n"
+                         "    return 1\n" "item = apropos(r'^grep$')[0]\n"
                          "print('fields='+','.join(item._fields))\n" "print('type='+item.type)\n"
                          "print('body='+str(len(item.body) > 0))\n"
                          "print('local='+str('local_helper' in [i.name for i in apropos('')]))"))]

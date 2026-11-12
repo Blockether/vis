@@ -316,7 +316,7 @@ def __vis_install_ls__():
         "\n\nStart at a known parent, and batch only confirmed directories. One "
         "missing, protected or non-directory path fails the batch with a host tool "
         "error. A missing path names the nearest existing directory. Read files with "
-        "cat."
+        "Path.read_text()."
         "\n\npattern=None leaves the listing unchanged. A string is a case-sensitive "
         "basename glob (*, ?, [abc], {a,b}), not a regex. It applies at every "
         "requested depth and keeps the ancestors of matches. A per-path spec can "
@@ -331,7 +331,7 @@ def __vis_install_ls__():
         "entry name, and directories end in '/'. A relative request gives relative "
         "paths, and an absolute or `~` request gives absolute paths. "
         "as_paths ignores limit and offset: `ls(dir, depth=3, as_paths=True)` is the "
-        "whole file list, ready for cat, grep or Path()."
+        "whole file list, ready for grep or Path()."
     )
 
     # ONE text for one handle: `help(ls)` and `doc("ls")` read the same

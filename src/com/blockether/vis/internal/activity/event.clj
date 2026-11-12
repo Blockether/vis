@@ -540,7 +540,7 @@
 
 (defn- result-diff-evidence
   "The diffs a row SHOWS, ONE PER FILE, for ANY result envelope carrying them. A file's diff
-   is `{:diff … :lines … :target …}`: `patch` edits one file and reports that map itself, a
+   is `{:diff … :lines … :target …}`: a tool that edits one file reports that map itself, a
    code block that wrote eleven files reports eleven of them under `:diffs`, and both arrive
    as the same evidence through the same renderer. A producer earns a diff by carrying that
    vocabulary, never by being a particular tool.

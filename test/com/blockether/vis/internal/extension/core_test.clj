@@ -1182,11 +1182,10 @@
   [_]
   (throw (InterruptedException. "cancelled")))
 
-(defn activity-patch-probe
-  "Observed patch operation whose internal envelope carries renderer metadata."
+(defn activity-diff-probe
+  "Observed write operation whose internal envelope carries renderer metadata."
   [_]
   (extension/success {:result "patched fixture.clj"
-                      :op :patch
                       :metadata {:target {:resolved "fixture.clj"}
                                  :diff "@@ -1 +1 @@\n-before\n+after"
                                  :lines {"added" 0 "removed" 0 "modified" 1}}}))
@@ -1360,12 +1359,12 @@
         (binding [extension/*tool-event-sink* #(swap! events conj %)]
           (extension/invoke-symbol-wrapper ext sym [{"query" "reasoning" "paths" ["src"]}] {}))
         (expect (= "reasoning" (:label (first @events))))))
-  (it "captures patch metadata before returning only the public value"
+  (it "captures diff metadata before returning only the public value"
       (let [events
             (atom [])
 
             sym
-            (extension/symbol #'activity-patch-probe {:tag :mutation :presenter :patch})
+            (extension/symbol #'activity-diff-probe {:tag :mutation})
 
             ext
             {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}

@@ -13,9 +13,8 @@ into a summary without deleting your session history.
   findings](#reuse-another-session-s-findings) instead of repeating the research.
 - **You need a helper that Vis wrote earlier, with changes.** Ask Vis to [find and
   refine it](#reuse-and-refine-session-helpers) instead of writing a new one.
-- **You want to know why Vis prints only part of a result, or edits files by line
-  address.** See [One tool, many functions](#one-tool-many-functions) and
-  [Addresses, not copies](#addresses-not-copies).
+- **You want to know why Vis prints only part of a result, or how it edits files.** See
+  [One tool, many functions](#one-tool-many-functions) and [Read and edit files](#read-and-edit-files).
 - **Your own program must show the context budget, the usage or the cost of a session.** Use
   [Context management API](context-management-api.md).
 
@@ -81,13 +80,11 @@ If you define a name again, Vis replaces its saved copy. `del name` removes a he
 and frees its memory. Before you redefine or remove a name, check aliases, captured defaults and
 callers. Python references do not update automatically.
 
-## Addresses, not copies
+## Read and edit files
 
-`grep` and `cat` show a `path @version` header and number each line. `patch` takes
-that version and those line numbers, with all edits for a file in one call. If the
-file changed elsewhere after your read, `patch` moves your edits to the new lines.
-Changed lines or syntax errors reject the batch. Use `Path.read_text()` for data
-you will not edit.
+The agent reads and writes files with plain Python. It prints only the lines that it needs, with
+line numbers. To edit, it replaces exact text and first checks that the text occurs one time.
+`grep` finds the lines and shows a `path @version` header with numbered rows.
 
 ## Reference: folds and context budget
 

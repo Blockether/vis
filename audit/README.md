@@ -30,7 +30,7 @@ compliance.
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 54 unique, across 4 `deps.edn` modules (root + siblings).
+- **Direct dependency coordinates:** 53 unique, across 4 `deps.edn` modules (root + siblings).
 - **Total direct jar size:** ~108 MB; most space is used by Python and optional speech components (§8).
 - **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — **copyleft exception(s) flagged in §6.**
 - **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
@@ -171,7 +171,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `info.sunng/ring-jetty9-adapter` | `0.40.4` | EPL-1.0 | 163 KB | 3rd-party |
 | `io.github.clj-holmes/clj-watson` | `git:be98e4db74fb8927db4825cc73bbe2606e44e5e3` | EPL-2.0 | source checkout | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
-| `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
 | `io.github.noahtheduke/lazytest` | `2.1.0` | EPL-1.0 | 47 KB | 3rd-party |
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
@@ -215,7 +214,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | License | Count |
 |---|---|
 | EPL-1.0 | 16 |
-| Apache-2.0 | 14 |
+| Apache-2.0 | 13 |
 | MIT | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |

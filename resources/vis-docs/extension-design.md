@@ -453,11 +453,9 @@ separate empty state, not a passing check.
 
 ### Know what this checks
 
-- `patch` runs the check after a patch operation. A `python_execution` hook also
-  runs when the whole Python block returns, including a normal Python error
-  after a write. That covers `Path.write_text()` and `with open(..., "w")` too.
-  A block that calls `patch` can therefore scan more than once. The report is
-  replaced, not accumulated.
+- A `python_execution` hook runs when the whole Python block returns, including
+  a normal Python error after a write. That covers `Path.write_text()` and
+  `with open(..., "w")`. The report is replaced, not accumulated.
 - Writes are checked **at these boundaries**, not at every filesystem write.
   Unfinished background processes, a killed interpreter and edits made outside
   Vis are not continuously watched. Wait for any work you start before relying

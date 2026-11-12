@@ -4253,23 +4253,6 @@ vis.register_extension(vis.Extension(name='name-hook', description='Name fixture
                                          ")\n" "raise ValueError('after the write')"))]
               (expect (some? (:error result)))
               (expect (= ["src/orders.py:4: nesting 4 exceeds 3"] (get (report) "findings"))))
-            ;; Bypass only the outer block hook here: a real host patch must
-            ;; refresh the report itself, not rely on python_execution to do it.
-            (doseq [[replacement findings] [["value = 1\n" []]
-                                            [nested ["src/orders.py:4: nesting 4 exceeds 3"]]]]
-              (let [result
-                    (ep/run-python-block
-                      ctx
-                      (str
-                        "lines = cat(path).splitlines()\n"
-                        "version = lines[0].rsplit(' @', 1)[1]\n"
-                        "rows = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
-                        "print(patch(path, [{'from': rows[0], 'to': rows[-1], 'new': "
-                        (json-text replacement)
-                        "}], version))"))]
-                (expect (nil? (:error result)) (pr-str result))
-                (expect (= replacement (slurp file)))
-                (expect (= findings (get (report) "findings")))))
             (let [result (run-block "path.unlink()")]
               (expect (nil? (:error result)) (pr-str result))
               (expect (= {"checked" 0 "limit" 3 "findings" []} (report))))

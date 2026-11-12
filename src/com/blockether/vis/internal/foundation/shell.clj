@@ -237,7 +237,7 @@
 
    `logs` takes its `offset` and its `lines` through [[->whole-long]] instead,
    because there a negative IS a reading — the last n LINES back from the end, as
-   in `cat(path, -50)`, and `lines: -10` the ten ABOVE an offset."
+   in `tail -n 50`, and `lines: -10` the ten ABOVE an offset."
   [x what]
   (let [n (->whole-long x what)]
     (when (and n (neg? (long n)))
@@ -2140,7 +2140,7 @@
    With no `:offset` the window is the TAIL, which is what someone watching a live
    command wants; `{:offset 0}` is the head, and a loop from there is the whole
    log. A NEGATIVE `:offset` is the last n LINES — `{:offset -50}` reads back 50
-   lines, the same reading `cat(path, -50)` has, and clamps to the head when the
+   lines, the same reading `tail -n 50` has, and clamps to the head when the
     log holds fewer. `is_eof` false means read again NOW rather than sleep.
 
    `:lines` N is the LINE switch: at most N lines come back, anchored at the LAST
@@ -3209,7 +3209,7 @@
        "Transport for `sh.logs(offset=…, lines=…)`. Call the handle that the shell result already "
        "is, not this. It reads the log of a background shell and returns at once.\n\n"
        "Without an offset, it reads the tail. `offset=0` starts at the beginning. A negative offset "
-       "gives the last n LINES (`sh.logs(-50)`), the same way that `cat(path, -50)` reads. "
+       "gives the last n LINES (`sh.logs(-50)`). "
        "`lines=10` gives the last ten lines. A page from offset zero walks forward with "
        "`next(page)`, and `lines=-10` walks above its current offset. `page.pages(max_pages=…)` "
        "includes the current page, has a default bound of ten and never waits for future output at "

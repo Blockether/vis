@@ -7,7 +7,6 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.drafts :as drafts]
-            [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -133,15 +132,6 @@
             (expect (not (zero? (long (:exit (shell-result environment
                                                            root
                                                            "printf changed > source.txt"))))))
-            (expect (= "original" (slurp (io/file root "source.txt")))))
-          (let [before
-                (:ext.symbol/before-fn editing/patch-symbol)
-
-                out
-                (before environment #'editing/patch-tool [(str root "/source.txt") [] "00000000"])]
-
-            (expect (contains? out :result))
-            (expect (re-find #"draft_create" (str out)))
             (expect (= "original" (slurp (io/file root "source.txt")))))
           (let [cache
                 (.getCanonicalPath (io/file root ".." "cache"))
@@ -523,65 +513,41 @@
   disabled-jail-drafts-write-their-own-copies
   (it "disabled jail drafts write their own copies"
       ;; The default configuration runs WITHOUT the jail, and that grants every host filesystem
-      ;; root. Sweeping those grants as protected originals refused every host write of a drafted
-      ;; session — the draft's own copies included — so `patch` could not land an edit anywhere
-      ;; while raw Python kept writing the shared checkout.
+      ;; root. A drafted session must still write its own copies and leave the originals alone.
       (with-project
         :worktree nil
-        false
-        (fn [environment root]
-          (let [extra
-                (.getCanonicalPath (io/file root ".." "extra"))
+        false (fn [environment root]
+                (let [extra
+                      (.getCanonicalPath (io/file root ".." "extra"))
 
-                unselected
-                (.getCanonicalPath (io/file root ".." "unselected"))
+                      unselected
+                      (.getCanonicalPath (io/file root ".." "unselected"))
 
-                scratch
-                (.getCanonicalPath (io/file root ".." "scratch.txt"))
+                      opened
+                      (drafts/draft-create environment "disabled-jail" true [root extra])
 
-                opened
-                (drafts/draft-create environment "disabled-jail" true [root extra])
+                      clone
+                      (get-in opened [:result "root"])
 
-                clone
-                (get-in opened [:result "root"])
+                      extra-clone
+                      (:clone (first (filter #(= extra (:trunk %))
+                                             (workspace/env-filesystem-roots
+                                               (assoc environment
+                                                 :workspace @(:workspace-atom environment))))))]
 
-                extra-clone
-                (:clone (first (filter #(= extra (:trunk %))
-                                       (workspace/env-filesystem-roots
-                                         (assoc environment
-                                           :workspace @(:workspace-atom environment))))))
-
-                gate
-                (fn [path]
-                  ((:ext.symbol/before-fn editing/patch-symbol)
-                    environment
-                    #'editing/patch-tool
-                    [path [{"from" 1 "new" "changed"}] "00000000"]))]
-
-            (expect (nil? (:error opened)) (str opened))
-            (expect (string? clone) (str opened))
-            (expect (not= root clone))
-            (expect (string? extra-clone) (str opened))
-            (expect (not= extra extra-clone))
-            ;; Every selected repository takes host writes in its own copy, and so does scratch
-            ;; space the blanket grant reaches.
-            (doseq [path [(str clone "/source.txt") (str extra-clone "/source.txt") scratch]]
-              ;; The pass-through carries the live environment: report the path, never the map.
-              (expect (nil? (:result (gate path))) path))
-            ;; Their originals, and a repository this draft never selected, stay read-only.
-            (doseq [path [(str root "/source.txt") (str extra "/source.txt")
-                          (str unselected "/source.txt")]]
-              (let [refusal (:result (gate path))]
-                (expect (some? refusal) path)
-                (expect (re-find #"draft_create" (str refusal)) path)))
-            (let [result (#'python-exec/execute-code
-                          environment
-                          (str "(project_root_path / 'source.txt').write_text('draft')\n"
-                               "(extra_path / 'source.txt').write_text('extra draft')\n"))]
-              (expect (nil? (:error result)) (str result)))
-            (expect (= "draft" (slurp (io/file clone "source.txt"))))
-            (expect (= "extra draft" (slurp (io/file extra-clone "source.txt"))))
-            (doseq [original [root extra unselected]]
-              (expect (= "original" (slurp (io/file original "source.txt"))) original))
-            (let [discarded (drafts/draft-discard environment)]
-              (expect (nil? (:error discarded)) (str discarded))))))))
+                  (expect (nil? (:error opened)) (str opened))
+                  (expect (string? clone) (str opened))
+                  (expect (not= root clone))
+                  (expect (string? extra-clone) (str opened))
+                  (expect (not= extra extra-clone))
+                  (let [result (#'python-exec/execute-code
+                                environment
+                                (str "(project_root_path / 'source.txt').write_text('draft')\n"
+                                     "(extra_path / 'source.txt').write_text('extra draft')\n"))]
+                    (expect (nil? (:error result)) (str result)))
+                  (expect (= "draft" (slurp (io/file clone "source.txt"))))
+                  (expect (= "extra draft" (slurp (io/file extra-clone "source.txt"))))
+                  (doseq [original [root extra unselected]]
+                    (expect (= "original" (slurp (io/file original "source.txt"))) original))
+                  (let [discarded (drafts/draft-discard environment)]
+                    (expect (nil? (:error discarded)) (str discarded))))))))

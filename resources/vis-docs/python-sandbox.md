@@ -27,8 +27,8 @@ To limit what the agent's commands can reach, turn on the [process jail](jail.md
 
 Each session has its own Python state. The sandbox and trusted Python extensions
 use separate namespaces.
-Tools such as `grep`, `cat`, `patch` and `shell` are available as
-Python functions. `apropos` and `doc` show the available functions.
+Tools such as `grep`, `ls` and `shell` are available as
+Python functions. The agent reads and writes files with plain Python. `apropos` and `doc` show the available functions.
 
 ### Unbalanced quotes and brackets
 
@@ -50,11 +50,7 @@ message and the first wrong quote, bracket or escape. It also shows the line wit
 
 ### File edits and formatting
 
-Language extensions check proposed `patch` edits before Vis writes the file. They can propose a
-repair, validate it, then let Vis write the final source once. The patch result shows corrections,
-the actual diff and the new file version. If validation fails, the original file stays unchanged.
-
-Plain writes inside Python blocks have a different boundary. The extensions inspect changed files
+The agent writes files with plain Python inside its blocks. Language extensions inspect changed files
 after the block, including a block that raises an exception. They can then repair invalid files and
 report corrections in the next context. These checks do not intercept each write or roll back a block.
 

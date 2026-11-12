@@ -1180,8 +1180,7 @@ Each new commit also crosses `git/commit`. A `before` hook that returns
 `vis.block(reason)` refuses the operation and the user sees the reason. See
 [Drafts](drafts.md).
 
-`"fs_access"` checks paths used by the host file tools (`cat`, `grep`, `patch`,
-`ls`). It is not a tool itself and takes no `phase`. Its callback receives
+`"fs_access"` checks paths used by the host file tools (`grep`, `ls`). It is not a tool itself and takes no `phase`. Its callback receives
 `{"operation": "file-read" | "file-write", "path": <absolute path>}`. An error
 in the callback refuses the operation. This check does not apply to `open()`
 in the sandbox, which uses the sandbox's filesystem policy.

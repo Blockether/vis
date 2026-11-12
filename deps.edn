@@ -52,7 +52,6 @@
         ;; Jetty 12 core adapter, not ring/ring-jetty-adapter: no ee9 servlet layer on the SSE hot
         ;; path, and it tracks Jetty's own releases, which is why no Jetty CVE pins live here.
         info.sunng/ring-jetty9-adapter {:mvn/version "0.40.4"}
-        io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
         io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
         metosin/reitit-ring {:mvn/version "0.10.1"}
         org.apache.commons/commons-compress {:mvn/version "1.28.0"}
