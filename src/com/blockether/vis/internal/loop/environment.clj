@@ -1120,28 +1120,78 @@
                      parse-long)
              (* 60 1000))))
 
+(def ^:private rss-budget-floor-mb
+  "The warm floor of a gateway with its Python workers, in MB. A `-Xmx5g` JVM gateway
+   sits above 3 GB resident before any session is busy. A warm native gateway with
+   seven workers measured 2.9 GB resident and 4.6 GB of physical footprint (#467)."
+  5120)
+
+(defn- meminfo-total-mb
+  "`MemTotal` of `/proc/meminfo` in MB, or nil off Linux."
+  []
+  (let [path (java.nio.file.Path/of "/proc/meminfo" (make-array String 0))]
+    (when (java.nio.file.Files/isRegularFile path (make-array java.nio.file.LinkOption 0))
+      (when-let [kb (some-> (re-find #"(?m)^MemTotal:\s+(\d+)\s+kB"
+                                     (java.nio.file.Files/readString path))
+                            second
+                            parse-long)]
+        (quot (long kb) 1024)))))
+
+(defn- physical-memory-mb
+  "Physical memory of this machine in MB, or 0 when unknown. Never throws.
+
+   The JDK and the native image answer the cgroup limit inside a Docker container,
+   but the host's memory inside an LXC guest, which has no cgroup limit of its own:
+   257 GB on a 16 GB guest. lxcfs gives that guest its own `/proc/meminfo`, so on
+   Linux the smaller of the two counts."
+  ^long []
+  (try (let [os
+             (java.lang.management.ManagementFactory/getOperatingSystemMXBean)
+
+             reported
+             (if (instance? com.sun.management.OperatingSystemMXBean os)
+               (quot (max 0 (.getTotalMemorySize ^com.sun.management.OperatingSystemMXBean os))
+                     1048576)
+               0)
+
+             meminfo
+             (long (or (meminfo-total-mb) 0))]
+
+         (cond (not (pos? meminfo)) reported
+               (not (pos? reported)) meminfo
+               :else (min reported meminfo)))
+       (catch Throwable t (cancellation/preserve-interrupt! t) 0)))
+
+(defn- rss-budget-mb
+  "The RSS budget in MB for the `VIS_ENV_RSS_BUDGET_MB` value `override` on a machine
+   with `physical-mb` of memory. Without an override: a third of physical memory, at
+   least [[rss-budget-floor-mb]], and never more than three quarters of physical
+   memory. Unknown memory gives the floor."
+  ^long [override physical-mb]
+  (or (some-> override
+              str/trim
+              parse-long)
+      (if (pos? (long physical-mb))
+        (min (quot (* 3 (long physical-mb)) 4)
+             (max (long rss-budget-floor-mb) (quot (long physical-mb) 3)))
+        (long rss-budget-floor-mb))))
+
 (def ^:private env-rss-budget-mb
   "Resident-set ceiling in MB. JVM heap alone misses each interpreter worker's
    native allocations, so this gate samples the gateway plus every live Python
-   worker and forces idle-env eviction when their aggregate RSS is high. Override
-   with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables.
+   worker and evicts idle envs when their aggregate RSS is high. Override
+   with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables. Default: [[rss-budget-mb]].
 
-   RUNTIME-DEPENDENT, because the two runtimes do not carry the same floor. The
-   native image keeps 3072; the JVM gets 5120, because a `-Xmx5g` gateway sits
-   ABOVE 3 GB resident as a matter of course — heap committed plus metaspace plus
-   CPython native is already past it before any session is busy. A gate below the
-   idle floor is not a gate: measured on a working gateway it read `pressure=true`
-   on every single reaper sweep for hours, which drives `effective-ttl` to 0 and
-   force-evicts every idle env on every sweep. The reaper was permanently in its
-   emergency mode, and the flag carried no information because it never varied.
+   The budget follows physical memory, the same way for both runtimes. A fixed
+   budget is wrong on every machine but one: 3 GB is no pressure on a 36 GB machine
+   with 67 % free. A gate below the idle floor is not a gate either: measured on a
+   working gateway it read `pressure=true` on every reaper sweep for hours, and
+   the reaper stopped every idle env on every sweep (#467).
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
-   BUILD time, so a top-level `getenv` would ship the BUILDER's answer — and the
-   runtime split below would answer for the BUILDER's runtime, not this one."
-  (delay (or (some-> (System/getenv "VIS_ENV_RSS_BUDGET_MB")
-                     str/trim
-                     parse-long)
-             (if (util/native-image?) 3072 5120))))
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer, and the
+   memory size would be the BUILDER's memory."
+  (delay (rss-budget-mb (System/getenv "VIS_ENV_RSS_BUDGET_MB") (physical-memory-mb))))
 
 (defn- runtime-pids
   "The gateway and every live Python worker it owns, once each."
@@ -1217,7 +1267,13 @@
    worker process, outside JVM heap accounting. Evicting an idle env kills that
    worker, whereas a JVM heap gate would fire on unrelated work and miss Python
    growth. Accepts a sampled RSS value to avoid duplicate process calls during
-   metrics and reaper sweeps."
+   metrics and reaper sweeps.
+
+   On macOS the `ps` sample leaves out the pages that the memory compressor or
+   swap holds, which the physical footprint of Activity Monitor counts. Reading the
+   footprint needs `proc_pid_rusage`, which no `ps` field gives. The gate guards
+   the RAM that Vis holds now, and a budget of a third of RAM leaves room for the
+   difference (#467)."
   ([] (memory-pressure? (process-rss-bytes)))
   ([rss-bytes]
    (and (pos? (long @env-rss-budget-mb))
@@ -1351,12 +1407,16 @@
 
 (defn reap-idle-envs!
   "One reaper sweep: dispose + evict cached session envs idle past
-   `env-idle-ttl-ms` (or, under memory pressure past `env-rss-budget-mb`,
-   EVERY idle env this sweep — TTL ignored), then — if the cache still exceeds
+   `env-idle-ttl-ms`, then — if the cache still exceeds
    `env-cache-max` — force-evict the least-recently-active idle entries until
    back under the cap. Every eviction is lock-guarded (a running turn is
    skipped). Returns the number of entries evicted. Safe to call directly
-   (tests / manual sweeps)."
+   (tests / manual sweeps).
+
+   Under memory pressure past `env-rss-budget-mb` the sweep first evicts the
+   least-recently-active idle env, whatever its age, and samples RSS again. It
+   stops when the total is below the budget, so one pressured sweep does not
+   evict every idle env when one eviction is enough (#467)."
   []
   (let [now
         (util/now-ms)
@@ -1376,7 +1436,8 @@
         pressure-detail
         (fn [_]
           (format (str "the gateway and its Python workers used %d MB of memory, over the %d MB"
-                       " limit (VIS_ENV_RSS_BUDGET_MB), so the gateway stopped every idle sandbox")
+                       " limit (VIS_ENV_RSS_BUDGET_MB), so the gateway stopped its least recently"
+                       " used idle sandbox")
                   (quot (long rss-bytes) 1048576)
                   (long @env-rss-budget-mb)))
 
@@ -1392,19 +1453,31 @@
                        " one was the least recently used idle one")
                   (long @env-cache-max)))
 
-        effective-ttl
-        (if pressure? 0 (long @env-idle-ttl-ms))
+        pressure-evicted
+        (if pressure?
+          (loop [candidates
+                 (sort-by (fn [[_ e]]
+                            (age e))
+                          >
+                          @cache)
+
+                 n
+                 0]
+
+            (if-let [[k _] (first candidates)]
+              (if (evict-if-idle! k 0 :memory-pressure pressure-detail)
+                (if (memory-pressure?) (recur (rest candidates) (inc n)) (inc n))
+                (recur (rest candidates) n))
+              n))
+          0)
 
         ttl-evicted
-        (if (or pressure? (pos? (long @env-idle-ttl-ms)))
+        (if (pos? (long @env-idle-ttl-ms))
           (->> @cache
                (filter (fn [[_ entry]]
-                         (>= (long (age entry)) (long effective-ttl))))
+                         (>= (long (age entry)) (long @env-idle-ttl-ms))))
                (reduce (fn [n [k _]]
-                         (if (evict-if-idle! k
-                                             effective-ttl
-                                             (if pressure? :memory-pressure :idle-timeout)
-                                             (if pressure? pressure-detail idle-detail))
+                         (if (evict-if-idle! k @env-idle-ttl-ms :idle-timeout idle-detail)
                            (inc (long n))
                            n))
                        0))
@@ -1431,33 +1504,38 @@
           0)
 
         total
-        (+ (long ttl-evicted) (long lru-evicted))
+        (+ (long pressure-evicted) (long ttl-evicted) (long lru-evicted))
 
         cpu
         (cpu-load-pct)]
 
     (when (mem-log-enabled?)
-      (tel/log!
-        {:level (if (or (pos? (long total)) pressure?) :info :debug)
-         :id ::env-reaper-sweep
-         :data {:evicted total
-                :ttl-evicted ttl-evicted
-                :lru-evicted lru-evicted
-                :heap-used-pct (heap-used-pct)
-                :process-rss-bytes rss-bytes
-                :cpu-proc-pct cpu
-                :memory-pressure? pressure?
-                :cache-size (count @cache)}}
-        (format
-          "env-reaper evicted=%d (ttl=%d lru=%d) heap=%d%% rss=%dMB cpu=%d%% pressure=%s cache=%d"
-          (long total)
-          (long ttl-evicted)
-          (long lru-evicted)
-          (long (heap-used-pct))
-          (quot (long rss-bytes) 1048576)
-          cpu
-          pressure?
-          (count @cache))))
+      (tel/log! {:level (if (or (pos? (long total)) pressure?) :info :debug)
+                 :id ::env-reaper-sweep
+                 :data {:evicted total
+                        :pressure-evicted pressure-evicted
+                        :ttl-evicted ttl-evicted
+                        :lru-evicted lru-evicted
+                        :heap-used-pct (heap-used-pct)
+                        :process-rss-bytes rss-bytes
+                        :rss-budget-mb @env-rss-budget-mb
+                        :cpu-proc-pct cpu
+                        :memory-pressure? pressure?
+                        :cache-size (count @cache)}}
+                (format
+                  (str
+                    "env-reaper evicted=%d (memory=%d ttl=%d lru=%d) heap=%d%% rss=%dMB budget=%dMB"
+                    " cpu=%d%% pressure=%s cache=%d")
+                  (long total)
+                  (long pressure-evicted)
+                  (long ttl-evicted)
+                  (long lru-evicted)
+                  (long (heap-used-pct))
+                  (quot (long rss-bytes) 1048576)
+                  (long @env-rss-budget-mb)
+                  cpu
+                  pressure?
+                  (count @cache))))
     total))
 
 (defn- reaper-loop

@@ -10318,62 +10318,107 @@
 
 (def ^:private memory-pressure? (deref #'loop-env/memory-pressure?))
 
-(defdescribe env-memory-pressure-test
-             ;; Layer 3: under process memory pressure the reaper force-evicts EVERY
-             ;; idle (unlocked) env this sweep, ignoring the idle TTL, to shed
-             ;; Python sessions fast. A running turn (lock held off-thread) is
-             ;; still skipped; the transcript reloads from the DB.
-             (describe "reap-idle-envs! under memory pressure"
-                       (it "force-evicts fresh, unlocked entries when pressured"
-                           (let [k "watermark-test/fresh"]
-                             (swap! env-cache assoc k (new-cache-entry {}))
-                             (try
-                               ;; not idle (just touched) + default 3m TTL: a
-                               ;; normal sweep keeps it ...
-                               (with-redefs [loop-env/memory-pressure? (constantly false)]
-                                 (reap-idle-envs!)
-                                 (expect (contains? @env-cache k)))
-                               ;; ... but under pressure it is evicted now.
-                               (with-redefs [loop-env/memory-pressure? (constantly true)]
-                                 (expect (pos? (reap-idle-envs!)))
-                                 (expect (not (contains? @env-cache k))))
-                               (finally (swap! env-cache dissoc k)))))
-                       (it "still skips a locked entry (a running turn) under pressure"
-                           (let [k
-                                 "watermark-test/busy"
+(defdescribe
+  env-memory-pressure-test
+  ;; Layer 3: under process memory pressure the reaper evicts idle (unlocked)
+  ;; envs, least recently used first and whatever their age, until RSS is
+  ;; below the budget. A running turn (lock held off-thread) is still
+  ;; skipped; the transcript reloads from the DB.
+  (describe
+    "reap-idle-envs! under memory pressure"
+    (it "force-evicts fresh, unlocked entries when pressured"
+        (let [k "watermark-test/fresh"]
+          (swap! env-cache assoc k (new-cache-entry {}))
+          (try
+            ;; not idle (just touched) + default 3m TTL: a
+            ;; normal sweep keeps it ...
+            (with-redefs [loop-env/memory-pressure? (constantly false)]
+              (reap-idle-envs!)
+              (expect (contains? @env-cache k)))
+            ;; ... but under pressure it is evicted now.
+            (with-redefs [loop-env/memory-pressure? (constantly true)]
+              (expect (pos? (reap-idle-envs!)))
+              (expect (not (contains? @env-cache k))))
+            (finally (swap! env-cache dissoc k)))))
+    (it "still skips a locked entry (a running turn) under pressure"
+        (let [k
+              "watermark-test/busy"
 
-                                 entry
-                                 (new-cache-entry {})
+              entry
+              (new-cache-entry {})
 
-                                 ^java.util.concurrent.locks.ReentrantLock lock
-                                 (:lock entry)]
+              ^java.util.concurrent.locks.ReentrantLock lock
+              (:lock entry)]
 
-                             (swap! env-cache assoc k entry)
-                             (let [held
-                                   (promise)
+          (swap! env-cache assoc k entry)
+          (let [held
+                (promise)
 
-                                   release
-                                   (promise)
+                release
+                (promise)
 
-                                   holder
-                                   (Thread. ^Runnable
-                                            (fn []
-                                              (.lock lock)
-                                              (deliver held true)
-                                              @release
-                                              (.unlock lock)))]
+                holder
+                (Thread. ^Runnable
+                         (fn []
+                           (.lock lock)
+                           (deliver held true)
+                           @release
+                           (.unlock lock)))]
 
-                               (try (.start holder)
-                                    @held
-                                    (with-redefs [loop-env/memory-pressure? (constantly true)]
-                                      (reap-idle-envs!)
-                                      (expect (contains? @env-cache k)))
-                                    (finally (deliver release true)
-                                             (.join holder 1000)
-                                             (swap! env-cache dissoc k))))))
-                       (it "memory-pressure? fires on the RSS budget"
-                           (expect (true? (with-redefs [loop-env/env-rss-budget-mb (delay 1)]
-                                            (memory-pressure?)))))))
+            (try (.start holder)
+                 @held
+                 (with-redefs [loop-env/memory-pressure? (constantly true)]
+                   (reap-idle-envs!)
+                   (expect (contains? @env-cache k)))
+                 (finally (deliver release true) (.join holder 1000) (swap! env-cache dissoc k))))))
+    (it "stops the least recently used idle sandbox first and stops below the budget"
+        ;; Regression #467: pressure set the idle TTL to 0, so one sweep
+        ;; stopped every idle sandbox, also when one stop was enough.
+        (let [ks
+              ["watermark-test/oldest" "watermark-test/middle" "watermark-test/newest"]
+
+              own
+              (fn []
+                (set (filter (set ks) (keys @env-cache))))
+
+              age!
+              (fn [k age-ms]
+                (.set ^java.util.concurrent.atomic.AtomicLong (:last-active (get @env-cache k))
+                      (- (util/now-ms) (long age-ms))))]
+
+          (doseq [k ks]
+            (swap! env-cache assoc k (new-cache-entry {})))
+          (doseq [[k age-ms] (map vector ks [30000 20000 10000])]
+            (age! k age-ms))
+          (try
+            ;; The gateway holds 2 GB and each sandbox 1 GB: 5 GB is over the
+            ;; 4.5 GB budget, and one stop brings the total back below it.
+            (with-redefs-fn {#'loop-env/env-rss-budget-mb (delay 4608)
+                             #'loop-env/process-rss-bytes (fn []
+                                                            (* 1024 1024 1024 (+ 2 (count (own)))))}
+              (fn []
+                (expect (= 1 (reap-idle-envs!)))
+                (expect (= #{"watermark-test/middle" "watermark-test/newest"} (own)))))
+            (finally (apply swap! env-cache dissoc ks)))))
+    (it "derives the budget from physical memory, never below the warm floor"
+        ;; Regression #467: the native image kept a fixed 3072 MB, below the
+        ;; memory of a warm gateway, on a 36 GB machine with 67 % free.
+        (let [budget (deref #'loop-env/rss-budget-mb)]
+          (expect (= 12288 (budget nil 36864)))
+          (expect (= 5120 (budget nil 8192)))
+          (expect (= 3072 (budget nil 4096)))
+          (expect (= 5120 (budget nil 0)))
+          (expect (= 8192 (budget "8192" 36864)))
+          (expect (= 0 (budget "0" 36864)))))
+    (it "reads the memory of an LXC guest, not of its host"
+        ;; Regression #467 on Linux: inside LXC the JVM and the native image report the
+        ;; host's memory (257 GB on a 16 GB guest); lxcfs gives the guest's /proc/meminfo.
+        (with-redefs-fn {#'loop-env/meminfo-total-mb (constantly 1024)}
+          (fn []
+            (expect (= 1024 ((deref #'loop-env/physical-memory-mb)))))))
+    (it "memory-pressure? fires on the RSS budget"
+        (expect (true? (with-redefs [loop-env/env-rss-budget-mb (delay 1)]
+                         (memory-pressure?)))))))
 
 (def ^:private recycle-env! (deref #'loop-env/recycle-env!))
 
