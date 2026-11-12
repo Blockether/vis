@@ -64,11 +64,11 @@
 (def MAX_FORM_OUTPUT_TOKENS
   "Maximum estimated tokens in one printed result, including its recovery pointer.
    The file windows of `cat` are not in this count: see `MAX_FORM_WINDOW_BYTES`."
-  4096)
+  8192)
 
 (def ^:private MAX_FORM_PREVIEW_CHARS
   "Additional work bound for unusually compressible text before token counting."
-  32768)
+  65536)
 
 (defn- utf8-length
   "Exact UTF-8 size of `s` without encoding it. A lone surrogate counts as 2 bytes,
@@ -350,7 +350,7 @@
         ;; Most results fit. Keep only this mark, so many fit in the weight limit.
         (if (= result (str/trimr s)) ::fits result)))
     4096
-    (* 8 1024 1024)
+    (* 16 1024 1024)
     (fn [[_ model scope call-id] result]
       (+ 1024
          (*
@@ -370,7 +370,7 @@
    Count the excerpt and recovery marker with Svar's tokenizer. Reuse up to 4096 projections.
    Keep only a mark for text that fits, and the excerpt for text that does not.
    Key source text by SHA-256, so equal text from a reload hits without holding the text.
-   Limit retained results and metadata to an estimated 8 MiB."
+   Limit retained results and metadata to an estimated 16 MiB."
   ([s] (clip-to-wire s {}))
   ([s form]
    (let [s

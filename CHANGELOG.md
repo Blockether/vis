@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
-- Sandbox: a printed result keeps the file windows of `cat` whole, up to one full 50 KiB window for each result. Before, the 4096-token clip of a printed result also cut the middle of a file read, and the model read one large file in three requests. Other printed text has the same clip as before, also the rows of `grep`.
+- Sandbox: a printed result keeps the file windows of `cat` whole, up to one full 50 KiB window for each result. Before, the 4096-token clip of a printed result also cut the middle of a file read, and the model read one large file in three requests. The clip does not keep the rows of `grep` whole.
+- Sandbox: a printed result shows up to 8192 estimated tokens before Vis clips it. Before, the limit was 4096.
 
 ## [v0.5.15] - 2026-11-11
 

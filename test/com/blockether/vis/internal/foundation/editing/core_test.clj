@@ -1231,7 +1231,7 @@
                       (let [result
                             (ep/run-python-block
                               ctx
-                              (str "print(\"noise \" * 8000)\nprint(cat(" (pr-str rel) "))")
+                              (str "print(\"noise \" * 20000)\nprint(cat(" (pr-str rel) "))")
                               "t1/i1")
 
                             projected

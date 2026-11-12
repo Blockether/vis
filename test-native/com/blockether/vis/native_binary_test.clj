@@ -2477,7 +2477,7 @@
 
                           (expect (= "native-context-0" (get tool-message "tool_call_id")))
                           (expect (str/includes? replay "stdout clipped: kept "))
-                          (expect (str/includes? replay "4096 estimated-token ceiling"))
+                          (expect (str/includes? replay "8192 estimated-token ceiling"))
                           (expect (str/includes? replay "Recover exact stdout"))
                           (expect (str/includes? replay "native-context-0"))
                           (expect (< (count replay) (count (:stdout (first forms)))))))

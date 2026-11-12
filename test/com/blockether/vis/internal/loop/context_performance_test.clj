@@ -204,7 +204,7 @@
                  [body (assoc record :svar/tool-call-id "call_changed")]]
 
                 ceiling
-                [4096 1024]]
+                [8192 1024]]
 
           (with-redefs [form/MAX_FORM_OUTPUT_TOKENS ceiling]
             (binding [toggles/*overrides* {"introspection" true}]
@@ -214,7 +214,7 @@
                               (:scope f)
                               (:svar/tool-call-id f)
                               ceiling
-                              32768)
+                              65536)
                     actual (form/clip-to-wire text f)]
 
                 (expect (= expected actual))
@@ -276,8 +276,8 @@
         (with-redefs [svar/count-tokens (fn [_ text]
                                           (swap! calls inc)
                                           (count text))]
-          (let [expected-a (#'form/clip-stdout a model "t23/i102" "call_collision" 4096 32768)
-                expected-b (#'form/clip-stdout b model "t23/i102" "call_collision" 4096 32768)
+          (let [expected-a (#'form/clip-stdout a model "t23/i102" "call_collision" 8192 65536)
+                expected-b (#'form/clip-stdout b model "t23/i102" "call_collision" 8192 65536)
                 actual-a (form/clip-to-wire a record)
                 actual-b (form/clip-to-wire b record)
                 after-misses @calls]

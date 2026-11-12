@@ -192,7 +192,7 @@
             (expect (= over (form/clip-to-wire over f)))
             (expect (pos? @calls))))))
   (it "reuses the counts of more fitting results than one long context shows"
-      ;; Regression (120-turn bench): each result over 4096 bytes kept its full text in
+      ;; Regression (120-turn bench): each result over the size ceiling kept its full text in
       ;; a 128-entry cache. With more visible results, every request counted them again.
       (let [f
             {:scope "t1/i2" :svar/tool-call-id "call_many" :llm-model "glm-5.3"}
@@ -201,7 +201,7 @@
             (mapv (fn [i]
                     (str "result " i
                          " " (random-uuid)
-                         "\n" (apply str (repeat 400 "row of output\n"))))
+                         "\n" (apply str (repeat 800 "row of output\n"))))
                   (range 300))
 
             calls

@@ -291,7 +291,7 @@ def test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch):
                         replay = str(tool_result["content"])
                         assert f"tail-{position}" in replay
                         assert "stdout clipped: kept " in replay
-                        assert "4096 estimated-token ceiling" in replay
+                        assert "8192 estimated-token ceiling" in replay
                         assert "Recover exact stdout" in replay
                         assert call_id in replay
                         replay_ids = [
