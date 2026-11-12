@@ -2402,8 +2402,19 @@
       (ctx-loop/session-snapshot env))))
 
 (defn- emit-context-updated!
+  "Append the post-turn utilization. A user cancel interrupts the turn worker,
+   and the worker runs this after the terminal with that flag still set. The
+   snapshot runs the extension ctx hooks, so it runs without the flag, which
+   then comes back for the code that follows."
   [sid]
-  (let [snapshot (try (context-snapshot sid) (catch Throwable _ nil))]
+  (let [interrupted?
+        (Thread/interrupted)
+
+        snapshot
+        (try (context-snapshot sid)
+             (catch Throwable _ nil)
+             (finally (when interrupted? (.interrupt (Thread/currentThread)))))]
+
     ;; `snapshot` is the STRING-KEYED session-view (`eng/session-view`).
     (when-let [utilization (get snapshot "session_utilization")]
       (append-event! sid "context.updated" {:utilization utilization}))))
