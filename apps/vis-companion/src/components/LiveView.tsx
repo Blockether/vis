@@ -1681,7 +1681,7 @@ function NodeCell({
   load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
   onSelect?: (nodeId: string, itemIds: string[]) => void;
   presentation: NodePresentation;
-  /** A control that stands under the headline and its detail. */
+  /** A control that stands under the headline and its detail, or under a leading bar. */
   statusAction?: ReactNode;
   /** The node is a direct child of a `wrap` group: it stands on a line with its siblings. */
   inWrap?: boolean;
@@ -1813,6 +1813,9 @@ function NodeCell({
           )}
           {node.type === 'status' && <StatusRow node={node} action={statusAction} />}
           {node.type === 'progress' && <ProgressRow node={node} />}
+          {node.type === 'progress' && statusAction && (
+            <div className="flex pt-4">{statusAction}</div>
+          )}
           {node.type === 'stat' && <StatRow node={node} />}
           {node.type === 'steps' && <StepsRows node={node} />}
           {node.type === 'timeline' && (
@@ -2057,9 +2060,12 @@ export function LiveViewPanel({
   const canInterrupt = !isSettled && Boolean(onInterrupt) && !isArmed;
   const isCard = !embedded && !inDialog;
   // In the dialog the band names the run, so the stop stands under the headline
-  // instead of on an empty header row above it. Without a headline it leads the
-  // body on the left, not alone at the far edge (user report).
-  const headlineHoldsStop = inDialog && canInterrupt && view.nodes[0]?.type === 'status';
+  // (or a leading bar, user report) instead of on an empty header row above it.
+  // Otherwise it leads the body on the left, not alone at the far edge.
+  const headlineHoldsStop =
+    inDialog &&
+    canInterrupt &&
+    (view.nodes[0]?.type === 'status' || view.nodes[0]?.type === 'progress');
   // An app's own chrome names its lifecycle once (#430), so its panel adds no verdict.
   const showsVerdict = isSettled && !app;
   const stopButton = (
