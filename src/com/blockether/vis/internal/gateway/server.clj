@@ -2061,10 +2061,12 @@
     (.setMinGzipSize (int GZIP_MIN_BYTES))
     (.addExcludedMimeTypes (into-array String ["text/event-stream"]))))
 
-(def ^:private jailed-peer-guard
+(defn- jailed-peer-guard
   "Closes a loopback connection that a jailed child of any Vis process opens (#473). A child
    of this gateway cannot connect at all; a child of another gateway can, and loopback has
-   no authentication by default."
+   no authentication by default. A function, because a top-level instance would go into the
+   native image heap, and native-image refuses it."
+  []
   (reify
     Connection$Listener
       (onOpened [_ connection]
@@ -2103,7 +2105,7 @@
       (.insertHandler server (gzip-handler))
       (when mirror (mirror server))
       (doseq [^ServerConnector connector (.getConnectors server)]
-        (.addEventListener connector jailed-peer-guard)))))
+        (.addEventListener connector (jailed-peer-guard))))))
 
 (defn- preload-voice-model!
   "Load the installed transcription model on a BACKGROUND thread, so the first
