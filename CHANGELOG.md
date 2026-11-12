@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Sandbox: a printed result keeps the file windows of `cat` whole, up to one full 50 KiB window for each result. Before, the 4096-token clip of a printed result also cut the middle of a file read, and the model read one large file in three requests. Other printed text has the same clip as before, also the rows of `grep`.
+
 ## [v0.5.15] - 2026-11-11
 
 ### Added

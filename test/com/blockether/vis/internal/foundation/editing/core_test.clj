@@ -11,6 +11,7 @@
             [clojure.set]
             [clojure.string :as string]
             [com.blockether.vis.internal.activity.event :as activity-event]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.fff :as fff]
@@ -1217,6 +1218,29 @@
         (expect (string/starts-with? (last lines) "… clipped at 2000 lines"))
         (expect (string/includes? (last lines) "continue with cat("))
         (expect (string/includes? (last lines) ", 2001, "))))
+  (it "a full window reaches the model whole through the stdout projection"
+      ;; The printed-result clip cut the middle of a read, so one file took three requests.
+      (let [rel
+            (write-temp! "cat/whole.txt"
+                         (string/join "\n" (map #(str "line " % " of the file") (range 1 4001))))
+
+            window
+            (:result ((private-fn "cat-tool") rel))]
+
+        (tpc/with-own [ctx (extension/builtin-sandbox-bindings (constantly nil))]
+                      (let [result
+                            (ep/run-python-block
+                              ctx
+                              (str "print(\"noise \" * 8000)\nprint(cat(" (pr-str rel) "))")
+                              "t1/i1")
+
+                            projected
+                            (form/clip-to-wire (:stdout result) {:llm-model "glm-5.3"})]
+
+                        (expect (nil? (:error result)))
+                        (expect (string/includes? window "continue with cat("))
+                        (expect (string/includes? projected "stdout clipped"))
+                        (expect (string/ends-with? projected (str "\n" window)))))))
   (it "an unreadable path and an inverted window both refuse"
       (let [cat-tool (comp :result (private-fn "cat-tool"))]
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool "does/not/exist.txt")))

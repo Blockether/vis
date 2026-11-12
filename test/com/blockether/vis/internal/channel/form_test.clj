@@ -45,6 +45,13 @@
   [payload]
   (wire/canonical payload))
 
+(defn- file-window
+  "Text in the shape that `cat` prints: the `path @version` line, then `n` numbered rows."
+  [path from n]
+  (str path
+       " @0a1b2c3d\n"
+       (str/join "\n" (map #(str % "│ value_" % " = compute(" % ")") (range from (+ from n))))))
+
 (defdescribe
   clip-to-wire-test
   (it "keeps short output verbatim and returns nil for a blank body"
@@ -208,7 +215,74 @@
                                           (swap! calls inc)
                                           (apply count-tokens args))]
           (expect (= (mapv str/trimr outputs) (mapv #(form/clip-to-wire % f) outputs))))
-        (expect (zero? @calls)))))
+        (expect (zero? @calls))))
+  (it
+    "keeps a file window of cat whole above the ceiling"
+    ;; The model reads a file through `cat`, which has its own 50 KiB window and an
+    ;; exact continuation line. A second clip in the middle lost the line addresses.
+    (let
+      [f
+       {:scope "t1/i2" :svar/tool-call-id "call_read" :llm-model "glm-5.3"}
+
+       window
+       (file-window "src/a.py" 1 1500)
+
+       continued
+       (str
+         window
+         "\n… clipped at 1500 lines — file has 9000; continue with cat(\"src/a.py\", 1501, 9000)")]
+
+      (expect (< form/MAX_FORM_OUTPUT_TOKENS (svar/count-tokens "glm-5.3" window)))
+      (expect (= window (form/clip-to-wire (str window "\n") f)))
+      (expect (= continued (form/clip-to-wire continued f)))))
+  (it "clips the other text around a file window"
+      (let [f
+            {:scope "t1/i2" :svar/tool-call-id "call_mixed" :llm-model "glm-5.3"}
+
+            window
+            (file-window "src/a.py" 40 900)
+
+            ;; A private-use character in other text must not be taken for a window.
+            noise
+            (apply str (repeat 6000 "printed \uE000 token\n"))
+
+            projected
+            (form/clip-to-wire (str noise window "\n" noise "LAST") f)]
+
+        (expect (str/includes? projected (str "\n" window "\n")))
+        (expect (str/includes? projected "stdout clipped"))
+        (expect (str/starts-with? projected "printed \uE000 token\n"))
+        (expect (str/ends-with? projected "LAST"))
+        (expect (<= (svar/count-tokens "glm-5.3" (str/replace projected window ""))
+                    form/MAX_FORM_OUTPUT_TOKENS))))
+  (it "keeps no more than one cat window budget whole in one result"
+      (let [f
+            {:scope "t1/i2" :svar/tool-call-id "call_two" :llm-model "glm-5.3"}
+
+            first-window
+            (file-window "src/a.py" 1 1200)
+
+            second-window
+            (file-window "src/b.py" 1 1200)
+
+            projected
+            (form/clip-to-wire (str first-window "\n" second-window) f)]
+
+        (expect (str/starts-with? projected first-window))
+        (expect (not (str/includes? projected second-window)))
+        (expect (<= (svar/count-tokens "glm-5.3" (str/replace projected first-window ""))
+                    form/MAX_FORM_OUTPUT_TOKENS))))
+  (it "clips the numbered rows of grep as before"
+      (let [f
+            {:scope "t1/i2" :svar/tool-call-id "call_hits" :llm-model "glm-5.3"}
+
+            hits
+            (str "src/a.py @0a1b2c3d  (3000)\n"
+                 (str/join "\n"
+                           (map #(str "  " % "│ value_" % " = compute(" % ")") (range 1 3001))))]
+
+        (expect (<= (svar/count-tokens "glm-5.3" (form/clip-to-wire hits f))
+                    form/MAX_FORM_OUTPUT_TOKENS)))))
 
 (defdescribe
   form-gateway-roundtrip-test
