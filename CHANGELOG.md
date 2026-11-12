@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion: the provider summary shows the GitHub Copilot premium request quota. Before, it showed only the unlimited chat and completions windows.
 - Companion: in the live view dialog, Interrupt is on the left, under a leading status line or progress bar.
 - TUI and Companion: the leader row shows its wait after its time, such as `22m 05s (waited 8m 52s)`.
+- Sessions: the session list and the search order use the end of the newest agent reply. Before, a sent message moved the session to the top before an agent replied.
 
 ### Package
 - sqlite-jdbc 3.54.1.0 bundles SQLite 3.54.1, which fixes 11 SQLite CVEs.
