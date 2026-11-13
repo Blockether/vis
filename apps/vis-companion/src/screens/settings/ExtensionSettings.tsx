@@ -1,6 +1,6 @@
 import { useContext, useId, useState, type ReactNode } from 'react';
 import { RefreshIcon } from '../../components/icons';
-import { Banner, Button, Disclosure, IconButton, Text } from '../../components/ui';
+import { Banner, Button, CompactText, Disclosure, IconButton, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import { OpenScopedSettings } from '../../lib/open-settings';
 import type {
@@ -139,7 +139,7 @@ function ExtensionGroup({
           <Text
             as={headingLevel === 4 ? 'h4' : headingLevel === 5 ? 'h5' : 'h6'}
             id={headingId}
-            variant="label"
+            variant="heading"
             className="min-w-0 flex-auto truncate"
           >
             {group.title}
@@ -149,19 +149,21 @@ function ExtensionGroup({
       )}
       <ExtensionNotice group={group} />
       {(members.length > 0 || skills.length > 0) && (
-        <div className="divide-y divide-dialog-edge ps-3 sm:ps-4">
-          {members.map(memberRow)}
-          {skills.length > 0 && (
-            <section aria-labelledby={skillsId} className="min-w-0">
-              <div className="px-3 pt-2 sm:px-4">
-                <Text role="heading" aria-level={headingLevel + 1} id={skillsId} variant="meta" className="block">
-                  Skills
-                </Text>
-              </div>
-              <div className="divide-y divide-dialog-edge">{skills.map(memberRow)}</div>
-            </section>
-          )}
-        </div>
+        <CompactText.Provider value>
+          <div className="divide-y divide-dialog-edge ps-3 sm:ps-4">
+            {members.map(memberRow)}
+            {skills.length > 0 && (
+              <section aria-labelledby={skillsId} className="min-w-0">
+                <div className="px-3 pt-2 sm:px-4">
+                  <Text role="heading" aria-level={headingLevel + 1} id={skillsId} variant="group" className="block">
+                    Skills
+                  </Text>
+                </div>
+                <div className="divide-y divide-dialog-edge">{skills.map(memberRow)}</div>
+              </section>
+            )}
+          </div>
+        </CompactText.Provider>
       )}
     </section>
   );

@@ -84,6 +84,12 @@ import { shortcutArrow, shortcutGlyph } from '../lib/app-shortcuts';
  * and descriptions and metadata never shrink below their readable steps.
  * Use inherited ink inside a selected control or a semantic status container.
  */
+/**
+ * Rows one level under a subheading, such as the settings of one extension: labels,
+ * options, descriptions and metadata take one step smaller, so the subheading leads.
+ */
+export const CompactText = createContext(false);
+
 export function Text({
   variant,
   as: Tag = 'span',
@@ -95,7 +101,14 @@ export function Text({
   as?: 'span' | 'p' | 'h3' | 'h4' | 'h5' | 'h6';
   tone?: 'default' | 'inherit';
 }) {
-  const role = {
+  const isCompact = useContext(CompactText);
+  const compact = {
+    label: 'text-ui font-medium',
+    option: 'text-ui font-normal',
+    description: 'text-meta font-normal',
+    meta: 'text-meta font-normal',
+  } as Record<string, string>;
+  const role = (isCompact ? compact[variant] : undefined) ?? {
     // Settings levels shrink from the column to the band to its groups; rows stay `label`.
     // A row is one step under the chat type: a dense settings list reads as a list (user).
     page: 'text-head font-semibold',
