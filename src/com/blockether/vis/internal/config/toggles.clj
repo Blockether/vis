@@ -910,7 +910,7 @@
       {:id "subagents"
        :label "Subagents"
        :description
-       "Let an agent start managed helper agents. Off blocks new agents, wakes and further steps."
+       "Let an agent start helper agents. Off stops all of them."
        :default true
        :scopes toggle-contract/scopes
        :owner :vis

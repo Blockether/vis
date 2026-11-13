@@ -2181,7 +2181,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
   const subagents = {
     id: 'subagents',
     label: 'Subagents',
-    description: 'Let an agent start managed helper agents. Off blocks new agents, wakes and further steps.',
+    description: 'Let an agent start helper agents. Off stops all of them.',
     type: 'boolean',
     enabled: true,
   };
