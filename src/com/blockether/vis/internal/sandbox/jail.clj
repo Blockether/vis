@@ -362,8 +362,10 @@
                       (throw (ex-info "This process has no start time to name its jail owner" {})))]
 
               ;; Without the record the mark still works: a gateway stop ends them.
+              ;; The record holds the task runtime directory, where the sweep of a
+              ;; later start finds the socket directories of this process.
               (try (.mkdirs dir)
-                   (.createNewFile (File. ^File dir ^String own))
+                   (spit (File. ^File dir ^String own) (str (paths/runtime-dir-setting)))
                    (catch java.io.IOException _ nil))
               (reset! run-owner own))))))
 
@@ -371,13 +373,18 @@
   "The private directory that the runtime gives each confined child for Unix sockets
    (#474), as its `:socket-dir` option. A `vis-agent` that the child starts finds the
    directory in `VIS_RUNTIME_DIR` and puts its worker control sockets there; Seatbelt
-   allows a Unix bind nowhere else. It is in the task runtime directory when one is
-   set. The runtime makes it and deletes it when the child exits; an owner sweep
-   deletes what a killed process left."
-  []
+   allows a Unix bind nowhere else. It is in `parent`, the task runtime directory, or
+   in `/tmp` without one. The runtime makes it and deletes it when the child exits; an
+   owner sweep deletes what a killed process left."
+  [parent]
   {:variable "VIS_RUNTIME_DIR"
-   :parent (some-> (paths/runtime-dir)
+   :parent (some-> parent
                    str)})
+
+(defn- recorded-runtime-dir
+  "The task runtime directory in the owner record `file`, or nil when it had none."
+  [^File file]
+  (try (not-empty (str/trim (slurp file))) (catch java.io.IOException _ nil)))
 
 (defn start-owner-run!
   "Mark each process that this gateway confines from now on, and end the processes of
@@ -385,19 +392,15 @@
    ended process goes after its sweep, so an interrupted start sweeps it again.
    Returns how many processes ended."
   []
-  (let [dir
-        (owners-dir)
-
-        sockets
-        (socket-dir)]
-
+  (let [dir (owners-dir)]
     (claim-owner!)
     (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
     (transduce (comp (filter #(re-matches #"\d+-\d+" (.getName ^File %)))
                      (remove #(live-owner? (.getName ^File %)))
                      (map (fn [^File file]
-                            (let [ended (python-runtime/end-confined-processes! (.getName file)
-                                                                                sockets)]
+                            (let [ended (python-runtime/end-confined-processes!
+                                          (.getName file)
+                                          (socket-dir (recorded-runtime-dir file)))]
                               (.delete file)
                               ended))))
                +
@@ -409,8 +412,9 @@
    a process confined after this sweep is ended by the next start. Returns how many
    ended, or nil when no run started."
   []
+  ;; The setting, not the checked directory: a sweep must not fail with the directory.
   (some-> @run-owner
-          (python-runtime/end-confined-processes! (socket-dir))))
+          (python-runtime/end-confined-processes! (socket-dir (paths/runtime-dir-setting)))))
 
 (defn runtime-policy
   "The platform-neutral confinement VALUE the runtime compiles, from a session
@@ -779,7 +783,7 @@
         :directory (some-> directory
                            str)
         :policy (when confined? (assoc (runtime-policy policy) :owner (claim-owner!)))
-        :socket-dir (when confined? (socket-dir))
+        :socket-dir (when confined? (socket-dir (paths/runtime-dir)))
         :pty? (boolean pty?)
         :merge-stderr? (boolean merge-stderr?)
         :rows (int (or rows 0))

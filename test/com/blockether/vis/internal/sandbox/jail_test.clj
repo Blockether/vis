@@ -230,7 +230,8 @@
                    (io/file out)]
 
                (expect (zero? exit) out)
-               (expect (str/includes? out "vis-run-") out)
+               (expect (<= (count (.getName dir)) 32)
+                       "a short name: a socket path holds about 100 bytes")
                (expect (loop [attempt 0]
                          (cond (not (.exists dir)) true
                                (> attempt 250) false
@@ -338,6 +339,74 @@
                       (.destroyForcibly)))
             (doseq [file (reverse (file-seq home))]
               (io/delete-file file true))))))))
+
+;; #474: a killed Vis process deletes no socket directory of its children.
+(defn- left-socket-dir
+  "A socket directory that the ended run `owner` left under `parent`."
+  ^java.io.File [parent owner]
+  (let [dir (doto (io/file parent (str "vis-" owner "@left")) (.mkdirs))]
+    (spit (io/file dir "control.sock") "")
+    dir))
+
+(defdescribe
+  socket-directories-go-with-their-ended-run
+  (it
+    "a start deletes the directories of each ended run, also when its own task directory is gone"
+    (when (sandbox-applicable?)
+      (let [home
+            (doto (io/file (System/getProperty "java.io.tmpdir")
+                           (str "vis-home-sockets-" (System/nanoTime)))
+              (.mkdirs))
+
+            task
+            (doto (io/file home "task") (.mkdirs))
+
+            owners
+            (doto (io/file home "gateway/jail-owners") (.mkdirs))
+
+            previous-home
+            (System/getProperty "vis.home")
+
+            previous-setting
+            (System/getProperty "vis.runtime.dir")
+
+            run-owner
+            @#'pj/run-owner
+
+            ;; pid 1 did not start at these epoch milliseconds: two runs that ended.
+            task-run
+            (str "1-" (System/nanoTime))
+
+            tmp-run
+            (str "1-" (System/nanoTime))
+
+            in-task
+            (left-socket-dir task task-run)
+
+            in-tmp
+            (left-socket-dir "/tmp" tmp-run)]
+
+        (System/setProperty "vis.home" (.getPath home))
+        (reset! run-owner nil)
+        (try (System/setProperty "vis.runtime.dir" (.getPath task))
+             ;; The record of the ended run is the one that a run in `task` writes.
+             (spit (io/file owners task-run) (slurp (io/file owners (pj/claim-owner!))))
+             (spit (io/file owners tmp-run) "")
+             (System/setProperty "vis.runtime.dir" (.getPath (io/file home "gone")))
+             (expect (= 0 (pj/start-owner-run!)))
+             (expect (not (.exists in-task)) "a record names the task directory of its run")
+             (expect (not (.exists in-tmp)) "a run without a task directory used /tmp")
+             (expect (not-any? #{task-run tmp-run} (.list owners)))
+             (expect (= 0 (pj/end-owner-run!)) "a stop ends its processes without its directory")
+             (finally (reset! run-owner nil)
+                      (if previous-home
+                        (System/setProperty "vis.home" previous-home)
+                        (System/clearProperty "vis.home"))
+                      (if previous-setting
+                        (System/setProperty "vis.runtime.dir" previous-setting)
+                        (System/clearProperty "vis.runtime.dir"))
+                      (doseq [file (concat (reverse (file-seq in-tmp)) (reverse (file-seq home)))]
+                        (io/delete-file file true))))))))
 
 (defdescribe proxy-env-vars
              (it ":proxy-port sets both-case proxy vars, and NO CA vars without a :ca-file"

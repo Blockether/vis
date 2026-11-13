@@ -378,7 +378,7 @@ Vis puts these items in `VIS_RUNTIME_DIR`:
 Other files in `VIS_RUNTIME_DIR` stay. Logs and other worker state stay under `HOME`. Host tools
 such as `git` and `uv` keep the environment that you give Vis. Set `TMPDIR` for them yourself.
 
-A socket path can have at most 103 bytes. If the full path is longer, Vis uses a path from its
+A socket path can have at most 102 bytes. If the full path is longer, Vis uses a path from its
 working directory. For a long path, start Vis in the directory that `-Duser.dir` names, or do not
 set `-Duser.dir`. If the relative path is also too long, the worker does not start. Then use a
 shorter directory.

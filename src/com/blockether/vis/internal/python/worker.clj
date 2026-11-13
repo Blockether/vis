@@ -491,8 +491,9 @@
               (catch IllegalStateException _ nil))))
 
 (def ^:private MAX_SOCKET_PATH_BYTES
-  "The portable AF_UNIX path limit: macOS has 104 bytes of `sun_path`, with its NUL."
-  103)
+  "The portable AF_UNIX path limit: macOS has 104 bytes of `sun_path`, and the JDK
+   takes two bytes fewer."
+  102)
 
 (defn- fits-socket-path?
   [path]

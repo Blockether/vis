@@ -564,7 +564,11 @@ print(worker_value)"))))
                (expect (< 103 (count (.getBytes (.getPath path) "UTF-8"))))
                (expect (not (.exists path)))
                (expect (not (.exists (.getParentFile path)))))
-             (expect (= ["other-task.sock"] (vec (.list dir))))
+             ;; The runtime deletes a child's socket directory off the exit thread.
+             (expect (loop [attempt 0]
+                       (cond (= ["other-task.sock"] (vec (.list dir))) true
+                             (= attempt 500) false
+                             :else (do (Thread/sleep 10) (recur (inc attempt))))))
              (expect (= "keep" (slurp sibling)))
              (finally (delete-tree! (.getParentFile dir))))))
     (it "starts concurrent and repeated workers on unique endpoints"
@@ -634,6 +638,29 @@ print(worker_value)"))))
                  (expect (str/includes? (str error) reason) (str error))))
              (expect (empty? (.list dir)))
              (finally (delete-tree! (.getParentFile dir))))))
+    (it "binds a socket path of 103 bytes by its relative name: the JDK takes 102 on macOS"
+        (let [base
+              (.getCanonicalFile (java.io.File. "target"))
+
+              ;; <base>/<name>/control.sock is 103 bytes.
+              length
+              (- 103 (count (.getBytes (.getPath base) "UTF-8")) (count "//control.sock"))]
+
+          (when (pos? length)
+            (let [dir
+                  (doto (java.io.File. base (apply str (repeat length "s"))) (.mkdirs))
+
+                  socket
+                  (.toPath (java.io.File. dir "control.sock"))]
+
+              (try (with-open [server (java.nio.channels.ServerSocketChannel/open
+                                        java.net.StandardProtocolFamily/UNIX)]
+                     (#'worker/bind-control!
+                      server
+                      (:bind (#'worker/socket-names socket (.getPath dir)))
+                      socket)
+                     (expect (.exists (.toFile socket))))
+                   (finally (delete-tree! dir)))))))
     (it "refuses a socket that does not fit, also relative to the working directory"
         (let [dir
               (runtime-dir-fixture)
