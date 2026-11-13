@@ -107,7 +107,7 @@ function ListHeader({
 function AccessGroup({ setting, children }: { setting: Toggle; children: ReactNode }) {
   return (
     <fieldset className="min-w-0 space-y-3">
-      <legend className="mb-1">
+      <legend>
         <Text variant="label" className="block">
           {setting.label}
         </Text>
