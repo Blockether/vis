@@ -228,7 +228,7 @@ export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): b
  */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
-    <Chip isOn={!isOn} aria-pressed={isOn} onClick={onToggle} className={`pointer-events-auto ${isOn ? 'text-white!' : ''}`}>
+    <Chip isOn={!isOn} aria-pressed={isOn} onClick={onToggle} className={`pointer-events-auto -my-0.5 min-h-6! ${isOn ? 'text-white!' : ''}`}>
       Timeline
     </Chip>
   );

@@ -48,7 +48,7 @@ export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<
       data-agent-dock
     >
       {/* The fold control lies under the whole line, so the timeline control can stand inside it. */}
-      <div className="relative flex min-w-0 items-baseline gap-2 px-3 py-1 sm:py-1.5">
+      <div className="relative flex min-w-0 items-baseline gap-2 px-3 py-1">
         <button
           type="button"
           aria-expanded={open}
