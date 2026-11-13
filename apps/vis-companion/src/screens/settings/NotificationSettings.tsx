@@ -173,7 +173,7 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
       }
     >
       {hasBanner && (
-        <div className="space-y-2 p-3">
+        <div className="space-y-2 p-3 sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
 
           {!supported && (
@@ -279,7 +279,7 @@ export function DesktopNotificationsPanel({ gateway }: { gateway: GatewayConn })
       }
     >
       {hasBanner && (
-        <div className="space-y-2 p-3">
+        <div className="space-y-2 p-3 sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
 
           {blocked && (
@@ -494,7 +494,7 @@ export function NativeNotificationsPanel({
       }
     >
       {hasBanner && (
-        <div className="space-y-2 p-3">
+        <div className="space-y-2 p-3 sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
 
           {push && !available && refusedRelay && (

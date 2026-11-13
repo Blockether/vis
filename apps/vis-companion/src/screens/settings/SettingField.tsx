@@ -70,15 +70,12 @@ function defaultPythonName(path: string): string {
 function ListHeader({
   label,
   hint,
-  isGroup = false,
   onAdd,
   children,
 }: {
   label: string;
   /** One sentence under the legend, beside the add action. */
   hint?: string;
-  /** Names a list of cards, whose fields have their own labels: a group heading. */
-  isGroup?: boolean;
   /** Gets the pressed button, so a panel that it opens can hang from it. */
   onAdd: (anchor: HTMLElement) => void;
   children: ReactNode;
@@ -86,7 +83,7 @@ function ListHeader({
   return (
     <legend className="mb-1 flex w-full items-center justify-between gap-2 last:mb-0">
       <span className="min-w-0">
-        <Text variant={isGroup ? 'group' : 'label'} className="block truncate">
+        <Text variant="label" className="block truncate">
           {children}
         </Text>
         {hint && (
@@ -102,12 +99,16 @@ function ListHeader({
   );
 }
 
-/** An access editor: its legend is a group heading over the legends of its own lists. */
+/**
+ * An access editor: its legend is named like every other setting row, and its own lists
+ * stand one step in, as the rows under a parent setting do. The uppercase group type
+ * belongs to subsection bands only.
+ */
 function AccessGroup({ setting, children }: { setting: Toggle; children: ReactNode }) {
   return (
     <fieldset className="min-w-0 space-y-3">
       <legend className="mb-1">
-        <Text variant="group" className="block">
+        <Text variant="label" className="block">
           {setting.label}
         </Text>
         {setting.description && (
@@ -116,7 +117,7 @@ function AccessGroup({ setting, children }: { setting: Toggle; children: ReactNo
           </Text>
         )}
       </legend>
-      {children}
+      <div className="space-y-3 ps-3 sm:ps-4">{children}</div>
     </fieldset>
   );
 }
@@ -292,6 +293,7 @@ function ToggleRow({
   name,
   isOn,
   disabled,
+  density = 'compact',
   onClick,
 }: {
   label: string;
@@ -300,6 +302,8 @@ function ToggleRow({
   name: string;
   isOn: boolean;
   disabled?: boolean;
+  /** `compact` in a card; a row of its own uses the switch of every other settings row. */
+  density?: 'default' | 'compact';
   onClick: () => void;
 }) {
   return (
@@ -312,7 +316,7 @@ function ToggleRow({
           {hint}
         </Text>
       </div>
-      <Switch density="compact" label={name} isOn={isOn} disabled={disabled} onClick={onClick} />
+      <Switch density={density} label={name} isOn={isOn} disabled={disabled} onClick={onClick} />
     </div>
   );
 }
@@ -376,18 +380,13 @@ function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
     <fieldset ref={frame} disabled={disabled} className="min-w-0 space-y-3">
       <ListHeader
         label="Add workspace root"
-        isGroup
+        hint={setting.description}
         onAdd={(anchor) =>
           machine ? pick('new', anchor) : onChange([...rows, { id: '', path: '', access: 'read-write' }])
         }
       >
         {setting.label}
       </ListHeader>
-      {setting.description && (
-        <Text as="p" variant="description">
-          {setting.description}
-        </Text>
-      )}
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         const access = String(row.access ?? 'read-write');
@@ -732,6 +731,7 @@ export function SettingField(props: FieldProps) {
           label="Private network access"
           hint="Commands can reach private addresses, such as 10.0.0.5."
           name="Private network access"
+          density="default"
           isOn={object.allow_private === true}
           disabled={disabled}
           onClick={() => onChange({ ...object, allow_private: object.allow_private !== true })}

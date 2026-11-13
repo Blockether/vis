@@ -1897,7 +1897,7 @@ export function SettingsDisclosure({
     <button
       type="button"
       aria-expanded={isOpen}
-      className={`flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent motion-reduce:transition-none mouse:min-h-10 ${className}`}
+      className={`flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left sm:px-4 transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent motion-reduce:transition-none mouse:min-h-10 ${className}`}
       {...props}
     >
       <span className="min-w-0 flex-1">

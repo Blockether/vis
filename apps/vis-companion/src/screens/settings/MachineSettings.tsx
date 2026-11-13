@@ -1761,7 +1761,7 @@ function ProvidersPanel({
       }
     >
       {(fleetErr || fleetNote) && (
-        <div className="space-y-2 p-3">
+        <div className="space-y-2 p-3 sm:p-4">
           {fleetErr && <Banner kind="err">{fleetErr.text}</Banner>}
           {fleetNote && <Banner kind="ok">{fleetNote.text}</Banner>}
         </div>
