@@ -1,7 +1,7 @@
 import { Disclosure, IconButton, Input, Select, Switch, Text } from '../../components/ui';
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { FormLabel } from './SettingsLayout';
-import { PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
+import { FormLabel, SettingsBandsOpen } from './SettingsLayout';
+import { ChevronIcon, PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
 import { ProjectFolderSheet } from '../../components/ProjectFolderSheet';
 import { PANEL_SIZES } from '../../components/Menu';
 import { FRAMED_ROOM, framedPosition, roomBelow, type MenuPosition } from '../../lib/anchored-menu';
@@ -102,22 +102,43 @@ function ListHeader({
 /**
  * An access editor: its legend is named like every other setting row, and its own lists
  * stand one step in, as the rows under a parent setting do. The uppercase group type
- * belongs to subsection bands only.
+ * belongs to subsection bands only. The lists start folded under the legend (user), and a
+ * search opens them, so a folded editor cannot hide a match.
  */
 function AccessGroup({ setting, children }: { setting: Toggle; children: ReactNode }) {
+  const [isOpen, setOpen] = useState(useContext(SettingsBandsOpen));
+  const bodyId = useId();
   return (
     <fieldset className="min-w-0 space-y-3">
-      <legend>
-        <Text variant="label" className="block">
-          {setting.label}
-        </Text>
-        {setting.description && (
-          <Text variant="description" className="mt-0.5 block">
-            {setting.description}
-          </Text>
-        )}
+      <legend className="w-full">
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          aria-controls={isOpen ? bodyId : undefined}
+          className="flex w-full min-w-0 items-center gap-2 text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none"
+          onClick={() => setOpen((open) => !open)}
+        >
+          <span className="min-w-0 flex-1">
+            <Text variant="label" tone="inherit" className="block">
+              {setting.label}
+            </Text>
+            {setting.description && (
+              <Text variant="description" className="mt-0.5 block">
+                {setting.description}
+              </Text>
+            )}
+          </span>
+          {/* The chevron stands on the trailing rail of the add marks under it. */}
+          <span className="flex size-8 shrink-0 items-center justify-center mouse:size-7">
+            <ChevronIcon open={isOpen} className="size-3 text-dialog-hint" />
+          </span>
+        </button>
       </legend>
-      <div className="space-y-3 ps-3 sm:ps-4">{children}</div>
+      {isOpen && (
+        <div id={bodyId} className="space-y-3 ps-3 sm:ps-4">
+          {children}
+        </div>
+      )}
     </fieldset>
   );
 }

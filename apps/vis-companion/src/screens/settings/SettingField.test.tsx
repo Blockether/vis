@@ -20,7 +20,8 @@ function renderField(setting: Toggle, value: SettingValue) {
       onRawChange={onRawChange}
     />,
   );
-  // Stored cards start folded; open each one, as a person does before an edit.
+  // An access editor and its stored cards start folded; open them, as a person does before an edit.
+  container.querySelectorAll('legend > button[aria-expanded="false"]').forEach((editor) => fireEvent.click(editor));
   container.querySelectorAll('[data-disclosure-toggle]').forEach((card) => fireEvent.click(card));
   return { onChange, onRawChange };
 }
@@ -32,6 +33,7 @@ it('folds stored cards to one row each and opens a card that the person adds', (
   const { rerender } = render(
     <SettingField setting={setting} value={{ rules }} disabled={false} onChange={vi.fn()} onRawChange={vi.fn()} />,
   );
+  fireEvent.click(screen.getByRole('button', { name: 'Network', expanded: false }));
   expect(screen.getByRole('button', { name: 'api.example.com (Read only) 1 / 2', expanded: false })).toBeTruthy();
   expect(screen.getByRole('button', { name: '10.0.0.5 (Blocked) 2 / 2', expanded: false })).toBeTruthy();
   expect(screen.queryByRole('textbox', { name: 'Rule host 1' })).toBeNull();

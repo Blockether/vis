@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { Toggle } from '../../lib/types';
 import { ValueSetting } from './MachineSettings';
@@ -20,13 +20,16 @@ it.each(['list', 'tools', 'paths'] as const)('shows the label and description of
 });
 
 // Regression: the name of an access editor looked like one more list legend under it.
+// User request: its lists stay folded until the person opens the editor.
 it.each([
   ['filesystem', 'Filesystem access', 'Allowed paths'],
   ['network', 'Network access', 'Allowed domains'],
-] as const)('names the %s editor as the group of its lists', (editor, label, list) => {
+] as const)('names the %s editor as the folded group of its lists', (editor, label, list) => {
   const toggle: Toggle = { id: `jail_${editor}`, label, type: 'object', editor, value: {} };
   render(<ValueSetting toggle={toggle} busy={false} onSave={vi.fn()} />);
   const group = screen.getByRole('group', { name: label });
+  expect(within(group).queryByRole('group', { name: new RegExp(`^${list}`) })).toBeNull();
+  fireEvent.click(within(group).getByRole('button', { name: label, expanded: false }));
   expect(within(group).getByRole('group', { name: new RegExp(`^${list}`) })).toBeTruthy();
   expect(screen.getAllByText(label)).toHaveLength(1);
 });
