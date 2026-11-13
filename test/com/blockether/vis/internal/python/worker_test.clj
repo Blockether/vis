@@ -1613,29 +1613,62 @@ print(worker_value)"))))
 
 ;; Regression: a worker rejecting its arguments exited immediately, but startup
 ;; still waited sixty seconds for a connection that could never arrive.
-(defdescribe worker-startup-exit-test
-             (it "reports an exited worker without waiting for the connection deadline"
-                 (let [^java.util.List command
-                       ["sh" "-c" "exit 2"]
+(defdescribe
+  worker-startup-exit-test
+  (it "reports an exited worker without waiting for the connection deadline"
+      (let [^java.util.List command
+            ["sh" "-c" "exit 2"]
 
-                       process
-                       (.start (ProcessBuilder. command))]
+            process
+            (.start (ProcessBuilder. command))]
 
-                   (.waitFor process)
-                   (with-redefs-fn {#'com.blockether.vis.internal.python.runtime/ensure-library!
-                                    (constantly nil)
-                                    #'com.blockether.vis.internal.python.worker/child-argv
-                                    (constantly ["unused"])
-                                    #'com.blockether.vis.internal.sandbox.jail/spawn! (fn [& _]
-                                                                                        process)}
-                     (fn []
-                       (let [task (future (try (#'com.blockether.vis.internal.python.worker/start!
-                                                worker/shared-key)
-                                               (catch clojure.lang.ExceptionInfo e (ex-data e))))]
-                         (try (let [result (deref task 2000 ::timeout)]
-                                (expect (not= ::timeout result))
-                                (expect (= :vis/python-worker (:type result))))
-                              (finally (future-cancel task)))))))))
+        (.waitFor process)
+        (with-redefs-fn {#'com.blockether.vis.internal.python.runtime/ensure-library! (constantly
+                                                                                        nil)
+                         #'com.blockether.vis.internal.python.worker/child-argv (constantly
+                                                                                  ["unused"])
+                         #'com.blockether.vis.internal.sandbox.jail/spawn! (fn [& _]
+                                                                             process)}
+          (fn []
+            (let [task (future (try (#'com.blockether.vis.internal.python.worker/start!
+                                     worker/shared-key)
+                                    (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+              (try (let [result (deref task 2000 ::timeout)]
+                     (expect (not= ::timeout result))
+                     (expect (= :vis/python-worker (:type result))))
+                   (finally (future-cancel task))))))))
+  (it "waits for the connection when the wall clock jumps during a host sleep"
+      ;; Issue #476: a host sleep moved the wall clock past the 60 s limit,
+      ;; so a worker that connected after the wake was refused.
+      (let [^java.util.List command
+            ["sh" "-c" "sleep 10"]
+
+            process
+            (.start (ProcessBuilder. command))
+
+            server
+            (doto (java.nio.channels.ServerSocketChannel/open)
+              (.bind (java.net.InetSocketAddress. "127.0.0.1" 0)))
+
+            offset
+            (atom 0)]
+
+        (try
+          (with-redefs [com.blockether.vis.internal.util/now-ms (fn ^long []
+                                                                  (+ (System/currentTimeMillis)
+                                                                     (long @offset)))]
+            (let [task (future (#'com.blockether.vis.internal.python.worker/await-worker-connection
+                                server
+                                process))]
+              (Thread/sleep 200)
+              (reset! offset 7200000)
+              (Thread/sleep 300)
+              (with-open [_client (java.nio.channels.SocketChannel/open (.getLocalAddress server))]
+                (let [accepted (deref task 5000 ::timeout)]
+                  (expect (instance? java.nio.channels.SocketChannel accepted))
+                  (when (instance? java.nio.channels.SocketChannel accepted)
+                    (.close ^java.nio.channels.SocketChannel accepted))))))
+          (finally (.close server) (.destroyForcibly process))))))
 
 ;; A blocked startup held the process-wide monitor before the first provider call,
 ;; stalling unrelated sessions in :engine-start and ignoring their cancellation.

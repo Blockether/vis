@@ -429,18 +429,19 @@
 
 (defn- await-worker-connection
   "Wait only while the child can still connect. No blocked accept future survives
-   an early child exit or a startup timeout. The selector bounds exit detection."
+   an early child exit or a startup timeout. The selector bounds exit detection.
+   The 60 s limit uses the monotonic clock, so a host sleep does not use it up."
   [^ServerSocketChannel server ^Process process]
   (.configureBlocking server false)
   (with-open [selector (Selector/open)]
     (.register server selector SelectionKey/OP_ACCEPT)
-    (let [deadline (+ (long (util/now-ms)) 60000)]
+    (let [deadline (+ (System/nanoTime) (* 60000 1000000))]
       (loop []
 
         (when (.isInterrupted (Thread/currentThread))
           (throw (InterruptedException. "Python worker startup interrupted")))
         (or (.accept server)
-            (when (and (.isAlive process) (< (long (util/now-ms)) deadline))
+            (when (and (.isAlive process) (neg? (- (System/nanoTime) deadline)))
               (.select selector 100)
               (.clear (.selectedKeys selector))
               (recur)))))))
@@ -953,15 +954,17 @@
                 (start-ready-probe k session))
               probes)
 
+        ;; Monotonic, so a host sleep during the probes does not use up the wait.
         deadline
-        (+ (long (util/now-ms)) (long READY_REPLY_MS))]
+        (+ (System/nanoTime) (* (long READY_REPLY_MS) 1000000))]
 
     (try (every? (fn [probe]
                    (boolean (when probe
                               (try (and (= "True"
-                                           (deref (:reply probe)
-                                                  (max 0 (- deadline (long (util/now-ms))))
-                                                  ::not-ready))
+                                           (deref
+                                             (:reply probe)
+                                             (max 0 (quot (- deadline (System/nanoTime)) 1000000))
+                                             ::not-ready))
                                         (identical? (:state probe) (get @workers (:k probe))))
                                    (catch ExecutionException _ false)))))
                  started)

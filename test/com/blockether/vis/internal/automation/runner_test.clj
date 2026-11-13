@@ -726,3 +726,77 @@
                              (let [third-run (settled db (get (runner/run-now! db id) "id"))]
                                (expect (not= (:session_id first-run) (:session_id third-run)))
                                (expect (= 2 (count (calls-of calls :create))))))))))
+
+(defn- stalled
+  "A turn result that stopped with the error code `code`."
+  [code]
+  {"status" "failed"
+   "turn_id" "t-stall"
+   "error" "Turn stalled before reaching the provider: no response for 60m."
+   "content" [{"type" "error" "code" code "message" "stalled" "retryable" true}]})
+
+(defn- runs-of [db id] (sort-by :created_at (ps/db-automation-runs db {:automation-id id})))
+
+;; Issue #476: a host sleep failed a run before its turn reached the model, and
+;; nothing ran it again.
+(defdescribe
+  stall-retry-test
+  (it "runs a temporary run again once when its turn stalled before the model"
+      (let [n (atom 0)]
+        (with-runner (fn [_ _]
+                       (if (= 1 (swap! n inc)) (stalled "turn_stalled") ((answer "Done.") nil nil)))
+                     (fn [db calls]
+                       (let [id (create! db {})
+                             first-run (settled db (get (runner/run-now! db id) "id"))
+                             retry (eventually
+                                     #(let [[_ r] (runs-of db id)] (when (terminal (:status r)) r)))
+                             original (ps/db-automation-run db (:id first-run))]
+
+                         (expect (= "failed" (:status original)))
+                         (expect (= (str "Retried as run " (:id retry)) (:reason original)))
+                         (expect (= "completed" (:status retry)))
+                         (expect (= (str (:trigger_key original) ":retry") (:trigger_key retry)))
+                         (expect (str/includes? (:reason retry) (:id original)))
+                         (expect (= 2 (count (calls-of calls :submit))))
+                         (expect (= 2 (count (calls-of calls :delete))))
+                         (expect (= 2 (count (runs-of db id)))))))))
+  (it "never retries a retry, a stall after the model, a cancel or a kept session"
+      (doseq [[result changes]
+              [[(stalled "turn_stalled") {}] [(stalled "provider_stream_stalled") {}]
+               [{"status" "cancelled" "turn_id" "t-c" "content" []} {}]
+               [(stalled "turn_stalled") {"target" {"mode" "session" "session_id" "s-old"}}]]]
+        (with-runner
+          (constantly result)
+          (fn [db calls]
+            (let [id (create! db changes)
+                  expected (if (and (= "turn_stalled" (get-in result ["content" 0 "code"]))
+                                    (empty? changes))
+                             2
+                             1)]
+
+              (settled db (get (runner/run-now! db id) "id"))
+              (expect (eventually #(and (= expected (count (runs-of db id)))
+                                        (every? (comp terminal :status) (runs-of db id)))))
+              (Thread/sleep 100)
+              (expect (= expected (count (runs-of db id))))
+              (expect (= expected (count (calls-of calls :submit)))))))))
+  (it "keeps a macOS host awake only while the run executes"
+      (let [caffeinate?
+            (fn []
+              (boolean (some #(str/ends-with? (str (.orElse (.command (.info ^ProcessHandle %)) ""))
+                                              "caffeinate")
+                             (iterator-seq (.iterator (.children (ProcessHandle/current)))))))
+
+            mac?
+            (str/starts-with? (System/getProperty "os.name" "") "Mac")
+
+            during
+            (atom nil)]
+
+        (with-runner (fn [_ _]
+                       (reset! during (caffeinate?))
+                       ((answer "Done.") nil nil))
+                     (fn [db _]
+                       (settled db (get (runner/run-now! db (create! db {})) "id"))
+                       (expect (= mac? @during))
+                       (expect (eventually #(not (caffeinate?)))))))))

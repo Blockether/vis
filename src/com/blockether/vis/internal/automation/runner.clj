@@ -14,7 +14,7 @@
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
-  (:import (java.lang ProcessHandle)
+  (:import (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.nio.charset StandardCharsets)
            (java.time Instant)
            (java.util UUID)
@@ -252,6 +252,27 @@
 
 ;; Runs
 
+(def ^:private retry-suffix
+  "The end of the trigger key of a retry. The unique trigger key keeps one retry for
+   each run, and a run with this key is never retried again."
+  ":retry")
+
+(defn- keep-awake!
+  "On macOS, start `caffeinate` so that the host does not idle-sleep while one run
+   executes. `-w` also ends it when the gateway exits. Answers the process, or nil
+   on another system or when it cannot start."
+  ^Process []
+  (when (str/starts-with? (System/getProperty "os.name" "") "Mac")
+    (try (let [^java.util.List argv ["/usr/bin/caffeinate" "-i" "-s" "-w"
+                                     (str (.pid (ProcessHandle/current)))]]
+           (-> (ProcessBuilder. argv)
+               (.redirectOutput ProcessBuilder$Redirect/DISCARD)
+               (.redirectError ProcessBuilder$Redirect/DISCARD)
+               .start))
+         (catch Exception e
+           (tel/log! {:level :warn :id ::keep-awake-failed :data {:error (ex-message e)}})
+           nil))))
+
 (defn- claim!
   [db automation-id kind trigger-key {:keys [scheduled-at request status reason]}]
   (let [at (util/now-ms)]
@@ -377,8 +398,14 @@
                 model
                 (merge {:provider (get model "provider") :model (get model "model")})))))))
 
+(defn- stalled-before-model?
+  "True when the turn stopped before it reached the model (`turn_stalled`)."
+  [result]
+  (boolean (some #(= "turn_stalled" (get % "code")) (get result "content"))))
+
 (defn- run-turn!
-  "Start the turn of one running run and answer the final run attributes."
+  "Start the turn of one running run and answer the final run attributes.
+   `::stalled-before-model?` is not a column: [[execute!]] removes it."
   [row run sid]
   (let [result
         (submit-run! row run sid)
@@ -393,7 +420,8 @@
         (outcome result)]
 
     (when turn-id (remember-turn! (str turn-id)))
-    {:status status
+    {::stalled-before-model? (and (= "failed" status) (stalled-before-model? result))
+     :status status
      :turn_id (some-> turn-id
                       str)
      :answer answer
@@ -418,8 +446,43 @@
                       (assoc (session-opts (:definition row) target) :external-id external-id))
                 "id")))))
 
+(declare enqueue!)
+
+(defn- retry-stalled-run!
+  "Claim and queue the one retry of `failed`, a temporary run whose turn stopped
+   before it reached the model. No tool ran, so a new temporary session can run
+   the request again. Answers `failed` with the link in its reason, or nil when
+   its retry exists already."
+  [db failed]
+  (when-let [retry (claim! db
+                           (:automation_id failed)
+                           (:trigger_kind failed)
+                           (str (:trigger_key failed) retry-suffix)
+                           {:scheduled-at (:scheduled_at failed)
+                            :request (:request failed)
+                            :reason (str "Retry of run "
+                                         (:id failed)
+                                         ": the turn stopped before it reached the model.")})]
+    (let [linked (ps/db-automation-update-run! db
+                                               (:id failed)
+                                               ["failed"]
+                                               {:reason (str "Retried as run " (:id retry))})]
+      (enqueue! db retry)
+      linked)))
+
+(defn- retry?
+  "Whether a finished run gets one retry: a temporary run of a prompt automation
+   whose turn stalled before the model, and that is not a retry itself. An
+   extension callback can change things without the model, so it never retries."
+  [row run attrs]
+  (boolean (and (::stalled-before-model? attrs)
+                (= "temporary" (get-in row [:definition "target" "mode"]))
+                (nil? (automation/owner row))
+                (not (str/ends-with? (str (:trigger_key run)) retry-suffix)))))
+
 (defn- execute!
-  "Run one queued run to its end, then deliver it."
+  "Run one queued run to its end, then deliver it. On macOS the host stays awake
+   while the run executes."
   [db run-id]
   (let [run
         (ps/db-automation-run db run-id)
@@ -447,6 +510,12 @@
             session
             (atom nil)
 
+            retry
+            (atom false)
+
+            awake
+            (keep-awake!)
+
             final
             (try
               (cond
@@ -465,22 +534,26 @@
                                             "id")))]
                         (reset! session sid)
                         (ps/db-automation-update-run! db run-id ["running"] {:session_id sid})
-                        (finish! db
-                                 run-id
-                                 (cond-> (with-run-session sid #(run-turn! row run sid))
-                                   (= "temporary" mode)
-                                   (assoc :session_id nil)))))
+                        (let [attrs (cond-> (with-run-session sid #(run-turn! row run sid))
+                                      (= "temporary" mode)
+                                      (assoc :session_id nil))]
+                          (reset! retry (retry? row run attrs))
+                          (finish! db run-id (dissoc attrs ::stalled-before-model?)))))
               (catch Throwable t
                 (finish! db run-id {:status "failed" :error (or (ex-message t) (str t))}))
-              (finally (when-let [sid @session]
+              (finally (when awake (.destroy ^Process awake))
+                       (when-let [sid @session]
                          (when (= "temporary" mode)
                            (try (call :delete-session! sid)
                                 (catch Throwable t
                                   (tel/log! {:level :warn
                                              :id ::temporary-session-delete-failed
-                                             :data {:error (ex-message t)}})))))))]
+                                             :data {:error (ex-message t)}})))))))
 
-        (deliver! db row (or final (ps/db-automation-run db run-id)))))))
+            done
+            (or final (ps/db-automation-run db run-id))]
+
+        (deliver! db row (or (when @retry (retry-stalled-run! db done)) done))))))
 
 (defonce ^:private queues (atom {}))
 

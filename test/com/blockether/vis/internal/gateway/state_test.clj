@@ -2972,6 +2972,9 @@
               offset
               (atom 0)
 
+              landed
+              (atom nil)
+
               stall
               (atom {:phase :engine-start :started? true :last-ms (System/currentTimeMillis)})]
 
@@ -2989,7 +2992,8 @@
                              50
 
                              state/fail-orphaned-turn!
-                             (fn [_sid _tid _token _reason]
+                             (fn [_sid _tid _token _reason & [code]]
+                               (reset! landed code)
                                true)
 
                              util/now-ms
@@ -3001,8 +3005,12 @@
                  ;; The host sleeps: the wall clock moves one hour between two ticks.
                  (reset! offset 3600000)
                  (expect (false? (await-cancel token 700)))
-                 (expect (true? (await-cancel token 4000))))
+                 (expect (true? (await-cancel token 4000)))
+                 (Thread/sleep 300))
                (expect (true? (:stalled? @stall)))
+               ;; The automation runner retries only this code: the turn never
+               ;; reached the provider, so no tool ran.
+               (expect (= "turn_stalled" @landed))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "counts the bare :provider-call marker as a lifecycle stamp, not output"
         ;; Regression: the engine emits `{:phase :provider-call}` the INSTANT the

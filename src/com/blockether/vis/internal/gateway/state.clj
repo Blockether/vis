@@ -4216,6 +4216,13 @@
            (stall-detail-text stall)
            ". NEXT STEP: send your message again."))))
 
+(defn- stall-failure-code
+  "The error code of a stalled turn: `turn_stalled` before the provider, else
+   `provider_stream_stalled`. An automation retries only `turn_stalled`: no model
+   output means that no tool ran."
+  [stall]
+  (if (stall-reached-provider? stall) "provider_stream_stalled" "turn_stalled"))
+
 (def ^:private stall-exempt-phases
   "Phases where a running turn may legitimately produce no chunk for a long time:
    shell/Python execution, Activity waits and local recording transcription. The
@@ -4763,28 +4770,29 @@
 
    Reported as a STALL-class failure (`:stalled? true`), never a user stop. The
    failed request remains terminal and any distinct queued backlog is held for an
-   explicit resume."
-  [sid tid cancel-token reason]
-  (when (claim-turn-terminal! sid tid cancel-token)
-    (tel/log! :error ["gateway: orphaned turn — landing turn.failed" tid reason])
-    (let [block (content/error "turn_failed" reason false)]
-      (persist-forced-terminal!
-        sid
-        tid
-        {:status :error :content [block] :error block :prior-outcome :error})
-      (finish-turn! sid
-                    tid
-                    {:status "failed"
-                     :role "assistant"
-                     :content [block]
-                     :error reason
-                     :completed_at (util/now-ms)})
-      (append-event! sid
-                     "turn.failed"
-                     (turn-terminal-payload sid tid "failed" {:content [block] :error reason})))
-    (emit-context-updated! sid)
-    (after-turn-terminal! sid tid {:failed? true :cancel-token cancel-token :stalled? true})
-    true))
+   explicit resume. `code` is the error code of the card, `turn_failed` by default."
+  ([sid tid cancel-token reason] (fail-orphaned-turn! sid tid cancel-token reason "turn_failed"))
+  ([sid tid cancel-token reason code]
+   (when (claim-turn-terminal! sid tid cancel-token)
+     (tel/log! :error ["gateway: orphaned turn — landing turn.failed" tid reason])
+     (let [block (content/error code reason false)]
+       (persist-forced-terminal!
+         sid
+         tid
+         {:status :error :content [block] :error block :prior-outcome :error})
+       (finish-turn! sid
+                     tid
+                     {:status "failed"
+                      :role "assistant"
+                      :content [block]
+                      :error reason
+                      :completed_at (util/now-ms)})
+       (append-event! sid
+                      "turn.failed"
+                      (turn-terminal-payload sid tid "failed" {:content [block] :error reason})))
+     (emit-context-updated! sid)
+     (after-turn-terminal! sid tid {:failed? true :cancel-token cancel-token :stalled? true})
+     true)))
 
 (defn- start-turn-stall-watchdog!
   "Daemon thread guarding ONE turn from `turn.started` — not from its first chunk
@@ -4914,7 +4922,13 @@
                       ;; gets the short grace.
                       (Thread/sleep (cancel-terminal-grace-ms stall))
                       (when (turn-watchdog-live? sid tid cancel-token)
-                        (fail-orphaned-turn! sid tid cancel-token reason)))
+                        (if started?
+                          (fail-orphaned-turn! sid
+                                               tid
+                                               cancel-token
+                                               reason
+                                               (stall-failure-code stall))
+                          (fail-orphaned-turn! sid tid cancel-token reason))))
                     (do (publish-provider-wait! sid tid stall-state shown-wait (util/now-ms))
                         (recur))))))
             (catch InterruptedException _ nil)
@@ -5297,10 +5311,7 @@
                                                 ;; A watchdog abort must not survive in history as a user Stop.
                                                 (if (and stall (:stalled? @stall))
                                                   (let [block
-                                                        (content/error (if (stall-reached-provider?
-                                                                             stall)
-                                                                         "provider_stream_stalled"
-                                                                         "turn_stalled")
+                                                        (content/error (stall-failure-code stall)
                                                                        (stall-failure-text stall)
                                                                        true)
 
@@ -5383,8 +5394,7 @@
             ;; and no :error all they can paint is a fabricated bare "Turn failed."
             ;; row - the unstyled line reported next to a lost answer.
             failure-code
-            (cond stalled?
-                  (if (stall-reached-provider? stall) "provider_stream_stalled" "turn_stalled")
+            (cond stalled? (stall-failure-code stall)
                   (and (= "failed" status) (empty? content-blocks)) "turn_failed")
 
             failure-text
