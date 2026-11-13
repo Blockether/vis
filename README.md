@@ -44,7 +44,7 @@ same sessions, so you can start a task in one client and continue it in another.
 | --- | --- | --- |
 | [Terminal client (TUI)](#terminal-client-tui) | Vis in your terminal, in the project directory. | Included. Run `vis-agent tui`. |
 | [Web app](#web-app-browser) | Vis in a browser, on this computer or on other devices on your network. | Included. Run `vis-agent web`. |
-| [Companion app](#companion-app-desktop) | Vis as an application on your desktop, phone or tablet. It connects to the engine on your computer. | A separate download for Windows, macOS, Linux, iPhone, iPad and Android. |
+| [Companion app](#companion-app-desktop) | Vis as an application on your desktop, phone or tablet. It connects to the engine on your computer. | Run `vis-agent desktop` on macOS or Linux: it downloads the app automatically on first use. Windows installers and phone/tablet store links are below. |
 
 ### Terminal client (TUI)
 
@@ -86,7 +86,16 @@ tokens and source checkouts.
 The desktop app runs on Windows, macOS and Linux. It does not run the engine: it
 connects to the gateway on the computer where your projects live.
 
-Use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
+On macOS or Linux, open it from your terminal:
+
+```bash
+vis-agent desktop
+```
+
+The command downloads the app automatically on first use. Later launches reuse the
+cached app. You do not need to download an installer yourself.
+
+Alternatively, use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
 For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-arm64.AppImage). You can also browse all packages
 on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest).
 
