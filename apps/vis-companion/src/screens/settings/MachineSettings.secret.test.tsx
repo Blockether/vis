@@ -47,7 +47,6 @@ function open() {
 it('sets a secret through a masked field and keeps no typed text after Save', async () => {
   const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockResolvedValue(saved);
   await open();
-  expect(screen.getByText('Not set')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Set' }));
   const field = screen.getByLabelText<HTMLInputElement>('Knowledge base token');
@@ -62,7 +61,7 @@ it('sets a secret through a masked field and keeps no typed text after Save', as
   fireEvent.change(field, { target: { value: 'tok-123' } });
   fireEvent.submit(field.closest('form')!);
   expect(save).toHaveBeenCalledExactlyOnceWith('graphify_kb_token', 'value', 'tok-123');
-  await screen.findByText('Saved');
+  await screen.findByRole('button', { name: 'Replace' });
   expect(screen.queryByLabelText('Knowledge base token')).toBeNull();
   // Focus stays in the row, not on the page body.
   await waitFor(() => expect(screen.getByRole('button', { name: 'Replace' })).toHaveFocus());
@@ -98,7 +97,7 @@ it('removes a saved machine secret only after confirmation', async () => {
   row = saved;
   const write = vi.spyOn(GatewayClient.prototype, 'setSetting').mockResolvedValue(unset);
   await open();
-  expect(screen.getByText('Saved')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Replace' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
   const question = screen.getByRole('group', { name: 'Remove Knowledge base token?' });
   fireEvent.click(within(question).getByRole('button', { name: 'Keep' }));
@@ -109,7 +108,7 @@ it('removes a saved machine secret only after confirmation', async () => {
     within(screen.getByRole('group', { name: 'Remove Knowledge base token?' })).getByRole('button', { name: 'Remove' }),
   );
   await waitFor(() => expect(write).toHaveBeenCalledExactlyOnceWith('graphify_kb_token', 'inherit'));
-  await screen.findByText('Not set');
+  await screen.findByRole('button', { name: 'Set' });
   expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Set' })).toHaveFocus());
 });

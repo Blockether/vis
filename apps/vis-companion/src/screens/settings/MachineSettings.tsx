@@ -185,7 +185,7 @@ export function secretSafeMessage(message: string, toggle: Toggle, value?: Setti
 }
 
 /**
- * Gateway-backed secret: the row shows only whether a value is saved. A new value
+ * Gateway-backed secret: the row action, Set or Replace, shows only whether a value is saved. A new value
  * is typed into a masked field, sent once, and cleared from this state at once.
  */
 export function SecretSetting({
@@ -267,7 +267,6 @@ export function SecretSetting({
       </div>
       {/* On a phone the actions take their own line, so the label keeps the width. */}
       <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-end gap-2 sm:col-span-1">
-        <Text variant="meta">{isSet ? 'Saved' : 'Not set'}</Text>
         {!isEditing && (
           <Button
             ref={action}

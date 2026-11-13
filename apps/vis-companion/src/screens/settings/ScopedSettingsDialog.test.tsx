@@ -79,14 +79,13 @@ it('removes a session secret with a confirmation, and an inherited secret offers
   });
   renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
   await screen.findByText('Set here');
-  expect(screen.getByText('Saved')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Replace' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   const question = screen.getByRole('group', { name: 'Remove Knowledge base token?' });
   await user.click(within(question).getByRole('button', { name: 'Remove' }));
   await screen.findByText('Inherited from global');
   expect(write).toHaveBeenLastCalledWith('graphify_kb_token', 'inherit', undefined, target);
-  expect(screen.getByText('Saved')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Replace' })).toBeEnabled();
 });

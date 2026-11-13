@@ -52,7 +52,6 @@ async function expectFits(canvasElement: HTMLElement) {
 export const NotSet: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText('Not set')).toBeVisible();
     await expect(canvas.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole('button', { name: 'Set' }));
     const field = canvas.getByLabelText('Knowledge base token');
@@ -60,7 +59,7 @@ export const NotSet: Story = {
     await expect(canvas.getByRole('button', { name: 'Save' })).toBeDisabled();
     await expectFits(canvasElement);
     await userEvent.type(field, 'tok-123{Enter}');
-    await waitFor(() => expect(canvas.getByText('Saved')).toBeVisible());
+    await waitFor(() => expect(canvas.getByRole('button', { name: 'Replace' })).toBeVisible());
     await expect(canvasElement.innerHTML).not.toContain('tok-123');
   },
 };
@@ -69,14 +68,13 @@ export const Saved: Story = {
   args: { toggle: { ...TOKEN, is_set: true, source: 'global', is_override: true } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText('Saved')).toBeVisible();
     await expect(canvas.getByRole('button', { name: 'Replace' })).toBeEnabled();
     await expectFits(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Remove' }));
     await expect(canvas.getByRole('group', { name: 'Remove Knowledge base token?' })).toBeVisible();
     await expectFits(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Keep' }));
-    await expect(canvas.getByText('Saved')).toBeVisible();
+    await expect(canvas.getByRole('button', { name: 'Replace' })).toBeVisible();
   },
 };
 
