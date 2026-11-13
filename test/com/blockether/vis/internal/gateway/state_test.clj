@@ -2956,6 +2956,54 @@
                  (expect (false? (await-cancel token 500))))
                (expect (nil? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "does not count host sleep as inactivity, but trips a hang after the wake"
+        ;; Issue #476: macOS slept for one hour while a turn prepared its session.
+        ;; On the wake, the first tick read one hour of wall-clock idle time and
+        ;; failed the turn.
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
+
+              tid
+              "t1"
+
+              token
+              (cancellation/cancellation-token)
+
+              offset
+              (atom 0)
+
+              stall
+              (atom {:phase :engine-start :started? true :last-ms (System/currentTimeMillis)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                             1500
+
+                             state/TURN_STALL_TIMEOUT_MS
+                             1500
+
+                             state/CANCEL_TERMINAL_GRACE_MS
+                             50
+
+                             state/SILENT_CANCEL_TERMINAL_GRACE_MS
+                             50
+
+                             state/fail-orphaned-turn!
+                             (fn [_sid _tid _token _reason]
+                               true)
+
+                             util/now-ms
+                             (fn ^long []
+                               (+ (System/currentTimeMillis) (long @offset)))]
+
+                 (watchdog sid tid token stall)
+                 (Thread/sleep 100)
+                 ;; The host sleeps: the wall clock moves one hour between two ticks.
+                 (reset! offset 3600000)
+                 (expect (false? (await-cancel token 700)))
+                 (expect (true? (await-cancel token 4000))))
+               (expect (true? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "counts the bare :provider-call marker as a lifecycle stamp, not output"
         ;; Regression: the engine emits `{:phase :provider-call}` the INSTANT the
         ;; request goes out, and the stall state counted it as model output. A

@@ -4664,6 +4664,22 @@
    provider wait notice on time."
   1000)
 
+(def ^:private TURN_SUSPEND_GAP_MS
+  "How much later than its sleep a watchdog tick can arrive before the watchdog
+   counts the excess as a host or process suspension. A suspended host (macOS
+   sleep, a stopped process) runs no turn code and no watchdog tick. The wall
+   clock continues, so the next tick sees a large gap."
+  5000)
+
+(defn- suspension-credit-ms
+  "Milliseconds of suspension to remove from the idle time of a turn. `gap-ms`
+   is the wall-clock time between two watchdog ticks and `idle-ms` the idle time
+   that is not yet excused. A tick that is late by more than
+   [[TURN_SUSPEND_GAP_MS]] excuses the late part, but never more than `idle-ms`."
+  [gap-ms check-ms idle-ms]
+  (let [late-ms (- (long gap-ms) (long check-ms))]
+    (if (> late-ms (long TURN_SUSPEND_GAP_MS)) (max 0 (min late-ms (long idle-ms))) 0)))
+
 (defn- turn-stall-decision
   [{:keys [phase started? produced? call-output? first-output-timeout-ms stall-timeout-ms]} idle-ms]
   (let [owes-output?
@@ -4798,6 +4814,11 @@
    While the model of a provider attempt is silent, it also sends the provider
    wait notice ([[publish-provider-wait!]]).
 
+   Host suspension is not inactivity. When a tick arrives much later than its
+   sleep ([[suspension-credit-ms]]), the watchdog removes the late part from the
+   idle time until the turn makes progress again. A resumed turn thus gets its
+   full window, and a hang while the host is awake still trips.
+
    Self-terminating: exits as soon as the turn no longer owes a terminal."
   [sid tid cancel-token stall]
   (let [check-ms
@@ -4809,7 +4830,15 @@
             (min (long TURN_WATCHDOG_TICK_MS)))
 
         shown-wait
-        (volatile! nil)]
+        (volatile! nil)
+
+        ;; Wall clock of the previous tick, and the suspension excused since the
+        ;; progress stamp `:last-ms`. Only this thread reads or writes them.
+        tick-ms
+        (volatile! (util/now-ms))
+
+        excused
+        (volatile! {:last-ms nil :ms 0})]
 
     (doto
       (Thread.
@@ -4823,8 +4852,29 @@
                 (let [{:keys [phase last-ms started?] :as stall-state}
                       @stall
 
+                      now
+                      (util/now-ms)
+
+                      last-ms
+                      (long (or last-ms 0))
+
+                      excused-ms
+                      (let [{prior-last :last-ms prior-ms :ms}
+                            @excused
+
+                            prior-ms
+                            (if (= prior-last last-ms) (long prior-ms) 0)]
+
+                        (+ prior-ms
+                           (suspension-credit-ms (- now (long @tick-ms))
+                                                 check-ms
+                                                 (- now last-ms prior-ms))))
+
+                      _
+                      (do (vreset! tick-ms now) (vreset! excused {:last-ms last-ms :ms excused-ms}))
+
                       idle-ms
-                      (- (util/now-ms) (long (or last-ms 0)))
+                      (- now last-ms excused-ms)
 
                       {:keys [awaiting-output? tripped?]}
                       (turn-stall-decision stall-state idle-ms)]
