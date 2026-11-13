@@ -5,7 +5,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HumanInputPrompt, HumanInputSheet } from './HumanInputPrompt';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import {
@@ -16,7 +16,11 @@ import {
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 const noop = () => {};
 
@@ -77,19 +81,41 @@ describe('a one-time code on a phone', () => {
     expect(document.activeElement).toBe(input);
   });
 
-  // Regression, user report: a double tap on the code boxes gave no paste menu. WebKit
-  // shows it only for a tap on the caret, which stood at the row's left edge.
-  it('puts the caret under the finger that touches the boxes', () => {
+  /** Send one key of the software keyboard; true when the input took it. */
+  const keyTap = (input: HTMLInputElement, data: string) =>
+    input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data, cancelable: true }));
+
+  // Regression, user report: a double tap on the boxes typed a digit nobody chose. The
+  // second tap landed on the number pad while it rose.
+  it('drops a key that a tap hits while the keyboard rises after a touch', () => {
+    const now = vi.spyOn(performance, 'now').mockReturnValue(1000);
     render(<OtpSheet />);
     const input = codeInput();
-    input.getBoundingClientRect = () => new DOMRect(16, 400, 370, 44);
-    fireEvent.pointerDown(input, { pointerType: 'mouse', clientX: 200, clientY: 420 });
-    expect(input.style.paddingRight).toBe('');
-    fireEvent.pointerDown(input, { pointerType: 'touch', clientX: 200, clientY: 420 });
-    expect(input.style.textAlign).toBe('right');
-    expect(input.style.paddingRight).toBe('186px');
-    fireEvent.pointerDown(input, { pointerType: 'touch', clientX: 500, clientY: 420 });
-    expect(input.style.paddingRight).toBe('0px');
+    fireEvent.pointerDown(input, { pointerType: 'touch' });
+    act(() => input.focus());
+    now.mockReturnValue(1300);
+    expect(keyTap(input, '8')).toBe(false);
+    expect(keyTap(input, '123456')).toBe(true);
+    now.mockReturnValue(1700);
+    expect(keyTap(input, '8')).toBe(true);
+  });
+
+  // Regression, user report: the paste menu of the code showed, hid and showed again
+  // under a double tap. A touch on the focused boxes keeps the focus and opens no menu,
+  // and the Paste verb fills the code.
+  it('pastes the clipboard from the Paste verb and keeps the focus', async () => {
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { readText: () => Promise.resolve('Code: 123 456') } });
+    render(<OtpSheet />);
+    const input = codeInput();
+    const row = document.querySelector('[data-otp-row]') as HTMLElement;
+    act(() => input.focus());
+    expect(fireEvent.pointerDown(row, { pointerType: 'touch' })).toBe(false);
+    expect(fireEvent.mouseDown(row)).toBe(false);
+    const verb = screen.getByRole('button', { name: 'Paste' });
+    expect(fireEvent.pointerDown(verb, { pointerType: 'touch' })).toBe(false);
+    fireEvent.click(verb);
+    await waitFor(() => expect(shownDigits()).toEqual(['1', '2', '3', '4', '5', '6']));
+    expect(document.activeElement).toBe(input);
   });
 });
 

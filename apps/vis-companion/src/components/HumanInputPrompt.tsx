@@ -7,10 +7,13 @@ import {
   DialogFrame,
   Input,
   Modal,
+  TextButton,
   ViewHeading,
   ViewLayout,
   ViewParagraph,
 } from './ui';
+import { Clipboard } from '@capacitor/clipboard';
+import { Capacitor } from '@capacitor/core';
 import { Markdown } from './ChatContent';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -20,7 +23,6 @@ import {
   humanInputFormChange,
   humanInputFormRefused,
   humanInputFormStart,
-  humanInputInputFields,
   humanInputOtp,
   humanInputOtpDigits,
   humanInputRange,
@@ -282,9 +284,6 @@ export function HumanInputPrompt({
   );
 }
 
-/** The fields a phone answers with its software keyboard. */
-const KEYBOARD_FIELD_TYPES = new Set<string>(['plaintext', 'password', 'multiline', 'otp']);
-
 /**
  * The pause itself, with no gateway behind it: a request, the answers typed so
  * far, whatever the engine last refused, and three callbacks. The container
@@ -323,11 +322,6 @@ export function HumanInputSheet({
   // box every other dialog is, minus the fixed height.
   // A subagent's form also reaches its ancestor sessions: name who asks.
   const origin = originLabel(request.origin);
-  // A field that raises the keyboard keeps the sheet where the keyboard puts it.
-  // Reported: a double tap on the one-time code made the keyboard and screen jump.
-  const isKeyboardReserved = humanInputInputFields(request.nodes).some((field) =>
-    KEYBOARD_FIELD_TYPES.has(field.type),
-  );
   return (
     <Modal
       size="fit"
@@ -336,7 +330,6 @@ export function HumanInputSheet({
       // so the whole application read as blocked while a single session waited. The
       // sheet stands in that session's own pane instead, where an opened run stands.
       within="session"
-      isKeyboardReserved={isKeyboardReserved}
       // A pause with no way out is not dismissed by tapping the glass either: the
       // scrim answers exactly what the header's X and Esc answer, and for an
       // uncancellable request all three do nothing.
@@ -742,6 +735,12 @@ export function HumanInputFieldRow({
 }
 
 /**
+ * How long the number pad takes to stand after the touch that focused the field, in
+ * milliseconds. Measured on iOS 18: about 630.
+ */
+const KEYBOARD_RISE_MS = 600;
+
+/**
  * A one-time code is shown as BOXES, one digit each — the shape every bank and
  * every 2FA screen has taught, and the same `[1] [2] [3] [ ] [ ] [ ]` the TUI
  * band paints. Only digits get in, wherever they come from: typing, an SMS
@@ -752,7 +751,12 @@ export function HumanInputFieldRow({
  * paste, because each box held one character and selected itself on focus, and
  * the keyboard jumped, because focus moved to a new input at every digit and
  * iOS rebuilt the keyboard for each one. With one input, focus stays put and
- * the platform's own paste menu and SMS autofill work.
+ * SMS autofill works.
+ *
+ * Paste is a visible verb under the boxes. Reported on an iPhone: the paste menu
+ * of the invisible input showed, hid and showed again under a double tap, and a
+ * long press showed nothing. While the input has focus, a touch on the row goes
+ * to the row and keeps the focus, so the platform menu never flashes.
  */
 function OtpBoxes({
   field,
@@ -776,11 +780,36 @@ function OtpBoxes({
   const { min, max } = humanInputOtp(field);
   const digits = humanInputOtpDigits(field, value);
   const [isFocused, setFocused] = useState(false);
-  // Where the last touch landed, as the gap to the input's right edge. The text ends
-  // there, so the caret stands under the finger. Reported on an iPhone: a double tap
-  // on a box gave no paste menu. WebKit shows that menu only for a tap on the caret,
-  // and the caret of the empty, invisible input stood at the left edge of the row.
-  const [touchEdge, setTouchEdge] = useState<number | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  // When a touch focused the input. The keyboard rises for about half a second, and
+  // the second tap of a double tap lands on a key. Reported on an iPhone: a double
+  // tap on the boxes typed a digit nobody chose.
+  const touchFocusAt = useRef(Number.NEGATIVE_INFINITY);
+  useEffect(() => {
+    const element = input.current;
+    if (!element) return undefined;
+    const onBeforeInput = (event: InputEvent) => {
+      const isKeyTap = event.inputType === 'insertText' && (event.data ?? '').length === 1;
+      if (isKeyTap && performance.now() - touchFocusAt.current < KEYBOARD_RISE_MS) event.preventDefault();
+    };
+    element.addEventListener('beforeinput', onBeforeInput);
+    return () => element.removeEventListener('beforeinput', onBeforeInput);
+  }, []);
+  // A pasted code REPLACES the code: an operator who pastes again after a wrong
+  // paste wants the new code, not the old code with digits added.
+  const paste = (text: string): boolean => {
+    const pasted = humanInputOtpDigits(field, text);
+    if (pasted) onChange(field.id, pasted);
+    return pasted !== '';
+  };
+  const pasteClipboard = () => {
+    const read = Capacitor.isNativePlatform()
+      ? Clipboard.read().then((result) => (result.type === 'text/plain' ? result.value : ''))
+      : navigator.clipboard.readText();
+    read
+      .then((text) => paste(text))
+      .catch((error: unknown) => console.warn('one-time code: clipboard read failed', error));
+  };
   // The next digit lands in this box; a full code keeps the last box marked.
   const active = Math.min(digits.length, max - 1);
 
@@ -800,7 +829,14 @@ function OtpBoxes({
           `sm:` up, where `Modal` becomes a 36rem box, it tightens again. */}
       <div
         data-otp-row=""
-        className="relative flex max-w-md flex-wrap justify-between gap-1.5 sm:max-w-sm"
+        className="relative flex max-w-md cursor-text flex-wrap justify-between gap-1.5 sm:max-w-sm"
+        // A double tap still sends a mouse down, and that took the focus.
+        onPointerDown={(event) => {
+          if (isFocused) event.preventDefault();
+        }}
+        onMouseDown={(event) => {
+          if (isFocused) event.preventDefault();
+        }}
       >
         {Array.from({ length: max }, (_unused, index) => (
           <span
@@ -830,21 +866,18 @@ function OtpBoxes({
           aria-describedby={describedBy}
           aria-invalid={isInvalid}
           aria-required={field.is_required}
-          className="absolute inset-0 size-full cursor-text border-0 bg-transparent p-0 font-mono text-body text-transparent caret-transparent outline-none selection:bg-transparent disabled:cursor-not-allowed"
-          style={touchEdge === null ? undefined : { textAlign: 'right', paddingRight: touchEdge }}
+          ref={input}
+          className={`absolute inset-0 size-full cursor-text border-0 bg-transparent p-0 font-mono text-body text-transparent caret-transparent outline-none selection:bg-transparent disabled:cursor-not-allowed ${
+            isFocused ? 'pointer-events-none' : ''
+          }`}
           onPointerDown={(event) => {
-            if (event.pointerType !== 'touch') return;
-            const box = event.currentTarget.getBoundingClientRect();
-            setTouchEdge(Math.round(Math.max(0, Math.min(box.right - event.clientX, box.width - 1))));
+            if (event.pointerType === 'touch' && document.activeElement !== event.currentTarget) {
+              touchFocusAt.current = performance.now();
+            }
           }}
           onChange={(event) => onChange(field.id, humanInputOtpDigits(field, event.target.value))}
-          // A pasted code REPLACES the code: an operator who pastes again after a
-          // wrong paste wants the new code, not the old code with digits added.
           onPaste={(event) => {
-            const pasted = humanInputOtpDigits(field, event.clipboardData.getData('text'));
-            if (!pasted) return;
-            event.preventDefault();
-            onChange(field.id, pasted);
+            if (paste(event.clipboardData.getData('text'))) event.preventDefault();
           }}
           onKeyDown={(event) => {
             if (event.key !== 'Enter') return;
@@ -855,9 +888,22 @@ function OtpBoxes({
           onBlur={() => setFocused(false)}
         />
       </div>
-      <p className="font-mono text-meta text-dialog-hint">
-        {min === max ? `${max} digits` : `${min}–${max} digits`}
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-mono text-meta text-dialog-hint">
+          {min === max ? `${max} digits` : `${min}–${max} digits`}
+        </p>
+        <TextButton
+          // A 44px touch reach that leaves the hint line its own height.
+          className="relative after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[''] mouse:after:content-none"
+          disabled={disabled}
+          // A press keeps the focus, so the keyboard stays up.
+          onPointerDown={(event) => event.preventDefault()}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={pasteClipboard}
+        >
+          Paste
+        </TextButton>
+      </div>
     </div>
   );
 }

@@ -710,34 +710,6 @@ export function useKeyboardInset(): number {
   );
 }
 
-// The band a sheet that holds a field keeps free below itself while the software
-// keyboard is still down: the predicted keyboard height, less what the keyboard
-// already covers. A focus shrinks the shell by that height in the same frame, so a
-// sheet docked to the bottom jumped up under the finger. The second tap of a double
-// tap then missed the field, focus dropped and the keyboard fell again.
-// Each keyboard kind has its own band: the pad is shorter than the text keyboard.
-const NO_KEYBOARD_RESERVE: Record<KeyboardKind, number> = { text: 0, pad: 0 };
-let keyboardReserve = NO_KEYBOARD_RESERVE;
-const keyboardReserveListeners = new Set<() => void>();
-
-const setKeyboardReserve = (value: (kind: KeyboardKind) => number): void => {
-  const band = (kind: KeyboardKind) => {
-    const pixels = value(kind);
-    return Number.isFinite(pixels) ? Math.max(0, Math.round(pixels)) : 0;
-  };
-  const next = { text: band('text'), pad: band('pad') };
-  if (keyboardReserve.text === next.text && keyboardReserve.pad === next.pad) return;
-  keyboardReserve = next;
-  for (const listener of keyboardReserveListeners) listener();
-};
-
-const subscribeKeyboardReserve = (listener: () => void): (() => void) => {
-  keyboardReserveListeners.add(listener);
-  return () => {
-    keyboardReserveListeners.delete(listener);
-  };
-};
-
 /**
  * Calls `listener` with each new keyboard inset, in the task that pins the shell.
  *
@@ -746,42 +718,6 @@ const subscribeKeyboardReserve = (listener: () => void): (() => void) => {
  */
 export function watchKeyboardInset(listener: (inset: number) => void): () => void {
   return subscribeKeyboardInset(() => listener(keyboardInset));
-}
-
-/**
- * Pixels a sheet docked to the bottom keeps free for a keyboard that is not up yet.
- *
- * With this band under it, the sheet already stands where the keyboard puts it, so
- * a focus does not move the field. `kind` is the keyboard that the sheet's field
- * raises. `0` while the keyboard is up, with a hardware keyboard, and on every
- * platform except native iOS.
- */
-export function useKeyboardReserve(kind: KeyboardKind = 'text'): number {
-  return useSyncExternalStore(
-    subscribeKeyboardReserve,
-    () => keyboardReserve[kind],
-    () => 0,
-  );
-}
-
-/**
- * The band a sheet with a field of `kind` keeps below itself, or `0` without a field.
- *
- * The sheet keeps the place of its first prediction until it closes. Reported on an
- * iPhone: the first one-time code predicted a taller pad than the one that rose, and
- * the sheet dropped under the finger. Now a shorter keyboard leaves a band of sheet
- * paper above it. Only a taller keyboard still lifts the sheet.
- */
-export function useKeyboardBand(kind: KeyboardKind | null): number {
-  const reserve = useKeyboardReserve(kind ?? 'text');
-  const inset = useKeyboardInset();
-  const orientation = useSyncExternalStore(subscribeKeyboardReserve, keyboardOrientation, () => 'portrait');
-  const key = kind === null ? null : `${kind}:${orientation}`;
-  const [held, setHeld] = useState<{ key: string; height: number } | null>(null);
-  // Hold the prediction while the keyboard is down. A new kind or orientation holds again.
-  if (key !== null && inset === 0 && reserve > 0 && held?.key !== key) setHeld({ key, height: reserve });
-  if (key === null) return 0;
-  return held?.key === key ? Math.max(0, held.height - inset) : reserve;
 }
 
 /** The shell's current height in CSS pixels, keyboard pin included. */
@@ -862,11 +798,6 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         next && safeBottom === SAFE_BOTTOM_KEYBOARD
           ? layoutHeight(readViewportMetrics()) - next.height - next.top
           : 0;
-      setKeyboardReserve((kind) =>
-        nativeKeyboard && !hasHardwarePointer()
-          ? keyboardHeightForPrepin(layoutHeight(readViewportMetrics()), keyboardOrientation(), kind) - inset
-          : 0,
-      );
       if (
         !(
           currentBox === next ||
@@ -1497,7 +1428,6 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       disposeKeyboard();
       pinnedShellHeight = null;
       setBox(null);
-      setKeyboardReserve(() => 0);
     };
   }, [shellRef]);
 }

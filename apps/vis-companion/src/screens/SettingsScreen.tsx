@@ -222,8 +222,7 @@ export function SettingsDialog({
     // The app's ONE dialog: `Modal` + `DialogFrame`, the same outer component
     // "Manage projects" and every ask already open in. `wide` is the one size that
     // holds two columns of settings side by side; the height is every dialog's.
-    // Its fields (a machine name, a provider key) raise the keyboard. Reserve the band while one shows.
-    <Modal size="wide" isKeyboardReserved onDismiss={onClose}>
+    <Modal size="wide" onDismiss={onClose}>
       <DialogFrame title="Settings" onClose={onClose}>
         {/* Each column scrolls ITSELF on desktop. One shared scroller made the short
             column a 1500px empty gutter: scrolling to a machine's Sandbox panel dragged

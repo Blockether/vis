@@ -57,12 +57,6 @@ import { EDGE_MARGIN, menuPosition, spanningPosition } from '../lib/anchored-men
 import type { ViewGroupDirection } from '../lib/view';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import {
-  isKeyboardInputElement,
-  keyboardKindOf,
-  useKeyboardBand,
-  type KeyboardKind,
-} from '../lib/viewport';
-import {
   AlertIcon,
   CheckIcon,
   ChevronIcon,
@@ -3042,7 +3036,6 @@ export function Modal({
   onDismiss,
   size = 'full',
   within = 'app',
-  isKeyboardReserved = false,
   children,
 }: {
   onDismiss: () => void;
@@ -3075,11 +3068,6 @@ export function Modal({
    * stops at its content, centred in the pane it belongs to.
    */
   within?: 'app' | 'session';
-  /**
-   * The sheet can hold a field that raises the software keyboard. While such a field is
-   * on the sheet, it stands where the keyboard will put it, so a tap does not move it.
-   */
-  isKeyboardReserved?: boolean;
   children: ReactNode;
 }) {
   const { host: portalHost, position } = within === 'session' ? sessionLayer() : overlayLayer();
@@ -3100,43 +3088,11 @@ export function Modal({
   // stands in, so the same cap left an opened run as a small window in the middle of a pane it
   // could have had. Reported: opening a live run should fill the session it belongs to.
   const fillsPane = within === 'session' && !stopsAtContent;
-  // A sheet with a typed field stands where the keyboard will put it. A short one sits
-  // above the reserved band. A tall one stands under the notch and lets the band run
-  // under its foot (`items-end-safe`), so it keeps its full height until the keys rise.
-  // Reserve the band only while a typed field is on the sheet. Reported on an iPhone:
-  // the machine list in Settings has no field, but it floated above an empty band,
-  // with the session list visible below it.
-  const watchesFields = isKeyboardReserved && stopsAtContent;
-  // The portal host can change after the first render, and the scrim then mounts again.
-  // A ref would leave the observer on the old node, so the element is state.
-  const [scrim, setScrim] = useState<HTMLDivElement | null>(null);
-  // The band is as tall as the keyboard of the sheet's first typed field: a one-time
-  // code raises the shorter number pad, and a text-height band let the sheet drop.
-  const [typedFieldKind, setTypedFieldKind] = useState<KeyboardKind | null>(null);
-  const keyboardReserve = useKeyboardBand(typedFieldKind);
-  useLayoutEffect(() => {
-    const element = scrim;
-    if (!watchesFields || element === null) return undefined;
-    const check = () => {
-      const field = Array.from(element.querySelectorAll('input, textarea, [contenteditable]')).find(
-        isKeyboardInputElement,
-      );
-      setTypedFieldKind(field ? keyboardKindOf(field) : null);
-    };
-    check();
-    const observer = new MutationObserver(check);
-    observer.observe(element, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['type', 'contenteditable', 'inputmode'],
-    });
-    return () => observer.disconnect();
-  }, [watchesFields, scrim]);
-  const isReserving = watchesFields && typedFieldKind !== null;
-  const phoneCeiling = isReserving
-    ? 'mt-[env(safe-area-inset-top)] max-h-[calc(100%+var(--keyboard-reserve,0px)-env(safe-area-inset-top))] sm:mt-0 sm:max-h-[calc(100%-env(safe-area-inset-top))]'
-    : 'max-h-[calc(100%-env(safe-area-inset-top))]';
+  // A SHEET STANDS ON THE BOTTOM EDGE, keyboard or not. Reported on an iPhone: a sheet
+  // with a one-time code floated above an empty band that waited for the keyboard, and
+  // the band never matched the pad that rose. The keyboard pins the shell, and the sheet
+  // rides that pin.
+  const phoneCeiling = 'max-h-[calc(100%-env(safe-area-inset-top))]';
   const boxHeight = stopsAtContent
     ? `${phoneCeiling} ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
     : fillsPane
@@ -3146,28 +3102,12 @@ export function Modal({
     ? 'sm:max-w-4xl mouse:max-w-6xl'
     : 'sm:max-w-xl';
   const boxWidth = fillsPane ? 'sm:max-w-none' : desktopWidth;
-  // THE RESERVED BAND IS THE SHEET'S OWN PAPER. Reported on an iPhone: Settings with the
-  // pairing field open floated above the band, and the session list showed under it. The
-  // gap under the sheet is never taller than the band, so paper of that height closes it.
-  // It stands behind the sheet, and the keyboard covers it when it rises.
-  const bandPaper = isReserving
-    ? 'relative after:absolute after:inset-x-0 after:top-full after:-z-10 after:h-[var(--keyboard-reserve,0px)] after:bg-panel sm:after:hidden'
-    : '';
 
   return createPortal(
     <div
-      ref={setScrim}
-      className={`${position} inset-0 z-50 flex justify-center pb-[var(--keyboard-reserve,0px)] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom),var(--keyboard-reserve,0px))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
-        stopsAtContent ? (isReserving ? 'items-end-safe' : 'items-end') : 'items-stretch'
+      className={`${position} inset-0 z-50 flex justify-center transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
+        stopsAtContent ? 'items-end' : 'items-stretch'
       }`}
-      // A focus shrinks the shell by the keyboard in the same frame. Without this band
-      // a sheet docked to the bottom jumped up under the finger, and the second tap of
-      // a double tap (paste) missed the field. The band is scoped to this element.
-      style={
-        isReserving && keyboardReserve > 0
-          ? ({ '--keyboard-reserve': `${keyboardReserve}px` } as CSSProperties)
-          : undefined
-      }
       role="presentation"
       onPointerDown={(event) => {
         dismissOnClick.current = event.target === event.currentTarget;
@@ -3210,7 +3150,7 @@ export function Modal({
           painting on it, and every box carries its own paper. */}
       <div
         ref={edgeBack}
-        className={`flex w-full flex-col ${boxWidth} ${boxHeight} ${bandPaper}`}
+        className={`flex w-full flex-col ${boxWidth} ${boxHeight}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
