@@ -44,7 +44,7 @@ same sessions, so you can start a task in one client and continue it in another.
 | --- | --- | --- |
 | [Terminal client (TUI)](#terminal-client-tui) | Vis in your terminal, in the project directory. | Included. Run `vis-agent tui`. |
 | [Web app](#web-app-browser) | Vis in a browser, on this computer or on other devices on your network. | Included. Run `vis-agent web`. |
-| [Companion app](#companion-app-desktop) | Vis as an application on your desktop, phone or tablet. It connects to the engine on your computer. | Run `vis-agent desktop` on macOS or Linux: it downloads the app automatically on first use. Windows installers and phone/tablet store links are below. |
+| Companion app | Vis on your desktop, phone or tablet, connected to the engine on your computer. | Run `vis-agent desktop` on macOS or Linux to download and open it automatically.<br><br>Or install the desktop app:<br><a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a><br><a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a><br><a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a><br>[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app)<br><br>Phone and tablet (public beta):<br><a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a><br><a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a><br>[Connect the desktop app](resources/vis-docs/index.md#connecting-the-companion-app) · [Pair a phone](resources/vis-docs/index.md#pair-a-phone) |
 
 ### Terminal client (TUI)
 
@@ -80,50 +80,6 @@ other devices on your network. Release and beta installations download a missing
 the first time you run the command. See
 [Web app setup](resources/vis-docs/distributions.md#open-the-web-app) for addresses,
 tokens and source checkouts.
-
-### Companion app: desktop
-
-The desktop app runs on Windows, macOS and Linux. It does not run the engine: it
-connects to the gateway on the computer where your projects live.
-
-On macOS or Linux, open it from your terminal:
-
-```bash
-vis-agent desktop
-```
-
-The command downloads the app automatically on first use. Later launches reuse the
-cached app. You do not need to download an installer yourself.
-
-Alternatively, use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
-For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-arm64.AppImage). You can also browse all packages
-on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest).
-
-<p>
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
-</p>
-
-Install the package, open Vis, and [connect to your gateway](resources/vis-docs/index.md#connecting-the-companion-app).
-See [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app) for installation
-and launcher options.
-
-### Companion app: phone and tablet
-
-Use your iPhone, iPad or Android device to check progress or continue a conversation
-on the same gateway. Both stores offer public testing without an invitation.
-
-<p>
-<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
-</p>
-
-Follow the [phone pairing guide](resources/vis-docs/index.md#pair-a-phone).
-Questions and beta feedback: `contact@blockether.com`.
 
 ### Update
 
