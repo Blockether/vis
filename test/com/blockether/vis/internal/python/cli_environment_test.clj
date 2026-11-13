@@ -538,3 +538,132 @@
                               @requests)
                     (pr-str @requests))))
         (finally (.stop server 0) (delete-tree! dir))))))
+
+(defdescribe
+  python-cli-shared-pip-test
+  (it
+    "installs and uninstalls with pip in shared packages, not in the interpreter's own directory"
+    (let [dir
+          (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-shared-pip-"
+                                                                 (make-array FileAttribute 0))))
+
+          shared
+          (io/file dir "shared")
+
+          environment
+          {"VIS_PYTHON_PACKAGES" (str shared)
+           "PIP_NO_INDEX" "1"
+           "PIP_DISABLE_PIP_VERSION_CHECK" "1"}
+
+          wheel
+          (str (shared-fixture-wheel! dir "shared_base"))
+
+          pip!
+          (fn [& args]
+            (run-cli dir environment (into ["--shared" "-m" "pip"] args)))]
+
+      (try
+        ;; The uninstall also runs after a failure: a wrong install must not stay in the runtime.
+        (try (let [result (pip! "install" wheel)]
+               (expect (= 0 (:exit result)) (:output result))
+               (expect (.isFile (io/file shared "shared_base.py")) (:output result)))
+             (finally (let [result (pip! "uninstall" "-y" "shared-base")]
+                        (expect (= 0 (:exit result)) (:output result)))))
+        (expect (not (.exists (io/file shared "shared_base.py"))))
+        ;; pip would delete the runtime's own pip, which the sandbox installs with.
+        (let [result (pip! "install" "--upgrade" "pip")]
+          (expect (= 1 (:exit result)) (:output result))
+          (expect (not (.exists (io/file shared "pip"))) (:output result)))
+        ;; A command that only names `install` and pip changes nothing.
+        (let [result (pip! "show" "install" "pip")]
+          (expect (= 0 (:exit result)) (:output result)))
+        ;; `list` can be the value of --log, so `install` can be the command.
+        (let [result (pip! "--log" "list" "install" "--dry-run" "pip")]
+          (expect (= 1 (:exit result)) (:output result)))
+        (finally (delete-tree! dir))))))
+
+(defdescribe
+  python-cli-shared-uv-test
+  (it
+    "adds, removes and installs packages in shared packages without a project environment"
+    (let [dir
+          (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-shared-uv-"
+                                                                 (make-array FileAttribute 0))))
+
+          project
+          (doto (io/file dir "project") .mkdirs)
+
+          shared
+          (io/file dir "shared")
+
+          environment
+          {"VIS_PYTHON_PACKAGES" (str shared) "UV_PYTHON" "not-the-embedded-python"}
+
+          wheel
+          (fn [module]
+            (str (shared-fixture-wheel! project module)))
+
+          uv!
+          (fn [& args]
+            (run-uv-cli dir environment (into ["--shared" "uv"] args)))
+
+          lock
+          (io/file project "uv.lock")]
+
+      (try
+        (spit (io/file project "pyproject.toml")
+              (str "[project]\nname = 'shared-edit-project'\nversion = '0.1.0'\n"
+                   "requires-python = '>=3.12'\ndependencies = []\n"))
+        ;; The first invocation goes through the real `-main` dispatch.
+        (let [result (run-cli dir
+                              environment
+                              ["--shared" "uv" "add" "--project" (str project) "--offline"
+                               (wheel "shared_base")])]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (str/includes? (slurp lock) "name = \"shared-base\""))
+        (expect (.isFile (io/file shared "shared_base.py")))
+        ;; Upstream uv installs the group that it changed; a plain shared sync does not select it.
+        (let [result (uv! "add"
+                          "--project" (str project)
+                          "--offline" "--group"
+                          "lint" (wheel "shared_extra"))]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (.isFile (io/file shared "shared_extra.py")))
+        (let [result (uv! "remove" "--project" (str project) "--offline" "shared-base")]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (not (str/includes? (slurp lock) "name = \"shared-base\"")))
+        ;; Other projects can use a removed package, so shared packages keep it.
+        (expect (.isFile (io/file shared "shared_base.py")))
+        (let [result (uv! "pip" "install" "--offline" (wheel "shared_dev"))]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (.isFile (io/file shared "shared_dev.py")))
+        (let [result (uv! "pip" "list")]
+          (expect (= 0 (:exit result)) (:output result))
+          (expect (str/includes? (:output result) "shared-dev") (:output result)))
+        (let [result (uv! "pip" "uninstall" "shared-dev")]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (not (.exists (io/file shared "shared_dev.py"))))
+        ;; An exact sync deletes the packages of every other project.
+        (spit (io/file dir "requirements.txt") "")
+        (let [result (uv! "pip" "sync" (str (io/file dir "requirements.txt")))]
+          (expect (= 1 (:exit result)) (:output result)))
+        (expect (.isFile (io/file shared "shared_base.py")))
+        ;; uv refuses --no-sync together with an install selection and with --frozen.
+        (let [result (uv! "add"
+                          "--project"
+                          (str project)
+                          "--offline"
+                          "--no-install-package"
+                          "shared-skip"
+                          (wheel "shared_skip")
+                          (wheel "shared_kept"))]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (.isFile (io/file shared "shared_kept.py")))
+        (expect (not (.exists (io/file shared "shared_skip.py"))))
+        (let [result
+              (uv! "add" "--project" (str project) "--offline" "--frozen" (wheel "shared_frozen"))]
+          (expect (= 0 (:exit result)) (:output result)))
+        (expect (str/includes? (slurp (io/file project "pyproject.toml")) "shared-frozen"))
+        (expect (not (.exists (io/file shared "shared_frozen.py"))))
+        (expect (not (.exists (io/file project ".venv"))))
+        (finally (delete-tree! dir))))))

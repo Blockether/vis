@@ -1084,11 +1084,24 @@
                    "To restore it, run: vis-agent python --shared uv sync --project "
                    previous))))
 
+(defn- shared-change!
+  "Run uv `command`, which changes shared `packages`; return its exit code. After a success,
+   name each editable package that moved and the reload that Vis workers need."
+  [^File cwd packages command]
+  (let [before
+        (editable-installs packages)
+
+        exit
+        (long (shared-sync-process! cwd command false))]
+
+    (when (zero? exit)
+      (warn-repointed-editables! before (editable-installs packages))
+      (.println config/original-stderr
+                (str "Shared packages: " packages "\nRun /reload to refresh Vis workers.")))
+    exit))
+
 (defn- shared-uv-sync!
   [args]
-  (when-not (= "sync" (first args))
-    (throw (ex-info "--shared supports uv sync only; use vis-agent python uv for other uv commands."
-                    {})))
   (if (some #{"--help" "-h"} (rest args))
     (shared-sync-help!)
     (let [{:keys [selection common location mode]}
@@ -1158,22 +1171,230 @@
                  exit
                  (let [packages (runtime/packages-dir)
                        modes (set (map first mode))
-                       before (when (empty? modes) (editable-installs packages))
                        install (into [uv "pip" "install" "--target" packages "--requirements"
                                       (str lock-file) "--no-deps" "--directory"
                                       (.getCanonicalPath project)]
                                      (concat common interpreter (when (seq modes) ["--dry-run"])))
-                       exit (if (modes "--check")
-                              (shared-sync-check! cwd install)
-                              (shared-sync-process! cwd install false))]
+                       exit (cond (modes "--check") (shared-sync-check! cwd install)
+                                  (seq modes) (shared-sync-process! cwd install false)
+                                  :else (shared-change! cwd packages install))]
 
-                   (when (and (zero? exit) (empty? modes))
-                     (warn-repointed-editables! before (editable-installs packages))
-                     (.println
-                       config/original-stderr
-                       (str "Shared packages: " packages "\nRun /reload to refresh Vis workers.")))
                    exit)))
              (finally (Files/deleteIfExists lock-file)))))))
+
+(def ^:private shared-edit-install-options
+  "Options of `uv add` and `uv remove` that select what the sync after the edit installs.
+   uv refuses them together with --no-sync, so only the shared sync gets them."
+  {"--no-install-project" 0
+   "--no-install-workspace" 0
+   "--no-install-local" 0
+   "--no-install-package" 1})
+
+(def ^:private shared-edit-options
+  "Options of `uv add` and `uv remove` that the shared sync after the edit needs too: the
+   project, the uv settings, the place of the dependency and the install selection."
+  (merge shared-sync-location-options
+         shared-sync-common-options
+         shared-edit-install-options
+         {"--package" 1 "--group" 1 "--optional" 1 "--dev" 0}))
+
+(defn- without-options
+  "`options` without the flags of `dropped`, a map of each flag to its count of values."
+  [dropped options]
+  (loop [options
+         (seq options)
+
+         kept
+         []]
+
+    (if-let [option (first options)]
+      (let [[flag inline] (str/split option #"=" 2)
+            arity (get dropped flag)]
+
+        (cond (nil? arity) (recur (next options) (conj kept option))
+              (and (= 1 arity) (nil? inline)) (recur (nnext options) kept)
+              :else (recur (next options) kept)))
+      kept)))
+
+(defn- shared-edit-sync-args
+  "The shared sync options that the `options` of `uv add` or `uv remove` imply. Upstream uv
+   syncs the group or the extra that it changed, so the shared sync selects it too."
+  [options]
+  (loop [options
+         (seq options)
+
+         sync
+         []]
+
+    (if-let [option (first options)]
+      (let [[flag inline] (str/split option #"=" 2)
+            arity (get shared-edit-options flag)
+            value (when (= 1 arity) (or inline (second options)))]
+
+        (recur (if (and value (nil? inline)) (nnext options) (next options))
+               (cond (nil? arity) sync
+                     (= "--dev" flag) (conj sync "--group" "dev")
+                     (= "--optional" flag) (conj sync "--extra" value)
+                     value (conj sync flag value)
+                     :else (conj sync flag))))
+      sync)))
+
+(defn- refuse-interpreter-option!
+  "Shared packages serve one interpreter, so a shared uv command takes no other."
+  [options]
+  (when (some #(re-matches #"--python(=.*)?|-p.*" %) options)
+    (throw (ex-info "Shared packages use the embedded Python of Vis; remove --python." {}))))
+
+(defn- shared-uv-project!
+  "Run `uv lock`, `uv export` or `uv tree`, which use only project files, with the embedded
+   Python of Vis. Without it uv resolves for another interpreter that it finds or downloads."
+  [[command & options]]
+  (refuse-interpreter-option! options)
+  (shared-sync-process! (io/file (System/getProperty "user.dir"))
+                        (-> [(bundled-uv!) command]
+                            (into (embedded-python))
+                            (into options))
+                        false))
+
+(defn- shared-uv-edit!
+  "Run `uv add` or `uv remove` for a project that installs into shared packages.
+   uv changes `pyproject.toml` and `uv.lock` and never a project environment; a shared sync
+   then installs the lock. As in upstream uv, --frozen and --no-sync stop after the edit, and
+   --script changes only the script. uv refuses --no-sync together with --frozen and with the
+   install selection, so an edit that stops gets the options unchanged. A removed package
+   stays in shared packages, because other projects can use it."
+  [[command & options :as args]]
+  (let [uv
+        (bundled-uv!)
+
+        cwd
+        (io/file (System/getProperty "user.dir"))]
+
+    (if (some #{"--help" "-h"} options)
+      (shared-sync-process! cwd (into [uv] args) false)
+      (do (refuse-interpreter-option! options)
+          (let [edit-only?
+                (some #(re-matches #"--frozen|--no-sync|--script(=.*)?" %) options)
+
+                exit
+                (shared-sync-process! cwd
+                                      (-> [uv command]
+                                          (into (when-not edit-only? ["--no-sync"]))
+                                          (into (embedded-python))
+                                          (into (if edit-only?
+                                                  options
+                                                  (without-options shared-edit-install-options
+                                                                   options))))
+                                      false)]
+
+            (if (or (not (zero? exit)) edit-only?)
+              exit
+              (let [exit (shared-uv-sync! (into ["sync"] (shared-edit-sync-args options)))]
+                (when (and (zero? exit) (= "remove" command))
+                  (.println
+                    config/original-stderr
+                    (str
+                      "Shared packages keep a removed package, because other projects can use it.\n"
+                      "To delete it, run: vis-agent python --shared uv pip uninstall NAME")))
+                exit)))))))
+
+(def ^:private shared-pip-commands
+  "The `uv pip` commands that read or change a --target directory, each with true when it
+   changes the packages. `sync` takes --target too, but an exact sync deletes the packages of
+   every other project. `tree` and `check` cannot read a --target directory."
+  {"install" true "uninstall" true "list" false "freeze" false "show" false})
+
+(defn- shared-uv-pip!
+  "Run a `uv pip` command on shared packages with the embedded Python of Vis."
+  [[command & options]]
+  (cond (= "sync" command)
+        (throw (ex-info
+                 (str
+                   "--shared does not support uv pip sync: it deletes the shared packages of other "
+                   "projects. Use vis-agent python --shared uv pip install -r FILE.")
+                 {}))
+        (= "check" command) (throw (ex-info (str "uv pip check cannot read shared packages. "
+                                                 "Use vis-agent python --shared -m pip check.")
+                                            {}))
+        (= "tree" command) (throw (ex-info (str "uv pip tree cannot read shared packages. "
+                                                "Use vis-agent python --shared uv pip list.")
+                                           {}))
+        (not (contains? shared-pip-commands command))
+        (throw (ex-info (str "--shared supports uv pip "
+                             (str/join ", " (sort (keys shared-pip-commands)))
+                             ". Use vis-agent python uv pip for other commands.")
+                        {}))
+        :else (let [packages
+                    (runtime/packages-dir)
+
+                    cwd
+                    (io/file (System/getProperty "user.dir"))
+
+                    argv
+                    (-> [(bundled-uv!) "pip" command "--target" packages]
+                        (into (embedded-python))
+                        (into options))]
+
+                (if (and (shared-pip-commands command)
+                         (not-any? #{"--dry-run" "--help" "-h"} options))
+                  (shared-change! cwd packages argv)
+                  (shared-sync-process! cwd argv false)))))
+
+(defn- shared-uv-help!
+  []
+  (.println
+    config/original-stdout
+    (str
+      "Usage: vis-agent python --shared uv COMMAND [OPTIONS]\n\n"
+      "Run uv on Vis shared packages with the embedded Python of Vis. No command makes or reads .venv.\n\n"
+      "Commands:\n" "  sync            Install a project's locked dependencies. See sync --help.\n"
+      "  add             Add dependencies to pyproject.toml and uv.lock, then sync.\n"
+      "  remove          Remove dependencies from pyproject.toml and uv.lock, then sync.\n"
+      "                  The removed packages stay in shared packages.\n"
+      "  pip install     Install packages.\n"
+      "  pip uninstall   Delete packages. Other projects can still need them.\n"
+      "  pip list | pip freeze | pip show\n"
+      "                  Read the installed packages.\n" "  lock | export | tree\n"
+      "                  Use only project files, as in upstream uv.\n\n"
+      "All but sync take the options of upstream uv, without --python.\n"
+      "Use vis-agent python uv for all other uv commands.\n"
+      "Run /reload after a change to refresh Vis workers."))
+  0)
+
+(defn- shared-uv!
+  "Run `uv ARGS` on Vis shared packages, never on a project environment; return the exit code.
+   Only commands that install into, delete from or read an environment have a shared form."
+  [args]
+  (case (first args)
+    (nil "--help" "-h" "help")
+    (shared-uv-help!)
+
+    ("--version" "-V")
+    (shared-sync-process! (io/file (System/getProperty "user.dir"))
+                          [(bundled-uv!) (first args)]
+                          false)
+
+    "sync"
+    (shared-uv-sync! args)
+
+    ("add" "remove")
+    (shared-uv-edit! args)
+
+    ("lock" "export" "tree")
+    (shared-uv-project! args)
+
+    "pip"
+    (shared-uv-pip! (rest args))
+
+    "run"
+    (throw (ex-info (str "--shared does not support uv run. Run a shared tool with "
+                         "vis-agent python --shared -m MODULE.")
+                    {}))
+
+    (throw (ex-info (str "--shared supports uv sync, add, remove, lock, export, tree and pip; "
+                         "run vis-agent python --shared uv --help. "
+                         "Use vis-agent python uv for other uv commands.")
+                    {}))))
 
 (defn shared-environment?
   "True when merged config selects shared packages for project extensions.
@@ -1435,7 +1656,7 @@
                                   (.inheritIO))))]
      (when (and (zero? exit) (= "sync" (first args))) (stamp-synced-project! args))
      exit))
-  ([args {:keys [shared?]}] (if shared? (shared-uv-sync! args) (uv-command! args))))
+  ([args {:keys [shared?]}] (if shared? (shared-uv! args) (uv-command! args))))
 
 (defn pip-install!
   "Install `specs` with pip and make what landed importable in THIS process,

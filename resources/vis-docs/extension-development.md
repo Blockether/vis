@@ -341,6 +341,37 @@ vis-agent python --shared uv sync --project . --check --offline || vis-agent pyt
 
 `vis-agent python --shared uv sync --help` lists supported options. Shared sync does
 not support `--exact`, `--active`, or choosing another interpreter.
+
+### Add and remove shared packages
+
+`--shared` also works with the uv commands that change or read installed packages. Each command
+uses Vis's embedded Python and the shared packages. None of them creates `.venv`.
+
+```bash
+# Add a dependency to pyproject.toml and uv.lock, then install the lock:
+vis-agent python --shared uv add --project ./einmal requests
+
+# Remove it from pyproject.toml and uv.lock:
+vis-agent python --shared uv remove --project ./einmal requests
+
+# Install, list and delete packages without a project:
+vis-agent python --shared uv pip install requests
+vis-agent python --shared uv pip list
+vis-agent python --shared uv pip uninstall requests
+```
+
+- `uv add` and `uv remove` take the options of upstream uv, but not `--python`. `--group` and
+  `--optional` also select that group or extra for the install. `--frozen`, `--no-sync` and
+  `--script` change the files and install nothing.
+- `uv remove` keeps the package in shared packages, because other projects can use it. To
+  delete it, use `uv pip uninstall`.
+- `uv pip install`, `uninstall`, `list`, `freeze` and `show` work on shared packages.
+  `uv pip sync` is not available, because it deletes the packages of other projects.
+- `uv lock`, `uv export` and `uv tree` use only project files. They run with the embedded Python.
+- `vis-agent python --shared -m pip` also installs into shared packages. It does not install
+  or uninstall pip, which belongs to the Python runtime of Vis.
+
+`vis-agent python --shared uv --help` lists these commands.
 Without `--shared`, `vis-agent python uv ...` remains ordinary upstream uv.
 
 ## Use shared packages for project extensions

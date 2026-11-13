@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Python CLI: `vis-agent python --shared uv` supports `add`, `remove`, `lock`, `export`, `tree` and `pip install`, `pip uninstall`, `pip list`, `pip freeze` and `pip show`. Each command uses the embedded Python and the shared packages, and none creates `.venv`. `uv add` and `uv remove` change `pyproject.toml` and `uv.lock`, then install the lock into shared packages. A removed package stays there, because other projects can use it. `uv pip sync` stays unavailable, because it deletes the packages of other projects. Before, each command but `sync` stopped with an error.
+
 ### Fixed
+- Python CLI: `vis-agent python --shared -m pip install` installs into shared packages (`~/.vis/python/packages` or `VIS_PYTHON_PACKAGES`). The same applies to `vis-agent python -m pip` outside a project. Before, pip reported a success but wrote into the directory of the Python runtime, which a runtime update replaces. pip in `vis-agent python` does not install or uninstall pip, because the Python runtime owns it.
 - Jail (#474): on macOS, a jailed command can start `vis-agent` with Python extensions. Each jailed child gets a private directory in `VIS_RUNTIME_DIR`, where it can bind Unix sockets and connect to them. The jail refuses a Unix socket bind in all other paths. The Python runtime makes the directory and deletes it after the child stops, without following symbolic links. A gateway start also deletes the directories that a killed Vis process left, under the task directory in its owner record. An invalid task directory no longer prevents a gateway from ending its confined processes. Before, each extension worker failed with "Operation not permitted" when it bound its control socket in `/tmp`. The Python runtime is now at commit 0e324e3.
 - Extensions (#475): a reload that replaces a Python extension restarts each worker that ran the old code. These are the registration worker and the extension worker of each session that used the extension. The threads, timers and file locks of the old code end with that process. A worker with a running call restarts when the call ends. Before, the old code continued in the same process, so a background job kept its file lock and the new code could not take it.
 

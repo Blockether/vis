@@ -2334,6 +2334,31 @@
       "finally:\n"
       "    del __vis_activate_cli_environment__\n")))
 
+(defn- share-python-cli-installs!
+  "Make shared `packages` the place where this interpreter installs packages.
+   pip takes its install paths from the interpreter. Without this scheme they name the
+   site-packages of the runtime itself: a runtime update replaces that directory, and the
+   install is not in shared packages. The paths are those of `uv pip install --target`."
+  [ctx packages]
+  (pyrt/exec! ctx
+              (str "def __vis_share_installs__(packages):\n"
+                   "    import os, sysconfig\n"
+                   "    scheme = dict(sysconfig._INSTALL_SCHEMES[sysconfig.get_default_scheme()])\n"
+                   "    scheme.update(purelib=packages, platlib=packages, data=packages,\n"
+                   "                  scripts=os.path.join(packages, 'bin'),\n"
+                   "                  include=os.path.join(packages, 'include'),\n"
+                   "                  platinclude=os.path.join(packages, 'include'))\n"
+                   "    sysconfig._INSTALL_SCHEMES['vis_shared'] = scheme\n"
+                   "    preferred = sysconfig.get_preferred_scheme\n"
+                   "    sysconfig.get_preferred_scheme = (\n"
+                   "        lambda key: 'vis_shared' if key == 'prefix' else preferred(key))\n"
+                   "try:\n"
+                   "    __vis_share_installs__("
+                   (env/py-json-literal packages)
+                   ")\n"
+                   "finally:\n"
+                   "    del __vis_share_installs__\n")))
+
 (defn- python-cli-context
   "Build a fresh standalone Python sandbox for `vis-agent python`: the same
    interpreter the agent runs, filesystem rooted at the current working
@@ -2348,7 +2373,8 @@
    declared by the project's packaging metadata. An existing cwd/.venv (or
    UV_PROJECT_ENVIRONMENT) supplies installed packages and editable hooks, without
    shared packages. A pyproject.toml without an environment reports a sync error.
-   `shared?` skips project activation and inferred/configured source roots. The
+   Without a project environment the interpreter imports shared packages, and pip
+   installs into them. `shared?` skips project activation and inferred/configured source roots. The
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE.
    Merged `python.tls_strict` applies as in workers and sets `VIS_PYTHON_TLS_STRICT`."
   [{:keys [network? argv env shared? mode]}]
@@ -2388,10 +2414,11 @@
          (pyrt/exec!
            python-context
            (str "import tls_policy\ntls_policy.configure(" (if tls-strict? "True" "False") ")\n"))
-         (when project-environment
+         (if project-environment
            (activate-python-cli-environment! python-context
                                              cwd
-                                             {"UV_PROJECT_ENVIRONMENT" project-environment}))
+                                             {"UV_PROJECT_ENVIRONMENT" project-environment})
+           (share-python-cli-installs! python-context (pyrt/packages-dir)))
          (catch Throwable t (env/dispose-python-context! python-context) (throw t)))
     ;; The interpreter receives the environment after startup, so PYTHONPATH
     ;; needs the same explicit sys.path setup a process launch would perform.
@@ -2581,6 +2608,51 @@
   (try (pyrt/exec! ctx (str python-cli-runner-src "\n__vis_shutdown__()\n"))
        (catch Throwable t (commandline/stderr! (or (.getMessage t) (str t))))))
 
+(def ^:private pip-flag
+  "The general options of pip that take no value. pip also takes other options, shortened
+   options and hidden names, so each other option can take the next argument as its value."
+  #"-[hvVq]+|--(help|debug|isolated|require-virtualenv|verbose|version|quiet|no-input|no-proxy-env|no-cache-dir|disable-pip-version-check|no-color)")
+
+(defn- pip-command-candidates
+  "Each argument list in the `args` of pip that can start with the command of pip. The
+   argument after an option that can take a value is that value or the command, so both
+   readings count."
+  [args]
+  (loop [args
+         (seq args)
+
+         option
+         nil
+
+         found
+         []]
+
+    (let [arg (first args)]
+      (cond (nil? arg) found
+            (str/starts-with? arg "-") (recur (next args) arg found)
+            (or (nil? option) (str/includes? option "=") (re-matches pip-flag option)) (conj found
+                                                                                             args)
+            :else (recur (next args) nil (conj found args))))))
+
+(defn- pip-changes-itself?
+  "True when `argv` of `-m pip` installs or uninstalls pip by its name or from a pip archive.
+   The Python runtime of Vis owns its pip, and the sandbox installs packages with it. pip in
+   this interpreter would delete that copy and install the new one in another directory.
+   A requirements file or a source directory that names pip is not seen."
+  [argv]
+  (boolean
+    (and (= "pip" (first argv))
+         (some
+           (fn [[command & targets]]
+             (and
+               (contains? #{"install" "uninstall"} command)
+               (some
+                 #(re-matches
+                    #"(?i)pip(\[.*\])?\s*([<>=!~@;].*)?|(.*[/\\])?pip-\d[^/\\]*\.(whl|tar\.gz|zip)"
+                    %)
+                 targets)))
+           (pip-command-candidates (rest argv))))))
+
 (defn- run-python-module!
   "Run MODULE as `__main__` in `ctx`, returning its exit code."
   [ctx module]
@@ -2645,7 +2717,11 @@
               (do (commandline/stderr! (str "vis-agent python: no such file: " file)) 2)))
 
           :module
-          (run-python-module! ctx module)
+          (if (pip-changes-itself? argv)
+            (do (commandline/stderr! (str "pip is part of the Python runtime of Vis. "
+                                          "A Vis update replaces it; vis-agent python does not."))
+                1)
+            (run-python-module! ctx module))
 
           :interactive
           (if (some? (System/console))
@@ -2737,6 +2813,7 @@
      ["vis-agent python --shared -c \"import requests; print(requests.__version__)\""
       "vis-agent python --shared -m pip install requests   # shared sandbox packages"
       "vis-agent python --shared uv sync --all-groups --all-extras   # shared project dependencies"
+      "vis-agent python --shared uv add requests   # add to the project, install in shared packages"
       "vis-agent python uv sync --project ./einmal --locked   # prepare extension dependencies"
       "vis-agent python -m pytest tests/ -q   # module run as __main__"
       "vis-agent python -m pytest tests/   # src layout inferred from project metadata"
