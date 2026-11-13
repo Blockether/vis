@@ -166,6 +166,7 @@ export function SettingsPanel({
   title,
   headingLevel = 4,
   meta,
+  note,
   action,
   disclosure,
   defaultOpen,
@@ -176,6 +177,8 @@ export function SettingsPanel({
   /** Heading level beneath the surrounding dialog or settings column. */
   headingLevel?: 3 | 4;
   meta?: ReactNode;
+  /** A short fact for every row of the band, in small italic type in parentheses after the name. */
+  note?: string;
   /** One icon action or switch; the header owns its alignment and trailing space. */
   action?: ReactNode;
   /** Makes the whole named band the disclosure target; the caller owns its state. */
@@ -221,10 +224,13 @@ export function SettingsPanel({
         variant={isNested ? 'group' : 'band'}
         role="heading"
         aria-level={level}
-        className="min-w-0 flex-auto truncate"
+        className={`min-w-0 truncate ${note ? '' : 'flex-auto'}`}
       >
         {title}
       </Text>
+      {note && (
+        <span className="min-w-0 flex-auto truncate font-mono text-meta italic text-dialog-hint">({note})</span>
+      )}
       {meta && (
         <span className="ms-auto min-w-0 max-w-full break-words text-right">
           <Text variant="meta">{meta}</Text>

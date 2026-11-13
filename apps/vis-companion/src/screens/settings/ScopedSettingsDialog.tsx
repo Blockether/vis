@@ -5,7 +5,7 @@ import type { SettingDecidedIn, SettingValue, SettingsResponse, SettingsTarget, 
 import { OpenMachineSettings, OpenScopedSettings } from '../../lib/open-settings';
 import { filterSettings, flattenSettings } from '../../lib/setting-tree';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
-import { McpServersPanel, SettingRow, secretSafeMessage, settingTree } from './MachineSettings';
+import { appliesNote, McpServersPanel, SettingRow, secretSafeMessage, settingTree } from './MachineSettings';
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingMachine } from './SettingField';
 import { hostOf } from '../../lib/endpoints';
@@ -186,7 +186,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
             <SettingsBandsOpen.Provider value={bandsOpen || Boolean(needle)}>
             {/* `divide-y` rules only between bands, so the last band gets its own rule and does not look open. */}
             <div className="divide-y divide-dialog-edge [&>:last-child]:border-b [&>:last-child]:border-dialog-edge">
-              {groups.filter((group) => !isExtensionGroup(group) && group !== tools).map((group) => <SettingsPanel key={needle ? `${group.id}:search` : group.id} title={group.title} headingLevel={3}>
+              {groups.filter((group) => !isExtensionGroup(group) && group !== tools).map((group) => <SettingsPanel key={needle ? `${group.id}:search` : group.id} title={group.title} note={appliesNote(group.toggles)} headingLevel={3}>
                 {rows(group)}
               </SettingsPanel>)}
               {(!needle || extensions.length > 0 || tools) && (

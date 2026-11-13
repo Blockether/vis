@@ -493,6 +493,18 @@ export function lockNote(toggle: Toggle): string | null {
 }
 
 /**
+ * The band note for rows that all take effect by the next turn: some on the next turn and
+ * the rest sooner, on the next call. One note in the header replaces a description line on
+ * every row (user). A row that applies at once, or only after a reload, gives no note.
+ */
+export function appliesNote(toggles: Toggle[]): string | undefined {
+  const isByNextTurn = toggles.length > 0
+    && toggles.every((toggle) => toggle.applies === 'next_turn' || toggle.applies === 'next_call')
+    && toggles.some((toggle) => toggle.applies === 'next_turn');
+  return isByNextTurn ? 'changes apply to the next turn' : undefined;
+}
+
+/**
  * One setting row and the rows under it, at any depth. Each level stands one step in.
  * A boolean parent that is off shows no rows under it: they cannot act until it is on.
  */
@@ -865,7 +877,7 @@ export function MachineSettings({
         groups
           .filter((group) => !isExtensionGroup(group) && !sectionIds.includes(group.id))
           .map((group) => (
-            <SettingsPanel key={group.id} title={group.title}>
+            <SettingsPanel key={group.id} title={group.title} note={appliesNote(group.toggles)}>
               {settingRows(group)}
             </SettingsPanel>
           ))

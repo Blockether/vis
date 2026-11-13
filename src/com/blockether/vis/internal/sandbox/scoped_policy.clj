@@ -302,12 +302,11 @@
              :inherited-value (:value parent)
              :inherited-source (:source parent)
              :own-value (when is-override value)
-             :applies (or applies "next_turn")
-             :description
-             (or description
-                 (if (= "project" (:scope target))
-                   "Changes apply to the next turn. Project access cannot exceed host permissions."
-                   "Changes apply to the next turn."))}
+             :applies (or applies "next_turn")}
+            ;; The contract has no null description. The band header names when changes apply.
+            (or description (= "project" (:scope target)))
+            (assoc :description (or description "Project access cannot exceed host permissions."))
+
             (= type "boolean")
             (assoc :enabled value)
 

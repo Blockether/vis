@@ -518,6 +518,8 @@ export interface Toggle {
   is_override?: boolean;
   /** The wider scope whose value applies when this target removes its own. */
   inherited_source?: SettingsScope | 'default';
+  /** When a change takes effect: `$defs.setting.properties.applies` in gateway.json. */
+  applies?: 'immediate' | 'next_call' | 'next_turn' | 'reload' | 'restart';
   /** Present only when the request named a session whose own scopes decide this row. */
   overridden_by?: SettingOverride;
   /** Present only when a wider scope decides this inherited row. */
