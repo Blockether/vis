@@ -21,7 +21,6 @@ import {
   axisMarks,
   dockTeams,
   formatAgentTime,
-  teamCounts,
   teamTime,
   useAgentTeam,
 } from './AgentTeam';
@@ -295,19 +294,6 @@ describe('agent row notes', () => {
 });
 
 describe('team line', () => {
-  // The team line shows no role counts: the table names each role.
-  it('counts the agents by status, the work first', () => {
-    const statuses = teamCounts([
-      { ...child, role: 'verify' },
-      { ...child, session_id: 'b', role: 'research', status: 'completed' },
-      { ...child, session_id: 'c', role: 'research', status: 'cancelled' },
-      { ...child, session_id: 'd' },
-      { ...child, session_id: 'e', role: 'verify', status: 'queued' },
-    ]);
-    expect(statuses.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 running', '1 queued', '1 done', '1 failed']);
-    expect(teamCounts([])).toEqual([]);
-  });
-
   it('times the team from its first spawn to now while it works, else to its last end', () => {
     const ended = { ...child, status: 'completed' as const };
     expect(teamTime([], T0)).toBeUndefined();
@@ -320,9 +306,9 @@ describe('team line', () => {
     vi.useFakeTimers({ now: T0 + 200_000 });
     render(<TurnAgents {...props} agents={[{ ...child, role: 'research' }]} />);
     const line = () => screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]');
-    expect(line()).toHaveTextContent(/^team3m 20s1 run/);
+    expect(line()).toHaveTextContent(/^team3m 20s$/);
     act(() => { vi.advanceTimersByTime(2000); });
-    expect(line()).toHaveTextContent(/^team3m 22s1 run/);
+    expect(line()).toHaveTextContent(/^team3m 22s$/);
     vi.useRealTimers();
   });
 
@@ -354,7 +340,7 @@ describe('teams', () => {
 });
 
 // User report 2026-11-09: a stored team card showed its agents and no leader. Each team table
-// starts with the leader row; it opens nothing, and the team counts stay agent counts.
+// starts with the leader row; it opens nothing.
 describe('leader row', () => {
   const wide = (isWide: boolean) => vi.stubGlobal('matchMedia', (query: string) => ({
     matches: isWide && query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
@@ -376,7 +362,6 @@ describe('leader row', () => {
     expect(rows).toHaveLength(3);
     expect(rows[0]).toMatch(/^leaderBoth reviews pass\.30s \(waited 12s\)done$/);
     expect(rows[1]).toMatch(/^verifyCompanion review/);
-    expect(screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]')).toHaveTextContent(/2 done/);
     expect(document.querySelector('[data-leader-row]')?.closest('button')).toBeNull();
   });
 
@@ -446,7 +431,6 @@ describe('leader row', () => {
       expect.stringMatching(/^agent#1/),
       expect.stringMatching(/^agent#1/),
     ]);
-    expect(screen.getByRole('button', { expanded: true })).toHaveAccessibleName(/2 running$/);
   });
 });
 

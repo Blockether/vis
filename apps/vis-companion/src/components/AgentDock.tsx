@@ -6,7 +6,7 @@ import { ChevronIcon, MARK_NUDGE } from './icons';
 
 /**
  * The subagents of the running turn, above the composer, folded to one line: the time of
- * the team and its counts by status. The line opens the table of the team.
+ * the team. The line opens the table of the team.
  * Timeline at the end of the line opens the table with the time bars of its agents. A team stays here while
  * one of its agents still works after its turn ended; then it stands in that turn of the
  * transcript.
@@ -53,7 +53,7 @@ export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<
           type="button"
           aria-expanded={open}
           aria-controls={body}
-          aria-labelledby={`${line}-team ${line}-time ${line}-counts`}
+          aria-labelledby={`${line}-team ${line}-time`}
           onClick={() => setOpen((value) => !value)}
           className="absolute inset-0 rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
         />

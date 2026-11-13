@@ -120,28 +120,6 @@ export function agentUpdate(agent: Subagent): string | undefined {
   return agent.activity ?? (councilLine(agent.task.trim().split('\n', 1)[0]) || undefined);
 }
 
-/** One count of a team line, such as `1 running`, with its ink. */
-export interface TeamCount {
-  text: string;
-  count: number;
-  ink: string;
-}
-
-// The order of the status counts: the work first, then the ends.
-const STATUS_ORDER = ['running', 'queued', 'done', 'failed'];
-
-function counted(words: readonly { text: string; ink: string }[], order: readonly string[]): TeamCount[] {
-  const counts = new Map<string, TeamCount>();
-  for (const word of words) counts.set(word.text, { ...word, count: (counts.get(word.text)?.count ?? 0) + 1 });
-  const rank = (text: string) => (order.includes(text) ? order.indexOf(text) : order.length);
-  return [...counts.values()].sort((a, b) => rank(a.text) - rank(b.text));
-}
-
-/** The agents counted by status word, the work first. */
-export function teamCounts(agents: readonly Subagent[]): TeamCount[] {
-  return counted(agents.map(agentStatus), STATUS_ORDER);
-}
-
 const marks = (values: readonly (number | null | undefined)[]) => values.filter((mark): mark is number => typeof mark === 'number');
 
 /**
@@ -162,41 +140,13 @@ function Divider() {
   return <span aria-hidden="true" className="h-3 w-px shrink-0 bg-dialog-edge" data-team-divider />;
 }
 
-// The counts of a team on a phone: one square for each agent, in the bar ink of its status. A
-// queued or waiting agent is an empty square. A screen reader reads the counts as words.
-function CountMarks({ counts, id }: { counts: readonly TeamCount[]; id?: string }) {
-  return (
-    <span id={id} className="flex min-w-0 flex-wrap items-center gap-0.5" data-team-marks>
-      {counts.flatMap(({ text, count }) =>
-        Array.from({ length: count }, (_, index) => (
-          <span key={`${text}-${index}`} aria-hidden="true" className={`size-2 ${BAR_INK[text] ?? 'border border-dialog-hint'}`} />
-        )),
-      )}
-      <span className="sr-only">{counts.map(({ text, count }) => `${count} ${text}`).join(', ')}</span>
-    </span>
-  );
-}
-
-function Counts({ counts, id, isShort }: { counts: readonly TeamCount[]; id?: string; isShort: boolean }) {
-  if (isShort) return <CountMarks counts={counts} id={id} />;
-  return (
-    <span id={id} className="flex flex-wrap gap-x-3">
-      {counts.map(({ text, count, ink }) => (
-        <span key={text} className={`whitespace-nowrap uppercase tabular-nums ${ink}`}>{`${count} ${text}`}</span>
-      ))}
-    </span>
-  );
-}
-
 /**
- * A team on one line: its time, then its counts by status: `TEAM | 3m 20s  1 RUNNING  2 DONE`.
- * A phone shortens the status words. `action` stands at the end of the line. `labelId` names the word, the time and the counts
- * `${labelId}-team`, `${labelId}-time` and `${labelId}-counts`, so a control can take them as its name.
+ * A team on one line: its time: `TEAM | 3m 20s`. `action` stands at the end of the line. `labelId` names the word and
+ * the time `${labelId}-team` and `${labelId}-time`, so a control can take them as its name.
  */
 export function TeamLine({ agents, action, labelId }: { agents: readonly Subagent[]; action?: ReactNode; labelId?: string }) {
   const now = useNow(agents.some(isLive));
   const time = teamTime(agents, now);
-  const isWide = useWide();
   return (
     <span className="flex min-w-0 flex-1 items-center gap-x-3 sm:min-h-5" data-team-line>
       <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 max-sm:flex-nowrap">
@@ -207,7 +157,6 @@ export function TeamLine({ agents, action, labelId }: { agents: readonly Subagen
             {formatAgentTime(time)}
           </span>
         )}
-        <Counts counts={teamCounts(agents)} id={labelId && `${labelId}-counts`} isShort={!isWide} />
       </span>
       {action}
     </span>
