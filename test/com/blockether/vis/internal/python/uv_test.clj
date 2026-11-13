@@ -581,7 +581,7 @@
           (expect (str/includes? (.getMessage (failure #(python-runtime/uv-command! ["run" "python"]
                                                                                     {:shared?
                                                                                      true})))
-                                 "supports uv sync only"))))))
+                                 "does not support uv run"))))))
 
 (defdescribe
   shared-sync-stages-and-cleanup-test
