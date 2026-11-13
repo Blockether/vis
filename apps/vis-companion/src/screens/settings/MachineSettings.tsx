@@ -559,7 +559,7 @@ export function SettingRow({ toggle, busy, head, error, onToggle, onPick, onInhe
       ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (
         <ValueSetting key={`${toggle.id}:${JSON.stringify(toggle.value)}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : (
-        <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] ${head ? 'items-center' : 'items-start'} gap-x-4 gap-y-2 px-3 py-2 sm:px-4`}>
+        <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] ${head || toggle.type === 'boolean' ? 'items-center' : 'items-start'} gap-x-4 gap-y-2 px-3 py-2 sm:px-4`}>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <Text as={head ? (head.level === 4 ? 'h4' : head.level === 5 ? 'h5' : 'h6') : 'p'} id={head?.id} variant={head ? 'heading' : 'label'} className="break-words">{toggle.label}</Text>
