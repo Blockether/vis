@@ -23,6 +23,108 @@ Vis is a coding agent you can adapt to your tools and workflow.
 Ask it to explore a project, make a change or investigate a failure. Follow the
 work from your terminal, desktop or phone, with the same sessions on each.
 
+## Install
+
+Install Vis on the computer where your projects live. The installer does not need
+Java or Git. Native packages support Apple silicon macOS and Linux (x64 or ARM64).
+On Windows, use Linux in WSL2. See [Runtime distributions](resources/vis-docs/distributions.md)
+for source builds and other installation options.
+
+The installer writes to `~/.local/bin` and can update your shell profile. You can
+[read it first](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent).
+
+```bash
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
+```
+
+This installs the engine, Python and two of the three clients. All clients show the
+same sessions, so you can start a task in one client and continue it in another.
+
+| Client | What it is | How to get it |
+| --- | --- | --- |
+| [Terminal client (TUI)](#terminal-client-tui) | Vis in your terminal, in the project directory. | Included. Run `vis-agent tui`. |
+| [Web app](#web-app-browser) | Vis in a browser, on this computer or on other devices on your network. | Included. Run `vis-agent web`. |
+| [Companion app](#companion-app-desktop) | Vis as an application on your desktop, phone or tablet. It connects to the engine on your computer. | A separate download for Windows, macOS, Linux, iPhone, iPad and Android. |
+
+### Terminal client (TUI)
+
+Open a terminal in your project:
+
+```bash
+cd /path/to/project
+vis-agent tui
+```
+
+Choose a provider, sign in and select a model. Your provider may charge for model
+usage. You can also use a supported local model. Try a read-only first task:
+“Explain how this project is organized. Don't change any files.”
+
+Vis can edit files and run commands within its configured permissions. Review
+changes before using them. The [first-session guide](resources/vis-docs/index.md#first-session)
+covers setup and what to expect.
+
+### Web app (browser)
+
+Open Vis in a browser:
+
+```bash
+vis-agent web
+```
+
+This starts the gateway if needed and opens the web app in your default browser, already
+connected to that gateway. The gateway serves the web app itself, so you do not need
+Node.js. Keep the command running
+while you use the app, and press Ctrl-C when you are done. Choose the gateway address
+with `--host` and `--port`: for example, `vis-agent web --host 0.0.0.0` also serves
+other devices on your network. Release and beta installations download a missing web app
+the first time you run the command. See
+[Web app setup](resources/vis-docs/distributions.md#open-the-web-app) for addresses,
+tokens and source checkouts.
+
+### Companion app: desktop
+
+The desktop app runs on Windows, macOS and Linux. It does not run the engine: it
+connects to the gateway on the computer where your projects live.
+
+Use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
+For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-arm64.AppImage). You can also browse all packages
+on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest).
+
+<p>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
+</p>
+
+Install the package, open Vis, and [connect to your gateway](resources/vis-docs/index.md#connecting-the-companion-app).
+See [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app) for installation
+and launcher options.
+
+### Companion app: phone and tablet
+
+Use your iPhone, iPad or Android device to check progress or continue a conversation
+on the same gateway. Both stores offer public testing without an invitation.
+
+<p>
+<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
+<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
+</p>
+
+Follow the [phone pairing guide](resources/vis-docs/index.md#pair-a-phone).
+Questions and beta feedback: `contact@blockether.com`.
+
+### Update
+
+```bash
+vis-agent update
+```
+
+This selects the latest stable release. Preview and source-build updates need
+an explicit track. See [updates and release tracks](resources/vis-docs/distributions.md#updating-and-selecting-a-track).
+
 ## Rationale
 
 A capable model can write code, but it does not know how your team works. It does not know which
@@ -79,98 +181,6 @@ a bug fix with a regression test and a release preparation.
     <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-settings.png"><img src="resources/vis-docs/assets/screenshots/tui-settings.png" width="100%" alt="Vis TUI settings with general and view options and the configured model providers."></a></td>
   </tr>
 </table>
-
-## Install
-
-Install Vis on the computer where your projects live. The default release
-includes the engine, Python and terminal client. It does not need Java or Git.
-Native packages support Apple silicon macOS and Linux (x64 or ARM64). See
-[Runtime distributions](resources/vis-docs/distributions.md) for source builds
-and other installation options.
-
-The installer writes to `~/.local/bin` and can update your shell profile. You can
-[read it first](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent).
-
-```bash
-curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
-```
-
-## Quick start
-
-Open a terminal in your project:
-
-```bash
-cd /path/to/project
-vis-agent tui
-```
-
-Choose a provider, sign in and select a model. Your provider may charge for model
-usage. You can also use a supported local model. Try a read-only first task:
-“Explain how this project is organized. Don't change any files.”
-
-Vis can edit files and run commands within its configured permissions. Review
-changes before using them. The [first-session guide](resources/vis-docs/index.md#first-session)
-covers setup and what to expect.
-
-## Desktop app (Windows / macOS / Linux)
-
-Use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
-For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-arm64.AppImage). You can also browse all packages
-on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest).
-
-<p>
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.17/vis-companion-0.5.17-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
-</p>
-
-Install the package, open Vis, and [connect to your gateway](resources/vis-docs/index.md#connecting-the-companion-app).
-The gateway runs your sessions on the computer where your projects live. See
-[Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app) for installation
-and launcher options.
-
-## Web app (browser)
-
-Open Vis in a browser:
-
-```bash
-vis-agent web
-```
-
-This starts the gateway if needed and opens the web app in your default browser, already
-connected to that gateway. The gateway serves the web app itself, so you do not need
-Node.js. Keep the command running
-while you use the app, and press Ctrl-C when you are done. Choose the gateway address
-with `--host` and `--port`: for example, `vis-agent web --host 0.0.0.0` also serves
-other devices on your network. Release and beta installations download a missing web app
-the first time you run the command. See
-[Web app setup](resources/vis-docs/distributions.md#open-the-web-app) for addresses,
-tokens and source checkouts.
-
-## Companion app (iPhone / Android)
-
-Use your phone to check progress or continue a conversation on the same gateway.
-Both stores offer public testing without an invitation.
-
-<p>
-<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
-</p>
-
-Follow the [phone pairing guide](resources/vis-docs/index.md#pair-a-phone).
-Questions and beta feedback: `contact@blockether.com`.
-
-## Update
-
-```bash
-vis-agent update
-```
-
-This selects the latest stable release. Preview and source-build updates need
-an explicit track. See [updates and release tracks](resources/vis-docs/distributions.md#updating-and-selecting-a-track).
 
 ## Native vs JVM
 
