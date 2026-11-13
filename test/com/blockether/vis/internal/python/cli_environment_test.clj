@@ -267,24 +267,38 @@
         (finally (delete-tree! dir))))))
 
 (defn- shared-fixture-wheel!
-  ^File [^File project module]
-  (let [dist
-        (str module "-1.0.0.dist-info/")
+  "Write a wheel of one module. With `script`, the wheel declares that console script, which
+   prints its arguments and returns 5; the module run as `__main__` prints them too. It also
+   installs the shell program `SCRIPT-program`, which prints its arguments and exits 4."
+  (^File [^File project module] (shared-fixture-wheel! project module nil))
+  (^File [^File project module script]
+   (let [dist
+         (str module "-1.0.0.dist-info/")
 
-        wheel
-        (io/file project (str module "-1.0.0-py3-none-any.whl"))]
+         wheel
+         (io/file project (str module "-1.0.0-py3-none-any.whl"))]
 
-    (with-open [zip (ZipOutputStream. (io/output-stream wheel))]
-      (doseq [[path text] {(str module ".py") "VALUE = 42\n"
-                           (str dist "METADATA")
-                           (str "Metadata-Version: 2.1\nName: " module "\nVersion: 1.0.0\n")
-                           (str dist "WHEEL")
-                           "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
-                           (str dist "RECORD") ""}]
-        (.putNextEntry zip (ZipEntry. ^String path))
-        (.write zip (.getBytes ^String text "UTF-8"))
-        (.closeEntry zip)))
-    wheel))
+     (with-open [zip (ZipOutputStream. (io/output-stream wheel))]
+       (doseq [[path text]
+               (cond-> {(str module ".py") "VALUE = 42\n"
+                        (str dist "METADATA")
+                        (str "Metadata-Version: 2.1\nName: " module "\nVersion: 1.0.0\n")
+                        (str dist "WHEEL")
+                        "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+                        (str dist "RECORD") ""}
+                 script
+                 (assoc (str module ".py")
+                   (str "import sys\nVALUE = 42\ndef main():\n"
+                        "    print('script', sys.argv[1:])\n    return 5\n"
+                        "if __name__ == '__main__':\n    print('module', sys.argv[1:])\n")
+                   (str dist "entry_points.txt")
+                   (str "[console_scripts]\n" script " = " module ":main\n")
+                   (str module "-1.0.0.data/scripts/" script "-program")
+                   "#!/bin/sh\necho program \"$@\"\nexit 4\n"))]
+         (.putNextEntry zip (ZipEntry. ^String path))
+         (.write zip (.getBytes ^String text "UTF-8"))
+         (.closeEntry zip)))
+     wheel)))
 
 (defdescribe
   python-cli-shared-sync-test
@@ -667,3 +681,58 @@
         (expect (not (.exists (io/file shared "shared_frozen.py"))))
         (expect (not (.exists (io/file project ".venv"))))
         (finally (delete-tree! dir))))))
+
+(defdescribe
+  python-cli-shared-run-test
+  (it
+    "runs the command of uv run in the embedded Python with shared packages"
+    (let [dir
+          (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-shared-run-"
+                                                                 (make-array FileAttribute 0))))
+
+          project
+          (doto (io/file dir "project") .mkdirs)
+
+          shared
+          (io/file dir "shared")
+
+          environment
+          {"VIS_PYTHON_PACKAGES" (str shared) "UV_PYTHON" "not-the-embedded-python"}]
+
+      (try (shared-fixture-wheel! project "shared_run" "shared-run-tool")
+           (spit (io/file project "pyproject.toml")
+                 (str "[project]\nname = 'shared-run-project'\nversion = '0.1.0'\n"
+                      "requires-python = '>=3.12'\ndependencies = ['shared-run==1.0.0']\n"
+                      "[tool.uv.sources]\n"
+                      "shared-run = {path = 'shared_run-1.0.0-py3-none-any.whl'}\n"))
+           (spit (io/file project "program.py")
+                 "import shared_run, sys\nprint('file', shared_run.VALUE, sys.argv[1:])\n")
+           ;; The sync before the run installs the project; the script gets each later token.
+           (let [result (run-cli dir
+                                 environment
+                                 ["--shared" "uv" "run" "--project" (str project) "--offline"
+                                  "shared-run-tool" "--help" "-V"])]
+             (expect (= 5 (:exit result)) (:output result))
+             (expect (= "script ['--help', '-V']\n" (:stdout result)) (:output result)))
+           (expect (.isFile (io/file shared "shared_run.py")))
+           (let [[module program python child]
+                 (run-cli-together
+                   project
+                   (for [args [["-m" "shared_run" "--help"] ["program.py" "-v" "--gateway="]
+                               ["--no-sync" "python" "-c" "import shared_run, sys; sys.exit(3)"]
+                               ["--no-sync" "shared-run-tool-program" "--help"]]]
+                     {:environment environment
+                      :args (into ["--shared" "uv" "run" "--offline"] args)}))]
+             (expect (= [0 "module ['--help']\n"] [(:exit module) (:stdout module)])
+                     (:output module))
+             ;; A sync that changes nothing prints nothing.
+             (expect (= "" (:stderr module)) (:stderr module))
+             ;; A flag of Vis after the command is an argument of the command.
+             (expect (= [0 "file 42 ['-v', '--gateway=']\n" ""]
+                        [(:exit program) (:stdout program) (:stderr program)])
+                     (:output program))
+             (expect (= 3 (:exit python)) (:output python))
+             ;; A program that is not Python runs as a child process.
+             (expect (= [4 "program --help\n"] [(:exit child) (:stdout child)]) (:output child)))
+           (expect (not (.exists (io/file project ".venv"))))
+           (finally (delete-tree! dir))))))

@@ -2665,7 +2665,7 @@
   [ctx file]
   (run-python-program! ctx "__vis_run_file__" file))
 
-(defn- cli-python!
+(defn- run-python-cli!
   "`vis-agent python` -- run the embedded CPython without tool bindings. Modes:
    `-c CODE` (run a string), `-m MODULE`, `FILE.py`, `-` or piped stdin, an
    interactive REPL on a bare TTY, and `-V`/`--version`. Programs run as
@@ -2673,13 +2673,10 @@
    after the program selector become `sys.argv`. `--no-network` disables sandbox
    network; the caller's environment is inherited into `os.environ` by default
    (`--no-env` scrubs it, `--env K=V` sets/overrides one var). `--shared` selects
-   Vis's shared packages instead of the current project's environment."
-  [_parsed residual]
-  (config/init-cli!)
-  (let [{:keys [network? inherit-env? env-overrides shared? mode code file module argv]}
-        (parse-python-cli-args residual)
-
-        env
+   Vis's shared packages instead of the current project's environment.
+   Return the exit code of the plan from `parse-python-cli-args`."
+  [{:keys [network? inherit-env? env-overrides shared? mode code file module argv]}]
+  (let [env
         (merge (if inherit-env? (into {} (System/getenv)) {})
                (python-cli-env-overrides->map env-overrides))
 
@@ -2699,7 +2696,11 @@
                  (throw (ex-info
                           "Python sandbox options do not apply to uv; put uv directly after python"
                           {})))
-               (python-runtime/uv-command! argv {:shared? shared?})
+               ;; A shared `uv run` runs its command here, in the embedded Python.
+               (python-runtime/uv-command! argv
+                                           {:shared? shared?
+                                            :python! #(run-python-cli! (parse-python-cli-args
+                                                                         (into ["--shared"] %)))})
                (catch Throwable t (commandline/stderr! (.getMessage t)) 1))
 
           :code
@@ -2714,7 +2715,12 @@
           (let [f (io/file file)]
             (if (.isFile f)
               (run-python-file! ctx file)
-              (do (commandline/stderr! (str "vis-agent python: no such file: " file)) 2)))
+              (do (commandline/stderr! (if (str/starts-with? file "-")
+                                         (str "vis-agent python does not take the Python option "
+                                              file
+                                              ". It takes -c CODE, -m MODULE, FILE, - and -V.")
+                                         (str "vis-agent python: no such file: " file)))
+                  2)))
 
           :module
           (if (pip-changes-itself? argv)
@@ -2735,6 +2741,13 @@
               0))]
 
     (when ctx (finish-python-cli! ctx))
+    exit))
+
+(defn- cli-python!
+  "Run `vis-agent python` with its `residual` arguments, then exit the process."
+  [_parsed residual]
+  (config/init-cli!)
+  (let [exit (run-python-cli! (parse-python-cli-args residual))]
     (shutdown-agents)
     (System/exit exit)))
 
@@ -2814,6 +2827,7 @@
       "vis-agent python --shared -m pip install requests   # shared sandbox packages"
       "vis-agent python --shared uv sync --all-groups --all-extras   # shared project dependencies"
       "vis-agent python --shared uv add requests   # add to the project, install in shared packages"
+      "vis-agent python --shared uv run pytest tests/ -q   # run in embedded Python, shared packages"
       "vis-agent python uv sync --project ./einmal --locked   # prepare extension dependencies"
       "vis-agent python -m pytest tests/ -q   # module run as __main__"
       "vis-agent python -m pytest tests/   # src layout inferred from project metadata"
@@ -3067,7 +3081,12 @@
 
 (def ^:private debug-flags #{"--debug" "--verbose" "-v"})
 
-(defn- debug-mode? [args] (or (some debug-flags args) (= "1" (System/getenv "VIS_DEBUG"))))
+(defn- debug-mode?
+  "True when the flags of Vis or VIS_DEBUG ask for console logs. `python` gives each later
+   word to Python or uv, so the `-v` of `python -m pytest -v` asks Vis for nothing."
+  [args]
+  (or (some debug-flags (when-not (= "python" (first args)) args))
+      (= "1" (System/getenv "VIS_DEBUG"))))
 
 (defn- log-file-path [] (config/log-path))
 
@@ -3349,6 +3368,12 @@
         (let [{:keys [status]} (commandline/dispatch! root full-args)]
           (= :help status))))))
 
+(defn- shared-uv-run?
+  "True for `vis-agent python --shared uv run …`. Its command runs in the embedded Python,
+   so it needs the initialized process, and it owns each later token, also `--help`."
+  [args]
+  (= ["python" "--shared" "uv" "run"] (vec (take 4 args))))
+
 (defn- unknown-command?
   "True when the user typed something the tree doesn't recognize.
    Detected by walking the tree: if `find-leaf` resolves only to the
@@ -3619,7 +3644,7 @@
   ;; uv owns every following token, including help, version and child-program flags.
   (when (= ["python" "uv"] (take 2 raw-args))
     (System/exit (python-runtime/uv-command! (drop 2 raw-args))))
-  (when (= ["python" "--shared" "uv"] (take 3 raw-args))
+  (when (and (= ["python" "--shared" "uv"] (take 3 raw-args)) (not (shared-uv-run? raw-args)))
     (System/exit (try (python-runtime/uv-command! (drop 3 raw-args) {:shared? true})
                       (catch Throwable t (commandline/stderr! (.getMessage t)) 1))))
   (system-trust/install!)
@@ -3627,11 +3652,16 @@
   (let [main-started
         (System/nanoTime)
 
+        ;; The command of a shared `uv run` owns each word after `run`: a `-v`, `--measure` or
+        ;; `--gateway` there is for the command, not for Vis.
+        own-args
+        (if (shared-uv-run? raw-args) (vec (take 4 raw-args)) raw-args)
+
         measure?
-        (startup-measure? raw-args)
+        (startup-measure? own-args)
 
         {gateway :gateway stripped :args}
-        (split-gateway-flags (strip-global-args raw-args))
+        (split-gateway-flags (strip-global-args own-args))
 
         args
         (rewrite-ext-alias stripped)]
@@ -3662,7 +3692,10 @@
       (timed-startup! measure? "stage-native-libs" native-libs/stage-resolver-libs!)
       ;; The first token count of a turn otherwise waits for the tokenizer ranks.
       (prompt/warm-token-encoding!)
-      (cond (version-request? args) (println (str "vis-agent " (vis-version)))
+      (cond (shared-uv-run? raw-args) (do (initialize-for-dispatch! measure? args)
+                                          (pre-redirect-stderr! args)
+                                          (cli-python! {} (rest raw-args)))
+            (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil
             :else (do (initialize-for-dispatch! measure? args)

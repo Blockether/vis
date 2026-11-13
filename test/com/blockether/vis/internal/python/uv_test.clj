@@ -578,10 +578,13 @@
 
             (with-redefs [config/original-stdout stream]
               (expect (= 0 (python-runtime/uv-command! ["sync" "--help"] {:shared? true})))))
-          (expect (str/includes? (.getMessage (failure #(python-runtime/uv-command! ["run" "python"]
-                                                                                    {:shared?
-                                                                                     true})))
-                                 "does not support uv run"))))))
+          (expect (str/includes? (.getMessage
+                                   (failure #(python-runtime/uv-command! ["venv"] {:shared? true})))
+                                 "Use vis-agent python uv for other uv commands"))
+          (expect (str/includes? (.getMessage (failure #(python-runtime/uv-command!
+                                                          ["run" "--with" "rich" "python"]
+                                                          {:shared? true})))
+                                 "does not support --with"))))))
 
 (defdescribe
   shared-sync-stages-and-cleanup-test

@@ -925,6 +925,7 @@
    "--system-certs" 0
    "--allow-insecure-host" 1
    "--no-progress" 0
+   "--quiet" 0
    "--index-strategy" 1
    "--keyring-provider" 1
    "--no-build-isolation" 0
@@ -1019,7 +1020,8 @@
    An unknown plan text fails the check, which costs one extra sync at most."
   [^File cwd args]
   (let [process
-        (.start (doto (ProcessBuilder. ^java.util.List args)
+        ;; The check reads the plan text, which --quiet removes.
+        (.start (doto (ProcessBuilder. ^java.util.List (vec (remove #{"--quiet"} args)))
                   (.directory cwd)
                   uv-index!
                   bytecode-cache!
@@ -1091,13 +1093,22 @@
   (let [before
         (editable-installs packages)
 
+        ;; uv keeps its `.lock` file there; only other entries are packages.
+        entries
+        #(disj (set (.list (io/file packages))) ".lock")
+
+        present
+        (entries)
+
         exit
         (long (shared-sync-process! cwd command false))]
 
     (when (zero? exit)
       (warn-repointed-editables! before (editable-installs packages))
-      (.println config/original-stderr
-                (str "Shared packages: " packages "\nRun /reload to refresh Vis workers.")))
+      ;; A quiet command, such as the sync before `uv run`, stays quiet when nothing changed.
+      (when-not (and (some #{"--quiet"} command) (= present (entries)))
+        (.println config/original-stderr
+                  (str "Shared packages: " packages "\nRun /reload to refresh Vis workers."))))
     exit))
 
 (defn- shared-uv-sync!
@@ -1340,6 +1351,169 @@
                   (shared-change! cwd packages argv)
                   (shared-sync-process! cwd argv false)))))
 
+(def ^:private shared-run-sync-options
+  "Options of `uv run` that the shared sync before the run takes."
+  (merge shared-sync-selection-options shared-sync-common-options {"--project" 1}))
+
+(def ^:private shared-run-console-script
+  "Guest program for `uv run NAME`. `sys.argv[1]` is the shared packages directory and
+   `sys.argv[2]` is NAME. Call the console script NAME of an installed package in this
+   interpreter, as its launcher file does. Else run the file NAME that a package installed
+   in `bin`: a Python script in this interpreter, another program as a child process."
+  "import os, sys
+from importlib.metadata import entry_points
+packages, name = sys.argv[1], sys.argv[2]
+sys.argv = sys.argv[2:]
+found = [e for g in ('console_scripts', 'gui_scripts') for e in entry_points(group=g, name=name)]
+if found:
+    sys.exit(found[0].load()())
+program = os.path.join(packages, 'bin', name)
+if os.path.basename(name) != name or not os.path.isfile(program) or not os.access(program, os.X_OK):
+    sys.exit(f'{name} is not a console script or a program of a package in Vis shared packages. '
+             'Install its package: vis-agent python --shared uv pip install PACKAGE')
+with open(program, 'rb') as file:
+    lines = file.read(1024).split(b'\\n')
+# uv starts a Python script with a long interpreter path through /bin/sh and an exec line.
+if b'python' in lines[0] or (len(lines) > 1 and lines[1].startswith(b\"'''exec'\")):
+    import runpy
+    sys.argv[0] = program
+    runpy.run_path(program, run_name='__main__')
+else:
+    import subprocess
+    sys.exit(subprocess.call([program, *sys.argv[1:]]))
+")
+
+(defn- shared-run-help!
+  []
+  (.println
+    config/original-stdout
+    (str
+      "Usage: vis-agent python --shared uv run [OPTIONS] COMMAND [ARGS]\n\n"
+      "Run COMMAND in the embedded Python of Vis with Vis shared packages. No other Python starts.\n"
+      "In a uv project, first install its locked dependencies into shared packages, as sync does.\n"
+      "Uses no .venv.\n\n"
+      "Commands:\n"
+      "  python [ARGS]   The embedded Python: python -c CODE, python -m MODULE, python FILE.\n"
+      "  FILE.py | -     A Python file, or a program from standard input.\n"
+      "                  Inline script dependencies are not installed.\n"
+      "  pip [ARGS]      pip on shared packages.\n"
+      "  NAME [ARGS]     The console script or program NAME of a package in shared packages.\n"
+      "                  A program that is not Python runs as a child process.\n\n"
+      "Options:\n"
+      "  -m, --module    COMMAND is a module, as in python -m COMMAND.\n"
+      "  -s, --script    COMMAND is a Python file.\n"
+      "  --no-sync, --no-project\n"
+      "                  Do not sync the project first.\n"
+      "  --help\n"
+      "Options of the sync before the run (VALUE marks an argument):\n"
+      (str/join "\n"
+                (for [[flag arity] (sort shared-run-sync-options)]
+                  (str "  " flag (when (= 1 arity) " VALUE"))))
+      "\n\n"
+      "Other programs, --with, --python and --directory are not supported.\n"
+      "Use vis-agent python uv run to run a command in a project environment."))
+  0)
+
+(defn- shared-run-plan
+  "Split the arguments of `uv run` into the `:sync` options, the `:project` directory, the
+   `:sync?` and `:kind` switches and the `:command`. The options of uv end at the first word
+   that is no option, so each option must be known with its count of values."
+  [args]
+  (loop [args
+         (seq args)
+
+         plan
+         {:sync [] :sync? true :kind :command}]
+
+    (let [arg
+          (first args)
+
+          [flag inline]
+          (some-> arg
+                  (str/split #"=" 2))
+
+          arity
+          (get shared-run-sync-options flag)]
+
+      (cond
+        (or (nil? arg) (= ["--"] args))
+        (throw (ex-info "uv run requires a command; run vis-agent python --shared uv run --help."
+                        {}))
+        (#{"--help" "-h"} arg) (assoc plan :help? true)
+        (= "--" arg) (assoc plan :command (vec (next args)))
+        (or (= "-" arg) (not (str/starts-with? arg "-"))) (assoc plan :command (vec args))
+        (#{"--no-sync" "--no-project"} arg) (recur (next args) (assoc plan :sync? false))
+        (#{"-m" "--module"} arg) (recur (next args) (assoc plan :kind :module))
+        (#{"-s" "--script"} arg) (recur (next args) (assoc plan :kind :script))
+        (= 0 arity) (recur (next args) (update plan :sync conj arg))
+        (= 1 arity) (let [value (or inline (second args))]
+                      (when (str/blank? value) (throw (ex-info (str flag " requires a value") {})))
+                      (recur (if inline (next args) (nnext args))
+                             (cond-> (update plan :sync conj flag value)
+                               (= "--project" flag)
+                               (assoc :project value))))
+        (re-matches #"--with(-editable|-requirements)?(=.*)?|-w.*" arg)
+        (throw (ex-info
+                 (str "--shared uv run does not support --with: the embedded Python of Vis uses no "
+                      "temporary environment. Install the package first: "
+                      "vis-agent python --shared uv pip install PACKAGE")
+                 {}))
+        :else (do (refuse-interpreter-option! [arg])
+                  (throw (ex-info (str "--shared uv run does not support "
+                                       flag
+                                       "; run vis-agent python --shared uv run --help.")
+                                  {})))))))
+
+(defn- shared-run-project?
+  "True when `uv run` finds a project to sync: a pyproject.toml in the `project` directory,
+   by default the working directory, or in a directory above it."
+  [project]
+  (let [cwd
+        (io/file (System/getProperty "user.dir"))
+
+        start
+        (cond (nil? project) cwd
+              (.isAbsolute (io/file project)) (io/file project)
+              :else (io/file cwd project))]
+
+    (boolean (some #(.isFile (io/file % "pyproject.toml"))
+                   (take-while some?
+                               (iterate #(.getParentFile ^File %) (.getCanonicalFile start)))))))
+
+(defn- shared-run-python-args
+  "The `vis-agent python` arguments that run the `command` of `uv run` in the embedded Python."
+  [kind [program & more :as command]]
+  (cond (= :module kind) (into ["-m"] command)
+        (or (= :script kind) (= "-" program) (str/ends-with? program ".py")) command
+        (re-matches #"python(3(\.\d+)?)?" program) (vec more)
+        (re-matches #"pip3?" program) (into ["-m" "pip"] more)
+        :else (into ["-c" shared-run-console-script (str (runtime/packages-dir))] command)))
+
+(defn- shared-uv-run!
+  "Run the command of `uv run ARGS` in the embedded Python of this process; return its exit
+   code. `python!` takes `vis-agent python --shared` arguments and returns the exit code.
+   Like upstream uv, sync the project first. Unlike it, sync into shared packages and start
+   no other interpreter, which could not import them."
+  [args python!]
+  (let [{:keys [help? sync project sync? kind command]} (shared-run-plan args)]
+    (cond help? (shared-run-help!)
+          (nil? python!) (throw (ex-info "Run it as: vis-agent python --shared uv run COMMAND" {}))
+          :else (let [exit (if (and sync? (shared-run-project? project))
+                             (try (long (shared-uv-sync! (into ["sync" "--quiet"] sync)))
+                                  (catch clojure.lang.ExceptionInfo e
+                                    ;; Upstream uv runs the command when the nearest pyproject.toml
+                                    ;; has no project: there is nothing to install.
+                                    (if (str/includes? (ex-message e) "No `project` table found")
+                                      0
+                                      (do (.println config/original-stderr (ex-message e)) 1))))
+                             0)]
+                  (if (zero? exit)
+                    (python! (shared-run-python-args kind command))
+                    (do (.println config/original-stderr
+                                  (str "The project sync failed, so the command did not run. "
+                                       "Add --no-sync to run it without the sync."))
+                        exit))))))
+
 (defn- shared-uv-help!
   []
   (.println
@@ -1347,24 +1521,27 @@
     (str
       "Usage: vis-agent python --shared uv COMMAND [OPTIONS]\n\n"
       "Run uv on Vis shared packages with the embedded Python of Vis. No command makes or reads .venv.\n\n"
-      "Commands:\n" "  sync            Install a project's locked dependencies. See sync --help.\n"
+      "Commands:\n"
+      "  sync            Install a project's locked dependencies. See sync --help.\n"
       "  add             Add dependencies to pyproject.toml and uv.lock, then sync.\n"
       "  remove          Remove dependencies from pyproject.toml and uv.lock, then sync.\n"
       "                  The removed packages stay in shared packages.\n"
       "  pip install     Install packages.\n"
       "  pip uninstall   Delete packages. Other projects can still need them.\n"
+      "  run             Run a command in the embedded Python. See run --help.\n"
       "  pip list | pip freeze | pip show\n"
       "                  Read the installed packages.\n" "  lock | export | tree\n"
       "                  Use only project files, as in upstream uv.\n\n"
-      "All but sync take the options of upstream uv, without --python.\n"
+      "All but sync and run take the options of upstream uv, without --python.\n"
       "Use vis-agent python uv for all other uv commands.\n"
       "Run /reload after a change to refresh Vis workers."))
   0)
 
 (defn- shared-uv!
   "Run `uv ARGS` on Vis shared packages, never on a project environment; return the exit code.
-   Only commands that install into, delete from or read an environment have a shared form."
-  [args]
+   Only commands that install into, delete from, read or run in an environment have a shared
+   form. `python!` runs `vis-agent python --shared` arguments for `uv run`."
+  [args python!]
   (case (first args)
     (nil "--help" "-h" "help")
     (shared-uv-help!)
@@ -1387,11 +1564,9 @@
     (shared-uv-pip! (rest args))
 
     "run"
-    (throw (ex-info (str "--shared does not support uv run. Run a shared tool with "
-                         "vis-agent python --shared -m MODULE.")
-                    {}))
+    (shared-uv-run! (rest args) python!)
 
-    (throw (ex-info (str "--shared supports uv sync, add, remove, lock, export, tree and pip; "
+    (throw (ex-info (str "--shared supports uv sync, add, remove, run, lock, export, tree and pip; "
                          "run vis-agent python --shared uv --help. "
                          "Use vis-agent python uv for other uv commands.")
                     {}))))
@@ -1645,6 +1820,7 @@
 (defn uv-command!
   "Run bundled upstream uv with unchanged arguments and stdio; return its exit code.
    Explicit :shared? opts select Vis's shared sync workflow, never a project venv.
+   `:python!` runs the command of a shared `uv run` in the embedded Python.
    Vis's python.index_url supplies UV_DEFAULT_INDEX unless uv's index environment
    is already set. Explicit uv CLI options retain upstream precedence.
    A successful `sync` stamps a ready extension project for the next preparation."
@@ -1656,7 +1832,7 @@
                                   (.inheritIO))))]
      (when (and (zero? exit) (= "sync" (first args))) (stamp-synced-project! args))
      exit))
-  ([args {:keys [shared?]}] (if shared? (shared-uv! args) (uv-command! args))))
+  ([args {:keys [shared? python!]}] (if shared? (shared-uv! args python!) (uv-command! args))))
 
 (defn pip-install!
   "Install `specs` with pip and make what landed importable in THIS process,

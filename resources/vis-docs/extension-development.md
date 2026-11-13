@@ -374,6 +374,33 @@ vis-agent python --shared uv pip uninstall requests
 `vis-agent python --shared uv --help` lists these commands.
 Without `--shared`, `vis-agent python uv ...` remains ordinary upstream uv.
 
+### Run a command with shared packages
+
+`vis-agent python --shared uv run` runs a command in the embedded Python of Vis, with the
+shared packages. No other Python starts, and the command does not use `.venv`.
+
+```bash
+# Run a console script of an installed package:
+vis-agent python --shared uv run pytest tests/ -q
+
+# Run a module, a file or Python code:
+vis-agent python --shared uv run -m pytest tests/ -q
+vis-agent python --shared uv run script.py --flag
+vis-agent python --shared uv run python -c "import requests; print(requests.__version__)"
+```
+
+- In a uv project, the command first installs the locked dependencies into shared packages,
+  like `uv sync`. It takes the options of the shared sync, such as `--project`, `--locked`,
+  `--offline` and `--group`. `--no-sync` runs the command without the install.
+- The command is `python`, `pip`, a Python file, or a console script or program that a package
+  installed in shared packages. Each word after the command goes to the command, also `--help`.
+- A program that is not Python, such as a compiled tool, runs as a child process.
+- `--with`, `--python` and `--directory` are not available. Install an extra package first with
+  `uv pip install`. The command does not install inline script dependencies.
+
+`vis-agent python --shared uv run --help` lists the options. To run a command in the project's
+own environment, use `vis-agent python uv run`.
+
 ## Use shared packages for project extensions
 
 Some projects install their dependencies only with `vis-agent python --shared uv sync`
