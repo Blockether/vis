@@ -3645,7 +3645,6 @@
             "list",
             "tools",
             "presets",
-            "model",
             "models"
           ]
         },
@@ -4534,39 +4533,27 @@
         }
       }
     },
-    "model_value": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "The value of a model row: a provider and one of its chat models. An empty object names no model, and the description of the row tells what applies then.",
-      "properties": {
-        "provider": {
-          "type": "string",
-          "minLength": 1
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "dependentRequired": {
-        "provider": [
-          "model"
-        ],
-        "model": [
-          "provider"
-        ]
-      }
-    },
     "models_value": {
       "type": "array",
       "uniqueItems": true,
       "description": "The value of a models row: chat models in order, each a provider and one of its models. An empty array names no model, and the description of the row tells what applies then.",
       "items": {
-        "$ref": "#/$defs/model_value",
+        "type": "object",
+        "additionalProperties": false,
         "required": [
           "provider",
           "model"
-        ]
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "setting_preview": {

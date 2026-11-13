@@ -4513,10 +4513,6 @@
       (presets/preset-label (get setting "editor_options")
                             (presets/active (get setting "editor_options") toggle-value))
 
-      "model"
-      (let [{:strs [provider model]} toggle-value]
-        (if (and provider model) (str provider "/" model) "Not set"))
-
       "models"
       (if (seq toggle-value)
         (str/join ", " (map (fn [{:strs [provider model]}] (str provider "/" model)) toggle-value))
@@ -5487,25 +5483,6 @@
 
 (declare model-picker!)
 
-(defn- settings-model-editor!
-  "Pick the model of a `model` row from the session model picker. Its first row writes `{}`,
-   which names no model. Returns the new value, or nil on Esc or an unchanged choice."
-  [screen row]
-  (let [{:strs [provider model] :as current}
-        (or (:toggle-value row) {})
-
-        choice
-        (model-picker! screen
-                       (when (and provider model) {:provider provider :model model})
-                       {:title (:label row) :reset-label "Not set"})
-
-        value
-        (cond (nil? choice) nil
-              (:reset? choice) {}
-              :else {"provider" (:provider choice) "model" (:model choice)})]
-
-    (when (and (some? value) (not= value current)) value)))
-
 (defn- settings-models-editor!
   "Edit the ordered models of a `models` row. The first model is the default. Add opens the
    session model picker; an entry opens Make default and Remove. Save returns the new list,
@@ -5561,9 +5538,6 @@
 
     "presets"
     (settings-presets-editor! screen g region row)
-
-    "model"
-    (settings-model-editor! screen row)
 
     "models"
     (settings-models-editor! screen row)

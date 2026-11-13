@@ -699,13 +699,6 @@
 ;; / `:reload`) idempotent: the live registry stays intact and any
 ;; user override in `state` survives.
 
-(defn- model-value-problem
-  "Nil when `value` is the value of a `model` editor: a provider and one of its models,
-   or an empty object for no model. Else a message for the person."
-  [value]
-  (when-let [explanation (document/explain "gateway" "model_value" value)]
-    (or (document/explain-text explanation value) "The value must name a provider and a model.")))
-
 (defn- models-value-problem
   "Nil when `value` is the value of a `models` editor: a list of different providers and
    models, or an empty list for no model. Else a message for the person."
@@ -926,12 +919,13 @@
        :persist? true})
     ;; A new subagent runs on the model of its task, else on the first `subagent_models`
     ;; entry, else on the model of its parent (`gateway.state/agent-spawn`). A list that is
-    ;; not empty is also the allowlist. A subagent keeps its route until it ends.
+    ;; not empty is also the allowlist, and its next model is the first fallback of the child
+    ;; (`agents/restrict-router`). A subagent keeps its route until it ends.
     (register-toggle!
       {:id "subagent_models"
        :label "Subagent models"
        :description
-       "The models that a subagent can use. A task that names no model uses the first. Empty uses the model of the agent that starts it and allows every model."
+       "The models that a subagent can use. A task that names no model uses the first. When its model fails, a subagent tries the next model, while automatic provider fallback is on. Empty uses the model of the agent that starts it and allows every model."
        :type :object
        :editor "models"
        :validate-fn models-value-problem
@@ -941,23 +935,7 @@
        :group :council
        :parent "subagents"
        :persist? true})
-    ;; The fallback stands first in the automatic provider fallback of the child
-    ;; (`agents/restrict-router`). With that fallback off, the child stays on its model.
-    (register-toggle!
-      {:id "subagent_fallback_model"
-       :label "Subagent fallback model"
-       :description
-       "The model that a subagent tries first when its model fails, while automatic provider fallback is on."
-       :type :object
-       :editor "model"
-       :validate-fn model-value-problem
-       :default {}
-       :scopes ["global" "project"]
-       :owner :vis
-       :group :council
-       :parent "subagents"
-       :persist? true})
-    ;; Live apps declare where they show; these two turn a surface off for every app.
+        ;; Live apps declare where they show; these two turn a surface off for every app.
     ;; Each app with a key adds its own settings under them (`view.app-surfaces`).
     (register-toggle! {:id "apps_inline"
                        :label "Apps in the chat"

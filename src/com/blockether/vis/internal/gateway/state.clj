@@ -7618,21 +7618,16 @@
 
 (defn- only-agent-models
   "The allowlist of a new subagent that starts on `pair`. A `subagent_models` setting that is not
-   empty holds it with `fallback`: a task allowlist can narrow it, never widen it, and a task model
-   must be one of them. An empty setting keeps the task allowlist."
-  [models fallback task-allowed pair]
+   empty holds it: a task allowlist can narrow it, never widen it, and a task model must be one of
+   them. An empty setting keeps the task allowlist."
+  [models task-allowed pair]
   (if-not (seq models)
     task-allowed
-    (let [only
-          (vec (distinct (remove nil? (conj models fallback))))
-
-          allowed
-          (if (seq task-allowed) (filterv (set only) task-allowed) only)]
-
+    (let [allowed (if (seq task-allowed) (filterv (set models) task-allowed) models)]
       (when-not (some #{pair} allowed)
         (agents/fail! :model-not-allowed
                       (str "Settings run subagents only on "
-                           (str/join ", " (map #(str (:provider %) "/" (:model %)) only)))))
+                           (str/join ", " (map #(str (:provider %) "/" (:model %)) models)))))
       allowed)))
 
 (defn- allowed-agent-model!
@@ -8013,12 +8008,12 @@
                             (or (:provider opts) (:provider inherited))
                             (or (:model opts) (:model inherited)))
 
-              fallback
-              (some->> (:fallback settings)
-                       (setting-model! router "subagent_fallback_model"))
-
               allowed
-              (only-agent-models models fallback (:allowed_models opts) pair)
+              (only-agent-models models (:allowed_models opts) pair)
+
+              ;; The next setting model that the child can use is its first fallback.
+              fallback
+              (when (seq models) (first (remove #{pair} (filter (set allowed) models))))
 
               ;; A child gets the parent's conversation without its tool work.
               checkpoint
@@ -8073,7 +8068,7 @@
                              :title (:title opts)
                              :iteration_budget budget
                              :allowed_models allowed
-                             :fallback_model (when (not= fallback pair) fallback)
+                             :fallback_model fallback
                              :files (not-empty files)
                              :spawn_key key
                              :spawn_fingerprint fingerprint

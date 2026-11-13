@@ -6,7 +6,7 @@
     "type": "object",
     "editor": "models",
     "parent": "subagents",
-    "description": "The models that a subagent can use. A task that names no model uses the first. Empty uses the model of the agent that starts it and allows every model.",
+    "description": "The models that a subagent can use. A task that names no model uses the first. When its model fails, a subagent tries the next model, while automatic provider fallback is on. Empty uses the model of the agent that starts it and allows every model.",
     "scopes": [
       "global",
       "project"

@@ -2205,27 +2205,19 @@
     (when (and provider model) {:provider provider :model model})))
 
 (defn model-settings
-  "The subagent model settings where session `sid` runs now: `{:models [pair] :fallback pair}`.
-   `:models` keeps the order of the setting, so its first pair is the default model. An empty
-   setting gives `[]` or a nil pair."
+  "The subagent model settings where session `sid` runs now: `{:models [pair]}`. `:models` keeps
+   the order of the setting, so its first pair is the default model. An empty setting gives `[]`."
   [db sid]
-  (let [values (scoped/values db sid)
-        models (get values "subagent_models")]
-    {:models (if (sequential? models) (vec (distinct (keep value-pair models))) [])
-     :fallback (value-pair (get values "subagent_fallback_model"))}))
+  (let [models (get (scoped/values db sid) "subagent_models")]
+    {:models (if (sequential? models) (vec (distinct (keep value-pair models))) [])}))
 
 (defn routing-view
   "The subagent model settings of session `sid` as `session[\"routing\"][\"subagents\"]` shows
    them in the sandbox: `models` is a list of providers and models, where the first is the default
-   and an empty list allows every model; `fallback` is a provider and a model, or None when empty."
+   and an empty list allows every model."
   [db sid]
-  (let [{:keys [models fallback]}
-        (model-settings db sid)
-
-        shown
-        #(when % {"provider" (:provider %) "model" (:model %)})]
-
-    {"models" (mapv shown models) "fallback" (shown fallback)}))
+  {"models" (mapv #(hash-map "provider" (:provider %) "model" (:model %))
+                  (:models (model-settings db sid)))})
 
 (defn- model-name [model] (if (map? model) (:name model) (str model)))
 

@@ -56,7 +56,6 @@ it('lists the models with the first as default, adds one from the session picker
 
   await user.click(screen.getByRole('button', { name: `Add a model to ${fixture.row.label}` }));
   const picker = screen.getByRole('dialog', { name: 'Model' });
-  expect(within(picker).queryByRole('button', { name: 'Not set' })).toBeNull();
   await user.click(await within(picker).findByRole('button', { name: /Anthropic/ }));
   await user.click(within(picker).getByRole('button', { name: added.model }));
   expect(asWrite(write.mock.calls[0])).toEqual(fixture.write);

@@ -61,7 +61,6 @@ import { ownsLegend, SettingField, SettingMachine } from './SettingField';
 import { machineLabel } from '../../lib/fleet';
 import { AutomationsPanel } from './AutomationsPanel';
 import { PresetsField } from './PresetsField';
-import { ModelField } from './ModelField';
 import { ModelsField } from './ModelsField';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
@@ -553,8 +552,6 @@ export function SettingRow({ toggle, busy, head, error, onToggle, onPick, onInhe
           onSave={onPick} onRemove={isOwnSecret ? (onRemove ?? onInherit) : undefined} />
       ) : toggle.editor === 'presets' ? (
         <PresetsField toggle={toggle} busy={busy} disabled={lock !== null} error={error} onSave={onPick} />
-      ) : toggle.editor === 'model' ? (
-        <ModelField toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : toggle.editor === 'models' ? (
         <ModelsField toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : toggle.type === 'string' ? (

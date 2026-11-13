@@ -21,16 +21,10 @@ interface Props {
   onClose: () => void;
   onPicked?: (pref: ModelPref) => void;
   /**
-   * Choose mode, for a model setting: a pick goes here instead of the session pin, and
-   * a first entry picks no model. Resolves true when the choice is saved.
+   * Choose mode, for a models setting: a pick goes here instead of the session pin.
+   * Resolves true when the choice is saved.
    */
   onChoose?: (pref: ModelPref) => Promise<boolean>;
-  /** The saved choice in choose mode; `{}` is no model. */
-  chosen?: ModelPref;
-  /** The first entry of choose mode, which picks no model. */
-  noneLabel?: string;
-  /** False drops that first entry, for a pick that must name a model. */
-  hasNone?: boolean;
   /**
    * Jump to gateway settings, where provider accounts and OAuth live. A provider id
    * focuses that provider's row there (#406).
@@ -60,15 +54,12 @@ export function ProviderRouterDialog({
   onPicked,
   onManageProviders,
   onChoose,
-  chosen,
-  noneLabel = 'Not set',
-  hasNone = true,
 }: Props) {
   // The session's project decides the providers that only projects register (#410).
   const fleet = useProviderFleet(client, sid);
   const { providers, err, note, pending, refresh } = fleet;
   const [pinned, setPref] = useState<ModelPref | null>(null);
-  const pref = onChoose ? (chosen ?? null) : pinned;
+  const pref = onChoose ? null : pinned;
   const canPick = Boolean(sid || onChoose);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
@@ -151,7 +142,7 @@ export function ProviderRouterDialog({
         title="Model"
         // The pin, and only the pin: `Current: ` said what standing under the title of a
         // model picker already says, in 54px this band does not have to give.
-        subtitle={pref?.model ? `${pref.provider ?? '?'}/${pref.model}` : onChoose ? noneLabel : 'No model pinned'}
+        subtitle={pref?.model ? `${pref.provider ?? '?'}/${pref.model}` : onChoose ? 'Choose a model' : 'No model pinned'}
         closeLabel="Close model picker"
         onClose={onClose}
         actions={
@@ -177,18 +168,6 @@ export function ProviderRouterDialog({
         <div className="space-y-3 p-3 sm:p-4">
           {err && <Banner kind="err">{err.text}</Banner>}
           {note && <Banner kind="ok">{note.text}</Banner>}
-
-          {onChoose && hasNone && (
-            <ListRow
-              isFramed
-              isSelected={!pref?.model}
-              aria-pressed={!pref?.model}
-              disabled={picking === 'none'}
-              onClick={() => void choose({}, 'none')}
-            >
-              <span className="min-w-0 flex-1 truncate font-mono text-ui">{noneLabel}</span>
-            </ListRow>
-          )}
 
           {providers === null && (
             <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading models…</p>

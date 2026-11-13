@@ -2,15 +2,21 @@ import { useContext, useState } from 'react';
 import { Button, Text } from '../../components/ui';
 import type { ModelPref, SettingValue, Toggle } from '../../lib/types';
 import { ProviderRouterDialog } from '../RouterScreen';
-import { modelValue } from './ModelField';
 import { SettingMachine } from './SettingField';
 
 type Model = { provider: string; model: string };
 
+/** One entry of a models row, or null for an entry that names no model. */
+function modelValue(value: SettingValue): Model | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { provider, model } = value;
+  return typeof provider === 'string' && provider && typeof model === 'string' && model ? { provider, model } : null;
+}
+
 /** The models that a models row lists, in order; entries that name no model drop out. */
 export function modelsValue(value: SettingValue | undefined): Model[] {
   if (!Array.isArray(value)) return [];
-  return value.map((entry) => modelValue(entry as SettingValue)).filter((entry): entry is Model => entry !== null);
+  return value.map(modelValue).filter((entry): entry is Model => entry !== null);
 }
 
 const same = (a: Model, b: ModelPref) => a.provider === b.provider && a.model === b.model;
@@ -96,9 +102,6 @@ export function ModelsField({
       {isOpen && machine && (
         <ProviderRouterDialog
           client={machine.client}
-          chosen={{}}
-          noneLabel="Add a model"
-          hasNone={false}
           onChoose={async (pref) =>
             !pref.provider || !pref.model || models.some((entry) => same(entry, pref))
               ? true
