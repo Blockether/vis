@@ -7617,14 +7617,14 @@
                             ", which the shared router does not offer. Change the setting.")))))
 
 (defn- only-agent-models
-  "The allowlist of a new subagent that starts on `pair`. With the `subagent_model_only` setting
-   it holds only `route`, the setting route, and `fallback`: a task allowlist can narrow it,
-   never widen it, and a task model must be one of them."
-  [settings route fallback task-allowed pair]
-  (if-not (:only? settings)
+  "The allowlist of a new subagent that starts on `pair`. A `subagent_models` setting that is not
+   empty holds it with `fallback`: a task allowlist can narrow it, never widen it, and a task model
+   must be one of them. An empty setting keeps the task allowlist."
+  [models fallback task-allowed pair]
+  (if-not (seq models)
     task-allowed
     (let [only
-          (vec (distinct (remove nil? [route fallback])))
+          (vec (distinct (remove nil? (conj models fallback))))
 
           allowed
           (if (seq task-allowed) (filterv (set only) task-allowed) only)]
@@ -7632,7 +7632,7 @@
       (when-not (some #{pair} allowed)
         (agents/fail! :model-not-allowed
                       (str "Settings run subagents only on "
-                           (str/join " and " (map #(str (:provider %) "/" (:model %)) only)))))
+                           (str/join ", " (map #(str (:provider %) "/" (:model %)) only)))))
       allowed)))
 
 (defn- allowed-agent-model!
@@ -7996,10 +7996,13 @@
               settings
               (agents/model-settings db sid)
 
-              ;; Without a task model, the `subagent_model` setting, then the route of the parent.
+              ;; The `subagent_models` setting in its order: the first is the default model.
+              models
+              (mapv #(setting-model! router "subagent_models" %) (:models settings))
+
+              ;; Without a task model, the first setting model, then the route of the parent.
               inherited
-              (or (some->> (:model settings)
-                           (setting-model! router "subagent_model"))
+              (or (first models)
                   (:route (ctx-loop/read-turn-state env))
                   (smodel/model-of db sid)
                   (let [m (loop-router/resolve-effective-model router)]
@@ -8015,13 +8018,7 @@
                        (setting-model! router "subagent_fallback_model"))
 
               allowed
-              (only-agent-models settings
-                                 {:provider (some-> (:provider inherited)
-                                                    name)
-                                  :model (:model inherited)}
-                                 fallback
-                                 (:allowed_models opts)
-                                 pair)
+              (only-agent-models models fallback (:allowed_models opts) pair)
 
               ;; A child gets the parent's conversation without its tool work.
               checkpoint

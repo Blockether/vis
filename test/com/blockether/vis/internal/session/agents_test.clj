@@ -2755,7 +2755,7 @@
 (defdescribe
   gateway-spawn-follows-subagent-model-settings-test
   (it
-    "a spawn without a task model uses the project subagent model, its fallback and its only limit"
+    "a spawn uses the first project subagent model by default, its fallback, and the list as its limit"
     (let [db
           (h/store)
 
@@ -2771,7 +2771,7 @@
 
           ;; The `toggles` of the project configuration files.
           project-toggles
-          (atom {"subagent_model" {"provider" "p" "model" "large"}
+          (atom {"subagent_models" [{"provider" "p" "model" "large"} {"provider" "q" "model" "big"}]
                  "subagent_fallback_model" {"provider" "q" "model" "mid"}})
 
           router
@@ -2817,12 +2817,16 @@
                 (spawn! {:task "Check on the setting model" :key "setting"})
 
                 tasked
-                (spawn! {:task "Check on the task model" :key "task" :provider "p" :model "small"})]
+                (spawn! {:task "Check on the task model" :key "task" :provider "q" :model "big"})]
 
+            (expect (= {"models" [{"provider" "p" "model" "large"} {"provider" "q" "model" "big"}]
+                        "fallback" {"provider" "q" "model" "mid"}}
+                       (agents/routing-view db leader))
+                    "The sandbox routing shows the list in its order and the fallback")
             (expect (= {:provider "p" :model "large"} (smodel/model-of db child))
-                    "The subagent_model setting wins over the model of the parent")
-            (expect (= {:provider "p" :model "small"} (smodel/model-of db tasked))
-                    "A task model wins over the setting")
+                    "The first subagent model wins over the model of the parent")
+            (expect (= {:provider "q" :model "big"} (smodel/model-of db tasked))
+                    "A task model from the list wins over the first one")
             (expect (= {:provider "q" :model "mid"} (:fallback_model (agents/info db child))))
             (expect (= [:q "mid"]
                        ((juxt :id :root)
@@ -2841,13 +2845,18 @@
                                                                        :timeout_secs 1}))
                                     ["provider" "model"]))
                     "The wait record names the model of the child")
-            (swap! project-toggles assoc "subagent_model_only" true)
             (expect (= :model-not-allowed
                        (refusal
                          :spawn
                          {:task "Check elsewhere" :key "other" :provider "p" :model "small"}))
-                    "Only these models refuses another task model")
+                    "The list refuses a task model outside it")
             (expect
-              (= [{:provider "p" :model "large"} {:provider "q" :model "mid"}]
-                 (:allowed_models (agents/info db (spawn! {:task "Check inside" :key "inside"}))))
-              "Only these models limits the child to the setting model and its fallback")))))))
+              (= [{:provider "p" :model "large"} {:provider "q" :model "big"} {:provider "q" :model "mid"}]
+                 (:allowed_models (agents/info db child)))
+              "The list and the fallback limit the child")
+            (swap! project-toggles assoc "subagent_models" [])
+            (let [free (spawn! {:task "Check anywhere" :key "free" :provider "p" :model "small"})]
+              (expect (= {:provider "p" :model "small"} (smodel/model-of db free))
+                      "An empty list allows every model")
+              (expect (empty? (:allowed_models (agents/info db free)))
+                      "An empty list sets no limit"))))))))

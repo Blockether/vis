@@ -29,6 +29,8 @@ interface Props {
   chosen?: ModelPref;
   /** The first entry of choose mode, which picks no model. */
   noneLabel?: string;
+  /** False drops that first entry, for a pick that must name a model. */
+  hasNone?: boolean;
   /**
    * Jump to gateway settings, where provider accounts and OAuth live. A provider id
    * focuses that provider's row there (#406).
@@ -60,6 +62,7 @@ export function ProviderRouterDialog({
   onChoose,
   chosen,
   noneLabel = 'Not set',
+  hasNone = true,
 }: Props) {
   // The session's project decides the providers that only projects register (#410).
   const fleet = useProviderFleet(client, sid);
@@ -175,7 +178,7 @@ export function ProviderRouterDialog({
           {err && <Banner kind="err">{err.text}</Banner>}
           {note && <Banner kind="ok">{note.text}</Banner>}
 
-          {onChoose && (
+          {onChoose && hasNone && (
             <ListRow
               isFramed
               isSelected={!pref?.model}

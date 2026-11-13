@@ -2187,13 +2187,10 @@
     (when (and command (not= command before))
       {:preference (select-keys command [:provider :model]) :command command})))
 
-(defn- setting-pair
-  "The `{:provider :model}` that the model setting `id` holds in `values`, or nil when empty."
-  [values id]
-  (let [v
-        (get values id)
-
-        field
+(defn- value-pair
+  "The `{:provider :model}` that the model value `v` holds, or nil when it is empty."
+  [v]
+  (let [field
         #(some-> (or (get v %) (get v (keyword %)))
                  str
                  str/trim
@@ -2208,25 +2205,27 @@
     (when (and provider model) {:provider provider :model model})))
 
 (defn model-settings
-  "The subagent model settings where session `sid` runs now:
-   `{:model pair :fallback pair :only? boolean}`. An empty setting gives a nil pair."
+  "The subagent model settings where session `sid` runs now: `{:models [pair] :fallback pair}`.
+   `:models` keeps the order of the setting, so its first pair is the default model. An empty
+   setting gives `[]` or a nil pair."
   [db sid]
-  (let [values (scoped/values db sid)]
-    {:model (setting-pair values "subagent_model")
-     :fallback (setting-pair values "subagent_fallback_model")
-     :only? (true? (get values "subagent_model_only"))}))
+  (let [values (scoped/values db sid)
+        models (get values "subagent_models")]
+    {:models (if (sequential? models) (vec (distinct (keep value-pair models))) [])
+     :fallback (value-pair (get values "subagent_fallback_model"))}))
 
 (defn routing-view
   "The subagent model settings of session `sid` as `session[\"routing\"][\"subagents\"]` shows
-   them in the sandbox: `model` and `fallback` are a provider and a model, or None when empty."
+   them in the sandbox: `models` is a list of providers and models, where the first is the default
+   and an empty list allows every model; `fallback` is a provider and a model, or None when empty."
   [db sid]
-  (let [{:keys [model fallback only?]}
+  (let [{:keys [models fallback]}
         (model-settings db sid)
 
         shown
         #(when % {"provider" (:provider %) "model" (:model %)})]
 
-    {"model" (shown model) "fallback" (shown fallback) "only" only?}))
+    {"models" (mapv shown models) "fallback" (shown fallback)}))
 
 (defn- model-name [model] (if (map? model) (:name model) (str model)))
 

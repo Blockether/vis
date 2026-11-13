@@ -1,0 +1,113 @@
+{
+  "description": "A models setting row of the settings catalog, its writes and values that the gateway refuses. The value lists chat models in order, each a provider and one of its models from GET /v1/models. An empty array names no model: for subagent_models, a new subagent then uses the model of the agent that starts it, and a task can name every model.",
+  "row": {
+    "id": "subagent_models",
+    "label": "Subagent models",
+    "type": "object",
+    "editor": "models",
+    "parent": "subagents",
+    "description": "The models that a subagent can use. A task that names no model uses the first. Empty uses the model of the agent that starts it and allows every model.",
+    "scopes": [
+      "global",
+      "project"
+    ],
+    "scope": "project",
+    "source": "project",
+    "is_override": true,
+    "is_experimental": false,
+    "applies": "immediate",
+    "value": [
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5"
+      },
+      {
+        "provider": "openai",
+        "model": "gpt-5"
+      }
+    ],
+    "own_value": [
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5"
+      },
+      {
+        "provider": "openai",
+        "model": "gpt-5"
+      }
+    ],
+    "inherited_value": [],
+    "inherited_source": "default"
+  },
+  "write": {
+    "scope": "project",
+    "id": "subagent_models",
+    "action": "value",
+    "value": [
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5"
+      },
+      {
+        "provider": "openai",
+        "model": "gpt-5"
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-4-1"
+      }
+    ]
+  },
+  "clear_write": {
+    "scope": "project",
+    "id": "subagent_models",
+    "action": "value",
+    "value": []
+  },
+  "invalid_values": [
+    {
+      "value": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5"
+      },
+      "reason": "one model instead of a list"
+    },
+    {
+      "value": [
+        {}
+      ],
+      "reason": "an entry that names no model"
+    },
+    {
+      "value": [
+        {
+          "provider": "anthropic"
+        }
+      ],
+      "reason": "an entry without a model"
+    },
+    {
+      "value": [
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5"
+        }
+      ],
+      "reason": "the same model two times"
+    },
+    {
+      "value": [
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5",
+          "effort": "high"
+        }
+      ],
+      "reason": "a key other than provider and model"
+    }
+  ]
+}

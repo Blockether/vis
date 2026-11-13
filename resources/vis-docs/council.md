@@ -103,22 +103,23 @@ To turn off only subagents, use Settings or set `subagents: false` under `toggle
 
 ### Choose the model of subagents
 
-Three settings under **Subagents** decide the model of a new subagent. Set them in Settings, or for
+Two settings under **Subagents** decide the model of a new subagent. Set them in Settings, or for
 all sessions of a project in its `vis.yml`:
 
 ```yaml
 toggles:
-  subagent_model: {provider: zai-coding-plan, model: glm-5.3}
+  subagent_models:
+    - {provider: zai-coding-plan, model: glm-5.3}
+    - {provider: anthropic-coding-plan, model: claude-haiku-5}
   subagent_fallback_model: {provider: anthropic-coding-plan, model: claude-sonnet-5}
-  subagent_model_only: true
 ```
 
-- **Subagent model**: the model of a new subagent when its task names no model. When it is not set,
-  the subagent uses the model of the agent that starts it.
+- **Subagent models**: the models that subagents can use. A task that names no model uses the
+  first model of the list. Vis refuses a task that names a model outside the list. When the list
+  is empty, a subagent uses the model of the agent that starts it, and a task can name any model.
 - **Subagent fallback model**: the model that a subagent tries first when its model fails. It
-  applies only while automatic provider fallback is on.
-- **Only these models**: subagents run only on the two models above. Vis refuses a task that
-  names another model.
+  applies only while automatic provider fallback is on. Subagents can also use it when the list
+  limits them.
 
 A subagent keeps its model until it ends. You cannot change the model of a subagent that runs.
 The model must be one of the chat models that your providers offer.

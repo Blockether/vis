@@ -1,12 +1,12 @@
 {
-  "description": "A model setting row of the settings catalog, its writes and values that the gateway refuses. The value names a provider and one of its chat models from GET /v1/models. An empty object names no model: for subagent_model, a new subagent then uses the model of the agent that starts it.",
+  "description": "A model setting row of the settings catalog, its writes and values that the gateway refuses. The value names a provider and one of its chat models from GET /v1/models. An empty object names no model: for subagent_fallback_model, a subagent then has no first fallback model.",
   "row": {
-    "id": "subagent_model",
-    "label": "Subagent model",
+    "id": "subagent_fallback_model",
+    "label": "Subagent fallback model",
     "type": "object",
     "editor": "model",
     "parent": "subagents",
-    "description": "The model of a new subagent when its task names none. Empty uses the model of the agent that starts it.",
+    "description": "The model that a subagent tries first when its model fails, while automatic provider fallback is on.",
     "scopes": [
       "global",
       "project"
@@ -29,7 +29,7 @@
   },
   "write": {
     "scope": "project",
-    "id": "subagent_model",
+    "id": "subagent_fallback_model",
     "action": "value",
     "value": {
       "provider": "anthropic",
@@ -38,7 +38,7 @@
   },
   "clear_write": {
     "scope": "project",
-    "id": "subagent_model",
+    "id": "subagent_fallback_model",
     "action": "value",
     "value": {}
   },

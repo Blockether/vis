@@ -3645,7 +3645,8 @@
             "list",
             "tools",
             "presets",
-            "model"
+            "model",
+            "models"
           ]
         },
         "is_set": {
@@ -4553,6 +4554,18 @@
         ],
         "model": [
           "provider"
+        ]
+      }
+    },
+    "models_value": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "The value of a models row: chat models in order, each a provider and one of its models. An empty array names no model, and the description of the row tells what applies then.",
+      "items": {
+        "$ref": "#/$defs/model_value",
+        "required": [
+          "provider",
+          "model"
         ]
       }
     },

@@ -706,6 +706,14 @@
   (when-let [explanation (document/explain "gateway" "model_value" value)]
     (or (document/explain-text explanation value) "The value must name a provider and a model.")))
 
+(defn- models-value-problem
+  "Nil when `value` is the value of a `models` editor: a list of different providers and
+   models, or an empty list for no model. Else a message for the person."
+  [value]
+  (when-let [explanation (document/explain "gateway" "models_value" value)]
+    (or (document/explain-text explanation value)
+        "The value must list different models, each with a provider and a model.")))
+
 (defonce
   ^{:doc
     "Sentinel that records whether the canonical internal toggles
@@ -916,17 +924,18 @@
        :group :council
        :parent "council"
        :persist? true})
-    ;; A new subagent runs on the model of its task, else on `subagent_model`, else on the
-    ;; model of its parent (`gateway.state/agent-spawn`). It keeps that route until it ends.
+    ;; A new subagent runs on the model of its task, else on the first `subagent_models`
+    ;; entry, else on the model of its parent (`gateway.state/agent-spawn`). A list that is
+    ;; not empty is also the allowlist. A subagent keeps its route until it ends.
     (register-toggle!
-      {:id "subagent_model"
-       :label "Subagent model"
+      {:id "subagent_models"
+       :label "Subagent models"
        :description
-       "The model of a new subagent when its task names none. Empty uses the model of the agent that starts it."
+       "The models that a subagent can use. A task that names no model uses the first. Empty uses the model of the agent that starts it and allows every model."
        :type :object
-       :editor "model"
-       :validate-fn model-value-problem
-       :default {}
+       :editor "models"
+       :validate-fn models-value-problem
+       :default []
        :scopes ["global" "project"]
        :owner :vis
        :group :council
@@ -943,18 +952,6 @@
        :editor "model"
        :validate-fn model-value-problem
        :default {}
-       :scopes ["global" "project"]
-       :owner :vis
-       :group :council
-       :parent "subagents"
-       :persist? true})
-    (register-toggle!
-      {:id "subagent_model_only"
-       :label "Only these models"
-       :description
-       "Run subagents only on the subagent model and its fallback model. A task cannot name another model."
-       :type :boolean
-       :default false
        :scopes ["global" "project"]
        :owner :vis
        :group :council

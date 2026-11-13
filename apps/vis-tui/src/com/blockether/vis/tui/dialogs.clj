@@ -4517,6 +4517,11 @@
       (let [{:strs [provider model]} toggle-value]
         (if (and provider model) (str provider "/" model) "Not set"))
 
+      "models"
+      (if (seq toggle-value)
+        (str/join ", " (map (fn [{:strs [provider model]}] (str provider "/" model)) toggle-value))
+        "Not set")
+
       (let [n (count toggle-value)]
         (when (pos? n)
           (str n
@@ -5501,6 +5506,47 @@
 
     (when (and (some? value) (not= value current)) value)))
 
+(defn- settings-models-editor!
+  "Edit the ordered models of a `models` row. The first model is the default. Add opens the
+   session model picker; an entry opens Make default and Remove. Save returns the new list,
+   which can be `[]`; Esc or an unchanged list returns nil."
+  [screen row]
+  (let [current (vec (:toggle-value row))
+        entry-name (fn [{:strs [provider model]}] (str provider "/" model))]
+    (loop [value current]
+      (let [choice
+            (list-dialog! screen
+                          (:label row)
+                          (vec (concat (map-indexed (fn [i entry]
+                                                      {:label (entry-name entry)
+                                                       :hint (when (zero? (long i)) "default")
+                                                       :index i})
+                                                    value)
+                                       [{:label "+ Add a model" :add? true}
+                                        {:label "Save" :save? true}]))
+                          {:enter-label "choose" :min-width 56 :height :content})]
+        (cond
+          (nil? choice) nil
+          (:save? choice) (when (not= value current) value)
+          (:add? choice)
+          (let [picked (model-picker! screen nil {:title (str "Add to " (:label row)) :reset-label "Cancel"})
+                entry (when (and picked (not (:reset? picked)))
+                        {"provider" (:provider picked) "model" (:model picked)})]
+            (recur (if (and entry (not (some #{entry} value))) (conj value entry) value)))
+          :else
+          (let [i (long (:index choice))
+                entry (nth value i)
+                others (into (subvec value 0 i) (subvec value (inc i)))
+                action (list-dialog! screen
+                                     (entry-name entry)
+                                     (cond-> []
+                                       (pos? i) (conj {:label "Make default" :default? true})
+                                       true (conj {:label "Remove" :remove? true}))
+                                     {:enter-label "choose" :height :content})]
+            (recur (cond (:default? action) (into [entry] others)
+                         (:remove? action) others
+                         :else value))))))))
+
 (defn- settings-structured-editor!
   [screen g region row]
   (case (get-in row [:setting "editor"])
@@ -5518,6 +5564,9 @@
 
     "model"
     (settings-model-editor! screen row)
+
+    "models"
+    (settings-models-editor! screen row)
 
     (do (mini-note! screen
                     g
