@@ -103,12 +103,6 @@ a bug fix with a regression test and a release preparation.
   </tr>
 </table>
 
-## Native vs JVM
-
-Use the native release for everyday work, or the JVM source build when developing
-Vis. The [runtime comparison](resources/vis-docs/distributions.md#native-vs-jvm)
-covers requirements, startup time and memory use.
-
 ## Use Vis from your code
 
 Start with [Python SDK basics](resources/vis-docs/python-sdk.md) to run a task using
