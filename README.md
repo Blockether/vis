@@ -20,8 +20,11 @@
 # Vis
 
 Vis is a coding agent you can adapt to your tools and workflow.
-Ask it to explore a project, make a change or investigate a failure. Follow the
-work from your terminal, desktop or phone, with the same sessions on each.
+Give it tools for your project, measure the results on real tasks, and use failures
+to improve those tools and checks.
+
+Follow the work from your terminal, browser, desktop or phone, with the same
+sessions on each.
 
 ## Install
 
@@ -51,6 +54,17 @@ same sessions, so you can start a task in one client and continue it in another.
 A capable model can write code, but it does not know how your team works. It does not know which
 tests matter, how changes get reviewed or what to check before a release. You do. Vis lets you put
 that knowledge into tools the agent can use, instead of a growing list of reminders.
+
+```mermaid
+flowchart LR
+    A[Build tools] --> B[Run real tasks]
+    B --> C[Measure results]
+    C --> D[Inspect failures]
+    D --> E[Improve tools and checks]
+    E --> B
+```
+
+Repeat the same tasks after each change to compare the results.
 
 For example, a function can select and run the right tests for a change. A hook
 can check the code after an edit and report problems. You define the operations
