@@ -76,8 +76,8 @@ Read the manual at [vis.blockether.com](https://vis.blockether.com/) or in
 
 - **Intro**: [Rationale](resources/vis-docs/rationale.md) and [Getting started](resources/vis-docs/index.md).
 - **Concepts**: one page for each feature, such as [Sessions](resources/vis-docs/sessions.md).
-- **Programmatic access**: [Python SDK](resources/vis-docs/python-sdk.md) and [HTTP API](resources/vis-docs/http-api.md).
-- **Extensions**: [Extending Vis](resources/vis-docs/extending.md) and the [Extension Center](https://vis.blockether.com/extensions/).
+- **Programmatic access**: [Python SDK](resources/vis-docs/python-sdk.md), [Python API reference](https://vis.blockether.com/python-sdk-api/) and [HTTP API](resources/vis-docs/http-api.md).
+- **Extensions**: [Extending Vis](resources/vis-docs/extending.md), [code checks example](resources/vis-docs/extension-design.md#check-code-complexity-after-edits) and the [Extension Center](https://vis.blockether.com/extensions/).
 - **Reference**: exact facts, such as [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md).
 
 ## Screenshot gallery
@@ -102,27 +102,6 @@ a bug fix with a regression test and a release preparation.
     <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-settings.png"><img src="resources/vis-docs/assets/screenshots/tui-settings.png" width="100%" alt="Vis TUI settings with general and view options and the configured model providers."></a></td>
   </tr>
 </table>
-
-## Use Vis from your code
-
-Start with [Python SDK basics](resources/vis-docs/python-sdk.md) to run a task using
-`Agent(project=".")`, continue the conversation or connect to a shared gateway.
-Then read the page for the concept that you need, for example
-[Sessions API](resources/vis-docs/sessions-api.md) or [Automations API](resources/vis-docs/automations-api.md).
-Browse the generated [Python API reference](https://vis.blockether.com/python-sdk-api/)
-for classes, methods, signatures and types. It follows `main` and can include
-unreleased APIs not yet available on PyPI.
-From other languages, start with [HTTP API basics](resources/vis-docs/http-api.md). Each API page shows the
-same steps as HTTP requests, for example [Sessions API](resources/vis-docs/sessions-api.md).
-For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md). No native build is needed.
-
-## Add your own tools and checks
-
-Follow [Extending Vis](resources/vis-docs/extending.md) to add a tool for your workflow.
-For a working example of an automatic check, see
-[Check code complexity after edits](resources/vis-docs/extension-design.md#check-code-complexity-after-edits).
-Only when adding Java/Clojure capabilities inside Vis, follow
-[Native builds for JVM extensions](resources/vis-docs/jvm-native-image.md).
 
 ## License
 
