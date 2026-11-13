@@ -2251,12 +2251,17 @@ therapy line 2"
       ;; Non-transcript sources already extract from cells; pass the value through.
       (expect (= "" (selection-copy-payload :input "" (constantly "visible")))))
   (it "single-click bubble copy strips ANSI/control-picture artifacts"
-      (let [copied (promise)]
+      (let [copied
+            (promise)
+
+            notifications
+            (atom [])]
+
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
                                                    true)
-                         #'vis/notify! (fn [& _]
-                                         nil)}
+                         #'vis/notify! (fn [& args]
+                                         (swap! notifications conj args))}
           (fn []
             ;; Wait for the WHOLE worker, including notify!, before restoring
             ;; its Vars. Otherwise it can notify the following test's promise.
@@ -2264,7 +2269,8 @@ therapy line 2"
                                                      "␛[31mok␛[0m"))
                                   1000
                                   ::timeout)))
-            (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
+            (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))
+            (expect (empty? @notifications))))))
   (it "file click targets open through the editor path, not the generic URL opener"
       (let [editor-opened
             (promise)

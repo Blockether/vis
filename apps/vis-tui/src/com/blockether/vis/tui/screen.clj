@@ -586,9 +586,10 @@
      worker-name
      #(if-let [payload (if (fn? text) (text) text)]
         (let [copied? (try (true? (input/clipboard-copy! payload)) (catch Throwable _ false))]
-          (vis/notify! (if copied? success-message "Copy failed — terminal clipboard unavailable")
-                       :level (if copied? :success :error)
-                       :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms))
+          (when (or (not copied?) success-message)
+            (vis/notify! (if copied? success-message "Copy failed — terminal clipboard unavailable")
+                         :level (if copied? :success :error)
+                         :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms)))
           copied?) (do (vis/notify! (or (if (fn? failure-message) (failure-message) failure-message)
                                         "Copy failed — nothing to copy")
                                     :level :error
@@ -614,7 +615,7 @@
 
 (defn- copy-bubble!
   [text]
-  (copy-text-async! "vis-tui-copy-bubble" (selection/clean-copied-text text) "✓ Copied bubble"))
+  (copy-text-async! "vis-tui-copy-bubble" (selection/clean-copied-text text) nil))
 
 (defn- copy-disclosure!
   "Copy a disclosure hit: an expanded body, a code header, or an Activity band.
