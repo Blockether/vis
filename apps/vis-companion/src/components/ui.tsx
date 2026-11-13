@@ -97,14 +97,15 @@ export function Text({
 }) {
   const role = {
     // Settings levels shrink from the column to the band to its groups; rows stay `label`.
+    // A row is one step under the chat type: a dense settings list reads as a list (user).
     page: 'text-head font-semibold',
     band: 'text-subhead font-semibold',
     group: 'text-ui font-bold uppercase tracking-[0.06em]',
     heading: 'text-title font-semibold',
     section: 'text-body font-semibold',
-    label: 'text-title font-medium',
-    option: 'text-title font-normal',
-    description: 'text-body font-normal',
+    label: 'text-body font-medium',
+    option: 'text-body font-normal',
+    description: 'text-ui font-normal',
     meta: 'text-ui font-normal',
   }[variant];
   const ink =

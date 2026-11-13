@@ -339,7 +339,7 @@ export function SecretSetting({
             </Button>
           </div>
           {isFailed && (
-            <p role="alert" className="w-full font-mono text-body text-err">
+            <p role="alert" className="w-full font-mono text-ui text-err">
               Not saved. Enter the value again.
             </p>
           )}
