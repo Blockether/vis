@@ -1,6 +1,6 @@
 import { useContext, useState } from 'react';
-import { Button, IconButton, Text } from '../../components/ui';
-import { PlusIcon } from '../../components/icons';
+import { IconButton, Text } from '../../components/ui';
+import { PlusIcon, StarIcon, TrashIcon } from '../../components/icons';
 import type { ModelPref, SettingValue, Toggle } from '../../lib/types';
 import { ProviderRouterDialog } from '../RouterScreen';
 import { SettingMachine } from './SettingField';
@@ -75,25 +75,25 @@ export function ModelsField({
                   {name}{index === 0 && ' (default)'}
                 </Text>
                 {index > 0 && (
-                  <Button
+                  <IconButton
                     variant="quiet"
-                    density="panel"
-                    aria-label={`Make ${name} the default`}
+                    label={`Make ${name} the default`}
+                    title="Make default"
                     disabled={isLocked}
                     onClick={() => void save([entry, ...models.filter((_, at) => at !== index)])}
                   >
-                    Make default
-                  </Button>
+                    <StarIcon className="size-3.5" />
+                  </IconButton>
                 )}
-                <Button
+                <IconButton
                   variant="remove"
-                  density="panel"
-                  aria-label={`Remove ${name}`}
+                  label={`Remove ${name}`}
+                  title="Remove"
                   disabled={isLocked}
                   onClick={() => void save(models.filter((_, at) => at !== index))}
                 >
-                  Remove
-                </Button>
+                  <TrashIcon className="size-3.5" />
+                </IconButton>
               </li>
             );
           })}

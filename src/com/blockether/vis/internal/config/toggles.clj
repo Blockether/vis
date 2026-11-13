@@ -925,7 +925,7 @@
       {:id "subagent_models"
        :label "Subagent models"
        :description
-       "The models that a subagent can use. A task that names no model uses the first. When its model fails, a subagent tries the next model, while automatic provider fallback is on. Empty uses the model of the agent that starts it and allows every model."
+       "The models that subagents can use. The first is the default. The next ones take over when a model fails. Empty uses the model of the agent."
        :type :object
        :editor "models"
        :validate-fn models-value-problem
