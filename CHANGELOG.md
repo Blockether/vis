@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
-- Jail (#474): on macOS, a jailed command can start `vis-agent` with Python extensions. Each jailed child gets a private directory in `VIS_RUNTIME_DIR`, where it can bind Unix sockets and connect to them; the jail refuses a Unix socket bind in all other paths. Vis deletes the directory when the child stops. Before, each extension worker failed with "Operation not permitted" when it bound its control socket in `/tmp`. The Python runtime is now at commit 0b93574.
+- Jail (#474): on macOS, a jailed command can start `vis-agent` with Python extensions. Each jailed child gets a private directory in `VIS_RUNTIME_DIR`, where it can bind Unix sockets and connect to them; the jail refuses a Unix socket bind in all other paths. The Python runtime makes the directory and deletes it when the child stops. A gateway start or stop also deletes the directories that a killed Vis process left. Before, each extension worker failed with "Operation not permitted" when it bound its control socket in `/tmp`. The Python runtime is now at commit 16bb6e4.
 - Extensions (#475): a reload that replaces a Python extension restarts each worker that ran the old code. These are the registration worker and the extension worker of each session that used the extension. The threads, timers and file locks of the old code end with that process. A worker with a running call restarts when the call ends. Before, the old code continued in the same process, so a background job kept its file lock and the new code could not take it.
 
 ## [v0.5.17] - 2026-11-13

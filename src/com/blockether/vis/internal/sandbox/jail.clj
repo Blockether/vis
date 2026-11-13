@@ -50,22 +50,12 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace.core :as workspace]
-            [taoensso.telemere :as tel])
-  (:import (java.io File IOException)
+            [com.blockether.vis.internal.workspace.core :as workspace])
+  (:import (java.io File)
            (java.lang ProcessHandle)
-           (java.nio.file FileSystems
-                          FileVisitResult
-                          Files
-                          LinkOption
-                          Path
-                          PathMatcher
-                          Paths
-                          SimpleFileVisitor)
-           (java.nio.file.attribute FileAttribute PosixFilePermissions)
+           (java.nio.file FileSystems Path PathMatcher Paths)
            (java.time Instant)
-           (java.util HashMap)
-           (java.util.concurrent CompletableFuture)))
+           (java.util HashMap)))
 
 (defn unenforceable-reason
   "Nil when this host can confine a child, else the runtime's explanation of the
@@ -377,19 +367,37 @@
                    (catch java.io.IOException _ nil))
               (reset! run-owner own))))))
 
+(defn- socket-dir
+  "The private directory that the runtime gives each confined child for Unix sockets
+   (#474), as its `:socket-dir` option. A `vis-agent` that the child starts finds the
+   directory in `VIS_RUNTIME_DIR` and puts its worker control sockets there; Seatbelt
+   allows a Unix bind nowhere else. It is in the task runtime directory when one is
+   set. The runtime makes it and deletes it when the child exits; an owner sweep
+   deletes what a killed process left."
+  []
+  {:variable "VIS_RUNTIME_DIR"
+   :parent (some-> (paths/runtime-dir)
+                   str)})
+
 (defn start-owner-run!
   "Mark each process that this gateway confines from now on, and end the processes of
    each ended Vis process: a crash or a kill skips its own sweep. The record of an
    ended process goes after its sweep, so an interrupted start sweeps it again.
    Returns how many processes ended."
   []
-  (let [dir (owners-dir)]
+  (let [dir
+        (owners-dir)
+
+        sockets
+        (socket-dir)]
+
     (claim-owner!)
     (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
     (transduce (comp (filter #(re-matches #"\d+-\d+" (.getName ^File %)))
                      (remove #(live-owner? (.getName ^File %)))
                      (map (fn [^File file]
-                            (let [ended (python-runtime/end-confined-processes! (.getName file))]
+                            (let [ended (python-runtime/end-confined-processes! (.getName file)
+                                                                                sockets)]
                               (.delete file)
                               ended))))
                +
@@ -402,7 +410,7 @@
    ended, or nil when no run started."
   []
   (some-> @run-owner
-          python-runtime/end-confined-processes!))
+          (python-runtime/end-confined-processes! (socket-dir))))
 
 (defn runtime-policy
   "The platform-neutral confinement VALUE the runtime compiles, from a session
@@ -747,87 +755,35 @@
      (when (seq extra) (.putAll environment ^java.util.Map extra))
      environment)))
 
-(defn- create-socket-dir!
-  "A new private directory where ONE confined child may bind and dial Unix sockets
-   (#474). A `vis-agent` that the child starts finds it in `VIS_RUNTIME_DIR` and puts
-   its worker control sockets there; Seatbelt allows a Unix bind nowhere else. It is
-   a real path, because `VIS_RUNTIME_DIR` refuses a symbolic link such as the macOS
-   `/tmp`. It is in the task runtime directory when one is set."
-  ^Path []
-  (Files/createTempDirectory (or (paths/runtime-dir)
-                                 (.toRealPath (Path/of "/tmp" (make-array String 0))
-                                              (make-array LinkOption 0)))
-                             "vis-run-"
-                             (into-array FileAttribute
-                                         [(PosixFilePermissions/asFileAttribute
-                                            (PosixFilePermissions/fromString "rwx------"))])))
-
-(defn- delete-socket-dir!
-  "Delete `dir` and its contents. The walk does not follow a symbolic link that the
-   child made, so it deletes nothing outside `dir`."
-  [^Path dir]
-  (try (Files/walkFileTree
-         dir
-         (proxy [SimpleFileVisitor] []
-           (visitFile [^Path path _attributes] (Files/deleteIfExists path) FileVisitResult/CONTINUE)
-           (visitFileFailed [_path _error] FileVisitResult/CONTINUE)
-           (postVisitDirectory [^Path path _error]
-             (Files/deleteIfExists path)
-             FileVisitResult/CONTINUE)))
-       (catch IOException e
-         (tel/log!
-           {:level :warn :id ::socket-dir-not-deleted :data {:dir (str dir) :error (ex-message e)}}
-           "a confined child's socket directory was not deleted"))))
-
 (defn spawn!
   "Spawn `argv` through the runtime-owned process boundary. An enabled policy
    becomes a [[runtime-policy]] value the runtime enforces (it refuses the spawn
    on a host that cannot); a disabled policy, or a process that is itself already
    confined, still gets libvisjail's detached process group, PTY and lifecycle
-   implementation with no second layer. A confined child also gets its own socket
-   directory as `VIS_RUNTIME_DIR` until it exits (#474).
+   implementation with no second layer. A confined child also gets its own
+   [[socket-dir]] until it exits.
 
    Options: `:directory`, an exact `:environment` or trusted
    `:extra-environment`, `:pty?`, `:merge-stderr?`, `:rows`, and `:columns`."
   ([argv directory policy] (spawn! argv directory policy nil))
   ([argv directory policy {:keys [environment extra-environment pty? merge-stderr? rows columns]}]
-   (let [confined?
-         (and policy (not (:disabled? policy)) (not (python-runtime/jailed?)))
-
-         socket-dir
-         (when confined? (create-socket-dir!))
-
-         environment
-         (or environment (process-environment policy extra-environment))]
-
+   (let [confined? (and policy (not (:disabled? policy)) (not (python-runtime/jailed?)))]
      ;; The spawn itself is the runtime library's (`Jail/spawn`), so the cdylib
      ;; has to be resolvable HERE — in the process doing the spawning, which is
      ;; not necessarily one that ever started an interpreter. Ensuring is a no-op
      ;; once it resolves.
      (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
-     (try (let [^Process process (python-runtime/spawn-process!
-                                   (mapv str argv)
-                                   {:environment (if socket-dir
-                                                   (doto (HashMap. ^java.util.Map environment)
-                                                     (.put "VIS_RUNTIME_DIR" (str socket-dir)))
-                                                   environment)
-                                    :directory (some-> directory
-                                                       str)
-                                    :policy (when confined?
-                                              (assoc (runtime-policy policy)
-                                                :owner (claim-owner!)
-                                                :unix-socket-dirs [(str socket-dir)]))
-                                    :pty? (boolean pty?)
-                                    :merge-stderr? (boolean merge-stderr?)
-                                    :rows (int (or rows 0))
-                                    :columns (int (or columns 0))})]
-            (when socket-dir
-              (.thenRun ^CompletableFuture (.onExit process)
-                        ^Runnable
-                        (fn []
-                          (delete-socket-dir! socket-dir))))
-            process)
-          (catch Throwable t (when socket-dir (delete-socket-dir! socket-dir)) (throw t))))))
+     (python-runtime/spawn-process!
+       (mapv str argv)
+       {:environment (or environment (process-environment policy extra-environment))
+        :directory (some-> directory
+                           str)
+        :policy (when confined? (assoc (runtime-policy policy) :owner (claim-owner!)))
+        :socket-dir (when confined? (socket-dir))
+        :pty? (boolean pty?)
+        :merge-stderr? (boolean merge-stderr?)
+        :rows (int (or rows 0))
+        :columns (int (or columns 0))}))))
 
 ;; ── ONE call's own environment ──────────────────────────────────────────────
 ;; `environment:` says what EVERY child of Vis gets. A verb that SPAWNS also
