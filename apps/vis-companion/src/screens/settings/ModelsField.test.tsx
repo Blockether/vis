@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, screen, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { renderOpenBands } from '../../test-settings';
@@ -67,5 +67,5 @@ it('lists the models with the first as default, adds one from the session picker
   for (const entry of [added, fixture.row.value[0], fixture.row.value[1]])
     await user.click(await screen.findByRole('button', { name: `Remove ${name(entry)}` }));
   expect(asWrite(write.mock.calls[4])).toEqual(fixture.clear_write);
-  expect(await screen.findByText('Not set')).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole('list', { name: `${fixture.row.label} value` })).toBeNull());
 });

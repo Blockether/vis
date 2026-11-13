@@ -1,5 +1,6 @@
 import { useContext, useState } from 'react';
-import { Button, Text } from '../../components/ui';
+import { Button, IconButton, Text } from '../../components/ui';
+import { PlusIcon } from '../../components/icons';
 import type { ModelPref, SettingValue, Toggle } from '../../lib/types';
 import { ProviderRouterDialog } from '../RouterScreen';
 import { SettingMachine } from './SettingField';
@@ -23,8 +24,8 @@ const same = (a: Model, b: ModelPref) => a.provider === b.provider && a.model ==
 
 /**
  * A setting whose value is an ordered list of chat models; `[]` names none. The
- * first model is the default. Add opens the session model picker in choose mode,
- * so the choices are the same models.
+ * first model is the default. The add mark opens the session model picker in
+ * choose mode, so the choices are the same models.
  */
 export function ModelsField({
   toggle,
@@ -52,53 +53,52 @@ export function ModelsField({
             <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>
           )}
         </div>
-        <Button
-          variant="secondary"
-          density="panel"
+        <IconButton
+          variant="quiet"
           className="self-center"
-          aria-label={`Add a model to ${toggle.label}`}
+          label={`Add a model to ${toggle.label}`}
+          title={`Add a model to ${toggle.label}`}
           aria-busy={busy}
           disabled={isLocked}
           onClick={() => setOpen(true)}
         >
-          Add
-        </Button>
+          <PlusIcon className="size-4" />
+        </IconButton>
       </div>
-      <ul className="mt-2 grid gap-1" aria-label={`${toggle.label} value`}>
-        {models.length === 0 && (
-          <li><Text as="p" variant="meta">Not set</Text></li>
-        )}
-        {models.map((entry, index) => {
-          const name = `${entry.provider}/${entry.model}`;
-          return (
-            <li key={name} className="flex min-w-0 items-center gap-2">
-              <Text as="span" variant="meta" className="min-w-0 flex-1 break-all">
-                {name}{index === 0 && ' (default)'}
-              </Text>
-              {index > 0 && (
+      {models.length > 0 && (
+        <ul className="mt-2 grid gap-1" aria-label={`${toggle.label} value`}>
+          {models.map((entry, index) => {
+            const name = `${entry.provider}/${entry.model}`;
+            return (
+              <li key={name} className="flex min-w-0 items-center gap-2">
+                <Text as="span" variant="meta" className="min-w-0 flex-1 break-all">
+                  {name}{index === 0 && ' (default)'}
+                </Text>
+                {index > 0 && (
+                  <Button
+                    variant="quiet"
+                    density="panel"
+                    aria-label={`Make ${name} the default`}
+                    disabled={isLocked}
+                    onClick={() => void save([entry, ...models.filter((_, at) => at !== index)])}
+                  >
+                    Make default
+                  </Button>
+                )}
                 <Button
-                  variant="quiet"
+                  variant="remove"
                   density="panel"
-                  aria-label={`Make ${name} the default`}
+                  aria-label={`Remove ${name}`}
                   disabled={isLocked}
-                  onClick={() => void save([entry, ...models.filter((_, at) => at !== index)])}
+                  onClick={() => void save(models.filter((_, at) => at !== index))}
                 >
-                  Make default
+                  Remove
                 </Button>
-              )}
-              <Button
-                variant="remove"
-                density="panel"
-                aria-label={`Remove ${name}`}
-                disabled={isLocked}
-                onClick={() => void save(models.filter((_, at) => at !== index))}
-              >
-                Remove
-              </Button>
-            </li>
-          );
-        })}
-      </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {isOpen && machine && (
         <ProviderRouterDialog
           client={machine.client}
