@@ -4827,6 +4827,9 @@
           ;; here) and reports its own failures; Settings just reloads.
           :mcp-action (fn [{:keys [server action g region]}]
                         (mcp/run-action! screen g region server action))
+          ;; A models row adds a model as a provider band, then a models band.
+          :choose-model (fn [g region title]
+                          (provider/choose-model-transient! screen g region title))
           :open-settings open-settings
           :context-session-id context-session-id}]
 

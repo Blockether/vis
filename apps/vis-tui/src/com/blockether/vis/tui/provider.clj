@@ -472,6 +472,57 @@
                                          #(model-transient-spec entries % marks page-size))]
         (if (= picked :show-all) (recur (build-model-list provider preferred true)) picked)))))
 
+(defn choose-model-transient!
+  "Choose one chat model as two bands in the caller's frame: a provider, then one of its
+   models. The models are those of the session model picker. Esc on the models goes back
+   to the providers. Returns `{:provider <str> :model <str>}`, or nil on Esc."
+  [^TerminalScreen screen g region title]
+  (let [region
+        (dlg/host-band-region screen region)
+
+        fleet
+        (into []
+              (filter #(seq (keep vis/model-name (:models %))))
+              (try (vis/picker-fleet) (catch Throwable _ nil)))
+
+        page-size
+        (model-transient-page-size (max 1
+                                        (- (long (:hint-row region)) (long (:min-row region 0)) 1)))
+
+        providers
+        (mapv (fn [p]
+                {:id (:id p) :label (vis/display-label (:id p))})
+              fleet)]
+
+    (if (empty? fleet)
+      (do ((:note! (dlg/band-questions screen g region))
+            title
+            "No provider has a model. Add a provider first.")
+          nil)
+      (loop []
+
+        (when-let [pid (run-paged-transient!
+                         screen
+                         g
+                         region
+                         title
+                         #(paged-key-groups
+                            {:title "Providers" :items providers :page % :page-size page-size}))]
+          (let [models (into []
+                             (comp (keep vis/model-name)
+                                   (map (fn [m]
+                                          {:id m :label m})))
+                             (:models (first (filter #(= pid (:id %)) fleet))))]
+            (if-let [model (run-paged-transient!
+                             screen
+                             g
+                             region
+                             (str (vis/display-label pid) " — models")
+                             #(paged-key-groups
+                                {:title "Models" :items models :page % :page-size page-size}))]
+              {:provider (name pid) :model model}
+              (recur))))))))
+
 (defn api-key-hint
   "PURE: the ONE line of a provider's own auth guidance that answers `where do I
    get the key?` — the first line naming a URL, else the first line that says

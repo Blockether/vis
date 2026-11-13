@@ -6,7 +6,8 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.dialogs :as dlg]))
+            [com.blockether.vis.tui.dialogs :as dlg]
+            [com.blockether.vis.tui.provider :as provider]))
 
 (def ^:private fixture
   (wire/parse-json (slurp (io/resource "vis-contract/fixtures/setting-models.json"))))
@@ -51,7 +52,7 @@
                         g
                         {:left 1 :inner-w 96 :hint-row 32 :text-w 92 :min-row 2}
                         {}
-                        {}
+                        {:choose-model #(provider/choose-model-transient! screen %1 %2 %3)}
                         (#'dlg/catalog-setting-row row))))})]
 
     (when-let [error (:error result)]
@@ -71,18 +72,21 @@
         (expect (= "Not set"
                    (#'dlg/settings-option-value (#'dlg/catalog-setting-row empty-row) {})))))
   (describe "the editor"
-            (it "adds the chosen model of the picker at the end"
+            (it "adds the model chosen in the provider and model bands at the end"
                 (let [{:strs [id value]} (get fixture "write")]
-                  (expect (= [[id value]]
-                             (written-values catalog-row [:down :down :enter \o \p \u \s :enter :end :enter :esc])))))
+                  (expect (= [[id value]] (written-values catalog-row [\a \a \b :esc])))))
             (it "makes a later model the default"
                 (let [[first-model second-model] (get catalog-row "value")]
                   (expect (= [["subagent_models" [second-model first-model]]]
-                             (written-values catalog-row [:down :enter :home :enter :end :enter :esc])))))
+                             (written-values catalog-row [\2 \d :esc])))))
             (it "writes an empty list when each model is removed"
-                (let [{:strs [id value]} (get fixture "clear_write")]
-                  (expect (= [[id value]]
-                             (written-values catalog-row
-                                             [:home :enter :end :enter :home :enter :enter :end :enter :esc])))))
+                (let [{:strs [id value]}
+                      (get fixture "clear_write")
+
+                      [_ second-model]
+                      (get catalog-row "value")]
+
+                  (expect (= [[id [second-model]] [id value]]
+                             (written-values catalog-row [\1 \x \1 \x :esc])))))
             (it "writes nothing on Esc"
-                (expect (= [] (written-values catalog-row [:down :down :enter \o \p \u \s :enter :esc :esc]))))))
+                (expect (= [] (written-values catalog-row [\a \a :esc :esc :esc]))))))

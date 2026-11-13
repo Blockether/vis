@@ -5520,84 +5520,129 @@
                                         nil)
               :else (recur value nil))))))
 
-(declare model-picker!)
+(def ^:private model-row-keys
+  "The keys of the model rows of a models band. `a`, `d` and `x` stay free for the commands."
+  "123456789bcefghijklmnopqrstuvwyz")
 
-(defn- settings-models-editor!
-  "Edit the ordered models of a `models` row. The first model is the default. Add opens the
-   session model picker; an entry opens Make default and Remove. Save returns the new list,
-   which can be `[]`; Esc or an unchanged list returns nil."
-  [screen row]
-  (let [current
-        (vec (:toggle-value row))
+(defn models-band-spec
+  "PURE: the band of a `models` row. Each model is a command on its own key, the first marked
+   as the default; `a` adds a model when `add?`."
+  [value add?]
+  (let [rows (into []
+                   (map-indexed (fn [i {:strs [provider model]}]
+                                  {:key (str (nth model-row-keys i))
+                                   :type :action
+                                   :id i
+                                   :label
+                                   (str provider "/" model (when (zero? (long i)) "  (default)"))}))
+                   (take (count model-row-keys) value))]
+    {:groups (cond-> []
+               (seq rows)
+               (conj {:title "Models" :items rows})
 
-        entry-name
-        (fn [{:strs [provider model]}]
-          (str provider "/" model))]
+               add?
+               (conj {:title "Commands"
+                      :items [{:key "a" :type :action :id :add :label "Add a model"}]}))}))
 
-    (loop [value current]
-      (let [choice (list-dialog! screen
-                                 (:label row)
-                                 (vec (concat (map-indexed (fn [i entry]
-                                                             {:label (entry-name entry)
-                                                              :hint (when (zero? (long i))
-                                                                      "default")
-                                                              :index i})
-                                                           value)
-                                              [{:label "+ Add a model" :add? true}
-                                               {:label "Save" :save? true}]))
-                                 {:enter-label "choose" :min-width 56 :height :content})]
-        (cond (nil? choice) nil
-              (:save? choice) (when (not= value current) value)
-              (:add? choice)
-              (let [picked (model-picker! screen
-                                          nil
-                                          {:title (str "Add to " (:label row))
-                                           :reset-label "Cancel"})
-                    entry (when (and picked (not (:reset? picked)))
-                            {"provider" (:provider picked) "model" (:model picked)})]
+(declare stale-setting?)
 
-                (recur (if (and entry (not (some #{entry} value))) (conj value entry) value)))
-              :else (let [i (long (:index choice))
-                          entry (nth value i)
-                          others (into (subvec value 0 i) (subvec value (inc i)))
-                          action (list-dialog! screen
-                                               (entry-name entry)
-                                               (cond-> []
-                                                 (pos? i)
-                                                 (conj {:label "Make default" :default? true})
-
-                                                 true
-                                                 (conj {:label "Remove" :remove? true}))
-                                               {:enter-label "choose" :height :content})]
-
-                      (recur (cond (:default? action) (into [entry] others)
-                                   (:remove? action) others
-                                   :else value))))))))
-
-(defn- settings-structured-editor!
-  [screen g region row]
-  (case (get-in row [:setting "editor"])
-    "paths"
-    (settings-path-editor! screen g region (:toggle-value row))
-
-    ("filesystem" "network")
-    (settings-object-editor! screen g region row)
-
-    ("list" "tools")
-    (settings-list-editor! screen (:label row) (:toggle-value row))
-
-    "presets"
-    (settings-presets-editor! screen g region row)
-
-    "models"
-    (settings-models-editor! screen row)
-
+(defn- save-models-value!
+  "Write the models list `value` over `base`. Returns the value the gateway confirmed, or nil
+   after a refusal or a change by another client is shown."
+  [screen g region id base value]
+  (if (stale-setting? id base)
     (do (mini-note! screen
                     g
                     region
-                    "Edit configuration file"
-                    "Edit this setting in your configuration file.")
-        nil)))
+                    "Setting not saved"
+                    "Another client changed this setting. Open it again to see the new value.")
+        nil)
+    (try (let [row (notify-change-error! (vis/set-setting-value! id value *settings-target*))]
+           (cache-setting-row! row)
+           (load-settings-inventory!)
+           (if (contains? row "value") (get row "value") value))
+         (catch Exception e (mini-note! screen g region "Setting not saved" (ex-message e)) nil))))
+
+(defn- settings-models-editor!
+  "Edit the ordered models of a `models` row as bands in the Settings frame. The key of a
+   model opens Make default and Remove; `a` asks `choose-model!` (`[g region title]`) for a
+   new model. Each change writes the whole list at once, so this returns nil."
+  [screen g region row choose-model!]
+  (let [region
+        (host-band-region screen region)
+
+        id
+        (:toggle-id row)]
+
+    (loop [value (vec (or (:toggle-value row) []))]
+      (let [action (:action (embed-transient! screen
+                                              g
+                                              region
+                                              (:label row)
+                                              (models-band-spec value (some? choose-model!))))
+            next-value
+            (cond (nil? action) nil
+                  (= :add action) (when-let [{:keys [provider model]}
+                                             (choose-model! g region (str "Add to " (:label row)))]
+                                    (let [entry {"provider" provider "model" model}]
+                                      (when-not (some #{entry} value) (conj value entry))))
+                  :else
+                  (let [i (long action)
+                        entry (nth value i)
+                        others (into (subvec value 0 i) (subvec value (inc i)))]
+
+                    (case (:action
+                            (embed-transient!
+                              screen
+                              g
+                              region
+                              (str (get entry "provider") "/" (get entry "model"))
+                              {:groups
+                               [{:items
+                                 (cond-> []
+                                   (pos? i)
+                                   (conj
+                                     {:key "d" :type :action :id :default :label "Make default"})
+
+                                   true
+                                   (conj {:key "x" :type :action :id :remove :label "Remove"}))}]}))
+                      :default
+                      (into [entry] others)
+
+                      :remove
+                      others
+
+                      nil)))]
+
+        (cond (nil? action) nil
+              (nil? next-value) (recur value)
+              :else (recur (or (save-models-value! screen g region id value next-value) value)))))))
+
+(defn- settings-structured-editor!
+  ([screen g region row] (settings-structured-editor! screen g region row nil))
+  ([screen g region row callbacks]
+   (case (get-in row [:setting "editor"])
+     "paths"
+     (settings-path-editor! screen g region (:toggle-value row))
+
+     ("filesystem" "network")
+     (settings-object-editor! screen g region row)
+
+     ("list" "tools")
+     (settings-list-editor! screen (:label row) (:toggle-value row))
+
+     "presets"
+     (settings-presets-editor! screen g region row)
+
+     "models"
+     (settings-models-editor! screen g region row (:choose-model callbacks))
+
+     (do (mini-note! screen
+                     g
+                     region
+                     "Edit configuration file"
+                     "Edit this setting in your configuration file.")
+         nil))))
 
 (defn- pick-setting-value!
   "Open the enum's choice list on its saved value; Escape leaves it unchanged."
@@ -5873,7 +5918,7 @@
               (recur value)))))
 
     :structured-setting
-    (when-let [value (settings-structured-editor! screen g region row)]
+    (when-let [value (settings-structured-editor! screen g region row callbacks)]
       (save-setting-value! screen g region (:toggle-id row) value {:base (:toggle-value row)}))
 
     ;; A local picture or text art path: an empty answer removes it, a file that is
