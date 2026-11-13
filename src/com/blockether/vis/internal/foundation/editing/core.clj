@@ -483,7 +483,7 @@
 
 (defn- resolve-search-roots
   "Resolve grep `paths` into
-   `{:roots [File …] :searched-paths [model-path …]}`.
+   `{:roots [File …] :searched-paths [model-path …] :missing [{:path :nearest} …]}`.
 
    `:roots` are the canonical Files actually searched — a FILE root is searched as
    that ONE file, a DIRECTORY root is walked as a tree (ripgrep / Claude-Code /
@@ -493,10 +493,11 @@
    addresses returned for search hits; it never leaves a default multi-root sweep
    disguised as `[\".\"]`.
 
-   An explicit path that DOES NOT EXIST fails the call, as in `ls`: the error names
-   the nearest existing directory to list first. A search never widens a missing
-   scope to a parent (session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: `/root/lanterna`
-   widened to `/root` and then failed to index it).
+   An explicit path that DOES NOT EXIST is not searched. It goes to `:missing` as
+   `{:path model-path :nearest File-or-nil}`, and the other paths are still searched.
+   A search never widens a missing scope to a parent (session
+   42f1f324-3b0e-4f4d-abb5-4e93343c44ac: `/root/lanterna` widened to `/root` and
+   then failed to index it).
 
    The DEFAULT/unscoped `[\".\"]` (or a BLANK/nil entry, which the model routinely
    tacks on, e.g. `[\".github\" \"\"]`) expands to the FULL allowed-roots set — the
@@ -522,28 +523,14 @@
                         allowed)]
 
         {:roots roots :searched-paths (mapv rel-path roots)})
-      (let [roots (into []
-                        (comp (map
-                                (fn [p]
-                                  (let [^File f (safe-path p)]
-                                    (when-not (.exists f)
-                                      (let [near (some-> (nearest-existing-dir f)
-                                                         rel-path)]
-                                        (throw (ex-info
-                                                 (str "grep: no such path `"
-                                                      (rel-path f)
-                                                      "`"
-                                                      (when near (str "; list `" near "` first"))
-                                                      ".")
-                                                 (cond-> {:type
-                                                          :ext.foundation.editing/grep-missing-path
-                                                          :path p}
-                                                   near
-                                                   (assoc :nearest near))))))
-                                    f)))
-                              (distinct))
-                        paths)]
-        {:roots roots :searched-paths (mapv rel-path roots)}))))
+      (let [files (into [] (comp (map safe-path) (distinct)) paths)
+            {found true gone false} (group-by #(.exists ^File %) files)
+            roots (vec found)]
+        {:roots roots
+         :searched-paths (mapv rel-path roots)
+         :missing (mapv (fn [^File f]
+                          {:path (rel-path f) :nearest (nearest-existing-dir f)})
+                        gone)}))))
 
 (defn- path->target
   [requested kind]
@@ -584,7 +571,7 @@
               :else [paths])]
 
     ;; Gate-check the same file or directory scopes used by the search. A missing
-    ;; path is checked as named; the search then fails with `no such path`.
+    ;; path is checked as named; the search then skips it and names it in the hint.
     (mapv (fn [p]
             (rel-path (safe-path p)))
           paths)))
@@ -1481,7 +1468,7 @@
   (let [{:keys [query paths limit offset is_hidden is_ignored is_ls is_regex]}
         (coerce-find-spec args)
 
-        {roots :roots searched-paths :searched-paths}
+        {roots :roots searched-paths :searched-paths missing :missing}
         (resolve-search-roots paths)
 
         ;; fff ranks genuine hits first but pads the page with loose subsequence
@@ -1627,6 +1614,7 @@
      "paths" (mapv :path items)
      "query" query
      "searched_paths" searched-paths
+     "missing_paths" missing
      "limit" limit
      "offset" offset
      "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")
@@ -2085,6 +2073,35 @@
                       regex-repairs))
        " Pass the repaired pattern next time."))
 
+(def ^:private missing-path-listing-limit
+  "Most entries that a missing-path hint lists from the nearest directory."
+  40)
+
+(defn- missing-path-note
+  "Name one missing grep scope and list one level of its nearest existing directory."
+  [{:keys [path ^File nearest]}]
+  (let [entries
+        (when nearest (get (list-dir nearest {:depth 1}) "entries"))
+
+        names
+        (map #(cond-> (get % "name")
+                (= "dir" (get % "type"))
+                (str "/"))
+             entries)
+
+        more
+        (- (count entries) (long missing-path-listing-limit))]
+
+    (str "`" path "` does not exist, so grep did not search it."
+         (when nearest
+           (str " `" (rel-path nearest) "/` "
+                (if (empty? entries)
+                  "is empty."
+                  (str "contains: "
+                       (str/join " " (take missing-path-listing-limit names))
+                       (when (pos? more) (str " … (" more " more)"))
+                       ".")))))))
+
 (defn- grep-data
   "grep's ORDERED DATA — the tested pure core. `grep-tool` is now only its
    RENDERER (`render-grep-text`), so this is the map every shape, count, paging
@@ -2158,8 +2175,8 @@
 
    NAME and CONTENT matching share the caller's exact file or directory scope.
    An existing file is never widened to its parent, including on zero hits.
-   A missing explicit scope fails the call with `no such path` and names the nearest
-   existing directory. NAME matching is fuzzy subsequence over the fff file index."
+   A missing explicit scope is skipped, never widened: the hint names it and lists
+   one level of its nearest existing directory. NAME matching is fuzzy subsequence over the fff file index."
   [& args]
   (let
     [{:strs [query offset item_count truncated_by] :as name-out}
@@ -2247,7 +2264,7 @@
      ;; sit at the top level for the model, the renderer and the tests alike.
      out
      (cond-> (-> name-out
-                 (dissoc "items" "fuzzy" "matched_terms" "item_count")
+                 (dissoc "items" "fuzzy" "matched_terms" "item_count" "missing_paths")
                  ;; `hint` and `next_offset` are TOTAL too: present on every grep
                  ;; result, nil when the search has nothing to explain / no next page.
                  (assoc "paths" kept-paths
@@ -2360,6 +2377,15 @@
         (str/join " "
                   (cond-> notes
                     (get out "hint")
+                    (conj (get out "hint")))))
+
+      ;; A missing scope comes FIRST. When no scope exists at all, nothing was
+      ;; searched, so a "nothing matched" hint would be false: it is dropped.
+      (seq (get name-out "missing_paths"))
+      (assoc "hint"
+        (str/join " "
+                  (cond-> (mapv missing-path-note (get name-out "missing_paths"))
+                    (and (seq (get out "searched_paths")) (get out "hint"))
                     (conj (get out "hint"))))))))
 
 (defn- shows-content?

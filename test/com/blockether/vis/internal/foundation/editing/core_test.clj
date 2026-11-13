@@ -1359,24 +1359,23 @@
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
     ;; Regression, session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: a missing scope climbed
     ;; to its parent; `/root/lanterna` became `/root`, and the index failed there.
-    (it "a MISSING path fails with `no such path` and names the nearest directory to list"
+    (it "a MISSING path is skipped: the other paths are searched and the hint lists the nearest directory"
         (let [d
               (temp-dir-path "rgp")
 
               ghost
               (str (temp-root) "/rgp/nope.edn")
 
-              err
-              (try (rg {"query" "needle" "paths" [d ghost]})
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+              _
+              (write-temp! "rgp/a.clj" "needle here\n")
 
-          (expect (some? err))
-          (expect (= :ext.foundation.editing/grep-missing-path (:type (ex-data err))))
-          (expect (clojure.string/starts-with? (ex-message err) "grep: no such path `"))
-          (expect (clojure.string/includes? (ex-message err) "nope.edn"))
-          (expect (clojure.string/includes? (ex-message err) "rgp` first."))
-          (expect (not (re-find #"(?i)\b(rg|fff)\b" (ex-message err))))))
+              r
+              (:result (rg {"query" "needle" "paths" [d ghost]}))]
+
+          (expect (= 1 (get r "hit_count")))
+          (expect (clojure.string/includes? (get r "hint") "nope.edn` does not exist"))
+          (expect (clojure.string/includes? (get r "hint") "rgp/` contains: a.clj"))
+          (expect (not (re-find #"(?i)\b(rg|fff)\b" (get r "hint"))))))
     (it
       "a BLANK/nil paths entry means \"everything\" — widens like \".\", never throws (`[\".github\" \"\"]` case)"
       (let [rsr
@@ -1483,7 +1482,7 @@
             (expect (= 1 (get out "hit_count")))
             (expect (= 1 (get out "file_count")))))))
     (it
-      "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path fails"
+      "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path is skipped"
       (let [dir
             (str (temp-root) "/rgd-precise")
 
@@ -1514,12 +1513,13 @@
           (expect (:success? r))
           (expect (= 1 (get-in r [:result "file_count"])))
           (expect (= 1 (get-in r [:result "hit_count"]))))
-        ;; a path that does NOT exist is NOT widened to `dir`: the call fails
-        (let [err (try (rg {"query" needle "paths" [(str dir "/gone.clj")]})
-                       nil
-                       (catch clojure.lang.ExceptionInfo e e))]
-          (expect (= :ext.foundation.editing/grep-missing-path (:type (ex-data err))))
-          (expect (clojure.string/includes? (ex-message err) "rgd-precise` first.")))))))
+        ;; a path that does NOT exist is NOT widened to `dir`: no hits, and the
+        ;; hint lists `dir` instead of claiming that nothing matched
+        (let [r (:result (rg {"query" needle "paths" [(str dir "/gone.clj")]}))]
+          (expect (= 0 (get r "hit_count")))
+          (expect (= [] (get r "searched_paths")))
+          (expect (clojure.string/includes? (get r "hint") "rgd-precise/` contains: a.clj b.clj."))
+          (expect (not (clojure.string/includes? (get r "hint") "No file NAME"))))))))
 
 (defdescribe empty-search-paths-default-test
              "grep preserves file and directory scopes; empty scope keeps the default search."
