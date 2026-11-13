@@ -384,6 +384,9 @@ CREATE INDEX idx_session_state_soul
 CREATE INDEX idx_session_state_parent
   ON session_state(parent_state_id);
 
+CREATE INDEX idx_session_state_summary
+  ON session_state(id, session_soul_id);
+
 -- =============================================================================
 -- session_turn_soul — immutable identity of a user request, branch-local.
 -- =============================================================================
@@ -409,6 +412,9 @@ CREATE INDEX idx_session_turn_soul_state
 -- The usage rollup chooses the newest completed model for each session.
 CREATE INDEX idx_session_turn_soul_state_created
   ON session_turn_soul(session_state_id, created_at DESC);
+
+CREATE INDEX idx_session_turn_soul_summary
+  ON session_turn_soul(id, session_state_id, request_kind, created_at, position);
 
 CREATE TRIGGER trg_session_turn_soul_position_ai
 BEFORE INSERT ON session_turn_soul
@@ -490,6 +496,9 @@ CREATE INDEX idx_session_turn_state_soul
 
 CREATE INDEX idx_session_turn_state_forked_from
   ON session_turn_state(forked_from_session_turn_state_id);
+
+CREATE INDEX idx_session_turn_state_summary
+  ON session_turn_state(session_turn_soul_id, version, status, id);
 
 -- =============================================================================
 -- session_turn_iteration — one LLM round-trip within a session_turn_state.

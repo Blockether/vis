@@ -2111,19 +2111,19 @@
    them said."
   {:title 0 :request 1 :reply 2 :thinking 3})
 
-(def ^:private turn-reply-at-sql
-  "SQL for the end of the agent's reply to turn soul `ts`, epoch ms, or NULL.
+(def ^:private turn-state-reply-at-sql
+  "End of the last iteration of settled turn state `f`, or NULL. Read the time
+   through the iteration index, without transcript data."
+  (str "CASE WHEN f.status <> 'running' THEN "
+       "(SELECT MAX(i.created_at) FROM session_turn_iteration i "
+       "WHERE i.session_turn_state_id = f.id) END"))
 
-   The reply is the newest state of the turn, once it has settled; it ends with its
-   last iteration. An iteration row is written once, when the iteration ends, so its
-   `created_at` is that end, read through the `(session_turn_state_id, created_at)`
-   index. A turn that still runs, or that ended before any iteration, has no reply
-   yet: a sent message never moves a session."
-  (str "(SELECT MAX(i.created_at) FROM session_turn_state f "
-       "JOIN session_turn_iteration i ON i.session_turn_state_id = f.id "
-       "WHERE f.session_turn_soul_id = ts.id AND f.status <> 'running' "
-       "AND f.version = (SELECT MAX(v.version) FROM session_turn_state v "
-       "WHERE v.session_turn_soul_id = ts.id))"))
+(def ^:private turn-reply-at-sql
+  "End of the newest state of turn soul `ts`, or NULL. Select the newest version
+   before checking its status, so a running retry cannot expose an older reply."
+  (str "(SELECT " turn-state-reply-at-sql
+       " FROM session_turn_state f "
+       "WHERE f.session_turn_soul_id = ts.id ORDER BY f.version DESC LIMIT 1)"))
 
 (defn- session-activity-at
   "When each of `sids` LAST MOVED, epoch ms, keyed by soul-id string.
@@ -2325,29 +2325,24 @@
    :limit 1})
 
 (def ^:private all-session-turn-stats-sql
-  "The all-session turn stats in one pass. Each turn reads its newest state
-   through the `(session_turn_soul_id, version)` index, and the grouped facts and
-   the newest human turn's status read that one materialized set. It answers
-   what [[human-answer-expression]] and [[latest-turn-status-expression]] answer
-   per session. Their correlated MAX(version) lookups cost about 70 ms over 18,000
-   turns; this costs about 50 ms. `latest` is the end of the newest agent reply
-   (`turn-reply-at-sql`), which adds about 45 ms over 680,000 iterations. Bind the
-   settled statuses, in order."
-  (str "WITH t AS MATERIALIZED ("
+  "All-session turn stats without transcript reads. Covering indexes keep request
+   and context data out of this scan. SQLite's single MAX(version) selects id and
+   status from the same newest state; the version is unique within each turn.
+   The ordered aggregate selects the newest human status without a second scan.
+   Bind the settled statuses, in order."
+  (str "WITH sessions AS MATERIALIZED (SELECT id, session_soul_id FROM session_state), "
+       "t AS ("
        "SELECT ss.session_soul_id AS sid, ts.request_kind AS kind, ts.created_at AS created_at, "
-       "ts.position AS position, "
-       "(SELECT f.status FROM session_turn_state f WHERE f.session_turn_soul_id = ts.id "
-       "ORDER BY f.version DESC LIMIT 1) AS status, " turn-reply-at-sql
-       " AS replied_at "
-       "FROM session_turn_soul ts JOIN session_state ss ON ss.id = ts.session_state_id), "
-       "agg AS (SELECT sid, COUNT(*) AS n, "
+       "ts.position AS position, f.id AS id, f.status AS status, MAX(f.version) AS version "
+       "FROM session_turn_soul ts JOIN sessions ss ON ss.id = ts.session_state_id "
+       "LEFT JOIN session_turn_state f ON f.session_turn_soul_id = ts.id GROUP BY ts.id) "
+       "SELECT sid, COUNT(*) AS n, "
        "SUM(CASE WHEN kind = 'user' AND status IN (?, ?, ?) THEN 1 ELSE 0 END) AS answers, "
-       "MAX(replied_at) AS latest FROM t GROUP BY sid), "
-       "lastu AS (SELECT sid, status FROM (SELECT sid, status, ROW_NUMBER() OVER "
-       "(PARTITION BY sid ORDER BY created_at DESC, position DESC) AS rn "
-       "FROM t WHERE kind = 'user' AND status IS NOT NULL) WHERE rn = 1) "
-       "SELECT agg.sid AS sid, agg.n AS n, agg.answers AS answers, lastu.status AS last_status, "
-       "agg.latest AS latest FROM agg LEFT JOIN lastu ON lastu.sid = agg.sid"))
+       "json_extract(json_group_array(status ORDER BY created_at DESC, position DESC) "
+       "FILTER (WHERE kind = 'user' AND status IS NOT NULL), '$[0]') AS last_status, "
+       "MAX("
+       turn-state-reply-at-sql
+       ") AS latest FROM t f GROUP BY sid"))
 
 (defn- turn-stats-row
   [row]
