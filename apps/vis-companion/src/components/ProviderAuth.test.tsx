@@ -328,6 +328,26 @@ describe('ProviderRows', () => {
     ...fields,
   });
 
+  it.each([null, 'auth:complete'])(
+    'can sign in again to a connected OAuth account unless busy (%s)',
+    (pending) => {
+      const row = signedIn({ auth_kind: 'oauth' });
+      const signIn = vi.fn(async () => {});
+      render(<ProviderRows auth={state({ providers: [row], pending, signIn })} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+      if (pending) expect(signIn).not.toHaveBeenCalled();
+      else expect(signIn).toHaveBeenCalledExactlyOnceWith(row);
+    },
+  );
+
+  it.each(['api-key', 'none', 'command'] as const)(
+    'does not offer OAuth sign-in again for %s credentials',
+    (auth_kind) => {
+      render(<ProviderRows auth={state({ providers: [signedIn({ auth_kind })] })} />);
+      expect(screen.queryByRole('button', { name: 'Sign in again' })).toBeNull();
+    },
+  );
+
   it.each([null, 'status:github-copilot', 'auth:complete'])(
     'keeps row refresh read-only and ignores it while busy (%s)',
     (pending) => {

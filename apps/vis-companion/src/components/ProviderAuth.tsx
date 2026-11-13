@@ -1561,6 +1561,15 @@ export function ProviderRows({ auth, focusId }: { auth: ProviderAuth; focusId?: 
               if (!pending) void auth.recheck(provider.id);
             },
           });
+        if (authed && provider.auth_kind === 'oauth')
+          actions.push({
+            key: 'sign-in-again',
+            label: 'Sign in again',
+            icon: <RefreshIcon className="size-4" />,
+            onSelect: () => {
+              if (!pending) void auth.signIn(provider);
+            },
+          });
         if (provider.models.length > 0 && !provider.is_default)
           actions.push({
             key: 'fallback',
