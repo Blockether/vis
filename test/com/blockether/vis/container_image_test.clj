@@ -86,11 +86,15 @@
                (expect (zero? exit) output)
                (expect (str/includes? output (str "NATIVE=" (.getCanonicalPath native))) output))
              ;; #183: launcher flags inside uv's child argv must remain opaque.
-             (let [args
-                   ["python" "uv" "run" "python" "--measure" "--jfr" "--stream-trace"]
+             ;; The same holds for the arguments of a Python program.
+             (doseq [args
+                     [["python" "uv" "run" "python" "--measure" "--jfr" "--stream-trace"]
+                      ["python" "--shared" "--env" "A=1" "-m" "pytest" "--measure" "--jfr" "--jvm"
+                       "--stream-trace"]
+                      ["--gateway" "localhost:9" "python" "-c" "pass" "--measure" "--jfr"]]
 
-                   {:keys [exit output]}
-                   (run-wrapper link {"HOME" (.getAbsolutePath tmp)} args)]
+                     :let [{:keys [exit output]}
+                           (run-wrapper link {"HOME" (.getAbsolutePath tmp)} args)]]
 
                (expect (zero? exit) output)
                (expect (= args
@@ -98,7 +102,8 @@
                                (filter #(str/starts-with? % "ARG="))
                                (map #(subs % 4))
                                (remove #(str/starts-with? % "-D"))
-                               vec))))
+                               vec))
+                       output))
              (finally (doseq [file (reverse (file-seq tmp))]
                         (io/delete-file file true)))))))
 

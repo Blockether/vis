@@ -272,6 +272,9 @@ and the command exits with your program's status. Unlike `python_execution`, it 
 tool functions or automatic imports. `vis-agent python --version` prints the Python
 version. Other interpreter options, such as `-u` or `-X`, are not supported.
 
+Each word after the program goes to the program, also `--help` and `-v`. Put the options of
+Vis before the program: `vis-agent python --no-network script.py --help`.
+
 `vis-agent python uv sync --project PATH` is upstream uv. It prepares the environment of the
 project, normally `.venv`, not the shared sandbox packages. From that project,
 `vis-agent python -m <module>` uses that environment with the embedded Python of Vis. It does not
@@ -281,6 +284,12 @@ and does not fall back to shared packages.
 Without a project, the CLI uses shared packages. For selection rules and explicit source paths, see
 [Python import roots](configuration.md#python-import-roots). To use the project's own interpreter,
 run `vis-agent python uv run --project PATH --no-sync python -m <module>`.
+
+`vis-agent python -m pip install` installs into the environment that the CLI uses: the
+environment of the project, or shared packages without a project. A child process that your
+program starts with `sys.executable` imports the same packages. A console script that pip
+installed there also runs by itself. In a project, the child process is the interpreter of the
+project environment. A uv environment has no pip, so run pip as `vis-agent python -m pip`.
 
 Missing imports raise `ModuleNotFoundError`. Sharing installed files does not relax
 sandbox restrictions: a package requiring refused native operations may work only

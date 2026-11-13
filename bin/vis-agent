@@ -140,13 +140,34 @@ jfr=0
 jvm_requested=0
 args=()
 end_of_flags=0
+command=""
+option_value=0
 for arg in "$@"; do
   # `--` ends the WRAPPER's parsing too, not just the app's, so every later word
   # reaches Vis verbatim — the one escape hatch the help promises must never eat
   # its own argument.
-  # Arguments after `python uv` belong to uv, including a child command's flags.
-  if [[ "${args[0]:-}" == python && "${args[1]:-}" == uv ]]; then end_of_flags=1; fi
   if (( end_of_flags )); then args+=("$arg"); continue; fi
+  # After `python` and its leading options, the next word selects the Python program
+  # or uv. It and every later word belong to that program, also a `--jfr` or `--measure`.
+  if [[ "$command" == python ]]; then
+    if (( option_value )); then option_value=0; args+=("$arg"); continue; fi
+    case "$arg" in
+      --measure|--jfr|--jvm|--stream-trace) ;;
+      --shared|--no-network|--no-env|--env=*|--gateway=*|--gateway-token=*) args+=("$arg"); continue ;;
+      --env|--gateway|--gateway-token) option_value=1; args+=("$arg"); continue ;;
+      *) end_of_flags=1; args+=("$arg"); continue ;;
+    esac
+  fi
+  # The command is the first word that is not a root gateway flag or a wrapper flag.
+  if [[ -z "$command" ]]; then
+    if (( option_value )); then option_value=0; args+=("$arg"); continue; fi
+    case "$arg" in
+      --gateway|--gateway-token) option_value=1; args+=("$arg"); continue ;;
+      --gateway=*|--gateway-token=*) args+=("$arg"); continue ;;
+      --|--measure|--jfr|--jvm|--stream-trace) ;;
+      *) command="$arg" ;;
+    esac
+  fi
   case "$arg" in
     --)        end_of_flags=1; args+=("$arg") ;;
     --measure) export VIS_MEASURE=1 ;;

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 assert Path(sys.executable).name == "python3", sys.executable
-assert sys._base_executable == sys.executable
+assert os.path.realpath(sys.executable) == os.path.realpath(sys._base_executable), sys.executable
 child_environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
 with tempfile.TemporaryDirectory(
     prefix="vis-reexecution-", dir=os.getcwd()

@@ -3,6 +3,7 @@
    Each source-launcher JVM loads the whole engine, so independent invocations run
    together and one probe checks every contract an invocation shares."
   (:require [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.string :as str]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
@@ -136,6 +137,50 @@
                     (mapv #(await-cli! % 240) started))))
         (partition-all 3 invocations)))
 
+(defn- shared-fixture-wheel!
+  "Write a wheel of one module. With `script`, the wheel declares that console script, which
+   prints its arguments and returns 5; the module run as `__main__` prints them too. It also
+   installs the shell program `SCRIPT-program`, which prints its arguments and exits 4."
+  (^File [^File project module] (shared-fixture-wheel! project module nil))
+  (^File [^File project module script]
+   (let [dist
+         (str module "-1.0.0.dist-info/")
+
+         wheel
+         (io/file project (str module "-1.0.0-py3-none-any.whl"))]
+
+     (with-open [zip (ZipOutputStream. (io/output-stream wheel))]
+       (doseq [[path text]
+               (cond-> {(str module ".py") "VALUE = 42\n"
+                        (str dist "METADATA")
+                        (str "Metadata-Version: 2.1\nName: " module "\nVersion: 1.0.0\n")
+                        (str dist "WHEEL")
+                        "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+                        (str dist "RECORD") ""}
+                 script
+                 (assoc (str module ".py")
+                   (str "import sys\nVALUE = 42\ndef main():\n"
+                        "    print('script', sys.argv[1:])\n    return 5\n"
+                        "if __name__ == '__main__':\n    print('module', sys.argv[1:])\n")
+                   (str dist "entry_points.txt")
+                   (str "[console_scripts]\n" script " = " module ":main\n")
+                   (str module "-1.0.0.data/scripts/" script "-program")
+                   "#!/bin/sh\necho program \"$@\"\nexit 4\n"))]
+         (.putNextEntry zip (ZipEntry. ^String path))
+         (.write zip (.getBytes ^String text "UTF-8"))
+         (.closeEntry zip)))
+     wheel)))
+
+(defn- runtime-installs
+  "The files of `module` in the tree of the Python runtime itself, where no install belongs."
+  [module]
+  (let [home (-> (Interpreter/pythonExecutable)
+                 io/file
+                 .getCanonicalFile
+                 .getParentFile
+                 .getParentFile)]
+    (filterv #(str/starts-with? (.getName ^File %) module) (file-seq (io/file home "lib")))))
+
 (defdescribe
   python-cli-invocation-test
   ;; Regression #237: the source launcher runs in its install directory and
@@ -145,6 +190,7 @@
   ;; startup hooks or modules imported by those hooks before its environment loads.
   ;; The native suite covers custom and missing environments against the binary.
   ;; `-c` and stdin ran in a sandbox module, printed errors to stdout and exited 1.
+  ;; pip installed into the runtime, and a child of `sys.executable` knew only the runtime.
   (it
     "runs code, stdin, modules, files and pytest like python in the invocation project"
     (let [dir
@@ -219,17 +265,22 @@
                ;; python -c dedents its code; the host has to ask for that.
                (str/replace
                  (str
-                   "import atexit, sys, threading, time\n" probe
+                   "import atexit, sys, threading, time\n"
+                   probe
                    "from cli_priority_fixture import VALUE as PRIORITY\n"
                    "print('PRIORITY', PRIORITY, sys._getframe().f_code.co_filename)\n"
                    "atexit.register(print, 'AT_EXIT')\n"
                    "threading.Thread(target=lambda: (time.sleep(0.2), print('JOINED'))).start()\n"
+                   "import subprocess\n"
+                   "subprocess.check_call([sys.executable, '-c',"
+                   " \"import cli_invocation_project as p; print('CHILD', p.VALUE)\"])\n"
                    "print('note', file=sys.stderr)\n" "sys.exit(3)\n")
                  #"(?m)^"
                  "    ")]
               ;; Like python: __main__, stderr apart, the program's exit status, and
               ;; non-daemon threads and atexit handlers finish before the process exits.
-              ["PROBE __main__ - 226 0.1.0" "PRIORITY 999 <string>" "JOINED" "AT_EXIT"]
+              ;; A child process of `sys.executable` imports the project too.
+              ["PROBE __main__ - 226 0.1.0" "PRIORITY 999 <string>" "CHILD 226" "JOINED" "AT_EXIT"]
               {"PYTHONPATH" (.getCanonicalPath shadow)}
               {:exit 3 :stderr "note\n"})
             (invocation
@@ -253,7 +304,11 @@
                               "assert str(Path.cwd()) == Path('expected-cwd.txt').read_text()\n"
                               "assert importlib.util.find_spec('cli_invocation_project') is None\n"
                               "print('SHARED', cli_shared_only.VALUE, cli_shared_editable.VALUE)")]
-                        ["SHARED shared editable"])]]
+                        ["SHARED shared editable"])
+            (invocation ["-m" "pip" "install" "--no-index" "--no-deps"
+                         (str (shared-fixture-wheel! dir "cli_project_pip"))]
+                        []
+                        {"PIP_DISABLE_PIP_VERSION_CHECK" "1"})]]
           (doseq [[{:keys [args expected exit stderr]} result]
                   (map vector invocations (run-cli-together install invocations))
                   :let [message (str args "\n" (:output result))]]
@@ -263,42 +318,12 @@
             (doseq [text expected]
               (expect (str/includes? (:stdout result) text) message))
             (when-not (some #{"--shared"} args)
-              (expect (not (str/includes? (:output result) "SHARED_HOOK_RAN")) message))))
-        (finally (delete-tree! dir))))))
-
-(defn- shared-fixture-wheel!
-  "Write a wheel of one module. With `script`, the wheel declares that console script, which
-   prints its arguments and returns 5; the module run as `__main__` prints them too. It also
-   installs the shell program `SCRIPT-program`, which prints its arguments and exits 4."
-  (^File [^File project module] (shared-fixture-wheel! project module nil))
-  (^File [^File project module script]
-   (let [dist
-         (str module "-1.0.0.dist-info/")
-
-         wheel
-         (io/file project (str module "-1.0.0-py3-none-any.whl"))]
-
-     (with-open [zip (ZipOutputStream. (io/output-stream wheel))]
-       (doseq [[path text]
-               (cond-> {(str module ".py") "VALUE = 42\n"
-                        (str dist "METADATA")
-                        (str "Metadata-Version: 2.1\nName: " module "\nVersion: 1.0.0\n")
-                        (str dist "WHEEL")
-                        "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
-                        (str dist "RECORD") ""}
-                 script
-                 (assoc (str module ".py")
-                   (str "import sys\nVALUE = 42\ndef main():\n"
-                        "    print('script', sys.argv[1:])\n    return 5\n"
-                        "if __name__ == '__main__':\n    print('module', sys.argv[1:])\n")
-                   (str dist "entry_points.txt")
-                   (str "[console_scripts]\n" script " = " module ":main\n")
-                   (str module "-1.0.0.data/scripts/" script "-program")
-                   "#!/bin/sh\necho program \"$@\"\nexit 4\n"))]
-         (.putNextEntry zip (ZipEntry. ^String path))
-         (.write zip (.getBytes ^String text "UTF-8"))
-         (.closeEntry zip)))
-     wheel)))
+              (expect (not (str/includes? (:output result) "SHARED_HOOK_RAN")) message)))
+          ;; pip installs into the environment of the project, not into the runtime.
+          (expect (some #(= "cli_project_pip.py" (.getName ^File %))
+                        (file-seq (io/file project ".venv"))))
+          (expect (empty? (runtime-installs "cli_project_pip"))))
+        (finally (run! delete-tree! (runtime-installs "cli_project_pip")) (delete-tree! dir))))))
 
 (defdescribe
   python-cli-shared-sync-test
@@ -556,7 +581,7 @@
 (defdescribe
   python-cli-shared-pip-test
   (it
-    "installs and uninstalls with pip in shared packages, not in the interpreter's own directory"
+    "installs and uninstalls with pip in shared packages, which child processes import too"
     (let [dir
           (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-shared-pip-"
                                                                  (make-array FileAttribute 0))))
@@ -570,7 +595,7 @@
            "PIP_DISABLE_PIP_VERSION_CHECK" "1"}
 
           wheel
-          (str (shared-fixture-wheel! dir "shared_base"))
+          (str (shared-fixture-wheel! dir "shared_base" "shared-base-tool"))
 
           pip!
           (fn [& args]
@@ -580,7 +605,22 @@
         ;; The uninstall also runs after a failure: a wrong install must not stay in the runtime.
         (try (let [result (pip! "install" wheel)]
                (expect (= 0 (:exit result)) (:output result))
-               (expect (.isFile (io/file shared "shared_base.py")) (:output result)))
+               (expect (.isFile (io/file shared "shared_base.py")) (:output result))
+               ;; The program owns each argument after its code. Its child process imports
+               ;; shared packages, and so does the installed script when it runs by itself.
+               (let [result (run-cli dir
+                                     environment
+                                     ["--shared" "-c"
+                                      (str "import subprocess, sys\n"
+                                           "print('argv', sys.argv[1:], flush=True)\n"
+                                           "sys.exit(subprocess.call([sys.executable, '-c',"
+                                           " 'import shared_base; print(shared_base.VALUE)']))")
+                                      "--help" "--gateway=" "--measure" "-h"])]
+                 (expect (= [0 "argv ['--help', '--gateway=', '--measure', '-h']\n42\n"]
+                            [(:exit result) (:stdout result)])
+                         (:output result)))
+               (let [tool (shell/sh (str (io/file shared "bin" "shared-base-tool")) "direct")]
+                 (expect (= [5 "script ['direct']\n"] [(:exit tool) (:out tool)]) (:err tool))))
              (finally (let [result (pip! "uninstall" "-y" "shared-base")]
                         (expect (= 0 (:exit result)) (:output result)))))
         (expect (not (.exists (io/file shared "shared_base.py"))))
@@ -707,6 +747,7 @@
                       "shared-run = {path = 'shared_run-1.0.0-py3-none-any.whl'}\n"))
            (spit (io/file project "program.py")
                  "import shared_run, sys\nprint('file', shared_run.VALUE, sys.argv[1:])\n")
+           (spit (io/file project "uv") "import sys\nprint('uv file', sys.argv[1:])\n")
            ;; The sync before the run installs the project; the script gets each later token.
            (let [result (run-cli dir
                                  environment
@@ -715,12 +756,13 @@
              (expect (= 5 (:exit result)) (:output result))
              (expect (= "script ['--help', '-V']\n" (:stdout result)) (:output result)))
            (expect (.isFile (io/file shared "shared_run.py")))
-           (let [[module program python child]
+           (let [[module program python child script]
                  (run-cli-together
                    project
                    (for [args [["-m" "shared_run" "--help"] ["program.py" "-v" "--gateway="]
                                ["--no-sync" "python" "-c" "import shared_run, sys; sys.exit(3)"]
-                               ["--no-sync" "shared-run-tool-program" "--help"]]]
+                               ["--no-sync" "shared-run-tool-program" "--help"]
+                               ["--no-sync" "--script" "uv" "--help"]]]
                      {:environment environment
                       :args (into ["--shared" "uv" "run" "--offline"] args)}))]
              (expect (= [0 "module ['--help']\n"] [(:exit module) (:stdout module)])
@@ -733,6 +775,9 @@
                      (:output program))
              (expect (= 3 (:exit python)) (:output python))
              ;; A program that is not Python runs as a child process.
-             (expect (= [4 "program --help\n"] [(:exit child) (:stdout child)]) (:output child)))
+             (expect (= [4 "program --help\n"] [(:exit child) (:stdout child)]) (:output child))
+             ;; A script with the name `uv` is that file, not bundled uv.
+             (expect (= [0 "uv file ['--help']\n"] [(:exit script) (:stdout script)])
+                     (:output script)))
            (expect (not (.exists (io/file project ".venv"))))
            (finally (delete-tree! dir))))))

@@ -1484,7 +1484,8 @@ else:
   "The `vis-agent python` arguments that run the `command` of `uv run` in the embedded Python."
   [kind [program & more :as command]]
   (cond (= :module kind) (into ["-m"] command)
-        (or (= :script kind) (= "-" program) (str/ends-with? program ".py")) command
+        ;; After `--`, a script with the name `uv` is a file and not bundled uv.
+        (or (= :script kind) (= "-" program) (str/ends-with? program ".py")) (into ["--"] command)
         (re-matches #"python(3(\.\d+)?)?" program) (vec more)
         (re-matches #"pip3?" program) (into ["-m" "pip"] more)
         :else (into ["-c" shared-run-console-script (str (runtime/packages-dir))] command)))

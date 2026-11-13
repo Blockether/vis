@@ -2296,23 +2296,48 @@
       (when (or configured (.exists venv) (.isFile (io/file cwd "pyproject.toml")))
         (.getCanonicalPath venv)))))
 
+(def ^:private python-cli-install-scheme-src
+  "Guest function `__vis_install_scheme__(name, paths)`: make `paths` the place where the pip
+   of the interpreter installs. pip takes its install paths from the interpreter. Without a
+   scheme they name the site-packages of the runtime itself: a runtime update replaces that
+   directory, and the install is in no environment. A custom prefix, such as `pip --prefix`
+   or the build environment of pip, keeps the layout of CPython."
+  (str
+    "def __vis_install_scheme__(name, paths):\n" "    import sysconfig\n"
+    "    own = sysconfig.__dict__.setdefault('_vis_install_scheme', {\n"
+    "        'preferred': sysconfig.get_preferred_scheme, 'paths': sysconfig.get_paths})\n"
+    "    preferred, get_paths = own['preferred'], own['paths']\n"
+    "    scheme = dict(sysconfig._INSTALL_SCHEMES[sysconfig.get_default_scheme()])\n"
+    "    scheme.update(paths)\n" "    sysconfig._INSTALL_SCHEMES[name] = scheme\n"
+    "    def paths_of(scheme=None, vars=None, expand=True):\n" "        if scheme is None:\n"
+    "            scheme = sysconfig.get_default_scheme()\n"
+    "        if scheme == name and vars and 'base' in vars:\n"
+    "            scheme = preferred('prefix')\n" "        return get_paths(scheme, vars, expand)\n"
+    "    sysconfig.get_preferred_scheme = lambda key: name if key == 'prefix' else preferred(key)\n"
+    "    sysconfig.get_paths = paths_of\n"))
+
 (defn- activate-python-cli-environment!
   "Load an existing uv environment after confinement, without syncing or granting paths.
-   Resolve UV_PROJECT_ENVIRONMENT relative to cwd; otherwise use cwd/.venv."
+   Resolve UV_PROJECT_ENVIRONMENT relative to cwd; otherwise use cwd/.venv. pip installs into
+   that environment, and `sys.executable` is its interpreter, so a child process imports the
+   same packages."
   [ctx cwd environment]
   (pyrt/exec!
     ctx
     (str
+      python-cli-install-scheme-src
       "def __vis_activate_cli_environment__(cwd, configured):\n"
-      "    import sys, sysconfig\n"
+      "    import os, sys, sysconfig\n"
       "    from pathlib import Path\n"
       "    import package_paths\n"
       "    venv = Path(configured or '.venv')\n"
       "    if not venv.is_absolute():\n"
       "        venv = Path(cwd) / venv\n"
-      "    sites = list(dict.fromkeys(\n"
-      "        sysconfig.get_path(name, vars={'base': str(venv), 'platbase': str(venv)})\n"
-      "        for name in ('purelib', 'platlib')))\n"
+      "    base = dict.fromkeys(\n"
+      "        ('base', 'platbase', 'installed_base', 'installed_platbase'), str(venv))\n"
+      "    paths = {name: sysconfig.get_path(name, vars=base) for name in (\n"
+      "        'purelib', 'platlib', 'scripts', 'data', 'include', 'platinclude')}\n"
+      "    sites = list(dict.fromkeys((paths['purelib'], paths['platlib'])))\n"
       "    if not any(Path(path).is_dir() for path in sites):\n"
       "        raise RuntimeError(\n"
       "            f'Project environment {venv} has no site-packages for embedded Python '\n"
@@ -2325,6 +2350,10 @@
       "            package_paths.refresh(path)\n"
       "    added = [path for path in sys.path if path not in before]\n"
       "    sys.path[:] = added + before\n"
+      "    __vis_install_scheme__('vis_project', paths)\n"
+      "    python = os.path.join(paths['scripts'], 'python')\n"
+      "    if os.access(python, os.X_OK):\n"
+      "        sys.executable = python\n"
       "try:\n"
       "    __vis_activate_cli_environment__("
       (env/py-json-literal cwd)
@@ -2332,32 +2361,85 @@
       (env/py-json-literal (get environment "UV_PROJECT_ENVIRONMENT"))
       ")\n"
       "finally:\n"
-      "    del __vis_activate_cli_environment__\n")))
+      "    del __vis_activate_cli_environment__, __vis_install_scheme__\n")))
+
+(def ^:private python-cli-shared-scheme-src
+  "Guest function `__vis_share_installs__(packages)`: make shared `packages` the place where
+   pip installs. The paths are those of `uv pip install --target`."
+  (str python-cli-install-scheme-src
+       "def __vis_share_installs__(packages):\n"
+       "    import os\n" "    __vis_install_scheme__('vis_shared', dict(\n"
+       "        purelib=packages, platlib=packages, data=packages,\n"
+       "        scripts=os.path.join(packages, 'bin'),\n"
+       "        include=os.path.join(packages, 'include'),\n"
+       "        platinclude=os.path.join(packages, 'include')))\n"))
 
 (defn- share-python-cli-installs!
-  "Make shared `packages` the place where this interpreter installs packages.
-   pip takes its install paths from the interpreter. Without this scheme they name the
-   site-packages of the runtime itself: a runtime update replaces that directory, and the
-   install is not in shared packages. The paths are those of `uv pip install --target`."
+  "Make shared `packages` the place where this interpreter and its child processes install
+   and import packages. `sys.executable` of the runtime starts a CPython that knows only the
+   runtime. This writes a small environment in `packages`/.python: a link to that CPython, and
+   a site module that adds `packages` and the install paths at each start. `sys.executable`
+   becomes that link. When `packages` is read-only and has no such environment,
+   `sys.executable` stays as it is."
   [ctx packages]
-  (pyrt/exec! ctx
-              (str "def __vis_share_installs__(packages):\n"
-                   "    import os, sysconfig\n"
-                   "    scheme = dict(sysconfig._INSTALL_SCHEMES[sysconfig.get_default_scheme()])\n"
-                   "    scheme.update(purelib=packages, platlib=packages, data=packages,\n"
-                   "                  scripts=os.path.join(packages, 'bin'),\n"
-                   "                  include=os.path.join(packages, 'include'),\n"
-                   "                  platinclude=os.path.join(packages, 'include'))\n"
-                   "    sysconfig._INSTALL_SCHEMES['vis_shared'] = scheme\n"
-                   "    preferred = sysconfig.get_preferred_scheme\n"
-                   "    sysconfig.get_preferred_scheme = (\n"
-                   "        lambda key: 'vis_shared' if key == 'prefix' else preferred(key))\n"
-                   "try:\n"
-                   "    __vis_share_installs__("
-                   (env/py-json-literal packages)
-                   ")\n"
-                   "finally:\n"
-                   "    del __vis_share_installs__\n")))
+  (pyrt/exec!
+    ctx
+    (str
+      python-cli-shared-scheme-src
+      "def __vis_share_python__(packages, module):\n"
+      "    import os, sys, sysconfig\n"
+      "    home = os.path.join(packages, '.python')\n"
+      "    site = sysconfig.get_path('purelib', vars={'base': home, 'platbase': home})\n"
+      "    python = os.path.join(home, 'bin', 'python3')\n"
+      "    def current(path, link):\n"
+      "        try:\n"
+      "            if link:\n"
+      "                return os.readlink(path)\n"
+      "            with open(path, encoding='utf-8') as file:\n"
+      "                return file.read()\n"
+      "        except OSError:\n"
+      "            return None\n"
+      "    def put(path, value, link=False):\n"
+      "        if current(path, link) == value:\n"
+      "            return\n"
+      "        os.makedirs(os.path.dirname(path), exist_ok=True)\n"
+      "        scratch = f'{path}.{os.getpid()}.new'\n"
+      "        if os.path.lexists(scratch):\n"
+      "            os.unlink(scratch)\n"
+      "        if link:\n"
+      "            os.symlink(value, scratch)\n"
+      "        else:\n"
+      "            with open(scratch, 'w', encoding='utf-8') as file:\n"
+      "                file.write(value)\n"
+      "        os.replace(scratch, path)\n"
+      "    try:\n"
+      "        put(os.path.join(home, 'pyvenv.cfg'),\n"
+      "            f'home = {os.path.dirname(sys._base_executable)}\\n'\n"
+      "            'include-system-site-packages = true\\n')\n"
+      "        put(os.path.join(site, '_vis_shared_packages.py'), module)\n"
+      "        put(os.path.join(site, '_vis_shared_packages.pth'), 'import _vis_shared_packages\\n')\n"
+      "        put(python, sys._base_executable, link=True)\n"
+      "    except OSError:\n"
+      "        return\n"
+      "    sys.executable = python\n"
+      "try:\n"
+      "    __vis_share_installs__("
+      (env/py-json-literal packages)
+      ")\n"
+      "    __vis_share_python__("
+      (env/py-json-literal packages)
+      ", "
+      (env/py-json-literal (str python-cli-shared-scheme-src
+                                "import site\n"
+                                "site.addsitedir("
+                                (env/py-json-literal packages)
+                                ")\n"
+                                "__vis_share_installs__("
+                                (env/py-json-literal packages)
+                                ")\n"))
+      ")\n"
+      "finally:\n"
+      "    del __vis_share_installs__, __vis_share_python__, __vis_install_scheme__\n")))
 
 (defn- python-cli-context
   "Build a fresh standalone Python sandbox for `vis-agent python`: the same
@@ -2373,8 +2455,9 @@
    declared by the project's packaging metadata. An existing cwd/.venv (or
    UV_PROJECT_ENVIRONMENT) supplies installed packages and editable hooks, without
    shared packages. A pyproject.toml without an environment reports a sync error.
-   Without a project environment the interpreter imports shared packages, and pip
-   installs into them. `shared?` skips project activation and inferred/configured source roots. The
+   Without a project environment the interpreter imports shared packages. pip installs into
+   the environment in use, and `sys.executable` starts a CPython that imports the same
+   packages. `shared?` skips project activation and inferred/configured source roots. The
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE.
    Merged `python.tls_strict` applies as in workers and sets `VIS_PYTHON_TLS_STRICT`."
   [{:keys [network? argv env shared? mode]}]
@@ -2495,12 +2578,13 @@
    `- …`       → `{:mode :stdin :argv [\"-\" …trailing]}`,
    `FILE …`    → `{:mode :file :file FILE :argv [FILE …trailing]}`.
    Trailing tokens ride into `argv` verbatim (CPython semantics; for `-m` the
-   module name takes the `argv[0]` slot, as CPython puts the module there)."
-  [prog]
+   module name takes the `argv[0]` slot, as CPython puts the module there).
+   With `uv?`, a first token `uv` selects bundled uv: `{:mode :uv :argv […trailing]}`."
+  [prog uv?]
   (cond (= "-c" (first prog)) {:mode :code :code (second prog) :argv (into ["-c"] (drop 2 prog))}
         (= "-m" (first prog))
         {:mode :module :module (second prog) :argv (into [(or (second prog) "-m")] (drop 2 prog))}
-        (= "uv" (first prog)) {:mode :uv :argv (vec (rest prog))}
+        (and uv? (= "uv" (first prog))) {:mode :uv :argv (vec (rest prog))}
         (= "-" (first prog)) {:mode :stdin :argv (vec prog)}
         :else {:mode :file :file (first prog) :argv (vec prog)}))
 
@@ -2511,6 +2595,7 @@
    from the selector on is the program plus its verbatim script `argv`
    (mirrors CPython: trailing args land in `sys.argv`, flags included).
    `-V`/`--version` before the selector reports the version, as in CPython.
+   After an explicit `--`, a FILE with the name `uv` is that file and not bundled uv.
    With no selector the mode is `:interactive` (REPL on a TTY, else stdin)."
   [residual]
   (loop [network?
@@ -2559,7 +2644,7 @@
                     (merge base
                            (if (empty? prog)
                              {:mode :interactive :argv []}
-                             (python-program-plan prog))))))))
+                             (python-program-plan prog (not= a "--")))))))))
 
 (def ^:private python-cli-runner-src
   "Guest runner for `vis-agent python` programs. `-c`, stdin, FILE and `-m` run
@@ -3370,7 +3455,7 @@
 
 (defn- shared-uv-run?
   "True for `vis-agent python --shared uv run …`. Its command runs in the embedded Python,
-   so it needs the initialized process, and it owns each later token, also `--help`."
+   so it needs the initialized process and not the early exit of the other uv commands."
   [args]
   (= ["python" "--shared" "uv" "run"] (vec (take 4 args))))
 
@@ -3531,6 +3616,41 @@
                           :else
                           (recur (nnext remaining) kept (assoc gateway k (fnext remaining)))))))))
 
+(defn- python-program-split
+  "Split the raw `args` of a `python` invocation at the first token that Vis does not own.
+   Vis owns its global flags and the leading options of `python`. The next token selects the
+   Python program (`-c`, `-m`, FILE, `-`, `uv`) or asks for help or the version. It and each
+   later token belong to that program: a `--help`, `--measure` or `--gateway` there is not for
+   Vis. Return `{:own [...] :program [...]}`, or nil for another command. A leading option
+   that this function does not know starts the program, where `parse-python-cli-args` reads it."
+  [args]
+  (loop [index
+         0
+
+         python?
+         false]
+
+    (let [arg
+          (nth args index nil)
+
+          [flag inline]
+          (some-> arg
+                  (str/split #"=" 2))
+
+          width
+          (cond (nil? arg) nil
+                (global-arg? arg) 1
+                (contains? gateway-flags flag) (if inline 1 2)
+                (not python?) (when (= "python" arg) 1)
+                (= "--env" flag) (if inline 1 2)
+                (contains? #{"--shared" "--no-network" "--no-env"} arg) 1)
+
+          index
+          (min (long index) (count args))]
+
+      (cond width (recur (+ index (long width)) (or python? (= "python" arg)))
+            python? {:own (subvec args 0 index) :program (subvec args index)}))))
+
 (defn- connect-gateway!
   "Point every gateway call of this invocation at the `--gateway` target. A missing
    address is a user error rather than a silent fall back to the local daemon —
@@ -3652,19 +3772,19 @@
   (let [main-started
         (System/nanoTime)
 
-        ;; The command of a shared `uv run` owns each word after `run`: a `-v`, `--measure` or
-        ;; `--gateway` there is for the command, not for Vis.
-        own-args
-        (if (shared-uv-run? raw-args) (vec (take 4 raw-args)) raw-args)
+        ;; A Python program owns its selector and each later word: a `--help`, `--measure` or
+        ;; `--gateway` there is for the program, not for Vis.
+        {:keys [own program]}
+        (python-program-split (vec raw-args))
 
         measure?
-        (startup-measure? own-args)
+        (startup-measure? (or own raw-args))
 
         {gateway :gateway stripped :args}
-        (split-gateway-flags (strip-global-args own-args))
+        (split-gateway-flags (strip-global-args (or own raw-args)))
 
         args
-        (rewrite-ext-alias stripped)]
+        (into (rewrite-ext-alias stripped) program)]
 
     (paths/set-log-role! (log-role-for-args args))
     (when measure? (System/setProperty "vis.measure" "1"))
@@ -3692,9 +3812,11 @@
       (timed-startup! measure? "stage-native-libs" native-libs/stage-resolver-libs!)
       ;; The first token count of a turn otherwise waits for the tokenizer ranks.
       (prompt/warm-token-encoding!)
-      (cond (shared-uv-run? raw-args) (do (initialize-for-dispatch! measure? args)
-                                          (pre-redirect-stderr! args)
-                                          (cli-python! {} (rest raw-args)))
+      (cond (and (seq program) (not (contains? #{"--help" "-h"} (first program))))
+            (do (initialize-for-dispatch! measure? args)
+                (when measure? (summarize-startup-registries!))
+                (timed-startup! measure? "pre-redirect-stderr" #(pre-redirect-stderr! args))
+                (cli-python! {} (rest args)))
             (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil
