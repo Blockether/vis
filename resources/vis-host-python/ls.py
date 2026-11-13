@@ -116,7 +116,7 @@ def __vis_install_ls__():
         if shared:
             out.append(prefix + "  ".join(shared))
         for entry in deeper:
-            out.append(prefix + _name(entry) + "/ %d" % len(entry["children"]))
+            out.append(prefix + _name(entry) + "/")
             _render(entry["children"], lo, hi, order, opened, prefix + "  ", out)
 
     def _paths(root, entries, out):
@@ -145,18 +145,21 @@ def __vis_install_ls__():
         if not entries:
             return shown + "  empty", None
         dirs = sum(1 for e in entries if e.get("type") == "dir")
-        head = "%s  %dd %df" % (shown, dirs, len(entries) - dirs)
+        # A complete page shows every entry, so the counts would repeat it. Only a
+        # partial page states them, next to its range.
+        counts = "  %dd %df" % (dirs, len(entries) - dirs)
         order = _breadth_order(entries)
         total = len(order)
         hi = total if limit is None else min(total, offset + limit)
         if offset >= total:
-            return head + "  · offset %d is past the last entry (%d)" % (
+            return shown + counts + "  · offset %d is past the last entry (%d)" % (
                 offset,
                 total,
             ), None
         following = hi if hi < total else None
+        head = shown
         if following is not None or offset:
-            head += "  %d-%d of %d" % (offset + 1, hi, total)
+            head += counts + "  %d-%d of %d" % (offset + 1, hi, total)
         out = [head]
         opened = set()
         _mark_open(entries, offset, hi, order, opened)
@@ -291,17 +294,17 @@ def __vis_install_ls__():
         "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, "
         "pattern=None, as_paths=False, limit=250, offset=0) lists directory contents "
         "from the ignore-aware walk of the host, as a compact printable STRING. "
-        "`ls(dir)` gives a `path  Nd Nf` header, then the tree."
+        "`ls(dir)` gives a `path` header, then the tree."
         "\n\nThe files and closed directories of one directory share one line, "
         "separated by two spaces. Directories come first, then files, each in "
-        "alphabetical order. Each open directory follows on its own line as `name/ N`, "
-        "with its child count, and its children indent two spaces. A closed directory "
-        "is `name/ N`, or `name/` at the depth limit. A file is `name`, or `name 120k` "
+        "alphabetical order. Each open directory follows on its own line as `name/`, "
+        "and its children indent two spaces. A closed directory "
+        "is `name/ N`, with its child count, or `name/` at the depth limit. A file is `name`, or `name 120k` "
         "from 64k up. A name with whitespace is quoted."
         "\n\nA page shows at most `limit` entries, counted level by level, so the "
         "shallow levels are complete first. `+K more (28 .md, 2 dirs)` ends a directory "
-        "that continues on the next page. A capped header shows its range, such as "
-        "`1-250 of 625`. limit=None lists "
+        "that continues on the next page. A capped header shows the directory and file "
+        "counts and its range, such as `path  12d 613f  1-250 of 625`. limit=None lists "
         "everything."
         "\n\n`next(r)` gives the next page and raises StopIteration after the last, so "
         "use `next(r, None)` as the sentinel form. `r.pages()` walks the pages with a "

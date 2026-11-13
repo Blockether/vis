@@ -62,7 +62,7 @@
                  "lines = text.split(\"\\n\")\n" "head, labels = lines[0], names(text)\n"
                  "dirs = [l for l in labels if l.endswith(\"/\")]\n"
                  "files = [l for l in labels if not l.endswith(\"/\")]\n"
-                 "print(head.endswith(\"d %sf\" % len(files)) and \"foundation\" in head,\n"
+                 "print(head.endswith(\"foundation\"),\n"
                  "      labels[:len(dirs)] == dirs, dirs == sorted(dirs),\n"
                  "      \"editing/\" in dirs, \"shim_ls.clj\" in files,\n"
                  "      len(lines) == 2, \"\\u251c\" not in text)")]
@@ -84,17 +84,17 @@
            "      \"ls.py\" not in second)")]
 
         (expect (= "True True True True\n" (out ctx code)))))
-  (it "indents children at depth, counts them on the directory, and hides dotfiles"
+  (it "indents children under a bare open directory line, and hides dotfiles"
       (let [ctx
             (sandbox)
 
             code
             (str names-py
                  "text = ls(\"src/com/blockether/vis/internal/foundation\", depth=2)\n"
-                 "editing = [l for l in text.split(\"\\n\") if l.startswith(\"editing/ \")][0]\n"
+                 "lines = text.split(\"\\n\")\n"
                  "nested = [l for l in text.split(\"\\n\") if l.startswith(\"  \")]\n"
                  "hidden = names(ls(\".\", is_hidden=True))\n" "plain = ls(\".\")\n"
-                 "print(int(editing.split(\"/ \")[1]) > 0,\n"
+                 "print(lines[lines.index(\"editing/\") + 1].startswith(\"  \"),\n"
                  "      any(\"core.clj\" in l.split() for l in nested),\n"
                  "      \".gitignore\" in hidden, \".gitignore\" in plain,\n"
                  "      \"target/\" in plain)")]
@@ -125,8 +125,8 @@
                  "batch = ls([p, {'path': p, 'pattern': None}], pattern='l?.py').split('\\n\\n')\n"
                  "tree = ls('resources', depth=2, pattern='ls.py')\n"
                  "print(ls(p, pattern=None) == plain, ls(p, pattern='*') == plain,\n"
-                 "      '  0d 1f\\n' in filtered, 'ls.py' in names(filtered),\n"
-                 "      batch == [filtered, plain], 'vis-host-python/ 1' in tree,\n"
+                 "      filtered.split('\\n')[1:] == ['ls.py'], 'ls.py' in names(filtered),\n"
+                 "      batch == [filtered, plain], 'vis-host-python/\\n' in tree,\n"
                  "      'ls.py' in names(tree), 'attach.py' not in tree,\n"
                  "      ls(p, pattern='__no_match__').endswith('  empty'),\n"
                  "      '.gitignore' not in names(ls('.', pattern='.git*')),\n"
@@ -166,7 +166,7 @@
          "    text = ls(\"d\")\n" "finally:\n"
          "    g[\"__vis_list_directories__\"] = saved\n" "print(repr(text))")]
 
-      (expect (= "'d  0d 4f\\nsmall.txt  big.json 64k  huge.bin 3.0G  \"my notes.md\"'\n"
+      (expect (= "'d\\nsmall.txt  big.json 64k  huge.bin 3.0G  \"my notes.md\"'\n"
                  (out ctx code)))))
   ;; Regression: `ls(Path("src/..."))` raised `TypeError: 'PosixPath' object is not iterable` —
   ;; one path-like argument was iterated as if it were a list of paths.
@@ -213,7 +213,7 @@
                                "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
                                "print('AGENTS.md' in text.split(), 'vis-host-python/' in text, "
                                "'ls.py' in batch.split() and 'core.clj' in batch.split(), "
-                               "'  0d 1f\\n' in ls(d, pattern='ls.py'))"))))))))
+                               "ls(d, pattern='ls.py').split('\\n')[1:] == ['ls.py'])"))))))))
 
 (defdescribe
   ls-shim-failure-test
@@ -568,7 +568,7 @@
 
       (expect
         (=
-          "'d  2d 1f  1-4 of 8\\nb/ 2  c.txt\\na/ 3\\n  1.txt  +2 more (2 .txt)'\n'd  2d 1f  5-8 of 8\\na/ 3\\n  2.txt  3.txt\\nb/ 2\\n  1.txt  2.txt'\n4 True None None\n[4, None] True True\nTrue str\n"
+          "'d  2d 1f  1-4 of 8\\nb/ 2  c.txt\\na/\\n  1.txt  +2 more (2 .txt)'\n'd  2d 1f  5-8 of 8\\na/\\n  2.txt  3.txt\\nb/\\n  1.txt  2.txt'\n4 True None None\n[4, None] True True\nTrue str\n"
           (out ctx code)))))
   (it
     "pages each directory of a batch on its own and refuses a bad window"
