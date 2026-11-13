@@ -37,7 +37,7 @@
 
 (def ^:private default-grep-context-lines
   "Numbered lines on each side of a grep hit when `context` is omitted."
-  3)
+  1)
 
 (def ^:private max-rg-result-bytes
   "Total-bytes ceiling on a content-mode rg result — pi DEFAULT_MAX_BYTES parity
@@ -1452,163 +1452,179 @@
        (take limit)
        vec))
 
+(defn- name-relevant?
+  "True when a path contains a whole needle, not only a fuzzy subsequence."
+  [path needles]
+  (let [path (str/lower-case (str path))]
+    (some #(str/includes? path (str/lower-case (str %))) needles)))
+
 (defn- find-search
-  [args]
-  (let [{:keys [query paths limit offset is_hidden is_ignored is_ls is_regex]}
-        (coerce-find-spec args)
+  ([args] (find-search args nil))
+  ([args relevant-needles]
+   (let [{:keys [query paths limit offset is_hidden is_ignored is_ls is_regex]}
+         (coerce-find-spec args)
 
-        {roots :roots searched-paths :searched-paths missing :missing}
-        (resolve-search-roots paths)
+         {roots :roots searched-paths :searched-paths missing :missing}
+         (resolve-search-roots paths)
 
-        ;; fff ranks genuine hits first but pads the page with loose subsequence
-        ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
-        ;; filter below do the real cutting (a fresh fff scan is ~11ms).
-        ;; The page the caller asked for starts at `offset`, so the candidate set
-        ;; has to cover everything up to its END, not just one page's worth.
-        candidate-page
-        (max (+ (long limit) (long offset)) 300)
+         ;; fff ranks genuine hits first but pads the page with loose subsequence
+         ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
+         ;; filter below do the real cutting (a fresh fff scan is ~11ms).
+         ;; The page the caller asked for starts at `offset`, so the candidate set
+         ;; has to cover everything up to its END, not just one page's worth.
+         candidate-page
+         (max (inc (+ (long limit) (long offset))) 300)
 
-        ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
-        ;; itself — see `fff-ignore-overlay`.
-        search-overlay
-        (when-not is_ignored (fff-ignore-overlay))
+         ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
+         ;; itself — see `fff-ignore-overlay`.
+         search-overlay
+         (when-not is_ignored (fff-ignore-overlay))
 
-        scan
-        (fn [q]
-          (find-scan roots q is_hidden is_ignored candidate-page search-overlay))
+         scan
+         (fn [q]
+           (find-scan roots q is_hidden is_ignored candidate-page search-overlay))
 
-        strict
-        (if (or is_ls is_regex) [] (scan query))
+         strict
+         (if (or is_ls is_regex) [] (scan query))
 
-        tokens
-        (find-fallback-tokens query)
+         tokens
+         (find-fallback-tokens query)
 
-        ;; RELAXED FALLBACK. `find-relevance` takes the MIN across query tokens,
-        ;; so EVERY word must land in one path — a multi-word CONCEPT query
-        ;; ("stream call visualization render") is dropped the moment any term
-        ;; is absent, even when a distinctive term is an exact filename match
-        ;; (`render`). That is why such queries returned nothing. When the
-        ;; strict pass is empty and the query has ≥2 usable tokens, search each
-        ;; token on its own and surface files ranked by HOW MANY query terms
-        ;; they match (coverage) then best term score. It stays a FILENAME tool
-        ;; — it just stops requiring the whole sentence to be one filename.
-        [ranked fuzzy?]
-        (cond
-          ;; `is_regex` is a CONTENT dialect. The NAME axis is a FUZZY SUBSEQUENCE
-          ;; score over filenames, which reads `^ns\b|foo.*bar` as literal
-          ;; characters and ranks unrelated paths above nothing at all — so in
-          ;; regex mode there is no name axis and `paths` stays empty.
-          is_regex [[] false]
-          is_ls [(find-ls roots (+ (long limit) (long offset)) is_hidden is_ignored search-overlay)
-                 false]
-          (or (seq strict) (< (count tokens) 2)) [strict false]
-          :else (let [stem
-                      (fn [it]
-                        (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
+         ;; RELAXED FALLBACK. `find-relevance` takes the MIN across query tokens,
+         ;; so EVERY word must land in one path — a multi-word CONCEPT query
+         ;; ("stream call visualization render") is dropped the moment any term
+         ;; is absent, even when a distinctive term is an exact filename match
+         ;; (`render`). That is why such queries returned nothing. When the
+         ;; strict pass is empty and the query has ≥2 usable tokens, search each
+         ;; token on its own and surface files ranked by HOW MANY query terms
+         ;; they match (coverage) then best term score. It stays a FILENAME tool
+         ;; — it just stops requiring the whole sentence to be one filename.
+         [ranked fuzzy?]
+         (cond
+           ;; `is_regex` is a CONTENT dialect. The NAME axis is a FUZZY SUBSEQUENCE
+           ;; score over filenames, which reads `^ns\b|foo.*bar` as literal
+           ;; characters and ranks unrelated paths above nothing at all — so in
+           ;; regex mode there is no name axis and `paths` stays empty.
+           is_regex [[] false]
+           is_ls
+           [(find-ls roots (inc (+ (long limit) (long offset))) is_hidden is_ignored search-overlay)
+            false]
+           (or (seq strict) (< (count tokens) 2)) [strict false]
+           :else (let [stem
+                       (fn [it]
+                         (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
 
-                      by-path
-                      (reduce (fn [m t]
-                                (reduce (fn [m it]
-                                          (update m
-                                                  (:path it)
-                                                  (fn [cur]
-                                                    (-> (or cur
-                                                            (assoc it
-                                                              :score 0.0
-                                                              :terms #{}))
-                                                        (update :score max (:score it))
-                                                        (update :terms conj t)))))
-                                        m
-                                        (scan t)))
-                              {}
-                              tokens)
+                       by-path
+                       (reduce (fn [m t]
+                                 (reduce (fn [m it]
+                                           (update m
+                                                   (:path it)
+                                                   (fn [cur]
+                                                     (-> (or cur
+                                                             (assoc it
+                                                               :score 0.0
+                                                               :terms #{}))
+                                                         (update :score max (:score it))
+                                                         (update :terms conj t)))))
+                                         m
+                                         (scan t)))
+                               {}
+                               tokens)
 
-                      ;; A term that IS the filename stem (`render` → `render.clj`) is a
-                      ;; bullseye — it must beat a 2-common-word loose match
-                      ;; (`stream`+`call` → `stream-call-handlers.md`), so it gets a
-                      ;; score bonus that ranks above raw term coverage.
-                      scored
-                      (map (fn [it]
-                             (let [s
-                                   (stem it)
+                       ;; A term that IS the filename stem (`render` → `render.clj`) is a
+                       ;; bullseye — it must beat a 2-common-word loose match
+                       ;; (`stream`+`call` → `stream-call-handlers.md`), so it gets a
+                       ;; score bonus that ranks above raw term coverage.
+                       scored
+                       (map (fn [it]
+                              (let [s
+                                    (stem it)
 
-                                   bull?
-                                   (contains? (:terms it) s)]
+                                    bull?
+                                    (contains? (:terms it) s)]
 
-                               (assoc it
-                                 :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
-                           (vals by-path))]
+                                (assoc it
+                                  :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
+                            (vals by-path))]
 
-                  [(->> scored
-                        (sort-by (fn [it]
-                                   [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
-                                    (- (long (or (:frecency-score it) 0))) (:path it)]))
-                        vec) true]))
+                   [(->> scored
+                         (sort-by (fn [it]
+                                    [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
+                                     (- (long (or (:frecency-score it) 0))) (:path it)]))
+                         vec) true]))
 
-        items
-        (if (or is_ls fuzzy?)
-          (vec (take limit (drop offset (map #(dissoc % :rank-score) ranked))))
-          (->> ranked
-               ;; strongest match first; frecency then path break ties.
-               (sort-by (fn [it]
-                          [(- (double (:score it 0.0))) (- (long (or (:frecency-score it) 0)))
-                           (:path it)]))
-               (drop offset)
-               (take limit)
-               vec))
+         ranked
+         (if (seq relevant-needles)
+           (filterv #(name-relevant? (:path %) relevant-needles) ranked)
+           ranked)
 
-        ;; The query terms that actually landed a file (fuzzy pass only) — so
-        ;; the card/model can see WHICH words matched, e.g. "render, native".
-        matched-terms
-        (when fuzzy?
-          (->> items
-               (mapcat :terms)
-               distinct
-               (sort-by (comp - count))
-               vec))
+         page
+         (if (or is_ls fuzzy?)
+           (vec (take (inc (long limit)) (drop offset (map #(dissoc % :rank-score) ranked))))
+           (->> ranked
+                ;; strongest match first; frecency then path break ties.
+                (sort-by (fn [it]
+                           [(- (double (:score it 0.0))) (- (long (or (:frecency-score it) 0)))
+                            (:path it)]))
+                (drop offset)
+                (take (inc (long limit)))
+                vec))
 
-        ;; Project each internal (keyword-keyed) item onto the model-facing
-        ;; string-keyed row — snake_case keys, keyword values stringified.
-        ->item
-        (fn [it]
-          (cond-> {"path" (:path it) "score" (:score it)}
-            (contains? it :file-name)
-            (assoc "file_name" (:file-name it))
+         items
+         (vec (take limit page))
 
-            (contains? it :size)
-            (assoc "size" (:size it))
+         ;; The query terms that actually landed a file (fuzzy pass only) — so
+         ;; the card/model can see WHICH words matched, e.g. "render, native".
+         matched-terms
+         (when fuzzy?
+           (->> items
+                (mapcat :terms)
+                distinct
+                (sort-by (comp - count))
+                vec))
 
-            (contains? it :modified)
-            (assoc "modified" (:modified it))
+         ;; Project each internal (keyword-keyed) item onto the model-facing
+         ;; string-keyed row — snake_case keys, keyword values stringified.
+         ->item
+         (fn [it]
+           (cond-> {"path" (:path it) "score" (:score it)}
+             (contains? it :file-name)
+             (assoc "file_name" (:file-name it))
 
-            (contains? it :frecency-score)
-            (assoc "frecency_score" (:frecency-score it))
+             (contains? it :size)
+             (assoc "size" (:size it))
 
-            (contains? it :git-status)
-            (assoc "git_status"
-              (let [g (:git-status it)]
-                (if (keyword? g) (name g) g)))
+             (contains? it :modified)
+             (assoc "modified" (:modified it))
 
-            (contains? it :binary?)
-            (assoc "binary" (boolean (:binary? it)))
+             (contains? it :frecency-score)
+             (assoc "frecency_score" (:frecency-score it))
 
-            (:source it)
-            (assoc "source" (name (:source it)))))]
+             (contains? it :git-status)
+             (assoc "git_status"
+               (let [g (:git-status it)]
+                 (if (keyword? g) (name g) g)))
 
-    ;; grep's canonical DATA result — `grep-tool` RENDERS this as numbered text;
-    ;; every key ships on every call (empty vector / false, never absent) so
-    ;; caller code can index a field without a `contains?` dance first.
-    {"items" (mapv ->item items)
-     "item_count" (count items)
-     "paths" (mapv :path items)
-     "query" query
-     "searched_paths" searched-paths
-     "missing_paths" missing
-     "limit" limit
-     "offset" offset
-     "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")
-     "fuzzy" (boolean fuzzy?)
-     "matched_terms" (vec matched-terms)}))
+             (contains? it :binary?)
+             (assoc "binary" (boolean (:binary? it)))
+
+             (:source it)
+             (assoc "source" (name (:source it)))))]
+
+     ;; grep's canonical DATA result — `grep-tool` RENDERS this as numbered text;
+     ;; every key ships on every call (empty vector / false, never absent) so
+     ;; caller code can index a field without a `contains?` dance first.
+     {"items" (mapv ->item items)
+      "item_count" (count items)
+      "paths" (mapv :path items)
+      "query" query
+      "searched_paths" searched-paths
+      "missing_paths" missing
+      "limit" limit
+      "offset" offset
+      "truncated_by" (if (> (count page) (long limit)) "limit" "end_of_results")
+      "fuzzy" (boolean fuzzy?)
+      "matched_terms" (vec matched-terms)})))
 
 (declare ^:private rg-search ^:private coerce-rg-spec)
 
@@ -1774,8 +1790,7 @@
 ;; ordered data. This is its RENDERER: one numbered text block, because the
 ;; model pays for what it PRINTS and `print(grep(...))` used to print a
 ;; four-level dict repr whose keys were bare line numbers. Each path header
-;; carries the file version and every rendered line — context lines included —
-;; its line number, so a grep hit is not "a place to go read" but a `patch` address.
+;; names the file; each row gives its line number and text.
 
 (defn- count-phrase
   "`3 files` / `1 file` — the unit singularized on 1, so a count never reads as a
@@ -1806,7 +1821,7 @@
 
 (defn- contiguous-runs
   "Split line-ordered tuples into contiguous runs, so a `context` window's gaps
-   render as a `⋮` marker instead of a misleading unbroken block."
+   render as a `…` marker instead of a misleading unbroken block."
   [tuples]
   (reduce (fn [runs t]
             (let [r (peek runs)]
@@ -1830,7 +1845,7 @@
 
         query
         (let [q (get result "query")]
-          (if (coll? q) (str/join " " (map str q)) (str q)))
+          (str/join " | " (map #(str "'" % "'") (if (coll? q) q [q]))))
 
         hits
         (long (or (get result "hit_count") 0))
@@ -1895,7 +1910,7 @@
 
     (if ls?
       (str "grep '' — file listing  " (count-phrase (count (get result "paths")) "file"))
-      (str "grep '" query "'  " (count-phrase hits "hit") " · " breadth from capped))))
+      (str "grep " query "  " (count-phrase hits "hit") " · " breadth from capped))))
 
 (defn- render-grep-text
   "grep's whole model-facing answer as ONE string: the summary line, then per
@@ -1932,8 +1947,8 @@
 
                     (str path
                          "  (" (get counts path (count runs))
-                         ")\n" (str/join "\n  ⋮\n"
-                                         (map #(version/render-numbered-block % "  ") runs)))))
+                         ")\n" (str/join "\n…\n"
+                                         (map #(version/render-numbered-block %) runs)))))
                 matches))
 
         name-rows
@@ -1951,30 +1966,6 @@
     (->> (concat [(grep-summary-line result)] blocks name-rows (when hint-row [hint-row]))
          (remove nil?)
          (str/join "\n"))))
-
-(defn- name-relevant-paths
-  "Prune the fuzzy NAME list down to the paths a human would call a match.
-
-   Fuzzy subsequence matching is deliberately generous, so a distinctive symbol
-   query (`strip-schema-constraints`) also drags in a pile of unrelated files
-   whose path merely contains the letters in order. When the SAME query already
-   produced CONTENT hits, those hits are the real answer and the generous name
-   list is pure noise — keep only paths whose lowercased path contains one whole
-   needle contiguously. Returns `paths` unchanged when there is nothing to
-   filter on."
-  [paths needles]
-  (let [terms (->> needles
-                   (keep #(some-> %
-                                  str
-                                  str/lower-case
-                                  not-empty))
-                   seq)]
-    (if-not terms
-      paths
-      (vec (filter (fn [p]
-                     (let [lp (str/lower-case (str p))]
-                       (some #(str/includes? lp %) terms)))
-                   paths)))))
 
 (defn- regex-looking-query?
   "True when `query` carries rg-style regex syntax that CONTENT search will match
@@ -2163,8 +2154,8 @@
    one level of its nearest existing directory. NAME matching is fuzzy subsequence over the fff file index."
   [& args]
   (let
-    [{:strs [query offset item_count truncated_by] :as name-out}
-     (find-search args)
+    [{:keys [query offset]}
+     (coerce-find-spec args)
 
      content-spec
      (find-args->content-spec args)
@@ -2215,12 +2206,9 @@
      multiword?
      (> (count (str/split (str/trim (str query)) #"\s+")) 2)
 
-     ;; When CONTENT matched, the fuzzy NAME list is noise (see
-     ;; `name-relevant-paths`) — keep only the paths that really carry a needle.
-     kept-paths
-     (if (pos? content-hits)
-       (name-relevant-paths (get name-out "paths") needles)
-       (get name-out "paths"))
+     ;; Filter names before paging so the cursor counts the rows that survive.
+     {:strs [item_count truncated_by] :as name-out}
+     (find-search args (when (pos? content-hits) needles))
 
      ;; PAGING. `next_offset` is the ONE value a caller passes back as `offset`;
      ;; nil means this page IS the whole answer. Each capped axis proposes the
@@ -2251,7 +2239,7 @@
                  (dissoc "items" "fuzzy" "matched_terms" "item_count" "missing_paths")
                  ;; `hint` and `next_offset` are TOTAL too: present on every grep
                  ;; result, nil when the search has nothing to explain / no next page.
-                 (assoc "paths" kept-paths
+                 (assoc "query" (get content-spec "query")
                         "hint" nil
                         "next_offset" next-offset)
                  (merge content))
@@ -2384,7 +2372,7 @@
 
    The whole call surface is `grep-data`'s; this is its projection. Line 1 always
    summarizes — hits, files and truncation — then each
-   `path` header heads a block of `  <line>│ <text>` rows, context lines
+   `path` header heads a block of `<line>│ <text>` rows, context lines
    numbered too."
   [& args]
   (let [out
@@ -3291,14 +3279,14 @@
      :result
      (str
        "Text, not a map. Line 1 gives the hit count, the file count, and any truncation. "
-       "Then each path has a `<path> @<version>  (<count>)` header and one `  <line>│ "
-       "<text>` row per hit. Context lines have line numbers too, and `⋮` marks a gap. Fuzzy "
+       "Then each path has a `<path>  (<count>)` header and one `<line>│ "
+       "<text>` row per hit. Context lines have line numbers too, and `…` marks a gap. Fuzzy "
        "file-name matches follow as `~ path`, then a `hint:` line.\n\n"
        "A capped page continues itself. `next(r)` gives the next page and raises StopIteration after "
        "the last page, so use `next(r, None)` as the sentinel form. `r.pages()` walks the pages with "
        "a bound, `r.all()` joins every page into one text, and `r.next_offset` is where the next "
        "page starts. With `is_files_only`, each row is `<path>  <n>`: the file and its match count, "
-       "with no lines and no version.")
+       "with no lines.")
      :description
      (str
        "Find where something is: where X is defined, who calls a function, which file defines a "
@@ -3306,9 +3294,9 @@
        "name. File and directory scopes limit both content matches and file-name matches. Use it "
        "first when you do not know the location.\n\n"
        "Give ONE options map as the whole call, for example `grep({\"query\": q, \"paths\": [\"src\"], "
-       "\"context\": 3})`. You can give the same keys as keyword arguments, but never a positional "
-       "query. `context: N` adds N numbered lines on each side (default 3). For pure location/count "
-       "sweeps only, set it to 0. Hits come back with line numbers and their file version.\n\n"
+       "\"context\": 1})`. You can give the same keys as keyword arguments, but never a positional "
+       "query. `context: N` adds N numbered lines on each side (default 1). For pure location/count "
+       "sweeps only, set it to 0. Hits have line numbers.\n\n"
        "By default, the query is literal smart-case content, and file names match fuzzily. "
        "`is_regex: True` runs the query as a regex over content only, and file names do not match. A "
        "stray literal, such as the `(` of `(defn foo`, is escaped, and `hint` shows the pattern that "

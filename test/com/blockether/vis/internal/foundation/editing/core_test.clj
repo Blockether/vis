@@ -1006,7 +1006,7 @@
         (expect (string/starts-with? (first lines) "grep 'ZZNEEDLEZZ'"))
         (expect (string/includes? (first lines) "1 hit · 1 file"))
         (expect (some #(re-matches #".*greptext/one\.txt  \(1\)" %) lines))
-        (expect (some #(re-matches #"  \d+│ .*" %) lines))))
+        (expect (some #(re-matches #"\d+│ .*" %) lines))))
   (it "context lines are numbered too"
       (let [d
             (temp-dir-path "greptextctx")
@@ -1020,11 +1020,27 @@
             rows
             (->> (:result (grep-tool {"query" "ZZCTXZZ" "paths" [d] "context" 1}))
                  string/split-lines
-                 (filter #(string/starts-with? % "  ")))]
+                 (filter #(re-matches #"\d+│ .*" %)))]
 
         (expect (= 3 (count rows)))
-        (expect (every? #(re-matches #"  \d+│ .*" %) rows))))
-  (it "clips the default four-line context safely at a one-line file"
+        (expect (every? #(re-matches #"\d+│ .*" %) rows))))
+  (it "keeps phrase boundaries in a multi-term search"
+      (let [render (private-fn "render-grep-text")
+            head (first (string/split-lines
+                          (render {"query" ["alpha beta" "gamma delta"]
+                                   "matches" {} "paths" [] "hit_count" 0 "file_count" 0})))]
+        (expect (string/starts-with? head "grep 'alpha beta' | 'gamma delta'  "))))
+  (it "shows one context line on each side unless more are requested"
+      (let [d (temp-dir-path "grep-default-context")
+            _ (write-temp! "grep-default-context/a.txt" "a\nb\nZZDEFAULTZZ\nd\ne\n")
+            grep (grep-data-fn)
+            spec {"query" "ZZDEFAULTZZ" "paths" [d]}
+            tuples (fn [out]
+                     ((private-fn "grep-hit-tuples")
+                       (first (vals (get (:result out) "matches")))))]
+        (expect (= [2 3 4] (mapv first (tuples (grep spec)))))
+        (expect (= [1 2 3 4 5] (mapv first (tuples (grep (assoc spec "context" 2))))))))
+  (it "clips default context safely at a one-line file"
       (let [d
             (temp-dir-path "greptextone")
 
@@ -1044,12 +1060,12 @@
             rows
             (->> ((private-fn "render-grep-text") out)
                  string/split-lines
-                 (filter #(string/starts-with? % "  ")))]
+                 (filter #(re-matches #"\d+│ .*" %)))]
 
         (expect (= [] (get hit "before")))
         (expect (= [] (get hit "after")))
         (expect (= 1 (count rows)))
-        (expect (= "  1│ ZZONEZZ" (first rows)))))
+        (expect (= "1│ ZZONEZZ" (first rows)))))
   (it "a capped sweep gives the cap and the next offset on line 1, breadth included"
       (let [render
             (private-fn "render-grep-text")
@@ -1491,11 +1507,11 @@
                      (expect (= [file] (:paths (coerce-find [spec]))))
                      ;; The gate checks that same file, not its parent directory.
                      (expect (= [expected-file] (find-paths [spec])))))
-               (it "accepts an explicit context and defaults both grep paths to three lines"
+               (it "accepts an explicit context and defaults both grep paths to one line"
                    (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
                    (expect (= 0 (:context (coerce-find [{"query" "needle" "context" 0}]))))
-                   (expect (= 3 (:context (coerce-find [{"query" "needle"}]))))
-                   (expect (= 3 (:context (coerce-rg {"query" "needle"}))))
+                   (expect (= 1 (:context (coerce-find [{"query" "needle"}]))))
+                   (expect (= 1 (:context (coerce-rg {"query" "needle"}))))
                    (expect (throws? clojure.lang.ExceptionInfo
                                     #(coerce-find [{"query" "needle" "context" -1}])))
                    (expect (throws? clojure.lang.ExceptionInfo
@@ -1915,6 +1931,36 @@
 ;; A capped grep had no way to ask for the NEXT page: the only way past the
 ;; limit was to re-run the same search with a bigger `limit` and pay for the
 ;; first page all over again.
+(defdescribe
+  grep-compact-output-test
+  (it "does not page through unrelated names after a content match"
+      (let [dir (temp-dir-path "grep-name-filter")
+            _ (doseq [i (range 4)]
+                (write-temp! (str "grep-name-filter/shared_" i ".txt")
+                             (if (zero? i) "shared phrase\n" "unrelated\n")))
+            out (:result ((grep-data-fn)
+                           {"query" ["shared phrase" "extra word"]
+                            "paths" [dir] "limit" 2}))]
+        (expect (= 1 (get out "hit_count")))
+        (expect (= [] (get out "paths")))
+        (expect (= "end_of_results" (get out "truncated_by")))
+        (expect (nil? (get out "next_offset")))))
+  (it "filters names before paging and does not page past the final exact-sized page"
+      (let [dir (temp-dir-path "grep-name-page")
+            _ (doseq [name ["shared_a" "shared_b" "needle_a" "needle_b"]]
+                (write-temp! (str "grep-name-page/" name ".txt") "unrelated\n"))
+            spec {"query" ["shared" "needle"] "paths" [dir] "limit" 1}
+            search (private-fn "find-search")
+            first-page (search [spec] ["needle"])
+            last-page (search [(assoc spec "offset" 1)] ["needle"])]
+        (expect (= 1 (count (get first-page "paths"))))
+        (expect (= 1 (count (get last-page "paths"))))
+        (expect (every? #(string/includes? % "needle_")
+                        (concat (get first-page "paths") (get last-page "paths"))))
+        (expect (not= (get first-page "paths") (get last-page "paths")))
+        (expect (= "limit" (get first-page "truncated_by")))
+        (expect (= "end_of_results" (get last-page "truncated_by"))))))
+
 (defdescribe
   grep-paging-test
   "`offset` + `next_offset` page BOTH grep axes — the CONTENT hits and the
