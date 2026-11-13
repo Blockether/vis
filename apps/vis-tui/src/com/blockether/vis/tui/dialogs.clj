@@ -5536,7 +5536,8 @@
                                    :label
                                    (str provider "/" model (when (zero? (long i)) "  (default)"))}))
                    (take (count model-row-keys) value))]
-    {:groups (cond-> []
+    {:flow? true
+     :groups (cond-> []
                (seq rows)
                (conj {:title "Models" :items rows})
 
@@ -5569,7 +5570,7 @@
    new model. Each change writes the whole list at once, so this returns nil."
   [screen g region row choose-model!]
   (let [region
-        (host-band-region screen region)
+        (assoc (host-band-region screen region) :grid? true)
 
         id
         (:toggle-id row)]

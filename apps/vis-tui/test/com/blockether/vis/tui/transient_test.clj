@@ -417,6 +417,41 @@
   {:left 1 :inner-w 100 :text-w 98 :hint-row 20 :min-row 1 :cols 104 :is-sideless true})
 
 (defdescribe
+  transient-flow-panes-test
+  (it "a flow band fills its columns row by row and keeps the next group under it"
+      (let [spec
+            {:flow? true
+             :groups [{:title "Models"
+                       :items (mapv #(hash-map :key (str %) :type :action :id % :label (str "m" %))
+                                    [1 2 3 4 5])}
+                      {:title "Commands" :items [{:key "a" :type :action :id :add :label "Add"}]}]}
+
+            cell
+            (fn [ps i j]
+              (let [r (nth (nth ps j) i)]
+                (or (some-> r
+                            :item
+                            :id)
+                    (:text r))))
+
+            ps
+            (tr/panes spec 3)]
+
+        (expect (nil? (tr/check spec)))
+        (expect (= [[nil nil nil] ["Models" nil nil] [1 2 3] [4 5 nil] [nil nil nil]
+                    ["Commands" nil nil] [:add nil nil] [nil nil nil]]
+                   (mapv (fn [i]
+                           (mapv #(cell ps i %) (range 3)))
+                         (range (count (first ps))))))
+        ;; Equal cells as wide as the widest item: the five short models take five columns,
+        ;; and one long label leaves room for two in 100 cells.
+        (expect (= 5 (tr/pane-count spec leader-band-region)))
+        (expect (= 2
+                   (tr/pane-count
+                     (assoc-in spec [:groups 0 :items 0 :label] (apply str (repeat 40 "x")))
+                     leader-band-region))))))
+
+(defdescribe
   transient-panes-test
   (it "groups are dealt WHOLE into panes, and every pane is padded to a rectangle"
       (let [ps (tr/panes leader-spec 3)]

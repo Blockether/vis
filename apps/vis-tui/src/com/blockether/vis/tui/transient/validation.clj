@@ -58,7 +58,7 @@
 
 (def spec-keys
   "Every key one transient declaration may carry."
-  #{:title :groups :read-option :escape-label})
+  #{:title :groups :read-option :escape-label :flow?})
 
 (def state-keys "Every key in a transient run state." #{:switches :options})
 
@@ -132,6 +132,7 @@
           (not (optional-valid? spec :escape-label non-blank-string?))
           "transient :escape-label must be non-blank text"
           (not (optional-valid? spec :read-option ifn?)) "transient :read-option must be callable"
+          (not (optional-valid? spec :flow? boolean?)) "transient :flow? must be boolean"
           :else
           (or (child-error "group" group-error groups)
               (let [items (items-of spec)]

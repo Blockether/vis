@@ -308,6 +308,33 @@
             (into (vec pane) (repeat (- h (count pane)) {:kind :blank})))
           ps)))
 
+(defn- flow-panes
+  "PURE: a `:flow?` spec dealt into `n` panes. The groups stand one under another, a
+   blank between them, and the items of each group fill the panes row by row, left to
+   right. A heading stands in the first pane."
+  [spec ^long n]
+  (let [cell
+        (fn [it]
+          (if it {:kind :item :item it} {:kind :blank}))
+
+        group-rows
+        (fn [{:keys [title items]}]
+          (into (if (nil? title)
+                  []
+                  [(into [{:kind :header :text title}] (repeat (dec n) {:kind :blank}))])
+                (map (fn [row]
+                       (mapv #(cell (get (vec row) %)) (range n))))
+                (partition-all n items)))
+
+        grid
+        (vec (mapcat identity
+                     (interpose [(vec (repeat n {:kind :blank}))]
+                       (map (comp vec group-rows) (:groups spec)))))]
+
+    (mapv (fn [j]
+            (pad-block (mapv #(nth % j) grid)))
+          (range n))))
+
 (defn panes
   "PURE: `spec`'s groups dealt into `n` side-by-side panes, in order.
 
@@ -324,37 +351,39 @@
 
    `n` = 1 is exactly [[rows]]: one pane IS the single column."
   [spec ^long n]
-  (let [blocks
-        (mapv group-block (:groups spec))
+  (if (:flow? spec)
+    (flow-panes spec n)
+    (let [blocks
+          (mapv group-block (:groups spec))
 
-        total
-        (+ (long (reduce + 0 (map count blocks))) (max 0 (dec (count blocks))))
+          total
+          (+ (long (reduce + 0 (map count blocks))) (max 0 (dec (count blocks))))
 
-        target
-        (max 1 (long (Math/ceil (/ (double total) (double (max 1 n))))))
+          target
+          (max 1 (long (Math/ceil (/ (double total) (double (max 1 n))))))
 
-        packed
-        (if (>= n (count blocks))
-          (split-tall blocks n)
-          (reduce
-            (fn [acc block]
-              (let [cur (peek acc)]
-                (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
-                  (conj acc (vec block))
-                  (conj (pop acc)
-                        (into (cond-> cur
-                                (seq cur)
-                                (conj {:kind :blank}))
-                              block)))))
-            [[]]
-            blocks))
+          packed
+          (if (>= n (count blocks))
+            (split-tall blocks n)
+            (reduce
+              (fn [acc block]
+                (let [cur (peek acc)]
+                  (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
+                    (conj acc (vec block))
+                    (conj (pop acc)
+                          (into (cond-> cur
+                                  (seq cur)
+                                  (conj {:kind :blank}))
+                                block)))))
+              [[]]
+              blocks))
 
-        padded
-        ;; Every pane breathes the same: the grid is one rectangle, so a blank top
-        ;; row on one column and none on the next would tilt the whole band.
-        (mapv pad-block packed)]
+          padded
+          ;; Every pane breathes the same: the grid is one rectangle, so a blank top
+          ;; row on one column and none on the next would tilt the whole band.
+          (mapv pad-block packed)]
 
-    (pad-to-tallest padded)))
+      (pad-to-tallest padded))))
 
 (defn pane-natural
   "PURE: the columns ONE pane needs for its own content — the lead, its widest
@@ -419,9 +448,18 @@
           want
           (max (min (long default-panes) room) (count (:groups spec)))]
 
-      (loop [n want]
-        (let [ps (panes spec n)]
-          (if (or (= n 1) (panes-fit? ps inner-w)) (count ps) (recur (dec n))))))))
+      (if (:flow? spec)
+        ;; A flow band is a grid of equal cells, each as wide as its widest item: it takes
+        ;; every column that fits, but no more than its longest group fills.
+        (let [cell (pane-natural (map (fn [it]
+                                        {:kind :item :item it})
+                                      (mapcat :items (:groups spec))))]
+          (long (p/clamp (quot (+ inner-w (long pane-gap)) (+ cell (long pane-gap)))
+                         1
+                         (max 1 (long (reduce max 0 (map (comp count :items) (:groups spec))))))))
+        (loop [n want]
+          (let [ps (panes spec n)]
+            (if (or (= n 1) (panes-fit? ps inner-w)) (count ps) (recur (dec n)))))))))
 
 (defn pane-widths
   "PURE: the columns EACH of `ps` gets inside `region`'s inner width, the gaps

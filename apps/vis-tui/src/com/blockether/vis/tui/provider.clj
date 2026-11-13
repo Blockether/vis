@@ -478,7 +478,7 @@
    to the providers. Returns `{:provider <str> :model <str>}`, or nil on Esc."
   [^TerminalScreen screen g region title]
   (let [region
-        (dlg/host-band-region screen region)
+        (assoc (dlg/host-band-region screen region) :grid? true)
 
         fleet
         (into []
@@ -501,13 +501,15 @@
           nil)
       (loop []
 
-        (when-let [pid (run-paged-transient!
-                         screen
-                         g
-                         region
-                         title
-                         #(paged-key-groups
-                            {:title "Providers" :items providers :page % :page-size page-size}))]
+        (when-let [pid (run-paged-transient! screen
+                                             g
+                                             region
+                                             title
+                                             #(assoc (paged-key-groups {:title "Providers"
+                                                                        :items providers
+                                                                        :page %
+                                                                        :page-size page-size})
+                                                :flow? true))]
           (let [models (into []
                              (comp (keep vis/model-name)
                                    (map (fn [m]
@@ -518,8 +520,9 @@
                              g
                              region
                              (str (vis/display-label pid) " — models")
-                             #(paged-key-groups
-                                {:title "Models" :items models :page % :page-size page-size}))]
+                             #(assoc (paged-key-groups
+                                       {:title "Models" :items models :page % :page-size page-size})
+                                :flow? true))]
               {:provider (name pid) :model model}
               (recur))))))))
 
