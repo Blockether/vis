@@ -499,12 +499,12 @@
            (when (seq attempts) (str "**Providers tried:** " (str/join " · " attempts)))
            (when body (str "**Provider response:**\n\n    " (str/replace body "\n" "\n    ")))])]
 
-    (str/join "\n\n"
-              (remove str/blank?
-                [title explanation next-step
-                 (when (seq facts) (str/join " · " (map #(str "`" % "`") facts)))
-                 (when (seq diagnostics)
-                   (str "**Diagnostics**\n\n" (str/join "\n\n" diagnostics)))]))))
+    (str/join
+      "\n\n"
+      (remove str/blank?
+        [title explanation next-step (when (= "auth" (get block "kind")) "[Sign in](vis:providers)")
+         (when (seq facts) (str/join " · " (map #(str "`" % "`") facts)))
+         (when (seq diagnostics) (str "**Diagnostics**\n\n" (str/join "\n\n" diagnostics)))]))))
 
 (defn content->markdown
   "Disposable Markdown projection of canonical content blocks."

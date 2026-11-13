@@ -783,6 +783,11 @@
             ;; Svar remains the owner of provider classification and retries.
             (try (transcript/ask-code-with-session! environment resolved-model ask-opts)
                  (catch Exception e
+                   (let [chain (loop-errors/bounded-cause-chain e)]
+                     (loop-router/note-auth-rejections! (some #(:routed/trace (ex-data %)) chain)
+                                                        (into (set (some #(:auth-failed (ex-data %))
+                                                                         chain))
+                                                              (perr/auth-failed-provider-ids e))))
                    (when (perr/context-overflow-error? e)
                      (let [model (or (get-in (ex-data e) [:request-accounting :model])
                                      (:model (ex-data e))
@@ -3175,31 +3180,24 @@
                             :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
                            :extra-body current-extra-body})
                         (catch Exception e
-                          (let [chain (loop-errors/bounded-cause-chain e)]
-                            ;; Svar already re-sent with refreshed credentials and fell back;
-                            ;; cool down every provider it left so later iterations skip it.
-                            (loop-router/note-auth-rejections!
-                              (some #(:routed/trace (ex-data %)) chain)
-                              (some #(:auth-failed (ex-data %)) chain))
-                            (if-let [recovery (context-overflow-recovery!
-                                                {:error e
-                                                 :output-started? provider-output-started?
-                                                 :recovery-state context-recovery-state
-                                                 :ctx-atom (:ctx-atom environment)
-                                                 :turn-input-tokens (:input-tokens @accounting-atom)
-                                                 :request-messages @effective-messages-atom
-                                                 :base-messages (:messages attempt-base)
-                                                 :trailer-iters visible-attempt-trailer
-                                                 :summaries attempt-summaries
-                                                 :canonical-base-messages-fn
-                                                 (when (:resumed? attempt-base) canonical-messages)
-                                                 :canonical-trailer-iters attempt-trailer
-                                                 :replay-target replay-target
-                                                 :conversation-options recall-options
-                                                 :model (or (:name resolved-model)
-                                                            (:model resolved-model))})]
-                              (do
-                                (install-projection! recovery)
+                          (if-let [recovery (context-overflow-recovery!
+                                              {:error e
+                                               :output-started? provider-output-started?
+                                               :recovery-state context-recovery-state
+                                               :ctx-atom (:ctx-atom environment)
+                                               :turn-input-tokens (:input-tokens @accounting-atom)
+                                               :request-messages @effective-messages-atom
+                                               :base-messages (:messages attempt-base)
+                                               :trailer-iters visible-attempt-trailer
+                                               :summaries attempt-summaries
+                                               :canonical-base-messages-fn
+                                               (when (:resumed? attempt-base) canonical-messages)
+                                               :canonical-trailer-iters attempt-trailer
+                                               :replay-target replay-target
+                                               :conversation-options recall-options
+                                               :model (or (:name resolved-model)
+                                                          (:model resolved-model))})]
+                            (do (install-projection! recovery)
                                 (tel/log!
                                   {:level :warn
                                    :id ::context-overflow-emergency-fold
@@ -3210,35 +3208,35 @@
                                    :msg
                                    "Context overflow: retrying with a smaller history projection"})
                                 ::retry-context-overflow)
-                              (do (when (perr/context-overflow-error? e)
-                                    (tel/log!
-                                      {:level :warn
-                                       :id ::context-overflow-terminal
-                                       :data (merge request-context
-                                                    (transcript/context-overflow-token-data (ex-data
-                                                                                              e))
-                                                    {:output-started? @provider-output-started?
-                                                     :recovery-attempts (:attempts
-                                                                          @context-recovery-state)})
-                                       :msg "Context overflow: no emergency-fold retry scheduled"}))
-                                  (let [failed (loop-errors/handle-iteration-exception!
-                                                 e
-                                                 {:iteration iteration
-                                                  :messages @effective-messages-atom
-                                                  :routing @iteration-routing
-                                                  :reasoning-level reasoning-level
-                                                  :log-id (:request-id request-context)
-                                                  :stream-recovery (stream-recovery-outcome
-                                                                     e
-                                                                     @provider-replay-evidence)})]
-                                    ;; The provider answered before the block failed: charge that response.
-                                    (cond-> failed
-                                      (and @answered-usage
-                                           (::loop-errors/iteration-error failed)
-                                           (nil? (get-in failed
-                                                         [::loop-errors/iteration-error :data
-                                                          :api-usage])))
-                                      (assoc :api-usage @answered-usage))))))))]
+                            (do (when (perr/context-overflow-error? e)
+                                  (tel/log!
+                                    {:level :warn
+                                     :id ::context-overflow-terminal
+                                     :data (merge request-context
+                                                  (transcript/context-overflow-token-data (ex-data
+                                                                                            e))
+                                                  {:output-started? @provider-output-started?
+                                                   :recovery-attempts (:attempts
+                                                                        @context-recovery-state)})
+                                     :msg "Context overflow: no emergency-fold retry scheduled"}))
+                                (let [failed (loop-errors/handle-iteration-exception!
+                                               e
+                                               {:iteration iteration
+                                                :messages @effective-messages-atom
+                                                :routing @iteration-routing
+                                                :reasoning-level reasoning-level
+                                                :log-id (:request-id request-context)
+                                                :stream-recovery (stream-recovery-outcome
+                                                                   e
+                                                                   @provider-replay-evidence)})]
+                                  ;; The provider answered before the block failed: charge that response.
+                                  (cond-> failed
+                                    (and @answered-usage
+                                         (::loop-errors/iteration-error failed)
+                                         (nil? (get-in failed
+                                                       [::loop-errors/iteration-error :data
+                                                        :api-usage])))
+                                    (assoc :api-usage @answered-usage)))))))]
 
                   {:result result :env env}))
               {:extra-body iteration-extra-body :env environment})))]

@@ -14,6 +14,7 @@ import {
 } from 'react';
 import {
   AssistantMessage,
+  ProviderSettingsContext,
   earlierStepsPendingInView,
   transcriptEnterClass,
   UserMessage,
@@ -6382,7 +6383,9 @@ export function SessionScreen({
     <ActivityHistoryContext.Provider value={activityHistorySource}>
       <OpenPathContext.Provider value={openPath}>
         <ArtifactLinkContext.Provider value={artifactLinks}>
-          {screen}
+          <ProviderSettingsContext.Provider value={onManageProviders}>
+            {screen}
+          </ProviderSettingsContext.Provider>
         </ArtifactLinkContext.Provider>
         {previewed ? (
           <FilePreview

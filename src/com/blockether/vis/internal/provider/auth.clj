@@ -101,6 +101,7 @@
   "Auth landed: drop the cached fleet, status and limits views once, before
    publishing success."
   [provider-id]
+  (auth-health/note-ok! provider-id)
   (refresh-fleet!)
   (providers/forget-provider-status! provider-id)
   (provider-limits/auth-changed! provider-id)
@@ -126,7 +127,17 @@
             (let [lines (atom [])]
               {:kind :device :interval-ms 1000 :instructions lines :flow {:lines lines}}))
    :await (fn [{:keys [lines]}]
-            (auth-health/reauthenticate! provider-id (provider-descriptor provider-id) nil lines))
+            (let [descriptor
+                  (provider-descriptor provider-id)
+
+                  rejected
+                  (when (auth-health/rejection-status provider-id)
+                    (some-> descriptor
+                            :provider/get-token-fn
+                            (apply [])
+                            :token))]
+
+              (auth-health/reauthenticate! provider-id descriptor rejected lines)))
    :settle #(signed-in! provider-id)})
 
 (defn- bound-legs

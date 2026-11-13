@@ -109,7 +109,16 @@
                                         :strikes strikes
                                         :hits (if live? (inc (long (:hits prev))) 1)}))))]
 
+        (provider-limits/auth-changed! pid)
         (= 1 (long (:hits (get after pid))))))))
+
+(defn rejection-status
+  "The exhausted request verdict until this provider accepts a request or signs in."
+  [pid]
+  (when (get @cooldowns pid)
+    {:is-authenticated false
+     :auth-state :rejected
+     :error "The provider rejected the current credentials. Select Connect to sign in again."}))
 
 (defn- clear-cooldown!
   "Close the auth cooldown for `pid`; called once the provider accepts a request.
@@ -244,7 +253,9 @@
    provider re-enters routing at once. Returns true when a cooldown was cleared."
   [pid]
   (when (contains? @last-refreshed pid) (swap! last-refreshed dissoc pid))
-  (clear-cooldown! pid))
+  (let [cleared? (clear-cooldown! pid)]
+    (when cleared? (provider-limits/auth-changed! pid))
+    cleared?))
 
 (defn managed?
   "True when `provider` is managed and can both sign in interactively and read its token."

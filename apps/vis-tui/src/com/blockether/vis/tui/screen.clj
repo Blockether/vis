@@ -3506,6 +3506,8 @@
   (when-not (= :ok status)
     (vis/notify! (or error "Link could not be opened") :level :warn :ttl-ms status-error-ttl-ms)))
 
+(declare open-settings-modal!)
+
 (defn- open-click-target!
   ([{:keys [kind url session-id user-written?]}]
    (if (and (= :url kind) (re-find #"(?i)^attachment:" (str url)))
@@ -3543,7 +3545,10 @@
 
                                 (report-open-result! (opener/open! url)))
                               (catch Throwable _ nil)))))
-  ([^TerminalScreen _screen ref] (open-click-target! ref)))
+  ([^TerminalScreen screen ref]
+   (if (and (= :url (:kind ref)) (= "vis:providers" (:url ref)))
+     (with-dialog-lock #(open-settings-modal! screen "Providers"))
+     (open-click-target! ref))))
 
 (defn- inspect-attachment!
   "Open a staged item in the OS viewer without requiring it to be under cwd. An

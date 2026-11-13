@@ -1,5 +1,6 @@
 import {
   Children,
+  createContext,
   Fragment,
   isValidElement,
   memo,
@@ -83,6 +84,7 @@ import {
   BandTally,
   CopyChip,
   Disclosure,
+  Button,
   IconButton,
   ListRow,
   LoadMore,
@@ -3978,9 +3980,12 @@ function providerAttemptText(value: unknown): string | undefined {
   return [route, verdict].filter(Boolean).join(': ') || undefined;
 }
 
+export const ProviderSettingsContext = createContext<((providerId?: string) => void) | undefined>(undefined);
+
 /** One failure, with the human decision first and machine evidence on demand. */
 export function ErrorBlockCard({ block }: { block: ContentBlock }) {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const manageProviders = useContext(ProviderSettingsContext);
   const structuredTitle = errorText(block.title);
   const title = structuredTitle ?? 'Turn failed';
   const explanation = structuredTitle ? errorText(block.explanation) : errorText(block.message);
@@ -4022,6 +4027,14 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
       {nextStep && (
         <div className="border-t border-warn-edge px-3 py-2.5">
           <p className={`${PROSE} text-body font-medium text-answer-foreground`}>{nextStep}</p>
+        </div>
+      )}
+
+      {block.kind === 'auth' && manageProviders && (
+        <div className="px-3 pb-3">
+          <Button variant="secondary" density="compact" onClick={() => manageProviders(provider)}>
+            Sign in
+          </Button>
         </div>
       )}
 

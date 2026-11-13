@@ -5,6 +5,7 @@
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
             [com.blockether.vis.internal.provider.auth :as pauth]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.provider.callback]
             [com.blockether.vis.internal.provider.flow :as auth-flow]
             [com.blockether.vis.internal.provider.service :as providers]
@@ -687,3 +688,37 @@
                           (expect (= "ok" (:status (pauth/poll-auth! id))))
                           (expect (= :unknown-flow (:error (pauth/complete-auth! id "test-code"))))
                           (finally (pauth/cancel-auth! id)))))))
+
+(defdescribe exhausted-managed-auth-reconnect-test
+             (it "runs sign-in instead of accepting the saved rejected token"
+                 (let [pid
+                       :rejected-managed-test
+
+                       token
+                       (atom "rejected-token")
+
+                       calls
+                       (atom 0)
+
+                       descriptor
+                       {:provider/id pid
+                        :provider/is-managed true
+                        :provider/get-token-fn (fn []
+                                                 {:token @token})
+                        :provider/auth-fn (fn [_]
+                                            (swap! calls inc)
+                                            (reset! token "signed-in"))}]
+
+                   (try (with-redefs [providers/configured-providers-cached
+                                      (constantly [])
+
+                                      registry/provider-by-id
+                                      (constantly descriptor)]
+
+                          (auth-health/note-failure! pid)
+                          (let [flow-id (get-in (pauth/start-auth! pid) [:flow :flow-id])]
+                            (expect (eventually #(= "ok" (:status (pauth/poll-auth! flow-id)))))
+                            (expect (= 1 @calls))
+                            (expect (= "signed-in" @token))
+                            (expect (nil? (auth-health/rejection-status pid)))))
+                        (finally (auth-health/note-ok! pid))))))

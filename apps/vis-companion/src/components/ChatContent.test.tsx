@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AssistantMessage,
+  ErrorBlockCard,
+  ProviderSettingsContext,
   AttachmentRail,
   IterationTrace,
   Markdown,
@@ -47,6 +49,26 @@ const announcedStates = (root: HTMLElement) =>
 const count = (html: string, pattern: RegExp) => (html.match(pattern) ?? []).length;
 
 // Regression, user screenshot: code blocks used a wide Copy label instead of an icon.
+describe('authentication error recovery', () => {
+  it('opens the failed provider from Sign in and leaves server errors without a login action', () => {
+    const manage = vi.fn();
+    const block = { id: 'auth-failure', type: 'error' as const, kind: 'auth', provider: 'anthropic-coding-plan', message: 'Token revoked' };
+    const view = render(
+      <ProviderSettingsContext.Provider value={manage}>
+        <ErrorBlockCard block={block} />
+      </ProviderSettingsContext.Provider>,
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Sign in' }));
+    expect(manage).toHaveBeenCalledExactlyOnceWith('anthropic-coding-plan');
+    view.rerender(
+      <ProviderSettingsContext.Provider value={manage}>
+        <ErrorBlockCard block={{ ...block, kind: 'gateway-unavailable' }} />
+      </ProviderSettingsContext.Provider>,
+    );
+    expect(view.queryByRole('button', { name: 'Sign in' })).toBeNull();
+  });
+});
+
 describe('code block copy controls', () => {
   it.each([
     ['bash', 'vis-agent python uv sync --project ./einmal --locked'],

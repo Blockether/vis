@@ -10,6 +10,8 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.catalog :as catalog]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.provider.vendor.github-copilot :as github-copilot]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.contract.provider :as provider-contract]
@@ -98,6 +100,50 @@
         (let [status (providers/provider-status {:id :remote})]
           (expect (true? (:is-authenticated status)))
           (expect (= :unverified (:auth-state status)))))))
+
+(defdescribe
+  exhausted-request-auth-status
+  (it "shows rejected credentials after request recovery fails and clears them after sign-in"
+      (let [pid
+            :exhausted-oauth-test
+
+            provider
+            {:id pid}
+
+            cooldown
+            @#'auth-health/cooldowns
+
+            saved
+            @cooldown]
+
+        (try (with-redefs [registry/provider-by-id
+                           (constantly {:provider/status-fn (constantly {:is-authenticated true})})]
+               (providers/provider-status provider)
+               (loop-router/note-auth-rejections! nil #{pid})
+               (doseq [status [(providers/provider-status-cached provider)
+                               (providers/provider-status provider)]]
+                 (expect (= :rejected (:auth-state status)))
+                 (expect (false? (:is-authenticated status))))
+               (auth-health/note-ok! pid)
+               (expect (nil? (auth-health/rejection-status pid)))
+               (expect (true? (:is-authenticated (providers/provider-status provider))))
+               (expect (true? (:is-authenticated (providers/provider-status-cached provider)))))
+             (finally (reset! cooldown saved) (providers/forget-provider-status! pid)))))
+  (it "does not mark a transient server failure or an auth retry as rejected"
+      (let [pid
+            :transient-oauth-test
+
+            provider
+            {:id pid}]
+
+        (with-redefs [registry/provider-by-id (constantly {:provider/status-fn
+                                                           (constantly {:is-authenticated true})})]
+          (loop-router/note-auth-rejections!
+            [{:event/type :llm.routing/provider-retry :reason :authentication :provider pid}
+             {:event/type :llm.routing/provider-fallback :reason :server-error :from-provider pid}]
+            nil)
+          (expect (true? (:is-authenticated (providers/provider-status provider)))))
+        (providers/forget-provider-status! pid))))
 
 (defdescribe provider-status-keeps-explicit-rejection
              (it "keeps a provider's saved sign-in requirement in live and cached status"

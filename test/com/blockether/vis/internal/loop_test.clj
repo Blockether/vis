@@ -3169,6 +3169,36 @@
                           (expect (= 1 @calls)))
                         (finally (loop-env/dispose-environment! env))))))
 
+(defdescribe
+  terminal-auth-rejection-status-test
+  (doseq [[status rejected?] [[401 true] [503 false]]]
+    (it (str "publishes exhausted authentication status for HTTP " status)
+        (let [pid :terminal-auth-test
+              environment (loop-env/create-environment ::router {:db :memory})]
+
+          (try
+            (auth-health/note-ok! pid)
+            (with-redefs [svar/session-capability (constantly nil)
+                          svar/ask-code! (fn [& _]
+                                           (throw (ex-info "Provider unavailable"
+                                                           {:type :svar.llm/provider-unavailable
+                                                            :attempts
+                                                            [{:provider pid
+                                                              :model "model"
+                                                              :status status
+                                                              :error (ex-info
+                                                                       "Request rejected"
+                                                                       {:type :svar.core/http-error
+                                                                        :status status})}]})))]
+
+              (expect (throws? clojure.lang.ExceptionInfo
+                               #(iteration/run-iteration
+                                  environment
+                                  []
+                                  {:iteration 0 :resolved-model {:provider pid :name "model"}})))
+              (expect (= rejected? (some? (auth-health/rejection-status pid)))))
+            (finally (auth-health/note-ok! pid) (loop-env/dispose-environment! environment)))))))
+
 (def ^:private next-replay-evidence (deref #'iteration/next-replay-evidence))
 
 (def ^:private stream-recovery-outcome (deref #'iteration/stream-recovery-outcome))

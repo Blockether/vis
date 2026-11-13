@@ -24,6 +24,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.provider.limits-format :as limits-format]
             [com.blockether.vis.internal.provider.catalog :as catalog]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.util :as util])
@@ -421,6 +422,8 @@
   ([] (reset! last-provider-status {}))
   ([provider-id] (swap! last-provider-status dissoc provider-id)))
 
+(swap! provider-limits/auth-change-listeners conj #'forget-provider-status!)
+
 (defn- config-only-status
   "The verdict a configured provider earns from its CONFIG alone, or `::probe`
    when only a live check can decide. Shared by the probing and non-probing
@@ -537,7 +540,7 @@
    PROBES the provider, so it belongs off the render path. Every verdict is
    remembered for `provider-status-cached`."
   [provider]
-  (let [status (status-of provider true)]
+  (let [status (or (auth-health/rejection-status (:id provider)) (status-of provider true))]
     (swap! last-provider-status assoc
       (:id provider)
       {:status status :at-ms (util/now-ms) :definition (provider-definition provider)})
@@ -555,7 +558,9 @@
    after the fleet loaded painted every other OAuth provider as signed out.
    `GET /v1/router` still reads live."
   [provider]
-  (or (get-in @last-provider-status [(:id provider) :status]) (status-of provider false)))
+  (or (auth-health/rejection-status (:id provider))
+      (get-in @last-provider-status [(:id provider) :status])
+      (status-of provider false)))
 
 (defn provider-status-current?
   "True when the last live verdict was reached for this exact provider definition.
