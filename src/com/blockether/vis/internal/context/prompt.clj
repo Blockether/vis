@@ -371,7 +371,7 @@
     "120` when more follow. Keep it in a variable: after `page = grep(spec)`, `page = next(page, None)` gives "
     "the next page or None, and `print(page.all())` prints every page.\n"
     "- `grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})` returns `N│ text` hit rows under "
-    "`path @version` headers. Terms combine with OR. `\"is_regex\": True` runs a regex, and `\"include\": "
+    "`path` headers. Terms combine with OR. `\"is_regex\": True` runs a regex, and `\"include\": "
     "[\"*.py\"]` limits the files. Example: `print(grep({\"query\": [\"def load\"], \"paths\": [\"src\"]}))`. "
     "Read known regions directly.\n"
     "- There is no read tool and no edit tool. Read and write files with plain Python and `Path`.\n"

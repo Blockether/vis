@@ -428,17 +428,6 @@
                           (workspace/filesystem-root-mappings))
                     (paths/abbreviate-home (str p))))))
 
-(defn- shown-version!
-  "Remember `content` as the version of `f` that a read showed, and answer the version.
-   The canonical path keys it, so each draft clone keeps its own versions."
-  [^File f ^String content]
-  (version/remember! (str (canonical-path f)) content))
-
-(defn- shown-lines!
-  "Record the inclusive `[from to]` line `ranges` of `version` of `f` that a result showed."
-  [^File f version ranges]
-  (version/note-shown! (str (canonical-path f)) version ranges))
-
 (defn- workspace-dir?
   "True when `f` lies inside the primary cwd or a real draft-clone mapping.
 
@@ -1910,7 +1899,7 @@
 
 (defn- render-grep-text
   "grep's whole model-facing answer as ONE string: the summary line, then per
-   path a `path @version` header and its numbered rows, then fuzzy NAME matches,
+   path a `path` header and its numbered rows, then fuzzy NAME matches,
    then the hint.
 
    The counts stay PROSE on line 1 and no structured field survives — control
@@ -1922,9 +1911,6 @@
 
         counts
         (get result "file_counts")
-
-        versions
-        (get result "versions")
 
         content-paths
         (set (map str (keys matches)))
@@ -1945,8 +1931,6 @@
                         (contiguous-runs (grep-hit-tuples (val e)))]
 
                     (str path
-                         (when-let [v (get versions path)]
-                           (str " @" v))
                          "  (" (get counts path (count runs))
                          ")\n" (str/join "\n  ⋮\n"
                                          (map #(version/render-numbered-block % "  ") runs)))))
@@ -2388,73 +2372,6 @@
                     (and (seq (get out "searched_paths")) (get out "hint"))
                     (conj (get out "hint"))))))))
 
-(defn- shows-content?
-  "True when every numbered row that grep shows for one file is that line of
-   `content`. A CR is compared away: rows render without it."
-  [tuples ^String content]
-  (let [lines
-        (version/split-content-lines content)
-
-        bare
-        #(str/replace (str %) #"\r$" "")]
-
-    (every? (fn [[ln text]]
-              (let [i (dec (long ln))]
-                (and (< -1 i (count lines)) (= (bare text) (bare (nth lines i))))))
-            tuples)))
-
-(defn- grep-versions
-  "`{path version}` for each file whose lines a grep page shows, and the paths that
-   changed while grep ran. The text is read again here and remembered, so a later
-   `patch` can name that version. A file whose shown rows differ from that text
-   changed after the search: it gets no version, because a patch on the new version
-   with the old line numbers would edit other lines."
-  [out]
-  (if (get out "is_files_only")
-    {:versions {} :changed []}
-    (reduce (fn [acc [path file-map]]
-              (let [path
-                    (str path)
-
-                    f
-                    (try (safe-path path) (catch Exception _ nil))
-
-                    content
-                    (when f (try (slurp f) (catch Exception _ nil)))
-
-                    tuples
-                    (grep-hit-tuples file-map)]
-
-                (cond (nil? content) acc
-                      (shows-content? tuples content) (let [v (shown-version! f content)]
-                                                        (shown-lines! f
-                                                                      v
-                                                                      (map (fn [[ln]]
-                                                                             [ln ln])
-                                                                           tuples))
-                                                        (assoc-in acc [:versions path] v))
-                      :else (update acc :changed conj path))))
-            {:versions {} :changed []}
-            (get out "matches"))))
-
-(defn- with-grep-versions
-  "`out` with the versions of its shown files, and a hint for each file that
-   changed while grep ran."
-  [out]
-  (let
-    [{:keys [versions changed]}
-     (grep-versions out)
-
-     note
-     (when (seq changed)
-       (str
-         (str/join ", " changed)
-         " changed while grep ran, so its rows have no version. Read it again before you write it."))]
-
-    (cond-> (assoc out "versions" versions)
-      note
-      (assoc "hint" (str/join " " (remove str/blank? [note (get out "hint")]))))))
-
 (defn- grep-tool
   "grep — literal smart-case CONTENT search plus fuzzy file-NAME matching, in ONE
    options map, answered as ONE numbered TEXT block.
@@ -2467,9 +2384,8 @@
 
    The whole call surface is `grep-data`'s; this is its projection. Line 1 always
    summarizes — hits, files and truncation — then each
-   `path @version` header heads a block of `  <line>│ <text>` rows, context lines
-   numbered too. A hit is therefore already a `patch` address: its line number and
-   the header's version, with no `cat` in between."
+   `path` header heads a block of `  <line>│ <text>` rows, context lines
+   numbered too."
   [& args]
   (let [out
         (apply grep-data args)
@@ -2480,7 +2396,7 @@
     (tool-success {:op :grep
                    :path (first searched_paths)
                    :kind :dir
-                   :result (render-grep-text (with-grep-versions out))
+                   :result (render-grep-text out)
                    :metadata {:query (get out "query")
                               :paths searched_paths
                               :limit (get out "limit")

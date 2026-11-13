@@ -84,7 +84,7 @@ callers. Python references do not update automatically.
 
 The agent reads and writes files with plain Python. It prints only the lines that it needs, with
 line numbers. To edit, it replaces exact text and first checks that the text occurs one time.
-`grep` finds the lines and shows a `path @version` header with numbered rows.
+`grep` finds the lines and shows a `path` header with numbered rows.
 
 ## Reference: folds and context budget
 

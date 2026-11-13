@@ -15,7 +15,6 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
-            [com.blockether.vis.internal.foundation.editing.version :as version]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -39,22 +38,6 @@
   (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" name)))
 
 (defn- private-fn [name] (deref (private-var name)))
-
-(defn- line-at
-  "Line `n` when `cat`/`patch`/`grep` printed a numbered row for it in `text`, else
-   nil. Splitting on the gutter is exactly what the model does, so the tests
-   address lines the same way the contract promises."
-  [text n]
-  (->> (string/split-lines text)
-       (keep (fn [line]
-               (let [[a b] (string/split line #"│ " 2)]
-                 (when (and b (= (str n) (string/trim (str a)))) n))))
-       first))
-
-(defn- version-in
-  "The first file version that a `path @version` header in `text` names."
-  [text]
-  (second (re-find #" @([0-9a-f]{8})" (str text))))
 
 (defn- grep-data-fn
   "grep answers in numbered TEXT now — `grep-tool` IS `render-grep-text` over
@@ -1003,7 +986,7 @@
 
 (defdescribe
   grep-returns-numbered-text-test
-  (it "line 1 summarizes, each file header names its version and each row its line"
+  (it "line 1 summarizes, each file header names its path and each row its line"
       (let [d
             (temp-dir-path "greptext")
 
@@ -1022,9 +1005,9 @@
         (expect (string? out))
         (expect (string/starts-with? (first lines) "grep 'ZZNEEDLEZZ'"))
         (expect (string/includes? (first lines) "1 hit · 1 file"))
-        (expect (some #(re-matches #".*greptext/one\.txt @[0-9a-f]{8}  \(1\)" %) lines))
+        (expect (some #(re-matches #".*greptext/one\.txt  \(1\)" %) lines))
         (expect (some #(re-matches #"  \d+│ .*" %) lines))))
-  (it "context lines are numbered too, so a context line is directly patchable"
+  (it "context lines are numbered too"
       (let [d
             (temp-dir-path "greptextctx")
 
@@ -1104,52 +1087,6 @@
         (expect (= (str "grep 'zzq_vis_probe'  0 hits · 0 files  file NAME matches capped by limit,"
                         " next \"offset\": 50")
                    head)))))
-
-(defdescribe
-  grep-hit-version-test
-  ;; A write between the search and the version read must not pair the new
-  ;; version with the old rows.
-  (it "a file that changes during the search gets no version"
-      (let [d
-            (temp-dir-path "greplinerace")
-
-            rel
-            (write-temp! "greplinerace/target.txt" "keep\nZZRACEZZ line\nkeep\n")
-
-            search
-            (private-fn "grep-data")
-
-            grep-out
-            (with-redefs-fn {(private-var "grep-data") (fn [& args]
-                                                         (let [out (apply search args)]
-                                                           (spit rel (str "inserted\n" (slurp rel)))
-                                                           out))}
-              #((private-fn "grep-tool") {"query" "ZZRACEZZ" "paths" [d]}))
-
-            text
-            (:result grep-out)]
-
-        (expect (some? (line-at text 2)))
-        (expect (nil? (version-in text)))
-        (expect (string/includes? text "changed while grep ran"))))
-  ;; The row check compares lines without their CR: a CRLF file that did not change
-  ;; keeps its version, with context rows on both sides of the hit.
-  (it "an unchanged CRLF file keeps its version"
-      (let [d
-            (temp-dir-path "greplinecrlf")
-
-            content
-            "keep\r\nZZCRLFZZ line\r\nkeep\r\n"
-
-            _
-            (write-temp! "greplinecrlf/target.txt" content)
-
-            text
-            (:result ((private-fn "grep-tool") {"query" "ZZCRLFZZ" "paths" [d] "context" 1}))]
-
-        (expect (some? (line-at text 1)))
-        (expect (= (version/content-version content) (version-in text)))
-        (expect (not (string/includes? text "changed while grep ran"))))))
 
 (defn- mk-tmp-dir
   [prefix]
