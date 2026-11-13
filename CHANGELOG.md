@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Jail (#474): on macOS, a jailed command can start `vis-agent` with Python extensions. Each jailed child gets a private directory in `VIS_RUNTIME_DIR`, where it can bind Unix sockets and connect to them; the jail refuses a Unix socket bind in all other paths. Vis deletes the directory when the child stops. Before, each extension worker failed with "Operation not permitted" when it bound its control socket in `/tmp`. The Python runtime is now at commit 0b93574.
+
 ## [v0.5.17] - 2026-11-13
 
 ### Added

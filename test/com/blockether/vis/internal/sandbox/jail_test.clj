@@ -14,6 +14,20 @@
             [com.blockether.vis.internal.sandbox.policy :as security-policy])
   (:import (java.lang ProcessHandle)))
 
+(defn- spawn-options
+  "The options that `pj/spawn!` gives the runtime for `policy`, as an unconfined host.
+   The stub answers a real finished process, as the runtime does."
+  [policy]
+  (let [sent (atom nil)]
+    (with-redefs [runtime/jailed? (constantly false)
+                  runtime/spawn-process! (fn [_ options]
+                                           (reset! sent options)
+                                           (.start (ProcessBuilder. ^java.util.List
+                                                                    (list "/usr/bin/true"))))]
+
+      (.waitFor ^Process (pj/spawn! ["/bin/true"] nil policy {:environment {}})))
+    @sent))
+
 (defdescribe automatic-java-process-boundary
              (it "automatic java process boundary"
                  (let [snapshot
@@ -29,20 +43,15 @@
                        (assoc (:process-jail snapshot)
                          :deny-read [denied]
                          :deny-write [java-home]
-                         :net-enabled? false)]
+                         :net-enabled? false)
 
-                   (with-redefs [runtime/jailed?
-                                 (constantly false)
+                       sent
+                       (:policy (spawn-options base))]
 
-                                 runtime/spawn-process!
-                                 (fn [_ options]
-                                   options)]
-
-                     (let [sent (:policy (pj/spawn! ["/bin/true"] nil base {:environment {}}))]
-                       (expect (some #{java-home} (:read-only sent)))
-                       (expect (not (some #{java-home} (:read-write sent))))
-                       (expect (= [denied] (:deny-read sent)))
-                       (expect (= [java-home denied] (:deny-write sent))))))))
+                   (expect (some #{java-home} (:read-only sent)))
+                   (expect (not (some #{java-home} (:read-write sent))))
+                   (expect (= [denied] (:deny-read sent)))
+                   (expect (= [java-home denied] (:deny-write sent))))))
 
 (defdescribe
   runtime-policy-value
@@ -182,6 +191,56 @@
                (expect (not (zero? (:exit denied-read)))))
              (finally (when (.exists outside) (io/delete-file outside true))
                       (doseq [file (reverse (file-seq root))]
+                        (io/delete-file file true))))))))
+
+;; #474: a jailed shell runs `vis-agent`, which binds its Python worker control socket.
+(defdescribe
+  confined-child-binds-sockets-in-its-runtime-dir
+  (it
+    "binds and dials a socket in its own VIS_RUNTIME_DIR, and the directory goes at exit"
+    (when (sandbox-applicable?)
+      (let [root
+            (doto (io/file (System/getProperty "java.io.tmpdir")
+                           (str "visjail-socket-" (System/nanoTime)))
+              (.mkdirs))
+
+            policy
+            {:roots-fn (constantly [(.getPath root)]) :net-enabled? false}
+
+            bind
+            (fn [socket]
+              (str "my $s = IO::Socket::UNIX->new(Type => SOCK_STREAM(), Local => \""
+                   socket
+                   "\", Listen => 1) or die \"bind $!\";"
+                   "IO::Socket::UNIX->new(Type => SOCK_STREAM(), Peer => \""
+                   socket
+                   "\") or die \"dial $!\";"))
+
+            run
+            (fn [script]
+              (run-process ["/usr/bin/perl" "-MIO::Socket::UNIX" "-e" script] root policy))]
+
+        (try (let [{:keys [exit out]}
+                   (run (str "my $d = $ENV{VIS_RUNTIME_DIR} or die \"no VIS_RUNTIME_DIR\";"
+                             "mkdir \"$d/vis-py-1\" or die \"mkdir $!\";"
+                             (bind "$d/vis-py-1/control.sock")
+                             "print $d;"))
+
+                   dir
+                   (io/file out)]
+
+               (expect (zero? exit) out)
+               (expect (str/includes? out "vis-run-") out)
+               (expect (loop [attempt 0]
+                         (cond (not (.exists dir)) true
+                               (> attempt 250) false
+                               :else (do (Thread/sleep 20) (recur (inc attempt)))))
+                       (str dir " still exists after the child exited")))
+             (when (pattern-enforcing-host?)
+               (let [{:keys [exit out]} (run (bind (str (.getCanonicalPath root) "/c.sock")))]
+                 (expect (not (zero? exit)) out)
+                 (expect (str/includes? out "bind Operation not permitted") out)))
+             (finally (doseq [file (reverse (file-seq root))]
                         (io/delete-file file true))))))))
 
 (defn- detached-sleeper
@@ -643,19 +702,9 @@
 
             ;; every managed child is handed the expanded paths and the rules. Only a jail
             ;; that binds paths gets the glob expanded, at spawn (#396).
-            (with-redefs [runtime/jailed?
-                          (constantly false)
-
-                          security-policy/os-binds-deny-paths?
-                          (constantly true)
-
-                          runtime/spawn-process!
-                          (fn [_ options]
-                            options)]
-
+            (with-redefs [security-policy/os-binds-deny-paths? (constantly true)]
               (doseq [child [policy (pj/python-worker-policy policy "/run" "/run/control.sock" [])]]
-                (let [sent (:deny-read (:policy
-                                         (pj/spawn! ["/bin/true"] nil child {:environment {}})))]
+                (let [sent (:deny-read (:policy (spawn-options child)))]
                   (expect (every? (set sent) denied))
                   ;; #263: the rule travels as written too. Expanding it names only the
                   ;; files that existed when the snapshot was built.
