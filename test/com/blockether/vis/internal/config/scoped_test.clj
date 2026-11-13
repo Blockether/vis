@@ -571,6 +571,32 @@
 " (slurp authored)))
            (finally (doseq [file (reverse (file-seq dir))]
                       (io/delete-file file true))))))
+  (it "removes the project overlay when its last setting inherits"
+      (let [dir
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-scoped-project"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            root
+            (.getCanonicalPath dir)
+
+            overlay
+            (io/file dir ".vis" "config.yml")]
+
+        (try (binding [workspace/*workspace-root* root]
+               (with-redefs [config/load-global-yaml-config-raw (constantly {})
+                             config/load-global-config-raw (constantly {})]
+
+                 (let [db (h/store)
+                       project (store/db-create-project! db {:name "Disk" :workspace-root root})
+                       target (scoped/target db "project" (:id project))]
+
+                   (scoped/set-setting! db target "subagents" "value" false)
+                   (expect (.exists overlay))
+                   (scoped/set-setting! db target "subagents" "inherit" nil)
+                   (expect (not (.exists overlay))))))
+             (finally (doseq [file (reverse (file-seq dir))]
+                        (io/delete-file file true))))))
   (it "retains sparse false values after reopening the database and cascades owner deletion"
       (let [file
             (.toFile (java.nio.file.Files/createTempDirectory

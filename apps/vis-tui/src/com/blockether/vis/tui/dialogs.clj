@@ -438,14 +438,36 @@
       (when (or (= action MouseActionType/MOVE) (= action MouseActionType/DRAG))
         (.updateHovered ^HitRegionMap (.get ^ThreadLocal modal-close-regions) ^MouseAction key)))))
 
+(defonce ^:private settings-revision (atom 0))
+
+(def ^:private modal-seen-revision (ThreadLocal.))
+
+(defn note-settings-changed!
+  "Another client changed a setting: an open Settings dialog reads its catalog again."
+  []
+  (swap! settings-revision inc))
+
+(defn- settings-wake?
+  "True one time on this thread after each settings change."
+  []
+  (let [revision
+        @settings-revision
+
+        seen
+        (.get ^ThreadLocal modal-seen-revision)]
+
+    (.set ^ThreadLocal modal-seen-revision revision)
+    (and (some? seen) (not= seen revision))))
+
 (defn- poll-modal-key!
-  "Return queued input, or one harmless wake key after applying a resize."
+  "Return queued input, or one harmless wake key after a resize or a settings change."
   ^KeyStroke [^TerminalScreen screen]
   (or (.pollInput screen)
       (when-let [size (frame/resize! screen)]
         (clear-screen-buffer! screen size)
         (invalidate-modal-backgrounds! screen)
-        (KeyStroke. KeyType/Unknown))))
+        (KeyStroke. KeyType/Unknown))
+      (when (settings-wake?) (KeyStroke. KeyType/Unknown))))
 
 (defn- await-modal-key!
   ^KeyStroke [^TerminalScreen screen]
@@ -4456,27 +4478,41 @@
       (vec (concat (take end rows) extra (drop end rows))))
     (vec rows)))
 
+(defn- with-tools-rows
+  "Add the Tools rows at the end of `rows`. A catalog Tools section takes them at its end, and
+   its header takes the reload button, so the list has one Tools section."
+  [rows]
+  (let [[header & body]
+        (tools-settings-rows)
+
+        i
+        (first (keep-indexed #(when (= "tools" (:section-id %2)) %1) rows))]
+
+    (if i
+      (put-at-section-end (assoc-in (vec rows) [i :button] (:button header)) "tools" body)
+      (into (vec rows) (cons header body)))))
+
 (defn- settings-rows
   "Every setting in one flat list, in the gateway's sections. Global Settings add the agent
    name to General, end General with the View rows (theme first) and add the provider accounts
    to Providers. A failed catalog read keeps the last catalog and says so. Tools ends the list."
   []
-  (vec (concat (cond-> (or (registry-toggle-rows) [])
-                 (not *settings-target*)
-                 (-> (put-in-section
-                       "general"
-                       "General"
-                       [{:type :agent-name
-                         :label "Agent name"
-                         :description (or
+  (-> (concat (cond-> (or (registry-toggle-rows) [])
+                (not *settings-target*)
+                (-> (put-in-section "general"
+                                    "General"
+                                    [{:type :agent-name
+                                      :label "Agent name"
+                                      :description
+                                      (or
                                         (get @agent-name-setting "error")
                                         "Shared by all gateway clients. Overrides project names.")}]
-                       true)
-                     (put-at-section-end "general" (view-settings-rows))
-                     (put-provider-rows (provider-settings-rows))))
-               (when-let [error (:error @(settings-inventory-atom))]
-                 [{:type :info :tone :bad :label "Settings unavailable" :description error}])
-               (tools-settings-rows))))
+                                    true)
+                    (put-at-section-end "general" (view-settings-rows))
+                    (put-provider-rows (provider-settings-rows))))
+              (when-let [error (:error @(settings-inventory-atom))]
+                [{:type :info :tone :bad :label "Settings unavailable" :description error}]))
+      (with-tools-rows)))
 
 (defn- settings-option-label
   [{:keys [label type toggle-id experimental? locked is-override?]} _values]
@@ -4515,7 +4551,10 @@
 
       "models"
       (if (seq toggle-value)
-        (str/join ", " (map (fn [{:strs [provider model]}] (str provider "/" model)) toggle-value))
+        (str/join ", "
+                  (map (fn [{:strs [provider model]}]
+                         (str provider "/" model))
+                       toggle-value))
         "Not set")
 
       (let [n (count toggle-value)]
@@ -5488,41 +5527,52 @@
    session model picker; an entry opens Make default and Remove. Save returns the new list,
    which can be `[]`; Esc or an unchanged list returns nil."
   [screen row]
-  (let [current (vec (:toggle-value row))
-        entry-name (fn [{:strs [provider model]}] (str provider "/" model))]
+  (let [current
+        (vec (:toggle-value row))
+
+        entry-name
+        (fn [{:strs [provider model]}]
+          (str provider "/" model))]
+
     (loop [value current]
-      (let [choice
-            (list-dialog! screen
-                          (:label row)
-                          (vec (concat (map-indexed (fn [i entry]
-                                                      {:label (entry-name entry)
-                                                       :hint (when (zero? (long i)) "default")
-                                                       :index i})
-                                                    value)
-                                       [{:label "+ Add a model" :add? true}
-                                        {:label "Save" :save? true}]))
-                          {:enter-label "choose" :min-width 56 :height :content})]
-        (cond
-          (nil? choice) nil
-          (:save? choice) (when (not= value current) value)
-          (:add? choice)
-          (let [picked (model-picker! screen nil {:title (str "Add to " (:label row)) :reset-label "Cancel"})
-                entry (when (and picked (not (:reset? picked)))
-                        {"provider" (:provider picked) "model" (:model picked)})]
-            (recur (if (and entry (not (some #{entry} value))) (conj value entry) value)))
-          :else
-          (let [i (long (:index choice))
-                entry (nth value i)
-                others (into (subvec value 0 i) (subvec value (inc i)))
-                action (list-dialog! screen
-                                     (entry-name entry)
-                                     (cond-> []
-                                       (pos? i) (conj {:label "Make default" :default? true})
-                                       true (conj {:label "Remove" :remove? true}))
-                                     {:enter-label "choose" :height :content})]
-            (recur (cond (:default? action) (into [entry] others)
-                         (:remove? action) others
-                         :else value))))))))
+      (let [choice (list-dialog! screen
+                                 (:label row)
+                                 (vec (concat (map-indexed (fn [i entry]
+                                                             {:label (entry-name entry)
+                                                              :hint (when (zero? (long i))
+                                                                      "default")
+                                                              :index i})
+                                                           value)
+                                              [{:label "+ Add a model" :add? true}
+                                               {:label "Save" :save? true}]))
+                                 {:enter-label "choose" :min-width 56 :height :content})]
+        (cond (nil? choice) nil
+              (:save? choice) (when (not= value current) value)
+              (:add? choice)
+              (let [picked (model-picker! screen
+                                          nil
+                                          {:title (str "Add to " (:label row))
+                                           :reset-label "Cancel"})
+                    entry (when (and picked (not (:reset? picked)))
+                            {"provider" (:provider picked) "model" (:model picked)})]
+
+                (recur (if (and entry (not (some #{entry} value))) (conj value entry) value)))
+              :else (let [i (long (:index choice))
+                          entry (nth value i)
+                          others (into (subvec value 0 i) (subvec value (inc i)))
+                          action (list-dialog! screen
+                                               (entry-name entry)
+                                               (cond-> []
+                                                 (pos? i)
+                                                 (conj {:label "Make default" :default? true})
+
+                                                 true
+                                                 (conj {:label "Remove" :remove? true}))
+                                               {:enter-label "choose" :height :content})]
+
+                      (recur (cond (:default? action) (into [entry] others)
+                                   (:remove? action) others
+                                   :else value))))))))
 
 (defn- settings-structured-editor!
   [screen g region row]
@@ -5579,14 +5629,33 @@
   (let [text (str text)]
     (if (str/blank? (str value)) text (str/replace text (str value) "***"))))
 
+(defn- stale-setting?
+  "True when the gateway's value of `id` is no longer `base`, the value an editor opened with.
+   It reads the catalog again first."
+  [id base]
+  (load-settings-inventory!)
+  (let [row (first (for [group (:groups @(settings-inventory-atom))
+                         top (get group "toggles")
+                         row (tree-seq #(seq (get % "children")) #(get % "children") top)
+                         :when (= id (get row "id"))]
+
+                     row))]
+    (and (some? row) (not= base (get row "value")))))
+
 (defn- save-setting-value!
   "Save one value for the open owner, then show the row the gateway confirmed. A
    secret value never appears in the error note."
   ([screen g region id value] (save-setting-value! screen g region id value nil))
-  ([screen g region id value {:keys [secret?]}]
-   (try (cache-setting-row! (notify-change-error!
-                              (vis/set-setting-value! id value *settings-target*)))
-        (load-settings-inventory!)
+  ([screen g region id value {:keys [secret?] :as opts}]
+   (try (if (and (contains? opts :base) (stale-setting? id (:base opts)))
+          (mini-note! screen
+                      g
+                      region
+                      "Setting not saved"
+                      "Another client changed this setting. Open it again to see the new value.")
+          (do (cache-setting-row! (notify-change-error!
+                                    (vis/set-setting-value! id value *settings-target*)))
+              (load-settings-inventory!)))
         (catch Exception e
           (mini-note! screen
                       g
@@ -5756,7 +5825,7 @@
                                  (host-band-region screen region)
                                  (:label row)
                                  {:initial (:toggle-value row)})]
-      (save-setting-value! screen g region (:toggle-id row) value))
+      (save-setting-value! screen g region (:toggle-id row) value {:base (:toggle-value row)}))
 
     ;; The masked input is local to `mini-read!`, so the typed text ends with this call.
     :secret-setting
@@ -5795,7 +5864,7 @@
                                    (:label row)
                                    {:initial text})]
         (if-let [number (setting-number value)]
-          (save-setting-value! screen g region (:toggle-id row) number)
+          (save-setting-value! screen g region (:toggle-id row) number {:base (:toggle-value row)})
           (do (mini-note! screen
                           g
                           region
@@ -5805,7 +5874,7 @@
 
     :structured-setting
     (when-let [value (settings-structured-editor! screen g region row)]
-      (save-setting-value! screen g region (:toggle-id row) value))
+      (save-setting-value! screen g region (:toggle-id row) value {:base (:toggle-value row)}))
 
     ;; A local picture or text art path: an empty answer removes it, a file that is
     ;; neither keeps the old value.
@@ -6373,7 +6442,10 @@
              (volatile! nil)
 
              query
-             (atom "")]
+             (atom "")
+
+             seen-revision
+             (volatile! @settings-revision)]
 
          ;; A live change can repaint the chat behind this modal. Reuse the SAME
          ;; settings paint without reading input or flushing a band-less frame.
@@ -6799,15 +6871,23 @@
                   (.setCursorPosition screen search-cursor)
                   (frame/refresh! screen))
                 (when-not paint-only?
-                  (if @inventories-pending
+                  (cond
+                    @inventories-pending
                     ;; The frame is ON the terminal now — only then pay for the gateway,
                     ;; and repaint into the dialog the user is already looking at.
                     ;; Refocus the requested section after the first inventory answer.
                     (do (vreset! inventories-pending false)
+                        (vreset! seen-revision @settings-revision)
                         (load-inventories!)
                         (reset! selected (initial-index))
                         (reset! scroll 0)
                         (recur))
+                    ;; Another client changed a setting: show its value.
+                    (not= @seen-revision @settings-revision) (do (vreset! seen-revision
+                                                                          @settings-revision)
+                                                                 (load-settings-inventory!)
+                                                                 (recur))
+                    :else
                     (let [key
                           (read-modal-key! screen)
 

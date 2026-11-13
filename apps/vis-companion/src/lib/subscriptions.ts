@@ -556,6 +556,8 @@ export class SessionSubscriptionHub {
    * is read again (#393). The client skips a reload id that it already handled.
    */
   private noticeReload(event: SseEvent): void {
+    // A setting saved in any client: an open settings view shows the new value.
+    if (event.type === 'settings.changed') this.client.settingsChanged();
     if (event.type !== 'extensions.reloaded') return;
     this.client.extensionsReloaded(typeof event.reload_id === 'string' ? event.reload_id : undefined);
   }

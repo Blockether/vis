@@ -8,6 +8,7 @@ import {
   GatewayError,
   GatewayOAuthError,
   INCOMPATIBLE_STATUS,
+  onSettingsChanged,
 } from '../../lib/gateway';
 import { replaceSetting } from '../../lib/setting-tree';
 import type {
@@ -688,8 +689,10 @@ export function MachineSettings({
     // Mount-time settings fetch: `load` writes state only after it settles, and
     // never once the signal aborts.
     void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+    // Another client can save a setting while this dialog is open.
+    const offChanged = onSettingsChanged(client.base, () => void load(controller.signal));
+    return () => { controller.abort(); offChanged(); };
+  }, [client, load]);
 
   // Escape belongs to the dialog that frames these panels.
 

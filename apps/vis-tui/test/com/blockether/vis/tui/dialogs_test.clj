@@ -1541,6 +1541,78 @@
             (expect (not-any? #(= :reasoning-level (:key %)) rows))
             (expect (not-any? #(= "Reasoning effort unavailable" (:label %)) rows))))))
   (it
+    "refuses a save when another client changed the value after the editor opened"
+    (let [save!
+          (var-get #'dlg/save-setting-value!)
+
+          writes
+          (atom [])
+
+          notes
+          (atom [])
+
+          catalog
+          (fn [value]
+            (fn [_ _ _]
+              {"groups" [{"id" "general"
+                          "title" "General"
+                          "toggles" [{"id" "subagents"
+                                      "type" "boolean"
+                                      "children" [{"id" "subagent_models"
+                                                   "type" "object"
+                                                   "value" value}]}]}]}))]
+
+      (binding [dlg/*settings-target*
+                {:scope "global"}
+
+                dlg/*local-settings-inventory*
+                (atom {:status :unloaded :groups [] :error nil})]
+
+        (with-redefs-fn {#'vis/gateway-settings (catalog ["gpt-6-luna"])
+                         #'vis/set-setting-value! (fn [id value _]
+                                                    (swap! writes conj [id value])
+                                                    {})
+                         #'dlg/mini-note! (fn [_ _ _ title _]
+                                            (swap! notes conj title))}
+          #(save! nil nil nil "subagent_models" ["claude-haiku-5-5"] {:base ["claude-haiku-5-5"]}))
+        (expect (= [] @writes))
+        (expect (= ["Setting not saved"] @notes))
+        (with-redefs-fn {#'vis/gateway-settings (catalog ["claude-haiku-5-5"])
+                         #'vis/set-setting-value! (fn [id value _]
+                                                    (swap! writes conj [id value])
+                                                    {})
+                         #'dlg/mini-note! (fn [_ _ _ title _]
+                                            (swap! notes conj title))}
+          #(save! nil nil nil "subagent_models" ["gpt-6-luna"] {:base ["claude-haiku-5-5"]}))
+        (expect (= [["subagent_models" ["gpt-6-luna"]]] @writes)))))
+  (it "keeps one Tools section when the project catalog has one"
+      (let [settings-rows
+            (var-get #'dlg/settings-rows)
+
+            local
+            (atom {:status :ok
+                   :error nil
+                   :groups [{"id" "tools"
+                             "title" "Tools"
+                             "toggles" [{"id" "skill_example"
+                                         "label" "Example skill"
+                                         "type" "boolean"
+                                         "enabled" true}]}]})]
+
+        (binding [dlg/*settings-target*
+                  {:scope "project" :target-id "p1"}
+
+                  dlg/*local-settings-inventory*
+                  local]
+
+          (with-redefs [vis/get-router (constantly nil)]
+            (let [rows (settings-rows)
+                  tools (filterv #(and (= :section (:type %)) (= "Tools" (:label %))) rows)]
+
+              (expect (= 1 (count tools)))
+              (expect (= :extensions-reload (get-in (first tools) [:button :id])))
+              (expect (some #(= "skill_example" (:toggle-id %)) rows)))))))
+  (it
     "session picker keeps new/fork out of the table and renders justified cells"
     (let [session-items
           dlg/session-dialog-items

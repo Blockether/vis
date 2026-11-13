@@ -1318,6 +1318,24 @@
                      "schema" 1
                      "type" (wire/->wire type))]))
 
+(defn- publish-settings-changed!
+  "Tell every client that a setting changed, so an open settings view reads it again."
+  [{:keys [scope target-id id]}]
+  (publish-fleet-event! "settings.changed"
+                        (cond-> {:target (cond-> {:scope (name (or scope "global"))}
+                                           target-id
+                                           (assoc :target-id (str target-id)))}
+                          id
+                          (assoc :id (str id)))))
+
+(defonce scoped-settings-listener (scoped/add-listener! publish-settings-changed!))
+
+(defonce toggle-settings-listener
+  ;; A persisted toggle write outside the scoped writer, such as a model command.
+  (toggles/add-listener! (fn [{:keys [id persist?]}]
+                           (when (and (not (false? persist?)) (:persist? (toggles/toggle-spec id)))
+                             (publish-settings-changed! {:id id})))))
+
 (defn- fleet-title-tap
   "Forward a session's OWN rename to fleet watchers. `broadcast-title-event!` also
    copies that event into every other session (the copy carries

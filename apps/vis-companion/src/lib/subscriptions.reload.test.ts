@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { SessionSubscriptionHub } from './subscriptions';
-import type { GatewayClient } from './gateway';
+import { GatewayClient as RealGatewayClient, onSettingsChanged, type GatewayClient } from './gateway';
 import type { SseEvent } from './types';
 
 /** A client with the two streams the hub can open and the reload notice. */
@@ -49,5 +49,33 @@ describe('an extensions.reloaded event', () => {
 
     expect(extensionsReloaded.mock.calls).toEqual([['r2']]);
     hub.dispose();
+  });
+});
+
+// A setting saved in one client must reach the settings view that another client has open.
+describe('a settings.changed event', () => {
+  it('tells the client when it arrives on the fleet feed', () => {
+    const { deliver, client } = fakeClient();
+    const settingsChanged = vi.fn();
+    Object.assign(client, { settingsChanged });
+    const hub = new SessionSubscriptionHub(client);
+    hub.subscribeFleet(() => {});
+
+    deliver.fleet!({ type: 'settings.changed', scope: 'fleet', id: 'subagent_models', seq: 5 });
+
+    expect(settingsChanged).toHaveBeenCalledTimes(1);
+    hub.dispose();
+  });
+
+  it('reaches each settings view of that gateway', () => {
+    const client = new RealGatewayClient({ url: 'http://127.0.0.1:7890' });
+    const receive = vi.fn();
+    const off = onSettingsChanged(client.base, receive);
+
+    client.settingsChanged();
+    off();
+    client.settingsChanged();
+
+    expect(receive).toHaveBeenCalledTimes(1);
   });
 });

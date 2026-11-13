@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { SearchIcon } from '../../components/icons';
-import type { GatewayClient } from '../../lib/gateway';
+import { onSettingsChanged, type GatewayClient } from '../../lib/gateway';
 import type { SettingDecidedIn, SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
 import { OpenMachineSettings, OpenScopedSettings } from '../../lib/open-settings';
 import { filterSettings, flattenSettings } from '../../lib/setting-tree';
@@ -57,10 +57,11 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     };
     // No timer: only this dialog or another client changes these settings, and a
     // 3 s poll cost 27 statements a read, also while the app was hidden. Read on
-    // open and on wake; a save reads its own answer.
+    // open, on wake and on a change from another client; a save reads its own answer.
     void refresh();
     const offWake = onWake(() => void refresh());
-    return () => { controller.abort(); offWake(); };
+    const offChanged = onSettingsChanged(client.base, () => void refresh());
+    return () => { controller.abort(); offWake(); offChanged(); };
   }, [client, owner]);
   const save = async (toggle: Toggle, action: 'toggle' | 'value' | 'inherit', value?: SettingValue) => {
     if (saving.current) return false;

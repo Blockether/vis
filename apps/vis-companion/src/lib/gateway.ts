@@ -661,6 +661,23 @@ export function onSettingChange(base: string, receive: (updated: Toggle) => void
     if (!listeners.size) settingListeners.delete(base);
   };
 }
+/** Mounted settings views per gateway base URL, told when any client saved a setting. */
+const settingsChangedListeners = new Map<string, Set<() => void>>();
+
+/** Hear each `settings.changed` event of the gateway at `base`. Returns the unsubscribe. */
+export function onSettingsChanged(base: string, receive: () => void): () => void {
+  let listeners = settingsChangedListeners.get(base);
+  if (!listeners) {
+    listeners = new Set();
+    settingsChangedListeners.set(base, listeners);
+  }
+  listeners.add(receive);
+  return () => {
+    listeners.delete(receive);
+    if (!listeners.size) settingsChangedListeners.delete(base);
+  };
+}
+
 /** Mounted provider lists per gateway base URL, given the fleet after an extension reload. */
 const routerRefreshListeners = new Map<string, Set<(rows: RouterProvider[]) => void>>();
 /** Recent reload ids per gateway base URL, so each reload refreshes the fleet once. */
@@ -3131,6 +3148,11 @@ export class GatewayClient {
         for (const receive of routerRefreshListeners.get(key) ?? []) receive(rows);
       })
       .catch(() => undefined);
+  }
+
+  /** A client saved a setting on this gateway: mounted settings views read it again. */
+  settingsChanged(): void {
+    for (const receive of [...(settingsChangedListeners.get(this.base) ?? [])]) receive();
   }
 
   /**

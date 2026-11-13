@@ -3252,6 +3252,10 @@
           "const": "session.title_updated"
         },
         {
+          "const": "settings.changed",
+          "description": "Live only, on the fleet feed. A setting changed. target names its owner and id names the setting, when one setting changed. A client reads its open settings again."
+        },
+        {
           "const": "subscription.ready"
         },
         {

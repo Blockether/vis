@@ -7733,6 +7733,9 @@
           (patch-picker-rows! sid (constantly nil))
           :counts)
 
+      "settings.changed"
+      (do (dlg/note-settings-changed!) nil)
+
       ;; A frame of a global app, or a new connection that reads them again.
       (do (apply-global-app-frame! event) nil))))
 

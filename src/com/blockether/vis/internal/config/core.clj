@@ -2219,13 +2219,19 @@
           (let [before
                 (or (read-yaml-config-map path) {})
 
+                ;; An empty toggles map means nothing; an empty overlay leaves no file.
                 after
-                (f before)]
+                (let [edited (f before)]
+                  (cond-> edited
+                    (= {} (get edited "toggles"))
+                    (dissoc "toggles")))]
 
             (config-validation/assert-config! after path)
             (when (not= before after)
-              (ensure-private-dir! (str dir))
-              (paths/spit-private! path (yamlstar/dump after))
+              (if (empty? after)
+                (io/delete-file path true)
+                (do (ensure-private-dir! (str dir))
+                    (paths/spit-private! path (yamlstar/dump after))))
               (invalidate-config-cache!))
             after))))))
 
