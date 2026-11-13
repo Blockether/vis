@@ -1710,6 +1710,23 @@ are not shared across workers.
 | Native calls through `ctypes` | refused under confinement | supported |
 | Lifetime | session worker | separate registration or session worker, reloaded by `/reload` |
 
+### Background work and reload
+
+Your code can start threads and timers and hold file locks. They belong to the worker process
+that ran the code. Python cannot stop a thread from outside, so only the end of that process
+stops this work.
+
+When `/reload` replaces an extension, Vis restarts each worker that ran the old code. These are
+the registration worker and the extension worker of each session that used the extension. The
+threads, timers and file locks of the old code end with the process. A worker with a running call
+restarts when that call ends, so the call finishes with old code. A reload that replaces no
+extension restarts no worker. To restart the workers of unchanged extensions, run `/reload --all`.
+
+The restart ends the complete process. Each extension in that worker loads again at its next
+call, without the values of its module globals. Live views that those extensions drive close.
+Processes that the old code started keep running. Keep data that a reload must not lose outside
+the process, for example in a file.
+
 Tool results cross as data. Objects and dataclasses expose their public fields as
 frozen data records in the sandbox, including nested records. A dataclass also sends its public
 properties and its own `str` text, as described in [Return typed objects](#return-typed-objects).

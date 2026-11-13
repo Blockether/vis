@@ -199,7 +199,10 @@ example the wait for another reload, Python environments and extension loads. Us
 slow part of a reload. The gateway log has the same times as the `reload-phases` event.
 
 Reload switches live sessions at the next turn boundary. Calls that are already running can finish
-with old code. A failed reload keeps the last good tools and docs and marks them stale. The reload
+with old code. Then Vis restarts each worker that ran the old code, which also ends its threads and
+releases its locks. See [Background work and reload](extension-api.md#background-work-and-reload).
+
+A failed reload keeps the last good tools and docs and marks them stale. The reload
 result, doctor and assistant context show the source fingerprints and the failure reason. Fix that
 failure before you judge the new API. Reload does not replace the gateway binary or its startup
 environment, and reloading Python source does not reload native libraries.
@@ -274,9 +277,9 @@ checkout in an allowed [workspace root](jail.md#filesystem-access). Editable ins
 do not widen access.
 
 Editable projects read the live checkout, not a frozen source snapshot. A first import can see edits
-before a reload. Cached imports can keep old code. Use `/reload` as the explicit update step. An
-editable reload does not clear ordinary installed dependencies from the module cache of the
-registration worker.
+before a reload. Cached imports can keep old code. Use `/reload` as the explicit update step. A
+reload that replaces the extension restarts the workers that ran it, so they import its
+dependencies again.
 
 Build backends and executable `.pth` lines are trusted code. A failed load cannot
 roll back project or shared package changes. Imports in `python_execution` never install

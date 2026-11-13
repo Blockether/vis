@@ -7418,7 +7418,8 @@ vis.register_extension(vis.Extension(name='reload-lifecycle', description='Reloa
                                 (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))
                    (let [b-after (:result (invoke b 'probe))]
                      (expect (= 2 (get b-after "version")))
-                     (expect (= (get b-before "pid") (get b-after "pid"))))
+                     ;; #475: the idle worker of b ran the old code, so the reload restarted it.
+                     (expect (not= (get b-before "pid") (get b-after "pid"))))
                    (expect (.isDirectory (io/file snapshot)))
                    (expect (contains? @@#'pyx/live-contexts old-ctx))
                    (when (= mode :teardown) (pyx/close-session-contexts! a))
@@ -7456,6 +7457,66 @@ vis.register_extension(vis.Extension(name='reload-lifecycle', description='Reloa
                           (ep/dispose-python-context! a)
                           (ep/dispose-python-context! b)
                           (future-cancel running)))))))))
+
+(defn- lock-holder-py
+  "An extension whose import starts a job that holds a lock on `lock-path` and never stops."
+  [version lock-path]
+  (str
+    "import fcntl, os, threading
+import blockether.vis.extension as vis
+
+VERSION = "
+    version
+    "
+_lock = open("
+    (pr-str lock-path)
+    ", 'a')
+try:
+    fcntl.flock(_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    _held = True
+except OSError:
+    _held = False
+threading.Thread(target=lambda lock=_lock: threading.Event().wait(), daemon=True).start()
+
+def probe() -> dict:
+    'Report the generation that answers and whether it holds the lock.'
+    return {'version': VERSION, 'held': _held}
+
+vis.register_extension(vis.Extension(name='lock-holder', description='Lock holder fixture.',
+    alias='lock_holder', symbols=[vis.Symbol(probe)]))
+"))
+
+(defdescribe
+  extension-reload-ends-background-work-test
+  ;; #475: a job of replaced code kept its lock in the shared worker and in the
+  ;; worker of the session, so the new code could never take it.
+  (it "releases the lock of the replaced code to the code that a reload loads"
+      (let [lock-path (str (java.nio.file.Files/createTempFile
+                             "vis-475-"
+                             ".lock"
+                             (make-array java.nio.file.attribute.FileAttribute 0)))]
+        (with-fresh-loaded
+          {"extension.py" (lock-holder-py 1 lock-path)}
+          (fn [loaded {:keys [ext-dir]}]
+            (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+            (let [a (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                  probe (fn []
+                          (binding [extension/*current-environment* {:python-context a
+                                                                     :session-id a}]
+                            (:result ((symbol-fn (registered "lock-holder") 'probe)))))
+                  reload! (fn [version]
+                            (write-ext! ext-dir "extension.py" (lock-holder-py version lock-path))
+                            (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))]
+
+              (try
+                ;; The registration in the shared worker took the lock first.
+                (expect (= {"version" 1 "held" false} (probe)))
+                (expect (= 0 (reload! 2)))
+                (expect (= {"version" 2 "held" true} (probe)))
+                ;; Now the worker of the session holds the lock.
+                (expect (= 0 (reload! 3)))
+                (expect (= {"version" 3 "held" true} (probe)))
+                (finally (ep/dispose-python-context! a) (io/delete-file lock-path true)))))))))
 
 (def ^:private stale-ctx-py
   "import blockether.vis.extension as vis

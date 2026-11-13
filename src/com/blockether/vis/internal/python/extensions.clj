@@ -1491,6 +1491,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   ;; Context -> snapshot and admitted calls. Guarded by session-contexts.
   (atom {}))
 
+(defonce ^:private stale-workers
+  ;; Trusted workers whose process still runs code that a reload replaced (#475).
+  ;; Guarded by session-contexts.
+  (atom #{}))
+
+(declare retire-stale-workers-soon!)
+
 (defonce ^:private loading-snapshots
   ;; Frozen roots retained by active scans, including not-yet-loaded siblings.
   ;; Guarded by session-contexts, like context retirement.
@@ -1545,11 +1552,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (defn- release-context!
   [ctx]
-  (locking session-contexts
-    (when (contains? @context-lifecycle ctx)
-      (let [state (swap! context-lifecycle update-in [ctx :calls] dec)]
-        (when (and (zero? (long (get-in state [ctx :calls]))) (get-in state [ctx :closing?]))
-          (discard-context! ctx))))))
+  (let [worker (worker-for ctx)]
+    (locking session-contexts
+      (when (contains? @context-lifecycle ctx)
+        (let [state (swap! context-lifecycle update-in [ctx :calls] dec)]
+          (when (and (zero? (long (get-in state [ctx :calls]))) (get-in state [ctx :closing?]))
+            (discard-context! ctx)))))
+    (when (contains? @stale-workers worker) (retire-stale-workers-soon!))))
 
 (defn- release-settled-context!
   "Caller cancellation can precede the guest reply. Keep its lease until the
@@ -1657,6 +1666,26 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       (view/close-unclaimed-stale! label)
       sealed)))
 
+(defn- context-opener
+  "The fn that opens pending namespace `ctx` in `worker`. It evaluates the extension.
+   When that evaluation registers other data than `sealed`, the namespace closes,
+   `stale!` runs and the operation fails."
+  [worker ctx label ^File snap entry-path source packages bound-env sealed stale!]
+  (fn []
+    (try (pyext/trust! worker ctx true)
+         (pyext/install-runtime! worker ctx)
+         (when-not (= sealed
+                      (evaluate-extension! ctx label snap entry-path source packages bound-env))
+           (throw (ex-info (str "Python extension " label
+                                " registered other data than its saved manifest."
+                                " It loads again at the next session or /reload.")
+                           {:type ::stale-manifest :file entry-path})))
+         (catch Throwable t
+           (swap! pending-contexts dissoc ctx)
+           (stale!)
+           (discard-context! ctx)
+           (throw t)))))
+
 (defn- initialize-extension-context!
   "Evaluate admitted extension `source` in a new trusted namespace of `worker`.
    Returns the sealed and the unsealed registration without touching the Clojure
@@ -1667,6 +1696,20 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       ctx
       {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
     (try (let [sealed (evaluate-extension! ctx label snap entry-path source packages bound-env)]
+           ;; The registry keeps a registration namespace when its worker restarts (#475).
+           (when (= worker pyext/shared-key)
+             (swap! context-lifecycle assoc-in
+               [ctx :reopen]
+               (context-opener worker
+                               ctx
+                               label
+                               snap
+                               entry-path
+                               source
+                               packages
+                               bound-env
+                               sealed
+                               (fn []))))
            {:context ctx :sealed sealed :registration (unseal ctx registration-site sealed)})
          (catch Throwable t (discard-context! ctx) (throw t)))))
 
@@ -1680,26 +1723,15 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         (context-name label)
 
         open
-        (fn []
-          (try (pyext/trust! worker ctx true)
-               (pyext/install-runtime! worker ctx)
-               (when-not
-                 (= sealed
-                    (evaluate-extension! ctx label snap entry-path source packages bound-env))
-                 (throw (ex-info (str "Python extension " label
-                                      " registered other data than its saved manifest."
-                                      " It loads again at the next session or /reload.")
-                                 {:type ::stale-manifest :file entry-path})))
-               (catch Throwable t
-                 (swap! pending-contexts dissoc ctx)
-                 (stale!)
-                 (discard-context! ctx)
-                 (throw t))))]
+        (context-opener worker ctx label snap entry-path source packages bound-env sealed stale!)]
 
     (swap! context-workers assoc ctx worker)
     (swap! context-lifecycle assoc
       ctx
-      {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
+      {:snapshot (.getCanonicalPath snap)
+       :calls 0
+       :project-path (::project-path bound-env)
+       :reopen open})
     (swap! pending-contexts assoc ctx open)
     (swap! live-contexts conj ctx)
     {:context ctx :registration (unseal ctx registration-site sealed)}))
@@ -1731,6 +1763,65 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   ;; `[sandbox-worker-key extension-name]` -> `{:done promise :closed? bool}` while one
   ;; call builds that session context. Guarded by session-contexts.
   (atom {}))
+
+(defn- mark-stale-workers!
+  "Mark the trusted workers that ran the code of the `retired` registrations: the worker
+   of each opened registration, and the worker of each session that realized one."
+  [retired]
+  (let [retired (into #{} (remove nil?) retired)]
+    (locking session-contexts
+      (swap! stale-workers into
+        (concat (keep #(when (and (contains? @live-contexts %) (not (pending-context? %)))
+                         (worker-for %))
+                      retired)
+                (keep #(when (retired (:source-context %)) (worker-for (:context %)))
+                      (vals @session-contexts)))))))
+
+(defn- worker-busy?
+  "True while trusted `worker` runs a call, owes a reply or builds a session context."
+  [worker]
+  (boolean (or (some (fn [[ctx {:keys [calls]}]]
+                       (and (pos? (long (or calls 0))) (= worker (worker-for ctx))))
+                     @context-lifecycle)
+               (some #(= (:session worker) (first %)) (keys @context-builds))
+               (some (complement realized?) (pyext/pending-replies worker)))))
+
+(defn- restart-worker!
+  "Stop the process of trusted `worker`, and with it each thread, timer and lock of the
+   code that it ran. The processes that it started keep running. A registration namespace
+   opens again at its next Python operation. Each other namespace closes, and its session
+   builds it again at the next call. Call with `session-contexts` held."
+  [worker]
+  (binding [pyext/*keep-children?* true]
+    (stop-trusted-worker! worker))
+  (doseq [ctx (filterv #(and (= worker (worker-for %)) (not (pending-context? %))) @live-contexts)]
+    (if-let [reopen (get-in @context-lifecycle [ctx :reopen])]
+      ;; The Python that drove an owned live view is gone.
+      (do (try (view/close-owned-by! ctx) (catch Throwable _ nil))
+          (swap! pending-contexts assoc ctx reopen))
+      (do (swap! session-contexts #(into {}
+                                         (remove (fn [[_ row]]
+                                                   (= ctx (:context row))))
+                                         %))
+          (discard-context! ctx false)))))
+
+(defn- retire-stale-workers!
+  "Restart each stale trusted worker that is not busy (#475). A busy worker stays stale,
+   and the end of its call tries again. Call with the load lock held, because a load
+   evaluates registrations in the shared worker."
+  []
+  (locking session-contexts
+    (doseq [worker
+            @stale-workers
+
+            :when (not (worker-busy? worker))]
+
+      (swap! stale-workers disj worker)
+      (restart-worker! worker)
+      (tel/log! {:level :info
+                 :id ::worker-restarted
+                 :data {:shared? (= worker pyext/shared-key)}
+                 :msg "Restarted a Python extension worker that ran code a reload replaced"}))))
 
 (defn- usable-context
   "The cached session context for `cache-key`, unless a reload replaced its source
@@ -1790,7 +1881,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                               (locking session-contexts (swap! context-builds dissoc cache-key))
                               (throw t)))]
                (install-built-context! cache-key row))
-             (finally (deliver value true)))))))
+             (finally (deliver value true)
+                      ;; A build kept a stale worker busy; the caller builds again after it.
+                      (when (some #(= (first cache-key) (:session %)) @stale-workers)
+                        (retire-stale-workers-soon!))))))))
 
 (defn- registration-callables
   "The callables of unsealed `registration` by the `:identity` of their site. Each
@@ -4633,6 +4727,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             :failed (count (filter #(= project-root (:project-root %)) @failures))
             :changed? true}
            (finally
+             ;; The code that this scan replaced still runs in these workers (#475).
+             (mark-stale-workers! @retired)
              ;; Retire replaced contexts only after the catalog is published, so a registry
              ;; lookup never answers adapters of a closed context (#445).
              (doseq [ctx @retired]
@@ -4640,6 +4736,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                     (catch Throwable t
                       (tel/log!
                         {:level :warn :id ::context-retire-failed :data {:error (ex-message t)}}))))
+             (try (retire-stale-workers!)
+                  (catch Throwable t
+                    (tel/log!
+                      {:level :warn :id ::worker-restart-failed :data {:error (ex-message t)}})))
              ;; A reload can unload the last extension: keep a spare only while one is loaded.
              (try (pyext/retain-spares! (spare-packages))
                   (catch Throwable t
@@ -4706,6 +4806,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (do (.incrementAndGet ^AtomicLong foreground-loads)
               (try (.lock ensure-load-lock) (finally (end-foreground-wait!)))))
         (try (f) (finally (.unlock ensure-load-lock))))))
+
+(defn- retire-stale-workers-soon!
+  "Restart the stale trusted workers now, or after the load that runs now."
+  []
+  (cond (.isHeldByCurrentThread ensure-load-lock) nil
+        (.tryLock ensure-load-lock) (try (retire-stale-workers!)
+                                         (finally (.unlock ensure-load-lock)))
+        :else (future (with-load-lock retire-stale-workers!))))
 
 (defn- with-phased-load-lock
   "[[with-load-lock]] inside one phase record, logged once by the outermost call.
@@ -4957,18 +5065,22 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    (with-reload-phases
      (fn []
        (let [requested (System/nanoTime)]
-         (with-load-lock
-           (fn []
-             (record-phase! :lock-wait nil requested)
-             (when (pyext/worker-live? pyext/shared-key)
-               (timed-phase :package-paths
-                            nil
-                            #(pyext/exec! pyext/shared-key
-                                          runtime/default-session
-                                          (str "import package_paths; package_paths.refresh("
-                                               (python-string-literal (runtime/packages-dir))
-                                               ", reload=True)"))))
-             (doto (load-scopes! (assoc opts :force? true) true) warn-unmatched-op-hooks!))))))))
+         (with-load-lock (fn []
+                           (record-phase! :lock-wait nil requested)
+                           (when (pyext/worker-live? pyext/shared-key)
+                             (timed-phase :package-paths
+                                          nil
+                                          #(pyext/exec!
+                                             pyext/shared-key
+                                             runtime/default-session
+                                             (str "import package_paths; package_paths.refresh("
+                                                  (python-string-literal (runtime/packages-dir))
+                                                  ", reload=True)"))))
+                           (let [result (load-scopes! (assoc opts :force? true) true)]
+                             (warn-unmatched-op-hooks! result)
+                             ;; A worker that an earlier load found busy is still stale (#475).
+                             (retire-stale-workers!)
+                             result))))))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 
