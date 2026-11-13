@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.5.16] - 2026-11-12
+## [v0.5.17] - 2026-11-13
 
 ### Added
 - Context: Claude Opus 5.5, Claude Fable and Claude Sonnet have a soft context budget of 250k tokens. The input window of the route still caps it.
