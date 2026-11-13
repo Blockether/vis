@@ -23,14 +23,12 @@ Vis is a coding agent you can adapt to your tools and workflow.
 Give it tools for your project, measure the results on real tasks, and use failures
 to improve those tools and checks.
 
-```mermaid
-flowchart LR
-    A[Build tools] --> B[Run real tasks]
-    B --> C[Measure results]
-    C --> D[Inspect failures]
-    D --> E[Improve tools and checks]
-    E --> B
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/vis-loop-dark.png">
+    <img src=".github/assets/vis-loop-light.png" width="100%" alt="The improvement loop. First, build tools for your project. Then run real tasks, measure the results, inspect the failures, and improve the tools and checks. Then run the tasks again.">
+  </picture>
+</p>
 
 Repeat the same tasks after each change to compare the results.
 
