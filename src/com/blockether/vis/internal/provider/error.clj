@@ -989,11 +989,10 @@
            "filtered again; if this is a false positive, switch provider/model.")
 
       :refusal
-      (str "NEXT STEP: an identical retry on the same model earns the same refusal. "
-           "Rephrase the request, or switch to a different model. To auto-recover, "
-           "enable Anthropic server-side fallback (`fallbacks: default` + the "
-           "`server-side-fallback-2026-07-01` beta) so a refused Opus 5 / Fable 5 "
-           "request is served by a fallback model in one round trip.")
+      (str "NEXT STEP: change the request or select a different model. The same request "
+           "on the same model gets the same refusal. When `refusal_fallback` is on, Vis "
+           "asks the provider for its fallback model; this route has none, or that "
+           "model declined too.")
 
       :invalid-thinking-signature
       "NEXT STEP: retry with plain context. If it persists, don't replay preserved thinking across a provider/model switch."

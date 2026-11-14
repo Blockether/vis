@@ -64,60 +64,24 @@
   (not (false? (toggles/value-of PROVIDER_FALLBACK_TOGGLE))))
 
 (def ^:private REFUSAL_FALLBACK_TOGGLE
-  "Feature-toggle id gating the automatic switch to a SIBLING MODEL after Anthropic's
-   safety classifier declines a request. Deliberately NOT `provider_fallback`: a
-   refusal is an HTTP-200 content decision by one model, with a healthy credential,
-   provider and wire behind it, so a human who refused peer credentials has not
-   thereby refused the one recovery Anthropic itself documents."
+  "Feature-toggle id that gates the server-side fallback after the safety classifier
+   of a model declines a request. It is not `provider_fallback`: a refusal is an
+   HTTP 200 content decision of one model. The credential, the provider and the wire
+   are healthy, and the provider itself serves the request again on another model."
   "refusal_fallback")
 
-(defn- refusal-fallback-allowed?
-  "True while a DECLINED request may be re-asked of a sibling model of the SAME
-   provider.
+(defn server-refusal-fallbacks
+  "The `:server-fallbacks` value of a provider call, or nil while `refusal_fallback`
+   is off.
 
-   OFF surfaces the refusal itself: the turn ends with the decline and its category
-   instead of an answer from a model the human did not pick. Reads the VALUE rather
-   than `enabled?` for the same reason as [[provider-fallback-allowed?]] — an
-   unregistered id must keep TODAY's behaviour, not strand the turn."
+   \"default\" lets the provider choose the fallback model. svar sends it only for a
+   provider and a model that support the server-side fallback, so Vis keeps no model
+   list. OFF shows the refusal and its category.
+
+   Reads the VALUE rather than `enabled?`, as [[provider-fallback-allowed?]] does: an
+   unregistered id must keep the fallback on."
   []
-  (not (false? (toggles/value-of REFUSAL_FALLBACK_TOGGLE))))
-
-(defn refusal-fallbacks-for
-  "The refusal-fallback chain for `resolved-model` WITHIN its own provider, or nil.
-   The provider's policy names the models whose safety classifier can decline a
-   request (`stop_reason: refusal`) and the ordered models to retry it on
-   (`:refusal-fallback`); svar owns the actual client-side switch. The current
-   model is dropped — an identical retry earns the identical decline.
-
-   Every candidate is checked against the models `router` says that provider actually
-   serves. svar switches by handing the name back as `:routing {:model …}`, which the
-   router turns into `:force-model`: a name this provider does not serve either dies
-   as a routing failure naming no credential, or resolves on ANOTHER provider — a
-   content decision quietly moving the session's billing and its cache. No router, or
-   no sibling on that provider, therefore means no chain and the refusal surfaces as
-   itself.
-
-   nil while `refusal_fallback` is off."
-  [router resolved-model]
-  (when (refusal-fallback-allowed?)
-    (let [nm
-          (str (:name resolved-model))
-
-          provider-id
-          (some-> (:provider resolved-model)
-                  name
-                  keyword)
-
-          {:keys [models fallbacks]}
-          (:refusal-fallback (catalog/policy provider-id))
-
-          served
-          (into #{}
-                (map #(str (:name %)))
-                (:models (some #(when (= provider-id (:id %)) %) (:providers router))))]
-
-      (when (and models (re-find (re-pattern models) nm))
-        (not-empty (into [] (comp (remove #{nm}) (filter served)) fallbacks))))))
+  (when-not (false? (toggles/value-of REFUSAL_FALLBACK_TOGGLE)) "default"))
 
 (defn pin-routing-to-model
   "Routing svar cannot walk away from once the human turned `provider_fallback` off.
@@ -135,23 +99,6 @@
       (assoc :provider
         (:provider resolved-model) :model
         model-name))))
-
-(defn pin-routing-to-provider
-  "Routing a REFUSAL switch cannot walk out of.
-
-   svar re-asks a declined request by replacing `:routing {:model …}` and keeping the
-   rest of that map, so a routing which never named a provider lets the router resolve
-   the fallback name wherever it is cheapest — a peer credential answering for a
-   content decision the original provider made. Stamping the provider this call already
-   resolved to keeps the switch inside it. A resolution with no provider is left alone:
-   half a pin routes to a different model, not this one."
-  [routing resolved-model]
-  (let [provider-id (some-> (:provider resolved-model)
-                            name
-                            keyword)]
-    (cond-> (or routing {})
-      (and provider-id (not (contains? routing :provider)))
-      (assoc :provider provider-id))))
 
 (defn provider-network-policy
   "Provider defaults baked into the current router, resolved at the request boundary."

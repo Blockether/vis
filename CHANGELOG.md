@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Providers: when a Claude 5 model declines a request (`stop_reason: refusal`), Anthropic serves the request on its fallback model in the same call. Vis asks for the default fallback of the provider on Anthropic and on the Anthropic coding plan, and keeps no model list. The turn note names the model that answered. The `refusal_fallback` setting turns this off. Before, Vis sent the request again to Claude Opus 4.8. The coding plan does not list that model, so the refusal stopped the turn. Needs svar 0.7.239.
+
 ## [v0.5.18] - 2026-11-14
 
 ### Added

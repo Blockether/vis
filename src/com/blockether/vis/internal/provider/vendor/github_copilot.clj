@@ -900,16 +900,12 @@
   `:adaptive-reasoning-models`: Claude on Copilot rides the native
   `/v1/messages` wire, where depth is `output_config.effort` and Claude's
   adaptive thinking decides for itself whether a casual message is worth
-  thinking about, so casual chat carries no reasoning level.
-
-  Copilot serves Claude, so it carries Anthropic's refusal fallback too; the
-  router still drops a fallback this account does not serve."
+  thinking about, so casual chat carries no reasoning level."
   {:preset-rank 4
    ;; Flat-fee seat: the last titling choice, after the coding plans.
    :title-rank 4
    :initiator-header "X-Initiator"
-   :adaptive-reasoning-models "(?i)claude"
-   :refusal-fallback {:models "(?i)claude-(opus|fable|sonnet)-5" :fallbacks ["claude-opus-4-8"]}})
+   :adaptive-reasoning-models "(?i)claude"})
 
 ;; ONE transparent provider for the Copilot account, one OAuth login. Copilot
 ;; serves two cacheable wires behind that single token, BOTH under `/v1`:

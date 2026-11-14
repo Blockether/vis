@@ -579,13 +579,6 @@
                       {:type :vis/anthropic-missing-access-token})))
     {:status :ok}))
 
-(def ^:private refusal-fallback
-  "Anthropic's safety classifier can DECLINE a Fable 5, Opus 5 or Sonnet 5
-  request (`stop_reason: refusal`). Anthropic recommends serving it on another
-  Claude model; Opus 4.8 is Vis's standing fallback. svar owns the actual
-  client-side model switch."
-  {:models "(?i)claude-(opus|fable|sonnet)-5" :fallbacks ["claude-opus-4-8"]})
-
 (defn register!
   []
   (extension/register-extension!
@@ -600,14 +593,14 @@
        [{:provider/id :anthropic
          :provider/label "Anthropic (API Key)"
          :provider/preset {:default-models (svar/provider-default-models :anthropic)}
-         :provider/policy {:preset-rank 1 :refusal-fallback refusal-fallback}}
+         :provider/policy {:preset-rank 1}}
         {:provider/id :anthropic-coding-plan
          :provider/label "Anthropic (Claude Subscription)"
          :provider/preset {:base-url (svar/provider-base-url :anthropic-coding-plan)
                            :api-style :anthropic
                            :default-models (svar/provider-default-models :anthropic-coding-plan)}
          ;; A flat-fee subscription: a titling choice after the cheaper plans.
-         :provider/policy {:preset-rank 2 :title-rank 3 :refusal-fallback refusal-fallback}
+         :provider/policy {:preset-rank 2 :title-rank 3}
          :provider/status-fn #'status
          :provider/logout-fn #'logout!
          :provider/detect-fn #'detect-credentials

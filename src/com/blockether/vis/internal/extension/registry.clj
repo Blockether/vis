@@ -109,9 +109,6 @@
                                 (\"user\") or Vis (\"agent\") started the call
     :adaptive-reasoning-models  regex source: matching models choose their own
                                 thinking depth, so casual chat carries no level
-    :refusal-fallback           {:models regex-source :fallbacks [model-name ...]}:
-                                models that can decline a request, and the models
-                                on the same provider to retry it on, in order
     :fast-mode                  {:turn-feature id}: the turn feature that asks for the
                                 faster service tier; Svar owns the tier and its pricing"
   [x]
@@ -120,13 +117,6 @@
        (optional-valid? x :title-rank int?)
        (optional-valid? x :initiator-header util/non-blank-string?)
        (optional-valid? x :adaptive-reasoning-models regex-source?)
-       (optional-valid? x
-                        :refusal-fallback
-                        #(and (map? %)
-                              (regex-source? (:models %))
-                              (vector? (:fallbacks %))
-                              (seq (:fallbacks %))
-                              (every? util/non-blank-string? (:fallbacks %))))
        (optional-valid? x :fast-mode #(and (map? %) (util/non-blank-string? (:turn-feature %))))))
 
 (defn provider?

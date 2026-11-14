@@ -150,47 +150,22 @@
      :error error
      :event event}))
 
-(defn- refusal-fallback-chunk
-  "Live-progress chunk for ONE automatic refusal fallback: the current model's
-   Anthropic safety classifier DECLINED, so svar switched to a SIBLING MODEL of the
-   same provider (e.g. Opus 5 -> Opus 4.8). Same chunk shape as a transport rewind
-   (`:provider-retry-reset`) so every channel already knows how to draw it and the
-   gateway persists it the instant it happens — the UI shows the switch instead of a
-   silent multi-second gap.
+(defn- server-refusal-fallback-event
+  "The routing-trace event for a reply that the provider served from its fallback
+   model after a refusal, or nil. The argument is the `:refusal-recovered` note of svar.
 
-   The TRACE event is a `:llm.routing/model-fallback`, never a provider retry: the
-   credential, the provider and the wire all worked, and counting a content decision
-   as a retry reports a healthy provider as flaky. The prompt cache is gone all the
-   same — an Anthropic cache belongs to ONE model — which is what the model-scoped
-   type tells the turn note."
-  [iteration-position {:keys [from-model to-model category explanation attempt]}]
-  (let [event
-        (cond-> {:event/type :llm.routing/model-fallback :reason :refusal :attempt attempt}
-          from-model
-          (assoc :from-model (str from-model))
+   The event is a `:llm.routing/model-fallback`, never a provider retry: the
+   credential, the provider and the wire all worked. The prompt cache of the requested
+   model does not serve the fallback model, which the model-scoped type tells the turn
+   note. The reply stream needs no reset: the text before the handoff stays valid."
+  [{:keys [from to category]}]
+  (when to
+    (cond-> {:event/type :llm.routing/model-fallback :reason :refusal :to-model (str to)}
+      from
+      (assoc :from-model (str from))
 
-          to-model
-          (assoc :to-model (str to-model))
-
-          category
-          (assoc :category (str category)))
-
-        error
-        (cond-> {:type :svar.llm/refusal
-                 :message (str "Model declined this request"
-                               (when category (str " (" category ")"))
-                               (when to-model (str " — switching to " to-model)))}
-          explanation
-          (assoc :explanation (str explanation))
-
-          attempt
-          (assoc :attempt attempt))]
-
-    {:phase :provider-retry-reset
-     :iteration iteration-position
-     :attempt attempt
-     :error error
-     :event event}))
+      category
+      (assoc :category (str category)))))
 
 (defn- prepend-routing-trace
   [result retry-events]
@@ -664,27 +639,18 @@
           ;; omit a policy stay on a warm provider; disabling `provider_fallback`
           ;; pins the resolved model below.
           pinned-routing (loop-router/pin-routing-to-model routing resolved-model)
-          ;; Anthropic's safety classifier declines with HTTP 200 (`stop_reason: refusal`):
-          ;; the credential, the provider and the wire are all healthy, so the recovery is a
-          ;; SIBLING MODEL of the same provider — pin it, or the router resolves the fallback
-          ;; name on whichever provider is cheapest.
-          refusal-fallbacks (loop-router/refusal-fallbacks-for (:router environment) resolved-model)
-          refusal-routing (cond-> pinned-routing
-                            refusal-fallbacks
-                            (loop-router/pin-routing-to-provider resolved-model))
-          sticky-routing (cond-> refusal-routing
-                           (not (contains? refusal-routing :on-transient-error))
+          sticky-routing (cond-> pinned-routing
+                           (not (contains? pinned-routing :on-transient-error))
                            (assoc :on-transient-error :fallback-model-in-the-same-provider))
+          ;; The safety classifier of a model declines with HTTP 200 (`stop_reason: refusal`).
+          ;; The provider then serves the request again on its default fallback model, in the
+          ;; same call. svar sends the option only where the provider supports it.
+          server-fallbacks (loop-router/server-refusal-fallbacks)
           ;; svar's empty-reply resend ladder (same model, same request) is
           ;; invisible mid-call — collect each re-send here and surface it as
           ;; a typed routing-trace event so the UI shows what the heal cost
           ;; instead of silence.
           empty-reply-resend-events (atom [])
-          ;; Automatic refusal fallback: when the model's Anthropic safety
-          ;; classifier declines (stop_reason refusal), svar switches to the
-          ;; fallback model (Opus 5 → Opus 4.8). Each switch is collected here and
-          ;; surfaced on the routing trace, same as an empty-reply resend.
-          refusal-fallback-events (atom [])
           provider-tools (transcript/model-facing-tools)
           ask-opts
           (rt/with-default-ask-code-idle-timeout
@@ -731,17 +697,8 @@
               prompt-cache-key
               (assoc :cache-key prompt-cache-key)
 
-              refusal-fallbacks
-              (assoc :refusal-fallbacks
-                refusal-fallbacks :on-refusal-fallback
-                (fn [ev]
-                  ;; LIVE: the instant svar switches models, paint the switch
-                  ;; and persist the recap — otherwise the UI shows a silent
-                  ;; gap while the fallback model streams its answer.
-                  (let [chunk (refusal-fallback-chunk iteration-position ev)]
-                    (swap! refusal-fallback-events conj (:event chunk))
-                    (reset-stream-state!)
-                    (when on-chunk (on-chunk chunk)))))
+              server-fallbacks
+              (assoc :server-fallbacks server-fallbacks)
 
               effective-reasoning
               (assoc :reasoning effective-reasoning)
@@ -807,9 +764,11 @@
                          (merge {:outcome :context-overflow :route-source :resolved}
                                 (transcript/context-overflow-token-data (ex-data e))))))
                    (throw e))))
+          refusal-fallback-event (server-refusal-fallback-event (:refusal-recovered ask-result-raw))
           ask-result (prepend-routing-trace ask-result-raw
-                                            (into (vec @empty-reply-resend-events)
-                                                  @refusal-fallback-events))
+                                            (cond-> (vec @empty-reply-resend-events)
+                                              refusal-fallback-event
+                                              (conj refusal-fallback-event)))
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop

@@ -257,9 +257,9 @@
 
 (defdescribe
   refusal-fallback-toggle-registry-test
-  "`refusal_fallback` decides whether a request Anthropic's safety classifier declined may be
-   re-asked of a sibling model of the SAME provider. It is separate from `provider_fallback`
-   because nothing about the credential, the provider or the wire failed."
+  "`refusal_fallback` decides whether the provider may serve a declined request on its
+   fallback model. It is separate from `provider_fallback` because nothing about the
+   credential, the provider or the wire failed."
   (it "is a DIFFERENT switch from provider fallback, not an alias of it"
       ;; One human wants no peer credentials; another wants no model they did not pick.
       ;; Collapsing the two would make the cheaper answer decide the safer one.

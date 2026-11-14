@@ -5,20 +5,16 @@
    fixture cannot drift from the source."
   (:require [com.blockether.vis.internal.provider.catalog :as catalog]))
 
-(def ^:private claude-5-refusal-fallback
-  {:models "(?i)claude-(opus|fable|sonnet)-5" :fallbacks ["claude-opus-4-8"]})
-
 (def first-party
   "`{provider-id policy}` exactly as the first-party vendors declare it."
   {:openai {:preset-rank 0}
-   :anthropic {:preset-rank 1 :refusal-fallback claude-5-refusal-fallback}
-   :anthropic-coding-plan {:preset-rank 2 :title-rank 3 :refusal-fallback claude-5-refusal-fallback}
+   :anthropic {:preset-rank 1}
+   :anthropic-coding-plan {:preset-rank 2 :title-rank 3}
    :openai-codex {:preset-rank 3 :title-rank 2 :fast-mode {:turn-feature "codex_fast_mode"}}
    :github-copilot {:preset-rank 4
                     :title-rank 4
                     :initiator-header "X-Initiator"
-                    :adaptive-reasoning-models "(?i)claude"
-                    :refusal-fallback claude-5-refusal-fallback}
+                    :adaptive-reasoning-models "(?i)claude"}
    :zai {:preset-rank 5}
    :zai-coding-plan {:preset-rank 6 :title-rank 0}
    :alibaba-coding-plan {:preset-rank 7 :title-rank 1}
