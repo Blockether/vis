@@ -65,7 +65,7 @@ from an earlier turn without computing it again.
 
 The sandbox process stops only in these cases:
 
-- The session was idle for 5 minutes. Set `VIS_ENV_IDLE_TTL_MS` on the gateway to
+- The session was idle for 60 minutes. Set `VIS_ENV_IDLE_TTL_MS` on the gateway to
   change this time.
 - You changed settings that need a new sandbox, for example with `/reload`.
 - The gateway freed memory for other sessions. See [Resource
