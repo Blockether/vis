@@ -112,8 +112,8 @@
    row can pick its rendering strategy (toggle, cycle or text) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group parent type choices visible-fn
-           on-change-fn channels settings? experimental? scopes inheritance secret? editor
-           editor-options validate-fn check-fn preview-fn]}]
+           on-change-fn read-fn write-fn channels settings? experimental? scopes inheritance secret?
+           editor editor-options validate-fn check-fn preview-fn]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -160,6 +160,15 @@
       ;; changes the effective value where it was made.
       on-change-fn
       (assoc :on-change-fn on-change-fn)
+
+      ;; `:read-fn` and `:write-fn` bind the project value to storage that the owner
+      ;; keeps: `(read-fn root)` gives the saved value or nil, `(write-fn root value)`
+      ;; saves it, and a nil value removes the saved choice.
+      read-fn
+      (assoc :read-fn read-fn)
+
+      write-fn
+      (assoc :write-fn write-fn)
 
       ;; `:channels` (set of channel keywords) scopes a toggle to specific
       ;; channels' settings UIs. Absent = channel-neutral (shown everywhere).

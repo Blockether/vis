@@ -434,3 +434,18 @@
                (t/hydrate-from-config! {"toggles" {"test_object" {"n" 5}}})
                (expect (= {"n" 5} (t/value-of "test_object")))
                (finally (t/unregister-toggle! "test_object")))))))
+
+(defdescribe
+  external-binding-validation
+  (it "rejects external storage without both callbacks, the project scope or a plain value"
+      (doseq [binding [{:read-fn (constantly false)}
+                       {:read-fn (constantly false) :write-fn identity :scopes ["global" "project"]}
+                       {:read-fn (constantly false) :write-fn identity :on-change-fn identity}]]
+        (expect (try (t/register-toggle!
+                       (merge
+                         {:id "bad_external" :label "External" :default false :scopes ["project"]}
+                         binding))
+                     (t/unregister-toggle! "bad_external")
+                     false
+                     (catch clojure.lang.ExceptionInfo e
+                       (= :vis.toggles/invalid-contribution (:type (ex-data e)))))))))

@@ -2879,6 +2879,17 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
            (throw t)))
     nil))
 
+(defn- storage-adapters
+  "The spec keys of a setting whose value the extension keeps in its own storage: Python
+   `read(root)` and `write(root, value)` as `:read-fn` and `:write-fn`. `state.yml` keeps
+   no value of it, so `:persist?` is false."
+  [ext-name ctx setting]
+  {:persist? false
+   :read-fn (fn [root]
+              (call-py-ext ext-name nil ctx (get setting "read") [root]))
+   :write-fn (fn [root value]
+               (call-py-ext ext-name nil ctx (get setting "write") [root value]))})
+
 (defn- ->provider-entry
   "`spec` is a Python `vis.Provider(...)` dict — STRING keys. Each callable slot
    is adapted with the field table its own host schema declares."
@@ -3017,6 +3028,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
                                     (true? (get setting "is_secret"))
                                     (assoc :secret? true)
+
+                                    (fn? (get setting "read"))
+                                    (merge (storage-adapters ext-name ctx setting))
 
                                     (fn? (get setting "on_change"))
                                     (assoc :on-change-fn

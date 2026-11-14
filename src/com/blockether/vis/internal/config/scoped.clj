@@ -147,9 +147,31 @@
                   [id (:value chosen)])))
         (get raw "toggles")))
 
+(defn- external-values
+  "The project values that extensions keep in their own storage, as id -> value, for the
+   project at `root`. A reader without a saved choice returns nil and gives no entry. A
+   reader that fails or returns a value of another type gives no entry and a warning:
+   one extension must not stop the settings list or a turn."
+  [root]
+  (into {}
+        (keep (fn [{:keys [id read-fn]}]
+                (when read-fn
+                  (try (when-some [raw (read-fn root)]
+                         (if-let [chosen (toggles/wire-value root id raw)]
+                           [id (:value chosen)]
+                           (throw (ex-info "The value does not match the setting type" {}))))
+                       (catch Throwable t
+                         (tel/log! {:level :warn
+                                    :id ::external-read-failed
+                                    :data {:id id :error (or (ex-message t) (.getName (class t)))}}
+                                   "A setting could not read its external storage")
+                         nil)))))
+        (toggles/target-toggles root)))
+
 (defn layers
   "Read ancestors afresh, including memberships and project configuration. A session
-   reads the configuration tiers that it was created with, on every thread."
+   reads the configuration tiers that it was created with, on every thread. A value in
+   external storage is the project value of its key for every reader."
   [db {:keys [scope target-id root group-id]}]
   (binding [workspace/*config-sources* (if (= scope "session")
                                          (workspace/session-config-sources db target-id)
@@ -157,8 +179,9 @@
     (let [global (merge (raw-toggles root (config/load-global-yaml-config-raw))
                         (raw-toggles root (config/load-global-config-raw)))
           project (when root
-                    (binding [workspace/*workspace-root* root]
-                      (raw-toggles root (config/load-project-tiers-raw))))]
+                    (merge (binding [workspace/*workspace-root* root]
+                             (raw-toggles root (config/load-project-tiers-raw)))
+                           (external-values root)))]
 
       (cond-> [{:scope "global" :values global}]
         root
@@ -228,8 +251,9 @@
     (raw-toggles root (config/load-global-config-raw))
 
     "project"
-    (binding [workspace/*workspace-root* root]
-      (raw-toggles root (config/load-project-config-raw)))
+    (merge (binding [workspace/*workspace-root* root]
+             (raw-toggles root (config/load-project-config-raw)))
+           (external-values root))
 
     (store/db-scoped-settings db scope target-id)))
 
@@ -743,8 +767,17 @@
 
       "project"
       (do (when-not (:root target) (throw (ex-info "Project has no workspace root" {:status 409})))
-          (binding [workspace/*workspace-root* (:root target)]
-            (config/update-project-config! edit)))
+          ;; External storage has one writer, its owner. Vis saves no second value.
+          (if-let [write-fn (:write-fn spec)]
+            (try (write-fn (:root target) v)
+                 (catch Exception e
+                   (throw (ex-info (str (:label spec)
+                                        " was not saved: "
+                                        (or (ex-message e) (.getName (class e))))
+                                   {:status 502 :id id}
+                                   e))))
+            (binding [workspace/*workspace-root* (:root target)]
+              (config/update-project-config! edit))))
 
       (store/db-set-scoped-setting! db scope (:target-id target) id v))
     (notify-listeners! (assoc target :id id))

@@ -418,6 +418,53 @@
                               (:result (read-token)))))))
              (finally (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "reads and writes a setting in the tool file of each project, without a Vis value"
+      ;; #477: Vis kept its own value next to the value that another tool saves.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)
+
+            other
+            (.getCanonicalPath ^java.io.File (temp-dir))
+
+            target
+            {:scope "project" :root root}
+
+            value-at
+            (fn [target]
+              (:value (first (filter #(= "external_preference" (:id %))
+                                     (scoped/settings nil target)))))]
+
+        (write-ext! dir
+                    ".vis/extensions/external.py"
+                    (str "from pathlib import Path\nimport blockether.vis.extension as vis\n"
+                         "def read(root):\n    file = Path(root) / 'preference.txt'\n"
+                         "    return file.read_text() == 'true' if file.exists() else None\n"
+                         "def write(root, value):\n    file = Path(root) / 'preference.txt'\n"
+                         "    if value is None:\n        file.unlink(missing_ok=True)\n"
+                         "    else:\n        file.write_text('true' if value else 'false')\n"
+                         "vis.register_extension(vis.Extension(name='external-preference', "
+                         "description='External preference fixture', settings=[vis.Setting("
+                         "id='external_preference', label='Preference', default=False, "
+                         "scopes=['project'], read=read, write=write)]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (expect (= [] (pyx/load-failures)))
+               (expect (false? (value-at target)))
+               ;; The tool saves its own choice.
+               (spit (io/file root "preference.txt") "true")
+               (expect (true? (value-at target)))
+               (scoped/set-setting! nil target "external_preference" "value" false)
+               (expect (= "false" (slurp (io/file root "preference.txt"))))
+               (expect (not (.exists (io/file other "preference.txt"))))
+               (scoped/set-setting! nil target "external_preference" "inherit" nil)
+               (expect (not (.exists (io/file root "preference.txt"))))
+               (expect (not (.exists (io/file dir ".vis/config.yml")))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "calls a Python on_change hook and reports its error"
       ;; #369: a setting had no change hook, so an extension had to poll for a change.
       (let [dir

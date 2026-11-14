@@ -151,3 +151,22 @@ def test_application_bridge_rejects_host_only_settings_before_connecting():
     )
     with pytest.raises(ValueError, match="host-only fields: settings"):
         ClientExtensions([declaration])
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"read": lambda root: False},
+        {"write": lambda root, value: None},
+        {"read": False, "write": lambda root, value: None},
+    ],
+)
+def test_external_setting_needs_both_callbacks(options):
+    with pytest.raises((TypeError, ValueError), match="read and write"):
+        vis.Setting(
+            id="external_test",
+            label="External",
+            default=False,
+            scopes=["project"],
+            **options,
+        )

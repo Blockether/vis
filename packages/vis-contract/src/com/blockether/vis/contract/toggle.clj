@@ -64,9 +64,21 @@
   [value]
   (and (string? value) (document/valid? "toggle" "string_value" value)))
 
+(defn- external-problem
+  "The broken rule of a setting that an extension keeps in its own storage, or nil.
+   That storage is the project value, so it needs both callbacks and only the project
+   scope. The writer replaces a change hook, and a secret stays in Vis."
+  [{:keys [read-fn write-fn scopes secret?] :as value}]
+  (when (or (contains? value :read-fn) (contains? value :write-fn))
+    (cond (not (and (ifn? read-fn) (ifn? write-fn))) "read-fn and write-fn must both be functions."
+          (not= ["project"] scopes) "external storage needs scopes [\"project\"]."
+          (or secret? (contains? value :on-change-fn))
+          "external storage allows no secret and no on-change-fn.")))
+
 (defn- semantic-contribution?
   [{:keys [type choices default visible-fn on-change-fn] :as value}]
-  (and (or (not (contains? value :visible-fn)) (ifn? visible-fn))
+  (and (nil? (external-problem value))
+       (or (not (contains? value :visible-fn)) (ifn? visible-fn))
        (or (not (contains? value :on-change-fn)) (ifn? on-change-fn))
        (case (or type default-type)
          :boolean
@@ -141,7 +153,8 @@
 
 (defn- semantic-problem
   [{:keys [type visible-fn on-change-fn] :as value}]
-  (cond (and (contains? value :visible-fn) (not (ifn? visible-fn))) "visible-fn must be a function."
+  (cond (external-problem value) (external-problem value)
+        (and (contains? value :visible-fn) (not (ifn? visible-fn))) "visible-fn must be a function."
         (and (contains? value :on-change-fn) (not (ifn? on-change-fn)))
         "on-change-fn must be a function."
         (= :enum (or type default-type)) "default must be one of the choices."

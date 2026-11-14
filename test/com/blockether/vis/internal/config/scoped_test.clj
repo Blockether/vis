@@ -1425,3 +1425,91 @@
                  (toggles/reset-to-default! "sound_presets")
                  (doseq [file (reverse (file-seq dir))]
                    (io/delete-file file true)))))))
+
+(defdescribe
+  external-project-settings
+  ;; #477: a setting whose value another tool saves. Vis kept a second value, and the two
+  ;; could disagree. The external storage is now the project value for every reader.
+  (it
+    "gives Settings and the session snapshot the value in external storage"
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            root
+            (.getCanonicalPath (java.io.File. "/tmp/external-project"))
+
+            project
+            (store/db-create-project! db {:name "External" :workspace-root root})
+
+            group
+            (store/db-create-session-group! db (:id project) {:name "Work"})
+
+            sid
+            (h/store-session! db {:title "A"})
+
+            id
+            "external_project_test"
+
+            saved
+            (atom {})
+
+            target
+            (scoped/target db "project" (str (:id project)))
+
+            row
+            #(first (filter (fn [r]
+                              (= id (:id r)))
+                            (scoped/settings db %)))]
+
+        (store/db-set-session-group! db sid (:id group))
+        (toggles/register-toggle!
+          {:id id
+           :label "External"
+           :default false
+           :scopes ["project"]
+           :read-fn #(get @saved %)
+           :write-fn (fn [root value]
+                       (if (nil? value) (swap! saved dissoc root) (swap! saved assoc root value)))})
+        (try (expect (= [false "default" false] ((juxt :value :source :is-override) (row target))))
+             ;; The tool changes its own file.
+             (swap! saved assoc root true)
+             (expect (= [true "project" true true]
+                        ((juxt :value :source :is-override :own-value) (row target))))
+             (expect (true? (get (scoped/values db sid) id)))
+             ;; Another project has its own storage.
+             (expect (false? (:value (row {:scope "project" :target-id "x" :root "/tmp/other"}))))
+             (with-redefs [config/update-project-config! (fn [_]
+                                                           (throw (ex-info "Unexpected Vis write"
+                                                                           {})))]
+               (expect (false? (:value (scoped/set-setting! db target id "value" false))))
+               (expect (= {root false} @saved))
+               (expect (false? (get (scoped/values db sid) id)))
+               (expect (false? (:is-override (scoped/set-setting! db target id "inherit" nil))))
+               (expect (= {} @saved)))
+             (finally (toggles/unregister-toggle! id))))))
+  (it "keeps the other settings and the saved value when the storage fails"
+      (with-empty-config
+        (let [id
+              "external_failure_test"
+
+              target
+              {:scope "project" :target-id "external" :root "/tmp/external"}
+
+              fail
+              (fn [& _]
+                (throw (ex-info "Tool file is locked" {})))]
+
+          (toggles/register-toggle! {:id id
+                                     :label "External"
+                                     :default false
+                                     :scopes ["project"]
+                                     :read-fn fail
+                                     :write-fn fail})
+          (try (expect (false? (:value (first (filter #(= id (:id %))
+                                                      (scoped/settings nil target))))))
+               (expect (= [502 "External was not saved: Tool file is locked"]
+                          (try (scoped/set-setting! nil target id "value" true)
+                               (catch clojure.lang.ExceptionInfo e
+                                 [(:status (ex-data e)) (ex-message e)]))))
+               (finally (toggles/unregister-toggle! id)))))))

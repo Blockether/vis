@@ -245,6 +245,46 @@ If the hook raises an error, the value stays saved. The app and the TUI show the
 gateway log records it. Vis does not call the hook when the extension loads. To read the current
 value at another time, call `value()` in a callback.
 
+To show a preference that another tool saves, give `read` and `write`. Vis then keeps no copy of
+the value. `read(root)` returns the saved value for the project directory `root`, or `None` if the
+tool has no saved choice. `write(root, value)` saves a change from Settings, and `None` removes the
+saved choice. Such a setting needs `scopes=["project"]`. It cannot have `on_change` or `is_secret`.
+
+```python
+import json
+from pathlib import Path
+
+def saved(root: str) -> dict:
+    file = Path(root) / ".linter.json"
+    return json.loads(file.read_text()) if file.exists() else {}
+
+def read_strict(root: str) -> bool | None:
+    return saved(root).get("strict")
+
+def write_strict(root: str, value: bool | None) -> None:
+    choices = saved(root)
+    if value is None:
+        choices.pop("strict", None)
+    else:
+        choices["strict"] = value
+    (Path(root) / ".linter.json").write_text(json.dumps(choices))
+
+strict_lint = vis.Setting(
+    id="linter_strict",
+    label="Strict lint",
+    default=False,
+    scopes=["project"],
+    read=read_strict,
+    write=write_strict,
+)
+```
+
+Settings, `value()` and each turn read the tool's file. A change that the tool makes shows the next
+time Vis reads the setting. Vis calls `read` for each Settings request and each turn, so keep it
+short-running. If `read` raises an error or returns a value of another type, Vis uses the default
+and the gateway log records the error. If `write` raises an error, Settings shows it and nothing
+changes.
+
 `value()` reads the current value in every callback, also outside a turn, such as in a background
 thread. In a session, it uses the session's settings. Without a session, a project extension's
 setting resolves at project scope, as Settings shows it there. Project values, such as `toggles:`
