@@ -643,6 +643,45 @@ def test_turn_wait_follows_the_event_stream_instead_of_polling():
     assert len(reads) == 2
 
 
+def test_turn_wait_continues_when_a_proxy_ends_streams_that_made_progress():
+    # A proxy with a stream time limit ends each connection. The wait failed after
+    # 4 connections with "event reconnect budget exhausted" while the turn ran on.
+    from blockether.vis.engine import Turn
+
+    streams, state = [], {"is_quiet": False}
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path == "/v1/sessions/s/seq":
+            return 200, {"seq": 0}
+        if path == "/v1/sessions/s/turns/t":
+            status = "completed" if len(streams) == 6 else "running"
+            return 200, {"turn_id": "t", "status": status}
+        if path.startswith("/v1/events?"):
+            cursor = int(parse_qs(urlsplit(path).query)["sids"][0].split(":")[1])
+            streams.append(cursor)
+            data = [{"type": "subscription.ready", "session_id": "s", "cursor": cursor}]
+            if not state["is_quiet"]:
+                kind = "turn.completed" if len(streams) == 6 else "turn.delta"
+                data.append(
+                    {"type": kind, "session_id": "s", "seq": cursor + 1, "turn_id": "t"}
+                )
+            return 200, b"".join(map(frame, data)), "text/event-stream"
+        return 404, {"error": {"code": "missing", "message": path}}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        turn = Turn(client.session("s"), "t")
+        assert turn.wait(timeout=10)["status"] == "completed"
+        assert streams == [0, 1, 2, 3, 4, 5]
+        # Streams without a new event still use the budget: the wait ends.
+        streams.clear()
+        state["is_quiet"] = True
+        with pytest.raises(TransportError, match="budget"):
+            turn.wait(timeout=10)
+        assert len(streams) == 4
+
+
 def test_turn_wait_on_a_silent_stream_keeps_its_deadline():
     from blockether.vis.engine import Turn
 

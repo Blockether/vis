@@ -3962,7 +3962,9 @@ class Turn:
 
         The record is read once, and again after the session event stream
         reports the end of the turn. Application-owned callbacks are serviced
-        while the stream waits.
+        while the stream waits. The reconnect budget of the stream counts only
+        connections that bring no new event, so a proxy that ends long streams
+        does not end the wait.
         """
         end = time.monotonic() + _duration(timeout)
 
@@ -3979,20 +3981,32 @@ class Turn:
         data = self.read(timeout=remaining())
         if _field(data, "status", str) in _TURN_SETTLED_STATUSES:
             return data
-        events = self.session.events(cursor=cursor)
-        events._deadline = end
-        try:
-            with events:
-                for event in events:
-                    if event.type == "session.deleted" or (
-                        event.turn_id == self.id and event.type in _TURN_END_EVENTS
-                    ):
-                        data = self.read(timeout=remaining())
-                        if _field(data, "status", str) in _TURN_SETTLED_STATUSES:
-                            return data
-        except VisTimeout:
-            raise VisTimeout("turn wait timed out; turn was not cancelled") from None
-        raise TransportError("event stream ended before the turn")
+        while True:
+            events = self.session.events(cursor=cursor)
+            events._deadline = end
+            is_progress = False
+            try:
+                with events:
+                    for event in events:
+                        is_progress = is_progress or event.type != "subscription.ready"
+                        if event.type == "session.deleted" or (
+                            event.turn_id == self.id and event.type in _TURN_END_EVENTS
+                        ):
+                            data = self.read(timeout=remaining())
+                            if _field(data, "status", str) in _TURN_SETTLED_STATUSES:
+                                return data
+            except VisTimeout:
+                raise VisTimeout(
+                    "turn wait timed out; turn was not cancelled"
+                ) from None
+            except TransportError:
+                # A proxy can end each connection. Streams that brought new events
+                # are not failures: follow again from the cursor, until the deadline.
+                if not is_progress:
+                    raise
+                cursor = events.cursor
+                continue
+            raise TransportError("event stream ended before the turn")
 
 
 class _ActivityStreamDecoder:
