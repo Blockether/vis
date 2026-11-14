@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf3eb">
+<title>Vis Playground · Workflows</title>
+<link rel="icon" href="/play/assets/logo.svg">
+<link rel="stylesheet" href="/play/vendor/cm-codemirror.min.css">
+<link rel="stylesheet" href="/play/assets/app.css">
+</head>
+<body data-page="/play/workflows">
+<header class="bar"></header>
+<div class="tabs only-phone" id="phone-tabs" role="tablist">
+  <button type="button" data-pane="list" aria-selected="false">Workflows</button>
+  <button type="button" data-pane="editor" aria-selected="true">Editor</button>
+  <button type="button" data-pane="runs" aria-selected="false">Runs</button>
+</div>
+<div class="studio" id="studio" data-pane="editor">
+  <section class="side" aria-label="Workflows">
+    <div class="side-head">
+      <div class="row"><h2>Workflows</h2><button class="btn small primary right" type="button" id="new">New</button></div>
+      <p class="small muted" style="margin:0">Python on the Vis SDK. Each activity is a turn of one Vis session.</p>
+    </div>
+    <div class="list" id="list"></div>
+  </section>
+  <section class="work" aria-label="Editor">
+    <div class="editor-head" id="editor-head"></div>
+    <div class="editor" id="editor"></div>
+    <div class="problem" id="problem" hidden></div>
+    <div class="outline" id="outline"></div>
+  </section>
+  <section class="runs" aria-label="Runs">
+    <div class="side-head" id="runs-head"></div>
+    <div class="runs-body" id="runs"></div>
+  </section>
+</div>
+<script src="/play/vendor/cm-codemirror.min.js"></script>
+<script src="/play/vendor/cm-python.min.js"></script>
+<script src="/play/vendor/cm-matchbrackets.min.js"></script>
+<script src="/play/vendor/cm-closebrackets.min.js"></script>
+<script src="/play/vendor/cm-comment.min.js"></script>
+<script src="/play/vendor/cm-active-line.min.js"></script>
+
+<script type="module" src="/play/assets/workflows.js"></script>
+</body>
+</html>

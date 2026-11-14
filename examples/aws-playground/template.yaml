@@ -1,0 +1,686 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Vis playground. Vis is the custom Lambda runtime of five functions from one image.
+  S3 is the database. EFS holds the repository. The worker has no route to the internet.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: The image of the five functions, with its digest.
+  Repository:
+    Type: String
+    Description: The GitHub repository, as owner/name.
+  Models:
+    Type: String
+    Default: ""
+    Description: A JSON list of the models that the provider offers. Empty for the default list.
+  S3PrefixList:
+    Type: String
+    Description: The id of the AWS prefix list of S3 in this region (pl-...).
+
+Mappings:
+  Network:
+    Vpc: {Cidr: 10.42.0.0/16}
+    Private: {Cidr: 10.42.0.0/24}
+
+Resources:
+  # ---------------------------------------------------------------- storage
+  Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration: {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      OwnershipControls: {Rules: [{ObjectOwnership: BucketOwnerEnforced}]}
+      # No function role can remove a version. A removed or changed object comes back
+      # from its old version for 7 days.
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - {Id: versions, Status: Enabled, NoncurrentVersionExpiration: {NoncurrentDays: 7}, ExpiredObjectDeleteMarker: true}
+          # The work files of a session are temporary.
+          - {Id: tmp, Status: Enabled, Prefix: tmp/, ExpirationInDays: 7}
+          - {Id: relay, Status: Enabled, Prefix: relay/, ExpirationInDays: 1}
+          - {Id: outbox, Status: Enabled, Prefix: outbox/, ExpirationInDays: 1}
+          - {Id: snapshots, Status: Enabled, Prefix: repo/snapshots/, ExpirationInDays: 30}
+          - {Id: uploads, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}}
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource: [!GetAtt Bucket.Arn, !Sub "${Bucket.Arn}/*"]
+            Condition: {Bool: {aws:SecureTransport: "false"}}
+
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 300
+      VisibilityTimeout: 60
+
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      FileSystemTags: [{Key: Name, Value: !Ref AWS::StackName}]
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          # The policy gives no access. Only the two function roles permit a mount, each
+          # through its own access point, so a client without a role or without an
+          # access point gets nothing.
+          - Effect: Deny
+            Principal: {AWS: "*"}
+            Action: "*"
+            Condition: {Bool: {aws:SecureTransport: "false"}}
+          - Effect: Deny
+            Principal: {AWS: "*"}
+            Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite, elasticfilesystem:ClientRootAccess]
+            Condition: {"Null": {elasticfilesystem:AccessPointArn: "true"}}
+
+  MountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroups: [!Ref FileSystemGroup]
+
+  # The sync function owns the directory. The worker reads the releases and writes
+  # only in `work`.
+  SyncAccess:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser: {Uid: "1001", Gid: "1001"}
+      RootDirectory:
+        Path: /playground
+        CreationInfo: {OwnerUid: "1001", OwnerGid: "1001", Permissions: "0755"}
+
+  WorkerAccess:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser: {Uid: "1002", Gid: "1002"}
+      RootDirectory:
+        Path: /playground
+        CreationInfo: {OwnerUid: "1001", OwnerGid: "1001", Permissions: "0755"}
+
+  # ---------------------------------------------------------------- network
+  # A network without an internet gateway and without a NAT gateway.
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !FindInMap [Network, Vpc, Cidr]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: !Ref AWS::StackName}]
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !FindInMap [Network, Private, Cidr]
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private"}]
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+
+  RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnet, RouteTableId: !Ref RouteTable}
+
+  FunctionGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: The worker and the sync function
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        # A function can open a connection only to S3, to the two interface endpoints
+        # and to EFS.
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, DestinationPrefixListId: !Ref S3PrefixList, Description: S3}
+
+  FunctionToEndpoints:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref FunctionGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationSecurityGroupId: !Ref EndpointGroup
+
+  FunctionToFileSystem:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref FunctionGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      DestinationSecurityGroupId: !Ref FileSystemGroup
+
+  FileSystemGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: The EFS mount target
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref FunctionGroup}
+      SecurityGroupEgress:
+        - {IpProtocol: "-1", CidrIp: 127.0.0.1/32, Description: none}
+
+  EndpointGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: The interface endpoints
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref FunctionGroup}
+      SecurityGroupEgress:
+        - {IpProtocol: "-1", CidrIp: 127.0.0.1/32, Description: none}
+
+  # Each endpoint accepts only the resources of this stack. Credentials from
+  # another account cannot move data out through an endpoint.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      RouteTableIds: [!Ref RouteTable]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+            Resource: [!GetAtt Bucket.Arn, !Sub "${Bucket.Arn}/*"]
+            Condition: {StringEquals: {aws:PrincipalAccount: !Ref AWS::AccountId}}
+
+  QueueEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sqs"
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref EndpointGroup]
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: [sqs:ReceiveMessage, sqs:DeleteMessage]
+            Resource: !GetAtt Queue.Arn
+            Condition: {StringEquals: {aws:PrincipalAccount: !Ref AWS::AccountId}}
+
+  LambdaEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.lambda"
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref EndpointGroup]
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: lambda:InvokeFunction
+            Resource:
+              - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-worker"
+              - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-llm"
+              - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-repo"
+            Condition: {StringEquals: {aws:PrincipalAccount: !Ref AWS::AccountId}}
+
+  # The resolver of the network answers only for AWS names. A session cannot send
+  # data out in DNS queries.
+  AllowedNames:
+    Type: AWS::Route53Resolver::FirewallDomainList
+    Properties: {Domains: ["*.amazonaws.com."]}
+
+  AllNames:
+    Type: AWS::Route53Resolver::FirewallDomainList
+    Properties: {Domains: ["*."]}
+
+  NameRules:
+    Type: AWS::Route53Resolver::FirewallRuleGroup
+    Properties:
+      FirewallRules:
+        - {Priority: 100, Action: ALLOW, FirewallDomainListId: !Ref AllowedNames}
+        - {Priority: 200, Action: BLOCK, BlockResponse: NXDOMAIN, FirewallDomainListId: !Ref AllNames}
+
+  NameRulesAssociation:
+    Type: AWS::Route53Resolver::FirewallRuleGroupAssociation
+    Properties:
+      FirewallRuleGroupId: !Ref NameRules
+      VpcId: !Ref Vpc
+      Priority: 101
+      Name: !Ref AWS::StackName
+
+  # ---------------------------------------------------------------- front
+  # The public address. It holds the password check, the pages and the relay.
+  FrontLog:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-front", RetentionInDays: 14}
+
+  FrontRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: front
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${FrontLog.Arn}:*"}
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/password"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/webhook-secret"
+              - {Effect: Allow, Action: sqs:SendMessage, Resource: !GetAtt Queue.Arn}
+              - {Effect: Allow, Action: s3:GetObject, Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/relay/*"]}
+              - {Effect: Allow, Action: s3:PutObject, Resource: !Sub "${Bucket.Arn}/relay/*"}
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt Bucket.Arn
+                Condition: {StringLike: {s3:prefix: [lease.json, relay/*]}}
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-worker"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-repo"
+
+  Front:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-front"
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      Role: !GetAtt FrontRole.Arn
+      MemorySize: 512
+      Timeout: 900
+      # Each open answer holds one instance. The limit protects the account and the cost.
+      ReservedConcurrentExecutions: 50
+      LoggingConfig: {LogGroup: !Ref FrontLog}
+      Environment:
+        Variables:
+          VIS_ROLE: front
+          VIS_BUCKET: !Ref Bucket
+          VIS_QUEUE_URL: !Ref Queue
+          VIS_WORKER_FUNCTION: !Sub "${AWS::StackName}-worker"
+          VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
+          VIS_REPO: !Ref Repository
+          VIS_TOKEN_PARAMETER: !Sub "/${AWS::StackName}/password"
+          VIS_WEBHOOK_PARAMETER: !Sub "/${AWS::StackName}/webhook-secret"
+
+  FrontUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt Front.Arn
+      AuthType: NONE
+      InvokeMode: RESPONSE_STREAM
+
+  FrontUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Front
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  FrontInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Front
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  # A schedule starts a worker when work waits and no worker lives.
+  Tick:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: rate(1 minute)
+      Targets: [{Id: front, Arn: !GetAtt Front.Arn}]
+
+  TickPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Front
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt Tick.Arn
+
+  # ---------------------------------------------------------------- worker
+  # The Vis gateway. No internet, no secret, no access to `repo/` in the bucket.
+  WorkerLog:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-worker", RetentionInDays: 14}
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: worker
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${WorkerLog.Arn}:*"}
+              # The code of a session can read the credentials of this role. Each data
+              # permission works only from the network of the stack, so the credentials
+              # have no use in another place.
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource:
+                  - !Sub "${Bucket.Arn}/lease.json"
+                  - !Sub "${Bucket.Arn}/state/*"
+                  - !Sub "${Bucket.Arn}/relay/*"
+                  - !Sub "${Bucket.Arn}/runs/*"
+                  - !Sub "${Bucket.Arn}/workflows/*"
+                  - !Sub "${Bucket.Arn}/artifacts/*"
+                  - !Sub "${Bucket.Arn}/tmp/*"
+                Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
+              - Effect: Allow
+                Action: s3:DeleteObject
+                Resource:
+                  - !Sub "${Bucket.Arn}/state/*"
+                  - !Sub "${Bucket.Arn}/relay/*"
+                  - !Sub "${Bucket.Arn}/workflows/*"
+                  - !Sub "${Bucket.Arn}/tmp/*"
+                Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${Bucket.Arn}/outbox/*"
+                Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
+              # With this permission, a read of a missing object answers "not found".
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt Bucket.Arn
+                Condition:
+                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, artifacts/*, tmp/*]}
+                  StringEquals: {aws:SourceVpc: !Ref Vpc}
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage]
+                Resource: !GetAtt Queue.Arn
+                Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-worker"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-llm"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-repo"
+                Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
+              - Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource: !GetAtt FileSystem.Arn
+                Condition: {StringEquals: {elasticfilesystem:AccessPointArn: !GetAtt WorkerAccess.Arn}}
+              # The Lambda service needs these to put the function in the network.
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+              # The code of the function must not use them.
+              - Effect: Deny
+                Action: ec2:*
+                Resource: "*"
+                Condition:
+                  ArnEquals:
+                    lambda:SourceFunctionArn: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-worker"
+
+  Worker:
+    Type: AWS::Lambda::Function
+    DependsOn: [MountTarget, S3Endpoint, QueueEndpoint, LambdaEndpoint]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-worker"
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      Role: !GetAtt WorkerRole.Arn
+      MemorySize: 3008
+      Timeout: 900
+      EphemeralStorage: {Size: 4096}
+      # One worker holds the lease. The others are a handoff or a start that ends at once.
+      ReservedConcurrentExecutions: 5
+      LoggingConfig: {LogGroup: !Ref WorkerLog}
+      VpcConfig: {SubnetIds: [!Ref PrivateSubnet], SecurityGroupIds: [!Ref FunctionGroup]}
+      FileSystemConfigs: [{Arn: !GetAtt WorkerAccess.Arn, LocalMountPath: /mnt/efs}]
+      Environment:
+        Variables:
+          VIS_ROLE: worker
+          VIS_BUCKET: !Ref Bucket
+          VIS_QUEUE_URL: !Ref Queue
+          VIS_WORKER_FUNCTION: !Sub "${AWS::StackName}-worker"
+          VIS_LLM_FUNCTION: !Sub "${AWS::StackName}-llm"
+          VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
+          VIS_REPO: !Ref Repository
+          VIS_MODELS: !Ref Models
+
+  # A failed worker start must not run two more times.
+  WorkerInvokes:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties: {FunctionName: !Ref Worker, Qualifier: $LATEST, MaximumRetryAttempts: 0, MaximumEventAgeInSeconds: 60}
+
+  # ---------------------------------------------------------------- llm
+  # The only reader of the provider key.
+  LlmLog:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-llm", RetentionInDays: 14}
+
+  LlmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: llm
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${LlmLog.Arn}:*"}
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/llm-url"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/llm-key"
+
+  Llm:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-llm"
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      Role: !GetAtt LlmRole.Arn
+      MemorySize: 256
+      Timeout: 900
+      # Each model call holds one instance. The limit is also a limit of the provider cost.
+      ReservedConcurrentExecutions: 20
+      LoggingConfig: {LogGroup: !Ref LlmLog}
+      Environment:
+        Variables:
+          VIS_ROLE: llm
+          VIS_MODELS: !Ref Models
+          VIS_LLM_URL_PARAMETER: !Sub "/${AWS::StackName}/llm-url"
+          VIS_LLM_KEY_PARAMETER: !Sub "/${AWS::StackName}/llm-key"
+
+  # ---------------------------------------------------------------- repo
+  # The only reader of the GitHub deploy key, which opens one repository.
+  RepoLog:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-repo", RetentionInDays: 14}
+
+  RepoRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: repo
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${RepoLog.Arn}:*"}
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/deploy-key"
+              - {Effect: Allow, Action: [s3:GetObject, s3:PutObject], Resource: !Sub "${Bucket.Arn}/repo/*"}
+              - {Effect: Allow, Action: [s3:GetObject, s3:DeleteObject], Resource: !Sub "${Bucket.Arn}/outbox/*"}
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt Bucket.Arn
+                Condition: {StringLike: {s3:prefix: [repo/*, outbox/*]}}
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-sync"
+
+  Repo:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-repo"
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      Role: !GetAtt RepoRole.Arn
+      MemorySize: 1024
+      Timeout: 300
+      EphemeralStorage: {Size: 2048}
+      # Two pushes at the same time would race for the main branch.
+      ReservedConcurrentExecutions: 1
+      LoggingConfig: {LogGroup: !Ref RepoLog}
+      Environment:
+        Variables:
+          VIS_ROLE: repo
+          VIS_BUCKET: !Ref Bucket
+          VIS_REPO: !Ref Repository
+          VIS_SYNC_FUNCTION: !Sub "${AWS::StackName}-sync"
+          VIS_DEPLOY_KEY_PARAMETER: !Sub "/${AWS::StackName}/deploy-key"
+
+  RepoInvokes:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties: {FunctionName: !Ref Repo, Qualifier: $LATEST, MaximumRetryAttempts: 1, MaximumEventAgeInSeconds: 300}
+
+  # The webhook of GitHub starts a fetch at once. This schedule finds a commit that
+  # a lost webhook did not report.
+  Fetch:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: rate(15 minutes)
+      Targets: [{Id: repo, Arn: !GetAtt Repo.Arn, Input: '{"action":"fetch"}'}]
+
+  FetchPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Repo
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt Fetch.Arn
+
+  # ---------------------------------------------------------------- sync
+  # The only writer of the releases on EFS.
+  SyncLog:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-sync", RetentionInDays: 14}
+
+  SyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: sync
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${SyncLog.Arn}:*"}
+              - {Effect: Allow, Action: s3:GetObject, Resource: !Sub "${Bucket.Arn}/repo/snapshots/*"}
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt Bucket.Arn
+                Condition: {StringLike: {s3:prefix: [repo/snapshots/*]}}
+              - Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource: !GetAtt FileSystem.Arn
+                Condition: {StringEquals: {elasticfilesystem:AccessPointArn: !GetAtt SyncAccess.Arn}}
+              # The Lambda service needs these to put the function in the network.
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+              - Effect: Deny
+                Action: ec2:*
+                Resource: "*"
+                Condition:
+                  ArnEquals:
+                    lambda:SourceFunctionArn: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-sync"
+
+  Sync:
+    Type: AWS::Lambda::Function
+    DependsOn: [MountTarget, S3Endpoint]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-sync"
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      Role: !GetAtt SyncRole.Arn
+      MemorySize: 1024
+      Timeout: 300
+      ReservedConcurrentExecutions: 1
+      LoggingConfig: {LogGroup: !Ref SyncLog}
+      VpcConfig: {SubnetIds: [!Ref PrivateSubnet], SecurityGroupIds: [!Ref FunctionGroup]}
+      FileSystemConfigs: [{Arn: !GetAtt SyncAccess.Arn, LocalMountPath: /mnt/efs}]
+      Environment:
+        Variables:
+          VIS_ROLE: sync
+          VIS_BUCKET: !Ref Bucket
+
+Outputs:
+  Url:
+    Description: The address of the playground.
+    Value: !GetAtt FrontUrl.FunctionUrl
+  Bucket:
+    Value: !Ref Bucket
+  FileSystem:
+    Value: !Ref FileSystem

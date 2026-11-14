@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf3eb">
+<title>Vis Playground · Sign in</title>
+<link rel="icon" href="/play/assets/logo.svg">
+<link rel="stylesheet" href="/play/assets/app.css">
+</head>
+<body>
+<main class="login">
+  <form class="card" method="post" action="/login">
+    <a class="brand" href="/play"><img src="/play/assets/logo.svg" alt=""><span>Vis Playground <small>on AWS Lambda</small></span></a>
+    <p class="muted">Sessions, workflows and a repository, on a Vis runtime that starts when you call it.</p>
+    <label class="field"><span>Password</span><input class="input" type="password" name="password" autocomplete="current-password" autofocus required></label>
+    <div class="error" role="alert"><!--error--></div>
+    <button class="btn primary" type="submit">Sign in</button>
+  </form>
+</main>
+</body>
+</html>

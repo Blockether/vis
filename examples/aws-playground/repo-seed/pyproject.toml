@@ -1,0 +1,9 @@
+[project]
+name = "shop"
+version = "0.1.0"
+description = "A small order library for the Vis playground"
+requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf3eb">
+<title>Vis Playground · Sessions</title>
+<link rel="icon" href="/play/assets/logo.svg">
+<link rel="stylesheet" href="/play/assets/app.css">
+</head>
+<body data-page="/play">
+<header class="bar"></header>
+<div class="panes" id="panes">
+  <aside class="side" aria-label="Sessions">
+    <div class="side-head">
+      <div class="row"><h2>Sessions</h2><span class="chip mono right" id="total"></span></div>
+      <input class="input" id="filter" type="search" placeholder="Filter by title, model or id" aria-label="Filter the sessions">
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+  <main class="main"><div class="main-inner" id="detail"></div></main>
+</div>
+<script type="module" src="/play/assets/sessions.js"></script>
+</body>
+</html>

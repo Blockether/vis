@@ -1,0 +1,13 @@
+# Extensions that the image installs and prepares at build time.
+# Each version is exact, so two builds install the same code.
+extensions:
+  vis-lang-interface:
+    source: https://github.com/Blockether/vis-lang-interface
+    version: "3.4.0"
+  vis-lang-clojure:
+    source: https://github.com/Blockether/vis-lang-clojure
+    subdirectory: extension
+    version: "1.20.16"
+  vis-lang-python:
+    source: https://github.com/Blockether/vis-lang-python
+    version: "1.16.10"
