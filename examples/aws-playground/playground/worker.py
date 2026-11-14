@@ -11,6 +11,7 @@ S3, the queue and three functions: llm, repo and itself.
 
 from __future__ import annotations
 
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -22,6 +23,7 @@ from playground.api import Api
 from playground.broker import Broker
 from playground.env import (
     DUE_S,
+    ENV,
     IDLE_S,
     LIFETIME,
     MARGIN,
@@ -55,6 +57,13 @@ def project() -> tuple[str, str]:
     return sync.clone(release, release[:12], gateway.environment("")), release
 
 
+def title(release: str) -> str:
+    """Return the project name of a release: the repository and the subject of its commit."""
+    command = ["git", "log", "-1", "--format=%s"]
+    subject = subprocess.run(command, cwd=f"{sync.RELEASES}/{release}", env=gateway.environment(""), capture_output=True, text=True, check=True).stdout
+    return f"{ENV.get('VIS_REPO', '').rpartition('/')[2]} · {subject.strip()[:60]}"
+
+
 def work(held: Lease, context: Context) -> dict[str, Any]:
     started = time.time()
     state.restore(held.data.get("state"))
@@ -67,7 +76,8 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     broker.start()
     engine = gateway.Gateway(root, broker.url)
     engine.start()
-    api.cancel_turn = engine.cancel
+    engine.name(root, title(release))
+    api.cancel_turn, api.runs.name_project = engine.cancel, engine.name
     # Each call gets its own SDK client: one client serves one thread.
     api.session = lambda session: GatewayClient(f"http://{gateway.HOST}:{gateway.PORT}", token=engine.token).session(session)
     relay = Relay(engine, api)

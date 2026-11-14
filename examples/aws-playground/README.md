@@ -170,6 +170,27 @@ for each file. S3 holds only the newest version of a name.
 
 The pages work on a phone and on a desktop. They use no framework and no build step.
 
+### The review of a session
+
+The image has the Vis extension [`vis-review`](../../packages/vis-review). It records
+each step of a session that changes files. After the first such step, the button
+"Session apps" in the header of Vis web shows the app "Review": the changed files as a
+diff, with an undo for a file, for a step and for the session. The command `/review` is
+not necessary. The record of the review is in the Vis home directory, so each
+checkpoint has it and a new worker shows the same review.
+
+### The names of the projects
+
+A project of Vis web has a name that a person can read:
+
+| Project | Name |
+| --- | --- |
+| The project of a release | `<repository> · <subject of the commit>` |
+| The project of a workflow run | `<title of the run> · <day and time of its start, UTC>` |
+
+The worker gives the name when it makes the project. To change a name, use "Rename
+project" in the project menu of Vis web. The worker does not replace a changed name.
+
 ## Addresses
 
 The address of the stack is the Function URL of `front`: the output `Url` of the stack.
@@ -471,7 +492,7 @@ The script is safe to run again. It does these steps:
 3. Stores the secrets in the Parameter Store. It makes the password, the webhook secret and the deploy key. GitHub gets the public half of the deploy key, with write access.
 4. Deploys [`template.yaml`](template.yaml).
 5. Adds the webhook to the repository.
-6. Starts the first fetch. Then it prints the address of the stack and the command that reads the password.
+6. Starts the first fetch. Starts the worker one time and sends one request to the stack: Lambda loads a new image at the first start, and that start is slow. Then it prints the address of the stack and the command that reads the password.
 
 | Variable | Default | Use |
 | --- | --- | --- |

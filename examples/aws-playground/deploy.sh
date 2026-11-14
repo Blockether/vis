@@ -98,5 +98,10 @@ echo "6/6 first release"
 aws lambda invoke --function-name "$STACK-repo" --cli-binary-format raw-in-base64-out \
   --payload '{"action":"fetch","force":true}' /dev/stdout
 echo
+# Lambda loads a new image at its first start, which is slow. One start of the worker
+# and one request to the front pay for it now, not at the first visit of a person.
+aws lambda invoke --function-name "$STACK-worker" --invocation-type Event --cli-binary-format raw-in-base64-out \
+  --payload '{"kind":"wake"}' /dev/null >/dev/null
+curl --silent --output /dev/null --max-time 30 "$url" || true
 echo "Playground: $url"
 echo "Password:   aws ssm get-parameter --name /$STACK/password --with-decryption --query Parameter.Value --output text"

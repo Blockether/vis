@@ -111,6 +111,14 @@ class Gateway:
         finally:
             connection.close()
 
+    def name(self, root: str, name: str) -> None:
+        """Make the project of a directory with a name that a person can read.
+
+        Vis names a project after its directory, and a work directory has the id of a
+        commit. The name is only for a new project, so a rename in Vis stays.
+        """
+        self.call("POST", "/v1/projects/actions/ensure", {"root": root, "name": name})
+
     def cancel(self, session: str) -> None:
         """Cancel the turn that runs in a session. The gateway cancels a turn only by its id."""
         _, row = self.call("GET", f"/v1/sessions/{session}")

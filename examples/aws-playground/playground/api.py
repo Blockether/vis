@@ -132,6 +132,8 @@ class Runs:
         self.lock = threading.RLock()
         self.docs: dict[str, dict[str, Any]] = {}
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
+        # The worker sets this after the gateway starts: name the project of a directory.
+        self.name_project: Callable[[str, str], None] = lambda root, name: None
         raw, _ = aws.get("runs/index.json")
         self.index: list[dict[str, Any]] = json.loads(raw) if raw else []
 
@@ -212,6 +214,8 @@ class Runs:
                 release = sync.current() or self.release
                 doc["root"] = doc.get("root") or sync.clone(release, f"{release[:12]}-{run_id[:8]}", env)
                 self.write(doc)
+                # The run makes its session in this project. The time is UTC.
+                self.name_project(doc["root"], f"{doc['title']} · {time.strftime('%d %b %H:%M', time.gmtime(doc['created']))}")
                 self.processes[run_id] = subprocess.Popen([sys.executable, "-m", "playground.run", run_id], cwd=doc["root"], env=env)
                 log("run started", run_id, doc["workflow"], "start", doc["starts"])
 

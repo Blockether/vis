@@ -11,3 +11,8 @@ extensions:
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
     version: "1.16.10"
+  # The review app has no approved release: the commit is the exact version.
+  vis-review:
+    source: https://github.com/Blockether/vis
+    subdirectory: packages/vis-review
+    revision: aed7d500953303f9621f694699a1a226d1ee9cd4
