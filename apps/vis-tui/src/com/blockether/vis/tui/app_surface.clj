@@ -131,6 +131,83 @@
         (plan-rows view (assoc node :is-flipped (contains? folded [:picture (:id node)])) width)
         :else (plan-rows view node width)))
 
+(def ^:private surface-letters
+  "The letters that the surface gives to its own verbs. An automatic key takes none
+   of them, so no verb moves behind C-x without a decision of the app."
+  (into #{} (map str) "uwftiacvsrl"))
+
+(defn- choice-strip?
+  "True when group `node` holds only choice buttons: a strip of tabs."
+  [node]
+  (let [children (:children node)]
+    (and (= :group (:type node))
+         (< 1 (count children))
+         (every? #(and (= :button (:type %)) (some? (:is-selected %))) children))))
+
+(defn- buttons-in
+  "The buttons of `nodes` in reading order. A button of a strip of tabs has `::tab?`."
+  [nodes]
+  (mapcat (fn [node]
+            (cond (= :button (:type node)) [node]
+                  (choice-strip? node) (map #(assoc % ::tab? true) (:children node))
+                  :else (buttons-in (:children node))))
+          nodes))
+
+(defn- letter-key
+  "The key of an action `label` that `taken` does not hold: its first letter in lower
+   case, then in upper case, then each next letter. Nil when no letter is free."
+  [label taken]
+  (let [letters
+        (filter #(and (< (int %) 128) (Character/isLetterOrDigit (char %))) (str label))
+
+        candidates
+        (when-let [c (first letters)]
+          (distinct (concat [(str/lower-case c) (str/upper-case c)]
+                            (map #(str/lower-case %) (rest letters)))))]
+
+    (some #(when-not (contains? taken %) %) candidates)))
+
+(defn auto-keyed
+  "`view` with a key for each button, when the app declares no shortcut of its own:
+   in a terminal a key is better than a button row. A strip of tabs takes the digits
+   from 1, and an action takes a letter of its label. An app that declares shortcuts
+   keeps full control of its keys. A disabled button gets no shortcut, so it keeps
+   its row and still shows that it exists."
+  [view]
+  (if (or (seq (:shortcuts view)) (model/read-only? view))
+    view
+    (let [buttons
+          (buttons-in (:nodes view))
+
+          tab-keys
+          (into {}
+                (map-indexed (fn [i button]
+                               [(:id button) (str (inc (long i)))]))
+                (take 9 (filter ::tab? buttons)))
+
+          ;; Each button takes part, also a disabled one: a key stays with its button
+          ;; when another button turns on or off.
+          [_ keys]
+          (reduce (fn [[taken keys] button]
+                    (if-let [k (letter-key (:label button) taken)]
+                      [(conj taken k) (assoc keys (:id button) k)]
+                      [taken keys]))
+                  [(into surface-letters (vals tab-keys)) tab-keys]
+                  (remove ::tab? buttons))
+
+          shortcuts
+          (into []
+                (keep (fn [button]
+                        (when-let [k (and (not (:is-disabled button)) (get keys (:id button)))]
+                          {:key k :node-id (:id button)})))
+                buttons)]
+
+      (cond-> view
+        (seq shortcuts)
+        (assoc :shortcuts
+          shortcuts :auto-keys?
+          true)))))
+
 (defn- keyed-buttons
   "Remove buttons named by shortcuts before layout, including nested controls."
   [nodes covered]
@@ -1475,14 +1552,28 @@
                         (update :key-menu dissoc :prefix :pane-prefix)))))))
 
 (defn- footer
-  [state view rows]
-  (cond (:editor state) [["C-Enter/C-s" "save"] ["Esc" "cancel"]]
-        (:search state) [["Enter/S-Enter" "find"] ["Esc" "back"]]
-        (:prefix state) [["C-x" "surface key"] ["?" "keys"]]
-        :else (cond-> [[(hidden-key view "?" "?") "keys"]]
-                (enter-label state view (nth rows (:selected state) nil))
-                (conj [(hidden-key view "Enter" "Enter")
-                       (enter-label state view (nth rows (:selected state) nil))]))))
+  "The keys of the hint bar. The automatic keys of an app stand in the bar: their
+   buttons have no row, so no other place names them or shows the tab that holds.
+   `? keys` is then the last pair, the one that a narrow bar keeps."
+  [state view rows legend]
+  (let [enter
+        (when-let [label (enter-label state view (nth rows (:selected state) nil))]
+          [(hidden-key view "Enter" "Enter") label])
+
+        keys
+        [(hidden-key view "?" "?") "keys"]]
+
+    (cond (:editor state) [["C-Enter/C-s" "save"] ["Esc" "cancel"]]
+          (:search state) [["Enter/S-Enter" "find"] ["Esc" "back"]]
+          (:prefix state) [["C-x" "surface key"] ["?" "keys"]]
+          (and (:auto-keys? view) (vector? legend)) (-> legend
+                                                        (cond->
+                                                          enter
+                                                          (conj enter))
+                                                        (conj keys))
+          :else (cond-> [keys]
+                  enter
+                  (conj enter)))))
 
 (def ^:private editor-h "Rows of the editor field." 5)
 
@@ -1517,6 +1608,9 @@
   [state cols rows-count content-w bounds view]
   (let [{:keys [content-top content-h hint-row]}
         (dlg/dialog-layout bounds)
+
+        view
+        (auto-keyed view)
 
         width
         (max 20 (- (long (:inner-w bounds)) 3))
@@ -1810,7 +1904,7 @@
                         left
                         hint-row
                         inner-w
-                        (dlg/fit-hint-keeping-last (footer state view rows)
+                        (dlg/fit-hint-keeping-last (footer state view rows (:legend geom))
                                                    (max 0 (- (long inner-w) 2))))
     (if (:key-menu state) (paint-key-menu! g state geom) cursor)))
 

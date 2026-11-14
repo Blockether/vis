@@ -1403,6 +1403,11 @@
                    (mapv :text (:cells line))))
         (expect (= [8 8 8 8 8] (:cell-widths line)) "each cell asks for the width of its own text")
         (expect (= "[ Go 5 ]" (:text (last plan))) "a line with one child paints it alone")))
+  ;; User report 2026-11-14: a row of choice buttons (tabs) did not show the choice.
+  (it "a button that holds the choice shows its mark"
+      (let [tabs [{:id "run" :type :button :label "Run" :is-selected true}
+                  {:id "history" :type :button :label "History" :is-selected false}]]
+        (expect (= [["[ • Run ]" "[ History ]"]] (split-lines-of (layout-pane :wrap tabs) 60)))))
   (it "a button inside a grid or a wrap is still a control and a hit target"
       (doseq [direction [:grid :wrap]]
         (let [pane (layout-pane direction (buttons 6))
@@ -1425,6 +1430,24 @@
         (expect (= ["host" "port" "user"] (mapv :node-id edits)))
         (expect (= "port" (:id (lv/input-node pane "port"))))
         (expect (some #(= :live-edit (:kind %)) (regions-of [pane]))))))
+
+;; User report 2026-11-14: a counter said its tone by colour only, so a strip of
+;; counters read as plain numbers where the terminal has no colour.
+(defdescribe live-view-stat-tone-test
+             (it "a counter with a tone carries the mark of that tone, a quiet counter does not"
+                 (let [strip
+                       (fixture/stat "runs"
+                                     [{:id "passed" :label "passed" :value-text "8" :tone :ok}
+                                      {:id "failed" :label "failed" :value-text "1" :tone :error}
+                                      {:id "queued" :label "queued" :value-text "0" :tone :idle}
+                                      {:id "elapsed" :label "elapsed" :value-text "37m 20s"}])
+
+                       row
+                       (first (filter #(= :stats (:kind %))
+                                      (lv/plan (lv/opened (mounted {} strip)) 80)))]
+
+                   (expect (= ["✓ 8" "✗ 1" "0" "37m 20s"]
+                              (mapv #(apply str (map :text (:value %))) (:items row)))))))
 
 ;; Regression, vis session a64d44c2: `band-rows` measured the band as ONE display
 ;; row while `paint!` drew every row the view asked for, so the wheel owned only

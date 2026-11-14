@@ -273,6 +273,10 @@ An app key can use a key from the table above, for example **s** or an arrow. Th
 first to use the key from the table: **Ctrl+X s** still sends the app. The status line shows `C-x s`
 for each such key. A closed app does not use its own keys.
 
+An app that gives no keys gets keys from the terminal. Each tab takes a digit, and each other
+button takes a letter of its label. The hint bar at the bottom of the app shows these keys with
+their labels, and `•` marks the tab that is open. A button that is not available keeps its row.
+
 After Ctrl+S, the app shows `Saved · state N` when the gateway has saved your draft. After s, it
 shows `Sent` and the id of the receipt. A closed or archived app is read only. There, Enter and s
 show `Closed: read only`. [Live views](live-views.md#apps) explains apps for developers.

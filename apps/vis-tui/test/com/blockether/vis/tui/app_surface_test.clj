@@ -28,6 +28,11 @@
            {:id "notes" :type :thread :label "Notes" :messages []}]
    :submissions [{:id "sub-1" :status "delivered"}]})
 
+(def ^:private own-keys
+  "The shortcuts of an app that declares its keys. Such an app keeps a row for each
+   button without a key. An app with no shortcut gets a key for each button."
+  [{:key "!" :label "Ping" :action "ping"}])
+
 (defn- harness
   "Key driver that records every effect instead of calling the gateway."
   [v]
@@ -210,7 +215,7 @@
     (it "sends only from a submit button, also when its action is a string"
         (doseq [[action expected] [[:submit [:send :submit "go"]] ["submit" [:send :submit "go"]]
                                    [nil [:activate :activate "go"]]]]
-          (let [v (update view
+          (let [v (update (assoc view :shortcuts own-keys)
                           :nodes
                           conj
                           (cond-> {:id "go" :type :button :label "Go"}
@@ -474,7 +479,7 @@
   app-controls
   (it "presses buttons, cards and table rows and edits inputs with Enter"
       (let [unkeyed
-            (dissoc game :shortcuts)
+            (assoc game :shortcuts own-keys)
 
             {:keys [press start calls]}
             (game-harness unkeyed)
@@ -531,6 +536,7 @@
    :title "Todo"
    :seq 1
    :placement :attachment
+   :shortcuts own-keys
    :nodes [{:id "entry"
             :type :group
             :direction :row
@@ -1235,3 +1241,84 @@
                 :when (not (and (<= l x (min 119 (+ r 2))) (<= top y (min 45 (inc bottom)))))]
 
           (expect (= (get-in before [y x]) (get-in after [y x]))))))))
+
+(def ^:private workflows
+  "An app that declares no shortcut: a strip of tabs, a field and three actions."
+  {:id "wf"
+   :title "Workflows"
+   :seq 1
+   :placement :attachment
+   :nodes [{:id "tabs"
+            :type :group
+            :direction :wrap
+            :children [{:id "tab-run" :type :button :label "Run" :is-selected true}
+                       {:id "tab-history" :type :button :label "History" :is-selected false}]}
+           {:id "name" :type :plaintext :label "Name"}
+           {:id "actions"
+            :type :group
+            :direction :wrap
+            :children [{:id "new" :type :button :label "New run"}
+                       {:id "reset" :type :button :label "Reset"}
+                       {:id "delete" :type :button :label "Delete" :is-disabled true}]}]})
+
+(defn- button-ids
+  "The node id of each button that `rows` show, also in a row of side-by-side cells."
+  [rows]
+  (for [row
+        rows
+
+        entry
+        (or (get-in row [:entry :cells]) [(:entry row)])
+
+        :when (= :button (:kind entry))]
+
+    (:node-id entry)))
+
+(defdescribe
+  automatic-keys
+  ;; User report 2026-11-14: in the terminal, keys are better than buttons. An app
+  ;; with no shortcut of its own showed each button as a row.
+  (it "gives each button of an app without shortcuts a key, and the tabs the digits"
+      (let [geom
+            (surface/measure (surface/initial-state) 100 40 workflows)
+
+            {:keys [press start calls]}
+            (game-harness workflows)]
+
+        ;; `r` is the surface key of Reload, so Reset takes the next free letter.
+        (expect (= [["1" "• Run"] ["2" "History"] ["n" "New run"] ["R" "Reset"]] (:legend geom)))
+        ;; A disabled button has no key: it keeps its row and shows that it exists.
+        (expect (= ["delete"] (button-ids (:rows geom))))
+        (press start (ch \2))
+        (press start (ch \n))
+        (expect (= [[:activate {:action :activate :node-id "tab-history"}]
+                    [:activate {:action :activate :node-id "new"}]]
+                   @calls))))
+  (it "names the keys in the hint bar, with the tab that holds"
+      (let [st
+            (surface/initial-state)
+
+            geom
+            (surface/measure st 100 30 workflows)
+
+            shot
+            (cap/capture! {:cols 100
+                           :rows 30
+                           :paint! (fn [{:keys [g]}]
+                                     (p/set-colors! g t/dialog-fg t/dialog-bg)
+                                     (#'surface/paint! g st geom))})
+
+            lines
+            (map #(apply str (map :ch %)) (first (:frames shot)))]
+
+        (expect (nil? (:error shot)))
+        ;; The buttons have no row, so only the bar names their keys.
+        (expect (some #(re-find #"1 • Run  ·  2 History  ·  n New run  ·  R Reset" %) lines))))
+  (it "keeps the keys of the surface: Reload still answers r"
+      (let [{:keys [press start calls]} (game-harness workflows)]
+        (press start (ch \r))
+        (expect (= [[:reload]] @calls))))
+  (it "gives no key to an app that is closed"
+      (let [geom (surface/measure (surface/initial-state) 100 40 (assoc workflows :is-closed true))]
+        (expect (nil? (:legend geom)))
+        (expect (= 5 (count (button-ids (:rows geom))))))))

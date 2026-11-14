@@ -1012,10 +1012,11 @@
     :is-active (and is-interactive is-active)}])
 
 (defmethod node-rows :button
-  [{:keys [id label is-disabled variant]} {:keys [is-interactive]}]
+  [{:keys [id label is-disabled is-selected variant]} {:keys [is-interactive]}]
   [{:kind :button
     :node-id id
-    :text (str "[ " (flat-text label) " ]")
+    ;; The mark says the choice without colour, as the legend of an app does.
+    :text (str "[ " (when is-selected "• ") (flat-text label) " ]")
     :variant (or variant :secondary)
     :is-disabled (or is-disabled (not is-interactive))}])
 
@@ -1051,7 +1052,11 @@
     (let [cells
           (mapv (fn [{:keys [label value-text tone] :as stat}]
                   {:label (md-runs label)
-                   :value (md-runs value-text)
+                   ;; The mark of the tone leads the value, so the counter says its
+                   ;; state without colour. A quiet counter stays a bare number.
+                   :value (cond->> (md-runs value-text)
+                            (contains? #{:ok :warn :error :running} tone)
+                            (into [{:text (str (get tone-glyph tone) " ")}]))
                    :tone tone
                    :is-fresh (contains? fresh (:id stat))})
                 stats)

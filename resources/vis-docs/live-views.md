@@ -943,6 +943,10 @@ app = vis.attach(vis.ui.app(
 - `app.set_shortcuts([...])` replaces the list. `app.set_shortcuts([])` removes it.
 - Before you remove a node that a shortcut presses, remove that shortcut in the same patch.
 
+An app without shortcuts gets keys in the terminal. Each tab takes a digit, and each other button
+takes a letter of its label. The hint bar of the app shows these keys. When you declare one
+shortcut or more, the terminal adds no key.
+
 [Use an app](keyboard-shortcuts.md#use-an-app) lists the keys that the terminal keeps for itself.
 
 ### Get the events of an app

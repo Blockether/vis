@@ -87,7 +87,8 @@ count. A bar without a value shows work of unknown length.
 ### Stat
 
 `vis.ui.stat(id, stats=[...])` shows a strip of counters. Each item has `id`, `label`, `value_text`
-and an optional `tone`.
+and an optional `tone`. The Companion app shows each counter as a tile. A counter with the tone
+`running`, `ok`, `warn` or `error` shows the mark of that tone before its value.
 
 ```python
 vis.ui.stat("summary", stats=[{"id": "open", "label": "Open", "value_text": "3"},
@@ -210,6 +211,9 @@ length, 6 by default and 12 at most. The value is a `vis-secret:` handle.
 `vis.ui.select(name, options, label="Target")` takes exactly one option. An option is a string, or
 `vis.ui.option(value, label)` when the value and the shown text differ.
 
+The Companion app shows two to four short options as one strip. In a live view, it shows six or
+more options as a list that opens on a press. It shows other sets of options as rows.
+
 ### Multiselect
 
 `vis.ui.multiselect(name, options)` takes any number of options. The value is a list in the declared
@@ -236,6 +240,9 @@ client. The extension decides what a press does.
 - `action="submit"` collects the inputs of the nearest group of the button. Vis checks each
   required input and each validator first. Then it sends one `submit` event with all `values`.
 - `is_disabled=True` refuses presses. Change it with `view[id].set(is_disabled=False)`.
+- `is_selected=True` or `False` makes the button one choice of a set, such as a tab. Put only such
+  buttons in one `vis.ui.wrap` or `vis.ui.row`. The Companion app shows that group as a strip of
+  tabs. Each surface marks the choice that holds, and the terminal marks it with `•`.
 - `variant` sets the rank of the button: `primary`, `secondary` (the default) or `destructive`.
   Give the main action of a group `variant="primary"`. Give an action that deletes or discards
   data `variant="destructive"`. The terminal fills a primary button, so its rank does not need
