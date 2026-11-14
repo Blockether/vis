@@ -25,6 +25,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from blockether.vis._contracts import definition, schema, validate
 from blockether.vis.activity import ActivityProjection
+from blockether.vis.engine._groups import SessionGroup
 from blockether.vis.engine._models import Model, SessionModel
 from blockether.vis.views import EVENT_DEFINITIONS, InputView, LiveView, ViewEvent
 
@@ -169,6 +170,24 @@ def _set_read_timeout(raw, seconds: float) -> None:
     sock = getattr(getattr(getattr(raw, "fp", None), "raw", None), "_sock", None)
     if sock is not None:
         sock.settimeout(seconds)
+
+
+def _group_id(group: SessionGroup | str) -> str:
+    return group.id if isinstance(group, SessionGroup) else group
+
+
+def _project_scope(root: str | None, project_id: str | None, id_name: str) -> dict:
+    """Name one project by its folder or by its ID, in the field names of a route."""
+    if (root is None) == (project_id is None):
+        raise ValueError("give root or project_id, not both")
+    return {"root": root} if root is not None else {id_name: project_id}
+
+
+def _group(data: Any) -> SessionGroup:
+    try:
+        return SessionGroup.from_wire(data)
+    except ValueError:
+        raise ProtocolError("invalid session group response") from None
 
 
 def _field(data: Any, name: str, kind: type) -> Any:
@@ -510,6 +529,7 @@ class ExecutionLayer(ABC):
         *,
         provider: str | None = None,
         model: str | None = None,
+        group: SessionGroup | str | None = None,
         timeout=None,
         **options,
     ) -> Session:
@@ -519,6 +539,9 @@ class ExecutionLayer(ABC):
             provider: Optional provider ID from `models`. Give it with `model`.
             model: Optional model name. The pair pins the model of the session
                 before its first turn.
+            group: Optional `SessionGroup` or group ID. The new session is in that
+                group and in the project of the group. A `root` option still sets
+                the folder that the session works in.
             timeout: Optional timeout in seconds for this creation request.
             **options: Session creation fields from the gateway contract. For a
                 project path, pass `**layer.session_options(project)`. This
@@ -532,10 +555,114 @@ class ExecutionLayer(ABC):
             raise ValueError("provider and model must be given together")
         if provider is not None:
             options = {**options, "provider": provider, "model": model}
+        if group is not None:
+            options = {**options, "group_id": _group_id(group)}
         data = self._request(
             "POST", "/v1/sessions", body=options, timeout=timeout
         ).json()
         return self.session(_field(data, "id", str))
+
+    def groups(
+        self,
+        *,
+        root: str | None = None,
+        project_id: str | None = None,
+        archived: str = "exclude",
+    ) -> list[SessionGroup]:
+        """List the session groups of one project, newest activity first.
+
+        Name the project with `root`, its folder on the gateway machine, or with
+        `project_id`. `archived` is `exclude`, `include` or `only`. A folder
+        without a project has no groups.
+        """
+        query = {**_project_scope(root, project_id, "project"), "archived": archived}
+        rows = _field(self.get_session_groups(query=query), "groups", list)
+        return [_group(row) for row in rows]
+
+    def create_group(
+        self,
+        name: str,
+        *,
+        root: str | None = None,
+        project_id: str | None = None,
+        color: str | None = None,
+    ) -> SessionGroup:
+        """Create a session group in one project and return it.
+
+        With `root`, the gateway also creates the project of that folder when it
+        does not exist. `color` is a palette token. A second group with the same
+        name in the project raises `GatewayError` with the status 409. To get
+        the group that exists, use `group`.
+        """
+        body = {"name": name, **_project_scope(root, project_id, "project_id")}
+        if color is not None:
+            body["color"] = color
+        return _group(self.post_session_groups(body=body))
+
+    def group(
+        self,
+        name: str,
+        *,
+        root: str | None = None,
+        project_id: str | None = None,
+        color: str | None = None,
+    ) -> SessionGroup:
+        """Return the group `name` of one project. Create it when it does not exist.
+
+        An archived group with that name is returned as it is. `color` applies
+        only to a new group.
+        """
+
+        def find(same) -> SessionGroup | None:
+            rows = self.groups(root=root, project_id=project_id, archived="include")
+            return next((row for row in rows if same(row.name)), None)
+
+        found = find(name.__eq__)
+        if found is not None:
+            return found
+        try:
+            return self.create_group(
+                name, root=root, project_id=project_id, color=color
+            )
+        except GatewayError as error:
+            if error.status != 409:
+                raise
+            # Another program created the group between the read and the write.
+            found = find(name.__eq__) or find(
+                lambda held: held.casefold() == name.casefold()
+            )
+            if found is None:
+                raise
+            return found
+
+    def update_group(
+        self,
+        group: SessionGroup | str,
+        *,
+        name: str | None = None,
+        color: str | None = None,
+        archived: bool | None = None,
+    ) -> SessionGroup:
+        """Rename, recolor, archive or restore a group and return its new record."""
+        body: dict[str, JSONValue] = {
+            key: value
+            for key, value in (("name", name), ("color", color), ("archived", archived))
+            if value is not None
+        }
+        if not body:
+            raise ValueError("give name, color or archived")
+        return _group(self.patch_session_group(_group_id(group), body=body))
+
+    def delete_group(
+        self, group: SessionGroup | str, *, delete_sessions: bool = False
+    ) -> JSONValue:
+        """Delete a group. Its sessions stay in the project without a group.
+
+        With `delete_sessions=True`, the sessions of the group are deleted too.
+        The answer has `scattered_session_ids` and `deleted_session_ids`.
+        """
+        mode = "delete" if delete_sessions else "detach"
+        return self.delete_session_group(_group_id(group), query={"sessions": mode})
 
     def restore_session(
         self,
@@ -3561,6 +3688,15 @@ class Session:
         The engine rejects unknown or invalid fields.
         """
         return self._call("PATCH", body=fields)
+
+    def set_group(self, group: SessionGroup | str | None):
+        """Put this session in a group and return the session record.
+
+        The session moves to the project of the group. With None, the session
+        leaves its group and stays in its project.
+        """
+        group_id = None if group is None else _group_id(group)
+        return self._call("PUT", "/group", body={"group_id": group_id})
 
     def delete(self):
         """Ask the engine to delete this conversation and return its response.

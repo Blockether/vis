@@ -117,11 +117,11 @@ request.
 | List sessions | `client.list_sessions(...)` | `get_sessions(query=...)` |
 | List the turns that a fork can keep | — | `get_session_forks(sid)` |
 | Fork a session | `session.fork(...)` | `post_session_forks(sid, body=...)` |
-| List groups | — | `get_session_groups(query=...)` |
-| Create a group | — | `post_session_groups(body=...)` |
-| Change or archive a group | — | `patch_session_group(gid, body=...)` |
-| Delete a group | — | `delete_session_group(gid, query=...)` |
-| Move a session to a group | — | `put_session_group(sid, body=...)` |
+| List groups | `client.groups(...)` | `get_session_groups(query=...)` |
+| Create a group | `client.group(...)`, `client.create_group(...)` | `post_session_groups(body=...)` |
+| Change or archive a group | `client.update_group(...)` | `patch_session_group(gid, body=...)` |
+| Delete a group | `client.delete_group(...)` | `delete_session_group(gid, query=...)` |
+| Move a session to a group | `session.set_group(...)`, `client.create_session(group=...)` | `put_session_group(sid, body=...)` |
 | Rename, star or archive a session | `session.update(...)` | `patch_session(sid, body=...)` |
 | Archive many sessions | — | `post_sessions_archive(body=...)` |
 | Delete a session | `session.delete()` | `delete_session(sid)` |
@@ -984,22 +984,27 @@ A session without turns, or a turn of another session, returns 409.
 <div data-variant="python">
 
 ```python
-group = client.post_session_groups(
-    body={"name": "Release apps", "root": os.environ["VIS_PROJECT_ROOT"]}
-)
-client.put_session_group(session.id, body={"group_id": group["id"]})
+root = os.environ["VIS_PROJECT_ROOT"]
+group = client.group("Release apps", root=root)
+session.set_group(group)
+new_session = client.create_session(group=group, **client.session_options(root))
 ```
 
-A group belongs to one project. Name the project with `root` or `project_id`. A second group with the
-same name in a project raises `GatewayError` with the status 409.
+A group belongs to one project. Name the project with `root` or `project_id`. `group()` returns the
+group with that name and creates it when it does not exist. The answer is a `SessionGroup` with `id`,
+`name`, `project_id`, `color`, `session_count` and `archived_at`.
 
-- `get_session_groups(query={"root": path})` lists the groups of one project. Use `project` with a
-  project ID instead of `root`. `archived` is `exclude`, `include` or `only`. The group with the
-  newest activity comes first. A new group counts as new activity.
-- `patch_session_group(gid, body=...)` changes `name`, `color` or `archived`.
-- `delete_session_group(gid, query={"sessions": "detach"})` deletes a group and keeps its sessions.
-  With `"delete"`, the sessions are deleted too.
-- `put_session_group(sid, body={"group_id": None})` removes a session from its group.
+- `create_session(group=...)` creates a session in a group. The session is in the project of the
+  group. A `root` option can still give the session a different work folder.
+- `session.set_group(group)` moves a session to a group. `session.set_group(None)` removes it from
+  its group.
+- `create_group(name, root=path)` always creates a group. A second group with the same name in a
+  project raises `GatewayError` with the status 409.
+- `groups(root=path)` lists the groups of one project. `archived` is `exclude`, `include` or `only`.
+  The group with the newest activity comes first. A new group counts as new activity.
+- `update_group(group, ...)` changes `name`, `color` or `archived`.
+- `delete_group(group)` deletes a group and keeps its sessions. With `delete_sessions=True`, the
+  sessions are deleted too.
 
 </div>
 
@@ -1014,7 +1019,7 @@ vis_api -X PUT "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/group" \
 
 A group belongs to one project. Name the project with `root` or `project_id`. The first answer has
 the status 201 and the new group with its `id`. A second group with the same name in a project
-returns 409.
+returns 409. `POST /v1/sessions` with `group_id` creates a session in a group.
 
 - `GET /v1/session-groups?root=/srv/projects/shop` lists the groups of one project. Use `project`
   with a project ID instead of `root`. `archived` is `exclude`, `include` or `only`. The group with

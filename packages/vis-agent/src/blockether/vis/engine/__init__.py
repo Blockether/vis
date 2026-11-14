@@ -33,6 +33,7 @@ from ._council import (
     CouncilSource,
     CouncilThread,
 )
+from ._groups import SessionGroup
 from ._install import InstallError, ensure_installed, install
 from ._local import LocalEngine
 from ._models import Model, SessionModel
@@ -66,6 +67,7 @@ __all__ = [
     "Query",
     "Response",
     "Session",
+    "SessionGroup",
     "SessionModel",
     "SoundPreset",
     "Sounds",

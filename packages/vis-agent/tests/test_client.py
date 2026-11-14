@@ -1405,3 +1405,55 @@ def test_global_apps_read_and_act_on_the_global_routes():
         ("GET", "/v1/apps/app-g"),
         ("POST", "/v1/apps/app-g/actions"),
     ]
+
+
+def test_group_is_get_or_create_and_sessions_join_it():
+    held = []
+    lost_race = {"left": 1}
+
+    def respond(method, path, body):
+        route = urlsplit(path).path
+        if route == "/v1/session-groups" and method == "GET":
+            if lost_race["left"]:
+                return 200, {"project_id": "P", "groups": []}
+            return 200, {"project_id": "P", "groups": held}
+        if route == "/v1/session-groups":
+            request = json.loads(body)
+            if any(group["name"] == request["name"] for group in held):
+                lost_race["left"] = 0
+                return 409, {"error": {"code": "group-exists", "message": "x"}}
+            held.append({"id": "G1", "project_id": "P", "archived_at": None, **request})
+            lost_race["left"] = 0
+            return 201, held[-1]
+        if route == "/v1/sessions":
+            return 201, {"id": "S1"}
+        return 200, {"id": "S1", **json.loads(body)}
+
+    with endpoint(respond) as (url, calls):
+        client = GatewayClient(url)
+        group = client.group("Workflows", root="/srv/shop", color="blue")
+        assert (group.id, group.name, group.color) == ("G1", "Workflows", "blue")
+        assert json.loads(calls[-1][3]) == {
+            "name": "Workflows",
+            "root": "/srv/shop",
+            "color": "blue",
+        }
+        # Another program created the group after the read: the 409 gives that group.
+        lost_race["left"] = 1
+        assert client.group("Workflows", root="/srv/shop") == group
+        assert [
+            parse_qs(urlsplit(path).query)
+            for method, path, _, _ in calls
+            if method == "GET"
+        ][-1] == {"root": ["/srv/shop"], "archived": ["include"]}
+        session = client.create_session(group=group, root="/srv/run-1", channel="app")
+        assert json.loads(calls[-1][3]) == {
+            "group_id": "G1",
+            "root": "/srv/run-1",
+            "channel": "app",
+        }
+        assert session.set_group(None)["group_id"] is None
+        assert calls[-1][:2] == ("PUT", "/v1/sessions/S1/group")
+        assert client.session("S1").set_group("G1")["group_id"] == "G1"
+        with pytest.raises(ValueError, match="root or project_id"):
+            client.groups()
