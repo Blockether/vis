@@ -318,10 +318,38 @@
         (vector? v) (mapv durable-value v)
         :else v))
 
-(def ^:private MAX_TURN_RESUMES
-  "How many times a gateway start resumes one parked turn. A turn over this limit
-   becomes interrupted, so a turn that stops each gateway cannot loop."
+(def ^:private MAX_TURN_CRASH_RESUMES
+  "How many times in sequence a gateway start resumes one turn that no gateway
+   parked. A turn over this limit becomes interrupted, so a turn that stops each
+   gateway cannot loop."
   3)
+
+(defn- turn-resume-limit-ms
+  "Milliseconds of the `turn_resume_limit` setting, such as \"8 hours\". nil means
+   no limit."
+  []
+  (when-let [[_ n] (re-matches #"(\d+) hours?" (str (toggles/value-of "turn_resume_limit")))]
+    (* (long (parse-long n)) 60 60 1000)))
+
+(defn- resumable-row?
+  "True when a gateway start can still resume the parked turn of `row`. A drain can
+   park a turn any number of times. The turn stops when it is older than the
+   `turn_resume_limit` setting, or when [[MAX_TURN_CRASH_RESUMES]] gateways in
+   sequence stopped without a park."
+  [row]
+  (let [{:keys [crashes turn]}
+        (:payload row)
+
+        limit
+        (turn-resume-limit-ms)
+
+        started
+        (:started_at turn)]
+
+    (and (< (long (or crashes 0)) (long MAX_TURN_CRASH_RESUMES))
+         (not (and limit
+                   (nat-int? started)
+                   (>= (- (long (util/now-ms)) (long started)) (long limit)))))))
 
 ;; nil, or `{:started-at ms}` while this gateway drains its turns before a stop.
 (defonce ^:private drain-state (atom nil))
@@ -1148,8 +1176,7 @@
 (defn- resumable-parked-rows
   "The parked gateway turn rows in `db` that a start can still resume."
   [db]
-  (try (filterv #(and (= "parked" (:kind %))
-                      (< (long (get-in % [:payload :resumes] 0)) MAX_TURN_RESUMES))
+  (try (filterv #(and (= "parked" (:kind %)) (resumable-row? %))
          (:turns (persistance/db-list-pending-turns db)))
        (catch Throwable t (tel/log! :warn ["gateway: parked turns unreadable" (ex-message t)]) [])))
 
@@ -5118,7 +5145,7 @@
 (defn- store-resume-row!
   "Store the row that lets the next gateway process resume the running turn `tid`:
    the turn record, the `launch` inputs, `clean?` and the resume count. A clean turn
-   stopped at an iteration boundary."
+   stopped at an iteration boundary. The row counts no crash: this process wrote it."
   [sid tid launch clean?]
   (let [turn (turn-record sid tid)]
     (persistance/db-store-parked-turn!
@@ -5128,7 +5155,8 @@
        :payload {:turn (turn-payload (apply dissoc turn ::resumes turn-execution-keys))
                  :launch (turn-payload (update launch :engine-opts dissoc :resume :hooks))
                  :clean? (boolean clean?)
-                 :resumes (long (or (::resumes turn) 0))}}
+                 :resumes (long (or (::resumes turn) 0))
+                 :crashes 0}}
       (bus/process-stamp))))
 
 (defn- park-turn!
@@ -6423,9 +6451,7 @@
          (try (agents/reconcile-orphans!
                 db
                 (concat (keys live)
-                        (keep #(when-not (and (= "parked" (:kind %))
-                                              (>= (long (get-in % [:payload :resumes] 0))
-                                                  MAX_TURN_RESUMES))
+                        (keep #(when-not (and (= "parked" (:kind %)) (not (resumable-row? %)))
                                  (:session-id %))
                               (:turns (persistance/db-list-pending-turns db)))))
               (catch Throwable t
@@ -6476,16 +6502,20 @@
 
 (defn- resume-parked-turn!
   "Start the parked turn of `row` again in this process. Rewrite the row first: it
-   names this process, counts the resume and marks the stop unclean. A crash during
-   the resume then continues from the transcript. Delete the row of a missing turn,
-   of a turn that does not run or of a turn over [[MAX_TURN_RESUMES]]. Returns
+   names this process, counts the resume and marks the stop unclean. It also counts
+   a crash, and the next park sets that count back to zero. A crash during the
+   resume then continues from the transcript. Delete the row of a missing turn, of
+   a turn that does not run or of a turn that [[resumable-row?]] refuses. Returns
    true when the turn started."
-  [db {:keys [turn-id session-id payload]}]
-  (let [{:keys [turn launch clean? resumes]}
+  [db {:keys [turn-id session-id payload] :as row}]
+  (let [{:keys [turn launch clean? resumes crashes]}
         payload
 
         resumes
         (long (or resumes 0))
+
+        crashes
+        (long (or crashes 0))
 
         stored
         (when (lp/by-id session-id) (persistance/db-read-session-turn db session-id turn-id))
@@ -6498,7 +6528,7 @@
 
     (cond (nil? stored) (drop! "missing turn")
           (not= :running (:status stored)) (drop! "turn does not run")
-          (>= resumes (long MAX_TURN_RESUMES)) (drop! "resume limit")
+          (not (resumable-row? row)) (drop! "resume limit")
           :else (let [token
                       (cancellation/cancellation-token)
 
@@ -6531,7 +6561,8 @@
                                                        {:turn-id turn-id
                                                         :payload (assoc payload
                                                                    :clean? false
-                                                                   :resumes (inc resumes))}
+                                                                   :resumes (inc resumes)
+                                                                   :crashes (inc crashes))}
                                                        (bus/process-stamp))
                     (tel/log! :info
                               ["gateway: parked turn resumed" turn-id

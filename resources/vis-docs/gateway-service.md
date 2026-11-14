@@ -120,7 +120,9 @@ Know these limits before you rely on a drain:
 - A turn stopped inside a step can have run part of a tool call. The model gets a note to check the
   current state before it repeats a change. Vis does not repeat or undo the tool call itself.
 - A turn in the `running` count also continues in the next gateway, as a turn stopped inside a step.
-- A turn that stops in three gateways in a row ends as interrupted.
+- A turn can continue in any number of gateways until it is older than the **Turn resume limit**
+  setting, `turn_resume_limit`. The default is 8 hours. An older turn ends as interrupted.
+- A turn that stops three gateways in a row without a drain also ends as interrupted.
 - You cannot cancel a drain. Stop the gateway after it.
 
 A gateway that ends without a drain, for example after a crash, keeps its running turns and its

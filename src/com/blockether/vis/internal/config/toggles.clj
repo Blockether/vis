@@ -986,6 +986,21 @@
                        :owner :vis
                        :group :session
                        :persist? true})
+    ;; A host that replaces its gateway on a schedule drains it each time, and a
+    ;; count of three resumes ended a long turn after about 40 minutes there. The
+    ;; age of the turn is the limit instead.
+    (register-toggle!
+      {:id "turn_resume_limit"
+       :label "Turn resume limit"
+       :description
+       "Continue a turn in a new gateway until the turn is older than this. An older turn ends as interrupted."
+       :type :enum
+       :choices ["1 hour" "4 hours" "8 hours" "24 hours" "no limit"]
+       :default "8 hours"
+       :scopes ["global"]
+       :owner :vis
+       :group :session
+       :persist? true})
     ;; The gateway plays the sounds on its own machine (`gateway.sounds`), so these are
     ;; machine settings. An empty file row plays the bundled sound of that cue.
     (register-toggle!

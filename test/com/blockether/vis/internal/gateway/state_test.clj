@@ -8810,15 +8810,44 @@
    :turn-order ["r1"]})
 
 (defn- parked-row
-  [store sid tid resumes]
-  (persistance/db-store-parked-turn! store
-                                     sid
-                                     {:turn-id tid
-                                      :payload {:turn {:request "busy" :idempotency_key "k"}
-                                                :launch {:request "busy" :engine-opts {}}
-                                                :clean? true
-                                                :resumes resumes}}
-                                     {:owner_pid 1 :owner_started_at 1}))
+  "Store a parked row for `tid`. `extra` is merged into its payload, and
+   `started-at` is the start time of its turn."
+  ([store sid tid extra] (parked-row store sid tid extra nil))
+  ([store sid tid extra started-at]
+   (persistance/db-store-parked-turn! store
+                                      sid
+                                      {:turn-id tid
+                                       :payload (merge {:turn (cond-> {:request "busy"
+                                                                       :idempotency_key "k"}
+                                                                started-at
+                                                                (assoc :started_at started-at))
+                                                        :launch {:request "busy" :engine-opts {}}
+                                                        :clean? true}
+                                                       extra)}
+                                      {:owner_pid 1 :owner_started_at 1})))
+
+(defn- restore-count
+  "The `:resumed` count of a gateway start over one parked row with `extra` and
+   `started-at`, and the rows that stay."
+  [extra started-at]
+  (let [store (sqlite/db-open! :memory)]
+    (try (let [sid (str (h/store-session! store {:channel :api}))
+               tid (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "busy"}))]
+
+           (parked-row store sid tid extra started-at)
+           (with-redefs [lp/db-info (constantly store)
+                         lp/by-id (constantly {:id sid})]
+
+             (let [resumed (with-redefs-fn {#'state/launch-turn-worker! (fn [& _]
+                                                                          nil)}
+                             #(:resumed (state/restore-pending-turns!)))
+                   rows (count (:turns (persistance/db-list-pending-turns store)))]
+
+               (forget-session! sid)
+               [resumed rows])))
+         (finally (sqlite/db-close! store)))))
 
 (defdescribe
   drain-test
@@ -8884,7 +8913,7 @@
                                                           {:parent-session-id sid
                                                            :user-request "busy"}))]
 
-             (parked-row store sid tid 0)
+             (parked-row store sid tid {:resumes 0})
              (expect
                (= 0 (lp/db-sweep-orphaned-running-turns! store (#'state/parked-turn-ids store))))
              (with-redefs [lp/db-info
@@ -8929,7 +8958,7 @@
                                                          {:parent-session-id sid
                                                           :user-request "busy"}))]
 
-            (parked-row store sid tid 0)
+            (parked-row store sid tid {:resumes 0})
             (with-redefs [lp/db-info
                           (constantly store)
 
@@ -9070,7 +9099,13 @@
                    (expect (= ["r1" true] [(:turn-id row) (get-in row [:payload :clean?])])))
                  (forget-session! sid)))
              (finally (sqlite/db-close! store)))))
-  (it "interrupts a parked turn over the resume limit"
+  (it "resumes a drained turn any number of times inside the time limit"
+      (let [hour (* 60 60 1000)]
+        (expect (= [1 1] (restore-count {:resumes 40 :crashes 0} (- (util/now-ms) hour))))
+        (expect (= [0 0] (restore-count {:resumes 2 :crashes 0} (- (util/now-ms) (* 9 hour)))))
+        (binding [toggles/*overrides* {"turn_resume_limit" "no limit"}]
+          (expect (= [1 1] (restore-count {:resumes 2 :crashes 0} (- (util/now-ms) (* 9 hour))))))))
+  (it "interrupts a turn that stopped three gateways without a park"
       (let [store
             (sqlite/db-open! :memory)
 
@@ -9085,7 +9120,7 @@
                                                             {:parent-session-id sid
                                                              :user-request "busy"}))]
 
-               (parked-row store sid tid 3)
+               (parked-row store sid tid {:resumes 3 :crashes 3})
                (expect
                  (= 1 (lp/db-sweep-orphaned-running-turns! store (#'state/parked-turn-ids store))))
                (with-redefs [lp/db-info
