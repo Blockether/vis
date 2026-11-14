@@ -11,6 +11,7 @@ import base64
 import http.client
 import json
 import queue
+import re
 import threading
 import time
 from typing import Any
@@ -22,6 +23,8 @@ from playground.gateway import HOST, PORT, Gateway
 
 # An event stream collects its bytes for this time, then writes one S3 object.
 COLLECT_S, PAUSE_S = 0.2, 0.15
+# The read of one turn. The gateway of Vis 0.5.17 knows only the turns of its own process.
+TURN = re.compile(r"/v1/sessions/([0-9a-f-]{36})/turns/([0-9a-f-]{36})")
 
 
 class Relay:
@@ -56,6 +59,13 @@ class Relay:
                 aws.client("sqs").delete_message(QueueUrl=QUEUE, ReceiptHandle=receipt)
             except aws.ClientError as failure:
                 log("delete message failed", repr(failure))
+
+    def settle(self, timeout_s: float) -> None:
+        """End each open event stream and wait until each call wrote its last part."""
+        self.closing = True
+        end = time.time() + timeout_s
+        while self.inflight and time.time() < end:
+            time.sleep(0.1)
 
     def done(self, rid: str) -> None:
         """Remove the message of an answered call from the queue."""
@@ -101,11 +111,32 @@ class Relay:
             answer = connection.getresponse()
             head = {"status": answer.status, "headers": [[k, v] for k, v in answer.getheaders() if k.lower() not in wire.HOP]}
             if "text/event-stream" not in (answer.getheader("content-type") or ""):
-                aws.put(f"relay/{rid}/0", wire.LAST + wire.frame(head, answer.read()))
+                data = answer.read()
+                if answer.status == 404 and call["method"] == "GET" and (turn := TURN.fullmatch(call["path"].partition("?")[0])):
+                    head, data = self.stored(turn[1], turn[2], headers) or (head, data)
+                aws.put(f"relay/{rid}/0", wire.LAST + wire.frame(head, data))
                 return
             self.stream(call, head, answer)
         finally:
             connection.close()
+
+    def stored(self, session: str, turn: str, headers: dict[str, str]) -> tuple[dict[str, Any], bytes] | None:
+        """Answer the read of a turn that a gateway of an earlier worker ran.
+
+        The turn list of the session has each stored turn. Without this answer, a
+        client that waits for a turn gets 404 when the turn ends at a worker change.
+        """
+        connection = http.client.HTTPConnection(HOST, PORT, timeout=30)
+        try:
+            connection.request("GET", f"/v1/sessions/{session}/turns", None, headers)
+            answer = connection.getresponse()
+            rows = json.loads(answer.read()).get("turns", []) if answer.status == 200 else []
+        except (OSError, ValueError, AttributeError, http.client.HTTPException):
+            return None
+        finally:
+            connection.close()
+        found = next((row for row in rows if row.get("turn_id") == turn), None)
+        return found and ({"status": 200, "headers": [["content-type", "application/json"]]}, json.dumps(found).encode())
 
     def stream(self, call: dict[str, Any], head: dict[str, Any], answer: http.client.HTTPResponse) -> None:
         """Write an event stream as S3 objects until it ends or the deadline comes."""

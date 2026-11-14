@@ -31,7 +31,7 @@ MARGIN = int(ENV.get("VIS_HANDOFF_MARGIN_S", "90"))
 LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - MARGIN
 IDLE_S = int(ENV.get("VIS_IDLE_S", "300"))
 # A relayed event stream ends after STREAM_S; the client connects again from its cursor.
-STREAM_S = int(ENV.get("VIS_STREAM_S", "600"))
+STREAM_S = int(ENV.get("VIS_STREAM_S", "870"))
 # The front waits ANSWER_S for the first part of an answer.
 ANSWER_S = 55
 LEASE, LEASE_TTL = "lease.json", 90

@@ -101,10 +101,12 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
         api.runs.stop()
         engine.stop(kill=True)
         return {"worker": "lost the lease"}
-    relay.closing = True
     api.runs.stop()
+    # The event streams stay open while the gateway drains: a client sees the end of a
+    # turn that completes now. A later gateway does not send those events again.
     parked = engine.drain(max(5.0, min(45.0, context.remaining_s() - 40)))
     engine.stop()
+    relay.settle(8.0)
     pool.shutdown(wait=False, cancel_futures=True)
     broker.stop()
     state.save(held)

@@ -20,6 +20,7 @@ import stat
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import blockether.vis.extension as vis
@@ -36,20 +37,25 @@ _lock = threading.Lock()
 _panels = {}
 
 
-def api(method, path, body=None, timeout=120):
-    """Call the playground API and return the JSON answer."""
+def call(method, path, body=None, timeout=120):
+    """Call the playground API and return the bytes of the answer."""
     data = None if body is None else json.dumps(body).encode()
     address = os.environ["PLAYGROUND_BROKER"] + "/play/api/" + path
     request = urllib.request.Request(address, data, {"content-type": "application/json"}, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as answer:
-            return json.loads(answer.read() or b"null")
+            return answer.read()
     except urllib.error.HTTPError as failure:
         try:
             message = json.loads(failure.read())["error"]
         except (ValueError, KeyError, TypeError):
             message = f"HTTP {failure.code}"
         raise RuntimeError(message) from None
+
+
+def api(method, path, body=None, timeout=120):
+    """Call the playground API and return the JSON answer."""
+    return json.loads(call(method, path, body, timeout) or b"null")
 
 
 def _session_id():
@@ -209,6 +215,14 @@ def render_artifact(phase, args, kwargs, result, error):
     return _present(f"Save artifact {name}", f"Saved {result['size']} bytes to S3", block, outcome="saved", handle_id=f"artifact:{name}")
 
 
+def render_read(phase, args, kwargs, result, error):
+    name = (args[0] if args else kwargs.get("name")) or "artifact"
+    if phase != "success":
+        return _failure(f"Read artifact {name}", error) if phase == "failure" else None
+    block = vis.ActivityMarkdown(result) if name.endswith(".md") else vis.ActivityCode(result)
+    return _present(f"Read artifact {name}", f"{len(result)} characters from S3", block, handle_id=f"artifact:{name}")
+
+
 def render_artifacts(phase, args, kwargs, result, error):
     if phase != "success":
         return _failure("List artifacts", error) if phase == "failure" else None
@@ -264,6 +278,11 @@ class Playground:
     def artifacts(self) -> list:
         """List the artifacts of this session."""
         return api("GET", f"artifacts?session={vis.session.id}")["artifacts"]
+
+    @vis.method(activity=vis.Activity(label="Read artifact", render=render_read, show_start=False))
+    def read_artifact(self, name: str) -> str:
+        """Return the text of one artifact of this session."""
+        return call("GET", f"artifacts/{vis.session.id}/{urllib.parse.quote(name)}").decode()
 
     @vis.method(tag="external", activity=vis.Activity(label="Publish to GitHub", render=render_publish))
     def publish(self, message: str) -> dict:
@@ -375,6 +394,7 @@ def open_workflows(ctx):
 PROMPT = """The playground runs on AWS Lambda. The project directory is a clone of the GitHub repository of the playground.
 - There is no internet access. Do not install packages.
 - `playground.save_artifact(name, content)` saves a document such as SPEC.md. Use it for each document that a person asks for.
+- `playground.artifacts()` lists the saved documents and `playground.read_artifact(name)` returns the text of one.
 - `playground.publish(message)` commits the project and pushes it to GitHub. Use it only when a person asks to publish.
 - `playground.workflows()` and `playground.run_workflow(name, input)` list and start the workflows."""
 

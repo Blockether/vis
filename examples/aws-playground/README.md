@@ -135,7 +135,8 @@ completed activity returns its recorded result.
 A worker stops 90 seconds before the Lambda time limit. It parks the turn that runs, and
 the gateway of the next worker continues that turn. The run records the number of session
 turns before each request. Thus the new run process waits for the turn that continues
-and sends no second request. A run can use at most 12 processes.
+and sends no second request. A run can use at most 12 processes. Vis continues one turn
+in at most three new workers, so keep a turn shorter than about 40 minutes.
 
 ```python
 from typing import Literal
@@ -186,6 +187,7 @@ The first worker copies them to S3. After that, the page edits the copies in S3.
 | `playground.run_status(run_id)` | The state of a run |
 | `playground.save_artifact(name, content)` | A document in S3 |
 | `playground.artifacts()` | The documents of the session |
+| `playground.read_artifact(name)` | The text of one document |
 | `playground.publish(message)` | A push to GitHub |
 
 In Vis web, the command `/workflows` opens a panel that starts a workflow and shows its runs.
@@ -199,6 +201,13 @@ payment policy and selects one of three next steps.
 ```sh
 PLAYGROUND_URL=https://<id>.lambda-url.<region>.on.aws PLAYGROUND_PASSWORD=... python decide.py
 ```
+
+A script that waits for a long turn must know one rule. The `front` function ends an
+event stream after 870 seconds, and a worker ends its streams when it stops. The Vis web
+app connects again. `Turn.wait` and `Session.run` of the SDK 0.5.17 connect again only
+three times, then they raise `TransportError`. The turn continues in the stack: read
+`session.turns()`, or call `wait` again. A later SDK release keeps the wait while the
+stream brings new events.
 
 ## Security
 
