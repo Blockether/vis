@@ -3,10 +3,13 @@ import {
   Banner,
   Button,
   Checkbox,
+  ChoiceList,
   ChoiceRow,
+  ChoiceSegments,
   DialogFrame,
   Input,
   Modal,
+  Select,
   TextButton,
   ViewHeading,
   ViewLayout,
@@ -448,6 +451,22 @@ function HumanInputFieldLabel({ field }: { field: HumanInputField }) {
   );
 }
 
+/** From this many choices on, a choice in a view folds into one line that opens a list. */
+const FOLDED_CHOICES = 6;
+
+/**
+ * A choice of two to four short words fits one strip of cells, also on a phone. A long
+ * word needs a row of its own.
+ */
+function isShortChoice(options: readonly { label: string }[]): boolean {
+  return (
+    options.length >= 2 &&
+    options.length <= 4 &&
+    options.every((option) => option.label.length <= 14) &&
+    options.reduce((sum, option) => sum + option.label.length, 0) <= 32
+  );
+}
+
 function FieldShell({
   field,
   error,
@@ -503,6 +522,7 @@ export function HumanInputFieldRow({
   values,
   errors,
   disabled,
+  isCompact = false,
   onChange,
   onSubmit,
 }: {
@@ -510,6 +530,11 @@ export function HumanInputFieldRow({
   values: HumanInputValues;
   errors: Record<string, string>;
   disabled: boolean;
+  /**
+   * A form in a view stands among other things, so a long choice folds into one line.
+   * A question shows every choice: the choices are the question.
+   */
+  isCompact?: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
   onSubmit: () => void;
 }) {
@@ -560,6 +585,7 @@ export function HumanInputFieldRow({
           {(field.children ?? []).map((child, at) => (
             <HumanInputFieldRow
               key={`${at}:${child.id}`}
+              isCompact={isCompact}
               field={child}
               values={values}
               errors={errors}
@@ -584,6 +610,7 @@ export function HumanInputFieldRow({
       >
         <Checkbox
           id={controlId}
+          variant="bare"
           isOn={on}
           disabled={disabled}
           aria-required={field.is_required || undefined}
@@ -599,9 +626,41 @@ export function HumanInputFieldRow({
 
   if (field.type === 'select' || field.type === 'multiselect') {
     const isMulti = field.type === 'multiselect';
+    const picked = typeof value === 'string' ? value : '';
+    // Three faces for one exclusive choice. A few short words are a strip of cells.
+    // Many choices in a view fold into one line that opens a list. The rest is a list.
+    if (!isMulti && isCompact && options.length >= FOLDED_CHOICES) {
+      return (
+        <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
+          <Select
+            id={controlId}
+            className="w-full sm:max-w-sm"
+            disabled={disabled}
+            aria-describedby={describedBy}
+            options={options}
+            value={picked}
+            placeholder="Choose one"
+            onValueChange={(next) => onChange(field.id, next)}
+          />
+        </FieldShell>
+      );
+    }
+    if (!isMulti && isShortChoice(options)) {
+      return (
+        <FieldShell field={field} {...(error ? { error } : {})}>
+          <ChoiceSegments
+            aria-label={field.label}
+            disabled={disabled}
+            options={options}
+            value={picked}
+            onValueChange={(next) => onChange(field.id, next)}
+          />
+        </FieldShell>
+      );
+    }
     return (
       <FieldShell field={field} {...(error ? { error } : {})}>
-        <div className="space-y-1" role={isMulti ? 'group' : 'radiogroup'} aria-label={field.label}>
+        <ChoiceList role={isMulti ? 'group' : 'radiogroup'} aria-label={field.label}>
           {options.map((option) => {
             const on = isMulti ? chosen.includes(option.value) : value === option.value;
             return isMulti ? (
@@ -636,7 +695,7 @@ export function HumanInputFieldRow({
               </ChoiceRow>
             );
           })}
-        </div>
+        </ChoiceList>
       </FieldShell>
     );
   }
@@ -646,7 +705,7 @@ export function HumanInputFieldRow({
     const current = typeof value === 'number' ? value : min;
     return (
       <FieldShell field={field} {...(error ? { error } : {})}>
-        <div className="flex items-center gap-3">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
           <RangeSlider
             disabled={disabled}
             min={min}
@@ -654,18 +713,22 @@ export function HumanInputFieldRow({
             step={step}
             value={current}
             aria-label={field.label}
-            className="flex-1"
             onChange={(event) =>
               onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))
             }
           />
-          <span className="shrink-0 font-mono text-ui tabular-nums text-white">
+          <output className="min-w-[2ch] text-right font-mono text-ui font-bold tabular-nums text-white">
             {current}
-          </span>
+          </output>
+          {/* The ends of the track carry its bounds; the slider itself already names them. */}
+          <p
+            aria-hidden="true"
+            className="flex justify-between font-mono text-meta tabular-nums text-dialog-hint"
+          >
+            <span>{min}</span>
+            <span>{max}</span>
+          </p>
         </div>
-        <p className="font-mono text-meta text-dialog-hint">
-          {min} to {max}
-        </p>
       </FieldShell>
     );
   }
@@ -702,7 +765,7 @@ export function HumanInputFieldRow({
           aria-required={field.is_required}
           {...(field.max_length ? { maxLength: field.max_length } : {})}
           {...(field.placeholder ? { placeholder: field.placeholder } : {})}
-          className="w-full resize-y border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted"
+          className="block w-full resize-y border border-edge bg-input px-2.5 py-1.5 font-mono text-ui text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted sm:px-3"
           onChange={(event) => onChange(field.id, event.target.value)}
         />
       </FieldShell>

@@ -14,7 +14,9 @@ import {
   Checkbox,
   Chip,
   ChoiceCell,
+  ChoiceList,
   ChoiceRow,
+  ChoiceSegments,
   CloseButton,
   ConfirmRow,
   CopyChip,
@@ -547,11 +549,12 @@ export const Toasts: Story = {
 function ChoiceRowDemo() {
   const [picked, setPicked] = useState('production');
   const [any, setAny] = useState<string[]>(['tests']);
+  const [isAlone, setIsAlone] = useState(true);
   const toggle = (value: string) =>
     setAny((on) => (on.includes(value) ? on.filter((v) => v !== value) : [...on, value]));
   return (
     <div className="flex w-full flex-col gap-3">
-      <div className="flex flex-col gap-1" role="radiogroup" aria-label="Environment">
+      <ChoiceList role="radiogroup" aria-label="Environment">
         {['production', 'staging'].map((value) => (
           <ChoiceRow
             key={value}
@@ -568,8 +571,8 @@ function ChoiceRowDemo() {
             {value}
           </ChoiceRow>
         ))}
-      </div>
-      <div className="flex flex-col gap-1" role="group" aria-label="What to run">
+      </ChoiceList>
+      <ChoiceList role="group" aria-label="What to run">
         {['tests', 'lint'].map((value) => (
           <Checkbox key={value} isOn={any.includes(value)} onClick={() => toggle(value)}>
             {value}
@@ -578,7 +581,19 @@ function ChoiceRowDemo() {
         <Checkbox isOn={false} disabled>
           Request a signing key that is unavailable on this device
         </Checkbox>
-      </div>
+      </ChoiceList>
+      <ChoiceSegments
+        aria-label="Environment, as a strip"
+        options={[
+          { value: 'production', label: 'Production' },
+          { value: 'staging', label: 'Staging' },
+        ]}
+        value={picked}
+        onValueChange={setPicked}
+      />
+      <Checkbox variant="bare" isOn={isAlone} onClick={() => setIsAlone((on) => !on)}>
+        Tell me when it ends
+      </Checkbox>
     </div>
   );
 }
@@ -586,7 +601,7 @@ function ChoiceRowDemo() {
 export const Selection: Story = {
   render: () => (
     <Sheet>
-      <Group of="ChoiceRow and Checkbox — choose one or any">
+      <Group of="ChoiceList, ChoiceSegments and Checkbox — choose one or any">
         <ChoiceRowDemo />
       </Group>
       <Group of="ConfirmRow — the question, and what committing costs">

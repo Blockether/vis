@@ -2,9 +2,10 @@
 // The sheet opens in `Modal`, which PORTALS into the document — there is no
 // document in the `node` environment, and a portal cannot be rendered to a
 // string. Every case here renders and then reads the body it landed in.
-import { cleanup, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { HumanInputSheet } from './HumanInputPrompt';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import { HumanInputFieldRow, HumanInputSheet } from './HumanInputPrompt';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import fixture from '../lib/human-input.fixture.json';
 import {
@@ -55,6 +56,66 @@ function element(html: string, marker: string): string {
   }
   throw new Error(`unterminated element for ${marker}`);
 }
+
+/** One exclusive choice with `count` options, the first `count` of these names. */
+function choiceField(labels: string[]): HumanInputField {
+  return {
+    id: 'pick',
+    name: 'pick',
+    type: 'select',
+    label: 'Workflow',
+    is_required: false,
+    options: labels.map((label) => ({ value: label.toLowerCase(), label })),
+  };
+}
+
+function choiceRow(labels: string[], isCompact: boolean) {
+  cleanup();
+  const onChange = vi.fn();
+  render(
+    <HumanInputFieldRow
+      field={choiceField(labels)}
+      values={{ pick: labels[0].toLowerCase() }}
+      errors={{}}
+      disabled={false}
+      isCompact={isCompact}
+      onChange={onChange}
+      onSubmit={noop}
+    />,
+  );
+  return onChange;
+}
+
+describe('one exclusive choice', () => {
+  const long = ['Story to SPEC', 'Review a pull request', 'Triage', 'Notes', 'Audit', 'Hello'];
+
+  // Reported on the Workflows app: six workflows stood as six framed rows and pushed
+  // the rest of the form off a phone screen.
+  it('folds a long choice in a view into one list, and keeps every choice in a question', async () => {
+    const onChange = choiceRow(long, true);
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+    const trigger = screen.getByRole('combobox', { name: /Workflow/ });
+    expect(trigger).toHaveTextContent('Story to SPEC');
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('option', { name: 'Audit' }));
+    expect(onChange).toHaveBeenCalledWith('pick', 'audit');
+
+    choiceRow(long, false);
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.getAllByRole('radio')).toHaveLength(6);
+  });
+
+  it('keeps a short choice as radios that answer a press, in a view and in a question', () => {
+    for (const isCompact of [true, false]) {
+      const onChange = choiceRow(['Staging', 'Production'], isCompact);
+      const group = screen.getByRole('radiogroup', { name: 'Workflow' });
+      expect(group).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: 'Staging' })).toBeChecked();
+      fireEvent.click(screen.getByRole('radio', { name: 'Production' }));
+      expect(onChange).toHaveBeenCalledWith('pick', 'production');
+    }
+  });
+});
 
 describe('human input sheet', () => {
   // Regression #282: request descriptions are Markdown, not a plain paragraph.

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
-import { STORY_LIVE_VIEW, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
+import { STORY_LIVE_DASHBOARD, STORY_LIVE_FORM, STORY_LIVE_VIEW, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
 
 /**
@@ -72,6 +72,28 @@ export const AllPrimitives: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Build A logs' }));
     await expect(canvas.getByText(/A started/)).toBeVisible();
     await expect(canvas.queryByText('B started')).not.toBeInTheDocument();
+  },
+};
+
+/**
+ * A whole dashboard: a strip of tabs, counter tiles, a table and lanes. Its rhythm is
+ * the thing to look at, at a phone width and at a desk width.
+ */
+export const Dashboard: Story = {
+  args: { view: STORY_LIVE_DASHBOARD, onActivate: fn(), onInterrupt: undefined },
+  play: async ({ canvas, args }) => {
+    const tabs = canvas.getByRole('group', { name: 'Views' });
+    await expect(within(tabs).getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(within(tabs).getByRole('button', { name: 'Run' }));
+    await expect(args.onActivate).toHaveBeenCalledWith('tab-run');
+  },
+};
+
+/** Every kind of field in one view: a short choice, a long choice, text and a slider. */
+export const Inputs: Story = {
+  args: { view: STORY_LIVE_FORM, onActivate: fn(), onChange: fn(), onSubmit: fn(), onInterrupt: undefined },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('Workflow')).toBeVisible();
   },
 };
 

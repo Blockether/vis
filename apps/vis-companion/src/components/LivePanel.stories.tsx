@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent } from 'storybook/test';
 
-import { STORY_INERT_CLIENT, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
+import { STORY_INERT_CLIENT, STORY_LIVE_DASHBOARD, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
 import { LivePanel } from './LivePanel';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 
@@ -80,5 +80,15 @@ export const TwoExtensions: Story = {
     await userEvent.click(row);
     await expect(row).toHaveAttribute('aria-expanded', 'false');
     await expect(canvas.queryByRole('button', { name: /Fast lane/ })).toBeNull();
+  },
+};
+
+/** A whole dashboard in the 24rem panel: tabs, counter tiles and a table at a phone width. */
+export const Dashboard: Story = {
+  args: {
+    views: [{ ...STORY_LIVE_DASHBOARD, placement: 'panel' as const }],
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
   },
 };

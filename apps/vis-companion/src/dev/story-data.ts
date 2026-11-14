@@ -800,6 +800,199 @@ export const STORY_LIVE_PRIMITIVES: LiveView = (() => {
   return view;
 })();
 
+/**
+ * A DASHBOARD AS AN EXTENSION BUILDS IT: a strip of tabs, counters, a bar, steps, a
+ * table, lanes, links, cards and a row of actions. The gallery measures the rhythm of
+ * a whole view on it, at each width and in each place where a view stands.
+ */
+export const STORY_LIVE_DASHBOARD: LiveView = (() => {
+  const start = 1_763_121_900_000;
+  const view = liveViewFromWire({
+    seq: 0,
+    id: 'dashboard',
+    title: 'Workflows',
+    description: 'Run a workflow and follow its steps',
+    extension: 'playground',
+    nodes: [
+      {
+        id: 'tabs',
+        type: 'group',
+        direction: 'wrap',
+        children: [
+          { id: 'tab-run', type: 'button', label: 'Run', is_selected: false },
+          { id: 'tab-history', type: 'button', label: 'History', is_selected: true },
+          { id: 'tab-files', type: 'button', label: 'Files', is_selected: false },
+        ],
+      },
+      {
+        id: 'state',
+        type: 'status',
+        text: 'Story to SPEC is running',
+        tone: 'running',
+        detail: 'Step 3 of 5, started 12:05 UTC',
+      },
+      {
+        id: 'counts',
+        type: 'stat',
+        label: 'Runs',
+        stats: [
+          { id: 'running', label: 'running', value_text: '2', tone: 'running' },
+          { id: 'passed', label: 'passed', value_text: '8', tone: 'ok' },
+          { id: 'failed', label: 'failed', value_text: '1', tone: 'error' },
+          { id: 'queued', label: 'queued', value_text: '0' },
+          { id: 'elapsed', label: 'elapsed', value_text: '37m 20s' },
+          { id: 'commit', label: 'commit', value_text: '94a55950eaa8ee4ad0aad01b54cb2434520a93b7' },
+        ],
+      },
+      { id: 'progress', type: 'progress', label: 'Progress', done: 3, total: 5 },
+      {
+        id: 'steps',
+        type: 'steps',
+        label: 'Steps',
+        steps: [
+          { id: 'read', label: 'Read the story', tone: 'ok', detail: '2 files attached' },
+          { id: 'plan', label: 'Plan the spec', tone: 'ok' },
+          { id: 'write', label: 'Write the spec', tone: 'running', detail: 'Section 4 of 9', value: 0.44 },
+          { id: 'review', label: 'Review', tone: 'idle' },
+          { id: 'publish', label: 'Publish', tone: 'idle' },
+        ],
+      },
+      {
+        id: 'runs',
+        type: 'table',
+        label: 'History',
+        columns: [
+          { id: 'workflow', label: 'Workflow' },
+          { id: 'started', label: 'Started (UTC)' },
+          { id: 'steps', label: 'Steps', align: 'right' },
+        ],
+        rows: [
+          { id: 'r1', cells: ['Story to SPEC', '14 Nov 12:05', '3/5'], tone: 'running' },
+          { id: 'r2', cells: ['Nightly build', '14 Nov 02:00', '7/7'], tone: 'ok' },
+          { id: 'r3', cells: ['Dependency audit', '13 Nov 18:40', '2/4'], tone: 'error' },
+          { id: 'r4', cells: ['Release notes', '13 Nov 09:12', '0/3'], tone: 'idle' },
+        ],
+      },
+      {
+        id: 'lanes',
+        type: 'timeline',
+        label: 'Agents',
+        lanes: [
+          { id: 'reader', label: 'Reader', tone: 'ok', start, end: start + 95_000 },
+          { id: 'planner', label: 'Planner', tone: 'ok', start: start + 60_000, end: start + 260_000 },
+          { id: 'writer', label: 'Writer', tone: 'warn', detail: '1 retry', start: start + 240_000, end: start + 610_000 },
+        ],
+      },
+      {
+        id: 'files',
+        type: 'link',
+        label: 'Files',
+        links: [
+          { id: 'spec', label: 'SPEC.md', target_kind: 'path', target: 'docs/SPEC.md', tone: 'ok' },
+          { id: 'run', label: 'Run page', target_kind: 'url', target: 'https://example.com/runs/42' },
+        ],
+      },
+      {
+        id: 'plans',
+        type: 'group',
+        direction: 'row',
+        label: 'Plans',
+        children: [
+          { id: 'small', type: 'card', title: 'Small', text: 'Two hosts, one region', meta: '2 vCPU', tone: 'ok', is_selectable: true },
+          { id: 'large', type: 'card', title: 'Large', text: 'Six hosts, three regions', meta: '8 vCPU', is_selectable: true },
+          { id: 'note', type: 'card', title: 'Quota', text: 'Twelve hosts are free', meta: 'eu-central-1' },
+        ],
+      },
+      {
+        id: 'actions',
+        type: 'group',
+        direction: 'wrap',
+        children: [
+          { id: 'start', type: 'button', label: 'Run workflow', variant: 'primary' },
+          { id: 'refresh', type: 'button', label: 'Refresh' },
+          { id: 'cancel', type: 'button', label: 'Cancel run', variant: 'destructive' },
+        ],
+      },
+    ],
+  });
+  if (!view) throw new Error('the dashboard story must be paintable');
+  return view;
+})();
+
+/**
+ * A FORM AS AN EXTENSION BUILDS IT: every kind of field in one view, with a short
+ * choice, a long choice and a row of actions. The gallery measures the fields on it.
+ */
+export const STORY_LIVE_FORM: LiveView = (() => {
+  const view = liveViewFromWire({
+    seq: 0,
+    id: 'form',
+    title: 'Run a workflow',
+    extension: 'playground',
+    nodes: [
+      {
+        id: 'workflow',
+        type: 'select',
+        label: 'Workflow',
+        description: 'The steps that the run follows',
+        is_required: true,
+        options: [
+          { value: 'story', label: 'Story to SPEC' },
+          { value: 'review', label: 'Review a pull request' },
+          { value: 'triage', label: 'Triage an incident' },
+          { value: 'release', label: 'Write release notes' },
+          { value: 'audit', label: 'Audit the dependencies' },
+          { value: 'hello', label: 'Hello' },
+        ],
+        value: 'review',
+      },
+      {
+        id: 'env',
+        type: 'select',
+        label: 'Environment',
+        options: [
+          { value: 'staging', label: 'Staging' },
+          { value: 'production', label: 'Production' },
+        ],
+        value: 'staging',
+      },
+      {
+        id: 'regions',
+        type: 'multiselect',
+        label: 'Regions',
+        options: [
+          { value: 'eu', label: 'Europe' },
+          { value: 'us', label: 'United States' },
+          { value: 'ap', label: 'Asia Pacific' },
+        ],
+        value: ['eu'],
+      },
+      { id: 'replicas', type: 'range', label: 'Replicas', min: 1, max: 9, value: 3 },
+      { id: 'title', type: 'plaintext', label: 'Title', placeholder: 'A short name for the run', value: '' },
+      {
+        id: 'input',
+        type: 'multiline',
+        label: 'Input',
+        description: 'The story, the ticket or the text that the workflow reads',
+        value: 'As a buyer, I can pay for an order with a saved card.',
+      },
+      { id: 'token', type: 'password', label: 'Access token', value: 'not-a-real-token' },
+      { id: 'notify', type: 'checkbox', label: 'Tell me when the run ends', value: true },
+      {
+        id: 'actions',
+        type: 'group',
+        direction: 'wrap',
+        children: [
+          { id: 'run', type: 'button', label: 'Run', action: 'submit', variant: 'primary' },
+          { id: 'reset', type: 'button', label: 'Reset' },
+        ],
+      },
+    ],
+  });
+  if (!view) throw new Error('the form story must be paintable');
+  return view;
+})();
+
 /** A fleet with something to say: the default, the fallback, and one never signed in. */
 export const STORY_PROVIDERS: RouterProvider[] = [
   {

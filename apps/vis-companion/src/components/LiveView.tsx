@@ -73,6 +73,7 @@ import {
   timelineGeometry,
   timelineStill,
   type LiveCardNode,
+  type LiveGroupNode,
   type LiveInputNode,
   type LiveLinkNode,
   type LiveLogNode,
@@ -353,7 +354,7 @@ function ProgressMeter({ value, label }: { value: number; label: string }) {
         preserveAspectRatio="none"
         className="block size-full"
       >
-        <rect width="1000" height="1" className="fill-dialog-edge" />
+        <rect width="1000" height="1" className="fill-edge-strong" />
         <rect width={Math.round(clamped * 1000)} height="1" className="fill-accent" />
       </svg>
     </span>
@@ -408,9 +409,11 @@ function ProgressRow({ node }: { node: LiveProgressNode }) {
 }
 
 /**
- * Counters as FACTS: each label over its value, in a grid that wraps to the width.
- * A long identifier wraps instead of scrolling sideways and keeps a copy action on
- * its first line. One short figure alone is the view's large number.
+ * Counters as FACTS, on TILES: each label over its value in a cell with a hairline
+ * frame, so a row of counters reads as one strip and not as loose words. The tiles
+ * share their edges and wrap to the width. A figure stands one size over an
+ * identifier. A long identifier wraps instead of scrolling sideways and keeps a copy
+ * action on its first line. One short figure alone is the view's large number.
  */
 function StatRow({ node }: { node: LiveStatNode }) {
   if (node.stats.length === 0) return <Empty>{EMPTY_LINE.stat}</Empty>;
@@ -418,7 +421,9 @@ function StatRow({ node }: { node: LiveStatNode }) {
   if (node.stats.length === 1 && only.value_text.length <= HERO_VALUE) {
     return (
       <div className="min-w-0 font-mono">
-        <p className="text-display font-bold tabular-nums text-white">{only.value_text}</p>
+        <p className={`text-display font-bold tabular-nums ${rowInk(only.tone) || 'text-white'}`}>
+          {only.value_text}
+        </p>
         <p className="flex min-w-0 items-start gap-1.5 text-body text-dialog-hint">
           {only.tone !== 'idle' && <LineMark tone={only.tone} />}
           <span className="min-w-0 [overflow-wrap:anywhere]">
@@ -430,26 +435,44 @@ function StatRow({ node }: { node: LiveStatNode }) {
     );
   }
   return (
-    <dl className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,9rem),1fr))] gap-x-5 gap-y-3 font-mono">
-      {node.stats.map((stat) => (
-        <div key={stat.id} className="min-w-0">
-          <dt className="text-meta text-dialog-hint [overflow-wrap:anywhere]">
-            <InlineMarkdown>{stat.label}</InlineMarkdown>
-          </dt>
-          <dd className="flex min-w-0 items-start gap-1.5 text-body font-bold tabular-nums text-white">
-            {stat.tone !== 'idle' && <LineMark tone={stat.tone} />}
-            <span className="min-w-0 [overflow-wrap:anywhere]">
-              <Breakable>{stat.value_text}</Breakable>
-            </span>
-            {stat.tone !== 'idle' && <span className="sr-only">{TONE_WORD[stat.tone]}</span>}
-            {stat.value_text.length > LONG_VALUE && (
-              <span className="flex h-[1lh] shrink-0 items-center">
-                <CopyChip value={stat.value_text} label={`Copy ${stat.label}`} />
+    // Each tile draws its whole frame and steps 1px over its neighbour, so an
+    // incomplete last row still closes: a frame on the grid would run on over the gap.
+    <dl className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,9rem),1fr))] pl-px pt-px font-mono">
+      {node.stats.map((stat) => {
+        const isFigure = stat.value_text.length <= HERO_VALUE;
+        return (
+          <div
+            key={stat.id}
+            data-stat-tile={stat.id}
+            // An identifier takes a whole row: in one track it broke into four lines.
+            className={`-ml-px -mt-px min-w-0 border border-edge-strong px-3 py-2.5 ${
+              stat.value_text.length > LONG_VALUE ? 'col-span-full' : ''
+            }`}
+          >
+            <dt className="text-meta text-dialog-hint [overflow-wrap:anywhere]">
+              <InlineMarkdown>{stat.label}</InlineMarkdown>
+            </dt>
+            <dd
+              className={`mt-0.5 flex min-w-0 items-start gap-1.5 font-bold tabular-nums ${
+                isFigure ? 'text-subhead' : 'text-body'
+              } ${rowInk(stat.tone) || 'text-white'}`}
+            >
+              {stat.tone !== 'idle' && (
+                <LineMark tone={stat.tone} className={isFigure ? 'size-3.5' : 'size-3'} />
+              )}
+              <span className="min-w-0 [overflow-wrap:anywhere]">
+                <Breakable>{stat.value_text}</Breakable>
               </span>
-            )}
-          </dd>
-        </div>
-      ))}
+              {stat.tone !== 'idle' && <span className="sr-only">{TONE_WORD[stat.tone]}</span>}
+              {stat.value_text.length > LONG_VALUE && (
+                <span className="flex h-[1lh] shrink-0 items-center">
+                  <CopyChip value={stat.value_text} label={`Copy ${stat.label}`} />
+                </span>
+              )}
+            </dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }
@@ -479,7 +502,7 @@ function StepsRows({ node }: { node: LiveStepsNode }) {
             <span className="flex flex-col items-center">
               <LineMark tone={step.tone} className="size-3.5" />
               {!isLast && (
-                <span aria-hidden="true" className="my-0.5 w-px flex-1 bg-dialog-edge" />
+                <span aria-hidden="true" className="w-px flex-1 bg-edge-strong" />
               )}
             </span>
             <span className={`min-w-0 ${isLast ? '' : 'pb-3'}`}>
@@ -526,8 +549,13 @@ function useClock(ticking: boolean): number {
 
 // The columns of a timeline: LABEL, the BAR on the shared scale, the DURATION and the
 // tone MARK. LABEL fits the longest label, but takes at most two fifths of the row.
-// DURATION fits `59m 59s`, so a ticking time never moves the bars.
-const LANE_ROW = 'grid min-w-0 grid-cols-[min(var(--lane-label),40%)_minmax(0,1fr)_7ch_auto] gap-x-3';
+// DURATION fits `59m 59s`, or the longest time when one is longer, so a ticking time
+// never moves the bars and a long time never pushes the mark out of the row.
+const LANE_ROW =
+  'grid min-w-0 grid-cols-[min(var(--lane-label),40%)_minmax(0,1fr)_var(--lane-time)_0.75rem] gap-x-3';
+
+/** The width of `59m 59s`, in characters. */
+const LANE_TIME = 7;
 
 /**
  * Parallel work on ONE time scale (`timeline`). Each bar starts where its lane
@@ -541,15 +569,22 @@ function TimelineRows({ node, isSettled }: { node: LiveTimelineNode; isSettled: 
   if (node.lanes.length === 0) return <Empty>{EMPTY_LINE.timeline}</Empty>;
   const geometry = timelineGeometry(node.lanes, isSettled ? timelineStill(node.lanes) : clock);
   const widest = Math.max(...node.lanes.map((lane) => lane.label.length));
+  const times = geometry.bars.map((bar) => formatDuration(bar.duration));
+  const longest = Math.max(LANE_TIME, ...times.map((time) => time.length));
   return (
-    <div className="min-w-0 font-mono text-body" style={{ '--lane-label': `${widest + 1}ch` } as CSSProperties}>
+    <div
+      className="min-w-0 font-mono text-body"
+      style={{ '--lane-label': `${widest + 1}ch`, '--lane-time': `${longest}ch` } as CSSProperties}
+    >
       {geometry.marks.length > 1 && (
-        <div aria-hidden="true" className={`pb-1 text-meta text-dialog-hint ${LANE_ROW}`}>
-          <span className="relative col-start-2 h-[calc(1lh+0.25rem)] border-b border-dialog-edge/50">
+        // The ruler keeps the type of the lanes: its columns are in `ch`, so a smaller
+        // type on the row moved each mark off the bars. Only its words step down.
+        <div aria-hidden="true" className={`pb-1 ${LANE_ROW}`}>
+          <span className="relative col-start-2 h-[calc(1lh+0.25rem)] border-b border-edge-strong text-meta text-dialog-hint">
             {geometry.marks.map((mark, index) => (
               <span key={mark.at} className="absolute inset-y-0" style={{ left: `${mark.left * 100}%` }}>
                 <span className={`absolute top-0 ${index === 0 ? '' : '-translate-x-1/2'}`}>{mark.label}</span>
-                <span className="absolute bottom-0 h-1 w-px bg-dialog-edge/50" />
+                <span className="absolute bottom-0 h-1 w-px bg-edge-strong" />
               </span>
             ))}
           </span>
@@ -574,7 +609,7 @@ function TimelineRows({ node, isSettled }: { node: LiveTimelineNode; isSettled: 
                 )}
               </span>
               <span aria-hidden="true" className="relative flex h-[1lh] items-center">
-                <span className="relative h-2 w-full bg-white/5">
+                <span className="relative h-2 w-full bg-edge">
                   <span
                     data-lane-bar={lane.id}
                     className={`absolute inset-y-0 ${BAR_INK[lane.tone]}`}
@@ -583,7 +618,7 @@ function TimelineRows({ node, isSettled }: { node: LiveTimelineNode; isSettled: 
                 </span>
               </span>
               <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">
-                {formatDuration(bar.duration)}
+                {times[index]}
               </span>
               <span className="flex items-start">
                 <LineMark tone={lane.tone} />
@@ -915,7 +950,7 @@ function LogRows({
           }
         }}
         // The frame shows that the pane scrolls: its paper alone is 1.0-1.15:1 on the page.
-        className="max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-all border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        className="max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-all border border-edge-strong bg-code px-3 py-2 font-mono text-ui text-dialog-hint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
       >
         {search ? (
           result && (
@@ -952,7 +987,7 @@ function LogErrors({ node, label }: { node: LiveLogNode; label: string }) {
   return (
     <pre
       aria-label={`Latest errors in ${label}`}
-      className="whitespace-pre-wrap break-all bg-panel-2 p-2 font-mono text-ui"
+      className="whitespace-pre-wrap break-all border border-edge-strong bg-code px-3 py-2 font-mono text-ui"
     >
       <LogLines
         lines={errors.map((error) => error.line)}
@@ -1117,18 +1152,18 @@ const LiveTableRow = memo(function LiveTableRow({
       {detailAt.map((index) => (
         <td
           key={columns[index]?.id ?? index}
-          className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere]"
+          className="border-l border-edge-strong px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere]"
         >
           <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
         </td>
       ))}
       {valueAt >= 0 && (
-        <td className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 text-right align-baseline tabular-nums text-ui text-white">
+        <td className="border-l border-edge-strong px-(--live-view-inset) py-2 text-right align-baseline tabular-nums text-ui text-white">
           <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
         </td>
       )}
       {hasState && (
-        <td className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 align-baseline whitespace-nowrap">
+        <td className="border-l border-edge-strong px-(--live-view-inset) py-2 align-baseline whitespace-nowrap">
           <ToneWord tone={row.tone} />
         </td>
       )}
@@ -1371,7 +1406,7 @@ function TableRows({
     // A table reads as a TABLE: a frame with a top and a bottom, a header band and a
     // rule between columns (user report: the bare rows did not read as a table). The
     // scroll viewport owns the frame, so a wide table scrolls inside it.
-    <div className="overflow-x-auto overscroll-x-contain border border-dialog-edge">
+    <div className="overflow-x-auto overscroll-x-contain border border-edge-strong">
       <table className="w-full min-w-0 border-collapse font-mono text-body">
         {/* The name takes the width that the measured columns leave, and at least 18ch:
             a narrower screen scrolls the table instead of squeezing the name. */}
@@ -1382,13 +1417,13 @@ function TableRows({
           ))}
         </colgroup>
         <thead>
-          <tr className="border-b border-dialog-edge bg-panel-2">
+          <tr className="border-b border-edge-strong bg-code">
             {node.columns.map((column, index) => (
               <th
                 key={column.id}
                 scope="col"
-                className={`px-(--live-view-inset) py-2 font-normal text-meta text-dialog-hint ${
-                  index > 0 ? 'border-l border-dialog-edge/40' : ''
+                className={`px-(--live-view-inset) py-1.5 font-normal text-meta text-dialog-hint ${
+                  index > 0 ? 'border-l border-edge-strong' : ''
                 } ${column.align === 'right' ? 'text-right' : 'text-left'}`}
               >
                 <InlineMarkdown>{column.label}</InlineMarkdown>
@@ -1397,14 +1432,14 @@ function TableRows({
             {hasState && (
               <th
                 scope="col"
-                className="border-l border-dialog-edge/40 px-(--live-view-inset) py-2 text-left font-normal text-meta text-dialog-hint"
+                className="border-l border-edge-strong px-(--live-view-inset) py-1.5 text-left font-normal text-meta text-dialog-hint"
               >
                 State
               </th>
             )}
           </tr>
         </thead>
-        <tbody className="divide-y divide-dialog-edge/40">
+        <tbody className="divide-y divide-edge-strong">
           {rows.length === 0 && (
             <tr>
               <td className="px-(--live-view-inset) py-2" colSpan={span}>
@@ -1444,7 +1479,7 @@ const TARGET_WORD = { url: 'Web page', path: 'File', attachment: 'Attachment' } 
 function LinkRows({ node }: { node: LiveLinkNode }) {
   if (node.links.length === 0) return <Empty>{EMPTY_LINE.link}</Empty>;
   return (
-    <ul className="min-w-0 divide-y divide-dialog-edge/40 font-mono text-ui">
+    <ul className="min-w-0 divide-y divide-edge-strong font-mono text-ui">
       {node.links.map((link) => (
         <li key={link.id} className="flex min-w-0 items-start gap-2 py-1.5 first:pt-0 last:pb-0">
           {link.tone && link.tone !== 'idle' && <LineMark tone={link.tone} />}
@@ -1554,6 +1589,7 @@ function LiveInput({ node, presentation }: { node: LiveInputNode; presentation: 
   return (
     <div className="min-w-0" onBlur={() => onCommit?.(node.id)}>
       <HumanInputFieldRow
+        isCompact
         field={node.field}
         values={{ [node.field.id]: liveInputValue(node, presentation.values) }}
         errors={presentation.errors?.[node.id] ? { [node.field.id]: presentation.errors[node.id] } : {}}
@@ -1598,12 +1634,14 @@ function CardTile({
       )}
     </>
   );
-  const frame = 'block w-full min-w-0 space-y-1 border border-dialog-edge bg-panel-2 px-3 py-2.5 text-left';
+  // One frame for both cards. A card that takes a click stands on the input paper.
+  const frame = 'block w-full min-w-0 space-y-1 border border-edge-strong px-3 py-2.5 text-left';
   if (!node.is_selectable) return <div className={frame}>{body}</div>;
   return (
     <ChoiceRow
       isOn={false}
       mark={null}
+      variant="card"
       data-node-id={node.id}
       aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
       disabled={isSettled || pending || !onActivate}
@@ -1633,17 +1671,38 @@ const BUTTON_RANK = {
   destructive: 'danger',
 } as const satisfies Record<ViewButtonVariant, ComponentProps<typeof Button>['variant']>;
 
+/**
+ * The face of a tab: the chip, one step larger, standing on the rule of its strip. The
+ * tab that holds is the filled one; the others have no frame, so the strip reads as
+ * one control and not as a row of boxes.
+ */
+const TAB_FACE =
+  '-mb-px min-h-9 border-b-0 px-3 text-ui mouse:min-h-8 mouse:text-ui aria-[pressed=false]:border-transparent';
+
+/** A group whose children are all choices is ONE control: a strip of tabs. */
+function isChoiceStrip(node: LiveGroupNode): boolean {
+  return (
+    (node.direction === 'row' || node.direction === 'wrap') &&
+    !node.is_collapsible &&
+    node.children.length > 1 &&
+    node.children.every((child) => child.type === 'button' && child.is_selected !== undefined)
+  );
+}
+
 /** An operator button waits for acknowledgement and is inert in receipts. */
 function ActionButton({
   node,
   onActivate,
   isSettled,
   shortcut,
+  isTab = false,
 }: {
   node: Extract<LiveNode, { type: 'button' }>;
   onActivate?: NodePresentation['onActivate'];
   isSettled: boolean;
   shortcut?: LiveShortcut;
+  /** The button stands in a strip of choices (`ChoiceStrip`), so it wears the tab face. */
+  isTab?: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const activate = async () => {
@@ -1661,6 +1720,7 @@ function ActionButton({
     return (
       <Chip
         isOn={node.is_selected}
+        className={isTab ? TAB_FACE : ''}
         data-node-id={node.id}
         aria-label={shortcut ? node.label : undefined}
         aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
@@ -1756,7 +1816,29 @@ function NodeCell({
           id={contentId}
           className={`min-w-0 ${isDisclosure && node.type !== 'log' ? 'pl-5' : ''}`}
         >
-          {node.type === 'group' && (
+          {node.type === 'group' && isChoiceStrip(node) && (
+            <div
+              role="group"
+              aria-label={node.label ?? 'Views'}
+              data-view-layout="tabs"
+              className="flex min-w-0 flex-wrap gap-x-1 border-b border-edge-strong"
+            >
+              {node.children.map(
+                (child) =>
+                  child.type === 'button' && (
+                    <ActionButton
+                      key={child.id}
+                      node={child}
+                      isTab
+                      isSettled={presentation.isSettled}
+                      onActivate={presentation.onActivate}
+                      shortcut={presentation.keys?.get(child.id)}
+                    />
+                  ),
+              )}
+            </div>
+          )}
+          {node.type === 'group' && !isChoiceStrip(node) && (
             <ViewLayout direction={node.direction} maxColumns={node.max_columns}>
               {node.children.map((child) => (
                 <NodeCell
@@ -1779,10 +1861,10 @@ function NodeCell({
                 aria-orientation="vertical"
                 className="flex h-[1lh] items-center font-mono text-body"
               >
-                <span className="h-full w-px bg-dialog-edge" />
+                <span className="h-full w-px bg-edge-strong" />
               </div>
             ) : (
-              <hr className="m-0 w-full border-0 border-t border-dialog-edge/40" />
+              <hr className="m-0 w-full border-0 border-t border-edge-strong" />
             ))}
           {node.type === 'paragraph' && (
             <ViewParagraph>
@@ -1795,14 +1877,16 @@ function NodeCell({
             </ViewHeading>
           )}
           {node.type === 'code' && (
-            <div className="min-w-0 bg-panel-2 p-2">
+            <div className="min-w-0 border border-edge-strong bg-code px-3 py-2">
               {node.language && (
-                <span className="font-mono text-ui text-dialog-hint">{node.language}</span>
+                <span className="block pb-1 font-mono text-meta text-dialog-hint">
+                  {node.language}
+                </span>
               )}
               <pre
                 tabIndex={0}
                 aria-label={node.label || 'Code'}
-                className="max-h-64 overflow-auto whitespace-pre font-mono text-body text-white"
+                className="max-h-64 overflow-auto whitespace-pre font-mono text-body text-code-foreground"
               >
                 <code>{node.text}</code>
               </pre>

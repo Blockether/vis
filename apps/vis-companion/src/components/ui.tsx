@@ -1055,7 +1055,11 @@ export function Checkbox({
   className = '',
   children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { isOn: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  isOn: boolean;
+  /** `bare` is a checkbox that stands alone: no frame, only the square shows the state. */
+  variant?: 'row' | 'bare';
+}) {
   return (
     <ChoiceRow
       {...props}
@@ -1094,6 +1098,7 @@ export function Checkbox({
 export function ChoiceRow({
   isOn,
   mark,
+  variant = 'row',
   className = '',
   children,
   ...props
@@ -1101,24 +1106,92 @@ export function ChoiceRow({
   isOn: boolean;
   /** The status glyph, decorative: the label beside it carries the meaning. */
   mark: ReactNode;
+  /**
+   * `row` is a framed line of a list. `card` gives a block of text more room. `bare` has
+   * no frame: a choice that stands alone, where only its mark shows the state.
+   */
+  variant?: 'row' | 'card' | 'bare';
 }) {
+  const frame =
+    variant === 'bare'
+      ? '-ml-px w-fit max-w-full border-transparent py-1 text-white enabled:hover:text-accent-ink'
+      : `w-full ${variant === 'card' ? 'px-3 py-2.5' : 'px-2.5 py-1'} ${
+          isOn
+            ? 'z-[1] border-accent bg-hover text-accent-ink'
+            : 'border-edge bg-input text-white enabled:hover:text-accent-ink enabled:active:bg-hover'
+        }`;
   return (
     <button
       type="button"
-      className={`flex min-h-11 w-full min-w-0 items-center gap-2 border px-2.5 py-1 text-left font-mono text-ui transition-colors duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none mouse:min-h-7 ${
-        isOn
-          ? 'border-accent bg-hover text-accent-ink'
-          : 'border-edge bg-input text-white enabled:hover:text-accent-ink enabled:active:bg-hover'
-      } ${className}`}
+      className={`relative flex min-h-11 min-w-0 items-center gap-2 border text-left font-mono text-ui transition-colors duration-150 focus-visible:z-[2] focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none mouse:min-h-7 ${frame} ${className}`}
       {...props}
     >
       <span className="flex min-w-0 items-start gap-2">
-        <span aria-hidden="true" className="flex h-[1lh] shrink-0 items-center">
-          {mark}
-        </span>
+        {/* A row with no mark keeps no slot for one, or its words stand 8px in. */}
+        {mark != null && (
+          <span aria-hidden="true" className="flex h-[1lh] shrink-0 items-center">
+            {mark}
+          </span>
+        )}
         <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
       </span>
     </button>
+  );
+}
+
+/**
+ * Choice rows as ONE list: the rows share their frame lines, so six choices read as
+ * one control and not as six boxes. The chosen row stands above its neighbours, so its
+ * amber frame is whole.
+ */
+export function ChoiceList({ children, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className="flex min-w-0 flex-col [&>*+*]:-mt-px" {...props}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A short exclusive choice as one strip of joined cells. The amber fill marks the chosen
+ * cell, so a cell needs no mark. The caller owns the value. On a narrow screen the cells
+ * wrap and still share their frame lines.
+ */
+export function ChoiceSegments({
+  options,
+  value,
+  onValueChange,
+  disabled = false,
+  ...props
+}: Pick<HTMLAttributes<HTMLDivElement>, 'aria-label' | 'aria-labelledby' | 'aria-describedby'> & {
+  options: readonly { value: string; label: string }[];
+  value: string | undefined;
+  onValueChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div role="radiogroup" className="flex max-w-full flex-wrap pl-px pt-px" {...props}>
+      {options.map((option) => {
+        const isOn = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={isOn}
+            disabled={disabled}
+            className={`relative -ml-px -mt-px flex min-h-11 min-w-16 items-center justify-center border px-3 font-mono text-ui transition-colors duration-150 focus-visible:z-[2] focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-45 motion-reduce:transition-none mouse:min-h-7 ${
+              isOn
+                ? 'z-[1] border-accent bg-accent text-accent-foreground'
+                : 'border-edge-strong bg-input text-white enabled:hover:text-accent-ink enabled:active:bg-hover'
+            }`}
+            onClick={() => onValueChange(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2393,6 +2466,8 @@ export const Select = forwardRef<
       | {
           value: string;
           onValueChange: (value: string) => void;
+          /** What the trigger says while the value names no option. */
+          placeholder?: string;
           values?: never;
           onValuesChange?: never;
           noneLabel?: never;
@@ -2404,10 +2479,22 @@ export const Select = forwardRef<
           noneLabel: string;
           value?: never;
           onValueChange?: never;
+          placeholder?: never;
         }
     )
 >(function Select(
-  { value, onValueChange, values, onValuesChange, noneLabel = '', options, disabled = false, className = '', ...props },
+  {
+    value,
+    onValueChange,
+    values,
+    onValuesChange,
+    noneLabel = '',
+    placeholder = '',
+    options,
+    disabled = false,
+    className = '',
+    ...props
+  },
   ref,
 ) {
   const [open, setOpen] = useState(false);
@@ -2435,7 +2522,7 @@ export const Select = forwardRef<
   const label = !values
     ? options.length === 0
       ? 'No options available'
-      : (chosen[0]?.label ?? value ?? '')
+      : (chosen[0]?.label ?? (value || placeholder))
     : values.length === 0
       ? noneLabel
       : chosen.length > 0
@@ -2603,7 +2690,7 @@ export const Select = forwardRef<
           event.preventDefault();
           setOpen(true);
         }}
-        className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
+        className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 sm:px-3 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
       >
         <span className="min-w-0 truncate text-left">{label}</span>
         <ChevronIcon open className={`size-3 shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
