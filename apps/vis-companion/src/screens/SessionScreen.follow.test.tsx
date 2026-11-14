@@ -189,7 +189,7 @@ describe('a reader reaching the end of a turn that is still being written', () =
     });
     await act(async () => {});
     const viewport = screen.getByRole('region', { name: 'Transcript' });
-    const content = viewport.firstElementChild!;
+    const content = viewport.querySelector(':scope > :not([data-scroll-ballast])')!;
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();
@@ -226,7 +226,7 @@ describe('a reader reaching the end of a turn that is still being written', () =
     });
     await act(async () => {});
     const viewport = screen.getByRole('region', { name: 'Transcript' });
-    const content = viewport.firstElementChild!;
+    const content = viewport.querySelector(':scope > :not([data-scroll-ballast])')!;
     measure(viewport, live, []);
     await paint();
 
@@ -309,7 +309,7 @@ describe('a reader reaching the end of a turn that is still being written', () =
     });
     await act(async () => {});
     const viewport = screen.getByRole('region', { name: 'Transcript' });
-    const content = viewport.firstElementChild!;
+    const content = viewport.querySelector(':scope > :not([data-scroll-ballast])')!;
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();
@@ -420,7 +420,7 @@ describe('a reader reaching the end of a turn that is still being written', () =
     });
     await act(async () => {});
     const viewport = screen.getByRole('region', { name: 'Transcript' });
-    const content = viewport.firstElementChild!;
+    const content = viewport.querySelector(':scope > :not([data-scroll-ballast])')!;
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();
@@ -457,7 +457,7 @@ describe('a reader reaching the end of a turn that is still being written', () =
     });
     await act(async () => {});
     const viewport = screen.getByRole('region', { name: 'Transcript' });
-    const content = viewport.firstElementChild!;
+    const content = viewport.querySelector(':scope > :not([data-scroll-ballast])')!;
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();
@@ -501,7 +501,7 @@ describe('a reader reaching the end of a turn that is still being written', () =
     });
     await act(async () => {});
     const viewport = screen.getByRole('region', { name: 'Transcript' });
-    const content = viewport.firstElementChild!;
+    const content = viewport.querySelector(':scope > :not([data-scroll-ballast])')!;
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();

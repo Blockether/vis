@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { applyScrollAnchor, applyScrollAnchorGrowth, scrollAnchorFor } from './viewport';
+import {
+  applyScrollAnchor,
+  applyScrollAnchorGrowth,
+  ballastHeight,
+  resizeBallast,
+  scrollAnchorFor,
+} from './viewport';
 
 // One transcript in content coordinates: the view starts at 100 px on screen, and an
 // element at content position `position` paints at `100 + position - scrollTop`.
@@ -253,5 +259,85 @@ describe('a skip mark in view', () => {
     const { header, anchor } = turn(1_400);
 
     expect(anchor.el).toBe(header);
+  });
+});
+
+// The scene with a ballast above the transcript: the line paints below the ballast,
+// and `writes` counts the scroll positions that a script set.
+function ballasted(scrollTop: number, position: number, room: number) {
+  const ballast = { style: { height: `${room}px` } };
+  const writes: number[] = [];
+  let top = scrollTop;
+  const viewport = {
+    get scrollTop() {
+      return top;
+    },
+    set scrollTop(value: number) {
+      writes.push(value);
+      top = value;
+    },
+    clientHeight: 600,
+    getBoundingClientRect: () => ({ top: 100, bottom: 700 }),
+  };
+  const line = {
+    isConnected: true,
+    position,
+    children: [] as Element[],
+    getBoundingClientRect() {
+      const y = 100 + ballastHeight(ballast) + line.position - top;
+      return { top: y, bottom: y + 20 };
+    },
+  };
+  const transcript = {
+    isConnected: true,
+    children: [line as unknown as Element],
+    getBoundingClientRect: () => ({ top: 100 + ballastHeight(ballast) - top, bottom: 9_999 }),
+  };
+  return { viewport, ballast, line, writes, anchor: scrollAnchorFor(viewport, transcript)! };
+}
+
+// Regression, user report: flicks up through a long session on an iPhone were slow.
+// Each history page that landed above the reader needed a scroll write, the write
+// had to wait for rest, and the reader stood at the top of the mounted turns.
+describe('a scroll ballast', () => {
+  it('takes the history that landed above the reader and writes no scroll position', () => {
+    const { viewport, ballast, line, writes, anchor } = ballasted(6_000, 1_040, 5_000);
+    viewport.scrollTop = 5_940;
+    writes.length = 0;
+    line.position += 2_651;
+
+    expect(applyScrollAnchorGrowth(viewport, anchor, ballast)).toBe(true);
+
+    expect(writes).toEqual([]);
+    expect(ballastHeight(ballast)).toBe(5_000 - 2_651);
+    expect(line.getBoundingClientRect().top - 100).toBe(40 + 60);
+  });
+
+  it('moves the scroller only by the history that it cannot take', () => {
+    const { viewport, ballast, line, anchor } = ballasted(2_000, 1_040, 1_000);
+    line.position += 2_651;
+
+    expect(applyScrollAnchor(viewport, anchor, ballast)).toBe(true);
+
+    expect(ballastHeight(ballast)).toBe(0);
+    expect(viewport.scrollTop).toBe(2_000 + 1_651);
+    expect(line.getBoundingClientRect().top - 100).toBe(40);
+  });
+
+  it('keeps the line of the reader when it gets a new height', () => {
+    const { viewport, ballast, line } = ballasted(6_000, 1_040, 5_000);
+
+    resizeBallast(viewport, ballast, 8_000);
+
+    expect(viewport.scrollTop).toBe(9_000);
+    expect(line.getBoundingClientRect().top - 100).toBe(40);
+  });
+
+  it('puts a reader who sees only ballast at the start of the content', () => {
+    const { viewport, ballast } = ballasted(1_000, 1_040, 5_000);
+
+    resizeBallast(viewport, ballast, 3_000);
+
+    expect(viewport.scrollTop).toBe(3_000);
   });
 });

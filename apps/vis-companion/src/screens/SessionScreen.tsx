@@ -165,6 +165,7 @@ import {
   readerMayBeScrolling,
   readerOwnsScroll,
   releaseReaderScroll,
+  scrollInMotion,
   untilScrollRests,
 } from '../lib/reader-gesture';
 import { glideTo } from '../lib/scroll-glide';
@@ -214,9 +215,11 @@ import { onWake } from '../lib/wake';
 import {
   applyScrollAnchor,
   applyScrollAnchorGrowth,
+  ballastHeight,
   isKeyboardInputElement,
   isViewportRotating,
   onViewportRotation,
+  resizeBallast,
   scrollAnchorFor,
   type ScrollAnchor,
   seatScroller,
@@ -293,10 +296,22 @@ const HYDRATE_TURNS_PER_FRAME = 2;
 // instead, and cap the wait so a device dropping frames still gets its
 // transcript well before the last-resort watchdog below.
 const OPENING_RAMP_MAX_MS = 800;
-// How far above the screen the oldest bubble starts the next earlier load. The turns
-// mount only when the transcript rests, so the margin is the distance of one flick:
-// a reader who stops in it finds the turns mounted before the next flick ends.
+// How far above the screen the oldest bubble starts the next earlier load. The margin
+// is the distance of one flick: the turns mount before the reader gets to them.
 const LOAD_EARLIER_MARGIN = '600%';
+// A reader above the oldest bubble sees only the ballast. The load continues for them.
+const LOAD_EARLIER_REACH_BELOW = '1000000px';
+// The ballast expects each earlier turn at the mean height of the mounted turns, and
+// holds this much more. Turn heights differ by two orders of magnitude.
+const BALLAST_SPARE = 1.5;
+const BALLAST_MAX = 500_000;
+
+/** The room that `earlier` turns are expected to take above the mounted turns. */
+function ballastRoomFor(transcript: HTMLElement, mounted: number, earlier: number): number {
+  if (earlier <= 0) return 0;
+  const mean = transcript.offsetHeight / Math.max(1, mounted);
+  return Math.min(BALLAST_MAX, Math.ceil(earlier * mean * BALLAST_SPARE));
+}
 // How long a reveal of earlier turns waits for their earlier steps. After this time
 // the turns mount with their newest steps only, and read the rest themselves.
 const EARLIER_STEPS_WAIT_MS = 1200;
@@ -1541,6 +1556,7 @@ export function SessionScreen({
     if (isNewVisit) {
       setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
       setHydratedTurnCount(FIRST_PAINT_TURNS);
+      if (ballastRef.current) ballastRef.current.style.height = '';
       followingRef.current = true;
       initialScrollPendingRef.current = !fresh;
       showJumpRef.current = false;
@@ -1943,6 +1959,12 @@ export function SessionScreen({
   // the turn at the top edge before the flip and put it back after, or simply
   // stay pinned to the bottom when that is where the reader was.
   const scrollAnchorRef = useRef<ScrollAnchor | null>(null);
+  // Empty room above the transcript. It takes the height of turns that land above the
+  // reader, so they can mount in a flick: see `ScrollBallast`.
+  const ballastRef = useRef<HTMLDivElement>(null);
+  // The turns above the oldest mounted turn, and the mounted turns: the ballast's measure.
+  const earlierTurnsRef = useRef(0);
+  const mountedTurnsRef = useRef(0);
 
   const captureScrollAnchor = useCallback(() => {
     const viewport = scrollRef.current;
@@ -1963,8 +1985,9 @@ export function SessionScreen({
     // A gesture moves the scroller between two readings, and history that a commit
     // landed above the reader in between is in the next reading already. Bill that
     // growth from the held anchor first, or no corrector ever sees it.
-    if (!followingRef.current && readerOwnsScroll())
-      applyScrollAnchorGrowth(viewport, scrollAnchorRef.current);
+    // Momentum is the reader's motion too, long after the gesture grace.
+    if (!followingRef.current && (readerOwnsScroll() || scrollInMotion()))
+      applyScrollAnchorGrowth(viewport, scrollAnchorRef.current, ballastRef.current);
     // Following the running turn needs no anchor: the bottom IS the anchor.
     scrollAnchorRef.current = followingRef.current ? null : scrollAnchorFor(viewport, transcript);
   }, []);
@@ -1972,9 +1995,29 @@ export function SessionScreen({
   const restoreScrollAnchor = useCallback(() => {
     const viewport = scrollRef.current;
     if (!viewport) return;
-    if (applyScrollAnchor(viewport, scrollAnchorRef.current)) return;
+    if (applyScrollAnchor(viewport, scrollAnchorRef.current, ballastRef.current)) return;
     if (followingRef.current) scrollToEnd('auto');
   }, [scrollToEnd]);
+
+  // Sizes the ballast for the earlier turns that are left, and removes it after the
+  // last one. It writes the scroll position, so it runs only when the transcript rests
+  // or when the reader gets to room that no turn will fill.
+  const settleBallast = useCallback(() => {
+    const viewport = scrollRef.current;
+    const transcript = transcriptRef.current;
+    const ballast = ballastRef.current;
+    if (!viewport || !transcript || !ballast) return;
+    const held = ballastHeight(ballast);
+    const room = ballastRoomFor(transcript, mountedTurnsRef.current, earlierTurnsRef.current);
+    const seesContent = held <= 0 || viewport.scrollTop + viewport.clientHeight > held;
+    // The estimate changes with each turn that mounts. Do not follow it step by step.
+    if (seesContent && (room > 0 ? held >= room / 2 && held <= room * 2 : held === 0)) return;
+    resizeBallast(viewport, ballast, room);
+    correctedTopRef.current = -1;
+    captureScrollAnchor();
+    correctedTopRef.current = viewport.scrollTop;
+    syncJump();
+  }, [captureScrollAnchor, syncJump]);
 
   // THE one owner of "the reader keeps their line". Rows land above the fold from
   // three directions — history prepends, the backfill that refills the render
@@ -2017,7 +2060,9 @@ export function SessionScreen({
       // The end is its own anchor, and a hand on the glass owns the scroller: in
       // both cases the reader's line is wherever they just put it, so re-read it.
       // Under a hand, `captureScrollAnchor` first bills growth that landed above it.
-      if (followingRef.current || readerOwns) {
+      // A flick is the reader's motion too. `captureScrollAnchor` bills the growth
+      // without the reader's own move, which a restore of their pixel would undo.
+      if (followingRef.current || readerOwns || scrollInMotion()) {
         // For a reader following the end, the end IS the anchor. This callback
         // sees every content change before paint, regardless of whether a stream
         // flush adds one line or mounts a whole tool/result card. Only a real
@@ -2043,7 +2088,7 @@ export function SessionScreen({
       // were reading ended by moving under them (BLO-170). The pixel they chose
       // outlives the element they chose it by: put them back on it, and re-read
       // the fold only once the transcript is tall enough to honour it again.
-      if (!applyScrollAnchor(viewport, scrollAnchorRef.current)) {
+      if (!applyScrollAnchor(viewport, scrollAnchorRef.current, ballastRef.current)) {
         const chosenTop = scrollAnchorRef.current?.top;
         if (chosenTop === undefined) captureScrollAnchor();
         else {
@@ -4811,6 +4856,10 @@ export function SessionScreen({
     () => paintableTurns.slice(renderStart),
     [paintableTurns, renderStart],
   );
+  useEffect(() => {
+    earlierTurnsRef.current = earlierTotal;
+    mountedTurnsRef.current = visibleTurns.length;
+  });
   // Memoized rows keep their element IDENTITY across composer keystrokes
   // (prompt/caret state), so React bails out of the whole transcript subtree
   // instead of re-reconciling every turn wrapper on each keypress — that
@@ -5326,17 +5375,27 @@ export function SessionScreen({
     const asked = sid;
     revealingEarlierRef.current = asked;
     const steps = client.warmTurnTraces(sid, nextEarlierTurns, true);
-    // The turns land above the reader, so they wait until the transcript stops moving.
-    // Measured on an iOS simulator: turns that mounted in a flick showed the transcript
-    // some hundred pixels away from its line for one frame, at each step of the ramp.
+    // The turns land above the reader. The ballast takes their height, so they can
+    // mount in a flick. Without that room they wait until the transcript stops moving.
+    // Measured on an iOS simulator: turns that mounted in a flick with a scroll write
+    // showed the transcript some hundred pixels away from its line for one frame, at
+    // each step of the ramp.
     void (steps ? settledWithin(steps, EARLIER_STEPS_WAIT_MS) : Promise.resolve())
-      .then(() => untilScrollRests())
+      .then(() => (ballastHoldsReveal() ? undefined : untilScrollRests()))
       .then(() => {
         if (revealingEarlierRef.current === asked) revealingEarlierRef.current = '';
         if (earlierSidRef.current !== asked) return;
         prependEarlier();
         setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
       });
+  };
+  // True when the ballast has room for the turns that one reveal mounts.
+  const ballastHoldsReveal = () => {
+    const transcript = transcriptRef.current;
+    const held = ballastHeight(ballastRef.current);
+    if (!transcript || held <= 0) return false;
+    const turns = Math.min(earlierTurnsRef.current, INITIAL_VISIBLE_TURNS);
+    return held >= ballastRoomFor(transcript, mountedTurnsRef.current, turns);
   };
   // A page only joins the held rows: the window counts from the newest turn, so
   // nothing on screen moves. The mark then reveals them as it reveals each held row.
@@ -5387,11 +5446,40 @@ export function SessionScreen({
         observer.disconnect();
         loadEarlierRef.current();
       },
-      { root: scroller, rootMargin: `${LOAD_EARLIER_MARGIN} 0px 0px 0px` },
+      { root: scroller, rootMargin: `${LOAD_EARLIER_MARGIN} 0px ${LOAD_EARLIER_REACH_BELOW} 0px` },
     );
     observer.observe(mark);
     return () => observer.disconnect();
   }, [earlierArmed, visibleStart, earlierRemaining]);
+
+  // THE BALLAST KEEPS ITS SIZE IN A FLICK AND GETS A NEW ONE AT REST. A change of its
+  // size writes the scroll position, see `settleBallast`. The one exception is room
+  // left after the last earlier turn: a reader who gets to it is at the first turn.
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    if (loading || !viewport) return;
+    const stop = new AbortController();
+    let waiting = false;
+    const settleAtRest = () => {
+      if (waiting) return;
+      waiting = true;
+      void untilScrollRests(stop.signal).then(() => {
+        waiting = false;
+        if (!stop.signal.aborted) settleBallast();
+      });
+    };
+    const handleBallastScroll = () => {
+      if (earlierTurnsRef.current <= 0 && viewport.scrollTop < ballastHeight(ballastRef.current))
+        settleBallast();
+      else settleAtRest();
+    };
+    viewport.addEventListener('scroll', handleBallastScroll, { passive: true });
+    settleAtRest();
+    return () => {
+      stop.abort();
+      viewport.removeEventListener('scroll', handleBallastScroll);
+    };
+  }, [loading, earlierTotal, settleBallast]);
 
   // THE OUTLINE'S JUMP (Blockether/vis#316). The turn can be anywhere in the session:
   // on screen, held outside the render window, or still on the gateway. The target
@@ -5900,6 +5988,7 @@ export function SessionScreen({
               role="region"
               aria-label="Transcript"
             >
+              <div ref={ballastRef} aria-hidden="true" data-scroll-ballast="" />
               <div
                 ref={transcriptRef}
                 className={transcriptColumnClass({ zen, outline: outlineGutter, empty: !turns.length && !runningTurn })}

@@ -393,6 +393,41 @@ export function seatScroller(viewport: AnchorScroller, top: number): void {
   style.overflowY = overflowY;
 }
 /**
+ * Empty room above a transcript that holds earlier turns which are not mounted yet.
+ *
+ * Content that lands above the reader takes its height from this room. Nothing below
+ * the room moves, so the scroll position needs no write. This matters on iOS: a write
+ * in a flick starts from a stale position and stops the flick (see `seatScroller`).
+ * Measured on an iOS simulator, 10 flicks up through a session of 160 turns: the
+ * reader was at the top of the mounted turns in 122 of 1 207 frames without the room,
+ * and in none with it.
+ */
+export type ScrollBallast = { style: { height: string } };
+
+/** The height of the ballast in pixels. No ballast has no height. */
+export function ballastHeight(ballast: ScrollBallast | null | undefined): number {
+  return (ballast && parseFloat(ballast.style.height)) || 0;
+}
+
+/**
+ * Gives the ballast a new height and moves the scroller by the difference, so the
+ * content stays where the reader sees it. A reader who sees only ballast lands where
+ * the content starts. Call it at rest: it writes the scroll position.
+ */
+export function resizeBallast(
+  viewport: AnchorScroller & { readonly clientHeight: number },
+  ballast: ScrollBallast,
+  height: number,
+): void {
+  const held = ballastHeight(ballast);
+  const before = viewport.scrollTop;
+  const top = before + viewport.clientHeight <= held ? height : Math.max(0, before + height - held);
+  if (height === held && top === before) return;
+  ballast.style.height = `${height}px`;
+  seatScroller(viewport, top);
+}
+
+/**
  * What the reader is looking at: the element crossing the fold and how far its
  * top sits below that fold — plus `top`, the `scrollTop` the reading was taken
  * at. That pixel is the part of the reading that OUTLIVES the element, and the
@@ -527,12 +562,16 @@ function anchorStillMounted(
  * restore (no anchor, or the turn and every sibling below it were unmounted
  * meanwhile) and the caller owns the fallback.
  */
-export function applyScrollAnchor(viewport: AnchorScroller, anchor: ScrollAnchor | null): boolean {
+export function applyScrollAnchor(
+  viewport: AnchorScroller,
+  anchor: ScrollAnchor | null,
+  ballast?: ScrollBallast | null,
+): boolean {
   const held = anchorStillMounted(anchor);
   if (!anchor || !held) return false;
   const drift =
     held.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - held.offset;
-  if (Math.abs(drift) > 0.5) moveAnchored(viewport, anchor, drift);
+  if (Math.abs(drift) > 0.5) moveAnchored(viewport, anchor, drift, ballast);
   return true;
 }
 
@@ -544,6 +583,7 @@ export function applyScrollAnchor(viewport: AnchorScroller, anchor: ScrollAnchor
 export function applyScrollAnchorGrowth(
   viewport: AnchorScroller,
   anchor: ScrollAnchor | null,
+  ballast?: ScrollBallast | null,
 ): boolean {
   const held = anchorStillMounted(anchor);
   if (!anchor || !held) return false;
@@ -553,7 +593,7 @@ export function applyScrollAnchorGrowth(
     held.offset +
     viewport.scrollTop -
     anchor.top;
-  if (Math.abs(growth) > 0.5) moveAnchored(viewport, anchor, growth);
+  if (Math.abs(growth) > 0.5) moveAnchored(viewport, anchor, growth, ballast);
   return true;
 }
 
@@ -561,8 +601,23 @@ export function applyScrollAnchorGrowth(
  * Moves the scroller by `delta` and the anchor's reading pixel with it, so the next
  * call measures zero. Without the second move, the reader's next scroll billed the
  * same growth again: an earlier-steps page of 1 351 px moved the reader twice.
+ * A ballast with height takes the growth first, and the scroller moves only by the
+ * part that the ballast cannot take.
  */
-function moveAnchored(viewport: AnchorScroller, anchor: ScrollAnchor, delta: number): void {
+function moveAnchored(
+  viewport: AnchorScroller,
+  anchor: ScrollAnchor,
+  growth: number,
+  ballast?: ScrollBallast | null,
+): void {
+  let delta = growth;
+  const held = ballastHeight(ballast);
+  if (ballast && held > 0) {
+    const left = Math.max(0, held - delta);
+    ballast.style.height = `${left}px`;
+    delta -= held - left;
+    if (Math.abs(delta) <= 0.5) return;
+  }
   const before = viewport.scrollTop;
   seatScroller(viewport, Math.max(0, before + delta));
   anchor.top += viewport.scrollTop - before;

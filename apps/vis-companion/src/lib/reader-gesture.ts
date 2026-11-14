@@ -209,6 +209,14 @@ export function untilScrollRests(signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * True while a scroller moves under the reader's hand or in the momentum of a flick.
+ * Momentum outlives `readerOwnsScroll`: iOS sends its scroll events for seconds.
+ */
+export function scrollInMotion(): boolean {
+  return dragging || Date.now() - lastScrollAt <= REST_MS;
+}
+
 /** A new scroll surface cannot inherit the gesture that owned the previous one. */
 export function releaseReaderScroll(): void {
   lastGestureAt = Number.NEGATIVE_INFINITY;
