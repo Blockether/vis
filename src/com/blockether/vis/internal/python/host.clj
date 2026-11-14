@@ -174,6 +174,19 @@
                (fn []
                  ~@body)))
 
+(def ^:dynamic *door*
+  "`[session thread]` while `thread` serves a host call that the driver of `session`
+   waits for, else nil. The thread is part of the value because a `future` copies the
+   bindings, and its later work is not that host call."
+  nil)
+
+(defn serving?
+  "True when this thread serves a host call that the driver of `session` waits for.
+   A driver call into `session` from here would wait for itself."
+  [session]
+  (let [[served thread] *door*]
+    (and (some? served) (= served session) (identical? thread (Thread/currentThread)))))
+
 (defn- answer-in-frame
   "[[answer]], under the binding frame the driver of `session` published.
    [[*guest-thread?*]] stays from the serving thread, because the driver's frame
@@ -184,7 +197,10 @@
           guest-thread? *guest-thread?*]
 
       (clojure.lang.Var/resetThreadBindingFrame frame)
-      (try (binding [*guest-thread?* guest-thread?]
+      (try (binding [*guest-thread?* guest-thread?
+                     ;; A thread that the guest created is not the call that the driver waits for.
+                     *door* (when-not guest-thread? [session (Thread/currentThread)])]
+
              (answer tool f args))
            (finally (clojure.lang.Var/resetThreadBindingFrame held))))
     (answer tool f args)))

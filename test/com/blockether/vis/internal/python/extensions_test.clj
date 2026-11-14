@@ -418,69 +418,109 @@
                               (:result (read-token)))))))
              (finally (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
-  (it "reads and writes a setting in the tool file of each project, without a Vis value"
-      ;; #477: Vis kept its own value next to the value that another tool saves.
-      (let [dir
-            (temp-dir)
+  (it
+    "reads and writes a setting in the tool file of each project, without a Vis value"
+    ;; #477: Vis kept its own value next to the value that another tool saves.
+    (let [dir
+          (temp-dir)
 
-            root
-            (.getCanonicalPath ^java.io.File dir)
+          root
+          (.getCanonicalPath ^java.io.File dir)
 
-            other
-            (.getCanonicalPath ^java.io.File (temp-dir))
+          other
+          (.getCanonicalPath ^java.io.File (temp-dir))
 
-            target
-            {:scope "project" :root root}
+          target
+          {:scope "project" :root root}
 
-            value-at
-            (fn [target]
-              (:value (first (filter #(= "external_preference" (:id %))
-                                     (scoped/settings nil target)))))]
+          value-at
+          (fn [target]
+            (:value (first (filter #(= "external_preference" (:id %))
+                                   (scoped/settings nil target)))))]
 
-        (write-ext! dir
-                    ".vis/extensions/external.py"
-                    (str "from pathlib import Path\nimport blockether.vis.extension as vis\n"
-                         "def read(root):\n    file = Path(root) / 'preference.txt'\n"
-                         "    return file.read_text() == 'true' if file.exists() else None\n"
-                         "def write(root, value):\n    file = Path(root) / 'preference.txt'\n"
-                         "    if value is None:\n        file.unlink(missing_ok=True)\n"
-                         "    else:\n        file.write_text('true' if value else 'false')\n"
-                         "preference = vis.Setting(id='external_preference', label='Preference', "
-                         "default=False, scopes=['project'], read=read, write=write)\n"
-                         "plain = vis.Setting(id='external_plain', label='Plain', default=True, "
-                         "scopes=['project'])\n"
-                         "def read_both() -> list:\n    \"Read both settings.\"\n"
-                         "    return [preference.value(), plain.value()]\n"
-                         "vis.register_extension(vis.Extension(name='external-preference', "
-                         "description='External preference fixture', alias='external_preference', "
-                         "settings=[preference, plain], symbols=[vis.Symbol(read_both, "
-                         "activity=vis.Activity(label='Read both', show_start=False))]))\n"))
-        (try (binding [workspace/*workspace-root* root]
-               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
-                                                      :project-root root})
-               (expect (= [] (pyx/load-failures)))
-               (expect (false? (value-at target)))
-               ;; The tool saves its own choice.
-               (spit (io/file root "preference.txt") "true")
-               (expect (true? (value-at target)))
-               ;; A callback reads the same storage. Vis cannot call `read` while the
-               ;; extension runs, so a host read of another setting must not wait for it.
-               (let [read-both (symbol-fn (registered "external-preference") 'read_both)
-                     read-in #(binding [extension/*current-environment* {:workspace/root root}]
-                                (:result (read-both)))]
+      (write-ext! dir
+                  ".vis/extensions/external.py"
+                  (str "from pathlib import Path\nimport blockether.vis.extension as vis\n"
+                       "def read(root):\n    file = Path(root) / 'preference.txt'\n"
+                       "    return file.read_text() if file.exists() else None\n"
+                       "def write(root, value):\n    file = Path(root) / 'preference.txt'\n"
+                       "    if value is None:\n        file.unlink(missing_ok=True)\n"
+                       "    else:\n        file.write_text('true' if value else 'false')\n"
+                       "preference = vis.Setting(id='external_preference', label='Preference', "
+                       "default=False, scopes=['project'], read=read, write=write)\n"
+                       "plain = vis.Setting(id='external_plain', label='Plain', default=True, "
+                       "scopes=['project'])\n"
+                       "def read_both() -> list:\n    \"Read both settings.\"\n"
+                       "    return [preference.value(), plain.value()]\n"
+                       "def wake() -> str:\n    \"Send a host request.\"\n"
+                       "    try:\n        vis.council.wake('ping')\n"
+                       "    except ValueError:\n        pass\n" "    return 'returned'\n"
+                       "vis.register_extension(vis.Extension(name='external-preference', "
+                       "description='External preference fixture', alias='external_preference', "
+                       "settings=[preference, plain], symbols=[vis.Symbol(read_both, "
+                       "activity=vis.Activity(label='Read both', show_start=False)), "
+                       "vis.Symbol(wake, "
+                       "activity=vis.Activity(label='Wake', show_start=False))]))\n"))
+      (try
+        (binding [workspace/*workspace-root* root]
+          (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                 :project-root root})
+          (expect (= [] (pyx/load-failures)))
+          (expect (false? (value-at target)))
+          ;; The tool saves its own choice.
+          (spit (io/file root "preference.txt") "true")
+          (expect (true? (value-at target)))
+          ;; A callback reads the same storage, with the type that Settings shows. Vis
+          ;; cannot call `read` while the extension runs, so a host read of another
+          ;; setting must not wait for it.
+          (let [read-both (symbol-fn (registered "external-preference") 'read_both)
+                read-in #(binding [extension/*current-environment* {:workspace/root root}]
+                           (:result (read-both)))]
 
-                 (expect (= [true true] (read-in)))
-                 (expect (= [false true]
-                            (binding [toggles/*invocation-overrides* {"external_preference" false}]
-                              (read-in)))))
-               (scoped/set-setting! nil target "external_preference" "value" false)
-               (expect (= "false" (slurp (io/file root "preference.txt"))))
-               (expect (not (.exists (io/file other "preference.txt"))))
-               (scoped/set-setting! nil target "external_preference" "inherit" nil)
-               (expect (not (.exists (io/file root "preference.txt"))))
-               (expect (not (.exists (io/file dir ".vis/config.yml")))))
-             (finally (binding [workspace/*workspace-root* root]
-                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+            (expect (= [true true] (read-in)))
+            (expect (= [false true]
+                       (binding [toggles/*invocation-overrides* {"external_preference" false}]
+                         (read-in)))))
+          ;; A host request of a callback reads the settings, as a new turn does. The
+          ;; extension waits for that request, so the request must not wait for `read`.
+          (let [store (ps/db-create-connection! :memory)
+                env {:workspace/root root
+                     :session-id (db-test/store-session! store {:channel :api})
+                     :db-info store}
+                door (atom nil)
+                previous @@#'pyx/host-exchange
+                wake (symbol-fn (registered "external-preference") 'wake)
+                worker (:python-context (ep/create-python-context {} nil {:worker? true} nil))]
+
+            (pyx/install-host-exchange! (fn [_ _]
+                                          (reset! door (Thread/currentThread))
+                                          (value-at target)
+                                          {:status 200
+                                           :headers {"content-type" "application/json"}
+                                           :content (.encodeToString
+                                                      (java.util.Base64/getEncoder)
+                                                      (.getBytes "{}" StandardCharsets/UTF_8))}))
+            ;; The callback runs in the extension's own context, then in a session worker.
+            (try (doseq [env [env (assoc env :python-context worker)]]
+                   (reset! door nil)
+                   (let [answer (deref (future (binding [extension/*current-environment* env]
+                                                 (:result (wake))))
+                                       20000
+                                       ::waiting)]
+                     (some-> ^Thread @door
+                             .interrupt)
+                     (expect (some? @door))
+                     (expect (= "returned" answer))))
+                 (finally (pyx/install-host-exchange! previous)
+                          (ep/dispose-python-context! worker))))
+          (scoped/set-setting! nil target "external_preference" "value" false)
+          (expect (= "false" (slurp (io/file root "preference.txt"))))
+          (expect (not (.exists (io/file other "preference.txt"))))
+          (scoped/set-setting! nil target "external_preference" "inherit" nil)
+          (expect (not (.exists (io/file root "preference.txt"))))
+          (expect (not (.exists (io/file dir ".vis/config.yml")))))
+        (finally (binding [workspace/*workspace-root* root]
+                   (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "calls a Python on_change hook and reports its error"
       ;; #369: a setting had no change hook, so an extension had to poll for a change.
       (let [dir
@@ -558,6 +598,34 @@
                  (expect (str/includes? (:error failure) expected) (:error failure))
                  (expect (some #(and (= :error (:level %)) (str/includes? (:message %) expected))
                                checks))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "names the broken rule of a setting with external storage"
+      ;; #477: the load failed with only "Invalid extension", and doctor printed the declaration.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)]
+
+        (write-ext! dir
+                    ".vis/extensions/shared.py"
+                    (str
+                      "import blockether.vis.extension as vis\n"
+                      "vis.register_extension(vis.Extension(name='shared-storage', "
+                      "description='Shared storage fixture', "
+                      "settings=[vis.Setting(id='shared_storage', label='Shared', default=False, "
+                      "scopes=['global', 'project'], read=lambda root: None, "
+                      "write=lambda root, value: None)]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (let [[failure] (pyx/load-failures root)]
+                 (expect (= "shared-storage" (:extension failure)))
+                 (expect (str/includes? (str (:error failure))
+                                        (str "Invalid setting shared_storage: external storage "
+                                             "needs scopes [\"project\"]."))
+                         (:error failure))))
              (finally (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "reads the session value of a project extension's setting"
@@ -1344,6 +1412,54 @@
             (expect (= "session" (read-in (in-session {mode "session"}))))))
         (finally (binding [workspace/*workspace-root* root]
                    (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "gives a nested project's directory to the storage of a setting that a glob loads"
+      ;; #477: `read` and `write` got the workspace directory, so the extension of a nested
+      ;; project read and wrote the file of another project.
+      (let [root
+            (.getCanonicalPath ^java.io.File (temp-dir))
+
+            id
+            "nested_external"
+
+            target
+            {:scope "project" :root root}
+
+            value-at
+            #(:value (first (filter (fn [row]
+                                      (= id (:id row)))
+                                    (scoped/settings nil target))))]
+
+        (write-ext!
+          (io/file root)
+          "repos/a/.vis/extensions/a.py"
+          (str "from pathlib import Path\nimport blockether.vis.extension as vis\n"
+               "def read(root):\n    file = Path(root) / 'preference.txt'\n"
+               "    return file.read_text() == 'true' if file.exists() else None\n"
+               "def write(root, value):\n"
+               "    (Path(root) / 'preference.txt').write_text('true' if value else 'false')\n"
+               "preference = vis.Setting(id='nested_external', label='Preference', "
+               "default=False, scopes=['project'], read=read, write=write)\n"
+               "def read_value() -> bool:\n    \"Read the value.\"\n    return preference.value()\n"
+               "vis.register_extension(vis.Extension(name='nested-external', "
+               "description='Nested external fixture', alias='nested_external', "
+               "settings=[preference], symbols=[vis.Symbol(read_value, "
+               "activity=vis.Activity(label='Read value', show_start=False))]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/reload-python-extensions!
+                 {:dirs []
+                  :project-root root
+                  :entries [{:name "repos" :source (str root "/repos/*/.vis/extensions/*.py")}]})
+               (expect (= [] (filter #(= root (:project-root %)) (pyx/load-failures))))
+               (spit (io/file root "repos/a/preference.txt") "true")
+               (expect (true? (value-at)))
+               (expect (true? (binding [extension/*current-environment* {:workspace/root root}]
+                                (:result ((symbol-fn (registered "nested-external")
+                                                     'read_value))))))
+               (scoped/set-setting! nil target id "value" false)
+               (expect (= "false" (slurp (io/file root "repos/a/preference.txt"))))
+               (expect (not (.exists (io/file root "preference.txt")))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "reads a secret setting only for the extension that declares it"
       (let [id
             "host_secret_fixture"

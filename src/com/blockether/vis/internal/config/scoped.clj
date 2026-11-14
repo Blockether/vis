@@ -12,6 +12,7 @@
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.util :as util]
@@ -143,15 +144,17 @@
   [root raw]
   (into {}
         (keep (fn [[id value]]
-                ;; A setting in external storage takes no value from a Vis file.
-                (when-not (:read-fn (toggles/target-toggle-spec root id))
-                  (when-let [chosen (toggles/wire-value root id value)]
-                    [id (:value chosen)]))))
+                (let [spec (toggles/target-toggle-spec root id)]
+                  ;; A setting in external storage takes no value from a Vis file.
+                  (when-not (:read-fn spec)
+                    (when-let [chosen (toggles/spec-value spec value)]
+                      [id (:value chosen)])))))
         (get raw "toggles")))
 
 (def ^:dynamic *read-external?*
-  "False while an extension call waits for a setting value. A read of external storage
-   calls that extension again, and its context serves one call at a time."
+  "False for a reader that needs no value from external storage. A read of that storage
+   calls its extension, waits while the extension is busy, and cannot return while the
+   reader is a call of that extension."
   true)
 
 (defn- external-values
@@ -159,47 +162,71 @@
    project at `root`, read once inside [[util/with-memo-scope]]. A reader without a saved
    choice returns nil and gives no entry. A reader that fails or returns a value of
    another type gives no entry and a warning: one extension must not stop the settings
-   list or a turn. Each turn reads again, so one setting of one project warns at most
-   once each minute. Without [[*read-external?*]], it reads nothing."
+   list or a turn. A cancelled reader throws. Each turn reads again, so one error of one
+   setting of one project warns at most once each minute. It reads nothing without a
+   `root`, without [[*read-external?*]], or for a session that does not read the project
+   tier."
   [root]
-  (util/scope-cached
-    [::external-values root *read-external?*]
-    []
-    (fn []
-      (into {}
-            (keep
-              (fn [{:keys [id owner read-fn]}]
-                (when read-fn
-                  (try (when-some [raw (read-fn root)]
-                         (if-let [chosen (toggles/wire-value root id raw)]
-                           [id (:value chosen)]
-                           (throw (ex-info "The value does not match the setting type" {}))))
-                       (catch Throwable t
-                         (tel/log! {:level :warn
-                                    :id ::external-read-failed
-                                    :limit [[1 60000]]
-                                    :limit-by [id root]
-                                    :data {:id id
-                                           :owner owner
-                                           :root root
-                                           :error (or (ex-message t) (.getName (class t)))}}
-                                   "A setting could not read its external storage")
-                         nil)))))
-            (when *read-external?* (toggles/target-toggles root))))))
+  (if-not (and root *read-external?* (workspace/source-enabled? "project"))
+    {}
+    (util/scope-cached
+      [::external-values root]
+      []
+      #(into {}
+             (keep
+               (fn [{:keys [id owner read-fn] :as spec}]
+                 (when read-fn
+                   (try (when-some [raw (read-fn root)]
+                          (if-let [chosen (toggles/spec-value spec raw)]
+                            [id (:value chosen)]
+                            (throw (ex-info (str "The value "
+                                                 (util/truncate (pr-str raw) 80)
+                                                 " does not fit the "
+                                                 (name (:type spec))
+                                                 " setting")
+                                            {}))))
+                        (catch Exception e
+                          ;; A cancelled reader stays cancelled: the default is not its answer.
+                          (when (some (partial instance? InterruptedException)
+                                      (error/error-chain e))
+                            (throw e))
+                          (let [reason (error/error-message e)]
+                            (tel/log! {:level :warn
+                                       :id ::external-read-failed
+                                       :limit [[1 60000]]
+                                       :limit-by [id root reason]
+                                       :data {:id id :owner owner :root root :error reason}}
+                                      "A setting could not read its external storage")
+                            nil))))))
+             (toggles/target-toggles root)))))
 
 (defn- write-external!
   "Save `value` of the setting `spec` in the storage of its owner, for the project at
    `root`. Nil removes the saved choice. That storage has one writer, its owner: Vis
    saves no second value. A failure gives a warning and the message that Settings shows."
   [root {:keys [id label owner write-fn]} value]
+  ;; A caller that holds a memo scope must read the new value after this write.
+  (some-> util/*memo-scope*
+          (swap! dissoc [::external-values root]))
   (try (write-fn root value)
        (catch Exception e
-         (let [reason (or (ex-message e) (.getName (class e)))]
+         (let [reason (error/error-message e)]
            (tel/log! {:level :warn
                       :id ::external-write-failed
                       :data {:id id :owner owner :root root :error reason}}
                      "A setting could not write its external storage")
-           (throw (ex-info (str label " was not saved: " reason) {:status 502 :id id} e))))))
+           ;; A 4xx status: the message is for the person, and the gateway works.
+           (throw (ex-info (str label " was not saved: " reason)
+                           {:status 409 :type :setting-not-saved :id id}
+                           e))))))
+
+(defn- project-values
+  "The typed project values of `root`: the `toggles` of the tier that `load-raw` reads
+   there, then the values in external storage."
+  [root load-raw]
+  (merge (binding [workspace/*workspace-root* root]
+           (raw-toggles root (load-raw)))
+         (external-values root)))
 
 (defn layers
   "Read ancestors afresh, including memberships and project configuration. A session
@@ -211,10 +238,7 @@
                                          workspace/*config-sources*)]
     (let [global (merge (raw-toggles root (config/load-global-yaml-config-raw))
                         (raw-toggles root (config/load-global-config-raw)))
-          project (when root
-                    (merge (binding [workspace/*workspace-root* root]
-                             (raw-toggles root (config/load-project-tiers-raw)))
-                           (external-values root)))]
+          project (when root (project-values root config/load-project-tiers-raw))]
 
       (cond-> [{:scope "global" :values global}]
         root
@@ -284,9 +308,7 @@
     (raw-toggles root (config/load-global-config-raw))
 
     "project"
-    (merge (binding [workspace/*workspace-root* root]
-             (raw-toggles root (config/load-project-config-raw)))
-           (external-values root))
+    (project-values root config/load-project-config-raw)
 
     (store/db-scoped-settings db scope target-id)))
 
@@ -652,7 +674,10 @@
         (:session-id env)]
 
     (when (and db session-id)
-      (util/scope-cached [::values session-id] [db] #(values db session-id)))))
+      ;; An engine or a resource is never in external storage, so no extension is called.
+      (util/scope-cached [::values session-id]
+                         [db]
+                         #(binding [*read-external?* false] (values db session-id))))))
 
 (defn- live-value
   "`id`'s live value from `live`, a map or a delay of one, resolved afresh when
@@ -713,7 +738,7 @@
                      nil
                      (catch Throwable t
                        ;; The hook message of a secret setting can hold the value.
-                       (let [reason (when-not secret? (or (ex-message t) (.getName (class t))))]
+                       (let [reason (when-not secret? (error/error-message t))]
                          (tel/log! {:level :warn
                                     :id ::change-hook-failed
                                     :data (cond-> {:id id :scope (:scope target)}
@@ -826,10 +851,7 @@
    is saved, outside the store lock. A failed external write leaves the other edits saved.
    Returns the failed change hooks and external writes as setting id -> message."
   [db {:keys [scope target-id root] :as target} edit]
-  (let [before
-        (settings db target)
-
-        external-spec
+  (let [external-spec
         (fn [{:keys [section name]}]
           (when (and (= "project" scope) (= ["toggles"] section))
             (let [spec (toggles/target-toggle-spec root name)]
@@ -840,8 +862,8 @@
 
         apply-raw
         (fn [current-db raw]
-          (let [edits (edit current-db)]
-            (vreset! external (filterv external-spec edits))
+          (let [{outside true stored false} (group-by #(some? (external-spec %)) (edit current-db))]
+            (vreset! external (vec outside))
             (reduce (fn [result {:keys [section name value]}]
                       (if (nil? value)
                         (if (seq section)
@@ -849,35 +871,40 @@
                           (dissoc result name))
                         (assoc-in result (conj section name) value)))
                     raw
-                    (remove external-spec edits))))
+                    stored)))
 
-        _
-        (case scope
-          "global"
-          (config/update-machine-config! #(apply-raw db %))
+        ;; One scope: `edit` reads the settings inside the store lock. It gets there the
+        ;; external values that `before` read, so the lock does not wait for an extension.
+        before
+        (util/with-memo-scope
+          (let [before (settings db target)]
+            (case scope
+              "global"
+              (config/update-machine-config! #(apply-raw db %))
 
-          "project"
-          (do (when-not root (throw (ex-info "Project has no workspace root" {:status 409})))
-              (binding [workspace/*workspace-root* root]
-                (config/update-project-config! #(apply-raw db %))))
+              "project"
+              (do (when-not root (throw (ex-info "Project has no workspace root" {:status 409})))
+                  (binding [workspace/*workspace-root* root]
+                    (config/update-project-config! #(apply-raw db %))))
 
-          (store/db-edit-scoped-settings!
-            db
-            scope
-            target-id
-            (fn [tx raw]
-              (reduce (fn [result {:keys [section name value]}]
-                        (let [id (if (= section ["toggles"])
-                                   name
-                                   (str (definition-prefix section) name))]
-                          (if (nil? value) (dissoc result id) (assoc result id value))))
-                      raw
-                      (edit tx)))))
+              (store/db-edit-scoped-settings!
+                db
+                scope
+                target-id
+                (fn [tx raw]
+                  (reduce (fn [result {:keys [section name value]}]
+                            (let [id (if (= section ["toggles"])
+                                       name
+                                       (str (definition-prefix section) name))]
+                              (if (nil? value) (dissoc result id) (assoc result id value))))
+                          raw
+                          (edit tx)))))
+            before))
 
         write-errors
         (into {}
-              (keep (fn [{:keys [name value] :as edit}]
-                      (try (write-external! root (external-spec edit) value)
+              (keep (fn [{:keys [name value] :as change}]
+                      (try (write-external! root (external-spec change) value)
                            nil
                            (catch clojure.lang.ExceptionInfo e [name (ex-message e)]))))
               @external)]

@@ -3703,7 +3703,7 @@
         },
         "change_error": {
           "type": "string",
-          "description": "Present after a write when the owner's change hook failed. The value stays saved."
+          "description": "Present after a write when the owner's change hook or its storage write failed. The message says when the value is not saved."
         },
         "parent": {
           "type": "string",

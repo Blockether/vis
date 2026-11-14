@@ -1227,11 +1227,12 @@ class Setting(Generic[_SettingValue]):
     `read(root)` and `write(root, value)` bind a project setting to storage that the
     extension owns, for example the settings file of another tool. Declare both, with
     `scopes=["project"]` and without `on_change` or `is_secret`. `root` is the project
-    directory. `read` returns the saved value, or None if that storage has no saved
-    choice; then the default applies. `write` saves the value, and None removes the
-    saved choice. Vis saves no copy: the app, the TUI, `value()` and each turn read this
-    storage, and a value in a Vis configuration file has no effect. `value()` calls
-    `read` itself, so an error of `read` goes to its caller. Elsewhere, if `read` raises
+    that holds the extension, as `vis.project_root()` gives it. `read` returns the saved
+    value, or None if that storage has no saved choice; then the default applies. `read`
+    cannot be async. `write` saves the value, and None removes the saved choice. Vis
+    saves no copy: the app, the TUI, `value()` and each turn read this storage, and a
+    value in a Vis configuration file has no effect. `value()` calls `read` itself, also
+    outside Vis, so an error of `read` goes to its caller. Elsewhere, if `read` raises
     or returns a value of another type, the default applies and Vis logs a warning. If
     `write` raises, Vis shows the error, logs a warning and saves nothing.
     """
@@ -1262,6 +1263,8 @@ class Setting(Generic[_SettingValue]):
             raise ValueError("Setting read and write must be declared together")
         if self.read is not None and not (callable(self.read) and callable(self.write)):
             raise TypeError("Setting read and write must be callable")
+        if inspect.iscoroutinefunction(self.read):
+            raise TypeError("Setting read must not be async: value() calls it")
         declaration = self._spec()
         for callback in ("on_change", "read", "write"):
             declaration.pop(callback, None)

@@ -1490,84 +1490,155 @@
              ;; A Vis file gives this key no second value.
              (with-redefs [config/load-project-tiers-raw (constantly {"toggles" {id true}})]
                (expect (= [false "default"] ((juxt :value :source) (row target)))))
+             ;; A caller that holds a memo scope gets the row of the new value.
+             (expect (true? (:value (util/with-memo-scope
+                                      (scoped/set-setting! db target id "value" true)))))
              (finally (toggles/unregister-toggle! id))))))
-  (it "keeps the other settings and the saved value when the storage fails"
-      (with-empty-config
-        (let [id
-              "external_failure_test"
-
-              target
-              {:scope "project" :target-id "external" :root "/tmp/external"}
-
-              fail
-              (fn [& _]
-                (throw (ex-info "Tool file is locked" {})))]
-
-          (toggles/register-toggle! {:id id
-                                     :label "External"
-                                     :default false
-                                     :scopes ["project"]
-                                     :read-fn fail
-                                     :write-fn fail})
-          (try (expect (false? (:value (first (filter #(= id (:id %))
-                                                      (scoped/settings nil target))))))
-               (expect (= [502 "External was not saved: Tool file is locked"]
-                          (try (scoped/set-setting! nil target id "value" true)
-                               (catch clojure.lang.ExceptionInfo e
-                                 [(:status (ex-data e)) (ex-message e)]))))
-               (finally (toggles/unregister-toggle! id))))))
-  (it "sends a batch edit to the external storage and reports a failed write on its row"
-      ;; The batch route saved the value in the Vis overlay, and the tool kept its old choice.
+  (it "calls no storage for an engine check, a project without a directory or a global-only session"
+      ;; Each tool call checks the engine of its extension. That check called `read` of
+      ;; each extension, and waited while one of them ran.
       (with-empty-config
         (let [db
               (h/store)
 
-              dir
-              (.toFile (java.nio.file.Files/createTempDirectory
-                         "external-batch"
-                         (make-array java.nio.file.attribute.FileAttribute 0)))
-
-              root
-              (.getCanonicalPath dir)
-
               project
-              (store/db-create-project! db {:name "Batch" :workspace-root root})
+              (store/db-create-project! db {:name "Engine" :workspace-root "/tmp/external-engine"})
 
-              target
-              (scoped/target db "project" (str (:id project)))
+              group
+              (store/db-create-session-group! db (:id project) {:name "Work"})
 
-              saved
-              (atom {})
+              sid
+              (h/store-session! db {:title "A"})
 
-              apply!
-              #(:change-errors
-                 (settings-edit/apply! db target (settings-edit/revision db target) %))
+              id
+              "external_engine_test"
 
-              declare!
-              (fn [id label write-fn]
-                (toggles/register-toggle! {:id id
-                                           :label label
-                                           :default false
-                                           :scopes ["project"]
-                                           :read-fn #(get @saved %)
-                                           :write-fn write-fn}))]
+              reads
+              (atom [])]
 
-          (declare! "external_batch_test"
-                    "External"
-                    (fn [root value]
-                      (if (nil? value) (swap! saved dissoc root) (swap! saved assoc root value))))
-          (declare! "external_batch_locked"
-                    "Locked"
-                    (fn [_ _]
-                      (throw (ex-info "Tool file is locked" {}))))
-          (try (expect (= {} (apply! [{"id" "external_batch_test" "action" "value" "value" true}])))
-               (expect (= {root true} @saved))
-               (expect (not (.exists (io/file root ".vis/config.yml"))))
-               (expect (= {"external_batch_locked" "Locked was not saved: Tool file is locked"}
-                          (apply! [{"id" "external_batch_locked" "action" "value" "value" true}
-                                   {"id" "external_batch_test" "action" "inherit"}])))
-               (expect (= {} @saved))
-               (finally (toggles/unregister-toggle! "external_batch_test")
-                        (toggles/unregister-toggle! "external_batch_locked")
-                        (doseq [file (reverse (file-seq dir))]
-                          (io/delete-file file true))))))))
+          (store/db-set-session-group! db sid (:id group))
+          (toggles/register-toggle! {:id id
+                                     :label "External"
+                                     :default false
+                                     :scopes ["project"]
+                                     :read-fn #(do (swap! reads conj %) nil)
+                                     :write-fn (fn [_ _])})
+          (try (scoped/values db sid)
+               (expect (= 1 (count @reads)))
+               (scoped/live-values {:db-info db :session-id sid})
+               (scoped/settings db {:scope "project" :target-id "none" :root nil})
+               ;; A session that reads only the global tier gets no project value.
+               (binding [workspace/*config-sources* #{"global"}]
+                 (scoped/settings db (scoped/target db "project" (str (:id project)))))
+               (expect (= 1 (count @reads)))
+               (finally (toggles/unregister-toggle! id))))))
+  (it
+    "keeps the other settings and the saved value when the storage fails"
+    (with-empty-config
+      (let [id
+            "external_failure_test"
+
+            target
+            {:scope "project" :target-id "external" :root "/tmp/external"}
+
+            fail
+            (fn [& _]
+              (throw (ex-info "Tool file is locked" {})))]
+
+        (toggles/register-toggle! {:id id
+                                   :label "External"
+                                   :default false
+                                   :scopes ["project"]
+                                   :read-fn fail
+                                   :write-fn fail})
+        (try (expect (false? (:value (first (filter #(= id (:id %))
+                                                    (scoped/settings nil target))))))
+             (expect (= [409 :setting-not-saved "External was not saved: Tool file is locked"]
+                        (try (scoped/set-setting! nil target id "value" true)
+                             (catch clojure.lang.ExceptionInfo e
+                               [(:status (ex-data e)) (:type (ex-data e)) (ex-message e)]))))
+             ;; A cancelled reader stays cancelled: the default is not its answer.
+             (toggles/register-toggle! {:id id
+                                        :label "External"
+                                        :default false
+                                        :scopes ["project"]
+                                        :read-fn
+                                        (fn [_]
+                                          (throw (ex-info "Cancelled" {} (InterruptedException.))))
+                                        :write-fn fail})
+             (expect (= "Cancelled"
+                        (try (scoped/settings nil target)
+                             (catch clojure.lang.ExceptionInfo e (ex-message e)))))
+             (finally (toggles/unregister-toggle! id))))))
+  (it
+    "sends a batch edit to the external storage and reports a failed write on its row"
+    ;; The batch route saved the value in the Vis overlay, and the tool kept its old choice.
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            dir
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "external-batch"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            root
+            (.getCanonicalPath dir)
+
+            project
+            (store/db-create-project! db {:name "Batch" :workspace-root root})
+
+            target
+            (scoped/target db "project" (str (:id project)))
+
+            saved
+            (atom {})
+
+            locked?
+            (atom false)
+
+            locked-reads
+            (atom 0)
+
+            update!
+            config/update-project-config!
+
+            apply!
+            #(:change-errors (settings-edit/apply! db target (settings-edit/revision db target) %))
+
+            declare!
+            (fn [id label write-fn]
+              (toggles/register-toggle! {:id id
+                                         :label label
+                                         :default false
+                                         :scopes ["project"]
+                                         :read-fn #(do (when @locked? (swap! locked-reads inc))
+                                                       (get @saved %))
+                                         :write-fn write-fn}))]
+
+        (declare! "external_batch_test"
+                  "External"
+                  (fn [root value]
+                    (if (nil? value) (swap! saved dissoc root) (swap! saved assoc root value))))
+        (declare! "external_batch_locked"
+                  "Locked"
+                  (fn [_ _]
+                    (throw (ex-info "Tool file is locked" {}))))
+        (try
+          (with-redefs [config/update-project-config!
+                        (fn [f]
+                          (update!
+                            #(try (reset! locked? true) (f %) (finally (reset! locked? false)))))]
+            (expect (= {} (apply! [{"id" "external_batch_test" "action" "value" "value" true}]))))
+          ;; The store lock does not wait for an extension that waits for the store.
+          (expect (zero? @locked-reads))
+          (expect (= {root true} @saved))
+          (expect (not (.exists (io/file root ".vis/config.yml"))))
+          (expect (= {"external_batch_locked" "Locked was not saved: Tool file is locked"}
+                     (apply! [{"id" "external_batch_locked" "action" "value" "value" true}
+                              {"id" "external_batch_test" "action" "inherit"}])))
+          (expect (= {} @saved))
+          (finally (toggles/unregister-toggle! "external_batch_test")
+                   (toggles/unregister-toggle! "external_batch_locked")
+                   (doseq [file (reverse (file-seq dir))]
+                     (io/delete-file file true))))))))

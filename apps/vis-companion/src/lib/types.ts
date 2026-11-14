@@ -533,7 +533,8 @@ export interface Toggle {
   parent?: string;
   /** Settings that belong under this row, in display order. They can have children too. */
   children?: Toggle[];
-  /** Present after a write when the extension's change hook failed. The value stays saved. */
+  /** Present after a write when the extension's change hook or its storage write failed.
+   *  The message says when the value is not saved. */
   change_error?: string;
 }
 

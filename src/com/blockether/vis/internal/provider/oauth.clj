@@ -16,6 +16,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
@@ -55,11 +56,6 @@
   [lock reuse refresh!]
   (locking lock (or (reuse) (refresh!))))
 
-(defn- error-chain
-  "`error` and each of its causes, outermost first."
-  [error]
-  (take-while some? (iterate ex-cause error)))
-
 (defn- invalid-grant?
   "True when `error` or one of its causes is an HTTP 400/401 `invalid_grant`
    answer of a token endpoint. The body is JSON text or an already-parsed map."
@@ -77,7 +73,7 @@
                                                                     :data {:status status}
                                                                     :error parse-error})
                                                          nil)))))))
-                 (error-chain error))))
+                 (error/error-chain error))))
 
 (defn- token-fingerprint
   "The first 8 hex digits of the SHA-256 of `token`, or nil for a blank one. A log
@@ -95,7 +91,7 @@
    only the HTTP status, the error type and class, and token fingerprints."
   [{:keys [store outcome trigger started-ms error refresh-token next-refresh-token locked]}]
   (let [chain
-        (error-chain error)
+        (error/error-chain error)
 
         data
         (into {}

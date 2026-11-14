@@ -247,8 +247,10 @@ value at another time, call `value()` in a callback.
 
 To show a preference that another tool saves, give `read` and `write`. Vis then keeps no copy of
 the value. `read(root)` returns the saved value for the project directory `root`, or `None` if the
-tool has no saved choice. `write(root, value)` saves a change from Settings, and `None` removes the
-saved choice. Such a setting needs `scopes=["project"]`. It cannot have `on_change` or `is_secret`.
+tool has no saved choice. `root` is the project that holds your extension, as `vis.project_root()`
+gives it. `write(root, value)` saves a change from Settings, and `None` removes the saved choice.
+Such a setting needs `scopes=["project"]` and a `read` that is not `async`, and cannot have
+`on_change` or `is_secret`.
 
 ```python
 import json

@@ -1124,7 +1124,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                      (not (.isAbsolute (io/file cwd))))
               (assoc opts
                 "cwd" (str (io/file (project-root-in (session-root "vis.shell") project-path) cwd)))
-              opts)))]
+              opts)))
+
+        ;; #326: a project extension's setting is known only where its project runs.
+        setting-root
+        (fn []
+          (if workspace/*workspace-root* (workspace/cwd-root) home-root))]
 
     (put! g
           "__vis_host_setting_declaration__"
@@ -1145,12 +1150,17 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       g
       "__vis_host_setting__"
       (fn [id default]
-        ;; #326: a project extension's setting is known only where its project runs.
         (let [root
-              (if workspace/*workspace-root* (workspace/cwd-root) home-root)
+              (setting-root)
 
               spec
               (toggles/target-toggle-spec root id)
+
+              ;; The door needs no value from external storage, so it calls no `read`.
+              rows
+              (fn [db target]
+                (binding [scoped/*read-external?* false]
+                  (scoped/settings db target)))
 
               ;; Only the extension that declares a secret setting reads its value.
               hidden?
@@ -1176,8 +1186,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
                   (when target
                     (some #(and (= id (:id %)) (contains? #{"group" "session"} (:source %)))
-                          (binding [scoped/*read-external?* false]
-                            (scoped/settings db target))))))
+                          (rows db target)))))
 
               ;; #399: an extension of a nested project reads that project's own
               ;; configuration, as a session at that project does. An invocation
@@ -1201,21 +1210,22 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
           (cond (or (nil? spec) hidden?) default
                 ;; #477: `default` is the value that the extension read in its own storage.
-                (:read-fn spec) (get toggles/*invocation-overrides* id default)
+                ;; It gets the type of the setting, as in Settings. Else the default applies.
+                (:read-fn spec) (get toggles/*invocation-overrides*
+                                     id
+                                     (:value (toggles/spec-value spec default) (:default spec)))
                 nested (:value nested)
                 ;; #380: without a session snapshot, a project extension's setting
                 ;; resolves at project scope, as Settings shows it there, vis.yml included.
                 (and (not (contains? toggles/*overrides* id))
                      (not (identical? spec (toggles/toggle-spec id))))
-                (:value (first (filter #(= id (:id %))
-                                       (binding [scoped/*read-external?* false]
-                                         (scoped/settings nil {:scope "project" :root root})))))
+                (:value (first (filter #(= id (:id %)) (rows nil {:scope "project" :root root}))))
                 :else (toggles/value-of root id)))))
     (put! g
           "__vis_host_setting_root__"
           (fn []
-            ;; #477: the project directory that `read` and `write` of a setting receive.
-            (if workspace/*workspace-root* (workspace/cwd-root) home-root)))
+            ;; #477: the directory that the host gives to `read` and `write` of a setting.
+            (project-root-in (setting-root) project-path)))
     (put! g
           "__vis_host_workspace_root__"
           (fn []
@@ -1500,6 +1510,11 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 (defonce ^:private context-lifecycle
   ;; Context -> snapshot and admitted calls. Guarded by session-contexts.
   (atom {}))
+
+(defn- context-project-root
+  "The project directory of the extension of `ctx` inside the session root `root` (#399)."
+  [ctx root]
+  (project-root-in root (:project-path (get @context-lifecycle ctx))))
 
 (defonce ^:private stale-workers
   ;; Trusted workers whose process still runs code that a reload replaced (#475).
@@ -2017,7 +2032,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
     (cond-> {"cwd" root
              "workspace_root" root
-             "project_root" (project-root-in root (:project-path (get @context-lifecycle ctx)))
+             "project_root" (context-project-root ctx root)
              "session_id" (some-> (:session-id env)
                                   str)
              "channel" (some-> (:channel env)
@@ -2034,19 +2049,20 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         [call-ctx call-f]
         (loop [attempt 1]
           (let [[target target-f] (session-call-target ext-name effective-env ctx f)
-                leased (locking session-contexts
-                         (when (contains? *suspended-contexts* target)
-                           (throw (ex-info (str "Extension `" ext-name
-                                                "` is waiting on this vis.tools call; "
-                                                "calling back into it would never return")
-                                           {:type ::tool-call-cycle :extension ext-name})))
-                         ;; A reload can retire the target before this lease. Resolve it again.
-                         (try (acquire-context! target)
-                              [target target-f]
-                              (catch clojure.lang.ExceptionInfo e
-                                (when-not (and (< attempt 3)
-                                               (= ::context-retired (:type (ex-data e))))
-                                  (throw e)))))]
+                leased
+                (locking session-contexts
+                  (when-let [waits-on (cond (contains? *suspended-contexts* target) "vis.tools"
+                                            (python-host/serving? target) "host")]
+                    (throw (ex-info (str "Extension `" ext-name
+                                         "` is waiting on this " waits-on
+                                         " call; " "calling back into it would never return")
+                                    {:type ::tool-call-cycle :extension ext-name})))
+                  ;; A reload can retire the target before this lease. Resolve it again.
+                  (try (acquire-context! target)
+                       [target target-f]
+                       (catch clojure.lang.ExceptionInfo e
+                         (when-not (and (< attempt 3) (= ::context-retired (:type (ex-data e))))
+                           (throw e)))))]
 
             (or leased (recur (inc attempt)))))]
 
@@ -2892,13 +2908,21 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 (defn- storage-adapters
   "The spec keys of a setting whose value the extension keeps in its own storage: Python
    `read(root)` and `write(root, value)` as `:read-fn` and `:write-fn`. `state.yml` keeps
-   no value of it, so `:persist?` is false."
+   no value of it, so `:persist?` is false. The host gives the root where the setting
+   shows. Python gets the directory of the extension's own project in that root (#399)."
   [ext-name ctx setting]
-  {:persist? false
-   :read-fn (fn [root]
-              (call-py-ext ext-name nil ctx (get setting "read") [root]))
-   :write-fn (fn [root value]
-               (call-py-ext ext-name nil ctx (get setting "write") [root value]))})
+  (let [call (fn [slot root & args]
+               (call-py-ext ext-name
+                            nil
+                            ctx
+                            (get setting slot)
+                            (into [(context-project-root ctx root)] args)))]
+    {:persist? false
+     ;; A waiting context gives no answer. Its `value()` reads the storage itself.
+     :read-fn #(try (call "read" %)
+                    (catch clojure.lang.ExceptionInfo e
+                      (when-not (= ::tool-call-cycle (:type (ex-data e))) (throw e))))
+     :write-fn #(call "write" %1 %2)}))
 
 (defn- ->provider-entry
   "`spec` is a Python `vis.Provider(...)` dict — STRING keys. Each callable slot

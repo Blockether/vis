@@ -607,6 +607,37 @@
 
       v)))
 
+(defn spec-value
+  "Coerce ONE wire value onto the type of `spec`, as [[wire-value]] does for the spec
+   of an id. Use it when the caller already holds the spec."
+  [{spec-type :type choices :choices :as spec} v]
+  (case spec-type
+    :boolean
+    (cond (boolean? v) {:value v}
+          (string? v) (let [token (str/lower-case (str/trim v))]
+                        (cond (contains? toggle-contract/boolean-true-tokens token) {:value true}
+                              (contains? toggle-contract/boolean-false-tokens token) {:value
+                                                                                      false})))
+
+    :enum
+    (let [target (some-> (cond (keyword? v) (name v)
+                               (string? v) v)
+                         str/trim
+                         str/lower-case)]
+      (some (fn [c]
+              (when (and target (= target (str/lower-case (name c)))) {:value c}))
+            choices))
+
+    :string
+    (let [text (cond (string? v) (str/trim v)
+                     (number? v) (str v))]
+      (when (toggle-contract/string-value? text) {:value text}))
+
+    :object
+    (when-not (object-problem spec v) {:value v})
+
+    nil))
+
 (defn wire-value
   "Coerce ONE value that arrived over the wire (`POST /v1/settings`) onto the
    REGISTERED type of `id`, using the vocabulary the CLI's `--toggles` already
@@ -621,34 +652,7 @@
    `false`, but a client asking for `\"maybe\"` deserves a refusal, not a
    coin-flip stored as its choice."
   ([id v] (wire-value nil id v))
-  ([root id v]
-   (let [{spec-type :type choices :choices} (target-toggle-spec root id)]
-     (case spec-type
-       :boolean
-       (cond (boolean? v) {:value v}
-             (string? v) (let [token (str/lower-case (str/trim v))]
-                           (cond (contains? toggle-contract/boolean-true-tokens token) {:value true}
-                                 (contains? toggle-contract/boolean-false-tokens token) {:value
-                                                                                         false})))
-
-       :enum
-       (let [target (some-> (cond (keyword? v) (name v)
-                                  (string? v) v)
-                            str/trim
-                            str/lower-case)]
-         (some (fn [c]
-                 (when (and target (= target (str/lower-case (name c)))) {:value c}))
-               choices))
-
-       :string
-       (let [text (cond (string? v) (str/trim v)
-                        (number? v) (str v))]
-         (when (toggle-contract/string-value? text) {:value text}))
-
-       :object
-       (when-not (object-problem (target-toggle-spec root id) v) {:value v})
-
-       nil))))
+  ([root id v] (spec-value (target-toggle-spec root id) v)))
 
 (defn hydrate-from-config!
   "Bulk-apply values from the string-keyed YAML `toggles` map."

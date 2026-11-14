@@ -170,3 +170,19 @@ def test_external_setting_needs_both_callbacks(options):
             scopes=["project"],
             **options,
         )
+
+
+def test_external_setting_rejects_an_async_read():
+    # #477: `value()` cannot await, so it gave a coroutine where Settings gave the value.
+    async def read(root):
+        return True
+
+    with pytest.raises(TypeError, match="read must not be async"):
+        vis.Setting(
+            id="external_test",
+            label="External",
+            default=False,
+            scopes=["project"],
+            read=read,
+            write=lambda root, value: None,
+        )

@@ -74,7 +74,8 @@
 
 (defn apply!
   "Validate and apply explicit edits with compare-and-swap. Failed batches write nothing.
-   Returns the new revision and the failed change hooks as setting id -> message."
+   Returns the new revision and the failed change hooks and external writes as setting
+   id -> message."
   [db target expected changes]
   (when-not (and (document/valid-json?
                    "gateway"

@@ -9,6 +9,7 @@
 
    Public API:
      `error-message`                 - raw text from a Throwable / map / string
+     `error-chain`                   - a Throwable and each of its causes
      `format-error`                  - prefix \"ERROR: \" idempotently
      `final-answer-code-error-message` - the \"Final-answer code error: ...\" prefix
                                         used by the iteration loop when an
@@ -22,6 +23,11 @@
         (map? v) (or (:message v) (:msg v) (pr-str v))
         (string? v) v
         :else (pr-str v)))
+
+(defn error-chain
+  "`error` and each of its causes, outermost first."
+  [error]
+  (take-while some? (iterate ex-cause error)))
 
 (defn format-error
   "Add the standard `ERROR: ` prefix to an error message, idempotent."

@@ -1249,9 +1249,18 @@
                  (:ext/name ext)
                  "': give one key from ! to ~ and exactly one of command (with label) and action")
                {:type :extension/invalid-keybinding :name (:ext/name ext) :keybinding binding})))
+    (when-let [setting (and (sequential? (:ext/toggles ext))
+                            (first (remove toggle-contract/contribution-valid?
+                                     (:ext/toggles ext))))]
+      (throw (ex-info (toggle-contract/contribution-message "Invalid setting" setting)
+                      {:type :extension/invalid-declaration
+                       :name (:ext/name ext)
+                       :extension (:ext/name ext)})))
     (when-not (extension? ext)
       (throw (ex-info (str "Invalid extension '" (:ext/name ext) "'")
-                      {:type :extension/invalid-declaration :name (:ext/name ext) :extension ext})))
+                      {:type :extension/invalid-declaration
+                       :name (:ext/name ext)
+                       :extension (:ext/name ext)})))
     (validate-symbol-op-tags! ext)))
 
 ;; Hook execution - runtime wrappers with output validation + logging

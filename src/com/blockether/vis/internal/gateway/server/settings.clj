@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.gateway.state :as state]))
 
 (defn- toggle-json
@@ -325,7 +326,8 @@
           (scoped-policy/settings (lp/db-info) target))))
 
 (defn- settings-catalog
-  "The settings of `target`. `change-errors` maps a setting id to its failed change hook."
+  "The settings of `target`. `change-errors` maps a setting id to the message of its
+   failed change hook or external write."
   [request target change-errors]
   (let [local?
         (not= "global" (:scope target))
@@ -464,8 +466,10 @@
 (defn- list-settings-handler
   "GET /v1/settings; typed catalog, provenance and a concurrency revision."
   [request]
-  (settings-response #(http/json-response
-                        (settings-catalog request (request-target request nil) nil))))
+  ;; One scope: the rows, the revision and the context session read external storage once.
+  (settings-response #(util/with-memo-scope
+                        (http/json-response
+                          (settings-catalog request (request-target request nil) nil)))))
 
 (defn- reload-extensions-handler
   "POST /v1/extensions/reload; load the extension files where a settings target runs again.
