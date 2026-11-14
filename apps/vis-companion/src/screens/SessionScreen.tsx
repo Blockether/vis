@@ -67,7 +67,7 @@ import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../componen
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { useCommands } from '../lib/commands';
-import { AppRevealContext, SessionAppsDialog, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
+import { AppRevealContext, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
 import { SessionAppSlot } from '../components/SessionAppSlot';
 import { useVisitState } from '../lib/review-memory';
 import { APP_REVEAL_WAIT_MS, pickedSessionApp, revealedApp, sessionApps, type AppReveal } from '../lib/app-surfaces';
@@ -4955,11 +4955,11 @@ export function SessionScreen({
   // A tablet or a desk docks the panel beside the transcript. A phone opens it as a sheet.
   const docksPanel = useMediaMatch('(min-width: 48rem)');
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
-  // The session apps of the header button. The list follows settings, so a saved app
+  // The session apps of the header menu. The list follows settings, so a saved app
   // setting moves an opened app or takes it out.
   const sessionAppViews = useSessionApps(client, sid);
   const listedApps = useMemo(() => sessionApps(sessionAppViews), [sessionAppViews]);
-  const [appsListOpen, setAppsListOpen] = useState(false);
+  const [appsAsked, setAppsAsked] = useState(0);
   const [pickedAppId, setPickedAppId] = useVisitState<string | null>(JSON.stringify([client.base, sid, 'picked-app']), null);
   const pickedApp = pickedSessionApp(sessionAppViews, pickedAppId, docksPanel);
   // A press that reveals another app shows it once its owner opens it, or gives up.
@@ -4974,7 +4974,6 @@ export function SessionScreen({
     if (!reveal) return;
     const shown = revealedApp(listedApps, reveal);
     if (shown) {
-      setAppsListOpen(false);
       setPickedAppId(shown);
       setReveal(null);
       return;
@@ -5829,9 +5828,11 @@ export function SessionScreen({
     setPanelChoice(!isPanelOpen);
   };
   const closeApp = () => setPickedAppId(null);
-  const pickApp = (view: { id: string }) => {
-    setAppsListOpen(false);
-    setPickedAppId(view.id);
+  // The command toggles the only app. With more apps, or without a header, it asks the menu.
+  const askApps = () => {
+    const only = listedApps.length === 1 || zen ? listedApps[0] : undefined;
+    if (only) setPickedAppId((held) => (held === only.id ? null : only.id));
+    else setAppsAsked((count) => count + 1);
   };
   // The C-x keys and the command palette run the same actions as the controls above.
   const parentId = isSubagent ? session?.agent?.parent_id : undefined;
@@ -5839,7 +5840,7 @@ export function SessionScreen({
     recenter: () => scrollToEnd('smooth'),
     'toggle-zen-mode': () => setZenMode(!zen),
     'live-panel': panelViews.length > 0 && (() => togglePanel()),
-    'session-apps': listedApps.length > 0 && (() => setAppsListOpen(true)),
+    'session-apps': listedApps.length > 0 && askApps,
     providers: onManageProviders && (() => onManageProviders()),
     'toggle-voice-recording': voiceSupported && (() => void toggleVoice()),
     'toggle-voice-conversation': voiceSupported && (() => void switchVoiceMode()),
@@ -5889,13 +5890,10 @@ export function SessionScreen({
               }
               apps={
                 listedApps.length > 0
-                  ? { count: listedApps.length, isOpen: appsListOpen || pickedApp !== null, onOpen: () => setAppsListOpen(true), hasReview: Boolean(reviewAppId) }
+                  ? { items: listedApps, openId: pickedApp?.view.id ?? null, onPick: setPickedAppId, onClose: closeApp, reviewId: reviewAppId, asked: appsAsked }
                   : undefined
               }
             />
-          )}
-          {appsListOpen && (
-            <SessionAppsDialog apps={listedApps} onPick={pickApp} onClose={() => setAppsListOpen(false)} />
           )}
           {pickedApp?.slot === 'sheet' && (
             <SessionAppSlot client={client} sid={sid} view={pickedApp.view} slot="sheet" onClose={closeApp} />

@@ -294,6 +294,12 @@ describe('Save states', () => {
 });
 
 describe('Send', () => {
+  // User report: a Send with nothing to send stood under the diff, at the panel edge.
+  it('shows no Send without a saved draft', () => {
+    render(<DiffNodeView node={{ ...DIFF, threads: [] }} actions={actions()} />);
+    expect(screen.queryByRole('button', { name: 'Send Review' })).toBeNull();
+  });
+
   it('reuses one idempotency key on retry and shows the receipts', async () => {
     const results: AppActionResult[] = [{ status: 'offline' }, { status: 'saved', seq: 7 }];
     const app = actions({

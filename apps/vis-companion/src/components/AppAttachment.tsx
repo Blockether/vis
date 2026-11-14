@@ -724,31 +724,6 @@ export function AppListRow({
   );
 }
 
-/**
- * The session apps list of the header button. It lists each app whose session
- * surface is not `off`; a pick opens the app where its surface says.
- */
-export function SessionAppsDialog({
-  apps,
-  onPick,
-  onClose,
-}: {
-  apps: readonly LiveViewModel[];
-  onPick: (view: LiveViewModel) => void;
-  onClose: () => void;
-}) {
-  return (
-    <AppsListDialog
-      title="Session apps"
-      empty="No app of this session shows here."
-      within="session"
-      apps={apps}
-      onPick={onPick}
-      onClose={onClose}
-    />
-  );
-}
-
 /** A list of apps in a dialog. A pick opens one app; Escape closes the list. */
 export function AppsListDialog({
   title,

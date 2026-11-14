@@ -135,8 +135,18 @@ export function SessionHeader({
   commands: SessionHeaderCommands;
   /** The live view panel of this session, when the session has panel views. */
   panel?: { isOpen: boolean; onToggle: () => void };
-  /** The session apps list, when the session has an app that shows there. */
-  apps?: { count: number; isOpen: boolean; onOpen: () => void; hasReview?: boolean };
+  /** The apps of this session. The session menu has one row with the name of each app. */
+  apps?: {
+    items: readonly { id: string; title: string }[];
+    /** The app that is open now. A press on its row closes it. */
+    openId: string | null;
+    onPick: (id: string) => void;
+    onClose: () => void;
+    /** The app that ⌘/Ctrl+D toggles. */
+    reviewId?: string;
+    /** A count that changes when a command asks for the app rows. */
+    asked?: number;
+  };
   /**
    * The desk's list toggle, when the shell has a list beside this transcript to
    * put away: it stands on the band's leading edge, where the phone's arrow does.
@@ -151,6 +161,15 @@ export function SessionHeader({
   const nativeIos = isIosNativeApp();
   /** Where the session's own menu hangs, and `null` while it is closed. */
   const [menu, setMenu] = useState<MenuPosition | null>(null);
+  const kebab = useRef<HTMLButtonElement>(null);
+  // The session apps command opens this menu: the app rows are in it.
+  const asked = apps?.asked ?? 0;
+  const answered = useRef(asked);
+  useEffect(() => {
+    if (answered.current === asked) return;
+    answered.current = asked;
+    if (kebab.current) setMenu(menuPosition(kebab.current.getBoundingClientRect(), MENU_WIDTH));
+  }, [asked]);
   // WHAT THE CLIPBOARD ANSWERED, worn by the row that asked it. Copying is silent, so
   // the row leaves the menu standing and reports in its own badge for a moment; a verb
   // that closes the panel under the thumb that pressed it reports nothing at all.
@@ -267,22 +286,10 @@ export function SessionHeader({
             <LivePanelIcon className="size-3.5" />
           </IconButton>
         )}
-        {apps && (
-          <IconButton
-            label={`Session apps (${apps.count})`}
-            title={apps.hasReview ? 'Session apps · toggle review with ⌘/Ctrl+D' : undefined}
-            aria-keyshortcuts={apps.hasReview ? 'Meta+d Control+d' : undefined}
-            variant={apps.isOpen ? 'primary' : 'quiet'}
-            aria-haspopup="dialog"
-            aria-expanded={apps.isOpen}
-            onClick={apps.onOpen}
-          >
-            <AppsIcon className="size-3.5" />
-          </IconButton>
-        )}
         {/* The kebab takes back its empty face as the app bar's last mark does, so
             both trailing glyphs stand in one column on the same inset. */}
         <IconButton
+          ref={kebab}
           label={menuLabel}
           variant="quiet"
           className="-mr-2 mouse:-mr-1.5"
@@ -297,6 +304,23 @@ export function SessionHeader({
       </div>
       {menu && (
         <Menu label="Session actions" at={menu} onDismiss={closeMenu}>
+          {apps?.items.map((app) => {
+            const isOpen = app.id === apps.openId;
+            return (
+              <MenuItem
+                key={app.id}
+                title={app.title}
+                meta={app.id === apps.reviewId ? '⌘/Ctrl+D' : undefined}
+                badge={isOpen ? 'open' : undefined}
+                icon={<AppsIcon className="size-3.5" />}
+                onSelect={() => {
+                  closeMenu();
+                  if (isOpen) apps.onClose();
+                  else apps.onPick(app.id);
+                }}
+              />
+            );
+          })}
           {model.artifacts.count > 0 && (
             <MenuItem
               // The row NAMES what pressing it does, and the count rides that name

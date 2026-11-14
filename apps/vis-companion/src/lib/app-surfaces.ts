@@ -11,7 +11,7 @@ const SURFACES_SCHEMA = viewSchema.$defs.app_surfaces.properties;
 
 export type AppSessionSurface = 'sidebar' | 'chat' | 'off';
 
-/** Where the session apps button opens an app (`app_surfaces.session`). CLOSED. */
+/** Where the session menu opens an app (`app_surfaces.session`). CLOSED. */
 export const APP_SESSION_SURFACES = SURFACES_SCHEMA.session.enum as readonly AppSessionSurface[];
 
 export type AppSurfaces = Readonly<{ inline: boolean; session: AppSessionSurface }>;
@@ -39,7 +39,7 @@ export function appSurfaces(view: Pick<LiveView, 'surfaces'> | undefined): AppSu
   return view?.surfaces ?? APP_SURFACE_DEFAULTS;
 }
 
-/** The apps that the session apps button lists: each app whose session surface is not `off`. */
+/** The apps that the session menu lists: each app whose session surface is not `off`. */
 export function sessionApps<T extends Pick<LiveView, 'placement' | 'surfaces'>>(views: readonly T[]): T[] {
   return views.filter(
     (view) => view.placement === 'attachment' && appSurfaces(view).session !== 'off',

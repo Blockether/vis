@@ -62,12 +62,27 @@ export const ActiveGoal: Story = {
   },
 };
 
-/** A session with live views and apps: the apps button stands next to the live panel button. */
+/** A session with apps: the session menu has one row with the name of each app. */
 export const WithApps: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   args: {
     panel: { isOpen: false, onToggle: () => {} },
-    apps: { count: 2, isOpen: false, onOpen: () => {} },
+    apps: {
+      items: [
+        { id: 'review', title: 'Review' },
+        { id: 'board', title: 'Release board' },
+      ],
+      openId: 'review',
+      reviewId: 'review',
+      onPick: () => {},
+      onClose: () => {},
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /^Session actions/ }));
+    const menu = within(within(document.body).getByRole('dialog', { name: 'Session actions' }));
+    await expect(menu.getByRole('button', { name: /^Review/ })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Release board' })).toBeVisible();
   },
 };
 

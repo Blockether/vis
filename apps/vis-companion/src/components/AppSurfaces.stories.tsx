@@ -2,18 +2,17 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useCallback, useState, type ReactNode } from 'react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 
-import { sessionApps } from '../lib/app-surfaces';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { SessionEventsContext } from '../lib/session-events';
 import type { IterationAttachment } from '../lib/types';
 import { StoryAppHost, TODO, type WireApp } from '../dev/story-apps';
-import { AppAttachmentRow, AppSurface, SessionAppsDialog, SessionAppViewsContext } from './AppAttachment';
+import { AppAttachmentRow, AppSurface, SessionAppViewsContext } from './AppAttachment';
 import { SessionAppSlot } from './SessionAppSlot';
 
 /**
  * WHERE A SESSION APP SHOWS. The engine sends the surfaces after the person's
  * settings: `inline` decides the frame in the chat turn, and `session` decides
- * where the session apps list opens the app.
+ * where the session menu opens the app.
  */
 const meta = {
   title: 'Session/Live view/App surfaces',
@@ -40,13 +39,6 @@ function listed(id: string, title: string, surfaces: WireApp['surfaces']): LiveV
   if (!view) throw new Error('story app must parse');
   return view;
 }
-
-const LISTED = [
-  listed('app-board', 'Release board', { inline: true, session: 'sidebar' }),
-  listed('app-review', 'Code review', { inline: false, session: 'chat' }),
-  // The person turned the session surface of this app off: the list leaves it out.
-  listed('app-metrics', 'Metrics', { inline: true, session: 'off' }),
-];
 
 /** The todo app in one in-memory host, with the surfaces that `over` sets. */
 type Host = Pick<StoryAppHost<unknown>, 'client' | 'sid' | 'hub' | 'view'>;
@@ -167,15 +159,6 @@ export const FullScreen: Story = {
     await userEvent.keyboard('{Escape}');
     await canvas.findByRole('button', { name: 'Open app todo-list' });
   },
-};
-
-/** The list of the header button. An app whose session surface is off is not in it. */
-export const AppsList: Story = {
-  render: () => (
-    <div data-session-surface className="relative h-dvh bg-ink">
-      <SessionAppsDialog apps={sessionApps(LISTED)} onPick={() => undefined} onClose={() => undefined} />
-    </div>
-  ),
 };
 
 /** An app opened in the side panel next to the chat, on a desk. */

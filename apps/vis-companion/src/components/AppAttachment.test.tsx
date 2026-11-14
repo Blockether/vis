@@ -15,7 +15,7 @@ import {
   AppAttachmentRow,
   AppRevealContext,
   AppSurface,
-  SessionAppsDialog,
+  AppsListDialog,
   SessionAppViewsContext,
   useSessionApps,
 } from './AppAttachment';
@@ -852,7 +852,7 @@ it('keeps the session app available while its returning list read waits', async 
   } as unknown as GatewayClient;
   function Apps() {
     const apps = useSessionApps(client, 'review-list-session');
-    return <SessionAppsDialog apps={apps} onPick={() => undefined} onClose={() => undefined} />;
+    return <AppsListDialog title="Apps" empty="No app." within="session" apps={apps} onPick={() => undefined} onClose={() => undefined} />;
   }
   const first = render(<Apps />);
   expect(await screen.findByRole('button', { name: 'Open app Code review' })).toBeInTheDocument();

@@ -98,19 +98,33 @@ describe('live views on session open', () => {
 });
 
 // User report: review keys must work without opening the app list first.
+const review = {
+  id: 'shortcut-review', title: 'Review shortcuts', placement: 'attachment' as const, seq: 1,
+  nodes: [{ id: 'review', type: 'diff' as const, patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new', threads: [] }],
+  surfaces: { inline: false, session: 'sidebar' as const },
+};
+
 it('toggles the session review with the primary-modifier key', async () => {
-  const review = {
-    id: 'shortcut-review', title: 'Review shortcuts', placement: 'attachment' as const, seq: 1,
-    nodes: [{ id: 'review', type: 'diff' as const, patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new', threads: [] }],
-    surfaces: { inline: false, session: 'sidebar' as const },
-  };
+  const appViews = vi.fn(async () => [review]);
   renderSessionScreen({
-    client: { appViews: async () => [review], liveView: async () => review },
+    client: { appViews, liveView: async () => review },
     subscriptions: { subscribeConnection: connected },
   });
-  await screen.findByRole('button', { name: 'Session apps (1)' });
+  await waitFor(() => expect(appViews).toHaveBeenCalled());
+  await act(async () => {});
   fireEvent.keyDown(document.body, { key: 'd', ctrlKey: true });
   expect(await screen.findByRole('button', { name: 'Split' })).toBeInTheDocument();
   fireEvent.keyDown(document.body, { key: 'd', metaKey: true });
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Split' })).toBeNull());
+});
+
+// User report: the session menu lists each app by its name, with no dialog between.
+it('opens a session app from the session menu', async () => {
+  renderSessionScreen({
+    client: { appViews: async () => [review], liveView: async () => review },
+    subscriptions: { subscribeConnection: connected },
+  });
+  fireEvent.click(await screen.findByRole('button', { name: /^Session actions/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /^Review shortcuts/ }));
+  expect(await screen.findByRole('button', { name: 'Split' })).toBeInTheDocument();
 });

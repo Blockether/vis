@@ -52,6 +52,37 @@ describe('SessionHeader', () => {
     await waitFor(() => expect(rows[1]).toHaveTextContent('copied'));
   });
 
+  // User report: the session apps must be in the three-dots menu by name, not in a dialog.
+  it('lists each session app by name in the menu, and a press opens or closes it', () => {
+    const onPick = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <SessionHeader
+        model={{ ...model, artifacts: { count: 0, isOpen: false } }}
+        commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
+        apps={{
+          items: [
+            { id: 'review', title: 'Review' },
+            { id: 'board', title: 'Release board' },
+          ],
+          openId: 'review',
+          onPick,
+          onClose,
+        }}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /^Session apps/ })).toBeNull();
+    const kebab = screen.getByRole('button', { name: 'Session actions' });
+    fireEvent.click(kebab);
+    fireEvent.click(screen.getByRole('button', { name: 'Release board' }));
+    expect(onPick).toHaveBeenCalledWith('board');
+    expect(screen.queryByRole('dialog', { name: 'Session actions' })).toBeNull();
+    fireEvent.click(kebab);
+    fireEvent.click(screen.getByRole('button', { name: /^Review/ }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onPick).toHaveBeenCalledTimes(1);
+  });
+
   // The screen under this header reads Escape as "cancel the running turn", so an open
   // menu has to spend that key itself.
   it('closes its menu on Escape without spending the key on the screen below', () => {

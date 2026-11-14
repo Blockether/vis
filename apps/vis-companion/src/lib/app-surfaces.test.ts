@@ -23,7 +23,7 @@ const app = (id: string, session?: AppSurfaces['session'], inline = true): App =
 });
 
 describe('session apps list', () => {
-  // The session apps button must not list an app that the person turned off.
+  // The session menu must not list an app that the person turned off.
   it('lists each app whose session surface is not off, and no panel view', () => {
     const apps: App[] = [app('a'), app('b', 'off'), app('c', 'chat'), { id: 'p', placement: 'panel' }];
     expect(sessionApps(apps).map((one) => one.id)).toEqual(['a', 'c']);

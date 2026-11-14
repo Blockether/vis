@@ -1,5 +1,5 @@
 /**
- * A session app opened from the session apps list, in the slot that its session
+ * A session app opened from the session menu, in the slot that its session
  * surface names: the side panel, the chat area or, on a phone, the whole pane.
  */
 

@@ -308,11 +308,14 @@ function SendBar({
   drafts,
   actions,
   label,
+  className = '',
 }: {
   nodeId: string;
   drafts: number;
   actions: AppNodeActions;
   label: string;
+  /** Position only: the inset of the node that holds the bar. */
+  className?: string;
 }) {
   const keys = useRef(new SendKeys());
   const [status, setStatus] = useState<AppActionStatus>('idle');
@@ -326,19 +329,25 @@ function SendBar({
     setStatus(result.status);
   };
   const isBusy = status === 'saving';
+  // Send shows only when it has work: a saved draft, a send in progress or a retry.
+  const hasWork = drafts > 0 || isBusy || isRetryPending;
+  if (!hasWork && receipts.length === 0) return null;
   return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="primary"
-          disabled={actions.isReadOnly || isBusy || (drafts === 0 && !isRetryPending)}
-          aria-label={label}
-          onClick={() => void send()}
-        >
-          {isRetryable(status) ? 'Retry send' : drafts > 1 ? `Send ${drafts}` : 'Send'}
-        </Button>
-        {status !== 'saved' && <ActionStatus status={status} />}
-      </div>
+    <div className={`space-y-1 ${className}`}>
+      {hasWork && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            density="compact"
+            disabled={actions.isReadOnly || isBusy}
+            aria-label={label}
+            onClick={() => void send()}
+          >
+            {isRetryable(status) ? 'Retry send' : drafts > 1 ? `Send ${drafts}` : 'Send'}
+          </Button>
+          {status !== 'saved' && <ActionStatus status={status} />}
+        </div>
+      )}
       {receipts.length > 0 && (
         <ul aria-label="Receipts" className="space-y-0.5">
           {receipts.map((receipt) => (
@@ -1053,6 +1062,7 @@ export function DiffNodeView({
           drafts={savedDrafts(node.threads)}
           actions={actions}
           label={`Send ${node.label ?? 'review'}`}
+          className="px-2 pb-2"
         />
       )}
     </div>
