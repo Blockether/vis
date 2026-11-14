@@ -42,7 +42,10 @@ def main(run_id: str) -> int:
         if run.get("session_id"):  # an earlier process of this run made the session
             session = client.session(run["session_id"])
         else:
+            # The run works in its own directory. Its session is in the group of the runs, in the one project.
             options = client.session_options(os.getcwd())
+            if os.environ.get("PLAYGROUND_GROUP"):
+                options["group_id"] = os.environ["PLAYGROUND_GROUP"]
             model = function.__workflow__["model"]
             session = client.create_session(provider=PROVIDER if model else None, model=model, **options)
             session.update(title=f"{run['title']} · run {run_id[:8]}")

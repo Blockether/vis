@@ -31,8 +31,8 @@ from playground import harness, sync
 from playground.env import APP_ENTRY, APP_PYTHON, log
 from playground.runtime import Context
 
-# The name of a work directory: the sessions of a release, or one workflow run.
-NAME = re.compile(r"[0-9a-f]{12}(-[0-9a-f]{8})?")
+# The name of a work directory: `main` of the sessions, one workflow run, or the sessions of an earlier release.
+NAME = re.compile(r"main|[0-9a-f]{12}(-[0-9a-f]{8})?")
 SHA = re.compile(r"[0-9a-f]{40,64}")
 METHODS = {"GET", "HEAD", "POST"}
 # The headers of the browser that the app gets. It gets no cookie and no password.
@@ -188,7 +188,8 @@ def sources(event: dict[str, Any], context: Context) -> dict[str, Any]:
     for entry in entries:
         if NAME.fullmatch(entry.name) and entry.is_dir(follow_symlinks=False):
             work.append({"name": entry.name, "modified": int(entry.stat().st_mtime)})
-    work.sort(key=lambda item: item["modified"], reverse=True)
+    # The directory of the sessions comes first, then the newest runs.
+    work.sort(key=lambda item: (item["name"] != sync.MAIN, -item["modified"]))
     return {"release": sync.current(), "work": work[:LISTED]}
 
 

@@ -1,7 +1,7 @@
 """The worker function: one long invocation that runs the Vis gateway.
 
 The worker takes the lease, restores the last checkpoint from S3 and starts the
-gateway in the project directory of the current release on EFS. Then it answers the
+gateway in the project directory `work/main` on EFS. Then it answers the
 calls from the queue until it is idle or near the Lambda time limit. At the end it
 parks the running turns, saves a checkpoint and starts its successor when work remains.
 
@@ -11,7 +11,8 @@ S3, the queue and three functions: llm, repo and itself.
 
 from __future__ import annotations
 
-import subprocess
+import hashlib
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -25,6 +26,7 @@ from playground.broker import Broker
 from playground.env import (
     DUE_S,
     ENV,
+    HOME,
     IDLE_S,
     LIFETIME,
     MARGIN,
@@ -41,11 +43,24 @@ from playground.runtime import Context
 RENEW_S, SAVE_S = 30, 15
 
 
-def project() -> tuple[str, str]:
-    """Return the project directory of the current release and its commit.
+def keep_review(old: str, new: str) -> None:
+    """Give the review journals of a directory to its new name.
 
-    The directory is a clone of the release, for the sessions that a person starts.
-    A session of an older release keeps its own directory.
+    Vis Review files the journals of a session below a hash of the project path.
+    """
+    base = os.path.join(HOME, ".vis", "review")
+    before, after = (os.path.join(base, hashlib.sha256(root.encode()).hexdigest()[:16]) for root in (old, new))
+    if os.path.isdir(before) and not os.path.exists(after):
+        os.rename(before, after)
+        with open(os.path.join(after, "ROOT"), "w", encoding="utf-8") as file:
+            file.write(new + "\n")
+
+
+def project() -> tuple[str, str]:
+    """Return the project directory and the commit of the current release.
+
+    All sessions that a person starts work in the one directory `work/main`. It takes
+    each new release, so a session and its project stay when the repository changes.
     """
     release = sync.current()
     if not release:
@@ -54,15 +69,18 @@ def project() -> tuple[str, str]:
         release = sync.current()
     if not release:
         raise RuntimeError("EFS has no release of the repository")
-    sync.sweep(release[:12])
-    return sync.clone(release, release[:12], gateway.environment("")), release
-
-
-def title(release: str) -> str:
-    """Return the project name of a release: the repository and the subject of its commit."""
-    command = ["git", "log", "-1", "--format=%s"]
-    subject = subprocess.run(command, cwd=f"{sync.RELEASES}/{release}", env=gateway.environment(""), capture_output=True, text=True, check=True).stdout
-    return f"{ENV.get('VIS_REPO', '').rpartition('/')[2]} · {subject.strip()[:60]}"
+    sync.sweep(sync.MAIN)
+    main, moved = f"{sync.WORK}/{sync.MAIN}", f"{sync.WORK}/{sync.MAIN}/.git/playground-earlier"
+    earlier = "" if os.path.isdir(main) else sync.earlier()
+    if earlier:
+        # The directory keeps its work. The note is for a worker that stops before it saves the journals.
+        os.rename(earlier, main)
+        with open(moved, "w", encoding="utf-8") as file:
+            file.write(earlier)
+    if os.path.isfile(moved):
+        with open(moved, encoding="utf-8") as file:
+            keep_review(file.read().strip(), main)
+    return sync.advance(release, gateway.environment("")), release
 
 
 def work(held: Lease, context: Context) -> dict[str, Any]:
@@ -77,8 +95,7 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     broker.start()
     engine = gateway.Gateway(root, broker.url)
     engine.start()
-    engine.name(root, title(release))
-    api.cancel_turn, api.runs.name_project = engine.cancel, engine.name
+    api.cancel_turn, api.runs.group = engine.cancel, engine.organize(root, ENV.get("VIS_REPO", "").rpartition("/")[2] or "playground")
     # Each call gets its own SDK client: one client serves one thread.
     client = lambda: GatewayClient(f"http://{gateway.HOST}:{gateway.PORT}", token=engine.token)  # noqa: E731
     api.session = lambda session: client().session(session)

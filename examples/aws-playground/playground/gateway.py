@@ -10,12 +10,15 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
 from typing import Any
+from urllib.parse import quote
 
 from playground.env import (
+    EFS,
     ENV,
     HOME,
     MODELS,
@@ -29,6 +32,8 @@ from playground.env import (
 BINARY = "/opt/vis/vis-agent-native"
 HOST, PORT, TOKEN_FILE = "127.0.0.1", 7890, f"{WORKER_DIR}/gateway.token"
 PROVIDER = "playground"
+# The session group of the workflow runs, and the directory names of a run and of an earlier release.
+GROUP, RUN_DIR, RELEASE_DIR = "Workflows", re.compile(r"[0-9a-f]{12}-[0-9a-f]{8}"), re.compile(r"[0-9a-f]{12}")
 # The variables that the gateway and the tools of a session get. No AWS credentials.
 PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "VIS_WEB_DIR")
 
@@ -111,13 +116,49 @@ class Gateway:
         finally:
             connection.close()
 
-    def name(self, root: str, name: str) -> None:
-        """Make the project of a directory with a name that a person can read.
+    def sessions(self, query: str) -> list[dict[str, Any]]:
+        """Return each session of a list, also the archived sessions."""
+        rows: dict[str, dict[str, Any]] = {}
+        cursor = ""
+        while True:
+            _, page = self.call("GET", f"/v1/sessions?limit=200&archived=include&{query}{cursor}")
+            rows.update((row["id"], row) for row in (page.get("sessions") or []) + (page.get("awaiting") or []))
+            if not page.get("has_more") or not page.get("next_cursor"):
+                return list(rows.values())
+            cursor = f"&after={page['next_cursor']}"
 
-        Vis names a project after its directory, and a work directory has the id of a
-        commit. The name is only for a new project, so a rename in Vis stays.
+    def organize(self, root: str, name: str) -> str:
+        """Make the one project and its group of workflow runs. Return the id of the group.
+
+        The name is only for a new project, so a rename in Vis stays. Earlier versions
+        made a project for each release and for each run. Their sessions move here: the
+        session of a run joins the group and keeps its directory, and each other session
+        moves to the project directory. A project that has no session left goes.
         """
         self.call("POST", "/v1/projects/actions/ensure", {"root": root, "name": name})
+        _, listed = self.call("GET", f"/v1/session-groups?archived=include&root={quote(root, safe='')}")
+        group = next((row["id"] for row in (listed or {}).get("groups") or [] if row["name"] == GROUP), None)
+        if group is None:
+            status, made = self.call("POST", "/v1/session-groups", {"name": GROUP, "root": root})
+            if status != 201:
+                raise RuntimeError(f"the gateway did not make the session group: HTTP {status}")
+            group = made["id"]
+        _, projects = self.call("GET", "/v1/projects")
+        for project in (projects or {}).get("projects") or []:
+            folder, parent = os.path.basename(str(project.get("workspace_root"))), os.path.dirname(str(project.get("workspace_root")))
+            is_run = bool(RUN_DIR.fullmatch(folder))
+            if parent != f"{EFS}/work" or not (is_run or RELEASE_DIR.fullmatch(folder)):
+                continue
+            for session in self.sessions(f"project_id={project['id']}"):
+                if is_run:
+                    status, _ = self.call("PUT", f"/v1/sessions/{session['id']}/group", {"group_id": group})
+                else:
+                    status, _ = self.call("PATCH", f"/v1/sessions/{session['id']}/workspace/root", {"path": root})
+                if status != 200:
+                    log("session stays in its earlier project", session["id"], status)
+            if not self.sessions(f"project_id={project['id']}"):
+                self.call("DELETE", f"/v1/projects/{project['id']}")
+        return group
 
     def cancel(self, session: str) -> None:
         """Cancel the turn that runs in a session. The gateway cancels a turn only by its id."""

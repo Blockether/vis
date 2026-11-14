@@ -118,10 +118,12 @@ the checkpoint that counts. You can delete each other object in `state/`.
 4. `sync` writes a new `CURRENT` file and renames it over the old one.
 
 Steps 3 and 4 each end with one rename. A reader sees the old release or the new
-release, and never a part of one. A worker reads `CURRENT` at its start for the project
-of its sessions: a clone of that release in `work/<commit>`. Each new workflow run
-reads `CURRENT` again and gets a clone of the newest release in `work/<commit>-<run>`.
-`sync` keeps the 5 newest releases.
+release, and never a part of one. All sessions that a person starts work in one
+directory, `work/main`. A worker reads `CURRENT` at its start and brings the commits of
+that release into `work/main`: as a fast-forward, else as a merge with the work of the
+sessions. If Git cannot merge, the directory stays as it is and the next worker tries
+again. Each new workflow run reads `CURRENT` again and gets a clone of the newest
+release in `work/<commit>-<run>`. `sync` keeps the 5 newest releases.
 
 ### A session publishes to GitHub
 
@@ -187,7 +189,7 @@ shows it in a frame.
 | Source | Directory on EFS | Content |
 | --- | --- | --- |
 | Published | `releases/<commit>` | The current release of the `main` branch |
-| Vis sessions | `work/<commit>` | The copy that the sessions of Vis web change |
+| Vis sessions | `work/main` | The copy that the sessions of Vis web change |
 | Workflow run | `work/<commit>-<run>` | The copy of one workflow run |
 
 A session writes its files directly in a work directory, and the `app` function reads
@@ -215,17 +217,25 @@ diff, with an undo for a file, for a step and for the session. The command `/rev
 not necessary. The record of the review is in the Vis home directory, so each
 checkpoint has it and a new worker shows the same review.
 
-### The names of the projects
+### One project and the group Workflows
 
-A project of Vis web has a name that a person can read:
+Vis web shows one project, with the name of the repository. Its directory is
+`work/main`, so a session and its review stay in the same project when the repository
+changes. The project has one session group, Workflows:
 
-| Project | Name |
+| Session | Place in Vis web |
 | --- | --- |
-| The project of a release | `<repository> · <subject of the commit>` |
-| The project of a workflow run | `<title of the run> · <day and time of its start, UTC>` |
+| A session that a person starts | The project |
+| The session of a workflow run | The group Workflows of the project |
 
-The worker gives the name when it makes the project. To change a name, use "Rename
-project" in the project menu of Vis web. The worker does not replace a changed name.
+The session of a run works in the directory of its run and is only listed in the
+group. The worker makes the project and the group at its start. To change the name of
+the project, use "Rename project" in the project menu of Vis web. The worker does not
+replace a changed name.
+
+An earlier version made one project for each release and for each run. At its start,
+the worker moves the sessions of those projects to the one project and to the group,
+and removes each project that has no session left.
 
 ## Addresses
 
@@ -502,7 +512,7 @@ Time:
 - A worker without work stops after 300 seconds. A worker with work gives the work to a new worker after 810 seconds.
 - The cookie ends after 7 days. A new password is in effect after 5 minutes.
 - `sync` keeps the 5 newest releases on EFS.
-- The worker removes a project directory that nothing changed for 14 days. Publish the work before that.
+- The worker removes the directory of a workflow run that nothing changed for 14 days. Publish the work before that. The directory `work/main` stays.
 - CloudWatch keeps the log of each function for 14 days. [S3 is the database](#s3-is-the-database) gives the time for each S3 key.
 
 ## Security
@@ -543,8 +553,8 @@ sessions of the stack. For this reason:
 - one stack is for one team that shares its sessions. Give each tenant its own stack;
 - the provider key has no spending limit in this stack. Set a budget for the key at the provider.
 
-A session can also write in `work/` on EFS, which holds the project directories of the
-workers and of the runs. It cannot write a release.
+A session can also write in `work/` on EFS, which holds the project directory of the
+sessions and the directories of the runs. It cannot write a release.
 
 The Studio runs the code of the project, and a session can change that code. The same
 limit applies to the `app` function: the code can read the temporary credentials of the

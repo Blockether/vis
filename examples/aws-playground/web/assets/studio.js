@@ -6,7 +6,7 @@ import { ago, app, bar, button, chip, empty, fill, h, item, loading } from "/pla
 const list = document.getElementById("sources");
 const stage = document.getElementById("stage");
 // A source goes into request paths: accept only `release` or the name of a work directory.
-const NAME = /^(release|[0-9a-f]{12}(-[0-9a-f]{8})?)$/;
+const NAME = /^(release|main|[0-9a-f]{12}(-[0-9a-f]{8})?)$/;
 const named = () => (NAME.test(location.hash.slice(1)) ? location.hash.slice(1) : null);
 // found: the sources of the app. source: the shown source. version: the stamp of its files.
 // expires: the end of the frame token, in seconds. changed: the time of the last live change.
@@ -16,8 +16,9 @@ const POLL_MS = 2500;
 /** Return the title and the detail of a source. */
 function label(name) {
   if (name === "release") return ["Published", `main · ${(state.found?.release || "").slice(0, 7) || "no release"}`];
-  const [commit, run] = name.split("-");
-  return run ? [`Workflow run ${run}`, `work/${name}`] : ["Vis sessions", `work/${commit}`];
+  const run = name.split("-")[1];
+  if (run) return [`Workflow run ${run}`, `work/${name}`];
+  return [name === "main" ? "Vis sessions" : "Earlier Vis sessions", `work/${name}`];
 }
 
 function drawList() {

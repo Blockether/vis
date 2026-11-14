@@ -145,8 +145,8 @@ class Runs:
         self.lock = threading.RLock()
         self.docs: dict[str, dict[str, Any]] = {}
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
-        # The worker sets this after the gateway starts: name the project of a directory.
-        self.name_project: Callable[[str, str], None] = lambda root, name: None
+        # The worker sets this after the gateway starts: the session group of the runs.
+        self.group = ""
         raw, _ = aws.get("runs/index.json")
         self.index: list[dict[str, Any]] = json.loads(raw) if raw else []
 
@@ -222,13 +222,11 @@ class Runs:
                     self.finish(doc, "failed", error=f"the run did not end in {RUN_LIMIT_S // 3600} hours of work ({STARTS} processes)")
                     continue
                 doc["starts"] += 1
-                env = {**self.environment(), "PYTHONPATH": ENV.get("PYTHONPATH", ""), "PYTHONUNBUFFERED": "1"}
+                env = {**self.environment(), "PYTHONPATH": ENV.get("PYTHONPATH", ""), "PYTHONUNBUFFERED": "1", "PLAYGROUND_GROUP": self.group}
                 # A new run starts from the newest release, also when the worker is older.
                 release = sync.current() or self.release
                 doc["root"] = doc.get("root") or sync.clone(release, f"{release[:12]}-{run_id[:8]}", env)
                 self.write(doc)
-                # The run makes its session in this project. The time is UTC.
-                self.name_project(doc["root"], f"{doc['title']} · {time.strftime('%d %b %H:%M', time.gmtime(doc['created']))}")
                 self.processes[run_id] = subprocess.Popen([sys.executable, "-m", "playground.run", run_id], cwd=doc["root"], env=env)
                 log("run started", run_id, doc["workflow"], "start", doc["starts"])
 

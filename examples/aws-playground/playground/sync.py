@@ -24,6 +24,8 @@ from playground.env import EFS, log
 from playground.runtime import Context
 
 RELEASES, WORK, CURRENT = f"{EFS}/releases", f"{EFS}/work", f"{EFS}/CURRENT"
+# The name of the one project directory. It follows the releases, so its sessions stay in one project.
+MAIN = "main"
 # The number of releases that stay on EFS, and the days that an unused work directory stays.
 KEEP, WORK_DAYS = 5, 14
 
@@ -83,6 +85,43 @@ def clone(release: str, name: str, environment: dict[str, str]) -> str:
             shutil.rmtree(incoming, ignore_errors=True)
             if not os.path.isdir(target):  # else another worker made the directory first
                 raise
+    return target
+
+
+def earlier() -> str:
+    """Return the project directory that was used last before `work/main` existed, or an empty string.
+
+    Before `work/main`, each release had a project directory with the commit as its name.
+    """
+    found = [entry.path for entry in os.scandir(WORK) if re.fullmatch(r"[0-9a-f]{12}", entry.name) and os.path.isfile(f"{entry.path}/.git/playground-base")]
+    return max(found, key=lambda path: os.lstat(f"{path}/.git").st_mtime, default="")
+
+
+def advance(release: str, environment: dict[str, str]) -> str:
+    """Return `work/main`, the project directory, with the commits of a release.
+
+    Call this only while no session works: before the gateway starts. The directory
+    takes the release as a fast-forward, else as a merge. When Git refuses both, the
+    directory stays as it is and the next worker tries again.
+    """
+    target = clone(release, MAIN, environment)
+    note = f"{target}/.git/playground-base"
+    with open(note, encoding="utf-8") as file:
+        if file.read().strip() == release:
+            return target
+
+    def git(*arguments: str) -> bool:
+        return subprocess.run(["git", *arguments], cwd=target, env=environment, capture_output=True, check=False).returncode == 0
+
+    merged = git("fetch", "--quiet", f"{RELEASES}/{release}", "HEAD") and (git("merge", "--quiet", "--ff-only", "FETCH_HEAD") or git("merge", "--quiet", "--no-edit", "FETCH_HEAD"))
+    if merged and git("merge-base", "--is-ancestor", release, "HEAD"):
+        # The publish step sends only the commits after this one.
+        with open(f"{note}.new", "w", encoding="utf-8") as file:
+            file.write(release)
+        os.replace(f"{note}.new", note)
+    else:
+        git("merge", "--abort")
+        log("the project directory keeps its release: its work does not merge with", release[:12])
     return target
 
 

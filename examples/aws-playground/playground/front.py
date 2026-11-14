@@ -76,7 +76,7 @@ RELAYED = {"content-type", "content-encoding", "content-disposition", "content-r
 # A page of the app has its own origin (`sandbox`). The front passes no cookie to the app.
 # The token in the path is the permission. It names one source and ends after APP_S.
 APP_S, APP_BODY = 3600, 1_000_000
-APP_SOURCE = re.compile(r"release|[0-9a-f]{12}(-[0-9a-f]{8})?")
+APP_SOURCE = re.compile(r"release|main|[0-9a-f]{12}(-[0-9a-f]{8})?")
 APP_METHODS = {"GET", "HEAD", "POST"}
 # The characters of a path and of a query, and of a host name with a port.
 APP_TARGET, APP_HOST = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*"), re.compile(r"[A-Za-z0-9.-]+(:[0-9]+)?")
