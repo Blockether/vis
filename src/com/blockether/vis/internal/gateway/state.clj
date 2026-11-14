@@ -2747,6 +2747,18 @@
 
     (wire/canonical (vec (concat persisted live)))))
 
+(defn stored-turn
+  "Canonical (string-keyed) wire view of the durable row of one turn, or nil.
+
+   A turn that an earlier gateway process ran has no live record, so [[get-turn]]
+   does not know it. This view answers for such a turn after a restart."
+  [sid tid]
+  (try
+    (some->> (persistance/db-read-session-turn (lp/db-info) sid tid)
+             (persisted-turn->wire sid)
+             wire/canonical)
+    (catch Throwable t (tel/log! :warn ["gateway: stored turn read failed" (ex-message t)]) nil)))
+
 (defn list-queued-turns
   "ONLY the still-queued rows for `sid`, oldest-first — the exact slice a tray
    polls for, and nothing else.

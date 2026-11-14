@@ -724,6 +724,29 @@
              (expect (= 400 (:status (patch-turn {:deliver "soon"}))))
              (reset! answer {:error :turn-not-found})
              (expect (= 404 (:status (patch-turn {:deliver "next_iteration"}))))))))
+  (it "GET /turns/:tid answers a settled turn that an earlier gateway process ran"
+      ;; After a gateway restart `Turn.wait` of the SDK read the turn that had just
+      ;; ended and got 404 turn-not-found: the turn had no live record.
+      (let [store (sqlite/db-open! :memory)]
+        (try (let [sid (str (h/store-session! store {:channel :api}))
+                   tid (str (persistance/db-store-session-turn! store
+                                                                {:parent-session-id sid
+                                                                 :user-request "ship it"}))]
+
+               (persistance/db-update-session-turn!
+                 store
+                 tid
+                 {:status :success :content [{"type" "prose" "markdown" "shipped"}]})
+               (with-redefs [lp/db-info (constantly store)]
+                 (let [response (#'turns-api/get-turn-handler
+                                 {:request-method :get :path-params {:sid sid :tid tid}})
+                       turn (wire/parse-json (:body response))]
+
+                   (expect (= 200 (:status response)))
+                   (expect (= [tid "completed" "ship it" "shipped"]
+                              [(get turn "turn_id") (get turn "status") (get turn "request")
+                               (get-in turn ["content" 0 "markdown"])])))))
+             (finally (sqlite/db-close! store)))))
   (it "POST /queue/send-now answers the marked and skipped rows, 404 without a session"
       (let [sid
             (random-uuid)

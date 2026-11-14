@@ -213,7 +213,7 @@
         tid
         (path-tid request)]
 
-    (if-let [turn (and sid (state/get-turn sid tid))]
+    (if-let [turn (and sid (or (state/get-turn sid tid) (state/stored-turn sid tid)))]
       (http/json-response turn)
       (http/error-response 404 :turn-not-found "unknown turn" :turn_id tid))))
 
