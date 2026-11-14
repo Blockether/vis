@@ -3700,9 +3700,10 @@
                       environment
                       "print(saved_helper(), scratch, 'handle' in globals())")]
           (expect (nil? (:error after)) (pr-str after))
-          ;; #305: the first block in the new process opens with the restart notice.
+          ;; #305: `handle` is gone, so the first block in the new process opens with
+          ;; the restart notice. The notice names no name.
           (expect (str/starts-with? (str (:stdout after)) "[Sandbox restarted]") (pr-str after))
-          (expect (str/includes? (str (:stdout after)) "NOT restored: handle (") (pr-str after))
+          (expect (not (str/includes? (str (:stdout after)) "handle")) (pr-str after))
           (expect (str/ends-with? (str (:stdout after)) "\n\nrestored 1 False\n") (pr-str after)))
         (expect (not= old-context (env/python-context environment)))
         (finally (loop-env/dispose-environment! environment)

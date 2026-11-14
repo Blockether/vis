@@ -348,11 +348,11 @@
              (tpc/with-own
                [ctx {} nil {:worker? worker?}]
                (expect (= 1 (ep/restore-session-defs! ctx sid)))
-               ;; The notice names only what is gone, not what came back.
-               (let [notice (ep/take-restore-notice! ctx)]
-                 (doseq [part ["NOT restored: pending (" "cannot be pickled"]]
-                   (expect (str/includes? notice part) part))
-                 (expect (not (str/includes? notice "next_total")) notice))
+               ;; `pending` is gone, so there is a notice. It names no name.
+               (let [notice (str (ep/take-restore-notice! ctx))]
+                 (expect (str/starts-with? notice "[Sandbox restarted]") notice)
+                 (doseq [n ["pending" "next_total" "TOTAL"]]
+                   (expect (not (str/includes? notice n)) notice)))
                ;; One notice per restore: the next block does not repeat it.
                (expect (nil? (ep/take-restore-notice! ctx)))
                (expect (= "42 2\n"
@@ -413,13 +413,8 @@
           (tpc/with-own
             [ctx {} nil {:worker? worker?}]
             (ep/restore-session-defs! ctx sid)
-            (let [notice (str (ep/take-restore-notice! ctx))]
-              (doseq [part
-                      ["NOT restored: lock ("
-                       "Restored names that use them: Guard (lock); held (lock); outer (lock). "]]
-                (expect (str/includes? notice part) notice))
-              (expect (not (str/includes? notice "NOT restored: a5")) notice)
-              (expect (not (str/includes? notice "plain (")) notice))
+            ;; `lock` is gone, so there is a notice. The spilled values are back.
+            (expect (some? (ep/take-restore-notice! ctx)))
             (let [answer
                   (ep/run-python-block
                     ctx

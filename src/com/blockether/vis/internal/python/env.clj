@@ -1130,7 +1130,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    'gather
    "gather(*awaitables, return_exceptions=False) -> list. Run independent deferred tool calls/awaitables; results preserve input order. One list/tuple also works; keep dependent calls sequential. Host batches use a bounded pool and settle every slot before failing. If a slot fails, the others still run to the end. Then the first failing slot in input order raises: its message starts with `[index]`, plus one `also failed:` line per other failed slot. No slot keeps running after the error. Cancelling the turn or a block timeout stops a gather instead: slots that have not started never run, running slots are interrupted, and the block gets one `KeyboardInterrupt`, which `except Exception` does not catch. A failed await returns no partial list, but the other slots already ran with their side effects: do not run a whole write batch again. With `return_exceptions=True`, results and exception objects stay in their original slots; host slots run serially in this mode. For per-slot recovery, use `await gather(grep(spec_a), grep(spec_b), return_exceptions=True)`. Examine each slot before you retry safe failed work."
    'defs
-   "defs(name=None, *, pattern=None, limit=20, offset=0, details=False) -> str. Find, read and refine the helpers and variables this session defined. `defs()` prints an index; match counts appear only when a pattern or a page hides rows. Helpers come first, alphabetically, with call hint and first docstring line. Their call hints have at most 120 characters, no annotations and default types (`=<str>`), never values. Variables follow, with type and size, never values. Rows mark only exceptions: `(restored)` and `not saved` with the reason. `pattern` is a case-sensitive regular expression over names, gists and variable types; `limit` is an integer from 1 to 100; `offset` is a nonnegative integer. `defs(name)` returns a helper's exact source or a variable's row; a missing name gets a bounded search suggestion. `defs(name, details=True)` returns metadata only: origin, source SHA-256 and up to 20 source-derived global or captured names with type and presence. These hints are advisory: liveness unknown; dynamic lookups and default/decorator expressions are not analyzed; the digest covers source, not state. `details` needs a name and takes no listing controls. After each block, Vis saves the session's helpers, imports and variables (best effort). A saved variable is a pickle of at most 1 MiB (4 MiB in total). Open files, handles, generators and larger values are not saved; their rows say why. Redefining a name replaces its saved copy; `del name` removes it and frees its memory. After an idle timeout, settings change or gateway restart, a fresh sandbox re-creates what remains, marks restored helpers `(restored)` and prints a restart notice that names what did not come back. Read a helper before you refine it under the same stable name. Delete explicitly, after you check callers: aliases and captured defaults can still hold older functions. Never clean up by age. Imported functions and engine internals are excluded; `apropos` does not show session helpers; the full docstring is the helper's `doc(name)` page. Never promote a helper to an extension automatically (`doc(\"extending\")`)."
+   "defs(name=None, *, pattern=None, limit=20, offset=0, details=False) -> str. Find, read and refine the helpers and variables this session defined. `defs()` prints an index; match counts appear only when a pattern or a page hides rows. Helpers come first, alphabetically, with call hint and first docstring line. Their call hints have at most 120 characters, no annotations and default types (`=<str>`), never values. Variables follow, with type and size, never values. Rows mark only exceptions: `(restored)` and `not saved` with the reason. `pattern` is a case-sensitive regular expression over names, gists and variable types; `limit` is an integer from 1 to 100; `offset` is a nonnegative integer. `defs(name)` returns a helper's exact source or a variable's row; a missing name gets a bounded search suggestion. `defs(name, details=True)` returns metadata only: origin, source SHA-256 and up to 20 source-derived global or captured names with type and presence. These hints are advisory: liveness unknown; dynamic lookups and default/decorator expressions are not analyzed; the digest covers source, not state. `details` needs a name and takes no listing controls. After each block, Vis saves the session's helpers, imports and variables (best effort). A saved variable is a pickle of at most 1 MiB (4 MiB in total). Open files, handles, generators and larger values are not saved; their rows say why. Redefining a name replaces its saved copy; `del name` removes it and frees its memory. After an idle timeout, settings change or gateway restart, a fresh sandbox re-creates what remains, marks restored helpers `(restored)` and prints a restart notice when a name did not come back. Read a helper before you refine it under the same stable name. Delete explicitly, after you check callers: aliases and captured defaults can still hold older functions. Never clean up by age. Imported functions and engine internals are excluded; `apropos` does not show session helpers; the full docstring is the helper's `doc(name)` page. Never promote a helper to an extension automatically (`doc(\"extending\")`)."
    'fold-session
    "fold_session(key, gist=None) -> str. Collapse SETTLED steps: prior turns, and the current turn only through its last completed iteration; live/future steps cannot fold. The key is a STRING: \"t2/i5\" one step · \"t2\" a whole turn · \"t2-t5\" whole turns · \"t2/i1-i56\" a range · \"-t2/i56\" everything through it · \"t2/i5-\" everything since it. `..` works like `-` (\"t2/i1..i56\", \"..t2/i56\", \"t2/i5..\"); use one separator per key. Comma-separate several keys, disjoint ranges included (\"t1/i61-i98, t3/i111-i135, t4\" is ONE fold). A token that is not a step key, or matches no settled step, is refused by name. Folding changes rendering, not storage; there is no destructive unfold command, and you cannot re-read a folded step inline — its GIST is what survives. With introspection on, use `s = await read_session()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps the newer one. Partial overlaps remain separate."})
 
@@ -2267,42 +2267,15 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    not session state, and is neither written nor read."
   8388608)
 
-(def ^:private notice-name-limit "Names a restart notice lists before it counts the rest." 12)
-
 (defn- restore-notice
   "The restart notice for `report`, the runtime's `__vis_restore_report__`, or nil
    when every saved name came back.
 
    A restart that lost nothing is not an event for the model: the snapshot is the
-   state, and the transcript stays true. The notice names only what is gone, with
-   the reason. The host adds `:dependents`: the restored helpers and classes that
-   use a lost name."
+   state, and the transcript stays true. The notice names no name: a NameError
+   for a lost name gives the reason ([[map-python-error]])."
   [report]
-  (let [listed
-        (fn [entries text]
-          (str (str/join "; "
-                         (map (fn [[n v]]
-                                (str (name n) " (" (text v) ")"))
-                              (take notice-name-limit entries)))
-               (when (> (count entries) notice-name-limit)
-                 (str "; +" (- (count entries) notice-name-limit) " more"))))
-
-        lost
-        (sort-by key (:lost report))
-
-        dependents
-        (sort-by (comp name key) (:dependents report))]
-
-    (when (seq lost)
-      (str "[Sandbox restarted] This Python sandbox is a new process, rebuilt from the session "
-           "snapshot. NOT restored: "
-           (listed lost str)
-           ". "
-           (when (seq dependents)
-             (str "Restored names that use them: " (listed dependents #(str/join ", " %)) ". "))
-           "Re-create the lost names before you use them"
-           (when (seq dependents) " or the names that use them")
-           "."))))
+  (when (seq (:lost report)) "[Sandbox restarted] Some names did not come back."))
 
 (defn take-restore-notice!
   "The restart notice of `session`'s restore, exactly once: the first block after
@@ -2830,8 +2803,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 
 (defn- complete-restore-report
   "`report` after the spill files came back: their names move from `:lost` to
-   `:variables`, and `:dependents` names the restored helpers and classes that
-   use a name that is still lost (#347)."
+   `:variables`."
   [session session-id report]
   (let [back
         (set (restore-spilled! session session-id (map name (keys (:lost report)))))
@@ -2840,24 +2812,11 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
         (into {}
               (remove (fn [[k _]]
                         (contains? back (name k))))
-              (:lost report))
-
-        restored
-        (vec (concat (:functions report) (:classes report)))
-
-        dependents
-        (when (and (seq lost) (seq restored))
-          (guest-value session
-                       (str "__import__('vis_snapshot').dependents(globals(), "
-                            (py-json-literal restored)
-                            ", "
-                            (py-json-literal (mapv name (keys lost)))
-                            ")")))]
+              (:lost report))]
 
     (assoc report
       :lost lost
-      :variables (vec (sort (concat (:variables report) back)))
-      :dependents (if (map? dependents) dependents {}))))
+      :variables (vec (sort (concat (:variables report) back))))))
 
 (defn restore-session-defs!
   "Re-create the helpers, imports and variables an EARLIER process persisted for
@@ -2866,9 +2825,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    The restored source is registered as a real block, so `defs(\"name\")` and
    `inspect.getsource` read it back exactly like a local one, and it goes
    through the same rewrite so it RUNS like one. Spill files bring back the large
-   values the snapshot left out. What did not come back becomes the restart
+   values the snapshot left out. A name that did not come back causes the restart
    notice of the next block ([[take-restore-notice!]]) and the hint on a
-   NameError for a name that is gone."
+   NameError for that name."
   [session session-id]
   (when (and session session-id)
     (try (let [f (io/file (paths/sandbox-defs-file (str session-id)))]
