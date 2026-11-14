@@ -3908,10 +3908,10 @@
                (expect (= (if same-response? [timeout-code after-code] [timeout-code])
                           (mapv :src forms)))
                (expect (str/includes? (str (:stdout (first forms))) "before native wait"))
-               ;; A second block of the same response runs in the fresh interpreter.
+               ;; A second block of the same response runs in the fresh interpreter. It
+               ;; prints only its own output: a restart adds no notice.
                (when same-response?
-                 (expect (str/ends-with? (str (:stdout (second forms))) "\n\nFalse\n")
-                         (pr-str (second forms))))
+                 (expect (= "False\n" (str (:stdout (second forms)))) (pr-str (second forms))))
                (expect (false? @(:python-context-retired-atom environment)))
                (expect (env/context-enterable? environment)))
              (finally (loop-env/dispose-environment! environment)))))))
