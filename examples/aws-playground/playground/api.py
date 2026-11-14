@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import copy
 import glob
 import json
 import os
@@ -41,6 +42,8 @@ JSON = [["content-type", "application/json"], ["cache-control", "no-store"]]
 SAMPLES = "/opt/playground/workflows"
 # The runs that work at the same time. The other runs wait.
 PARALLEL = 3
+# The processes that one run can use. A worker handoff starts a new process.
+STARTS = 12
 LIVE = ("queued", "running")
 Answer = tuple[int, list[list[str]], bytes]
 
@@ -122,12 +125,18 @@ class Runs:
         self.index: list[dict[str, Any]] = json.loads(raw) if raw else []
 
     def doc(self, run_id: str) -> dict[str, Any]:
-        if run_id not in self.docs:
-            raw, _ = aws.get(f"runs/{run_id}/run.json")
-            if raw is None:
-                raise Refused(404, "no such run")
-            self.docs[run_id] = json.loads(raw)
-        return self.docs[run_id]
+        with self.lock:  # two callers must get the same object, or one of them loses its change
+            if run_id not in self.docs:
+                raw, _ = aws.get(f"runs/{run_id}/run.json")
+                if raw is None:
+                    raise Refused(404, "no such run")
+                self.docs[run_id] = json.loads(raw)
+            return self.docs[run_id]
+
+    def copy(self, run_id: str) -> dict[str, Any]:
+        """Return a run as a copy that no other thread changes."""
+        with self.lock:
+            return copy.deepcopy(self.doc(run_id))
 
     def write(self, doc: dict[str, Any]) -> None:
         """Save a run and its line in the index."""
@@ -159,6 +168,8 @@ class Runs:
             "root": None,
             "activities": [],
             "notes": [],
+            # The session turn count before each request of an activity: `<seq>:<n>`.
+            "asked": {},
         }
         with self.lock:
             aws.put(f"runs/{doc['id']}/workflow.py", source.encode())
@@ -179,6 +190,9 @@ class Runs:
             waiting = [line["id"] for line in reversed(self.index) if line["status"] in LIVE and line["id"] not in self.processes]
             for run_id in waiting[: max(0, PARALLEL - len(self.processes))]:
                 doc = self.doc(run_id)
+                if doc["starts"] >= STARTS:
+                    self.finish(doc, "failed", error=f"the run did not end in {STARTS} processes")
+                    continue
                 doc["starts"] += 1
                 env = {**self.environment(), "PYTHONPATH": ENV.get("PYTHONPATH", ""), "PYTHONUNBUFFERED": "1"}
                 # A new run starts from the newest release, also when the worker is older.
@@ -209,6 +223,8 @@ class Runs:
             elif kind == "activity_started":
                 fresh = {"seq": event["seq"], "name": event["name"], "title": event["title"], "status": "running"}
                 fresh.update(started=now, finished=None, result=None, error=None, artifacts=[], notes=[])
+                if step and step["name"] == event["name"]:  # the same activity continues in a new process
+                    fresh.update(started=step["started"], artifacts=step["artifacts"], notes=step["notes"])
                 doc["activities"] = [s for s in doc["activities"] if s["seq"] != event["seq"]] + [fresh]
             elif kind == "activity_completed" and step:
                 record = {"name": event["name"], "result": event["result"]}
@@ -216,6 +232,8 @@ class Runs:
                 step.update(status="completed", finished=now, result=event["result"])
             elif kind == "activity_failed" and step:
                 step.update(status="failed", finished=now, error=event.get("error"))
+            elif kind == "asked":
+                doc.setdefault("asked", {})[str(event["key"])] = int(event["turns"])
             elif kind == "note":
                 (step["notes"] if step else doc["notes"]).append({"at": now, "text": event.get("text", "")})
             elif kind == "completed":
@@ -375,7 +393,7 @@ class Api:
         return self.runs.create(name, source, describe(name, source), given)
 
     def show(self, run_id: str, **_: Any) -> dict[str, Any]:
-        doc = self.runs.doc(need(RUN, run_id, "the run id"))
+        doc = self.runs.copy(need(RUN, run_id, "the run id"))
         raw, _ = aws.get(f"runs/{run_id}/workflow.py")
         files = self.files("artifacts", doc["session_id"]) if doc["session_id"] else []
         return {**doc, "source": (raw or b"").decode(), "artifacts": files}

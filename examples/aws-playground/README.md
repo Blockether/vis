@@ -132,6 +132,11 @@ A workflow is one Python file on the Vis SDK. An activity is a recorded step. Wh
 worker stops in the middle of a run, the next worker starts the run again and each
 completed activity returns its recorded result.
 
+A worker stops 90 seconds before the Lambda time limit. It parks the turn that runs, and
+the gateway of the next worker continues that turn. The run records the number of session
+turns before each request. Thus the new run process waits for the turn that continues
+and sends no second request. A run can use at most 12 processes.
+
 ```python
 from typing import Literal
 

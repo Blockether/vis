@@ -114,6 +114,7 @@
     <li>A workflow is one Python file. <code>@workflow</code> marks the entry and <code>@activity</code> marks each step.</li>
     <li><code>ctx.ask(request, Model)</code> calls <code>session.run(response_model=Model)</code> of the Vis SDK. The result is a validated Pydantic object, and the workflow branches on it.</li>
     <li><code>ctx.document(name, request)</code> makes Vis write a document and save it with <code>playground.save_artifact</code>. The artifact is in S3, in the transcript and in the run.</li>
+    <li>A worker stops before the Lambda time limit and parks the turn that runs. The gateway of the next worker continues that turn. The new run process waits for it and sends no second request.</li>
     <li>The same workflows run from the Vis web app: the command <code>/workflows</code> of the playground extension opens a panel.</li>
   </ul>
 

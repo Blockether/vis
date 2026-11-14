@@ -27,18 +27,21 @@ Temporal workflow: decide only from its input and from the results of activities
 from __future__ import annotations
 
 import functools
+import time
 import traceback
 import typing
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, TypeVar
 
-from blockether.vis.engine import Session, final_answer
+from blockether.vis.engine import GatewayError, Session, Turn, final_answer
 from pydantic import BaseModel
 
 from playground.client import Playground
 
 Model = TypeVar("Model", bound=BaseModel)
+# The statuses of a turn that does not run any more.
+ENDED = ("completed", "failed", "cancelled", "suspended", "error")
 
 __all__ = ["ActivityError", "Artifact", "Context", "activity", "workflow"]
 
@@ -112,6 +115,8 @@ class Context:
     def __init__(self, run: dict[str, Any], session: Session, api: Playground) -> None:
         self.run_id, self.input, self.session = run["id"], run["input"], session
         self._api, self._next, self._current, self._turns = api, 0, None, 0
+        # For each request of an activity: the number of session turns before it.
+        self._asked: dict[str, int] = dict(run.get("asked") or {})
 
     def _event(self, kind: str, **fields: Any) -> Any:
         return self._api.call("POST", f"runs/{self.run_id}/events", {"type": kind, **fields})
@@ -141,15 +146,43 @@ class Context:
         With a Pydantic model, return a validated instance: the SDK asks the session to
         correct an answer that does not fit. Without a model, return the answer text.
         """
+        earlier = self._earlier(timeout)
         if model is not None:
-            return self.session.run(request, response_model=model, timeout=timeout)
-        # After a new start of the run, the same key gives the same turn and no second one.
-        self._turns += 1
-        key = f"{self.run_id}:{self._current}:{self._turns}"
-        turn = self.session.send(request, idempotency_key=key).wait(timeout=timeout)
+            try:
+                return model.model_validate_json(final_answer(earlier or {}) or "")
+            except ValueError:  # no earlier answer, or one that does not fit: the SDK asks
+                return self.session.run(request, response_model=model, timeout=timeout)
+        turn = earlier if earlier and earlier.get("status") == "completed" else self.session.send(request).wait(timeout=timeout)
         if turn.get("status") != "completed":
             raise ActivityError(f"the turn ended with the status {turn.get('status')!r}")
         return final_answer(turn) or ""
+
+    def _earlier(self, timeout: float) -> dict[str, Any] | None:
+        """Return the end of the turn that an earlier process of this run started for this request.
+
+        A worker stops before the Lambda time limit and parks the running turn. The gateway
+        of the next worker continues that turn. Thus the new run process waits for the turn
+        and sends no second request.
+        """
+        self._turns += 1
+        key = f"{self._current}:{self._turns}"
+        turns = self.session.turns()
+        if key not in self._asked:
+            self._asked[key] = len(turns)
+            self._event("asked", key=key, turns=len(turns))
+            return None
+        end = time.monotonic() + timeout
+        while sent := turns[self._asked[key] :]:
+            if sent[-1]["status"] in ENDED:
+                return sent[-1]
+            try:
+                return Turn(self.session, sent[-1]["turn_id"]).wait(timeout=max(end - time.monotonic(), 1))
+            except GatewayError as failure:  # the new gateway did not take the turn yet
+                if failure.code != "turn-not-found":
+                    raise
+            time.sleep(2)
+            turns = self.session.turns()
+        return None
 
     def artifact(self, name: str, content: str) -> Artifact:
         """Save a document of the run in S3."""

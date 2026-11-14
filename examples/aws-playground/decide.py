@@ -31,7 +31,7 @@ KNOWN_VENDORS = {"Nordlicht Hosting GmbH", "Papierhaus Krakow"}
 
 INVOICES = [
     "Invoice 2291 from Nordlicht Hosting GmbH, PO 7731. Managed Kubernetes, November. Net 1 840.00 EUR, VAT 19%, total 2 189.60 EUR. Due in 14 days.",
-    "Invoice A-17 from Brightline Consulting Ltd. 'Strategy workshop and follow-up'. Total 18 400.00 EUR. No purchase order. Due in 7 days.",
+    "Invoice A-17 from Brightline Consulting Ltd. 'Strategy workshop and follow-up', 2 days. Net 16 000.00 EUR, VAT 15%, total 18 400.00 EUR. No purchase order. Due in 7 days.",
     "Invoice 0098 from Papierhaus Krakow, PO 7702. 40 boxes of paper. Net 400.00 EUR, VAT 23%, total 520.00 EUR. The sum of the lines is 492.00 EUR.",
 ]
 
@@ -43,7 +43,7 @@ class Review(BaseModel):
     total: float = Field(description="The total with tax, as a number")
     currency: str = Field(description="The ISO 4217 code")
     purchase_order: str | None = Field(description="The purchase order number, or null when the invoice names none")
-    is_arithmetic_correct: bool = Field(description="False when the lines, the tax and the total do not agree")
+    is_arithmetic_correct: bool = Field(description="False only when the numbers on the invoice contradict each other")
     concerns: list[str] = Field(description="Each fact that a controller must know. Empty when there is none")
 
 
