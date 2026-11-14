@@ -157,6 +157,36 @@ def test_the_ai_review_shows_its_summary_and_findings(tmp_path, recorder):
     assert thread["messages"][0]["body"].endswith("Check this.")
 
 
+def test_a_restart_keeps_the_scope_and_the_results_of_the_review(tmp_path, recorder):
+    # Turn 10 user report: after each gateway restart the review went back to its first
+    # range and lost the result of the AI review.
+    def ask(request, model):
+        return AiReview(
+            summary="Looks risky.",
+            findings=[
+                AiFinding(path="b.py", line=1, level="warning", message="Check this.")
+            ],
+        )
+
+    root, journal, app = setup(tmp_path, recorder, ask=ask)
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block")
+    edit(root, "b.py", "b = 1\n")
+    second = journal.checkpoint("block")
+    label = f"Checkpoint #{second.seq}"
+    recorder.send("activate", f"checkpoint-{second.seq}")
+    assert wait_for(lambda: recorder.node("scope")["label"] == label)
+    recorder.send("activate", "ai")
+    assert wait_for(lambda: recorder.node("notice").get("detail") == "Looks risky.")
+    # A restart: a new process reads the journal and adopts the open app.
+    again = Journal(root, "s1", tmp_path / "base", files=walked)
+    ReviewApp(again, extension_opener, ask=ask).open()
+    assert recorder.node("scope")["label"] == label
+    assert recorder.node("notice").get("detail") == "Looks risky."
+    [thread] = recorder.node("diff")["threads"]
+    assert thread["messages"][0]["body"].endswith("Check this.")
+
+
 def test_sent_comments_go_to_the_session_and_answer_the_submission(tmp_path, recorder):
     sent = []
     root, journal, app = setup(tmp_path, recorder, send=sent.append)

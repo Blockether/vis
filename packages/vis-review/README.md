@@ -23,6 +23,7 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 
 - `objects/`: file contents, by SHA-256 and compressed. Each content is kept once.
 - One journal file for each session and root. It is append-only JSON lines.
+- One state file next to each journal: the scope of the app and the results of the last checks and AI review. After a restart, the app shows them again.
 - A file larger than 8 MiB keeps only its digest. Undo cannot bring it back.
 
 ## The app

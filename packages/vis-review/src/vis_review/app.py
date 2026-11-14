@@ -11,8 +11,11 @@ first node never changes, so each node keeps its place.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import json
 import logging
+import os
 import threading
 import time
 import traceback
@@ -87,6 +90,17 @@ MOST_CACHED_PICTURE_BYTES = 2 * MOST_PICTURE_BYTES
 MOST_CACHED_IMAGES = 256
 # The name of a checks run, by whether it runs the tests too.
 _RUN_NAMES = {True: "Tests and checks", False: "Checks"}
+# The scope fields that the app saves next to its journal, so a restart keeps them.
+_KEPT = (
+    "start",
+    "end",
+    "selected",
+    "path",
+    "is_full",
+    "against",
+    "is_own",
+    "ai_summary",
+)
 
 
 def event_dict(event) -> dict[str, Any]:
@@ -158,6 +172,10 @@ class ReviewApp:
         self._busy: str | None = None
         # Image nodes by (path, old digest, new digest): a paint reads no blob twice.
         self._images: OrderedDict[tuple, dict | None] = OrderedDict()
+        # The scope and the last results, saved at each paint for the next process.
+        self._state_path = journal.path.with_suffix(".view.json")
+        self._saved: dict | None = None
+        self._load_state()
 
     # Opening and painting ----------------------------------------------------
 
@@ -202,6 +220,64 @@ class ReviewApp:
             for node_id in set(self._painted) - {node["id"] for node in nodes}:
                 self.view.drop(node_id)
                 del self._painted[node_id]
+        self._keep_state()
+
+    def _state(self) -> dict:
+        """What a new process needs to show the same review: the scope and the last results."""
+        text, tone = self.notice
+        return {
+            **{name: getattr(self, name) for name in _KEPT},
+            # A run does not continue after a restart.
+            "notice": ["Ready", "idle"] if tone == "running" else [text, tone],
+            "findings": [dataclasses.asdict(finding) for finding in self.findings],
+        }
+
+    def _keep_state(self) -> None:
+        """Save the state when it changed. One rename, so a reader sees a whole file."""
+        state = self._state()
+        if state == self._saved:
+            return
+        part = self._state_path.with_suffix(".part")
+        try:
+            part.parent.mkdir(parents=True, exist_ok=True)
+            part.write_text(json.dumps(state), encoding="utf-8")
+            os.replace(part, self._state_path)
+        except OSError as error:
+            LOG.warning("vis-review: the state of the app is not saved: %s", error)
+            return
+        self._saved = state
+
+    def _load_state(self) -> None:
+        """Take the state that the last process saved. A file that does not fit is ignored."""
+        try:
+            state = json.loads(self._state_path.read_text(encoding="utf-8"))
+            findings = [checks.Finding(**finding) for finding in state["findings"]]
+            kept = {name: state[name] for name in _KEPT}
+            text, tone = state["notice"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        last = self.journal.last
+
+        def number(value, least: int) -> bool:
+            return type(value) is int and least <= value <= last
+
+        if not (
+            number(kept["start"], 1)
+            and (kept["end"] is None or number(kept["end"], kept["start"]))
+            and (kept["selected"] is None or number(kept["selected"], 0))
+            and (kept["path"] is None or isinstance(kept["path"], str))
+            and (kept["against"] is None or kept["against"] in _AGAINST)
+            and all(type(kept[name]) is bool for name in ("is_full", "is_own"))
+            and all(
+                isinstance(value, str) for value in (kept["ai_summary"], text, tone)
+            )
+        ):
+            return
+        for name, value in kept.items():
+            setattr(self, name, value)
+        # Only a session door knows which checkpoints the session wrote itself.
+        self.is_own = self.is_own and self.is_session_scoped
+        self.findings, self.notice = findings, (text, tone)
 
     def log(self, message: str, level: str = "info", detail: str | None = None) -> None:
         """Write one entry to the Log panel of the app; a closed app only logs here."""
