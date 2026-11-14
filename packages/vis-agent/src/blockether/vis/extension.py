@@ -86,6 +86,10 @@ class Host(Protocol):
         """Read one setting from the current callback snapshot, as the type of `default`."""
         ...
 
+    def setting_root(self) -> str:
+        """The project directory that `read` and `write` of a setting receive."""
+        ...
+
     def state_get(self, key: str) -> Any:
         """Read one value out of the extension's durable state."""
         ...
@@ -1226,8 +1230,10 @@ class Setting(Generic[_SettingValue]):
     directory. `read` returns the saved value, or None if that storage has no saved
     choice; then the default applies. `write` saves the value, and None removes the
     saved choice. Vis saves no copy: the app, the TUI, `value()` and each turn read this
-    storage. If `read` raises or returns a value of another type, the default applies
-    and Vis logs a warning. If `write` raises, Vis shows the error and saves nothing.
+    storage, and a value in a Vis configuration file has no effect. `value()` calls
+    `read` itself, so an error of `read` goes to its caller. Elsewhere, if `read` raises
+    or returns a value of another type, the default applies and Vis logs a warning. If
+    `write` raises, Vis shows the error, logs a warning and saves nothing.
     """
 
     id: str
@@ -1301,7 +1307,10 @@ class Setting(Generic[_SettingValue]):
 
     def value(self) -> _SettingValue:
         """Read this setting in the current callback without changing any scope."""
-        return _host.setting(self.id, self.default)
+        if self.read is None:
+            return _host.setting(self.id, self.default)
+        saved = self.read(_host.setting_root())
+        return _host.setting(self.id, self.default if saved is None else saved)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

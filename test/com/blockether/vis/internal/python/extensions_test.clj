@@ -445,10 +445,16 @@
                          "def write(root, value):\n    file = Path(root) / 'preference.txt'\n"
                          "    if value is None:\n        file.unlink(missing_ok=True)\n"
                          "    else:\n        file.write_text('true' if value else 'false')\n"
+                         "preference = vis.Setting(id='external_preference', label='Preference', "
+                         "default=False, scopes=['project'], read=read, write=write)\n"
+                         "plain = vis.Setting(id='external_plain', label='Plain', default=True, "
+                         "scopes=['project'])\n"
+                         "def read_both() -> list:\n    \"Read both settings.\"\n"
+                         "    return [preference.value(), plain.value()]\n"
                          "vis.register_extension(vis.Extension(name='external-preference', "
-                         "description='External preference fixture', settings=[vis.Setting("
-                         "id='external_preference', label='Preference', default=False, "
-                         "scopes=['project'], read=read, write=write)]))\n"))
+                         "description='External preference fixture', alias='external_preference', "
+                         "settings=[preference, plain], symbols=[vis.Symbol(read_both, "
+                         "activity=vis.Activity(label='Read both', show_start=False))]))\n"))
         (try (binding [workspace/*workspace-root* root]
                (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
                                                       :project-root root})
@@ -457,6 +463,16 @@
                ;; The tool saves its own choice.
                (spit (io/file root "preference.txt") "true")
                (expect (true? (value-at target)))
+               ;; A callback reads the same storage. Vis cannot call `read` while the
+               ;; extension runs, so a host read of another setting must not wait for it.
+               (let [read-both (symbol-fn (registered "external-preference") 'read_both)
+                     read-in #(binding [extension/*current-environment* {:workspace/root root}]
+                                (:result (read-both)))]
+
+                 (expect (= [true true] (read-in)))
+                 (expect (= [false true]
+                            (binding [toggles/*invocation-overrides* {"external_preference" false}]
+                              (read-in)))))
                (scoped/set-setting! nil target "external_preference" "value" false)
                (expect (= "false" (slurp (io/file root "preference.txt"))))
                (expect (not (.exists (io/file other "preference.txt"))))

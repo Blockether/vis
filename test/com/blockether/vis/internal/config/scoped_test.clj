@@ -1487,6 +1487,9 @@
                (expect (false? (get (scoped/values db sid) id)))
                (expect (false? (:is-override (scoped/set-setting! db target id "inherit" nil))))
                (expect (= {} @saved)))
+             ;; A Vis file gives this key no second value.
+             (with-redefs [config/load-project-tiers-raw (constantly {"toggles" {id true}})]
+               (expect (= [false "default"] ((juxt :value :source) (row target)))))
              (finally (toggles/unregister-toggle! id))))))
   (it "keeps the other settings and the saved value when the storage fails"
       (with-empty-config
@@ -1512,4 +1515,59 @@
                           (try (scoped/set-setting! nil target id "value" true)
                                (catch clojure.lang.ExceptionInfo e
                                  [(:status (ex-data e)) (ex-message e)]))))
-               (finally (toggles/unregister-toggle! id)))))))
+               (finally (toggles/unregister-toggle! id))))))
+  (it "sends a batch edit to the external storage and reports a failed write on its row"
+      ;; The batch route saved the value in the Vis overlay, and the tool kept its old choice.
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              dir
+              (.toFile (java.nio.file.Files/createTempDirectory
+                         "external-batch"
+                         (make-array java.nio.file.attribute.FileAttribute 0)))
+
+              root
+              (.getCanonicalPath dir)
+
+              project
+              (store/db-create-project! db {:name "Batch" :workspace-root root})
+
+              target
+              (scoped/target db "project" (str (:id project)))
+
+              saved
+              (atom {})
+
+              apply!
+              #(:change-errors
+                 (settings-edit/apply! db target (settings-edit/revision db target) %))
+
+              declare!
+              (fn [id label write-fn]
+                (toggles/register-toggle! {:id id
+                                           :label label
+                                           :default false
+                                           :scopes ["project"]
+                                           :read-fn #(get @saved %)
+                                           :write-fn write-fn}))]
+
+          (declare! "external_batch_test"
+                    "External"
+                    (fn [root value]
+                      (if (nil? value) (swap! saved dissoc root) (swap! saved assoc root value))))
+          (declare! "external_batch_locked"
+                    "Locked"
+                    (fn [_ _]
+                      (throw (ex-info "Tool file is locked" {}))))
+          (try (expect (= {} (apply! [{"id" "external_batch_test" "action" "value" "value" true}])))
+               (expect (= {root true} @saved))
+               (expect (not (.exists (io/file root ".vis/config.yml"))))
+               (expect (= {"external_batch_locked" "Locked was not saved: Tool file is locked"}
+                          (apply! [{"id" "external_batch_locked" "action" "value" "value" true}
+                                   {"id" "external_batch_test" "action" "inherit"}])))
+               (expect (= {} @saved))
+               (finally (toggles/unregister-toggle! "external_batch_test")
+                        (toggles/unregister-toggle! "external_batch_locked")
+                        (doseq [file (reverse (file-seq dir))]
+                          (io/delete-file file true))))))))

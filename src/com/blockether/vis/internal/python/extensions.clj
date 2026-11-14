@@ -1176,13 +1176,15 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
                   (when target
                     (some #(and (= id (:id %)) (contains? #{"group" "session"} (:source %)))
-                          (scoped/settings db target)))))
+                          (binding [scoped/*read-external?* false]
+                            (scoped/settings db target))))))
 
               ;; #399: an extension of a nested project reads that project's own
               ;; configuration, as a session at that project does. An invocation
               ;; override or a value that the user set for the session still wins.
               nested
               (when (and spec
+                         (not (:read-fn spec))
                          ;; A project file sets only the keys that allow the project scope.
                          (contains? (set (:scopes spec)) "project")
                          (not (str/blank? project-path))
@@ -1198,14 +1200,22 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                   (when (contains? values id) (toggles/wire-value root id (get values id)))))]
 
           (cond (or (nil? spec) hidden?) default
+                ;; #477: `default` is the value that the extension read in its own storage.
+                (:read-fn spec) (get toggles/*invocation-overrides* id default)
                 nested (:value nested)
                 ;; #380: without a session snapshot, a project extension's setting
                 ;; resolves at project scope, as Settings shows it there, vis.yml included.
                 (and (not (contains? toggles/*overrides* id))
                      (not (identical? spec (toggles/toggle-spec id))))
                 (:value (first (filter #(= id (:id %))
-                                       (scoped/settings nil {:scope "project" :root root}))))
+                                       (binding [scoped/*read-external?* false]
+                                         (scoped/settings nil {:scope "project" :root root})))))
                 :else (toggles/value-of root id)))))
+    (put! g
+          "__vis_host_setting_root__"
+          (fn []
+            ;; #477: the project directory that `read` and `write` of a setting receive.
+            (if workspace/*workspace-root* (workspace/cwd-root) home-root)))
     (put! g
           "__vis_host_workspace_root__"
           (fn []

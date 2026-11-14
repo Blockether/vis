@@ -282,8 +282,11 @@ strict_lint = vis.Setting(
 Settings, `value()` and each turn read the tool's file. A change that the tool makes shows the next
 time Vis reads the setting. Vis calls `read` for each Settings request and each turn, so keep it
 short-running. If `read` raises an error or returns a value of another type, Vis uses the default
-and the gateway log records the error. If `write` raises an error, Settings shows it and nothing
-changes.
+and the gateway log records the error. If `write` raises an error, Settings shows it, the gateway
+log records it and nothing changes.
+
+In your code, `value()` calls `read` directly, so an error of `read` reaches your code. A `toggles:`
+value in a Vis configuration file has no effect on this setting.
 
 `value()` reads the current value in every callback, also outside a turn, such as in a background
 thread. In a session, it uses the session's settings. Without a session, a project extension's

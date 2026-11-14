@@ -1681,6 +1681,7 @@ _IMPLEMENTATIONS = {
     "workspace_files": workspace_files,
     "setting_declaration": setting_declaration,
     "setting": setting,
+    "setting_root": workspace_root,
     "state_get": state_get,
     "state_put": state_put,
     "state_del": state_del,

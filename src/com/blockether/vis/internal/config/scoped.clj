@@ -143,18 +143,32 @@
   [root raw]
   (into {}
         (keep (fn [[id value]]
-                (when-let [chosen (toggles/wire-value root id value)]
-                  [id (:value chosen)])))
+                ;; A setting in external storage takes no value from a Vis file.
+                (when-not (:read-fn (toggles/target-toggle-spec root id))
+                  (when-let [chosen (toggles/wire-value root id value)]
+                    [id (:value chosen)]))))
         (get raw "toggles")))
+
+(def ^:dynamic *read-external?*
+  "False while an extension call waits for a setting value. A read of external storage
+   calls that extension again, and its context serves one call at a time."
+  true)
 
 (defn- external-values
   "The project values that extensions keep in their own storage, as id -> value, for the
-   project at `root`. A reader without a saved choice returns nil and gives no entry. A
-   reader that fails or returns a value of another type gives no entry and a warning:
-   one extension must not stop the settings list or a turn."
+   project at `root`, read once inside [[util/with-memo-scope]]. A reader without a saved
+   choice returns nil and gives no entry. A reader that fails or returns a value of
+   another type gives no entry and a warning: one extension must not stop the settings
+   list or a turn. Each turn reads again, so one setting of one project warns at most
+   once each minute. Without [[*read-external?*]], it reads nothing."
   [root]
-  (into {}
-        (keep (fn [{:keys [id read-fn]}]
+  (util/scope-cached
+    [::external-values root *read-external?*]
+    []
+    (fn []
+      (into {}
+            (keep
+              (fn [{:keys [id owner read-fn]}]
                 (when read-fn
                   (try (when-some [raw (read-fn root)]
                          (if-let [chosen (toggles/wire-value root id raw)]
@@ -163,10 +177,29 @@
                        (catch Throwable t
                          (tel/log! {:level :warn
                                     :id ::external-read-failed
-                                    :data {:id id :error (or (ex-message t) (.getName (class t)))}}
+                                    :limit [[1 60000]]
+                                    :limit-by [id root]
+                                    :data {:id id
+                                           :owner owner
+                                           :root root
+                                           :error (or (ex-message t) (.getName (class t)))}}
                                    "A setting could not read its external storage")
                          nil)))))
-        (toggles/target-toggles root)))
+            (when *read-external?* (toggles/target-toggles root))))))
+
+(defn- write-external!
+  "Save `value` of the setting `spec` in the storage of its owner, for the project at
+   `root`. Nil removes the saved choice. That storage has one writer, its owner: Vis
+   saves no second value. A failure gives a warning and the message that Settings shows."
+  [root {:keys [id label owner write-fn]} value]
+  (try (write-fn root value)
+       (catch Exception e
+         (let [reason (or (ex-message e) (.getName (class e)))]
+           (tel/log! {:level :warn
+                      :id ::external-write-failed
+                      :data {:id id :owner owner :root root :error reason}}
+                     "A setting could not write its external storage")
+           (throw (ex-info (str label " was not saved: " reason) {:status 502 :id id} e))))))
 
 (defn layers
   "Read ancestors afresh, including memberships and project configuration. A session
@@ -480,23 +513,25 @@
   "Effective, own and inherited values, with provenance and eligible scopes. A session
    target takes its thinking defaults from its provider entry."
   [db target]
-  (let [specs
-        (with-provider-defaults db target (toggles/target-toggles (:root target)))
+  ;; One scope: the own, inherited and effective columns read external storage once.
+  (util/with-memo-scope
+    (let [specs
+          (with-provider-defaults db target (toggles/target-toggles (:root target)))
 
-        own
-        (own-values db target)
+          own
+          (own-values db target)
 
-        inherited
-        (into {}
-              (map (juxt :id identity))
-              (resolve-layers specs (inherited-layers db target) (:scope target) {}))]
+          inherited
+          (into {}
+                (map (juxt :id identity))
+                (resolve-layers specs (inherited-layers db target) (:scope target) {}))]
 
-    (mapv (fn [{:keys [id] :as row}]
-            (assoc row
-              :own-value (get own id)
-              :inherited-value (get-in inherited [id :value])
-              :inherited-source (get-in inherited [id :source])))
-          (resolve-layers specs (layers db target) (:scope target) own))))
+      (mapv (fn [{:keys [id] :as row}]
+              (assoc row
+                :own-value (get own id)
+                :inherited-value (get-in inherited [id :value])
+                :inherited-source (get-in inherited [id :source])))
+            (resolve-layers specs (layers db target) (:scope target) own)))))
 
 (defn- specificity
   "Position in resolution order: later scopes win; `default` precedes them all."
@@ -767,15 +802,8 @@
 
       "project"
       (do (when-not (:root target) (throw (ex-info "Project has no workspace root" {:status 409})))
-          ;; External storage has one writer, its owner. Vis saves no second value.
-          (if-let [write-fn (:write-fn spec)]
-            (try (write-fn (:root target) v)
-                 (catch Exception e
-                   (throw (ex-info (str (:label spec)
-                                        " was not saved: "
-                                        (or (ex-message e) (.getName (class e))))
-                                   {:status 502 :id id}
-                                   e))))
+          (if (:write-fn spec)
+            (write-external! (:root target) spec v)
             (binding [workspace/*workspace-root* (:root target)]
               (config/update-project-config! edit))))
 
@@ -794,19 +822,34 @@
 (defn edit-settings!
   "Edit one owner atomically. `edit` validates inside the storage lock/transaction.
    It receives the current store and returns section/name/value edits; nil inherits.
-   Returns the failed change hooks as setting id -> message."
+   An edit of a project setting in external storage goes to its owner after the store
+   is saved, outside the store lock. A failed external write leaves the other edits saved.
+   Returns the failed change hooks and external writes as setting id -> message."
   [db {:keys [scope target-id root] :as target} edit]
   (let [before
         (settings db target)
 
+        external-spec
+        (fn [{:keys [section name]}]
+          (when (and (= "project" scope) (= ["toggles"] section))
+            (let [spec (toggles/target-toggle-spec root name)]
+              (when (:write-fn spec) spec))))
+
+        external
+        (volatile! [])
+
         apply-raw
         (fn [current-db raw]
-          (reduce (fn [result {:keys [section name value]}]
-                    (if (nil? value)
-                      (if (seq section) (update-in result section dissoc name) (dissoc result name))
-                      (assoc-in result (conj section name) value)))
-                  raw
-                  (edit current-db)))
+          (let [edits (edit current-db)]
+            (vreset! external (filterv external-spec edits))
+            (reduce (fn [result {:keys [section name value]}]
+                      (if (nil? value)
+                        (if (seq section)
+                          (update-in result section dissoc name)
+                          (dissoc result name))
+                        (assoc-in result (conj section name) value)))
+                    raw
+                    (remove external-spec edits))))
 
         _
         (case scope
@@ -829,7 +872,15 @@
                                    (str (definition-prefix section) name))]
                           (if (nil? value) (dissoc result id) (assoc result id value))))
                       raw
-                      (edit tx)))))]
+                      (edit tx)))))
+
+        write-errors
+        (into {}
+              (keep (fn [{:keys [name value] :as edit}]
+                      (try (write-external! root (external-spec edit) value)
+                           nil
+                           (catch clojure.lang.ExceptionInfo e [name (ex-message e)]))))
+              @external)]
 
     (when (= scope "global")
       (binding [toggles/*overrides*
@@ -841,4 +892,4 @@
         (doseq [{:keys [id value]} (settings db target)]
           (toggles/set-value! id value))))
     (notify-listeners! target)
-    (run-change-hooks! target before (settings db target))))
+    (merge (run-change-hooks! target before (settings db target)) write-errors)))
