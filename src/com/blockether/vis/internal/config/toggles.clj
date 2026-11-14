@@ -112,8 +112,8 @@
    row can pick its rendering strategy (toggle, cycle or text) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group parent type choices visible-fn
-           on-change-fn channels settings? experimental? scopes inheritance secret? editor
-           editor-options validate-fn check-fn preview-fn]}]
+           on-change-fn read-fn write-fn channels settings? experimental? scopes inheritance secret?
+           editor editor-options validate-fn check-fn preview-fn]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -161,6 +161,12 @@
       on-change-fn
       (assoc :on-change-fn on-change-fn)
 
+      read-fn
+      (assoc :read-fn read-fn)
+
+      write-fn
+      (assoc :write-fn write-fn)
+
       ;; `:channels` (set of channel keywords) scopes a toggle to specific
       ;; channels' settings UIs. Absent = channel-neutral (shown everywhere).
       (seq channels)
@@ -189,6 +195,14 @@
 (defn- validated-spec
   "Normalize one contribution after checking the contract-owned shape."
   [contribution]
+  (when (or (:read-fn contribution) (:write-fn contribution))
+    (when-not (and (fn? (:read-fn contribution))
+                   (fn? (:write-fn contribution))
+                   (= ["project"] (:scopes contribution))
+                   (not (:secret? contribution))
+                   (not (:on-change-fn contribution)))
+      (throw (ex-info "External settings need paired callbacks and project-only scope"
+                      {:type :vis.toggles/invalid-contribution}))))
   (when-not (toggle-contract/contribution-valid? contribution)
     (throw (ex-info (toggle-contract/contribution-message "Invalid toggle contribution"
                                                           contribution)

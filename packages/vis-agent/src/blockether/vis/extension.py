@@ -1217,6 +1217,9 @@ class Setting(Generic[_SettingValue]):
     `value()` can return the default.
     `parent` names another setting of the same section. Settings shows this setting
     under that setting. Settings can nest at any depth.
+    `read()` and `write(value)` bind a project-only setting to extension-owned storage.
+    They must be declared together. Vis reads that storage and does not save an overlay.
+    Reset writes the declared default. The extension writer owns atomicity and errors.
     `on_change(old, new, scope)` runs once after a person changes the setting in the
     app or TUI and its effective value changes. `scope` is `global`, `project`, `group`
     or `session`. Vis keeps the saved value if the hook raises, and shows the error.
@@ -1232,6 +1235,8 @@ class Setting(Generic[_SettingValue]):
     parent: str | None = None
     on_change: Callable[[Any, Any, str], Any] | None = None
     is_secret: bool = False
+    read: Callable[[], _SettingValue] | None = None
+    write: Callable[[_SettingValue], Any] | None = None
 
     def __post_init__(self):
         for name, value in (("scopes", self.scopes), ("choices", self.choices)):
@@ -1242,8 +1247,22 @@ class Setting(Generic[_SettingValue]):
             object.__setattr__(self, name, tuple(value))
         if self.on_change is not None and not callable(self.on_change):
             raise TypeError("Setting on_change must be callable")
+        if (self.read is None) != (self.write is None):
+            raise ValueError("Setting read and write must be declared together")
+        if self.read is not None:
+            if not callable(self.read) or not callable(self.write):
+                raise TypeError("Setting read and write must be callable")
+            if (
+                self.scopes != ("project",)
+                or self.is_secret
+                or self.on_change is not None
+            ):
+                raise ValueError(
+                    "External settings require project-only scope and no secret or change hook"
+                )
         declaration = self._spec()
-        declaration.pop("on_change", None)
+        for callback in ("on_change", "read", "write"):
+            declaration.pop(callback, None)
         spec = _host.setting_declaration(declaration)
         object.__setattr__(self, "scopes", tuple(spec["scopes"]))
         if self.type == "boolean" and type(self.default) is not bool:
@@ -1277,12 +1296,17 @@ class Setting(Generic[_SettingValue]):
             spec["parent"] = self.parent
         if self.on_change is not None:
             spec["on_change"] = self.on_change
+        if self.read is not None:
+            spec["read"] = self.read
+            spec["write"] = self.write
         if self.is_secret:
             spec["is_secret"] = True
         return spec
 
     def value(self) -> _SettingValue:
         """Read this setting in the current callback without changing any scope."""
+        if self.read is not None:
+            return self.read()
         return _host.setting(self.id, self.default)
 
 

@@ -151,3 +151,39 @@ def test_application_bridge_rejects_host_only_settings_before_connecting():
     )
     with pytest.raises(ValueError, match="host-only fields: settings"):
         ClientExtensions([declaration])
+
+
+def test_external_project_setting_reads_current_storage():
+    saved = {"value": False}
+    setting = vis.Setting(
+        id="external_test",
+        label="External",
+        default=False,
+        scopes=["project"],
+        read=lambda: saved["value"],
+        write=lambda value: saved.update(value=value),
+    )
+    assert setting.value() is False
+    setting._spec()["write"](True)
+    assert setting.value() is True
+    saved["value"] = False
+    assert setting.value() is False
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"read": lambda: False},
+        {"write": lambda value: None},
+        {"read": False, "write": lambda value: None},
+        {"read": lambda: False, "write": lambda value: None, "scopes": ["global"]},
+    ],
+)
+def test_external_project_setting_rejects_invalid_binding(options):
+    with pytest.raises((TypeError, ValueError)):
+        vis.Setting(
+            id="external_test",
+            label="External",
+            default=False,
+            **({"scopes": ["project"]} | options),
+        )

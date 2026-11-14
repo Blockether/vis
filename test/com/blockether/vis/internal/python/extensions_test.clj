@@ -418,6 +418,48 @@
                               (:result (read-token)))))))
              (finally (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it
+    "reads and writes an external project setting without a Vis overlay"
+    (let [dir
+          (temp-dir)
+
+          root
+          (.getCanonicalPath ^java.io.File dir)
+
+          value-file
+          (io/file dir "preference.txt")
+
+          target
+          {:scope "project" :root root}]
+
+      (spit value-file "false")
+      (write-ext! dir
+                  ".vis/extensions/external.py"
+                  (str "from pathlib import Path\nimport blockether.vis.extension as vis\n"
+                       "path = Path("
+                       (pr-str (.getPath value-file))
+                       ")\n"
+                       "def read():\n    return path.read_text() == 'true'\n"
+                       "def write(value):\n    path.write_text('true' if value else 'false')\n"
+                       "vis.register_extension(vis.Extension(name='external-preference', "
+                       "description='External preference fixture', settings=[vis.Setting("
+                       "id='external_preference', label='Preference', default=False, "
+                       "scopes=['project'], read=read, write=write)]))\n"))
+      (try (binding [workspace/*workspace-root* root]
+             (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                    :project-root root})
+             (expect (= [] (pyx/load-failures)))
+             (expect (false?
+                       (:value
+                         (scoped/set-setting! nil target "external_preference" "value" false))))
+             (spit value-file "true")
+             (expect (true? (:value (first (filter #(= "external_preference" (:id %))
+                                                   (scoped/settings nil target))))))
+             (scoped/set-setting! nil target "external_preference" "value" false)
+             (expect (= "false" (slurp value-file)))
+             (expect (not (.exists (io/file dir ".vis/config.yml")))))
+           (finally (binding [workspace/*workspace-root* root]
+                      (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "calls a Python on_change hook and reports its error"
       ;; #369: a setting had no change hook, so an extension had to poll for a change.
       (let [dir

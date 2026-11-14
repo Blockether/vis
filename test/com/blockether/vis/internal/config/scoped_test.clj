@@ -1425,3 +1425,56 @@
                  (toggles/reset-to-default! "sound_presets")
                  (doseq [file (reverse (file-seq dir))]
                    (io/delete-file file true)))))))
+
+(defdescribe
+  external-project-settings
+  (it "reads external changes and writes without a Vis overlay"
+      (with-empty-config
+        (let [id
+              "external_project_test"
+
+              saved
+              (atom false)
+
+              target
+              {:scope "project" :target-id "external" :root "/tmp/external"}]
+
+          (toggles/register-toggle! {:id id
+                                     :label "External"
+                                     :default false
+                                     :scopes ["project"]
+                                     :read-fn #(deref saved)
+                                     :write-fn #(reset! saved %)})
+          (try
+            (expect (false? (:value (first (filter #(= id (:id %)) (scoped/settings nil target))))))
+            (reset! saved true)
+            (expect (true? (:value (first (filter #(= id (:id %)) (scoped/settings nil target))))))
+            (with-redefs [config/update-project-config! (fn [_]
+                                                          (throw (ex-info "Unexpected Vis write"
+                                                                          {})))]
+              (expect (false? (:value (scoped/set-setting! nil target id "value" false))))
+              (expect (false? @saved))
+              (scoped/set-setting! nil target id "value" true)
+              (expect (false? (:value (scoped/set-setting! nil target id "inherit" nil)))))
+            (finally (toggles/unregister-toggle! id))))))
+  (it "does not save a Vis value when the external writer fails"
+      (with-empty-config
+        (let [id
+              "external_failure_test"
+
+              target
+              {:scope "project" :target-id "external" :root "/tmp/external"}]
+
+          (toggles/register-toggle! {:id id
+                                     :label "External"
+                                     :default false
+                                     :scopes ["project"]
+                                     :read-fn (constantly false)
+                                     :write-fn (fn [_]
+                                                 (throw (ex-info "Write refused" {})))})
+          (try (expect (try (scoped/set-setting! nil target id "value" true)
+                            false
+                            (catch Exception e (= "Write refused" (ex-message e)))))
+               (expect (false? (:value (first (filter #(= id (:id %))
+                                                      (scoped/settings nil target))))))
+               (finally (toggles/unregister-toggle! id)))))))

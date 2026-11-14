@@ -467,11 +467,22 @@
               (map (juxt :id identity))
               (resolve-layers specs (inherited-layers db target) (:scope target) {}))]
 
-    (mapv (fn [{:keys [id] :as row}]
-            (assoc row
-              :own-value (get own id)
-              :inherited-value (get-in inherited [id :value])
-              :inherited-source (get-in inherited [id :source])))
+    (mapv (fn [{:keys [id read-fn default] :as row}]
+            (if read-fn
+              (let [value (read-fn)]
+                (when-not (toggles/wire-value (:root target) id value)
+                  (throw (ex-info "External setting returned an invalid value" {:id id})))
+                (assoc row
+                  :value value
+                  :own-value value
+                  :source "project"
+                  :is-override true
+                  :inherited-value default
+                  :inherited-source "default"))
+              (assoc row
+                :own-value (get own id)
+                :inherited-value (get-in inherited [id :value])
+                :inherited-source (get-in inherited [id :source]))))
           (resolve-layers specs (layers db target) (:scope target) own))))
 
 (defn- specificity
@@ -730,23 +741,24 @@
             (update raw "toggles" dissoc id)
             (assoc-in raw ["toggles" id] v)))]
 
-    (case scope
-      "global"
-      (do (config/update-machine-config! edit)
-          (binding [toggles/*overrides*
-                    nil
+    (if-let [write-fn (:write-fn spec)]
+      (write-fn (if (= action "inherit") (:default spec) v))
+      (case scope
+        "global"
+        (do (config/update-machine-config! edit)
+            (binding [toggles/*overrides* nil
+                      toggles/*persist-writes* false]
 
-                    toggles/*persist-writes*
-                    false]
+              (toggles/set-value! id
+                                  (:value (first (filter #(= id (:id %)) (settings db target)))))))
 
-            (toggles/set-value! id (:value (first (filter #(= id (:id %)) (settings db target)))))))
+        "project"
+        (do (when-not (:root target)
+              (throw (ex-info "Project has no workspace root" {:status 409})))
+            (binding [workspace/*workspace-root* (:root target)]
+              (config/update-project-config! edit)))
 
-      "project"
-      (do (when-not (:root target) (throw (ex-info "Project has no workspace root" {:status 409})))
-          (binding [workspace/*workspace-root* (:root target)]
-            (config/update-project-config! edit)))
-
-      (store/db-set-scoped-setting! db scope (:target-id target) id v))
+        (store/db-set-scoped-setting! db scope (:target-id target) id v)))
     (notify-listeners! (assoc target :id id))
     (let [after
           (settings db target)

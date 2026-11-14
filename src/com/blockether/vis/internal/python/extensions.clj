@@ -2999,29 +2999,36 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (cond-> {:ext/name ext-name
              :ext/description (str (get reg "description"))
              :ext/kind (str (or (get reg "kind") "python"))
-             :ext/toggles (mapv (fn [setting]
-                                  (cond-> {:id (get setting "id")
-                                           :label (get setting "label")
-                                           :default (get setting "default")
-                                           :type (keyword (get setting "type"))
-                                           :scopes (vec (get setting "scopes"))
-                                           :persist? true}
-                                    (get setting "description")
-                                    (assoc :description (get setting "description"))
+             :ext/toggles
+             (mapv (fn [setting]
+                     (cond-> {:id (get setting "id")
+                              :label (get setting "label")
+                              :default (get setting "default")
+                              :type (keyword (get setting "type"))
+                              :scopes (vec (get setting "scopes"))
+                              :persist? true}
+                       (get setting "description")
+                       (assoc :description (get setting "description"))
 
-                                    (get setting "parent")
-                                    (assoc :parent (get setting "parent"))
+                       (get setting "parent")
+                       (assoc :parent (get setting "parent"))
 
-                                    (get setting "choices")
-                                    (assoc :choices (vec (get setting "choices")))
+                       (get setting "choices")
+                       (assoc :choices (vec (get setting "choices")))
 
-                                    (true? (get setting "is_secret"))
-                                    (assoc :secret? true)
+                       (true? (get setting "is_secret"))
+                       (assoc :secret? true)
 
-                                    (fn? (get setting "on_change"))
-                                    (assoc :on-change-fn
-                                      (on-change-adapter ext-name ctx (get setting "on_change")))))
-                                (get reg "settings"))
+                       (fn? (get setting "read"))
+                       (assoc :read-fn
+                         #(call-py-ext ext-name nil ctx (get setting "read") []) :write-fn
+                         #(call-py-ext ext-name nil ctx (get setting "write") [%]) :persist?
+                         false)
+
+                       (fn? (get setting "on_change"))
+                       (assoc :on-change-fn
+                         (on-change-adapter ext-name ctx (get setting "on_change")))))
+                   (get reg "settings"))
              :ext/source-nses ['com.blockether.vis.internal.python.extensions]
              :ext/engine (cond-> {:ext.engine/symbols symbols :ext.engine/exact-symbol-names? true}
                            alias-sym
