@@ -84,11 +84,9 @@ After each block, Vis saves a snapshot of the session:
   All these values together can use up to 128 MiB. Vis keeps them in separate
   files beside the snapshot, and deletes the files when you delete the session.
 
-The next sandbox restores this snapshot before it runs your next block. If each
-saved value came back, the block shows no sign of the restart. If a value did not
-come back, the output of that block starts with a short `[Sandbox restarted]`
-notice. The notice does not name the value. An error for a name that did not come
-back gives the reason.
+The next sandbox restores this snapshot before it runs your next block. The output
+of that block shows no sign of the restart. If a block uses a name that did not
+come back, the error gives the reason.
 
 These values never survive a restart. Create them again when you need them:
 

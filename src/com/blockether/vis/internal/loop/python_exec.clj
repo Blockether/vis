@@ -79,7 +79,7 @@
 ;; (defs, imports, variables) carry across calls and turns NATURALLY, REPL-style.
 ;; (A FRESH process — after an idle timeout, a settings change or a gateway
 ;; restart — re-creates the saved helpers, imports and variables from the
-;; session snapshot and prints a restart notice when a name did not come back.)
+;; session snapshot and prints nothing about it.)
 
 (def ^:private INTERRUPT_UNWIND_MS
   "How long an acknowledged interrupt gets to unwind before its session worker
@@ -951,20 +951,10 @@
                                               deref)
                                       "engine_fold_count")
                                  0))
-                       folds-before)
-              ;; The first block after a restore that lost a name says so, BEFORE its
-              ;; own output: the transcript still shows every name the old sandbox
-              ;; held (Blockether/vis#305). A restore that lost nothing says nothing.
-              notice (env/take-restore-notice! python-context)]
-
+                       folds-before)]
           (cond-> exec
             (pos? folds)
-            (assoc :vis/fold-count folds)
-
-            notice
-            (update :stdout
-                    (fn [printed]
-                      (if (str/blank? (str printed)) notice (str notice "\n\n" printed))))))))))
+            (assoc :vis/fold-count folds)))))))
 
 ;; get-locals (read sandbox vars)
 

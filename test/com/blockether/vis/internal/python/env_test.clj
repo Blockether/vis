@@ -325,7 +325,7 @@
                                                "(restored)")))
           (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
-;; #305: variables come back after a restart, and the first block learns what did not.
+;; #305: variables come back after a restart, and a NameError names what did not.
 (defdescribe
   session-defs-restart-notice-test
   (it
@@ -348,13 +348,6 @@
              (tpc/with-own
                [ctx {} nil {:worker? worker?}]
                (expect (= 1 (ep/restore-session-defs! ctx sid)))
-               ;; `pending` is gone, so there is a notice. It names no name.
-               (let [notice (str (ep/take-restore-notice! ctx))]
-                 (expect (str/starts-with? notice "[Sandbox restarted]") notice)
-                 (doseq [n ["pending" "next_total" "TOTAL"]]
-                   (expect (not (str/includes? notice n)) notice)))
-               ;; One notice per restore: the next block does not repeat it.
-               (expect (nil? (ep/take-restore-notice! ctx)))
                (expect (= "42 2\n"
                           (:stdout (ep/run-python-block ctx "print(next_total(), len(rows))"))))
                ;; `import xml.dom.minidom` binds only `xml`. The snapshot must load the
@@ -378,12 +371,11 @@
                  (expect (str/includes? deleted "If an earlier block created `TOTAL`") deleted)))
              (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
-;; #347: a restart keeps large text and bytes values in spill files, and the
-;; notice names the restored helpers and classes that use a lost value.
+;; #347: a restart keeps large text and bytes values in spill files.
 (defdescribe
   session-defs-spill-test
   (it
-    "spills values past the snapshot budget and names what depends on a lost value"
+    "spills values past the snapshot budget and brings them back"
     (doseq [worker? [false true]]
       (let [sid (str "vis-test-defs-spill-" (random-uuid))
             file (io/file (paths/sandbox-defs-file sid))
@@ -413,8 +405,6 @@
           (tpc/with-own
             [ctx {} nil {:worker? worker?}]
             (ep/restore-session-defs! ctx sid)
-            ;; `lock` is gone, so there is a notice. The spilled values are back.
-            (expect (some? (ep/take-restore-notice! ctx)))
             (let [answer
                   (ep/run-python-block
                     ctx
@@ -635,8 +625,6 @@
                (tpc/with-own
                  [ctx {} nil {:worker? worker?}]
                  (expect (= 0 (ep/restore-session-defs! ctx sid)))
-                 ;; Every name came back, so the next block prints no restart notice.
-                 (expect (nil? (ep/take-restore-notice! ctx)))
                  (expect (= "IssueSearch [317] open True IssueSearch\n"
                             (:stdout (ep/run-python-block
                                        ctx

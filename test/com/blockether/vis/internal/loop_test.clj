@@ -3700,11 +3700,9 @@
                       environment
                       "print(saved_helper(), scratch, 'handle' in globals())")]
           (expect (nil? (:error after)) (pr-str after))
-          ;; #305: `handle` is gone, so the first block in the new process opens with
-          ;; the restart notice. The notice names no name.
-          (expect (str/starts-with? (str (:stdout after)) "[Sandbox restarted]") (pr-str after))
-          (expect (not (str/includes? (str (:stdout after)) "handle")) (pr-str after))
-          (expect (str/ends-with? (str (:stdout after)) "\n\nrestored 1 False\n") (pr-str after)))
+          ;; `handle` is gone, and the first block in the new process still prints
+          ;; only its own output: a restart adds no notice.
+          (expect (= "restored 1 False\n" (str (:stdout after))) (pr-str after)))
         (expect (not= old-context (env/python-context environment)))
         (finally (loop-env/dispose-environment! environment)
                  (clojure.java.io/delete-file defs-file true))))))
