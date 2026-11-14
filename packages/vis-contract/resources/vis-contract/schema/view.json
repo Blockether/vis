@@ -1601,7 +1601,7 @@
             },
             "is_selected": {
               "type": "boolean",
-              "description": "The choice that holds now. A menu of a diff toolbar marks it, and a press chooses it again."
+              "description": "The choice that holds now. A menu of a diff toolbar marks it, a view paints the button as one choice of its row, and a press chooses it again."
             },
             "reveals": {
               "$ref": "#/$defs/reveals"

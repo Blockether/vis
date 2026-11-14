@@ -340,7 +340,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.ui.divider(id)` | a rule between sections, vertical in a `wrap` group | none (use `view.add(...)` or `view.drop(id)`) |
 | `vis.ui.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
 | `vis.ui.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
-| `vis.ui.button(id, label, is_disabled=False, variant=None)` | an operator action; `variant` is `primary`, `secondary` or `destructive` | `.set(label=, is_disabled=)` |
+| `vis.ui.button(id, label, is_disabled=False, variant=None)` | an operator action; `variant` is `primary`, `secondary` or `destructive`; `is_selected=True` or `False` makes it one choice of a row, such as a tab, and the Companion app marks the choice that holds | `.set(label=, is_disabled=)` |
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | a collapsible column | children update by their own ids |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | a 3D world, [drawn on every surface](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
 
@@ -725,6 +725,8 @@ def open_board(session_id):
 - Vis saves the last state of a panel view. After a gateway restart, the view shows that state as
   stale until your extension loads again. Open your views again when your extension loads. If the
   load does not open the same key, Vis closes the stale view.
+- The Companion app shows no Interrupt button on a panel view. A panel view is a tool, not a
+  run. Your extension closes it.
 
 An `attachment` view is an app. Open it with `vis.attach(vis.ui.app(...))`, as [Apps](#apps) shows.
 

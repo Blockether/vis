@@ -16,6 +16,7 @@ import {
 import {
   BandLabel,
   Button,
+  Chip,
   ChoiceRow,
   CopyChip,
   DialogFrame,
@@ -66,6 +67,7 @@ import {
   liveInputNodes,
   liveFraction,
   livePercent,
+  livePlacement,
   nestedLiveNodes,
   orderedRows,
   timelineGeometry,
@@ -1644,6 +1646,33 @@ function ActionButton({
   shortcut?: LiveShortcut;
 }) {
   const [pending, setPending] = useState(false);
+  const activate = async () => {
+    if (!onActivate || pending) return;
+    setPending(true);
+    try {
+      await onActivate(node.id);
+    } finally {
+      setPending(false);
+    }
+  };
+  // A button that is a choice shows which one holds: a row of them is a row of tabs.
+  // It does not dim while it waits, or the row would flicker at each change of tab.
+  if (node.is_selected !== undefined) {
+    return (
+      <Chip
+        isOn={node.is_selected}
+        data-node-id={node.id}
+        aria-label={shortcut ? node.label : undefined}
+        aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
+        disabled={isSettled || node.is_disabled || !onActivate}
+        aria-busy={pending}
+        onClick={activate}
+      >
+        {node.label}
+        <NodeKey shortcut={shortcut} />
+      </Chip>
+    );
+  }
   return (
     <Button
       variant={BUTTON_RANK[node.variant]}
@@ -1653,15 +1682,7 @@ function ActionButton({
       aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
       disabled={isSettled || node.is_disabled || pending || !onActivate}
       aria-busy={pending}
-      onClick={async () => {
-        if (!onActivate || pending) return;
-        setPending(true);
-        try {
-          await onActivate(node.id);
-        } finally {
-          setPending(false);
-        }
-      }}
+      onClick={activate}
     >
       {node.label}
       <NodeKey shortcut={shortcut} />
@@ -2589,7 +2610,11 @@ export function LiveView({
       view,
       error: stopping === null ? error : null,
       isInterrupting: stopping === view.id,
-      onInterrupt: (note: string | null) => interrupt(view.id, note),
+      // A panel is the tool surface of an extension, not a run: it has nothing to stop.
+      onInterrupt:
+        livePlacement(view) === 'panel'
+          ? undefined
+          : (note: string | null) => interrupt(view.id, note),
       onSelect: (nodeId: string, itemIds: string[]) => select(view.id, nodeId, itemIds),
       onActivate: (nodeId: string) => activate(view.id, nodeId),
       onChange: (nodeId: string, value: HumanInputValue) => change(view.id, nodeId, value),
