@@ -2267,47 +2267,18 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    not session state, and is neither written nor read."
   8388608)
 
-(def ^:private notice-name-limit
-  "Names a restart notice lists per kind before it counts the rest."
-  12)
-
-(defn- notice-names
-  "`names` for the restart notice: the first [[notice-name-limit]], then a count."
-  [names]
-  (let [shown
-        (take notice-name-limit names)
-
-        more
-        (- (count names) (count shown))]
-
-    (str (str/join ", " shown) (when (pos? more) (str ", +" more " more")))))
+(def ^:private notice-name-limit "Names a restart notice lists before it counts the rest." 12)
 
 (defn- restore-notice
-  "The restart notice for `report`, the runtime's `__vis_restore_report__`.
+  "The restart notice for `report`, the runtime's `__vis_restore_report__`, or nil
+   when every saved name came back.
 
-   It separates what the conversation still shows from what this NEW process
-   holds: the host binds tools, `session` and workspace aliases again; helpers,
-   imports and saved variables come back from the snapshot; every other name is
-   gone, and the ones the snapshot knew of are named with their reason. The
-   host adds `:dependents`: the restored helpers and classes that use a lost name."
+   A restart that lost nothing is not an event for the model: the snapshot is the
+   state, and the transcript stays true. The notice names only what is gone, with
+   the reason. The host adds `:dependents`: the restored helpers and classes that
+   use a lost name."
   [report]
-  (let [kind
-        (fn [k one many]
-          (let [names (vec (get report k))]
-            (when (seq names)
-              (str (count names)
-                   " "
-                   (if (= 1 (count names)) one many)
-                   " ("
-                   (notice-names names)
-                   ")"))))
-
-        restored
-        (keep identity
-              [(kind :functions "helper" "helpers") (kind :classes "class" "classes")
-               (kind :variables "variable" "variables") (kind :imports "import" "imports")])
-
-        listed
+  (let [listed
         (fn [entries text]
           (str (str/join "; "
                          (map (fn [[n v]]
@@ -2322,30 +2293,21 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
         dependents
         (sort-by (comp name key) (:dependents report))]
 
-    (str "[Sandbox restarted] This Python sandbox is a new process: the previous one "
-         "stopped after an idle timeout, a settings change, a memory limit or a gateway "
-         "restart, or this session is a fork of another session. The conversation above "
-         "is unchanged. The host bound the tools, "
-         "`session` and the workspace path aliases again. "
-         (if (seq restored)
-           (str "Restored from the session snapshot: " (str/join ", " restored) ". ")
-           "Nothing was restored from the session snapshot. ")
-         (if (seq lost)
-           (str
-             "NOT restored: "
-             (listed lost str)
-             ". "
-             (when (seq dependents)
-               (str "Restored names that use them: " (listed dependents #(str/join ", " %)) ". "))
-             "Re-create the lost names before you use them"
-             (when (seq dependents) " or the names that use them")
-             ".")
-           (str "Every saved name is back. Open files, handles and running processes do not "
-                "survive a restart: create them again before you use them.")))))
+    (when (seq lost)
+      (str "[Sandbox restarted] This Python sandbox is a new process, rebuilt from the session "
+           "snapshot. NOT restored: "
+           (listed lost str)
+           ". "
+           (when (seq dependents)
+             (str "Restored names that use them: " (listed dependents #(str/join ", " %)) ". "))
+           "Re-create the lost names before you use them"
+           (when (seq dependents) " or the names that use them")
+           "."))))
 
 (defn take-restore-notice!
   "The restart notice of `session`'s restore, exactly once: the first block after
-   the restore prints it, later blocks do not. Nil when there is none."
+   the restore prints it, later blocks do not. Nil when there is none: no restore,
+   or a restore that lost no name."
   [session]
   (when session
     (let [[old _] (swap-vals! restore-reports
@@ -2904,8 +2866,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    The restored source is registered as a real block, so `defs(\"name\")` and
    `inspect.getsource` read it back exactly like a local one, and it goes
    through the same rewrite so it RUNS like one. Spill files bring back the large
-   values the snapshot left out. What came back and what did not becomes the
-   restart notice of the next block ([[take-restore-notice!]]) and the hint on a
+   values the snapshot left out. What did not come back becomes the restart
+   notice of the next block ([[take-restore-notice!]]) and the hint on a
    NameError for a name that is gone."
   [session session-id]
   (when (and session session-id)

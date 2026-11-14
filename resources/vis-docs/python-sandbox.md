@@ -84,11 +84,11 @@ After each block, Vis saves a snapshot of the session:
   All these values together can use up to 128 MiB. Vis keeps them in separate
   files beside the snapshot, and deletes the files when you delete the session.
 
-The next sandbox restores this snapshot before it runs your next block. The
-output of that block starts with a `[Sandbox restarted]` notice. The notice names
-the restored helpers and variables. It also names each value that did not come
-back, with the reason. If a restored helper or class uses a value that did not
-come back, the notice names that helper or class too.
+The next sandbox restores this snapshot before it runs your next block. If each
+saved value came back, the block shows no sign of the restart. If a value did not
+come back, the output of that block starts with a `[Sandbox restarted]` notice.
+The notice names each value that did not come back, with the reason. If a restored
+helper or class uses such a value, the notice names that helper or class too.
 
 These values never survive a restart. Create them again when you need them:
 

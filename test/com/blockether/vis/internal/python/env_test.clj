@@ -348,10 +348,11 @@
              (tpc/with-own
                [ctx {} nil {:worker? worker?}]
                (expect (= 1 (ep/restore-session-defs! ctx sid)))
+               ;; The notice names only what is gone, not what came back.
                (let [notice (ep/take-restore-notice! ctx)]
-                 (doseq [part ["1 helper (next_total)" "TOTAL" "rows" "1 import (xml)"
-                               "NOT restored: pending (" "cannot be pickled"]]
-                   (expect (str/includes? notice part) part)))
+                 (doseq [part ["NOT restored: pending (" "cannot be pickled"]]
+                   (expect (str/includes? notice part) part))
+                 (expect (not (str/includes? notice "next_total")) notice))
                ;; One notice per restore: the next block does not repeat it.
                (expect (nil? (ep/take-restore-notice! ctx)))
                (expect (= "42 2\n"
@@ -414,7 +415,7 @@
             (ep/restore-session-defs! ctx sid)
             (let [notice (str (ep/take-restore-notice! ctx))]
               (doseq [part
-                      ["a5" "blob" "text" "NOT restored: lock ("
+                      ["NOT restored: lock ("
                        "Restored names that use them: Guard (lock); held (lock); outer (lock). "]]
                 (expect (str/includes? notice part) notice))
               (expect (not (str/includes? notice "NOT restored: a5")) notice)
@@ -639,8 +640,8 @@
                (tpc/with-own
                  [ctx {} nil {:worker? worker?}]
                  (expect (= 0 (ep/restore-session-defs! ctx sid)))
-                 (let [notice (str (ep/take-restore-notice! ctx))]
-                   (expect (not (str/includes? notice "NOT restored")) notice))
+                 ;; Every name came back, so the next block prints no restart notice.
+                 (expect (nil? (ep/take-restore-notice! ctx)))
                  (expect (= "IssueSearch [317] open True IssueSearch\n"
                             (:stdout (ep/run-python-block
                                        ctx

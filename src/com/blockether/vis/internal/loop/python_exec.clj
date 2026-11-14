@@ -952,9 +952,9 @@
                                       "engine_fold_count")
                                  0))
                        folds-before)
-              ;; The first block after a restore says what the restart kept and lost,
-              ;; BEFORE its own output: the transcript still shows every name the old
-              ;; sandbox held (Blockether/vis#305).
+              ;; The first block after a restore says what the restart lost, BEFORE
+              ;; its own output: the transcript still shows every name the old sandbox
+              ;; held (Blockether/vis#305). A restore that lost nothing says nothing.
               notice (env/take-restore-notice! python-context)]
 
           (cond-> exec
