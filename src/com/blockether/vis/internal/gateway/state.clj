@@ -3855,44 +3855,49 @@
    `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx`.
 
    The rows are the SAME [[attachment-descriptors]] the live frame and the
-   transcript ship, with `:turn` added: the 1-based ordinal of the turn that
-   produced it, counted from the start of the session, so `index` names the same
-   artifact here, in history and at the byte endpoint. Model-only rows are
+   transcript ship, with `:turn` and `:turn_id` added: the 1-based ordinal of the
+   turn that produced it, counted from the start of the session, and the ID of
+   that turn. So `index` names the same artifact here, in history and at the byte
+   endpoint, and an SDK program takes the files of one turn. Model-only rows are
    dropped by the very filter the byte endpoint indexes
    ([[user-iteration-attachments]]), and a user's own uploaded image is not an
    artifact the model produced, so it is not here either."
   [sid]
-  (try (let [db
-             (lp/db-info)
+  (try
+    (let [db
+          (lp/db-info)
 
-             ordinal
-             (into {}
-                   (map-indexed (fn [i turn]
-                                  [(str (:id turn)) (inc (long i))]))
-                   (persistance/db-list-session-turns db sid))
+          ordinal
+          (into {}
+                (map-indexed (fn [i turn]
+                               [(str (:id turn)) (inc (long i))]))
+                (persistance/db-list-session-turns db sid))
 
-             rows
-             (->> (persistance/db-list-session-attachments-meta db sid)
-                  (filter :iteration-id)
-                  (remove attachments/hidden-from-user?))]
+          rows
+          (->> (persistance/db-list-session-attachments-meta db sid)
+               (filter :iteration-id)
+               (remove attachments/hidden-from-user?))]
 
-         (->> (group-by #(str (:iteration-id %)) rows)
-              (mapcat (fn [[iid group]]
-                        ;; `(tool_call_id, position)` is the order
-                        ;; `db-list-iteration-attachments-meta` serves, so index N is
-                        ;; the same N the byte endpoint resolves.
-                        (let [ordered (vec (sort-by (juxt #(str (:tool-call-id %))
-                                                          #(or (:position %) 0))
-                                                    group))]
-                          (map (fn [descriptor row]
-                                 (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
-                               (attachment-descriptors iid ordered)
-                               ordered))))
-              (sort-by (juxt :turn :iteration_id :index))
-              vec))
-       (catch Throwable t
-         (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
-         [])))
+      (->> (group-by #(str (:iteration-id %)) rows)
+           (mapcat (fn [[iid group]]
+                     ;; `(tool_call_id, position)` is the order
+                     ;; `db-list-iteration-attachments-meta` serves, so index N is
+                     ;; the same N the byte endpoint resolves.
+                     (let [ordered (vec (sort-by (juxt #(str (:tool-call-id %))
+                                                       #(or (:position %) 0))
+                                                 group))]
+                       (map (fn [descriptor row]
+                              (let [turn-id (str (:turn-soul-id row))]
+                                (assoc descriptor
+                                  :turn (get ordinal turn-id 0)
+                                  :turn_id turn-id)))
+                            (attachment-descriptors iid ordered)
+                            ordered))))
+           (sort-by (juxt :turn :iteration_id :index))
+           vec))
+    (catch Throwable t
+      (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
+      [])))
 
 (defn- hydrated-turn-trace
   "Canonical persisted iteration rows for `turn-id`.

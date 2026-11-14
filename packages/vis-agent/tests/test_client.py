@@ -682,6 +682,71 @@ def test_turn_wait_continues_when_a_proxy_ends_streams_that_made_progress():
         assert len(streams) == 4
 
 
+def test_attachments_cover_one_turn_several_turns_or_the_conversation():
+    # A workflow passes the files of one step to the next step. Before, a program
+    # had to map the ordinals of the artifact inventory to turns by itself.
+    from blockether.vis.engine import Turn
+
+    def row(turn, name, version=1, index=0):
+        return {
+            "index": index,
+            "iteration_id": f"i{turn}",
+            "attachment_id": f"a{turn}{index}",
+            "kind": "file",
+            "media_type": "text/markdown",
+            "filename": name,
+            "version": version,
+            "audience": "both",
+            "size": 6,
+            "turn": turn,
+            "turn_id": f"t{turn}",
+        }
+
+    rows = [row(1, "SPEC.md"), row(2, "PLAN.md"), row(3, "SPEC.md", 2, 1)]
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path == "/v1/sessions/s/artifacts":
+            return 200, {"artifacts": rows}
+        if path == "/v1/sessions/s/turns":
+            return 200, {"turns": [{"turn_id": f"t{n}"} for n in (1, 2, 3, 4)]}
+        if path == "/v1/sessions/s/iterations/i3/attachments/1":
+            return 200, b"# Spec", "text/markdown"
+        return 404, {"error": {"code": "missing", "message": path}}
+
+    def names(items):
+        return [(item.filename, item.version) for item in items]
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        session = client.session("s")
+        assert names(session.attachments()) == [
+            ("SPEC.md", 1),
+            ("PLAN.md", 1),
+            ("SPEC.md", 2),
+        ]
+        assert names(session.attachments("t2")) == [("PLAN.md", 1)]
+        assert names(session.attachments(0)) == [("SPEC.md", 1)]
+        # The last turn made no file: the answer is empty, not the newest file.
+        assert session.attachments(-1) == []
+        assert names(session.attachments(["t1", Turn(session, "t3")])) == [
+            ("SPEC.md", 1),
+            ("SPEC.md", 2),
+        ]
+        newest = Turn(session, "t3").attachments()[0]
+        assert (newest.turn_id, newest.media_type, newest.size) == (
+            "t3",
+            "text/markdown",
+            6,
+        )
+        assert newest.read() == b"# Spec"
+        assert newest.text() == "# Spec"
+        with pytest.raises(IndexError):
+            session.attachments(7)
+        with pytest.raises(TypeError, match="turn"):
+            session.attachments(1.5)
+
+
 def test_turn_wait_on_a_silent_stream_keeps_its_deadline():
     from blockether.vis.engine import Turn
 

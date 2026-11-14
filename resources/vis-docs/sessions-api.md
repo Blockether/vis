@@ -37,6 +37,8 @@ requests, select **HTTP** at the top of the page.
   groups](#organize-sessions-into-groups).
 - **Your program needs a checked answer in a fixed shape.** [Run a task and read a typed
   answer](#run-a-task-and-read-a-typed-answer).
+- **Your program needs the files that the agent made.** [Read the files of a
+  turn](#read-the-files-of-a-turn).
 - **Your program must keep a record of the work.** [Export a session](#export-a-session) or [read
   Activity history](#read-activity-history).
 - **A session must move to another gateway, or you need a full backup.** [Save and restore a session
@@ -101,6 +103,8 @@ request.
 | List turns or queued messages | `session.turns(...)` | `get_session_turns(sid, query=...)` |
 | Change a queued message | — | `patch_session_turn(sid, tid, body=...)` |
 | Remove a queued message | — | `delete_session_turn(sid, tid)` |
+| List the files that the agent attached | `session.attachments(...)`, `turn.attachments()` | `get_session_artifacts(sid)` |
+| Download one file | `attachment.read()`, `session.download_attachment(iid, index)` | `get_session_iteration_attachments(sid, iid, idx)` |
 | Cancel a turn | `turn.cancel()` | `post_session_turn_cancel(sid, tid)` |
 | Cancel the running turn without its ID | — | `post_session_cancel_current(sid, body=...)` |
 | Start the oldest queued message | — | `post_session_drain_queue(sid)` |
@@ -153,6 +157,8 @@ request.
 | List turns or queued messages | `GET /v1/sessions/{sid}/turns` |
 | Change a queued message | `PATCH /v1/sessions/{sid}/turns/{tid}` |
 | Remove a queued message | `DELETE /v1/sessions/{sid}/turns/{tid}` |
+| List the files that the agent attached | `GET /v1/sessions/{sid}/artifacts` |
+| Download one file | `GET /v1/sessions/{sid}/iterations/{iid}/attachments/{idx}` |
 | Cancel a turn | `POST /v1/sessions/{sid}/turns/{tid}/cancel` |
 | Cancel the running turn without its ID | `POST /v1/sessions/{sid}/cancel-current` |
 | Start the oldest queued message | `POST /v1/sessions/{sid}/drain-queue` |
@@ -539,6 +545,55 @@ correction turns, 2 by default. Each correction turn costs model tokens. When no
 Send the message and read the turn as in [Send a message and wait](#send-a-message-and-wait). Then
 check the `content` of the turn in your program. If it does not match, send a correction as the next
 message of the same session.
+
+</div>
+
+### Read the files of a turn
+
+<div data-variant="python">
+
+```python
+turn = session.send("Write the specification and attach it as SPEC.md.")
+turn.wait(timeout=600)
+
+for item in turn.attachments():
+    print(item.filename, item.version, item.size)
+
+spec = turn.attachments()[0].text()
+```
+
+`turn.attachments()` lists the files that the agent attached in that turn. `session.attachments()`
+lists the files of the whole conversation, oldest turn first. Give it turns to select a part:
+
+| Call | Files |
+|---|---|
+| `session.attachments()` | The whole conversation |
+| `session.attachments(-1)` | The last turn |
+| `session.attachments(turn)` | One turn, as a `Turn` or as a turn ID |
+| `session.attachments([first, second])` | Several turns |
+
+An integer is an index into `session.turns()`: 0 is the first turn and -1 is the last turn. Each
+record has `filename`, `media_type`, `kind`, `size`, `version`, `turn_id`, `iteration_id` and `index`.
+The list has no file content. `read()` downloads the bytes and `text()` decodes them.
+
+When the agent attaches a filename again, the list has each version. A file that you uploaded with
+a message is not in the list. A typed answer and files go together: call `session.run()` with a
+`response_model`, then read `session.attachments(-1)`.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/artifacts"
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/iterations/$ITERATION_ID/attachments/0" -o SPEC.md
+```
+
+The first request returns `artifacts`, a list with one row for each file of the conversation. A row
+has `turn_id`, `turn`, `iteration_id`, `index`, `filename`, `media_type`, `kind`, `size` and
+`version`. `turn` is the number of the turn, counted from 1. To get the files of one turn, keep the
+rows with its `turn_id`. The second request returns the bytes of the file at `index` of that
+iteration.
 
 </div>
 

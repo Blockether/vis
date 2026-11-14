@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias, overload
@@ -3612,6 +3612,46 @@ class Session:
             path={"sid": self.id, "iid": iteration_id, "idx": index},
         )
 
+    def attachments(self, turns: Any = None) -> list[Attachment]:
+        """List the files that the agent attached, oldest turn first.
+
+        Without `turns`, the list covers the whole conversation. `turns` is one
+        turn or an iterable of turns. A turn is a `Turn`, a turn ID, or an integer
+        index into `turns()`: 0 is the first turn and -1 is the last turn. An
+        index outside the history raises `IndexError`.
+
+        The list holds metadata only. Call `Attachment.read` for the bytes. When
+        the agent attaches a filename again, the list holds each version. A file
+        that a person uploaded with a request is not in the list, and a file for
+        the model only is not in it either.
+        """
+        found = [
+            Attachment._from(self, row)
+            for row in _field(self.artifacts(), "artifacts", list)
+        ]
+        if turns is None:
+            return found
+        wanted = self._turn_ids(turns)
+        return [item for item in found if item.turn_id in wanted]
+
+    def _turn_ids(self, turns: Any) -> set[str]:
+        """Resolve `Turn` handles, turn IDs and history indexes to turn IDs."""
+        if isinstance(turns, (Turn, str)) or not isinstance(turns, Iterable):
+            turns = [turns]
+        history: list[Any] = []
+        ids = set()
+        for turn in turns:
+            if isinstance(turn, Turn):
+                ids.add(turn.id)
+            elif isinstance(turn, str):
+                ids.add(turn)
+            elif type(turn) is int:
+                history = history or self.turns()
+                ids.add(_field(history[turn], "turn_id", str))
+            else:
+                raise TypeError("a turn must be a Turn, a turn ID or an integer index")
+        return ids
+
     def goal(
         self, objective: str, *, iteration_budget: int | None = None, **options
     ) -> Turn:
@@ -3940,6 +3980,14 @@ class Turn:
         """
         return self.session._call("POST", "/turns/:tid/cancel", path={"tid": self.id})
 
+    def attachments(self) -> list[Attachment]:
+        """List the files that the agent attached in this turn.
+
+        The rules are those of `Session.attachments`. Read a finished turn for a
+        complete list; a running turn can attach more files.
+        """
+        return self.session.attachments(self)
+
     def wait(self, *, timeout: float = 300):
         """Wait until this turn finishes or suspends, returning its record.
 
@@ -4007,6 +4055,60 @@ class Turn:
                 cursor = events.cursor
                 continue
             raise TransportError("event stream ended before the turn")
+
+
+@dataclass(frozen=True, slots=True)
+class Attachment:
+    """One file that the agent attached in a turn.
+
+    Returned by `Session.attachments` and `Turn.attachments`. The record holds
+    metadata only: `read` downloads the bytes and `text` decodes them. `index`
+    is the position of the file in the iteration `iteration_id`, the address
+    that `Session.download_attachment` takes. `version` counts from 1 and grows
+    each time the agent attaches the same `filename` again. The record borrows
+    its session and execution layer. Keep that layer open while you read.
+    """
+
+    session: Session
+    turn_id: str
+    iteration_id: str
+    index: int
+    filename: str | None
+    media_type: str
+    kind: str
+    size: int
+    version: int
+    id: str | None = None
+
+    @classmethod
+    def _from(cls, session: Session, row: Any) -> Attachment:
+        """Build the record from one row of the gateway artifact inventory."""
+        filename = row.get("filename") if isinstance(row, dict) else None
+        identity = row.get("attachment_id") if isinstance(row, dict) else None
+        if not isinstance(filename, (str, type(None))) or not isinstance(
+            identity, (str, type(None))
+        ):
+            raise ProtocolError("invalid response field: attachment")
+        return cls(
+            session=session,
+            turn_id=_field(row, "turn_id", str),
+            iteration_id=_field(row, "iteration_id", str),
+            index=_field(row, "index", int),
+            filename=filename,
+            media_type=_field(row, "media_type", str),
+            kind=_field(row, "kind", str),
+            size=_field(row, "size", int),
+            version=_field(row, "version", int),
+            id=identity,
+        )
+
+    def read(self) -> bytes:
+        """Download the bytes of the file."""
+        return self.session.download_attachment(self.iteration_id, self.index).content
+
+    def text(self, encoding: str = "utf-8") -> str:
+        """Download the file and decode it as text."""
+        return self.read().decode(encoding)
 
 
 class _ActivityStreamDecoder:

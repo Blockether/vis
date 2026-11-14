@@ -7,6 +7,7 @@ For installation, workflows and lifecycle choices, use the
 from ._agent import Agent, StructuredOutputError, final_answer
 from ._agents import Subagent, SubagentRecord
 from ._client import (
+    Attachment,
     Event,
     Events,
     ExecutionLayer,
@@ -40,6 +41,7 @@ from ._speech import Speech, SpeechAudio, Transcript, Voice
 
 __all__ = [
     "Agent",
+    "Attachment",
     "Subagent",
     "SubagentRecord",
     "Council",

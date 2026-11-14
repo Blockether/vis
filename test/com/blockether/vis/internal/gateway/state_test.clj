@@ -1795,6 +1795,9 @@
             ;; The turn ordinal is counted from the START of the session, so a
             ;; client never has to hold the earlier pages to name it.
             (expect (= [1 1 3] (mapv :turn rows)))
+            ;; The turn ID lets an SDK program take the files of one turn without
+            ;; a second read that maps an ordinal to a turn.
+            (expect (= ["soul-0" "soul-0" "soul-2"] (mapv :turn_id rows)))
             ;; `(tool_call_id, position)` is the byte endpoint's own order, so
             ;; index N names the same artifact everywhere — and that endpoint drops
             ;; model-only rows BEFORE it numbers what is left, so `late.png` is i9's
