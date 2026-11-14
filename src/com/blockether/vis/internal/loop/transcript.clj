@@ -3080,16 +3080,25 @@
 
               _
               (when-not current
-                (reset! session-atom {:provider provider :router router :session session}))]
+                (reset! session-atom {:provider provider :router router :session session}))
 
-          ;; Svar sends only the unsent suffix. A rewritten history, for example after
-          ;; compaction, resets only the logical response chain; the socket stays hot.
-          (svar/ask! session
-                     (-> ask-opts
-                         (dissoc :messages)
-                         (assoc :conversation (vec (:messages ask-opts))
-                                :prompt-cache-options {:session-scoped? session-context-message?})
-                         (pin-session-route provider model)))))
+              ;; Svar sends only the unsent suffix. Compaction resets the logical chain.
+              result
+              (svar/ask! session
+                         (-> ask-opts
+                             (dissoc :messages)
+                             (assoc :conversation (vec (:messages ask-opts))
+                                    :prompt-cache-options
+                                    {:session-scoped? session-context-message?})
+                             (pin-session-route provider model)))]
+          (when (= :refusal (:stop-reason result))
+            (throw (ex-info (or (get-in result [:stop-details "explanation"])
+                                "The model declined this request.")
+                            (assoc result
+                              :type :svar.llm/refusal
+                              :model model
+                              :provider-id provider))))
+          result))
       (do (when (and session-atom @session-atom)
             (locking session-atom (close-llm-session! session-atom)))
           (svar/ask-code! (:router environment)

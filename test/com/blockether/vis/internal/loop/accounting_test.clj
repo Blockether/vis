@@ -282,3 +282,22 @@
         (expect (= 900 (get util "auto_compress_above")))
         (expect (= status (get util "prompt_cache")))
         (expect (not (contains? (accounting/turn-utilization acc 1000 900 nil) "prompt_cache"))))))
+
+(defdescribe
+  server-fallback-price-test
+  (it
+    "prices usage by the response model, not the requested route"
+    (let [pricing
+          (accounting/pricing "claude-fable-5-2" :anthropic nil nil)
+
+          usage
+          {:input-tokens 412 :output-tokens 264 :llm-model "claude-opus-4-8"}
+
+          expected
+          (accounting/response-cost pricing (dissoc usage :llm-model) "claude-opus-4-8" :anthropic)
+
+          actual
+          (accounting/response-cost pricing usage "claude-fable-5-2" :anthropic)]
+
+      (expect (pos? (:cost-usd expected)))
+      (expect (close? (:cost-usd expected) (:cost-usd actual))))))

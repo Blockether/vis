@@ -73,6 +73,7 @@
 (defn response-cost
   "Tokens and cost of one provider response, priced by the model and provider that
    served it: a fallback response must not bill at the selected model's rates. A
+   response usage can name `:llm-model` when a server fallback changed the model. A
    missing `served-model` prices at the turn's model; a missing `served-provider`
    falls back to the usage's routing data, then to the turn's provider.
 
@@ -101,7 +102,10 @@
           (or served-provider (:llm-provider api-usage) (:provider api-usage) (:provider pricing))
 
           cost-map
-          (loop-router/estimate-token-cost (or (some-> served-model
+          (loop-router/estimate-token-cost (or (some-> (:llm-model api-usage)
+                                                       str
+                                                       not-empty)
+                                               (some-> served-model
                                                        str
                                                        not-empty)
                                                (:model pricing))

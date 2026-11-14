@@ -801,7 +801,9 @@
                                 :tokens (:tokens ask-result)
                                 :thinking thinking}
                                code-observation))
-          api-usage (:api-usage ask-result)
+          api-usage (cond-> (:api-usage ask-result)
+                      (and (:api-usage ask-result) (:response-model ask-result))
+                      (assoc :llm-model (:response-model ask-result)))
           _ (goals/account! environment goal-at-request-start api-usage)
           actual-provider (transcript/actual-llm-provider resolved-model ask-result)
           actual-model (transcript/actual-llm-model resolved-model ask-result)

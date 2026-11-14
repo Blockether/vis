@@ -14414,3 +14414,36 @@
                    (ticker {:invocation-id "loud" :phase :start :label "loud"})
                    (ticker {:invocation-id "loud" :phase :terminal :succeeded true})
                    (expect (= ["loud"] @shown)))))
+
+(defdescribe
+  session-refusal-error-test
+  (it
+    "reports a session refusal through the provider error path"
+    (let [details
+          {"category" "cyber" "explanation" "declined"}
+
+          session-atom
+          (atom nil)]
+
+      (with-redefs [svar/session-capability
+                    (fn [_ _]
+                      {:auto-open? true})
+
+                    svar/open-session
+                    (fn [_ _]
+                      ::session)
+
+                    svar/ask!
+                    (fn [_ _]
+                      {:stop-reason :refusal :content "No." :tool-calls [] :stop-details details})]
+
+        (let [error (try (transcript/ask-code-with-session!
+                           {:router {} :llm-session-atom session-atom}
+                           {:provider :anthropic :name "claude-fable-5-2"}
+                           {:messages [{:role "user" :content "question"}]})
+                         nil
+                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (expect (= :svar.llm/refusal (:type error)))
+          (expect (= details (:stop-details error)))
+          (expect (= "claude-fable-5-2" (:model error)))
+          (expect (= :anthropic (:provider-id error))))))))
