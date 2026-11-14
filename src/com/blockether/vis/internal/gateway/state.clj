@@ -1668,6 +1668,24 @@
   [db id]
   (try (:root (resolve-workspace db id)) (catch Throwable _ nil)))
 
+(defn- group-project-root
+  "Folder of the project that owns session group `group-id`, or nil."
+  [group-id]
+  (try (some->> (some-> group-id
+                        lp/get-session-group
+                        :project-id)
+                (persistance/db-get-project (lp/db-info))
+                :workspace-root
+                not-empty)
+       (catch Throwable _ nil)))
+
+(defn- listed-project-root
+  "Folder of the project that lists session `id`. A session in a group is in the
+   project of that group, also when it works in another folder. `group-root` gives
+   the project folder of a group id."
+  [db id group-id group-root]
+  (or (when (seq (str group-id)) (group-root group-id)) (session-project-root db id)))
+
 (defn- publish-session-created!
   "Tell fleet watchers that the wire `session` now exists, then return it.
 
@@ -1681,7 +1699,7 @@
                          not-empty)]
     (let [{:keys [project-id group-id]}
           (when db (try (persistance/db-get-session db sid) (catch Throwable _ nil)))
-          root (when db (session-project-root db sid))]
+          root (when db (listed-project-root db sid group-id group-project-root))]
 
       (publish-fleet! [(cond-> {"schema" 1 "type" "session.created" "session_id" sid}
                          root
@@ -7138,16 +7156,6 @@
                                      str)
                    :origin origin}))
 
-(defn- group-project-root
-  "Folder of the project that owns session group `group-id`, or nil."
-  [group-id]
-  (some->> (some-> group-id
-                   lp/get-session-group
-                   :project-id)
-           (persistance/db-get-project (lp/db-info))
-           :workspace-root
-           not-empty))
-
 (defn- file-in-root-project!
   "Put new session `sid` in the project of the folder of workspace `workspace-id`,
    and create that project first when there is none. Clients that list a project
@@ -8616,11 +8624,17 @@
 (defn- session-scope-rows
   "Apply root, project and OR-group membership before search or list budgets."
   [db rows {:keys [root project-id group-ids]}]
-  (let [groups (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))]
+  (let [groups
+        (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))
+
+        group-root
+        (memoize group-project-root)]
+
     (cond->> (vec rows)
       (and db (some? root))
       (filterv (fn [row]
-                 (= (str root) (str (session-project-root db (:id row))))))
+                 (= (str root)
+                    (str (listed-project-root db (:id row) (:group-id row) group-root)))))
 
       (seq (str project-id))
       (filterv (fn [row]
@@ -8972,7 +8986,7 @@
   [channel unsent ranked live waiting named unread? stopped?]
   [@projects-overview-epoch (workspace/root-change-count) (str channel) unsent
    (mapv (fn [row]
-           [(:id row) (:project-id row) (:recency-ms row) (contains? live (:id row))
+           [(:id row) (:project-id row) (:group-id row) (:recency-ms row) (contains? live (:id row))
             (contains? waiting (:id row)) (boolean (unread? (:id row)))
             (boolean (stopped? (:id row)))])
          ranked)
@@ -9103,13 +9117,17 @@
               :stopped-count 0
               :last-activity-ms 0}
 
+             group-root
+             (memoize group-project-root)
+
              groups
              (reduce (fn [acc row]
                        (let [sid
                              (:id row)
 
                              root
-                             (or (when db (session-project-root db sid)) "")
+                             (or (when db (listed-project-root db sid (:group-id row) group-root))
+                                 "")
 
                              g
                              (get acc root empty-counts)]

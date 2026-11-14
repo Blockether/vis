@@ -4367,6 +4367,47 @@
               (expect (= header (:total (state/list-sessions-page :all {:root "/repo/a"}))))
               (expect (= 2 (:session_count overview)))))))))
 
+;; User report: a workflow run works in its own folder and its session is in a group of
+;; the project. No list of that project showed the session.
+(defdescribe
+  grouped-session-lists-in-the-project-of-its-group-test
+  (it
+    "lists and counts a session in a group under the folder of the project of that group"
+    (let [store (sqlite/db-open! :memory)]
+      (try (let [project
+                 (persistance/db-create-project! store {:name "Shop" :workspace-root "/repo/shop"})
+                 group
+                 (persistance/db-create-session-group! store (:id project) {:name "Workflows"})
+                 fleet [{:id "run"
+                         :title "Run"
+                         :created-at 300
+                         :project-id (:id project)
+                         :group-id (:id group)}
+                        {:id "plain" :title "Plain" :created-at 200 :project-id (:id project)}
+                        {:id "other" :title "Other" :created-at 100}]
+                 roots {"run" "/repo/run-1" "plain" "/repo/shop" "other" "/repo/other"}]
+
+             (with-redefs-fn {#'lp/db-info (constantly store)
+                              #'lp/projects (constantly [])
+                              #'persistance/db-session-turn-stats (constantly nil)
+                              #'lp/by-channel (constantly fleet)
+                              #'state/session-project-root (fn [_ sid]
+                                                             (get roots (str sid)))
+                              #'bus/live-turns (constantly {})
+                              #'bus/waiting-requests (constantly {})
+                              #'state/soul (fn [sid]
+                                             {"id" (str sid)})}
+               (fn []
+                 (let [page (state/list-sessions-page :all {:root "/repo/shop" :grouped :aside})
+                       counts (into {}
+                                    (map (juxt #(get % "root") #(get % "session_count")))
+                                    (:projects (state/projects-overview)))]
+
+                   (expect (= ["plain"] (mapv #(get % "id") (:sessions page))))
+                   (expect (= ["run"] (mapv #(get % "id") (:grouped page))))
+                   (expect (= {"/repo/shop" 2 "/repo/other" 1} counts))))))
+           (finally (sqlite/db-close! store))))))
+
 ;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
 ;; list too"): a channel that wanted ONE project's tab set, or the session a short id
 ;; names, downloaded the whole fleet and filtered the answer in its own process.
