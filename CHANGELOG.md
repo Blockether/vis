@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.18] - 2026-11-14
+
 ### Added
 - Python CLI: `vis-agent python --shared uv` supports `add`, `remove`, `lock`, `export`, `tree` and `pip install`, `pip uninstall`, `pip list`, `pip freeze` and `pip show`. Each command uses the embedded Python and the shared packages, and none creates `.venv`. `uv add` and `uv remove` change `pyproject.toml` and `uv.lock`, then install the lock into shared packages. A removed package stays there, because other projects can use it. `uv pip sync` stays unavailable, because it deletes the packages of other projects. Before, each command but `sync` stopped with an error.
 - Python CLI: `vis-agent python --shared uv run COMMAND` runs a command in the embedded Python with the shared packages. No other Python starts and the command does not use `.venv`. The command is `python`, `pip`, a Python file, a module with `-m`, or a console script or program of a package in shared packages. In a uv project, the command first installs the locked dependencies into shared packages. `--no-sync` runs the command without the install. `--with`, `--python` and `--directory` are not available. Before, the command stopped with an error.
