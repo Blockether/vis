@@ -878,7 +878,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     workspace = data.get('workspace') or {}
     paths = {entry['python_name']: expand(entry['cwd'])
              for entry in (workspace.get('filesystem_roots') or [])
-             if entry.get('python_name') and not entry.get('is_denied')}
+             if entry.get('python_name')}
     paths['project_root_path'] = expand(workspace.get('root') or fallback)
     old = set(g.get('__vis_path_names__', ['project_root_path']))
     names = set(paths)
@@ -1265,8 +1265,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 
 (defn refresh-confinement!
   "Install live read/write grants before a block. A failed policy update stops execution.
-   The worker kernel remains the deny-precedence boundary; this audit backstop
-   narrows its reserved session store to the currently active draft copies. A subagent
+   The worker kernel remains the deny-precedence boundary; this is the audit
+   backstop. A subagent
    file grant (`write-limited?`) limits writes also when the jail is off."
   [session roots-fn {:keys [jail-enabled? write-limited? write-rules]} & [policy-fn]]
   (when write-limited? (swap! write-grants assoc session (vec write-rules)))

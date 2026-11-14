@@ -5,8 +5,10 @@ export interface DiffEnvelope {
   schema_version: 1;
   patch: string;
   source: {
-    type: 'draft' | 'workspace';
-    backend?: 'worktree' | 'rift';
+    /** Vis writes `workspace`. Older snapshots carry other values. */
+    type: string;
+    /** A value that older snapshots carry. The reader ignores it. */
+    backend?: string;
     label?: string;
     base_revision?: string;
     head_revision?: string;
@@ -45,10 +47,6 @@ export function parseDiff(text: string): DiffEnvelope {
     !object(value.source) ||
     !keys(value.source, Object.keys(schema.$defs.source.properties)) ||
     typeof value.source.type !== 'string' ||
-    !schema.$defs.source.properties.type.enum.includes(value.source.type) ||
-    (value.source.backend !== undefined &&
-      (typeof value.source.backend !== 'string' ||
-        !schema.$defs.source.properties.backend.enum.includes(value.source.backend))) ||
     !optionalText(value.source, schema.$defs.source.properties)
   ) {
     throw new Error('Invalid diff attachment. Ask for a new snapshot.');
@@ -61,9 +59,7 @@ export function parseDiff(text: string): DiffEnvelope {
 }
 
 export function diffSourceLabel(source: DiffEnvelope['source']): string {
-  return [source.type === 'draft' ? 'Draft' : 'Workspace', source.label, source.backend]
-    .filter(Boolean)
-    .join(' · ');
+  return ['Workspace', source.label].filter(Boolean).join(' · ');
 }
 
 /**

@@ -54,8 +54,8 @@
       (expect (= {"tool_name" "rg" "duration_ms" 5 "is_llm_fallback" true}
                  (wire/canonical {:vis/tool-name "rg" :duration-ms 5 :llm-fallback? true}))))
   (it "boolean-style keyword keys become `is_*` (never a trailing `?`)"
-      (expect (= {"is_draft" true "is_redacted" false "is_answer_present" true}
-                 (wire/canonical {:draft? true :redacted? false :answer-present? true}))))
+      (expect (= {"is_starred" true "is_redacted" false "is_answer_present" true}
+                 (wire/canonical {:starred? true :redacted? false :answer-present? true}))))
   (it "already-canonical string keys pass through untouched"
       (expect (= {"total_cost" 0.1 "cache_created" 2}
                  (wire/canonical {"total_cost" 0.1 "cache_created" 2})))))

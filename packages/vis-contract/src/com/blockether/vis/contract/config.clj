@@ -28,10 +28,6 @@
   "Accepted workspace access spellings."
   (set (get-in @schema ["$defs" "workspaceEntry" "properties" "access" "enum"])))
 
-(def workspace-draft-values
-  "Workspace draft policies."
-  (set (get-in @schema ["$defs" "workspaceEntry" "properties" "draft" "enum"])))
-
 (def workspace-os-values
   "Workspace host selectors."
   (set (get-in @schema ["$defs" "workspaceOs" "enum"])))

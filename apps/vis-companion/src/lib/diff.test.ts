@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/diff.json';
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
-import { parseDiff, diffHeaderAnchors, diffHeaderPath } from './diff';
+import { parseDiff, diffHeaderAnchors, diffHeaderPath, diffSourceLabel } from './diff';
 import { DIFF_MEDIA } from './artifacts';
 
 describe('portable diff attachment', () => {
@@ -9,14 +9,11 @@ describe('portable diff attachment', () => {
   it('reads the shared fixture without changing its patch', () => {
     expect(parseDiff(JSON.stringify(fixture))).toEqual(snapshot);
   });
-  it('accepts schema-declared source kinds and backends', () => {
+  it('reads the source that an older snapshot stored', () => {
     expect(DIFF_MEDIA).toBe(schema.$defs.attachment.contentMediaType);
-    for (const type of schema.$defs.source.properties.type.enum) {
-      for (const backend of schema.$defs.source.properties.backend.enum) {
-        const envelope = { ...snapshot, source: { type, backend } };
-        expect(parseDiff(JSON.stringify(envelope))).toEqual(envelope);
-      }
-    }
+    const older = { ...snapshot, source: { type: 'draft', backend: 'worktree', label: 'wire' } };
+    expect(parseDiff(JSON.stringify(older))).toEqual(older);
+    expect(diffSourceLabel(older.source)).toBe('Workspace · wire');
   });
   it('requires the patch, its source and the schema version', () => {
     for (const key of ['schema_version', 'patch', 'source']) {
@@ -37,10 +34,10 @@ describe('portable diff attachment', () => {
     { ...snapshot, schema_version: 2 },
     { ...snapshot, patch: 4 },
     { ...snapshot, extra: true },
-    { ...snapshot, source: { type: ['draft'] } },
-    { ...snapshot, source: { type: 'other' } },
-    { ...snapshot, source: { type: 'draft', backend: 'other' } },
-    { ...snapshot, source: { type: 'draft', label: '' } },
+    { ...snapshot, source: { type: ['workspace'] } },
+    { ...snapshot, source: { type: '' } },
+    { ...snapshot, source: { type: 'workspace', backend: 4 } },
+    { ...snapshot, source: { type: 'workspace', label: '' } },
     { ...snapshot, source: { type: 'workspace', unknown: true } },
   ])('refuses an invalid envelope %j', (value) => {
     expect(() => parseDiff(JSON.stringify(value))).toThrow();

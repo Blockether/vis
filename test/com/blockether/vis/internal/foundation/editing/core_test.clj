@@ -1113,7 +1113,7 @@
 (defdescribe
   multi-root-safe-path-test
   (it
-    "accepts paths under a LIVE filesystem root (trunk==clone), rejects paths outside every root"
+    "accepts paths under a bound filesystem root, rejects paths outside every root"
     (let [safe-path
           (private-fn "safe-path")
 
@@ -1127,7 +1127,7 @@
                 primary
 
                 workspace/*filesystem-roots*
-                [{:trunk ctx-root :clone ctx-root}]]
+                [{:root ctx-root}]]
 
         (expect (string/starts-with? (.getPath ^java.io.File (safe-path "deps.edn")) primary))
         (expect (string/starts-with? (.getPath ^java.io.File
@@ -1166,35 +1166,6 @@
         (expect (not (string/includes? (.getPath ^java.io.File (safe-path "~/some-file.txt")) "~")))
         ;; bare ~ resolves to home itself
         (expect (= home (.getCanonicalPath ^java.io.File (safe-path "~")))))))
-  (it "ISOLATED filesystem root: address by trunk → edits land in clone, display shows trunk"
-      (let [safe-path
-            (private-fn "safe-path")
-
-            rel-path
-            (private-fn "rel-path")
-
-            primary
-            (mk-tmp-dir "vis-prim")
-
-            trunk
-            (mk-tmp-dir "vis-trunk")
-
-            clone
-            (mk-tmp-dir "vis-clone")]
-
-        (spit (java.io.File. ^String clone "x.txt") "in-clone")
-        (spit (java.io.File. ^String trunk "x.txt") "in-trunk")
-        (binding [workspace/*workspace-root*
-                  primary
-
-                  workspace/*filesystem-roots*
-                  [{:trunk trunk :clone clone}]]
-
-          (let [f (safe-path (str trunk "/x.txt"))]
-            (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone)) ;; lands in clone
-            (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
-            (expect (= (.replace (str trunk "/x.txt") "\\" "/") (rel-path f)))) ;; display shows real trunk path, `/`-normalized
-          (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts"))))))
   ;; A file in an added root under home used to show its whole absolute path
   ;; in cat and grep headers. It now shows `~/…`, and that address round-trips.
   (it
@@ -1225,7 +1196,7 @@
                      primary
 
                      workspace/*filesystem-roots*
-                     [{:trunk sibling :clone sibling :draft :shared}]]
+                     [{:root sibling}]]
 
              (let [f
                    (safe-path (str sibling "/x.txt"))
@@ -1344,7 +1315,7 @@
         ;; a blank mixed with a real path still means everything
         (expect (= sweep (rsr ["src" ""])))))
     (it
-      "the DEFAULT sweep PRUNES vis's own ~/.vis home (its drafts/ repo mirrors + cache/ CPython are search noise) yet keeps the primary + sibling roots; the primary is NEVER pruned even when it IS ~/.vis"
+      "the DEFAULT sweep PRUNES vis's own ~/.vis home (its cache/ CPython is search noise) yet keeps the primary + sibling roots; the primary is NEVER pruned even when it IS ~/.vis"
       (let [rsr
             @#'editing/resolve-search-roots
 
@@ -1379,32 +1350,6 @@
                       (constantly #{vis-home})]
 
           (expect (= [vis-home primary] (mapv str (:roots (rsr ["."]))))))))
-    (it
-      "a real DRAFT clone under the drafts store (~/.vis/drafts) is KEPT in the default sweep even though it is under ~/.vis — so an in-draft session stays searchable, while the raw ~/.vis grant is still pruned"
-      (let [rsr
-            @#'editing/resolve-search-roots
-
-            home
-            (System/getProperty "user.home")
-
-            vis-home
-            (str home "/.vis")
-
-            draft-primary
-            (str vis-home "/drafts/proj/feature-x")
-
-            draft-clone
-            (str vis-home "/drafts/proj/feature-x-lib")]
-
-        (binding [workspace/*drafts-home* (java.io.File. (str vis-home "/drafts"))]
-          (with-redefs [workspace/allowed-roots (constantly [draft-primary draft-clone vis-home])
-                        workspace/no-search-roots (constantly #{vis-home})]
-
-            (let [roots (mapv str (:roots (rsr ["."])))]
-              ;; both draft clones kept because only the raw catalog root opts out …
-              (expect (= [draft-primary draft-clone] roots))
-              ;; … and the raw ~/.vis grant is gone.
-              (expect (not (some #{vis-home} roots))))))))
     ;; Regression, session 64404d5c-8826-482c-9989-da87f1a502c5: `~/blockether.com` was
     ;; catalogued in `workspace.filesystem` eleven minutes before that repo was cloned, so
     ;; the DEFAULT sweep handed a directory that was NOT THERE to `fff-index/lease`, and
@@ -1840,8 +1785,7 @@
           (let [leased (atom [])]
             (binding [workspace/*workspace-root* (fs/file primary)]
               (with-redefs [workspace/allowed-roots (constantly roots)
-                            workspace/no-search-roots (constantly #{})
-                            workspace/filesystem-root-mappings (constantly [])]
+                            workspace/no-search-roots (constantly #{})]
 
                 (with-redefs-fn {lease-var (fn [root & args]
                                              (swap! leased conj (str root))
@@ -1919,8 +1863,7 @@
         (spit (fs/file sibling "two.txt") "sibling\n")
         (binding [workspace/*workspace-root* (java.io.File. primary)]
           (with-redefs [workspace/allowed-roots (constantly [primary sibling])
-                        workspace/no-search-roots (constantly #{})
-                        workspace/filesystem-root-mappings (constantly [])]
+                        workspace/no-search-roots (constantly #{})]
 
             (let [result (:result (grep-tool {"query" ""}))
                   expected (mapv rel-path (map fs/file [primary sibling]))]
@@ -2685,7 +2628,7 @@
               excluded-dirs
               [".git" "node_modules" "target" "build" "dist" "out" ".gradle" ".m2" "__pycache__"
                ".venv" ".shadow-cljs" "cljs-runtime" "vendor" ".next" ".cpcache" ".clj-kondo"
-               ".calva" ".lsp" ".rift"]]
+               ".calva" ".lsp"]]
 
           (doseq [prefix
                   ["repositories/corp/" "repositories/corp/nested/"]
@@ -3086,19 +3029,16 @@
 ;; or home directories"), so `ls("/")` and `ls("~")` answered with
 ;; "rg requires fff for directory search, but fff failed for /" and the ROOT files
 ;; were unreachable — the one listing a real `ls` never fails at.
-(defdescribe
-  ls-unindexable-dir-test
-  (it "ls lists a directory fff refuses to index — filesystem root and home"
-      (let [home (System/getProperty "user.home")]
-        ;; the session that reported this had the WHOLE filesystem granted as a root
-        (with-redefs [workspace/allowed-roots (constantly ["/" home])
-                      workspace/filesystem-root-mappings (constantly [{:trunk "/" :clone "/"}])]
-
-          (let [row (fn [spec]
-                      (first (ls-rows {"paths" [spec]})))
-                names (fn [spec]
-                        (into #{} (map #(get % "name")) (get (row spec) "entries")))
-                root-names (names "/")]
+(defdescribe ls-unindexable-dir-test
+             (it "ls lists a directory fff refuses to index — filesystem root and home"
+                 (let [home (System/getProperty "user.home")]
+                   ;; the session that reported this had the WHOLE filesystem granted as a root
+                   (binding [workspace/*filesystem-roots* [{:root "/"}]]
+                     (let [row (fn [spec]
+                                 (first (ls-rows {"paths" [spec]})))
+                           names (fn [spec]
+                                   (into #{} (map #(get % "name")) (get (row spec) "entries")))
+                           root-names (names "/")]
 
             (expect (contains? root-names "usr"))
             (expect (contains? root-names "etc"))
@@ -3491,43 +3431,12 @@
               path
               (.getPath root)]
 
-          (binding [workspace/*filesystem-roots*
-                    [{:trunk path :clone path :draft :shared}
-                     {:trunk "/" :clone "/" :draft :shared :no-search? true}]]
+          (binding [workspace/*filesystem-roots* [{:root path} {:root "/" :no-search? true}]]
             (with-redefs [editing/fff-ls-target-items
                           (fn [_ _ ^long _ _]
                             (throw (ex-info "ls must not index a shared auxiliary root" {})))]
-              (expect (= #{"sub" "a.txt"} (names (first (ls-rows {"paths" [path] "depth" 1})))))))))
-    ;; Regression: `ls` decided ownership from the RENDERED address, and `rel-path`
-    ;; renders a context clone as its TRUNK absolute path — so the workspace itself,
-    ;; mounted as a draft clone, read exactly like `/etc` and every listing inside it
-    ;; silently lost the index path along with the `vis.yml` overlay it applies.
-    (it "treats a context clone as the workspace it is, not as an outside tree"
-        (let [clone
-              (fs/path (System/getProperty "java.io.tmpdir") "vis-ls-clone-test")
-
-              _
-              (do (fs/delete-tree clone)
-                  (fs/create-dirs (fs/path clone "sub"))
-                  (spit (fs/file (fs/path clone "a.txt")) "a"))
-
-              root
-              (.getCanonicalFile (fs/file clone))
-
-              indexed
-              (atom 0)]
-
-          (with-redefs [workspace/filesystem-root-mappings
-                        (fn []
-                          [{:trunk "/somewhere/else/trunk" :clone (.getPath root)}])
-
-                        editing/fff-ls-target-items
-                        (fn [_ _ ^long _ _]
-                          (swap! indexed inc)
-                          [{:relative-path "a.txt" :directory? false :size 1}])]
-
-            (expect (= #{"a.txt"} (names (list-dir root {:depth 1}))))
-            (expect (= 1 @indexed)))))))
+              (expect (= #{"sub" "a.txt"}
+                         (names (first (ls-rows {"paths" [path] "depth" 1})))))))))))
 
 (defdescribe
   grep-large-file-and-deadline-test
@@ -3718,64 +3627,12 @@
                                         0
                                         0))))))
 
-(defdescribe
-  draft-isolated-root-enforcement-test
-  (it
-    "jail DISABLED: a drafted session's trunk path still remaps into the clone (regression: `/` accepted it verbatim and wrote into the real tree)"
-    (let [safe-path
-          (private-fn "safe-path")
-
-          trunk
-          (mk-tmp-dir "vis-iso-trunk")
-
-          clone
-          (mk-tmp-dir "vis-iso-clone")]
-
-      (spit (java.io.File. ^String trunk "a.txt") "TRUNK ORIGINAL")
-      (spit (java.io.File. ^String clone "a.txt") "IN CLONE")
-      (binding [workspace/*workspace-root*
-                clone
-
-                ;; Exactly what `env-filesystem-roots` binds with the OS jail OFF: the
-                ;; session's own trunk↔clone pair plus a host root that matches EVERY
-                ;; absolute path.
-                workspace/*filesystem-roots*
-                [{:trunk trunk :clone clone :draft :copy-and-apply :primary? true}
-                 {:trunk "/" :clone "/" :draft :shared :no-search? true}]]
-
-        (let [f (safe-path (str trunk "/a.txt"))]
-          (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone))
-          (expect (= "IN CLONE" (slurp f)))))))
-  (it "a root the draft policy WITHHOLDS is refused outright, even with a host root granted"
-      (let [safe-path
-            (private-fn "safe-path")
-
-            clone
-            (mk-tmp-dir "vis-iso-clone2")
-
-            secret
-            (mk-tmp-dir "vis-iso-secret")]
-
-        (spit (java.io.File. ^String secret "c.txt") "SECRET")
-        (binding [workspace/*workspace-root*
-                  clone
-
-                  workspace/*filesystem-roots*
-                  [{:trunk secret :clone secret :draft :not-allowed :denied? true}
-                   {:trunk "/" :clone "/" :draft :shared :no-search? true}]]
-
-          (expect (= #{secret} (workspace/denied-roots)))
-          (expect (not-any? #{secret} (workspace/allowed-roots)))
-          (expect (throws? clojure.lang.ExceptionInfo #(safe-path (str secret "/c.txt"))))
-          (expect (= :ext.foundation.editing/path-denied
-                     (try (safe-path (str secret "/c.txt"))
-                          nil
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
-  ;; hs_err_pid61432: POSIX locks belong to the process, so one file tool read of a
-  ;; live `vis.db-shm` released sqlite's wal-index locks for the whole gateway.
-  (it "a file this process holds OS locks on is refused while its neighbours are served"
-      (let [safe-path
-            (private-fn "safe-path")
+(defdescribe held-file-refusal-test
+             ;; hs_err_pid61432: POSIX locks belong to the process, so one file tool read of a
+             ;; live `vis.db-shm` released sqlite's wal-index locks for the whole gateway.
+             (it "a file this process holds OS locks on is refused while its neighbours are served"
+                 (let [safe-path
+                       (private-fn "safe-path")
 
             root
             (mk-tmp-dir "vis-held")
@@ -3789,8 +3646,8 @@
         (try (binding [workspace/*workspace-root*
                        root
 
-                       workspace/*filesystem-roots*
-                       [{:trunk root :clone root :draft :shared :primary? true}]]
+                                  workspace/*filesystem-roots*
+                                  [{:root root}]]
 
                (expect (= "NOTES" (slurp (safe-path (str root "/notes.txt")))))
                (let [data

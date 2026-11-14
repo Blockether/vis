@@ -27,16 +27,13 @@
       ],
       "properties": {
         "type": {
-          "enum": [
-            "draft",
-            "workspace"
-          ]
+          "description": "The kind of source. Vis writes `workspace`. Readers accept the other values that older Vis versions stored.",
+          "type": "string",
+          "minLength": 1
         },
         "backend": {
-          "enum": [
-            "worktree",
-            "rift"
-          ]
+          "description": "A value that older Vis versions stored. Readers ignore it.",
+          "type": "string"
         },
         "label": {
           "type": "string",

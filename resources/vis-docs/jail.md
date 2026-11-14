@@ -72,7 +72,6 @@ workspace:
       path: ~/sibling-repository
       description: repository used by this project
       access: read-write
-      draft: copy-and-apply
     - id: reference
       path: ~/reference-data
       access: read-only
@@ -124,9 +123,8 @@ Paths must be absolute or home-relative. Use `when.os`, `when.exists` or
 `allow` when its conditional entry does not apply. An unknown id is an error.
 
 `search: false` keeps a granted root out of default `grep` searches without blocking
-an explicit path. `draft` controls isolated workspace copies independently of the OS
-jail. Vis also grants `~/.vis` read/write and excludes it from default searches.
-Declare it explicitly only to change that access.
+an explicit path. Vis also grants `~/.vis` read/write and excludes it from default
+searches. Declare it explicitly only to change that access.
 
 ### Deny specific files
 

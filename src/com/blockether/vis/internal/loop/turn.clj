@@ -721,7 +721,7 @@
                                 shell/run-blocking)]
                  ;; Calling the shell var directly skips the symbol-call seam, so the
                  ;; workspace view stays unbound and `resolve-dir` falls back to the
-                 ;; PROCESS cwd — a bang inside a draft would then run on trunk.
+                 ;; PROCESS cwd — a bang would then run outside the session root.
                  (extension/with-context
                    {:env env}
                    (if (= kind :bg) (shell-fn env cmd {"id" id}) (shell-fn env cmd {}))))
@@ -1276,9 +1276,8 @@
           ;; (only :workspace/* namespaced keys flow through).
           ;; turn-state-atom already lives on env (one atom for all
           ;; per-turn cursor + id fields); no re-assoc needed.
-          workspace-overrides (select-keys opts
-                                           [:workspace/root :workspace/id :workspace/sandbox?
-                                            :vcs/kind :vcs/ref :vcs/mainline])
+          workspace-overrides
+          (select-keys opts [:workspace/root :workspace/id :vcs/kind :vcs/ref :vcs/mainline])
           ;; Reseat :router to the preference-hoisted one — run-iteration-phase
           ;; routes off THIS environment's router, not the ctx :router below.
           environment (cond-> (assoc env

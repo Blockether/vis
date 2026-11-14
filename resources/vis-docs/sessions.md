@@ -17,6 +17,8 @@ apps and the command line.
   send them again.
 - **You want to leave the session.** See [Quit](#quit) for what **Ctrl+C** does in
   each state.
+- **The session must work in another directory.** [Change the directory of the
+  session](#change-the-directory-of-a-session).
 - **You need a conversation from last week.** [Find the
   session](#find-a-saved-session) by its title or by something said in it.
 - **Your program must create sessions, send messages or find saved sessions.** Read [Sessions
@@ -43,6 +45,21 @@ apps and the command line.
 In the terminal, press **Ctrl+X s n**. In the desktop or phone app, choose **New session**. To start
 it inside a group, use the **+** on the group's band in the app. In the terminal, select the group in
 [Projects](#find-a-saved-session) and press **n**. The session then opens at the top of that group.
+
+## Change the directory of a session
+
+A session works in one directory. Shell commands, file tools and search start there. To see that
+directory, send `/cd`. To move the session, send `/cd` with a path:
+
+```text
+/cd ~/projects/api
+```
+
+The path must be a directory that exists. A relative path starts at the current directory of the
+session. The change applies from the next turn. The files in the old directory stay unchanged.
+
+A session that belongs to a project moves to the project of the new directory. If no project has
+that directory, the session leaves its project and its group.
 
 ## Control a running session
 

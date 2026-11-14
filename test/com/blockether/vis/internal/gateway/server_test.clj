@@ -7632,7 +7632,7 @@
                                                               (when (= session id)
                                                                 {"root" workspace}))
                              #'lp/env-for (fn [_]
-                                            {:workspace {:root workspace :repo-root workspace}
+                                            {:workspace {:root workspace}
                                              :security-policy {:jail-enabled true :process-jail {}}
                                              :security/filesystem-roots []})
                              #'external-opener/open-file-in-editor! (fn [path]
@@ -7716,7 +7716,7 @@
                                                                 (when (= session id)
                                                                   {"root" workspace}))
                                #'lp/env-for (fn [_]
-                                              {:workspace {:root workspace :repo-root workspace}
+                                              {:workspace {:root workspace}
                                                :security-policy {:jail-enabled true
                                                                  :process-jail {}}
                                                :security/filesystem-roots []})}
@@ -7813,8 +7813,7 @@
                                                               (when (= sid id)
                                                                 {"root" (.getPath root)}))
                              #'lp/env-for (fn [_]
-                                            {:workspace {:root (.getPath root)
-                                                         :repo-root (.getPath root)}
+                                            {:workspace {:root (.getPath root)}
                                              :security-policy {:jail-enabled true :process-jail {}}
                                              :security/filesystem-roots []})}
               #(#'fs-api/read-file-handler {:path-params {:sid (str sid)} :query-params query})))]
@@ -7886,7 +7885,7 @@
            #'state/session-workspace-info (fn [id]
                                             (when (= sid id) {"root" (.getPath root)}))
            #'lp/env-for (fn [_]
-                          {:workspace {:root (.getPath root) :repo-root (.getPath root)}
+                          {:workspace {:root (.getPath root)}
                            :security-policy {:jail-enabled true :process-jail {}}
                            :security/filesystem-roots []})}
 
@@ -8068,8 +8067,7 @@
                                                               (when (= sid id)
                                                                 {"root" (.getPath root)}))
                              #'lp/env-for (fn [_]
-                                            {:workspace {:root (.getPath root)
-                                                         :repo-root (.getPath root)}
+                                            {:workspace {:root (.getPath root)}
                                              :security-policy {:jail-enabled true :process-jail {}}
                                              :security/filesystem-roots []})}
               #(let [response
@@ -8184,7 +8182,7 @@
            #'state/session-workspace-info (fn [id]
                                             (when (= sid id) {"root" (.getPath root)}))
            #'lp/env-for (fn [_]
-                          {:workspace {:root (.getPath root) :repo-root (.getPath root)}
+                          {:workspace {:root (.getPath root)}
                            :security-policy {:jail-enabled true :process-jail {}}
                            :security/filesystem-roots []})}
 
@@ -8335,7 +8333,7 @@
   (it
     "session readable external file preview"
     ;; Regression #284: previews and editor opens follow the session's live read scope,
-    ;; not just its primary workspace. Deny rules and private draft copies still win.
+    ;; not just its primary workspace. Deny rules still win.
     (let [sid
           (random-uuid)
 
@@ -8354,14 +8352,8 @@
           denied
           (io/file base "denied")
 
-          trunk
-          (io/file base "trunk")
-
-          clone
-          (io/file base "clone")
-
           _
-          (doseq [dir [root extra denied trunk clone]]
+          (doseq [dir [root extra denied]]
             (.mkdir dir))
 
           readable
@@ -8373,20 +8365,11 @@
           local
           (io/file root "local.txt")
 
-          trunk-file
-          (io/file trunk "draft.txt")
-
-          clone-file
-          (io/file clone "draft.txt")
-
           outside-link
           (io/file root "outside-link.txt")
 
-          mapped-link
-          (io/file clone "mapped-link.txt")
-
           env*
-          (atom {:workspace {:root (.getPath root) :repo-root (.getPath root) :filesystem-roots []}
+          (atom {:workspace {:root (.getPath root)}
                  :security-policy {:jail-enabled true :process-jail {}}
                  :security/filesystem-roots [(.getPath extra)]})
 
@@ -8418,12 +8401,7 @@
       (spit readable "outside the primary workspace")
       (spit blocked "never reveal this")
       (spit local "in the workspace")
-      (spit trunk-file "live original")
-      (spit clone-file "private copy")
       (java.nio.file.Files/createSymbolicLink (.toPath outside-link)
-                                              (.toPath blocked)
-                                              (make-array java.nio.file.attribute.FileAttribute 0))
-      (java.nio.file.Files/createSymbolicLink (.toPath mapped-link)
                                               (.toPath blocked)
                                               (make-array java.nio.file.attribute.FileAttribute 0))
       (try
@@ -8481,30 +8459,10 @@
               (expect (= [{:operation "file-read" :path (.getCanonicalPath readable)}
                           {:operation "file-read" :path (.getCanonicalPath readable)}]
                          @calls))
-              (expect (= 1 (count @opened)))))
-          ;; a draft reads and opens its private copy even with the host root granted
-          (reset! env* {:workspace
-                        {:root (.getPath clone) :repo-root (.getPath trunk) :filesystem-roots []}
-                        :security-policy {:jail-enabled false
-                                          :process-jail {}
-                                          :draft-policies {(.getPath denied) :not-allowed
-                                                           (.getPath extra) :copy-only}}
-                        :security/filesystem-roots [(.getPath denied) (.getPath extra)]})
-          (expect (= ["private copy"] (lines (preview (.getPath trunk-file)))))
-          (expect (= 200 (:status (open (.getPath trunk-file)))))
-          (expect (= (.getCanonicalPath clone-file) (last @opened)))
-          (expect (= 403 (:status (preview (.getPath blocked)))))
-          (expect (= 403 (:status (preview (.getPath readable)))))
-          (expect (= 403 (:status (open (.getPath blocked)))))
-          (expect (= 2 (count @opened)))
-          ;; a mapped file may not follow a clone symlink into a withheld root
-          (expect (= 403 (:status (preview (.getPath (io/file trunk "mapped-link.txt"))))))
-          (expect (= 403 (:status (open (.getPath (io/file trunk "mapped-link.txt"))))))
-          (expect (= 2 (count @opened))))
-        (finally (doseq [file [mapped-link outside-link readable blocked local trunk-file
-                               clone-file]]
+              (expect (= 1 (count @opened))))))
+        (finally (doseq [file [outside-link readable blocked local]]
                    (.delete file))
-                 (doseq [dir [clone trunk denied extra root base]]
+                 (doseq [dir [denied extra root base]]
                    (.delete dir)))))))
 
 (defdescribe voice-model-preload-follows-its-toggle

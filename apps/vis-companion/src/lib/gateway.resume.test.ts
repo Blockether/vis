@@ -67,7 +67,7 @@ function sseBody(frames: Array<Record<string, unknown>>): ReadableStream<Uint8Ar
 // workspace the list had established. The row then grouped under the empty path
 // and its project grew a second, nameless header beside the real one.
 describe('a lean single-session payload', () => {
-  const workspace = { root: '/repo/a/apps/web', repo_root: '/repo/a' };
+  const workspace = { root: '/repo/a' };
 
   const listRow: Session = {
     id: 's1',

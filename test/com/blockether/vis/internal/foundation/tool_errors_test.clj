@@ -18,8 +18,6 @@
                  ["await shell('')" "shell: command required; use shell(command)."]
                  ["await _shell_logs('missing-handle')"
                   "shell: unknown id 'missing-handle'; use the handle returned by shell()."]
-                 ["await draft_approve('test')"
-                  "draft_approve(): not in a draft; use draft_create(\"name\") first."]
                  ["await council.read()"
                   "Council requires a persisted session with a project or workspace"]]]
           (let [out (ep/run-python-block ctx (str code "\nprint('unreachable')") "t1/i1")]

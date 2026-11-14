@@ -7,7 +7,6 @@
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
-            [com.blockether.vis.internal.foundation.drafts :as drafts]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
@@ -22,8 +21,7 @@
 (defn- combined-prompt
   "Render the toggle-gated core guidance."
   [env]
-  (->> [(shell/prompt env) (drafts/prompt env) (introspection/prompt env) (agents/prompt env)
-        (council/prompt env)]
+  (->> [(shell/prompt env) (introspection/prompt env) (agents/prompt env) (council/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 
@@ -46,8 +44,8 @@
 
 (defn- session-workspace-block
   "Resolve the env's workspace and render the canonical session workspace CTX block.
-   The live confinement pointer wins over the turn-start pin, so a draft the agent
-   opens or discards mid-turn shows in the next block's `session[\"workspace\"]`."
+   The live confinement pointer wins over the turn-start pin, so a root change
+   mid-turn shows in the next block's `session[\"workspace\"]`."
   [env]
   (let [db
         (:db-info env)
@@ -136,8 +134,7 @@
                                                    council-host/symbols
                                                    goals/symbols
                                                    agents/symbols
-                                                   shell/shell-symbols
-                                                   drafts/symbols))}
+                                                   shell/shell-symbols))}
      :ext/kind "foundation"
      :ext/slash-commands (vec (concat workspace-slashes/specs session-slashes/specs))
      :ext/cli shell/shell-cli

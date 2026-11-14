@@ -4341,33 +4341,22 @@
           (persistance/db-create-project! s {:name "vis" :workspace-root "/old/vis"})
 
           trunk
-          (persistance/db-workspace-insert!
-            s
-            {:repo-id "vis-old" :repo-root "/old/vis" :root "/old/vis"})
-
-          draft
-          (persistance/db-workspace-insert! s
-                                            {:repo-id "vis-old"
-                                             :repo-root "/old/vis"
-                                             :root "/drafts/vis-1"
-                                             :workspace-kind :draft
-                                             :fork-ms 1})
+          (persistance/db-workspace-insert! s {:repo-id "vis-old" :root "/old/vis"})
 
           other
-          (persistance/db-workspace-insert! s {:repo-id "x" :repo-root "/old/x" :root "/old/x"})
+          (persistance/db-workspace-insert! s {:repo-id "x" :root "/old/x"})
 
           moved
           (persistance/db-update-project! s (:id p) {:workspace-root "/new/vis" :repo-id "vis-new"})
 
           ws
           (fn [w]
-            (select-keys (persistance/db-workspace-get s (:id w)) [:repo-id :repo-root :root]))]
+            (select-keys (persistance/db-workspace-get s (:id w)) [:repo-id :root]))]
 
       (expect (= "/new/vis" (:workspace-root moved)))
-      ;; the trunk follows the folder; a draft keeps its clone and applies into the new folder
-      (expect (= {:repo-id "vis-new" :repo-root "/new/vis" :root "/new/vis"} (ws trunk)))
-      (expect (= {:repo-id "vis-new" :repo-root "/new/vis" :root "/drafts/vis-1"} (ws draft)))
-      (expect (= {:repo-id "x" :repo-root "/old/x" :root "/old/x"} (ws other)))))
+      ;; the workspace follows the folder
+      (expect (= {:repo-id "vis-new" :root "/new/vis"} (ws trunk)))
+      (expect (= {:repo-id "x" :root "/old/x"} (ws other)))))
   (it "names a path-named project by its folder when the store opens"
       (let [s
             (h/store)

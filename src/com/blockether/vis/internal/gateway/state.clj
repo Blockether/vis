@@ -57,7 +57,6 @@
     [com.blockether.vis.internal.gateway.runtime :as runtime]
     [com.blockether.vis.internal.session.snapshot :as snapshot]
     [com.blockether.vis.internal.workspace.core :as workspace]
-    [com.blockether.vis.internal.workspace.drafts :as drafts]
     [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
@@ -1663,14 +1662,11 @@
                (persistance/db-workspace-get db))))
 
 (defn- session-project-root
-  "The PROJECT a session belongs to: its workspace `repo-root` when there is one,
-   else its `root`. The same key clients group the list by (a draft is a clone
-   under ~/.vis/drafts and reports the repo it was forked from), so a `root=`
-   window is exactly one project's column of the navigator."
+  "The PROJECT a session belongs to: the `root` of its workspace. The same key
+   clients group the list by, so a `root=` window is exactly one project's
+   column of the navigator."
   [db id]
-  (try (when-let [w (resolve-workspace db id)]
-         (or (:repo-root w) (:root w)))
-       (catch Throwable _ nil)))
+  (try (:root (resolve-workspace db id)) (catch Throwable _ nil)))
 
 (defn- publish-session-created!
   "Tell fleet watchers that the wire `session` now exists, then return it.
@@ -1730,8 +1726,8 @@
        (catch Throwable _ nil)))
 
 (defn- lean-workspace
-  "The lean `workspace` map a session payload carries - `{root repo_root label
-   fork_ms is_draft}` - or nil when the session's workspace cannot be resolved.
+  "The lean `workspace` map a session payload carries - `{root label}` - or nil
+   when the session's workspace cannot be resolved.
 
    Deliberately NO git status: that stays in the per-session
    `session-workspace-info`. It belongs to `soul`, so a LIST row and a
@@ -1740,19 +1736,9 @@
    attached it, so a detail row arrived carrying `project_name` and no path at
    all. A client keys a row to its project BY PATH, so that row keyed to the empty
    path and painted a SECOND project header beside the one it was already under.
-
-   A DRAFT is a per-session clone under ~/.vis/drafts/<repo>/<label>; without
-   `is_draft` a client cannot tell its `root` from a real project root and groups
-   every draft as its own project. Clients group by `repo_root`, badge on
-   `is_draft`. `w` is the record of `resolve-workspace`."
+   `w` is the record of `resolve-workspace`."
   [w]
-  (try (when w
-         (wire/canonical {:root (:root w)
-                          :repo-root (:repo-root w)
-                          :label (:label w)
-                          :fork-ms (:fork-ms w)
-                          :is-draft (boolean (workspace/draft? w))}))
-       (catch Throwable _ nil)))
+  (try (when w (wire/canonical {:root (:root w) :label (:label w)})) (catch Throwable _ nil)))
 
 (def ^:dynamic ^:private *agent-name-for-root*
   "Request-local resolver, shared by page and awaiting rows; nil outside listings."
@@ -1778,95 +1764,18 @@
       (append-event! sid "session.agent_name_updated" {:agent-name agent-name} {:store? false}))
     agent-name))
 
-(def ^:private draft-status-cache-limit 128)
-
-(def ^:private draft-status-cache-ms 1000)
-
-(defonce ^:private draft-status-cache (atom {}))
-
-(defonce ^:private draft-status-reader (agent nil))
-
-(defn- read-draft-status
-  [ws]
-  (try (let [status (select-keys (drafts/status ws)
-                                 [:backend :branch :ahead :pending :repositories :draft-changes
-                                  :working-changes :draft-error])]
-         (cond-> status
-           (nil? (:draft-changes status))
-           (assoc :draft-error (or (:draft-error status) "Draft changes are unavailable."))))
-       (catch Throwable _ {:draft-error "Draft changes are unavailable; retry shortly."})))
-
-(defn- cached-draft-status
-  "Bounded, single-flight background summaries. Cold reads keep draft identity
-   visible while loading; warm reads never hash repository files on the request
-   thread. Pending entries cannot be evicted, bounding the reader's queue too."
-  [ws]
-  (let [key
-        (select-keys ws [:id :root :repo-root :fork-ms :filesystem-roots])
-
-        now
-        (util/now-ms)
-
-        loading
-        {:draft-error "Draft changes are loading."}]
-
-    (locking draft-status-cache
-      (let [{:keys [value expires-at pending?]} (get @draft-status-cache key)]
-        (when (and (not pending?) (or (nil? expires-at) (>= (long now) (long expires-at))))
-          (let [entries @draft-status-cache
-                oldest (when (>= (count entries) (long draft-status-cache-limit))
-                         (first (sort-by (comp :expires-at val)
-                                         (remove (comp :pending? val) entries))))]
-
-            (when (or (contains? entries key)
-                      (< (count entries) (long draft-status-cache-limit))
-                      oldest)
-              (swap! draft-status-cache (fn [entries]
-                                          (assoc (if (and oldest (not (contains? entries key)))
-                                                   (dissoc entries (first oldest))
-                                                   entries)
-                                            key {:value (or value loading)
-                                                 :expires-at now
-                                                 :pending? true})))
-              (send-off draft-status-reader
-                        (fn [_]
-                          (let [status (read-draft-status ws)]
-                            (swap! draft-status-cache assoc
-                              key
-                              {:value status
-                               :expires-at (+ (util/now-ms) (long draft-status-cache-ms))
-                               :pending? false}))
-                          nil)))))
-        (or value loading)))))
-
 (defn session-workspace-info
-  "Canonical wire workspace metadata for channel footers and directory pickers.
-   Draft identity is immediate; working_changes, draft_changes and repositories
-   refresh in the background. Missing/failed summaries never become clean zeroes.
-   A trunk row rooted inside a draft is marked recovery_required, not owned.
-   Resolves the latest session workspace; nil only when it cannot be resolved."
+  "Canonical wire workspace metadata for channel footers and directory pickers:
+   `{id root agent_name label git}`. Resolves the latest session workspace; nil
+   only when it cannot be resolved."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [ws (resolve-workspace db sid)]
-           (let [draft? (workspace/draft? ws)
-                 recovery (when-not draft? (workspace/draft-location db (:root ws)))]
-
-             (wire/canonical (cond-> {:id (:id ws)
-                                      :draft? (boolean (or draft? recovery))
-                                      :root (:root ws)
-                                      :agent-name (config/agent-name (:root ws))
-                                      :repo-root
-                                      (if recovery (:source-root recovery) (:repo-root ws))
-                                      :label (if recovery (:label recovery) (:label ws))
-                                      :fork-ms (:fork-ms ws)
-                                      :git (git/workspace-status (:root ws))}
-                               draft?
-                               (merge (cached-draft-status ws))
-
-                               recovery
-                               (assoc :recovery-required
-                                 true :draft-error
-                                 "Draft ownership needs recovery."))))))
+           (wire/canonical {:id (:id ws)
+                            :root (:root ws)
+                            :agent-name (config/agent-name (:root ws))
+                            :label (:label ws)
+                            :git (git/workspace-status (:root ws))})))
        (catch Throwable _ nil)))
 
 (defn- request-health-metrics
@@ -7247,8 +7156,7 @@
   [sid workspace-id]
   (when-let [root (some->> workspace-id
                            (persistance/db-workspace-get (lp/db-info))
-                           ((fn [w]
-                              (or (:repo-root w) (:root w)))))]
+                           :root)]
     (when (.isDirectory (java.io.File. (str root)))
       (try (when-let [pid (:id (lp/ensure-project-for-root! "local" (str root) nil))]
              (lp/assign-project! sid pid))
@@ -7836,10 +7744,10 @@
                 (keep (fn [k]
                         (when-let [rules (seq (get grant k (get grant (name k))))]
                           [k
-                           (security-policy/resolve-rules
-                             rules
-                             (or (:root current) (:repo-root current) (workspace/trunk-root))
-                             (System/getProperty "user.home"))])))
+                           (security-policy/resolve-rules rules
+                                                          (or (:root current)
+                                                              (workspace/trunk-root))
+                                                          (System/getProperty "user.home"))])))
                 [:write :read_only :deny]))
 
         policy
@@ -7848,8 +7756,8 @@
         outside
         (security-policy/outside-write-rules policy
                                              (:write files)
-                                             (concat [(:root current) (:repo-root current)]
-                                                     (:security/filesystem-roots env)))
+                                             (cons (:root current)
+                                                   (:security/filesystem-roots env)))
 
         denied
         (some #(process-jail/deny-refusal env "file-write" (security-policy/rule-root %))
@@ -7863,7 +7771,7 @@
                                    (distinct (keep #(some-> %
                                                             str
                                                             not-empty)
-                                                   (concat [(:root current) (:repo-root current)]
+                                                   (concat [(:root current)]
                                                            (:security/filesystem-roots env)
                                                            (security-policy/read-write-roots
                                                              policy))))))))
@@ -8172,9 +8080,7 @@
                 (agent-files env current (:files opts))
 
                 ws
-                (:id (workspace/create-trunk-at!
-                       db
-                       (or (:repo-root current) (:root current) (workspace/trunk-root))))
+                (:id (workspace/create-trunk-at! db (or (:root current) (workspace/trunk-root))))
 
                 child-id
                 (str
@@ -8336,7 +8242,7 @@
           (resolve-workspace db sid)
 
           root
-          (or (:repo-root current) (:root current) (workspace/trunk-root))
+          (or (:root current) (workspace/trunk-root))
 
           workspace-id
           (:id (workspace/create-trunk-at! db root))
@@ -9428,7 +9334,7 @@
    (conversations are never deleted).
 
    With `{:is-recursive true}` every member session is DELETED first via
-   `close-session!` (draft clones trashed, session tree dropped, runtime torn
+   `close-session!` (session tree dropped, runtime torn
    down off-thread) and only then is the project row removed — sessions first, so
    an interrupted teardown leaves a project holding survivors rather than
    orphaned sessions. Real workspace directories are never touched.
@@ -9674,24 +9580,17 @@
              nil)))
 
 (defn close-session!
-  "DELETE a session: trash the session's draft clones (primary + auto-cloned
-   filesystem roots — only DRAFTS have clones; a trunk workspace's roots are the
-   user's real dirs and are never touched), delete the session tree, and drop it
-   from this process. Idempotent. Returns the teardown Future.
+  "DELETE a session: delete the session tree and drop it from this process.
+   The directories of its workspace are the user's real ones and are never
+   touched. Idempotent. Returns the teardown Future.
 
    THE RESPONSE COSTS THE DB REMOVAL, NOTHING MORE. Disposing the live runtime
    (background shells, managed REPLs, the Python session) used to run right
    here on the request thread, so deleting a session the user had just worked in
    held DELETE open for seconds — long enough for the companion's confirm modal
    to read as a frozen screen. Teardown now runs on `teardown-session-async!`,
-   after the session has already stopped existing for every client.
-
-   NOTE: this is the DELETE path — merely quitting/closing a session (navigating
-   away, no server call) keeps the draft intact so it can be resumed."
+   after the session has already stopped existing for every client."
   [sid]
-  ;; trash on-disk clones BEFORE the DB tree (delete) so the workspace row is
-  ;; still resolvable; draft-only, so this can never delete a real directory.
-  (try (workspace/discard-session-clones! (lp/db-info) sid) (catch Throwable _ nil))
   ;; The log bytes are on disk, outside the DB tree, so the delete has to name
   ;; them: a shell log dies with the session that produced it and nothing else.
   (shell-log/delete-session-logs! sid)
@@ -9709,8 +9608,7 @@
 
 (defn delete-session-group-with-sessions!
   "Delete a group AND the sessions filed under it — the second answer the delete
-   dialog offers. Every member goes through `close-session!`, so draft clones,
-   shell logs and attached clients learn about it exactly as they do for a single
+   dialog offers. Every member goes through `close-session!`, so shell logs and attached clients learn about it exactly as they do for a single
    session DELETE. Returns `{:group_id … :scattered_session_ids []
    :deleted_session_ids […] :session_count n}`."
   [gid]

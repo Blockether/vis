@@ -36,10 +36,6 @@
      :page "skills"
      :title "Skills"}
     {:blurb
-     "Try a change in an isolated working copy, review the diff and decide whether to approve it."
-     :page "drafts"
-     :title "Drafts"}
-    {:blurb
      "Ask another session for help, get a second review or share findings without repeating research."
      :page "council"
      :title "Council"}
@@ -118,11 +114,6 @@
        :label "Project instructions"
        :page "project-instructions-api"
        :title "Project instructions API"}
-      {:blurb
-       "Turn on drafts, read the draft state of a session and control draft work from Python or with HTTP requests."
-       :label "Drafts"
-       :page "drafts-api"
-       :title "Drafts API"}
       {:blurb
        "Publish and read Council messages and wake idle sessions from Python or with HTTP requests."
        :label "Council"

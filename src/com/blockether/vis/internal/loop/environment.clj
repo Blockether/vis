@@ -5,8 +5,7 @@
    security snapshot), keeps Python extension symbols in sync, caches live
    environments, reaps idle ones, applies `/reload` and provider changes to
    cached sessions, and serializes turns per session."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -500,7 +499,7 @@
                              (assoc "provider" (name root-provider)))
             ;; Workspace pin (1:1 with session_state):
             ;;   - resuming a session       → derive workspace from its latest state
-            ;;   - brand-new session        → mint a trunk workspace, pass its id
+            ;;   - brand-new session        → mint a workspace, pass its id
             ;;                                into db-store-session! below
             ;; db-info nil (sandbox-only mode) → skip; iteration loop never asserts
             ;;                                workspace pin when there's no DB
@@ -509,10 +508,9 @@
                                  ;; Resume path: the existing session already pins a
                                  ;; workspace; honour it or fail, never fall back to user.dir.
                                  resolved-session-id (saved-workspace db-info resolved-session-id)
-                                 ;; New session, caller pre-spawned a workspace
-                                 ;; (e.g. /workspace slash spawn-branch path).
+                                 ;; New session, the caller made the workspace row.
                                  workspace-id (persistance/db-workspace-get db-info workspace-id)
-                                 ;; New session, no pre-spawn: clone cwd.
+                                 ;; New session, no pre-spawn: work in cwd.
                                  :else (workspace/ensure-workspace! db-info {})))
             session-id (or resolved-session-id
                            (persistance/db-store-session! db-info
@@ -624,12 +622,7 @@
                                   values (merge (scoped/values db-info session-id)
                                                 invocation-overrides)]
 
-                              ;; The turn binds the session snapshot (project vis.yml, group and
-                              ;; session settings), so the draft policy must come from the same values.
-                              {:security-config security-config
-                               :toggle-values values
-                               :draft-required? (binding [toggles/*overrides* values]
-                                                  (not= :off (workspace/draft-backend-setting)))})))
+                              {:security-config security-config :toggle-values values})))
             policy (read-policy)
             security-config (:security-config policy)
             toggle-values (atom (:toggle-values policy))
@@ -640,54 +633,18 @@
             ;; workspace overlay plus immutable configured read/write roots. Python
             ;; filesystem bindings consume the same roots through the environment below.
             workspace-atom (atom active-workspace)
-            sandbox-roots-fn
-            (when (or active-workspace (seq configured-rw-roots))
-              (fn []
-                (let [ws @workspace-atom
-                      ;; The same per-root draft resolution every Python binding uses, so the
-                      ;; Python sandbox cannot reach a root the draft policy withholds
-                      ;; (`:denied?`) or write straight into a root this draft only owns
-                      ;; a private copy of — the clone is granted in its place.
-                      entries (workspace/env-filesystem-roots {:security-policy security-config
-                                                               :workspace ws
-                                                               :security/filesystem-roots
-                                                               configured-rw-roots})
-                      clones (into []
-                                   (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %))))
-                                         (map :clone))
-                                   entries)
-                      withheld (into #{}
-                                     (comp (filter #(or (:denied? %)
-                                                        (and (:clone %)
-                                                             (not= (:clone %) (:trunk %)))))
-                                           (map :trunk))
-                                     entries)]
-
-                  (vec (distinct (concat (when ws [(str (:root ws))])
-                                         clones
-                                         (remove #(contains? withheld (workspace/normalize-root %))
-                                           configured-rw-roots)))))))
+            sandbox-roots-fn (when (or active-workspace (seq configured-rw-roots))
+                               (fn []
+                                 (let [ws @workspace-atom]
+                                   (vec (distinct (concat (when ws [(str (:root ws))])
+                                                          configured-rw-roots))))))
             access-view-fn (fn []
                              (security-policy/access-view security-config))
-            draft-required? (:draft-required? policy)
-            draft-home (when draft-required?
-                         (let [directory (io/file (workspace/session-drafts-home session-id))]
-                           (.mkdirs directory)
-                           (.getCanonicalPath directory)))
-            draft-env {:workspace-atom workspace-atom
-                       :security-policy security-config
-                       :security/filesystem-roots configured-rw-roots}
-            draft-protected-roots (when draft-required?
-                                    (binding [toggles/*overrides* @toggle-values]
-                                      (process-jail/draft-source-roots draft-env)))
-            draft-env (assoc draft-env :workspace/draft-protected-roots draft-protected-roots)
             jail-config (:process-jail security-config)
             ;; A later council.grant replaces the jail value of this child session.
             live-jail-config #(process-jail/live-jail session-id jail-config)
-            filesystem-policy-fn #(process-jail/runtime-policy (process-jail/draft-policy
-                                                                 (assoc (live-jail-config)
-                                                                   :roots-fn sandbox-roots-fn)
-                                                                 draft-env))
+            filesystem-policy-fn #(process-jail/runtime-policy (assoc (live-jail-config)
+                                                                 :roots-fn sandbox-roots-fn))
             jail-enabled? (not (:disabled? jail-config))
             net-cfg (:network security-config)
             ;; Host sockets stay available to the interpreter; the jail is the ONE
@@ -720,36 +677,29 @@
                                           (gateway-sandbox/ensure-session-proxy! sandbox-token
                                                                                  session-id))]
 
-                  (process-jail/draft-policy
-                    (merge (live-jail-config)
-                           {:roots-fn sandbox-roots-fn
-                            :net-enabled? net-on?
-                            ;; Resolved per spawn (never baked into the session snapshot), so a
-                            ;; `.env` edit or a refreshed keychain item reaches the next child.
-                            :env-values (binding [workspace/*workspace-root*
-                                                  (or (:root @workspace-atom)
-                                                      workspace/*workspace-root*)]
-                                          (config/child-environment-values))
-                            :proxy-port proxy-port
-                            :worker-proxy-port worker-proxy-port
-                            :proxy-token (when proxy? sandbox-token)
-                            :java-trust-store (:java-trust-store java-trust)
-                            :java-trust-store-password (:java-trust-store-password java-trust)
-                            :ca-file ca-file}
-                           ;; Read at every spawn, after this session took its front door (#469).
-                           (when proxy? (gateway-sandbox/loopback-grant compiled-network-policy)))
-                    draft-env))))
+                  (merge (live-jail-config)
+                         {:roots-fn sandbox-roots-fn
+                          :net-enabled? net-on?
+                          ;; Resolved per spawn (never baked into the session snapshot), so a
+                          ;; `.env` edit or a refreshed keychain item reaches the next child.
+                          :env-values (binding [workspace/*workspace-root*
+                                                (or (:root @workspace-atom)
+                                                    workspace/*workspace-root*)]
+                                        (config/child-environment-values))
+                          :proxy-port proxy-port
+                          :worker-proxy-port worker-proxy-port
+                          :proxy-token (when proxy? sandbox-token)
+                          :java-trust-store (:java-trust-store java-trust)
+                          :java-trust-store-password (:java-trust-store-password java-trust)
+                          :ca-file ca-file}
+                         ;; Read at every spawn, after this session took its front door (#469).
+                         (when proxy? (gateway-sandbox/loopback-grant compiled-network-policy))))))
             network-opts {;; The worker launch reads this policy before its first
                           ;; interpreter request; the same snapshot configures its
                           ;; runtime audit-hook backstop immediately afterwards.
                           :worker? true
-                          :worker-policy-fn (when jail-policy-fn
-                                              #(cond-> (jail-policy-fn) draft-home
-                                                 (update :allow-read-write
-                                                         (fnil conj [])
-                                                         draft-home)))
+                          :worker-policy-fn jail-policy-fn
                           :filesystem-policy-fn filesystem-policy-fn
-                          :draft-required? draft-required?
                           :enabled? net-on?
                           :jail-enabled? jail-enabled?
                           :write-limited? (boolean (:write-limited? jail-config))
@@ -843,8 +793,6 @@
                          ;; Live workspace pointer for sandbox confinement. run-turn!
                          ;; refreshes it so `sandbox-roots-fn` tracks the active root.
                          :workspace-atom workspace-atom
-                         :workspace/drafts-home draft-home
-                         :workspace/draft-protected-roots draft-protected-roots
                          ;; routing digest → rendered into ctx as `routing`
                          ;; (current model + provider only).
                          :routing routing-digest
@@ -863,13 +811,7 @@
                   (assoc :workspace
                     active-workspace :workspace/id
                     (:id active-workspace) :workspace/root
-                    (:root active-workspace)
-                    ;; Every workspace is a rift CoW clone — always a sandbox.
-                    ;; Reported on :workspace/sandbox?, NOT as a VCS. The
-                    ;; model-facing :vcs/kind is the real repo VCS, computed in
-                    ;; foundation.workspace-ctx/render-block.
-                    :workspace/sandbox?
-                    true))
+                    (:root active-workspace)))
             env (assoc env
                   ;; Context atoms — visible to the rest of the loop so renderer /
                   ;; per-iter capture / done snapshot can read or stamp them.
@@ -905,8 +847,6 @@
                   :policy-current? (fn []
                                      (= (dissoc policy :toggle-values)
                                         (dissoc (read-policy) :toggle-values)))
-                  ;; A policy change of this env alone marks it stale, without a reload of others.
-                  :policy-stale (java.util.concurrent.atomic.AtomicBoolean. false)
                   ;; Long-lived per-env LRU map: `{var-name-string →
                   ;; last-used-turn-pos}`. Merged from each iteration's
                   ;; `:lru` after eval.
@@ -993,11 +933,8 @@
 
 (defn policy-stale?
   [entry]
-  (boolean (or (some-> ^java.util.concurrent.atomic.AtomicBoolean
-                       (:policy-stale (:environment entry))
-                       .get)
-               (when-let [^java.util.concurrent.atomic.AtomicLong epoch (:policy-epoch entry)]
-                 (< (.get epoch) (long @python-exec/policy-reload-epoch))))))
+  (boolean (when-let [^java.util.concurrent.atomic.AtomicLong epoch (:policy-epoch entry)]
+             (< (.get epoch) (long @python-exec/policy-reload-epoch)))))
 
 (defn- policy-unchanged?
   "True when the reloaded configuration gives `entry` the same sandbox policy. An env
@@ -1010,8 +947,6 @@
         (:policy-current? environment)]
 
     (and (some? current?)
-         (not (some-> ^java.util.concurrent.atomic.AtomicBoolean (:policy-stale environment)
-                      .get))
          (try (boolean (current?))
               (catch Throwable t
                 (tel/log! :warn
@@ -1670,9 +1605,7 @@
       (doseq [{:keys [environment]} (vals entries)]
         (some-> (:config/tool-policy environment)
                 (reset! (session-tool-policy (:db-info environment) (:session-id environment))))))
-    (when (or (= workspace/draft-backend-toggle-id (:id event))
-              (#{["workspace"] ["jail"]} (:section event)))
-      (mark-policy-reload!))
+    (when (#{["workspace"] ["jail"]} (:section event)) (mark-policy-reload!))
     (sync-cached-extension-symbols! entries)))
 
 (defonce ^:private _toggle-extension-sync-listener

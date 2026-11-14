@@ -513,14 +513,6 @@
         "search": {
           "type": "boolean"
         },
-        "draft": {
-          "enum": [
-            "shared",
-            "copy-only",
-            "copy-and-apply",
-            "not-allowed"
-          ]
-        },
         "when": {
           "$ref": "#/$defs/workspaceWhen"
         },

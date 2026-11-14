@@ -80,9 +80,9 @@ Whole skill body."}
         (expect (str/ends-with? (:text entry) (:body skill)))
         (expect (nil? (:call entry))))))
 
-(def ^:private drafts-page
+(def ^:private reviews-page
   (str/join "\n"
-            ["# Drafts" "" "A draft gives a session its own working copy." "" "## When to use" ""
+            ["# Reviews" "" "A review gives a session its own checklist." "" "## When to use" ""
              "- **You want to read the whole"
              "  diff first.** See [Review changes](#review-changes)." "" "## Review changes" ""
              "Approval happens after a matrix check." "" "```md" "## Fenced heading" "```"]))
@@ -97,7 +97,7 @@ Whole skill body."}
             {:name "numpy.linalg.solve" :kind "function" :text "Solve a matrix equation."}
             {:name "pandas.read_csv" :kind "function" :text "Read comma-separated data."}
             {:name "shell" :kind "tool" :text "Runs a command."}
-            {:name "drafts" :kind "doc" :text drafts-page}]]
+            {:name "reviews" :kind "doc" :text reviews-page}]]
     (it "matches names with a caller-supplied regular expression"
         (expect (= ["numpy" "numpy.linalg.solve"] (mapv :name (dc/search es #"numpy(?:\..*)?"))))
         (expect (= ["numpy.linalg.solve" "pandas.read_csv"] (mapv :name (dc/search es #"\.\w")))))
@@ -105,8 +105,8 @@ Whole skill body."}
         (expect (= ["pandas.read_csv"] (mapv :name (dc/search es "READ_CSV"))))
         (expect (empty? (dc/search es #"READ_CSV"))))
     (it "finds a page by its opening, headings and When to use problems"
-        (doseq [pattern ["working copy" "^drafts$" "review changes" "whole diff first"]]
-          (expect (= ["drafts"] (mapv :name (dc/search es pattern))) pattern)))
+        (doseq [pattern ["own checklist" "^reviews$" "review changes" "whole diff first"]]
+          (expect (= ["reviews"] (mapv :name (dc/search es pattern))) pattern)))
     (it "reads a hyphenated name as words too"
         (let [pages [{:name "human-input" :kind "doc" :text "Ask for a value."}]]
           (expect (= ["human-input"] (mapv :name (dc/search pages "human input"))))
@@ -142,30 +142,31 @@ Whole skill body."}
   "What a page or skill is found by besides its name: its opening, headings
    outside code and the problems its `When to use` list opens with, one line each."
   (it "reads a page's outline in document order"
-      (expect (= ["A draft gives a session its own working copy." "Drafts" "When to use"
+      (expect (= ["A review gives a session its own checklist." "Reviews" "When to use"
                   "You want to read the whole diff first." "Review changes"]
-                 (dc/outline {:name "drafts" :kind "doc" :text drafts-page})))))
+                 (dc/outline {:name "reviews" :kind "doc" :text reviews-page})))))
 
 (defdescribe
   miss-text-test
   "A miss names the handles whose name or outline contains the target, so a near
    miss costs one more `doc` call instead of a search."
-  (let [es (into [{:name "drafts" :kind "doc" :text drafts-page}]
+  (let [es (into [{:name "reviews" :kind "doc" :text reviews-page}]
                  (map (fn [i]
                         {:name (str "tool-" i) :kind "tool" :text "A tool."}))
                  (range 7))]
     (it "suggests the handles that contain the target"
-        (let [text (dc/miss-text es "Working Copy")]
-          (expect (str/includes? text "contains it: drafts."))))
+        (let [text (dc/miss-text es "Own Checklist")]
+          (expect (str/includes? text "contains it: reviews."))))
     (it "lists name matches before outline matches"
-        (expect (str/includes?
-                  (dc/miss-text (conj es {:name "copy-tool" :kind "tool" :text "Copies."}) "copy")
-                  "contains it: copy-tool, drafts.")))
+        (expect (str/includes? (dc/miss-text
+                                 (conj es {:name "checklist-tool" :kind "tool" :text "Checks."})
+                                 "checklist")
+                               "contains it: checklist-tool, reviews.")))
     (it "counts a hyphenated name read as words as a name match"
         (expect (str/includes? (dc/miss-text
-                                 (conj es {:name "working-copy" :kind "tool" :text "Copies."})
-                                 "working copy")
-                               "contains it: working-copy, drafts.")))
+                                 (conj es {:name "own-checklist" :kind "tool" :text "Checks."})
+                                 "own checklist")
+                               "contains it: own-checklist, reviews.")))
     (it "caps the suggestions and counts the rest"
         (expect (str/includes? (dc/miss-text es "tool")
                                "tool-0, tool-1, tool-2, tool-3, tool-4 and 2 more.")))
@@ -182,17 +183,16 @@ Whole skill body."}
    `apropos` read names only; the page's outline now carries it."
   (it "finds the page a reader means"
       (let [es (dc/entries)]
-        (doseq [[words page] [["context window" "context-management"]
-                              ["tokens" "context-management"] ["api key" "configuration"]
-                              ["worktree" "drafts"] ["iphone" "index"] ["android" "index"]
-                              ["permissions" "jail"] ["log file" "logging"] ["crash" "logging"]
-                              ["plugin" "extending"] ["custom tool" "extending"]
-                              ["transcript" "sessions"] ["upgrade" "distributions"]
-                              ["graalvm" "jvm-native-image"] ["password" "human-input"]
-                              ["llm provider" "provider-extensions"] ["workflow" "skills"]
-                              ["stop" "sessions"] ["team" "council"] ["embed" "python-sdk"]
-                              ["remote" "gateway-service"] ["keybindings" "keyboard-shortcuts"]
-                              ["new line" "keyboard-shortcuts"] ["fork" "sessions"]]]
+        (doseq [[words page]
+                [["context window" "context-management"] ["tokens" "context-management"]
+                 ["api key" "configuration"] ["iphone" "index"] ["android" "index"]
+                 ["permissions" "jail"] ["log file" "logging"] ["crash" "logging"]
+                 ["plugin" "extending"] ["custom tool" "extending"] ["transcript" "sessions"]
+                 ["upgrade" "distributions"] ["graalvm" "jvm-native-image"]
+                 ["password" "human-input"] ["llm provider" "provider-extensions"]
+                 ["workflow" "skills"] ["stop" "sessions"] ["team" "council"] ["embed" "python-sdk"]
+                 ["remote" "gateway-service"] ["keybindings" "keyboard-shortcuts"]
+                 ["new line" "keyboard-shortcuts"] ["fork" "sessions"]]]
           (expect (some #{page} (map :name (dc/search es words))) (str words " -> " page))))))
 
 (defdescribe index-text-test

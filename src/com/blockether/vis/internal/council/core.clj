@@ -82,7 +82,7 @@
    assignment. The human's own GROUP wins when the session has one: a group
    NARROWS the boundary, so the sessions filed under \"Release apps\" talk to
    each other instead of to the whole project. Without a group, the project;
-   without a project, the owning repository, never a draft's root."
+   without a project, the owning repository."
   [db {:keys [id project-id group-id owner-id]}]
   (or (some-> group-id
               str)
@@ -90,7 +90,7 @@
               str)
       (when-let [workspace (some->> (ps/db-latest-session-state-id db id)
                                     (ps/db-workspace-for-session db))]
-        (when-let [origin (or (not-empty (:repo-root workspace)) (not-empty (:root workspace)))]
+        (when-let [origin (not-empty (:root workspace))]
           (or (some-> (ps/db-get-project-by-root db owner-id origin)
                       :id
                       str)
@@ -98,7 +98,7 @@
                    (util/sha256-hex (util/content-str [(or owner-id "local") origin]))))))))
 
 (defn default-group
-  "The persisted project or repository group, shared by trunk and isolated workspaces."
+  "The persisted project or repository group."
   [db sid]
   (or (session-group db (ps/db-get-session db sid))
       (fail! :group-not-found "Council requires a persisted session with a project or workspace")))

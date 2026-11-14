@@ -337,10 +337,18 @@
    copy back, and it was out of date after each configuration change.
 
    `session_soul.goal_history` held the earlier goals of a session. The transcript
-   holds each goal and the replies about it, so the copy was not necessary."
+   holds each goal and the replies about it, so the copy was not necessary.
+
+   The `workspace` columns `repo_root`, `fork_ms`, `apply_fork_ms`, `filesystem_roots`,
+   `workspace_kind`, `workspace_backend`, `workspace_mechanism` and
+   `parent_workspace_id` described a draft: an isolated copy of a checkout. Vis has no
+   drafts any more, so a workspace is only the directory in `root`."
   [["session_turn_iteration" "llm_assistant_message"] ["session_attachment" "classification"]
    ["session_attachment" "activity_anchor"] ["session_soul" "last_opened_at"]
-   ["council_entry" "kind"] ["session_state" "system_prompt"] ["session_soul" "goal_history"]])
+   ["council_entry" "kind"] ["session_state" "system_prompt"] ["session_soul" "goal_history"]
+   ["workspace" "repo_root"] ["workspace" "fork_ms"] ["workspace" "apply_fork_ms"]
+   ["workspace" "filesystem_roots"] ["workspace" "workspace_kind"] ["workspace" "workspace_backend"]
+   ["workspace" "workspace_mechanism"] ["workspace" "parent_workspace_id"]])
 
 (def ^:private retired-values
   "Values a narrowed CHECK no longer admits, as `[table column old new]`.
@@ -365,12 +373,22 @@
    gallery with `.live.ndjson` files no surface can open."
   [["session_attachment" "classification" "classification = 'activity'"]])
 
+(def ^:private retired-copies
+  "Values COPIED into another column of the same row before their column is retired,
+   as `[table column target predicate]`.
+
+   `workspace.repo_root` held the checkout that a draft was a copy of, and
+   `workspace.root` held the copy. Without drafts, the session of each such row works
+   in the checkout again. The copy stays on disk."
+  [["workspace" "repo_root" "root" "workspace_kind = 'draft'"]])
+
 (def ^:private schema-generation
   "The generation of the store shape that this Vis leaves: one step for each entry in
-   `retired-columns`, `retired-values` and `retired-rows`. Those lists only grow, never
-   remove an entry, so a newer Vis always has a higher generation. An older Vis cannot
-   run against a store that a newer Vis removed columns or values from (#455)."
-  (+ (count retired-columns) (count retired-values) (count retired-rows)))
+   `retired-columns`, `retired-values`, `retired-rows` and `retired-copies`. Those lists
+   only grow, never remove an entry, so a newer Vis always has a higher generation. An
+   older Vis cannot run against a store that a newer Vis removed columns or values from
+   (#455)."
+  (+ (count retired-columns) (count retired-values) (count retired-rows) (count retired-copies)))
 
 (defn- stored-generation
   "The generation that `conn`'s store records, or 0 for a store from before the record."
@@ -682,6 +700,21 @@
              (.executeUpdate st (str "DELETE FROM " table " WHERE " predicate)))
            (catch Throwable _ nil)))))
 
+(defn- copy-retired-values!
+  "Copy every `retired-copies` entry a store still carries.
+
+   Runs BEFORE the columns are dropped. Best effort: a store that already dropped
+   the column has nothing left to copy."
+  [^DataSource ds]
+  (with-open [conn (.getConnection ds)]
+    (doseq [[^String table ^String column ^String target ^String predicate] retired-copies
+            :when (contains? (existing-columns conn table) (str/lower-case column))]
+
+      (try (with-open [st (.createStatement conn)]
+             (.executeUpdate st
+                             (str "UPDATE " table " SET " target " = " column " WHERE " predicate)))
+           (catch Throwable _ nil)))))
+
 (defn- rewrite-retired-values!
   "Rewrite every `retired-values` entry a store still holds. Best effort: a store
    without the column has nothing to rewrite."
@@ -790,8 +823,8 @@
    A store that a newer Vis migrated is refused with `newer-store-error`, and
    nothing in it changes. With `:shared? true`, another process has the store open,
    maybe an older Vis that still uses the retired columns and values. The retired
-   values, rows and columns then stay, and so does the recorded generation: a later
-   open that has the store alone removes them (#455)."
+   values, rows, copies and columns then stay, and so does the recorded generation: a
+   later open that has the store alone removes them (#455)."
   ([ds locations] (migrate! ds locations {}))
   ([^DataSource ds locations {:keys [shared?]}]
    (let [locs
@@ -832,6 +865,7 @@
      (install-missing-canonical-indexes! ds locs)
      (when-not shared?
        (delete-retired-rows! ds)
+       (copy-retired-values! ds)
        (drop-retired-columns! ds locs)
        (record-generation! ds))
      ds)))

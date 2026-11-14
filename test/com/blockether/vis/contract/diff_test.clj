@@ -27,8 +27,12 @@
                        (dissoc sample "comments")]
 
                    (expect (= patch (get (diff/parse! (diff/render current)) "patch")))
-                   ;; An envelope that older Vis versions stored with review comments still reads.
+                   ;; An envelope that older Vis versions stored still reads: with review comments,
+                   ;; and with a source kind and backend that Vis no longer writes.
                    (expect (diff/valid? sample))
+                   (expect (diff/valid? (assoc current
+                                          "source"
+                                          {"type" "draft" "backend" "worktree" "label" "old"})))
                    (expect (diff/valid? current))
                    (expect (diff/valid? (assoc current "patch" ""))))))
 
@@ -37,8 +41,9 @@
                  (let [sample (fixture)]
                    (doseq [invalid [(dissoc sample "patch") (assoc sample "schema_version" 2)
                                     (assoc sample "extra" true) (assoc sample "patch" nil)
-                                    (assoc sample "source" {"type" "unknown"})
-                                    (assoc sample "source" {"type" "draft" "unknown" "value"})
+                                    (assoc sample "source" {"type" ""})
+                                    (assoc sample "source" {"label" "no type"})
+                                    (assoc sample "source" {"type" "workspace" "unknown" "value"})
                                     (assoc sample "comments" [{"quote" "line"}])
                                     (assoc sample "comments" [{"quote" "line" "body" ""}])]]
                      (expect (not (diff/valid? invalid)))))

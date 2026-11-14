@@ -42,9 +42,8 @@ CREATE TABLE project (
 
   -- Canonical absolute path of the workspace root this project is bound to.
   -- NULL = a LOOSE project (hand-created via the move-to-project picker), not
-  -- tied to a directory. NOTE: this is `workspace.repo_root` (the real cwd),
-  -- NOT `workspace.root` (the rift clone path) — named `workspace_root` so the
-  -- two `root`s one join apart never collide. Callers store a
+  -- tied to a directory. It is the same directory as `workspace.root`, named
+  -- `workspace_root` so the two `root`s one join apart never collide. Callers store a
   -- java.io.File/getCanonicalPath (case-normalized so a dir never fragments
   -- into two projects). The CHECK forbids a blank binding posing as "bound".
   workspace_root TEXT CHECK (workspace_root IS NULL OR trim(workspace_root) <> '')
@@ -295,43 +294,19 @@ CREATE TABLE session_read_mark (
 CREATE INDEX idx_session_read_mark_session ON session_read_mark(session_id);
 
 -- =============================================================================
--- workspace — a rift copy-on-write clone of cwd (a "draft"). One row = one
--- draft clone on disk = one session-binding (1:1).
+-- workspace — the directory a session works in. One row = one
+-- session-binding (1:1).
 -- =============================================================================
 CREATE TABLE workspace (
   id                   TEXT PRIMARY KEY NOT NULL,
   repo_id              TEXT NOT NULL,
-  repo_root            TEXT NOT NULL,     -- trunk: the real cwd, where apply lands
-  root                 TEXT NOT NULL,     -- the rift clone path
+  root                 TEXT NOT NULL,     -- the real cwd of the session
 
   state                TEXT NOT NULL DEFAULT 'active'
                        CHECK (state IN ('active', 'discarded')),
 
-  fork_ms              INTEGER,           -- clone timestamp; mtime since-fork baseline
-
   label                TEXT,              -- human label overriding session.title in the TUI strip
   last_focused_at_ms   INTEGER,           -- last workspace/focus! (NULL -> created_at)
-
-  -- Extra filesystem roots the session may operate on (JSON array of canonical
-  -- absolute paths). NULL/absent = single-root default.
-  filesystem_roots     TEXT,
-
-  workspace_kind       TEXT NOT NULL DEFAULT 'trunk'
-                       CHECK (workspace_kind IN ('trunk', 'draft', 'checkpoint')),
-
-  workspace_backend    TEXT NOT NULL DEFAULT 'live',
-
-  -- HOW the backend physically made this workspace: rift reports 'btrfs',
-  -- 'reflink', 'apfs', 'worktree' (linked Git worktree fallback) or 'copy'.
-  -- NULL when the backend does not report a mechanism (live roots, older
-  -- native libraries).
-  workspace_mechanism  TEXT,
-
-  -- Lineage: draft -> its trunk parent. RESTRICT so a parent can't vanish under
-  -- a child. NULL for trunks.
-  parent_workspace_id  TEXT REFERENCES workspace(id) ON DELETE RESTRICT,
-
-  apply_fork_ms        INTEGER,           -- cumulative since-fork baseline for apply!
 
   created_at           INTEGER NOT NULL,
   discarded_at         INTEGER
@@ -339,9 +314,6 @@ CREATE TABLE workspace (
 
 CREATE INDEX idx_workspace_repo_state
   ON workspace(repo_id, state);
-
-CREATE INDEX idx_workspace_parent
-  ON workspace(parent_workspace_id);
 
 -- =============================================================================
 -- repo_focus — per-repo last-active workspace pointer.

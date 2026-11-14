@@ -6394,7 +6394,7 @@
 (def ^:private workspace-refresh-ms 4000)
 
 (defn- start-workspace-refresh-thread!
-  "Keep gateway workspace identity, Git and draft landing facts fresh between
+  "Keep gateway workspace identity and Git facts fresh between
    turns. The shared refresh path pins each response to its requesting tab and
    rejects obsolete snapshots; unchanged facts never churn the render loop."
   ^Thread []
@@ -7083,7 +7083,7 @@
    workspace map the gateway folds into every list-sessions row."
   [s]
   (let [ws (get s "workspace")]
-    (assoc s :work-dir (short-dir (or (get ws "repo_root") (get ws "root"))))))
+    (assoc s :work-dir (short-dir (get ws "root")))))
 
 (def ^:private picker-page-size
   "Rows the session PICKER opens on, and pulls at a time as the reader nears the end of
@@ -7264,7 +7264,7 @@
    startup fallback when the per-place tab sidecar has nothing resumable
    (first launch here after the sidecar was lost, or every saved id is
    dead). Probes newest-first summaries, matching each session's pinned
-   workspace root (`:root`, or isolated workspace `:repo-root`) against the
+   workspace root (`:root`) against the
    launch dir, across the `startup-session-window` newest rows. Every row carries its
    own folded `workspace` map, so the probe costs ONE windowed read and nothing per
    session."
@@ -7285,7 +7285,7 @@
                             (get s "workspace")
 
                             root
-                            (or (get ws "repo_root") (get ws "root"))]
+                            (get ws "root")]
 
                         (when (and root (= place (canonical root))) sid))))))
        (catch Throwable _ nil)))
@@ -10163,11 +10163,8 @@
                       (state/dispatch [:reset-input])
                       (switch-session! {:action :new :seed-text seed}))
 
-                    ;; Workspace ops (`:workspace`,
-                    ;; `:apply-workspace-to-trunk`,
-                    ;; `:discard-workspace-{soft,hard}`) live as
-                    ;; typed slash commands now. No bespoke
-                    ;; Ctrl+K palette case here.
+                    ;; Workspace operations are typed slash commands.
+                    ;; They have no Ctrl+K palette case here.
                     :fork-session
                     (switch-session! {:action :fork})
 

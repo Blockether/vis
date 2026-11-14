@@ -73,7 +73,6 @@
   (db-workspace-get [db-info workspace-id])
   (db-workspace-list-by-repo [db-info repo-id]
                              [db-info repo-id state-set])
-  (db-workspace-list-drafts [db-info])
   (db-workspace-for-session [db-info session-state-id])
   (db-session-state-list-for-workspace [db-info workspace-id])
   (db-session-state-set-workspace! [db-info session-state-id workspace-id])

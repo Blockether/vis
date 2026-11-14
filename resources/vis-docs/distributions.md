@@ -406,8 +406,7 @@ the stable package. To keep your stable app, use
 Run the gateway on the computer where your projects live: macOS, Linux, or [Linux in
 WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) on Windows. For a local WSL2 gateway,
 enable localhost forwarding. The [connection guide](index.md#connect-an-app) covers
-both local addresses and remote pairing. [Isolated drafts](drafts.md) have more filesystem
-requirements.
+both local addresses and remote pairing.
 
 ### Notifications on the desktop
 

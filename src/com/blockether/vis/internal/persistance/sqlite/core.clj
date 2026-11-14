@@ -1264,28 +1264,9 @@
     (cond-> {:id (->uuid (:id row))
              :type :workspace
              :repo-id (:repo_id row)
-             :repo-root (:repo_root row)
              :root (:root row)
              :state (->kw-back (:state row))
              :created-at (->date (:created_at row))}
-      (:fork_ms row)
-      (assoc :fork-ms (:fork_ms row))
-
-      (:apply_fork_ms row)
-      (assoc :apply-fork-ms (:apply_fork_ms row))
-
-      (:workspace_kind row)
-      (assoc :workspace-kind (->kw-back (:workspace_kind row)))
-
-      (:workspace_backend row)
-      (assoc :workspace-backend (->kw-back (:workspace_backend row)))
-
-      (:workspace_mechanism row)
-      (assoc :workspace-mechanism (->kw-back (:workspace_mechanism row)))
-
-      (:parent_workspace_id row)
-      (assoc :parent-workspace-id (->uuid (:parent_workspace_id row)))
-
       (:discarded_at row)
       (assoc :discarded-at (->date (:discarded_at row)))
 
@@ -1297,26 +1278,14 @@
       (assoc :label (:label row))
 
       (:last_focused_at_ms row)
-      (assoc :last-focused-at-ms (:last_focused_at_ms row))
-
-      ;; Extra filesystem roots bound to this workspace: the per-root draft
-      ;; clones minted for it. JSON array of
-      ;; `{trunk, clone, fork_ms, backend, policy}` maps.
-      (:filesystem_roots row)
-      (assoc :filesystem-roots (or (<-json (:filesystem_roots row)) [])))))
+      (assoc :last-focused-at-ms (:last_focused_at_ms row)))))
 
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
 
-   Required: :repo-id :repo-root :root
-   Optional: :id (defaults to a new UUID), :label, :fork-ms, :apply-fork-ms,
-             :workspace-kind, :workspace-backend, :workspace-mechanism (how the
-             backend made the clone), :parent-workspace-id, :state
-             (defaults to :active), :filesystem-roots (extra per-root draft
-             clones, persisted as a JSON array)"
-  [db-info
-   {:keys [id repo-id repo-root root label fork-ms apply-fork-ms workspace-kind workspace-backend
-           workspace-mechanism parent-workspace-id state filesystem-roots]}]
+   Required: :repo-id :root
+   Optional: :id (defaults to a new UUID), :label, :state (defaults to :active)"
+  [db-info {:keys [id repo-id root label state]}]
   (when (ds db-info)
     (let [ws-id
           (->id (or id (new-uuid)))
@@ -1329,23 +1298,19 @@
         (fn [tx-info]
           (execute! tx-info
                     {:insert-into :workspace
-                     :values [{:id ws-id
-                               :repo_id repo-id
-                               :repo_root repo-root
-                               :root root
-                               :label label
-                               :fork_ms fork-ms
-                               :apply_fork_ms apply-fork-ms
-                               :workspace_kind (->kw (or workspace-kind (if fork-ms :draft :trunk)))
-                               :workspace_backend (->kw (or workspace-backend :live))
-                               :workspace_mechanism (some-> workspace-mechanism
-                                                            ->kw)
-                               :parent_workspace_id (some-> parent-workspace-id
-                                                            ->ref)
-                               :state (->kw (or state :active))
-                               :filesystem_roots (when (seq filesystem-roots)
-                                                   (->json (vec filesystem-roots)))
-                               :created_at now}]})
+                     :values [(cond-> {:id ws-id
+                                       :repo_id repo-id
+                                       :root root
+                                       :label label
+                                       :state (->kw (or state :active))
+                                       :created_at now}
+                                ;; While an older Vis has the store open, the retired
+                                ;; `repo_root` stays, and it takes no NULL (#455).
+                                (seq (query-sql! tx-info
+                                                 [(str
+                                                    "SELECT 1 FROM pragma_table_info('workspace')"
+                                                    " WHERE name = 'repo_root'")]))
+                                (assoc :repo_root root))]})
           (row->workspace (query-one! tx-info
                                       {:select [:*] :from :workspace :where [:= :id ws-id]})))))))
 
@@ -1459,20 +1424,6 @@
                db-info
                {:select [:*] :from :workspace :where where :order-by [[:created_at :desc]]}))))))
 
-(defn db-workspace-list-drafts
-  "Every draft workspace across all repos, newest first. Housekeeping reads
-   this to decide which draft clones on disk have gone stale; it is
-   deliberately repo-agnostic because the drafts store is a single
-   `~/.vis/drafts` tree shared by every trunk."
-  [db-info]
-  (when (ds db-info)
-    (mapv row->workspace
-          (query! db-info
-                  {:select [:*]
-                   :from :workspace
-                   :where [:= :workspace_kind (->kw :draft)]
-                   :order-by [[:created_at :desc]]}))))
-
 (defn db-workspace-for-session
   "Return the workspace pinned to `session-state-id`, or nil. Always
    non-nil after step-4 wiring (1:1 invariant); nil only during the
@@ -1531,8 +1482,8 @@
 
    Required opt: `:workspace-id` — session_state.workspace_id is NOT NULL
    after V1, enforcing the 1:1 invariant. The caller
-   (loop/create-environment) calls `workspace/ensure-trunk!` to mint a
-   trunk workspace before invoking this fn.
+   (loop/create-environment) calls `workspace/ensure-workspace!` to make
+   the workspace row before invoking this fn.
 
    Session identity and LLM root defaults are first-class columns:
      session_soul.channel / external_id
@@ -2949,19 +2900,15 @@
       (db-get-project db-info project-id))))
 
 (defn- move-project-workspaces!
-  "Carry the workspaces of the checkout at `from` to the checkout at `to`: trunks
-   repoint their root, and every workspace applies into `to`, grouped by `repo-id`."
+  "Carry the workspaces of the checkout at `from` to the checkout at `to`, grouped
+   by `repo-id`."
   [tx-info from to repo-id]
   (execute! tx-info
             {:update :workspace
-             :set {:root to}
-             :where [:and [:= :workspace_kind (->kw :trunk)] [:= :root from]]})
-  (execute! tx-info
-            {:update :workspace
-             :set (cond-> {:repo_root to}
+             :set (cond-> {:root to}
                     repo-id
                     (assoc :repo_id repo-id))
-             :where [:= :repo_root from]}))
+             :where [:= :root from]}))
 
 (defn- move-owned-automations!
   "Move the extension automations of root `from` to root `to` with their project:
@@ -3620,8 +3567,7 @@
 
    Required opt: `:workspace-id` — every session_state must be pinned to
    exactly one workspace. Callers (screen handlers, cli) call
-   `workspace/spawn-branch!` or `workspace/ensure-trunk!` first and pass
-   the returned id here."
+   `workspace/ensure-workspace!` first and pass the returned id here."
   [db-info session-id {:keys [provider model title workspace-id]}]
   (when-not workspace-id
     (throw (ex-info "db-fork-session! requires :workspace-id (1:1 invariant)"

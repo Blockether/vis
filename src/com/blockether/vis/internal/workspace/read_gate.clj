@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.workspace.read-gate
   "The one read gate for a file that a person opens on the gateway machine: the
-   session's filesystem roots, its draft rules, the configured deny rules and the
+   session's filesystem roots, the configured deny rules and the
    `:fs/access` gate hooks. The file preview, the media stream and an attachment
    that keeps a reference to a file (#450) all ask here, so none of them can show
    a file that another of them refuses."

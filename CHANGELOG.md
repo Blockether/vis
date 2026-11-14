@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- Drafts: Vis has no draft workspaces. The tools `draft_create`, `draft_status`, `draft_diff`, `draft_sync`, `draft_approve` and `draft_discard`, the setting `draft_backend`, the `draft` key of a `workspace.filesystem` entry and the two manual pages are gone. A session always works in its own directory, as it did with the default `draft_backend: off`.
+- Drafts: Vis does not ship the Rift library and makes no Git worktree for a session. The operation names `draft/create`, `draft/sync`, `draft/approve`, `draft/discard` and `git/commit` are gone, so a hook on one of them matches no operation.
+- Drafts: the workspace of a session has only `root` and `label` in a session row, and `id`, `root`, `agent_name`, `label` and `git` in the workspace answer. The keys `repo_root`, `fork_ms`, `is_draft`, `draft`, `backend`, `branch`, `ahead`, `pending`, `repositories`, `draft_changes`, `working_changes`, `draft_error` and `recovery_required` are gone.
+- Drafts: at the first start that does not share the store with another Vis process, Vis moves each session of a draft back to the directory that the draft came from and removes the draft columns from its store. Vis does not delete the draft directories in `~/.vis/drafts` or the `vis/<label>` branches. Approve or copy unfinished draft work before you update.
+- Drafts: Vis ignores a `draft` key that an older version stored in the machine settings, in the project settings of `.vis/config.yml` or in the settings of a group or a session. The next save of those settings removes the key. In a `vis.yml` or `~/.vis/config.yml` that a person writes, Vis reports the key by name and does not apply the access settings of that file. Remove the key there.
+
 ### Fixed
 - Providers: price a fallback response with the rates of the model that answered. A refusal that contains text or a partial tool call now stays a refusal, not a successful response. Anthropic sessions keep the refusal text in history but return no tool calls to execute. Needs svar 0.7.240.
 - Providers: when a Claude 5 model declines a request (`stop_reason: refusal`), Anthropic serves the request on its fallback model in the same call. Vis asks for the default fallback of the provider on Anthropic and on the Anthropic coding plan, and keeps no model list. The turn note names the model that answered. The `refusal_fallback` setting turns this off. Before, Vis sent the request again to Claude Opus 4.8. The coding plan does not list that model, so the refusal stopped the turn. Needs svar 0.7.239.

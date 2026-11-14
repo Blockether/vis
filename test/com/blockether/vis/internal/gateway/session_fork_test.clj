@@ -29,13 +29,7 @@
         (temp-dir "vis-gateway-fork")
 
         trunk
-        (ps/db-workspace-insert! store
-                                 {:repo-id "fork-repo"
-                                  :repo-root root
-                                  :root root
-                                  :workspace-kind :trunk
-                                  :workspace-backend :live
-                                  :state :active})
+        (ps/db-workspace-insert! store {:repo-id "fork-repo" :root root :state :active})
 
         sid
         (str (random-uuid))

@@ -2083,7 +2083,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "The environment a slash callback runs in. A turn dispatches its slash command
    inside the session's extension context, so the callback inherits that whole
    environment, as a tool call does: the session's trusted worker and a
-   `vis.workspace_root()` that follows its draft and live workspace (#301).
+   `vis.workspace_root()` that follows its live workspace (#301).
    Without a bound environment for that session, the callback gets only the
    persistence handle and session id the dispatcher stamps onto the slash ctx
    (see `slash/dispatch`)."
@@ -2107,8 +2107,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         (assoc :session-id session-id)))))
 
 (defn- op-name
-  "Python spelling of an op: `\"patch\"` for a tool, `\"draft/approve\"` for a
-   namespaced host operation — the same string an `OpHook` registers with."
+  "Python spelling of an op: `\"patch\"` for a tool, `\"python_execution\"` for
+   a host operation — the same string an `OpHook` registers with."
   [op-kw]
   (subs (str op-kw) 1))
 

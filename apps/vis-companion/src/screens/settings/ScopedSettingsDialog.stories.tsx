@@ -17,7 +17,7 @@ const settings: SettingsResponse = {
         type: 'boolean', enabled: false, scopes: ['global', 'group'], source: 'global', is_override: false },
     ] },
     { id: 'experimental', title: 'Experimental', toggles: [
-      { id: 'draft_backend', label: 'Draft backend', description: 'Try isolated drafts for changes.',
+      { id: 'sample_feature', label: 'Sample feature', description: 'Try a feature that can change.',
         type: 'boolean', enabled: false, scopes: ['global', 'group'], source: 'global', is_override: false },
     ] },
   ],

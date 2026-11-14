@@ -5130,7 +5130,6 @@
                                     [{:label "Name" :value "id"} {:label "Path" :value "path"}
                                      {:label "Python name (optional)" :value "python_name"}
                                      {:label "Access" :value "access"}
-                                     {:label "Draft policy" :value "draft"}
                                      {:label "Search this path" :value "search"}
                                      {:label "Remove this path" :value :remove}])]
 
@@ -5147,7 +5146,7 @@
                 (nil? field) (recur entries)
                 :else (let [current (get entry field)
                             value (cond (= field "search") (not (if (nil? current) true current))
-                                        (#{"access" "draft"} field)
+                                        (= field "access")
                                         (settings-pick! screen
                                                         (str "Workspace " field)
                                                         (settings-enum-items

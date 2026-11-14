@@ -699,6 +699,43 @@
                         (io/delete-file file true)))))))
 
 (defdescribe
+  retired-key-in-a-scoped-value-test
+  "An older Vis version stored `draft` on a root entry of a session or a group. The
+   contract no longer has that key, so the access policy of that session failed and
+   each save of the list from a client got a 400."
+  (it "reads the stored root entry without the key"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              sid
+              (h/store-session! db {:title "Old"})
+
+              target
+              (scoped/target db "session" sid)
+
+              entry
+              {"id" "lib" "path" "/tmp" "description" "Old root" "access" "read-write"}
+
+              roots
+              #(:value (first (filter (comp #{"workspace_filesystem"} :id)
+                                      (policy/settings db target))))]
+
+          (store/db-set-scoped-setting! db
+                                        "session" sid
+                                        "config:workspace:filesystem" [(assoc entry
+                                                                         "draft" "copy-only")])
+          (expect (= [entry] (roots)))
+          (expect (nil? (:config-error (policy/snapshot db sid))))
+          ;; A client sends the list that it read, with one more root.
+          (policy/set-setting! db
+                               target
+                               "workspace_filesystem"
+                               "value"
+                               (conj (roots) (assoc entry "id" "more")))
+          (expect (= ["lib" "more"] (mapv #(get % "id") (roots))))))))
+
+(defdescribe
   provider-thinking-defaults
   (it
     "takes the session's thinking defaults from its provider and keeps session picks"

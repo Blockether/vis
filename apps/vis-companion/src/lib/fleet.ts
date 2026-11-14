@@ -534,36 +534,12 @@ export function shortAge(millis: number, now: number = Date.now()): string {
   return `${Math.floor(hours / 24)} d`;
 }
 
-// A DRAFT is a per-session clone parked at ~/.vis/drafts/<repo>/<label>; it is a
-// workspace of the session, never a project of its own. `is_draft` is the gateway
-// fact (list rows carry it); the path shape is the fallback for a gateway older
-// than the flag, so an out-of-date daemon does not resurrect the
-// one-project-per-draft bug.
-const DRAFT_ROOT = /(^|\/)\.vis\/drafts\//;
-
-export function isDraftWorkspace(session: Session): boolean {
-  const workspace = session.workspace;
-  if (!workspace) return false;
-  if (typeof workspace.is_draft === 'boolean') return workspace.is_draft;
-  return DRAFT_ROOT.test(workspace.root ?? '');
-}
-
 /**
  * The path a session is grouped under: THE GATEWAY'S OWN RULE, which is its
- * workspace `repo_root` when it has one, else its `root`
- * (`gateway/state.clj session-project-root`).
- *
- * Every row follows that rule, drafts included. Branching on `is_draft` here
- * disagreed with the machine for an ordinary session opened in a SUBDIRECTORY of
- * its repository: the gateway counts it under the repository, this device filed
- * it under the subdirectory, and the project got a second header holding the
- * rows the first one was still counting.
+ * workspace `root` (`gateway/state.clj session-project-root`).
  */
 export function projectPath(session: Session): string {
-  const workspace = session.workspace;
-  if (!workspace) return '';
-  const path = workspace.repo_root || workspace.root;
-  return path?.replace(/\/+$/, '') || '';
+  return session.workspace?.root?.replace(/\/+$/, '') || '';
 }
 
 /**
@@ -574,17 +550,11 @@ export function projectPath(session: Session): string {
  * rename itself every time the row order moved (a turn starting, a star, an unsent draft). A name
  * only one row claims is not the project's name; the folder is, and it never moves. Same unanimity
  * rule `projectDelete` uses before it dares call a group a project.
- *
- * NEVER `workspace.label` for a draft: that is the DRAFT's name, and using it gave every draft its
- * own bogus top-level project.
  */
 export function projectLabel(sessions: Session[]): string {
   const named = new Set(
     sessions.map(
-      (session) =>
-        session.project_name?.trim() ||
-        (isDraftWorkspace(session) ? '' : session.workspace?.label?.trim()) ||
-        '',
+      (session) => session.project_name?.trim() || session.workspace?.label?.trim() || '',
     ),
   );
   const agreed = named.size === 1 ? [...named][0] : '';

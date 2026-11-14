@@ -9,10 +9,10 @@ const meta = {
   parameters: { layout: 'padded' },
   args: {
     toggle: {
-      id: 'draft_backend',
-      label: 'Draft backend',
+      id: 'sample_mode',
+      label: 'Sample mode',
       type: 'enum',
-      choices: ['auto', 'worktree', 'rift', 'off'],
+      choices: ['auto', 'fast', 'safe', 'off'],
       value: 'off',
     },
     onPick: () => {},
@@ -28,14 +28,14 @@ type Story = StoryObj<typeof meta>;
 export const Saving: Story = { args: { busy: true } };
 export const Choosing: Story = {
   play: async ({ canvasElement }) => {
-    const select = within(canvasElement).getByRole('combobox', { name: 'Draft backend' });
+    const select = within(canvasElement).getByRole('combobox', { name: 'Sample mode' });
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.tab();
     await expect(select).toHaveFocus();
     await userEvent.keyboard('{ArrowDown}');
     await expect(page.getByRole('option', { name: 'off' })).toHaveFocus();
-    await userEvent.keyboard('r{Enter}');
-    await expect(select).toHaveTextContent('rift');
+    await userEvent.keyboard('s{Enter}');
+    await expect(select).toHaveTextContent('safe');
     await expect(select).toHaveFocus();
     await userEvent.click(select);
     await userEvent.click(page.getByRole('option', { name: 'off' }));

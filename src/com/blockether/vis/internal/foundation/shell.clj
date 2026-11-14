@@ -270,14 +270,8 @@
         (workspace/env-filesystem-roots env)
 
         roots
-        (->> (concat [{:trunk (.getPath root) :clone (.getPath root)}]
-                     env-roots
-                     workspace/*filesystem-roots*)
-             ;; A root the draft policy withholds is not a working directory:
-             ;; `shell` must not offer what `safe-path` refuses.
-             (remove :denied?)
-             (mapcat (juxt :trunk :clone))
-             (keep #(some-> %
+        (->> (concat [{:root (.getPath root)}] env-roots workspace/*filesystem-roots*)
+             (keep #(some-> (:root %)
                             io/file
                             .getCanonicalFile))
              distinct
@@ -2815,27 +2809,11 @@
 
     (if (or (false? (:jail-enabled security)) (:disabled? jail-config))
       {:disabled? true :env-values (config/child-environment-values) ::environment latest-env}
-      (let [entries
-            (workspace/env-filesystem-roots latest-env)
-
-            clones
-            (into []
-                  (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %)))) (map :clone))
-                  entries)
-
-            withheld
-            (into #{}
-                  (comp (filter #(or (:denied? %) (and (:clone %) (not= (:clone %) (:trunk %)))))
-                        (map :trunk))
-                  entries)
-
-            roots-fn
+      (let [roots-fn
             (fn []
               (vec (distinct (concat (when-let [root (:root active-workspace)]
                                        [(str root)])
-                                     clones
-                                     (remove #(contains? withheld (workspace/normalize-root %))
-                                       configured-roots)))))
+                                     configured-roots))))
 
             network
             (:network security)

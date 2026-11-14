@@ -1294,10 +1294,14 @@
 
 (defn- read-yaml-config-map
   "Parse one YAML file and validate its original string-keyed JSON shape.
-   Absent, malformed, and non-map documents return nil; invalid maps throw."
-  [path]
-  (when-let [normalized (parse-yaml-config-map path)]
-    (config-validation/assert-config! normalized path)))
+   Absent, malformed, and non-map documents return nil; invalid maps throw.
+   `prepare` changes the parsed map before validation; only a file that Vis
+   itself writes gets one."
+  ([path] (read-yaml-config-map path identity))
+  ([path prepare]
+   (when-let [normalized (some-> (parse-yaml-config-map path)
+                                 prepare)]
+     (config-validation/assert-config! normalized path))))
 
 (defn- read-yaml-config-map-lenient
   "Like `read-yaml-config-map` but never lets an invalid config FILE crash the
@@ -1306,18 +1310,20 @@
    throwing, so a transient/out-of-sync `vis.yml`, overlay, or machine store
    never kills a running session mid-turn — the next `save!`/`/reload`
    re-validates. Strict validation still guards the WRITE path (`save-config!`)."
-  [path]
-  (try (read-yaml-config-map path)
-       (catch clojure.lang.ExceptionInfo e
-         (if (= :vis/invalid-config (:type (ex-data e)))
-           (do (tel/log!
-                 {:level :warn
-                  :id ::config-file-invalid
-                  :data {:source path :problems (:problems (ex-data e))}
-                  :msg
-                  "config file failed the contract; loading leniently so the session survives"})
-               (parse-yaml-config-map path))
-           (throw e)))))
+  ([path] (read-yaml-config-map-lenient path identity))
+  ([path prepare]
+   (try (read-yaml-config-map path prepare)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :vis/invalid-config (:type (ex-data e)))
+            (do (tel/log!
+                  {:level :warn
+                   :id ::config-file-invalid
+                   :data {:source path :problems (:problems (ex-data e))}
+                   :msg
+                   "config file failed the contract; loading leniently so the session survives"})
+                (some-> (parse-yaml-config-map path)
+                        prepare))
+            (throw e))))))
 
 (defn- project-config-yaml-paths
   "YAML candidates for the hidden `.vis/` project overlay tier."
@@ -1395,11 +1401,11 @@
 
 (defn- read-machine-store
   "Read `~/.vis/state.yml` completely, for writers and for `load-global-config-raw`.
-   Invalid derived blocks are dropped so a malformed cache cannot refuse the
-   person's next write."
+   Invalid derived blocks and retired keys are dropped so that a stored value
+   cannot refuse the person's next write."
   []
   (let [raw
-        (read-yaml-config-map-lenient (state-path))
+        (read-yaml-config-map-lenient (state-path) config-validation/without-retired-keys)
 
         [config dropped]
         (config-validation/without-invalid-derived raw)]
@@ -1689,7 +1695,7 @@
    replace on merge, like everywhere else in config)."
   [".git/" "node_modules/" "target/" "build/" "dist/" "__pycache__/" ".venv/" ".gradle/" "vendor/"
    ".next/" "out/" ".m2/" ".shadow-cljs/" "cljs-runtime/" ".cpcache/" ".clj-kondo/" ".calva/"
-   ".lsp/" ".rift/"])
+   ".lsp/"])
 
 (defn search-overlay
   "Return the grep overlay as an internal keyword-keyed map, or nil when unset.
@@ -2217,7 +2223,7 @@
             (throw (ex-info "Project settings cannot alias the global configuration"
                             {:status 400})))
           (let [before
-                (or (read-yaml-config-map path) {})
+                (or (read-yaml-config-map path config-validation/without-retired-keys) {})
 
                 ;; An empty toggles map means nothing; an empty overlay leaves no file.
                 after

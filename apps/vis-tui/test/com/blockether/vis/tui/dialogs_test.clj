@@ -1093,11 +1093,11 @@
       (expect (zero? @asked))
       (expect (nil? @result)))))
 
-(defn- exercise-backend-picker
+(defn- exercise-enum-picker
   "Run the production Settings picker on a virtual terminal with a fixture gateway."
-  [keys {:keys [width fail? experimental? value] :or {width 80 value "worktree"}}]
+  [keys {:keys [width fail? experimental? value] :or {width 80 value "fast"}}]
   (let [id
-        "dialogs_draft_backend"
+        "dialogs_sample_mode"
 
         terminal
         (DefaultVirtualTerminal. (TerminalSize. width 25))
@@ -1118,9 +1118,9 @@
         @#'dlg/read-modal-key!]
 
     (toggles/register-toggle! {:id id
-                               :label "Draft backend"
+                               :label "Sample mode"
                                :type :enum
-                               :choices ["auto" "worktree" "rift" "off"]
+                               :choices ["auto" "fast" "safe" "off"]
                                :default value
                                :experimental? (boolean experimental?)
                                :settings? false})
@@ -1138,63 +1138,62 @@
                         (KeyStroke. KeyType/ArrowUp)
 
                         (term/keystroke key))))
-         (with-redefs-fn
-           {#'dlg/load-inventories! (constantly nil)
-            #'dlg/settings-rows (constantly
-                                  [{:type :registry-toggle :toggle-id id :label "Draft backend"}])
-            #'dlg/read-modal-key! (fn [s]
-                                    (swap! frames conj
-                                      (str/join "\n" (map :text (term/painted-rows terminal))))
-                                    (read-key s))
-            #'vis/send-json! (fn [_ path body]
-                               (swap! requests conj [path body])
-                               (if fail?
-                                 (throw (ex-info "Save refused" {}))
-                                 {"id" id "type" "enum" "value" (or (:value body) "auto")}))
-            #'vis/notify! (fn [message & _]
-                            (swap! errors conj message))}
+         (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                          #'dlg/settings-rows
+                          (constantly [{:type :registry-toggle :toggle-id id :label "Sample mode"}])
+                          #'dlg/read-modal-key!
+                          (fn [s]
+                            (swap! frames conj
+                              (str/join "\n" (map :text (term/painted-rows terminal))))
+                            (read-key s))
+                          #'vis/send-json!
+                          (fn [_ path body]
+                            (swap! requests conj [path body])
+                            (if fail?
+                              (throw (ex-info "Save refused" {}))
+                              {"id" id "type" "enum" "value" (or (:value body) "auto")}))
+                          #'vis/notify! (fn [message & _]
+                                          (swap! errors conj message))}
            #(dlg/settings-dialog! screen {}))
          {:requests @requests :frames @frames :errors @errors :value (vis/toggle-value id)}
          (finally (toggles/reset-to-default! id) (.stopScreen screen)))))
 
 (defdescribe
   settings-enum-dropdown-test
-  (it "shows every backend and the current choice without saving on open or Escape"
+  (it "shows every choice and the current one without saving on open or Escape"
       (doseq [width [40 100]]
-        (let [{:keys [requests frames value]} (exercise-backend-picker [:enter :esc :esc]
+        (let [{:keys [requests frames value]} (exercise-enum-picker [:enter :esc :esc]
                                                                        {:width width})]
           (expect (empty? requests))
-          (expect (= "worktree" value))
+          (expect (= "fast" value))
           (expect (some (fn [frame]
-                          (every? #(str/includes? frame %)
-                                  ["auto" "worktree" "rift" "off" "current"]))
+                          (every? #(str/includes? frame %) ["auto" "fast" "safe" "off" "current"]))
                         frames)))))
-  (it "starts on the saved value and submits only the explicitly selected backend"
-      (let [{:keys [requests value]} (exercise-backend-picker [:enter :down :enter :esc] {})]
-        (expect (= [["/v1/settings" {:id "dialogs_draft_backend" :action "value" :value "rift"}]]
+  (it "starts on the saved value and submits only the explicitly selected choice"
+      (let [{:keys [requests value]} (exercise-enum-picker [:enter :down :enter :esc] {})]
+        (expect (= [["/v1/settings" {:id "dialogs_sample_mode" :action "value" :value "safe"}]]
                    requests))
-        (expect (= "rift" value))))
-  ;; #242 and #243: drafts remain available in Settings without enabling them on open.
-  (it "shows off and lets the user explicitly enable and disable drafts"
+        (expect (= "safe" value))))
+  ;; #242 and #243: an `off` setting stays in Settings and changes only on an explicit choice.
+  (it "shows off and lets the user explicitly enable and disable the setting"
       (doseq [[initial keys expected] [["off" [:esc] "off"]
                                        ["off" [:enter :up :up :up :enter :esc] "auto"]
                                        ["auto" [:enter :down :down :down :enter :esc] "off"]]]
-        (let [{:keys [requests frames value]} (exercise-backend-picker keys {:value initial})]
+        (let [{:keys [requests frames value]} (exercise-enum-picker keys {:value initial})]
           (expect (= expected value))
           (expect (some #(str/includes? (str/lower-case %) initial) frames))
           (expect (= (if (= initial expected)
                        []
                        [["/v1/settings"
-                         {:id "dialogs_draft_backend" :action "value" :value expected}]])
+                         {:id "dialogs_sample_mode" :action "value" :value expected}]])
                      requests)))))
-  (it "confirming the current backend is a no-op"
-      (let [{:keys [requests value]} (exercise-backend-picker [:enter :enter :esc] {})]
+  (it "confirming the current choice is a no-op"
+      (let [{:keys [requests value]} (exercise-enum-picker [:enter :enter :esc] {})]
         (expect (empty? requests))
-        (expect (= "worktree" value))))
-  (it "a refused save leaves the effective backend unchanged"
-      (let [{:keys [errors value]} (exercise-backend-picker [:enter :down :enter :esc]
-                                                            {:fail? true})]
-        (expect (= "worktree" value))
+        (expect (= "fast" value))))
+  (it "a refused save leaves the effective value unchanged"
+      (let [{:keys [errors value]} (exercise-enum-picker [:enter :down :enter :esc] {:fail? true})]
+        (expect (= "fast" value))
         (expect (= ["Setting was not changed: Save refused"] errors)))))
 
 (defdescribe
@@ -3080,8 +3079,7 @@
             (expect (true? answer))
             (expect (str/includes? painted "Discard 'feature-a'?"))
             (expect (str/includes? painted "Yes"))
-            (expect (str/includes? painted "No"))
-            (expect (not (str/includes? painted "Abandon draft"))))
+            (expect (str/includes? painted "No")))
           (finally (.stopScreen screen)))))
   (it "a DESTRUCTIVE y/n names what saying yes COSTS, and what each answer does"
       ;; `Yes` alone never says what it agrees to. The companion's confirm row
@@ -3852,31 +3850,31 @@
                           "enabled" true
                           "children"
                           [{"id" "subagents" "label" "Subagents" "type" "boolean" "enabled" false}]}
-                         {"id" "draft_backend"
-                          "label" "Draft backend"
+                         {"id" "sample_mode"
+                          "label" "Sample mode"
                           "description" "Off by default."
                           "type" "enum"
                           "value" "off"
-                          "choices" ["auto" "worktree" "rift" "off"]
+                          "choices" ["auto" "fast" "safe" "off"]
                           "is_experimental" true}]}]})
            ;; The agent group stays with the dialog's own agent-name row above,
            ;; and the section header is the gateway's title verbatim.
            (let [rows
                  (registry-toggle-rows)
 
-                 [council subagents drafts]
+                 [council subagents sample]
                  (rest rows)]
 
              (expect (= [:section :registry-toggle :registry-toggle :registry-toggle]
                         (mapv :type rows)))
              (expect (= "General" (:label (first rows))))
-             ;; `draft_backend` lives in the engine, never in this binary's
+             ;; `sample_mode` lives in the engine, never in this binary's
              ;; registry: the catalog is what puts it on the screen.
-             (expect (nil? (toggles/toggle-spec "draft_backend")))
-             (expect (= "draft_backend" (:toggle-id drafts)))
-             (expect (= ["auto" "worktree" "rift" "off"] (:choices drafts)))
-             (expect (= "Draft backend  [Experimental]" (settings-option-label drafts {})))
-             (expect (= "Off" (#'dlg/settings-option-value drafts {})))
+             (expect (nil? (toggles/toggle-spec "sample_mode")))
+             (expect (= "sample_mode" (:toggle-id sample)))
+             (expect (= ["auto" "fast" "safe" "off"] (:choices sample)))
+             (expect (= "Sample mode  [Experimental]" (settings-option-label sample {})))
+             (expect (= "Off" (#'dlg/settings-option-value sample {})))
              ;; A child stands one level under its parent and is not experimental.
              (expect (= "subagents" (:toggle-id subagents)))
              (expect (= 1 (:depth subagents)))
@@ -3884,7 +3882,7 @@
              (expect (nil? (:locked subagents)))
              ;; The value column gives the state of each row.
              (expect (= ["On" "Off" "Off"]
-                        (mapv #(settings-option-value % {}) [council subagents drafts]))))
+                        (mapv #(settings-option-value % {}) [council subagents sample]))))
            (finally (reset! inventory original)))))
   (it "hides the rows under a boolean parent that is off"
       (let [inventory
@@ -3938,20 +3936,20 @@
                               :error nil
                               :groups [{"id" "experimental"
                                         "title" "Experimental"
-                                        "toggles" [{"id" "draft_backend"
-                                                    "label" "Draft backend"
+                                        "toggles" [{"id" "sample_mode"
+                                                    "label" "Sample mode"
                                                     "type" "enum"
                                                     "value" "off"
-                                                    "choices" ["auto" "worktree" "rift" "off"]
+                                                    "choices" ["auto" "fast" "safe" "off"]
                                                     "is_experimental" true}]}]})
            (with-redefs [vis/gateway-set-setting-value! (fn [id value _target]
                                                           {"id" id "type" "enum" "value" value})]
-             (apply-settings-option {} (assoc (second (registry-toggle-rows)) :value "worktree")))
-           (expect (= "Draft backend  [Experimental]"
+             (apply-settings-option {} (assoc (second (registry-toggle-rows)) :value "fast")))
+           (expect (= "Sample mode  [Experimental]"
                       (settings-option-label (second (registry-toggle-rows)) {})))
-           (expect (= "worktree" (#'dlg/settings-option-value (second (registry-toggle-rows)) {})))
+           (expect (= "fast" (#'dlg/settings-option-value (second (registry-toggle-rows)) {})))
            ;; A daemon-only toggle never leaks into the process registry.
-           (expect (nil? (toggles/toggle-spec "draft_backend")))
+           (expect (nil? (toggles/toggle-spec "sample_mode")))
            (finally (reset! inventory original)))))
   (it "falls back to the process registry when the daemon cannot answer"
       (let [registry-toggle-rows

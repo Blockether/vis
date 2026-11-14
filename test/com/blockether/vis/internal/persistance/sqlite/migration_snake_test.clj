@@ -335,6 +335,82 @@
              (expect (not (str/includes? (get (master-sql ds) "council_entry") "autocomplain")))
              (finally (.delete file))))))
 
+(def ^:private draft-workspace-ddl
+  "The `workspace` table of a V1 that still had drafts."
+  (str "CREATE TABLE workspace (id TEXT PRIMARY KEY NOT NULL, repo_id TEXT NOT NULL, "
+       "repo_root TEXT NOT NULL, root TEXT NOT NULL, "
+       "state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'discarded')), "
+       "fork_ms INTEGER, label TEXT, last_focused_at_ms INTEGER, filesystem_roots TEXT, "
+       "workspace_kind TEXT NOT NULL DEFAULT 'trunk' "
+       "CHECK (workspace_kind IN ('trunk', 'draft', 'checkpoint')), "
+       "workspace_backend TEXT NOT NULL DEFAULT 'live', workspace_mechanism TEXT, "
+       "parent_workspace_id TEXT REFERENCES workspace(id) ON DELETE RESTRICT, "
+       "apply_fork_ms INTEGER, created_at INTEGER NOT NULL, discarded_at INTEGER)"))
+
+(defn- draft-store!
+  "Give `ds` the workspace table of a V1 with drafts: a checkout row, a draft of it
+   and a discarded draft."
+  [ds]
+  (exec! ds "DROP TABLE workspace")
+  (exec! ds draft-workspace-ddl)
+  (exec! ds "CREATE INDEX idx_workspace_repo_state ON workspace(repo_id, state)")
+  (exec! ds "CREATE INDEX idx_workspace_parent ON workspace(parent_workspace_id)")
+  (exec! ds
+         (str "INSERT INTO workspace (id, repo_id, repo_root, root, created_at)"
+              " VALUES ('w1', 'r1', '/code/app', '/code/app', 1)"))
+  (exec! ds
+         (str "INSERT INTO workspace (id, repo_id, repo_root, root, fork_ms, label,"
+              " filesystem_roots, workspace_kind, workspace_backend, workspace_mechanism,"
+              " parent_workspace_id, apply_fork_ms, created_at)"
+              " VALUES ('w2', 'r1', '/code/app', '/home/u/.vis/drafts/r1/fix', 5, 'fix', '[]',"
+              " 'draft', 'worktree', 'worktree', 'w1', 6, 2)"))
+  (exec! ds
+         (str "INSERT INTO workspace (id, repo_id, repo_root, root, state, fork_ms,"
+              " workspace_kind, workspace_backend, parent_workspace_id, created_at, discarded_at)"
+              " VALUES ('w3', 'r1', '/code/app', '/home/u/.vis/drafts/r1/old', 'discarded', 3,"
+              " 'draft', 'rift', 'w1', 3, 4)")))
+
+(defdescribe
+  retired-draft-workspace-test
+  ;; User decision: Vis has no drafts. A session that worked in a draft works in the
+  ;; checkout again, and the draft directory stays on disk.
+  (it "returns each draft workspace to its checkout and drops the draft columns"
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             (draft-store! ds)
+             (exec! ds "DELETE FROM vis_schema")
+             (migration/migrate! ds [migration-dir])
+             (expect (= #{"id" "repo_id" "root" "state" "label" "last_focused_at_ms" "created_at"
+                          "discarded_at"}
+                        (columns-of ds "workspace")))
+             (expect (= 3 (row-count ds "workspace")))
+             (expect (= "3" (scalar ds "SELECT count(*) FROM workspace WHERE root = '/code/app'")))
+             (expect (= "fix" (scalar ds "SELECT label FROM workspace WHERE id = 'w2'")))
+             (expect (= "discarded" (scalar ds "SELECT state FROM workspace WHERE id = 'w3'")))
+             (expect (not (str/includes? (str (master-sql ds)) "idx_workspace_parent")))
+             (finally (.delete file)))))
+  (it "keeps the draft columns while another process has the store open"
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             (draft-store! ds)
+             (exec! ds "DELETE FROM vis_schema")
+             (migration/migrate! ds [migration-dir] {:shared? true})
+             (expect (contains? (columns-of ds "workspace") "repo_root"))
+             (expect (= "/home/u/.vis/drafts/r1/fix"
+                        (scalar ds "SELECT root FROM workspace WHERE id = 'w2'")))
+             ;; this Vis still makes a workspace in that store
+             (expect (= "/code/new"
+                        (:root (sqlite/db-workspace-insert! {:datasource ds}
+                                                            {:repo-id "r2" :root "/code/new"}))))
+             (expect (= "/code/new"
+                        (scalar ds "SELECT repo_root FROM workspace WHERE repo_id = 'r2'")))
+             ;; the next open that has the store alone returns the draft to its checkout
+             (migration/migrate! ds [migration-dir])
+             (expect (not (contains? (columns-of ds "workspace") "repo_root")))
+             (expect (= "/code/app" (scalar ds "SELECT root FROM workspace WHERE id = 'w2'")))
+             (expect (= "/code/new" (scalar ds "SELECT root FROM workspace WHERE repo_id = 'r2'")))
+             (finally (.delete file))))))
+
 (defdescribe
   attachment-reference-reopen-test
   (it "adds the composer reference column to an existing store without losing attachments"

@@ -626,7 +626,7 @@
 (defdescribe
   cli-merged-toggle-config-test
   (it "hydrates merged configuration before running and restores CLI overrides without saving"
-      ;; #241: one-shot native runs ignored an explicit worktree backend in YAML.
+      ;; #241: one-shot native runs ignored a toggle value set in YAML.
       (manifest/initialize!)
       (let [previous
             @#'toggles/state
@@ -635,14 +635,14 @@
             @previous]
 
         (try
-          (doseq [[configured override expected]
-                  [[nil nil "off"] ["off" nil "off"] ["worktree" nil "worktree"]
-                   ["off" "worktree" "worktree"] ["worktree" "off" "off"]]]
+          (doseq [[configured override expected] [[nil nil "low"] ["low" nil "low"]
+                                                  ["high" nil "high"] ["low" "high" "high"]
+                                                  ["high" "low" "low"]]]
             (let [seen (atom [])
                   writes (atom [])
-                  merged (if configured {"toggles" {"draft_backend" configured}} {})]
+                  merged (if configured {"toggles" {"verbosity" configured}} {})]
 
-              (toggles/reset-to-default! "draft_backend")
+              (toggles/reset-to-default! "verbosity")
               (with-redefs-fn {#'config/init-cli! (fn []
                                                     nil)
                                #'config/load-global-yaml-config-raw (fn []
@@ -662,19 +662,19 @@
                                #'clojure.core/shutdown-agents (fn []
                                                                 nil)
                                #'main/run! (fn [& _]
-                                             (swap! seen conj (toggles/value-of "draft_backend"))
+                                             (swap! seen conj (toggles/value-of "verbosity"))
                                              {:content []})}
                 #(#'main/cli-run!
                    {}
                    (cond-> ["--raw"]
                      override
-                     (into ["--toggles" (str "draft_backend=" override)])
+                     (into ["--toggles" (str "verbosity=" override)])
 
                      true
                      (conj "fixture"))))
               (expect (empty? @writes))
               (expect (= [expected] @seen))
-              (expect (= (or configured "off") (toggles/value-of "draft_backend")))))
+              (expect (= (or configured "low") (toggles/value-of "verbosity")))))
           (finally (reset! previous saved-state))))))
 
 (defdescribe
@@ -1312,10 +1312,10 @@
                         (reset! exit code))]
 
           (#'main/exit-with-user-error!
-           (ex-info "Invalid value for --toggles draft_backend: x" {:vis/user-error true})))
+           (ex-info "Invalid value for --toggles verbosity: x" {:vis/user-error true})))
         (expect (= [] @out))
         (expect (= 2 @exit))
-        (expect (= ["vis-agent: Invalid value for --toggles draft_backend: x"] @err)))))
+        (expect (= ["vis-agent: Invalid value for --toggles verbosity: x"] @err)))))
 
 (defdescribe
   one-shot-trajectory-test

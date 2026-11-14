@@ -170,16 +170,15 @@
     :cmd/parent ["projects"]
     :cmd/doc "Delete a project; with --with-sessions, every session in it too."
     :cmd/usage "vis-agent projects delete <PROJECT-ID> [--with-sessions]"
-    :cmd/args
-    [{:name "project-id"
-      :kind :positional
-      :type :string
-      :required true
-      :doc "Project id (full UUID or unambiguous prefix)."}
-     {:name "with-sessions"
-      :kind :flag
-      :type :boolean
-      :doc "Also delete every session in the project (drafts included), not just the project row."}]
+    :cmd/args [{:name "project-id"
+                :kind :positional
+                :type :string
+                :required true
+                :doc "Project id (full UUID or unambiguous prefix)."}
+               {:name "with-sessions"
+                :kind :flag
+                :type :boolean
+                :doc "Also delete every session in the project, not just the project row."}]
     :cmd/examples ["vis-agent projects delete 9f2c1a44"
                    "vis-agent projects delete 9f2c1a44 --with-sessions"]
     :cmd/run-fn cli-delete-project!}])

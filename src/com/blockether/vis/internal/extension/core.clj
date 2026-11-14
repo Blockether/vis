@@ -52,7 +52,7 @@
    (`symbol.json`, `callable.tag`). Activity reports the tag as each row's signal:
 
      :observation    reads state without changing it - cat, ls, grep, lookups
-     :mutation       changes local state - files, processes, REPLs, drafts
+     :mutation       changes local state - files, processes, REPLs
      :verification   checks work - tests, lint, CI status
      :external       reaches people or systems beyond this session - messages,
                      publications, remote hosts, external services
@@ -2001,7 +2001,7 @@
 (defn invoke-operation
   "Invoke host operation `f` through the declarative :around hooks for `op-kw`,
    then thread its result through the :after hooks. This is the non-model-tool
-   entry point for operations such as a TUI Git commit or a draft approval; hook
+   entry point for host operations such as the Python block; hook
    lifecycle remains owned by extension registration."
   [op-kw env f args]
   (let [op
@@ -3118,10 +3118,9 @@
     extensions))
 
 (def host-operations
-  "Operations that are not tools but run op hooks: the Python block, the draft
-   lifecycle and each Git commit. With the tools and `gate-ops`, they are every
-   name that an op hook can match."
-  #{:python_execution :draft/create :draft/sync :draft/approve :draft/discard :git/commit})
+  "Operations that are not tools but run op hooks: the Python block. With the
+   tools and `gate-ops`, they are every name that an op hook can match."
+  #{:python_execution})
 
 (defn unmatched-op-hooks
   "One row for each op hook of `extensions` that names no tool of `extensions`, no

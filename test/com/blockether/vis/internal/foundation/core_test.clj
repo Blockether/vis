@@ -30,48 +30,6 @@
                      (expect (fn? (:render declaration)))))))
 
 (defdescribe
-  draft-workflow-prompt-test
-  (it
-    "requires the draft workflow only for explicitly enabled backends"
-    (let [value-of toggles/value-of]
-      (doseq [backend ["auto" "worktree" "rift"]]
-        (with-redefs [toggles/value-of (fn [id]
-                                         (if (= "draft_backend" id) backend (value-of id)))]
-          (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-            (doseq
-              [required
-               ["## Draft workflow" "standing authorization to create drafts without asking"
-                "every change-making task (code, tests, documentation and configuration)"
-                "Read-only questions, analysis and diff previews do not require a draft"
-                "draft_status()" "draft_create(\"task-name\")" "before editing"
-                "this session's draft for the same task"
-                "Never edit the shared checkout or another session's draft" "project_root_path"
-                "next block" "Keep edits, formatting and verification in the draft" "draft_diff()"
-                "roots=[project_root_path, sibling_path]" "draft_sync()" "draft_approve()"
-                "commits and may push"
-                "user or applicable project instructions authorize commit and push"
-                "Review-first, local-only and no-commit/push requests leave the draft unapproved"
-                ;; Completed merged drafts are cleanup, not a new approval gate.
-                "fetch origin" "origin/<target_branch>" "before editing" "no pending changes"
-                "all draft commits merged into the target" "required publication succeeded"
-                "draft_discard()` without asking" "Do not discard an active task"
-                "Confirm destructive discard only when unapproved changes or unmerged commits would be lost"
-                "If drafts are unavailable or blocked, report the blocker"
-                "Never silently fall back to shared-checkout edits"]]
-              (expect (str/includes? prompt required) (str backend ": " required))))))))
-  (it "omits the workflow by default, removes it when switched off and restores it on opt-in"
-      (let [value-of toggles/value-of]
-        (doseq [backend [nil "" "unknown" "auto" "off" "rift"]]
-          (with-redefs [toggles/value-of (fn [id]
-                                           (if (= "draft_backend" id) backend (value-of id)))]
-            (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-              (expect (= (contains? #{"auto" "rift"} backend)
-                         (str/includes? prompt "## Draft workflow")))
-              (when-not (contains? #{"auto" "rift"} backend)
-                (doseq [absent ["draft_create(" "draft_approve(" "draft_discard("]]
-                  (expect (not (str/includes? prompt absent)))))))))))
-
-(defdescribe
   project-path-prompt-runtime-contract-test
   (it
     "renders and binds one registry, including removals as append-only prompt deltas"

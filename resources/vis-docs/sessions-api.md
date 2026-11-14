@@ -30,6 +30,8 @@ requests, select **HTTP** at the top of the page.
   bindings](#read-the-key-bindings).
 - **A session must use a cheaper or stronger model.** [Choose the model of a
   session](#choose-the-model-of-a-session).
+- **A session must work in another directory.** [Change the directory of a
+  session](#change-the-directory-of-a-session).
 - **Your program must stop work or change waiting messages.** [Queue and cancel
   messages](#queue-and-cancel-messages).
 - **Your program must find, copy or sort saved sessions.** [Find a saved
@@ -93,6 +95,8 @@ request.
 | Read the limits of a provider | `client.model_limits(provider)` | `get_provider_limits(provider_id)` |
 | Read the model of a session | `session.model()` | `get_session_model(sid)` |
 | Pin or clear the model of a session | `session.set_model(provider, model)` | `patch_session_model(sid, body=...)` |
+| Read the directory of a session | — | `get_session_workspace(sid)` |
+| Change the directory of a session | — | `patch_session_workspace_root(sid, body=...)` |
 | Read a session | `session.read()` | `get_session(sid)` |
 | Send a message | `session.send(request)` | `get_session_seq(sid)`, then `post_session_turns(sid, body=...)` |
 | Send a message and wait for a checked answer | `session.run(request, ...)` | — |
@@ -146,6 +150,8 @@ request.
 | Read the limits of a provider | `GET /v1/providers/{provider-id}/limits` |
 | Read the model of a session | `GET /v1/sessions/{sid}/model` |
 | Pin or clear the model of a session | `PATCH /v1/sessions/{sid}/model` |
+| Read the directory of a session | `GET /v1/sessions/{sid}/workspace` |
+| Change the directory of a session | `PATCH /v1/sessions/{sid}/workspace/root` |
 | Read a session | `GET /v1/sessions/{sid}` |
 | Read the event cursor | `GET /v1/sessions/{sid}/seq` |
 | Send a message | `POST /v1/sessions/{sid}/turns` |
@@ -461,6 +467,39 @@ pair that the session uses without a pin.
 A provider that the gateway does not serve returns 400 with the code `unknown-provider`. An archived
 session returns 409. A model request can cost money. Read `pricing` before you choose a model for
 many turns.
+
+## Change the directory of a session
+
+<div data-variant="python">
+
+```python
+workspace = client.get_session_workspace(session.id)["workspace"]
+print(workspace["root"])
+moved = client.patch_session_workspace_root(session.id, body={"path": "/Users/me/projects/api"})
+print(moved["workspace"]["root"])
+```
+
+The first call reads the directory where the session works. The second call moves the session to
+another directory and returns the new `workspace`.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/workspace"
+vis_api -X PATCH "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/workspace/root" \
+  -H 'content-type: application/json' --data '{"path": "/Users/me/projects/api"}'
+```
+
+The first request reads the directory where the session works. The second request moves the session
+to another directory and returns the new `workspace`.
+
+</div>
+
+The `workspace` object has the `root` of the session and the `git` state of that directory. The
+change does the same as `/cd` in a conversation. [Change the directory of a
+session](sessions.md#change-the-directory-of-a-session) explains its effects.
 
 ## Send a message and wait
 

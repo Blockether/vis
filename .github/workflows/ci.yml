@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')) }}
 
 jobs:
-  # Full test suite on Linux + macOS only. vis embeds CPython (FFM) + rift
-  # FFM, so tests use the build JDK from .graalvm-version
+  # Full test suite on Linux + macOS only. vis embeds CPython (FFM),
+  # so tests use the build JDK from .graalvm-version
   # via ./.github/actions/setup-graalvm-25, i.e. the exact JDK the
   # native binary is built with. JVM users may use any JDK 25+ distribution.
   # fail-fast false so each OS reports independently. Windows is not supported.

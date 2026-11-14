@@ -1,19 +1,17 @@
 (ns com.blockether.vis.internal.foundation.housekeeping-test
-  "Stale-state accounting for `~/.vis/drafts`, `~/.vis/gateway/events` and the
+  "Stale-state accounting for `~/.vis/gateway/events`, `~/.vis/sandbox` and the
    directories `sweep-stale!` deletes on its own.
 
-   Everything here runs against throwaway directories bound through
-   `workspace/*drafts-home*` and — for every sweep test, ALL FIVE at once via
-   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*python-home*`,
-   `*events-home*` and `*sandbox-home*`; no test may read, let alone delete,
-   anything under the real `~/.vis`."
+   Everything here runs against throwaway directories bound through — for every
+   sweep test, ALL FIVE at once via `with-homes` — `housekeeping/*logs-home*`,
+   `*cache-home*`, `*python-home*`, `*events-home*` and `*sandbox-home*`; no test
+   may read, let alone delete, anything under the real `~/.vis`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
-            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.test-temp :as test-temp]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
   (:import [java.io File]
@@ -48,108 +46,6 @@
     (.setLastModified f (age-ms age-days))
     f))
 
-(defn- draft-dir!
-  "Create `<drafts>/<repo>/<name>` holding one file of the given age."
-  ^File [^File drafts repo name age-days]
-  (let [f (touch! drafts (str repo File/separator name File/separator "file.txt") age-days "x")]
-    (.getParentFile f)))
-
-(defn- kinds [report] (frequencies (map :kind (:reclaimable (:drafts report)))))
-
-;; scan — drafts
-
-(defdescribe
-  scan-drafts-test
-  (it "reports nothing when every draft directory is younger than the cutoff"
-      (let [drafts (tmp-dir "vis-hk-fresh")]
-        (draft-dir! drafts "repo" "ws-a" 1)
-        (draft-dir! drafts "repo" "ws-b" 3)
-        (binding [workspace/*drafts-home* (.getPath drafts)
-                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
-
-          (let [report (housekeeping/scan {:days 14})]
-            (expect (zero? (:count report)))
-            (expect (zero? (:bytes report)))
-            (expect (= 2 (:dir-count (:drafts report))))))))
-  (it "reports a directory with no workspace row as a stale orphan once it ages out"
-      (let [drafts (tmp-dir "vis-hk-orphan")]
-        (draft-dir! drafts "repo" "ancient" 40)
-        (draft-dir! drafts "repo" "recent" 2)
-        (binding [workspace/*drafts-home* (.getPath drafts)
-                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
-
-          (let [report (housekeeping/scan {:days 14})
-                item (first (:reclaimable (:drafts report)))]
-
-            (expect (= 1 (:count report)))
-            (expect (= {:orphan 1} (kinds report)))
-            (expect (= "ancient" (:label item)))
-            (expect (>= (long (:age-days item)) 40))
-            (expect (pos? (long (:bytes item))))))))
-  (it "judges an orphan by its newest FILE, not by the directory's own timestamp"
-      ;; A clone that is worked in daily can keep an old directory mtime, because
-      ;; a directory's timestamp only moves when entries are added or removed.
-      ;; Deleting such a tree would destroy live work.
-      (let [drafts
-            (tmp-dir "vis-hk-mtime")
-
-            dir
-            (draft-dir! drafts "repo" "busy" 90)]
-
-        (touch! dir "fresh.txt" 0 "still in use")
-        (.setLastModified dir (age-ms 90))
-        (binding [workspace/*drafts-home*
-                  (.getPath drafts)
-
-                  housekeeping/*events-home*
-                  (.getPath (tmp-dir "vis-hk-ev"))]
-
-          (expect (zero? (:count (housekeeping/scan {:days 14})))))))
-  (it "honours an explicit :days cutoff"
-      (let [drafts (tmp-dir "vis-hk-days")]
-        (draft-dir! drafts "repo" "ws" 20)
-        (binding [workspace/*drafts-home* (.getPath drafts)
-                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
-
-          (expect (zero? (:count (housekeeping/scan {:days 30}))))
-          (expect (= 1 (:count (housekeeping/scan {:days 7})))))))
-  (it "ignores dot-entries, so the store's own internals are never reclaimed"
-      (let [drafts (tmp-dir "vis-hk-dot")]
-        (touch! drafts (str ".trash" File/separator "old" File/separator "f.txt") 99 "x")
-        (touch! drafts (str ".fresh-seed" File/separator "seed" File/separator "f.txt") 99 "x")
-        (binding [workspace/*drafts-home* (.getPath drafts)
-                  housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-ev"))]
-
-          (expect (zero? (:count (housekeeping/scan {:days 14}))))))))
-
-(defdescribe scan-private-root-ownership-test
-             (it "keeps extra-root ownership after the primary clone has been removed"
-                 (doseq [state [:active :discarded]]
-                   (let [drafts (tmp-dir "vis-hk-extra-roots")
-                         first-copy (draft-dir! drafts "repo-a" "extra" 40)
-                         second-copy (draft-dir! drafts "repo-b" "extra" 40)
-                         row {:id "ws"
-                              :root (.getPath (io/file drafts "repo" "removed-primary"))
-                              :fork-ms 1
-                              :state state
-                              :last-focused-at-ms (System/currentTimeMillis)
-                              :filesystem-roots [{:trunk (.getPath (io/file drafts "trunk-a"))
-                                                  :clone (.getPath first-copy)
-                                                  :policy :copy-and-apply}
-                                                 {:trunk (.getPath (io/file drafts "trunk-b"))
-                                                  :clone (.getPath second-copy)
-                                                  :policy :copy-only}]}]
-
-                     (binding [workspace/*drafts-home* (.getPath drafts)
-                               housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-extra-ev"))]
-
-                       (with-redefs [p/db-workspace-list-drafts (constantly [row])]
-                         (let [items (get-in (housekeeping/scan {:db-info :fixture})
-                                             [:drafts :reclaimable])]
-                           (expect (= (if (= :discarded state) 2 0) (count items)))
-                           (expect (every? #(= :discarded (:kind %)) items))
-                           (expect (every? #(= "ws" (:workspace-id %)) items)))))))))
-
 ;; scan — gateway journals
 
 (defdescribe scan-journals-test
@@ -158,8 +54,7 @@
                    (touch! events "old.ndjson" 30 "{}\n")
                    (touch! events "live.ndjson" 0 "{}\n")
                    (touch! events "notes.txt" 30 "not a journal")
-                   (binding [workspace/*drafts-home* (.getPath (tmp-dir "vis-hk-d"))
-                             housekeeping/*events-home* (.getPath events)]
+                   (binding [housekeeping/*events-home* (.getPath events)]
 
                      (let [report (housekeeping/scan {:days 14})
                            journals (:journals report)]
@@ -195,10 +90,7 @@
             (repeatedly 3 #(str (random-uuid)))]
 
         (sandbox-fixture! dir gone kept young)
-        (binding [workspace/*drafts-home*
-                  (.getPath (tmp-dir "vis-hk-d"))
-
-                  housekeeping/*events-home*
+        (binding [housekeeping/*events-home*
                   (.getPath (tmp-dir "vis-hk-ev"))
 
                   housekeeping/*sandbox-home*
@@ -224,10 +116,7 @@
             (repeatedly 3 #(str (random-uuid)))]
 
         (sandbox-fixture! dir gone kept young)
-        (binding [workspace/*drafts-home*
-                  (.getPath (tmp-dir "vis-hk-d"))
-
-                  housekeeping/*events-home*
+        (binding [housekeeping/*events-home*
                   (.getPath (tmp-dir "vis-hk-ev"))
 
                   housekeeping/*sandbox-home*
@@ -256,10 +145,7 @@
 
                (touch! dir (str live ".py") 30 "x = 1\n")
                (touch! dir (str gone ".py") 30 "x = 2\n")
-               (binding [workspace/*drafts-home*
-                         (.getPath (tmp-dir "vis-hk-d"))
-
-                         housekeeping/*events-home*
+               (binding [housekeeping/*events-home*
                          (.getPath (tmp-dir "vis-hk-ev"))
 
                          housekeeping/*sandbox-home*
@@ -276,10 +162,7 @@
             (repeatedly 3 #(str (random-uuid)))]
 
         (sandbox-fixture! dir gone kept young)
-        (binding [workspace/*drafts-home*
-                  (.getPath (tmp-dir "vis-hk-d"))
-
-                  housekeeping/*events-home*
+        (binding [housekeeping/*events-home*
                   (.getPath (tmp-dir "vis-hk-ev"))
 
                   housekeeping/*sandbox-home*
@@ -317,10 +200,7 @@
       (touch! dir (str kept ".py") 30 "x = 2\n")
       (touch! dir (str kept ".turns" File/separator ".turn.py.tmp-" (random-uuid)) 30 "partial")
       (touch! dir (str kept ".spill" File/separator ".young.bin.tmp-" (random-uuid)) 0 "in flight")
-      (binding [workspace/*drafts-home*
-                (.getPath (tmp-dir "vis-hk-d"))
-
-                housekeeping/*events-home*
+      (binding [housekeeping/*events-home*
                 (.getPath (tmp-dir "vis-hk-ev"))
 
                 housekeeping/*sandbox-home*
@@ -341,156 +221,52 @@
 
 ;; purge!
 
-(defdescribe
-  purge-test
-  (it "dry-run deletes nothing and still returns the full plan"
-      (let [drafts
-            (tmp-dir "vis-hk-dry")
+(defdescribe purge-test
+             (it "dry-run deletes nothing and still returns the full plan"
+                 (let [events (tmp-dir "vis-hk-dry-ev")]
+                   (touch! events "old.ndjson" 40 "{}\n")
+                   (binding [housekeeping/*events-home* (.getPath events)]
+                     (let [report (housekeeping/purge! {:days 14 :is-dry-run true})]
+                       (expect (true? (:is-dry-run report)))
+                       (expect (= 1 (count (:purged report))))
+                       (expect (every? #(false? (:is-purged %)) (:purged report)))
+                       (expect (zero? (long (:reclaimed-bytes report))))
+                       (expect (.exists (io/file events "old.ndjson")))))))
+             (it "reclaims stale journals and leaves fresh ones alone"
+                 (let [events (tmp-dir "vis-hk-purge-ev")]
+                   (touch! events "old.ndjson" 40 "{}\n")
+                   (touch! events "live.ndjson" 0 "{}\n")
+                   (binding [housekeeping/*events-home* (.getPath events)]
+                     (let [report (housekeeping/purge! {:days 14})]
+                       (expect (false? (:is-dry-run report)))
+                       (expect (every? :is-purged (:purged report)))
+                       (expect (pos? (long (:reclaimed-bytes report))))
+                       (expect (not (.exists (io/file events "old.ndjson"))))
+                       (expect (.exists (io/file events "live.ndjson")))
+                       ;; A second pass finds nothing left to do.
+                       (expect (zero? (:count (housekeeping/purge! {:days 14}))))))))
+             (it "never deletes outside the roots it owns"
+                 ;; The `under?` guard is the only thing between a bad `:root` and an
+                 ;; arbitrary `rm -rf`, so it is asserted directly.
+                 (let [outside
+                       (tmp-dir "vis-hk-outside")
 
-            events
-            (tmp-dir "vis-hk-dry-ev")
+                       victim
+                       (touch! outside "precious.txt" 99 "do not delete")
 
-            dir
-            (draft-dir! drafts "repo" "old" 40)]
+                       events
+                       (tmp-dir "vis-hk-ev")]
 
-        (touch! events "old.ndjson" 40 "{}\n")
-        (binding [workspace/*drafts-home*
-                  (.getPath drafts)
-
-                  housekeeping/*events-home*
-                  (.getPath events)]
-
-          (let [report (housekeeping/purge! {:days 14 :is-dry-run true})]
-            (expect (true? (:is-dry-run report)))
-            (expect (= 2 (count (:purged report))))
-            (expect (every? #(false? (:is-purged %)) (:purged report)))
-            (expect (zero? (long (:reclaimed-bytes report))))
-            (expect (.isDirectory dir))
-            (expect (.exists (io/file events "old.ndjson")))))))
-  (it "reclaims stale orphan trees and stale journals, and leaves fresh ones alone"
-      (let [drafts
-            (tmp-dir "vis-hk-purge")
-
-            events
-            (tmp-dir "vis-hk-purge-ev")
-
-            old
-            (draft-dir! drafts "repo" "old" 40)
-
-            fresh
-            (draft-dir! drafts "repo" "fresh" 1)]
-
-        (touch! events "old.ndjson" 40 "{}\n")
-        (touch! events "live.ndjson" 0 "{}\n")
-        (binding [workspace/*drafts-home*
-                  (.getPath drafts)
-
-                  housekeeping/*events-home*
-                  (.getPath events)]
-
-          (let [report (housekeeping/purge! {:days 14})]
-            (expect (false? (:is-dry-run report)))
-            (expect (every? :is-purged (:purged report)))
-            (expect (pos? (long (:reclaimed-bytes report))))
-            (expect (not (.exists old)))
-            (expect (not (.exists (io/file events "old.ndjson"))))
-            (expect (.isDirectory fresh))
-            (expect (.exists (io/file events "live.ndjson")))
-            ;; A second pass finds nothing left to do.
-            (expect (zero? (:count (housekeeping/purge! {:days 14}))))))))
-  (it "never deletes outside the two roots it owns"
-      ;; The `under?` guard is the only thing between a bad `:root` and an
-      ;; arbitrary `rm -rf`, so it is asserted directly.
-      (let [outside
-            (tmp-dir "vis-hk-outside")
-
-            victim
-            (touch! outside "precious.txt" 99 "do not delete")
-
-            drafts
-            (tmp-dir "vis-hk-guard")]
-
-        (binding [workspace/*drafts-home*
-                  (.getPath drafts)
-
-                  housekeeping/*events-home*
-                  (.getPath (tmp-dir "vis-hk-ev"))]
-
-          (housekeeping/purge! {:days 14}))
-        (expect (.exists victim)))))
-
-(defdescribe
-  purge-backend-retry-test
-  (it "routes stale and discarded retries through the backend and waits for removal"
-      (doseq [kind [:stale :discarded]]
-        (let [drafts (tmp-dir "vis-hk-backend")
-              dir (draft-dir! drafts "repo" "retry" 40)
-              calls (atom [])
-              item {:kind kind :root (.getPath dir) :workspace-id "ws" :bytes 1}
-              report {:drafts {:root (.getPath drafts) :reclaimable [item]}}
-              completion (reify
-                           clojure.lang.IBlockingDeref
-                             (deref [_ timeout-ms _]
-                               (expect (= 30000 timeout-ms))
-                               (.delete (io/file dir "file.txt"))
-                               (.delete dir)
-                               true))]
-
-          (with-redefs [housekeeping/scan (constantly report)
-                        workspace/abandon! (fn [db opts]
-                                             (swap! calls conj [db opts])
-                                             {:discard-future completion})]
-
-            (let [result (housekeeping/purge! {:db-info :fixture})]
-              (expect (= [[:fixture {:workspace-id "ws" :reason :housekeeping}]] @calls))
-              (expect (true? (:is-purged (first (:purged result)))))
-              (expect (= 1 (:reclaimed-bytes result)))
-              (expect (not (.exists dir))))))))
-  (it
-    "never bypasses stalled, refused or failed backend cleanup with raw deletion"
-    (doseq [kind
-            [:stale :discarded]
-
-            outcome
-            [:timeout :refused :failed :incomplete]]
-
-      (let [drafts
-            (tmp-dir "vis-hk-retain")
-
-            dir
-            (draft-dir! drafts "repo" "retry" 40)
-
-            item
-            {:kind kind :root (.getPath dir) :workspace-id "ws" :bytes 1}
-
-            report
-            {:drafts {:root (.getPath drafts) :reclaimable [item]}}
-
-            completion
-            (reify
-              clojure.lang.IBlockingDeref
-                (deref [_ timeout-ms timeout-value]
-                  (expect (= 30000 timeout-ms))
-                  (case outcome
-                    :timeout
-                    timeout-value
-
-                    :failed
-                    (throw (ex-info "Backend failed" {}))
-
-                    true)))]
-
-        (with-redefs [housekeeping/scan
-                      (constantly report)
-
-                      workspace/abandon!
-                      (fn [_ _]
-                        (if (= :refused outcome) {:status :refused} {:discard-future completion}))]
-
-          (let [result (housekeeping/purge! {})]
-            (expect (.exists (io/file dir "file.txt")))
-            (expect (false? (:is-purged (first (:purged result)))))
-            (expect (zero? (:reclaimed-bytes result)))))))))
+                   (binding [housekeeping/*events-home* (.getPath events)]
+                     (with-redefs [housekeeping/scan
+                                   (constantly {:days 14
+                                                :journals {:root (.getPath events)
+                                                           :reclaimable [{:kind :journal
+                                                                          :root (.getPath victim)
+                                                                          :bytes 1}]}
+                                                :sandbox {:reclaimable []}})]
+                       (housekeeping/purge! {:days 14})))
+                   (expect (.exists victim)))))
 
 ;; sweep-stale! — the self-deleting surface
 

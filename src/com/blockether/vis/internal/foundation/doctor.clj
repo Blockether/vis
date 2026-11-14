@@ -81,19 +81,16 @@
              :data {:provider provider-id :env-vars env-vars}})
           gaps)))
 
-;; ::housekeeping - stale drafts, gateway journals and sandbox snapshots
+;; ::housekeeping - stale gateway journals and sandbox snapshots
 
 (defn- housekeeping-diagnostics
-  "Vis owns two directories that only ever grow: `~/.vis/drafts` (a full
-   working-tree clone per draft, the biggest thing on disk by far) and
-   `~/.vis/gateway/events` (one NDJSON journal per session). Nothing reclaims
-   an abandoned draft the operator never abandoned explicitly, so after a few
-   busy days the store quietly holds gigabytes nobody is going to open again.
+  "Vis owns state that only ever grows: `~/.vis/gateway/events` (one NDJSON
+   journal per session) and the sandbox snapshots of sessions that have no row.
 
    Reported as :info, never :warn: stale state is untidy, not broken, and
    `vis-agent doctor` must not start exiting 1 on a machine that is working fine."
   [environment]
-  (let [{:keys [days bytes drafts journals sandbox] :as report}
+  (let [{:keys [days bytes journals sandbox] :as report}
         (try (housekeeping/scan {:db-info (:db-info environment)
                                  :days (:housekeeping-days environment)})
              (catch Throwable _ nil))
@@ -108,8 +105,6 @@
                       " untouched for over "
                       days
                       " days: "
-                      (count (:reclaimable drafts))
-                      " draft workspace(s), "
                       (count (:reclaimable journals))
                       " session journal(s) and "
                       (count (:reclaimable sandbox))
@@ -121,7 +116,6 @@
         :data {:days days
                :count n
                :bytes bytes
-               :drafts-root (:root drafts)
                :journals-root (:root journals)
                :sandbox-root (:root sandbox)}}])))
 

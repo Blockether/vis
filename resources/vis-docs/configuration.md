@@ -576,7 +576,6 @@ specific files](jail.md#deny-specific-files).
 | `python_name` | Optional Python variable for the path, for example `runtime_path` |
 | `access` | `read-write` or `read-only` |
 | `search` | Whether search indexes it |
-| `draft` | `shared`, `copy-only`, `copy-and-apply` or `not-allowed` in an isolated session (see [Drafts](drafts.md)) |
 | `when`, `optional` | Mount only on some hosts or when the path exists |
 
 Allowed, searchable roots have a Python `Path` variable named after the
@@ -584,18 +583,12 @@ directory (`vis-python-runtime` → `vis_python_runtime_path`). Set `python_name
 to choose another name. `project_root_path` is the current project. Access to
 `~/.vis` is always allowed.
 
-You can ask Vis to create one draft across several added read/write repositories,
-even when their policies are `shared`. `draft_create("task", roots=[project_root_path, sibling_path])`
-selects participants without changing the catalog. The first root is primary.
-See [Work in another repository](drafts.md#work-in-another-repository).
-
 ```yaml
 # vis.yml
 workspace:
   filesystem:
     - id: sibling
       path: ~/sibling-repository
-      draft: copy-and-apply
     - id: reference
       path: ~/shared-reference
       access: read-only
@@ -851,7 +844,6 @@ toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
   council: true         # default true; classified project messages, replies and explicit pings
-  draft_backend: off    # default off; opt in with auto | worktree | rift (see drafts.md)
   automations: true     # default false; lets schedules and webhooks start turns (see automations.md)
 ```
 
@@ -898,9 +890,8 @@ Turning it on globally does not change that session. Open **Project settings** a
 there. Vis writes the change to `.vis/config.yml`, which overrides `vis.yml` without editing it.
 From a session outside that project, you can still edit the global row.
 
-Global means this gateway, which all its connected clients share. Project settings use the canonical
-project root, not the working-copy path of a draft. Edits go to the project's `.vis/config.yml`, and
-the checked-in `vis.yml` does not change.
+Global means this gateway, which all its connected clients share. Project edits go to the
+project's `.vis/config.yml`, and the checked-in `vis.yml` does not change.
 
 The gateway database keeps group and session overrides. A session that you move keeps its own values
 and follows its new ancestors. New sessions and forks inherit from their ancestors, not the
@@ -923,8 +914,7 @@ Paths and access rows use guided editors. Changes apply on the next turn.
 To edit configuration files directly, use a text editor outside the app or TUI.
 
 Project access settings cannot expand the host's global access policy. Group and session settings
-can, for example to turn off the process jail for one session. Draft settings govern future
-operations. Changing them does not move or delete an existing draft.
+can, for example to turn off the process jail for one session.
 
 Skill and MCP availability applies to the next lookup or call, including a call
 by an already-known name. An ongoing external call can finish. Disable a skill
@@ -1064,7 +1054,7 @@ grep:
 Both lists use `.gitignore` pattern syntax. Omit `always_exclude` to use the defaults. The defaults
 are `.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `__pycache__/`, `.venv/`, `.gradle/`,
 `vendor/`, `.next/`, `out/`, `.m2/`, `.shadow-cljs/`, `cljs-runtime/`, `.cpcache/`, `.clj-kondo/`,
-`.calva/`, `.lsp/` and `.rift/`. If you set `always_exclude`, it replaces that list. It does not add
+`.calva/` and `.lsp/`. If you set `always_exclude`, it replaces that list. It does not add
 to it. Run `/reload` after you edit these lists.
 
 ## See also

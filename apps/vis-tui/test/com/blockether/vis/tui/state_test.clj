@@ -322,7 +322,7 @@
       (state/dispatch [:set-workspace {"id" "ws-1" "root" "/tmp/new"}])
       (expect (= "/tmp/new" (:workspace/root @state/app-db)))
       (expect (= "/tmp/new" (get-in @state/app-db [:tab-locals :main :workspace/root]))))
-  ;; #247: outstanding reads cannot restore a closed or reassigned session's draft.
+  ;; #247: outstanding reads cannot restore a closed or reassigned session's workspace.
   (it "ignores pending workspace responses when their tab was closed or reused"
       (doseq [current [{:session {:id "other"} :active-tab-id :other :tab-locals {}}
                        {:session {:id "replacement"}
@@ -332,7 +332,7 @@
               db (atom current)]
 
           (with-redefs [state/app-db db]
-            (state/dispatch [:set-workspace {"id" "draft" "root" "/draft"} :main
+            (state/dispatch [:set-workspace {"id" "moved" "root" "/moved"} :main
                              {:session-id "original" :workspace nil}])
             (expect (= current @db))))))
   (it "does not fetch a workspace for an old turn after its tab changes sessions"
@@ -345,7 +345,7 @@
           (state/refresh-workspace! :main "original"))))
   (it "keeps workspace data and the render counter unchanged for missing or unchanged reads"
       (let [ws
-            {"id" "draft" "root" "/draft"}
+            {"id" "moved" "root" "/moved"}
 
             current
             {:session {:id "a"} :active-tab-id :main :workspace ws :render-version 1}]
@@ -5428,18 +5428,9 @@
       ;; tab-3 (proj-a) slots in right after tab-1 (proj-a), before tab-2.
       (expect (= [:main :tab-1 :tab-3 :tab-2] (mapv :id (:tabs @state/app-db))))
       (expect (= :tab-3 (:active-tab-id @state/app-db))))
-  (it "a rift draft groups under its trunk via repo_root"
-      (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
-                            :active-tab-id :main
-                            :tab-locals {}
-                            :render-version 0})
-      (state/dispatch [:create-tab {:workspace {"root" "/tmp/trunk"}}])
-      (state/dispatch [:create-tab {:workspace {"root" "/tmp/other"}}])
-      (state/dispatch [:create-tab {:workspace {"root" "/tmp/clones/x" "repo_root" "/tmp/trunk"}}])
-      (expect (= [:main :tab-1 :tab-3 :tab-2] (mapv :id (:tabs @state/app-db)))))
   ;; Regression #291: the gateway serves the workspace record with its JSON keys, so an
-  ;; opened draft session keeps its roots and label and groups under its trunk.
-  (it "groups an opened draft session under its trunk from the gateway record"
+  ;; opened session keeps its root and label and groups under its project.
+  (it "groups an opened session under its project from the gateway record"
       (reset! state/app-db {:tabs [{:id :main
                                     :label "Main"
                                     :active? true
@@ -5450,8 +5441,8 @@
                             :session {:id "sid-main"}
                             :tab-locals {:tab-1 {:session {:id "sid-other"}}}
                             :render-version 0})
-      (state/dispatch [:open-session-tab {:id "sid-draft"} []
-                       {"root" "/tmp/clones/x" "repo_root" "/tmp/trunk" "label" "rift-x"}])
+      (state/dispatch [:open-session-tab {:id "sid-opened"} []
+                       {"root" "/tmp/trunk" "label" "feature-x"}])
       (let [db
             @state/app-db
 
@@ -5459,10 +5450,10 @@
             (some #(when (= :tab-2 (:id %)) %) (:tabs db))]
 
         (expect (= [:main :tab-2 :tab-1] (mapv :id (:tabs db))))
-        (expect (= "rift-x" (:label opened)))
-        (expect (= "/tmp/clones/x" (:workspace/root opened)))
-        (expect (= "/tmp/clones/x" (:workspace/root db)))
-        (expect (some #{{:id "sid-draft" :root "/tmp/trunk"}}
+        (expect (= "feature-x" (:label opened)))
+        (expect (= "/tmp/trunk" (:workspace/root opened)))
+        (expect (= "/tmp/trunk" (:workspace/root db)))
+        (expect (some #{{:id "sid-opened" :root "/tmp/trunk"}}
                       (:sessions (state/tab-session-snapshot db))))))
   (it "a tab with no workspace root still appends at the end"
       (reset! state/app-db
@@ -5474,18 +5465,14 @@
       (expect (= [:main :tab-1] (mapv :id (:tabs @state/app-db)))))
   (it "tab-session-snapshot carries each tab's project root"
       (reset! state/app-db
-        {:tabs
-         [{:id :main :label "Main" :active? true :workspace {"root" "/tmp/proj-a"}}
-          {:id :tab-1 :label "T1" :workspace {"root" "/tmp/clones/x" "repo_root" "/tmp/proj-b"}}
-          {:id :tab-2 :label "T2"}]
+        {:tabs [{:id :main :label "Main" :active? true :workspace {"root" "/tmp/proj-a"}}
+                {:id :tab-1 :label "T1" :workspace {"root" "/tmp/proj-b"}} {:id :tab-2 :label "T2"}]
          :active-tab-id :main
          :session {:id "sid-main"}
          :tab-locals {:tab-1 {:session {:id "sid-b"}} :tab-2 {:session {:id "sid-c"}}}
          :render-version 0})
       (expect (= {:active "sid-main"
-                  :sessions [{:id "sid-main" :root "/tmp/proj-a"}
-                             ;; draft → grouped under its trunk (repo_root)
-                             {:id "sid-b" :root "/tmp/proj-b"}
+                  :sessions [{:id "sid-main" :root "/tmp/proj-a"} {:id "sid-b" :root "/tmp/proj-b"}
                              ;; no workspace → root absent, id-only entry
                              {:id "sid-c"}]}
                  (state/tab-session-snapshot @state/app-db)))))

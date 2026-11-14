@@ -812,7 +812,7 @@
                        (extension/with-context {:env other} (str workspace/*workspace-root*))))))
         (expect (= 2 @calls)))))
 
-;; ── plain :inject-env? symbols share invoke-symbol-wrapper with draft-aware cwd ──
+;; ── plain :inject-env? symbols share invoke-symbol-wrapper with the session cwd ──
 ;;
 ;; Turn 10-13's bug (`shell` bypassing `with-context`) lived in
 ;; `run-native-handler`, the seam ONLY for symbols carrying an explicit
@@ -821,9 +821,9 @@
 ;; through `invoke-symbol-wrapper`, which has wrapped every call in
 ;; `with-context` since before this investigation started. This pins that the
 ;; SAME generic path resolves `workspace/*workspace-root*` from the call's own
-;; `:workspace/root`, so a draft session's tools already run against the draft,
-;; not trunk.
-(defn draft-cwd-probe
+;; `:workspace/root`, so a session's tools run against its own root, not the
+;; process directory.
+(defn root-cwd-probe
   "A plain engine-bound symbol: no :handler, :inject-env? true so the live env
    lands as its first argument."
   [env]
@@ -832,20 +832,20 @@
 
 (defdescribe invoke-symbol-wrapper-workspace-root-test
              (it "binds workspace/*workspace-root* from :workspace/root for a plain engine symbol"
-                 (let [draft-root
-                       (.getCanonicalPath (java.io.File. "target/test-draft-cwd-probe"))
+                 (let [session-root
+                       (.getCanonicalPath (java.io.File. "target/test-root-cwd-probe"))
 
                        sym
-                       (extension/symbol #'draft-cwd-probe {:tag :observation :inject-env? true})
+                       (extension/symbol #'root-cwd-probe {:tag :observation :inject-env? true})
 
                        ext
-                       {:ext/name "test.draft-cwd-probe" :ext/engine {:ext.engine/symbols [sym]}}
+                       {:ext/name "test.root-cwd-probe" :ext/engine {:ext.engine/symbols [sym]}}
 
                        result
-                       (extension/invoke-symbol-wrapper ext sym [] {:workspace/root draft-root})]
+                       (extension/invoke-symbol-wrapper ext sym [] {:workspace/root session-root})]
 
-                   (expect (= draft-root (get result "root")))
-                   (expect (= draft-root (get result "env-root"))))))
+                   (expect (= session-root (get result "root")))
+                   (expect (= session-root (get result "env-root"))))))
 
 ;; A function is reached by typing its name in a Python block, so the registry
 ;; may not carry a second, schema-shaped door beside that name. This walks the

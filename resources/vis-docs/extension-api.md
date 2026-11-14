@@ -43,7 +43,7 @@ design](extension-design.md) for authoring and test guidance.
 | Store or read files that a tool makes | [Attachments](#attachments) |
 | Read environment or add session context | [Environment](#environment) · [Session context](#session-context) |
 | Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
-| Resolve the active working copy | [Workspace root](#workspace-root) · [Python environment](#python-environment) |
+| Find the directory of the session | [Workspace root](#workspace-root) · [Python environment](#python-environment) |
 | Show forms, live work or register a provider | [Forms](human-input.md) · [Live views](live-views.md) · [Providers](provider-extensions.md) |
 
 ## Build metadata
@@ -684,10 +684,8 @@ The press and its hover title carry the whole path. Use an empty string for a ro
 file, such as a directory or a total. The list must be exactly as long as `rows`, or the block is
 rejected.
 
-Files that Vis finds itself are pressable in the same way:
-
-- The file that a failing test reports in a `run_tests` result.
-- The file that a patch header names when you read a diff artifact.
+A file that Vis finds itself is pressable in the same way, for example the file that a failing test
+reports in a `run_tests` result.
 
 Each headline and summary is one line of at most 512 UTF-8 bytes, including any Markdown source. Put
 the complete result in content blocks and non-nested sections. Vis does not cut their text, table
@@ -1001,8 +999,8 @@ words. `raw` is the full text of the command, with its `/`. For example, `/deplo
 gives the `args` `["staging", "now"]`.
 
 Vis runs `run` in the session that sent the command, as it does for a tool call.
-In `run`, [`vis.workspace_root()`](#workspace-root) returns the working copy of that
-session, including its draft.
+In `run`, [`vis.workspace_root()`](#workspace-root) returns the directory of that
+session.
 
 Set `saveable=True` when the command text is real prompt content that a person can
 want to run again, such as a goal. The terminal then keeps the full command in its
@@ -1216,15 +1214,6 @@ you want post-edit checks to cover host patches and plain Python writes. Use
 model request, not the callback's return value. See the complete
 [complexity-check example](extension-design.md#check-code-complexity-after-edits).
 
-`ops` also names the draft lifecycle: `"draft/create"`, `"draft/sync"`, `"draft/approve"` and
-`"draft/discard"` run for the sandbox's `draft_create()`, `draft_sync()`, `draft_approve()` and
-`draft_discard()`. Their `args` carry the draft's `workspace_id`, `label`,
-`root`, `repo_root`, `backend` and, for approval, `branch`, `target_branch`,
-`files` and `message`. Approval commits and merges into the default branch.
-Each new commit also crosses `git/commit`. A `before` hook that returns
-`vis.block(reason)` refuses the operation and the user sees the reason. See
-[Drafts](drafts.md).
-
 `"fs_access"` checks paths used by the host file tools (`grep`, `ls`). It is not a tool itself and takes no `phase`. Its callback receives
 `{"operation": "file-read" | "file-write", "path": <absolute path>}`. An error
 in the callback refuses the operation. This check does not apply to `open()`
@@ -1435,9 +1424,9 @@ no context and does not block the turn.
 ## Workspace root
 
 Call `vis.workspace_root()` from a session-bound extension to get a `pathlib.Path`
-for the session’s current primary working copy. Relative file and process paths
-should start there. The value switches to the draft when the session enters one,
-and follows the live workspace if it changes. Do not cache it across tool calls.
+for the directory where the session works. Relative file and process paths
+should start there. The value follows the session when its directory changes,
+for example after `/cd`. Do not cache it across tool calls.
 
 ```python
 import blockether.vis.extension as vis
@@ -1455,8 +1444,7 @@ corresponding root. Extension code uses this SDK function.
 ## Project root
 
 Call `vis.project_root()` to get a `pathlib.Path` for the project that holds your extension. The
-project is the nearest directory above the extension file that holds a `.vis` directory. Vis maps
-it into the session's current working copy, so it follows the draft like `vis.workspace_root()`.
+project is the nearest directory above the extension file that holds a `.vis` directory.
 
 ```python
 import blockether.vis.extension as vis
@@ -1483,7 +1471,7 @@ value wins over all of them.
 
 ## List workspace files
 
-Call `vis.workspace_files()` when your extension needs the files of the session working copy. For
+Call `vis.workspace_files()` when your extension needs the files of the session workspace. For
 example, a language check can watch every source file that a block can change. The function returns
 the paths that Git sees under `vis.workspace_root()`: tracked files and untracked files that Git does
 not ignore.
@@ -1495,7 +1483,7 @@ files = vis.workspace_files() or []
 sources = [path for path in files if path.suffix == ".py"]
 ```
 
-The host lists the working copy once and gives the same list to each extension that asks within two
+The host lists the workspace once and gives the same list to each extension that asks within two
 seconds. This is faster than a `git` child process in each extension, also when the jail is on. The
 function returns None when the workspace is not in a Git working tree. Outside a Vis process, it
 lists the process working directory.

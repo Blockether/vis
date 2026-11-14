@@ -737,7 +737,7 @@
 (defn- native-lib-jars
   "Resolve every host-platform FFM artifact at the exact version of its main jar
    in `basis`. Only the host native jar enters the image classpath, so each
-   platform image embeds only its own fff/rift/imaging library.
+   platform image embeds only its own fff/imaging library.
 
    Native images cannot use the runtime tools.deps downloader. A missing main
    dependency, failed resolution, or missing direct native jar is therefore a
@@ -748,7 +748,6 @@
 
         native-artifacts
         {'com.blockether/fff (str "fff-native-" tok)
-         'com.blockether/rift (str "rift-native-" tok)
          'com.blockether/imaging (str "imaging-native-" tok)}
 
         missing-mains
@@ -1132,8 +1131,8 @@
              ;; Unsafe caches its memory-access policy during image initialization.
              ;; Set it in the builder JVM; runtime launcher flags cannot change it.
              "-J--sun-misc-unsafe-memory-access=allow"
-             ;; Restricted native access (java.lang.foreign): rift and the embedded
-             ;; CPython bridge both use downcalls. A future JDK blocks them unless the
+             ;; Restricted native access (java.lang.foreign): fff, imaging and the
+             ;; embedded CPython bridge use downcalls. A future JDK blocks them unless the
              ;; application opts in explicitly.
              "--enable-native-access=ALL-UNNAMED"
              ;; Enable stack dumps and diagnostic attach without restarting the gateway.

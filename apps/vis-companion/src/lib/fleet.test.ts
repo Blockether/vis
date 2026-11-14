@@ -3,7 +3,6 @@ import {
   groupByWorkDir,
   fleetError,
   fleetRead,
-  isDraftWorkspace,
   machineCounts,
   machineKey,
   machineLabel,
@@ -87,23 +86,6 @@ describe('machineLabel', () => {
   });
 });
 
-describe('isDraftWorkspace', () => {
-  it('trusts the gateway is_draft flag when present', () => {
-    expect(isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: true } }))).toBe(
-      true,
-    );
-    expect(isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: false } }))).toBe(
-      false,
-    );
-  });
-  it('falls back to the drafts path for a gateway without the flag', () => {
-    expect(
-      isDraftWorkspace(session('x', { workspace: { root: '/Users/me/.vis/drafts/vis/wire' } })),
-    ).toBe(true);
-    expect(isDraftWorkspace(session('x', { workspace: { root: '/Users/me/vis' } }))).toBe(false);
-  });
-});
-
 describe('groupByWorkDir', () => {
   // Regression, issue #session-list-work-dir: project names used to split one working directory into separate groups.
   it('groups sessions by workspace root even when their project names differ', () => {
@@ -172,20 +154,6 @@ describe('projectLabel', () => {
     expect(projectLabel([session('a', { workspace: { root: '/Users/me/vis' } })])).toBe('vis');
     expect(projectLabel([session('a')])).toBe('No project');
     expect(projectLabel([])).toBe('No project');
-  });
-
-  // A draft's `workspace.label` is the DRAFT's name; using it as the project name gave every draft
-  // its own bogus top-level project.
-  it('never takes its name from a draft workspace label', () => {
-    const draft = session('a', {
-      workspace: {
-        root: '/Users/me/.vis/drafts/vis/wire',
-        repo_root: '/Users/me/vis',
-        label: 'wire',
-      },
-    });
-
-    expect(projectLabel([draft])).toBe('vis');
   });
 });
 
@@ -505,24 +473,24 @@ describe('projectGroups', () => {
       live_count: 0,
       awaiting_count: 0,
     };
-    const draft = session('d', { workspace: { root: '/drafts/x', is_draft: true } });
-    const groups = projectGroups(overview, [draft]);
-    expect(groups.map((group) => group.root)).toEqual(['/drafts/x', '/repo/a']);
+    const local = session('d', { workspace: { root: '/local/x' } });
+    const groups = projectGroups(overview, [local]);
+    expect(groups.map((group) => group.root)).toEqual(['/local/x', '/repo/a']);
     expect(groups[0]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0, stopped: 0 });
-    expect(groups[0]?.sessions).toEqual([draft]);
+    expect(groups[0]?.sessions).toEqual([local]);
     overview.projects.unshift({
-      root: '/drafts/x',
+      root: '/local/x',
       project_id: 'p-d',
-      name: 'Draft',
+      name: 'Local',
       session_count: 1,
       live_count: 0,
       awaiting_count: 0,
       last_activity_ms: 20,
     });
-    const refreshed = projectGroups(overview, [draft]);
+    const refreshed = projectGroups(overview, [local]);
     expect(refreshed.map((group) => group.root)).toEqual(groups.map((group) => group.root));
     expect(refreshed[0]?.projectId).toBe('p-d');
-    expect(refreshed[0]?.sessions).toEqual([draft]);
+    expect(refreshed[0]?.sessions).toEqual([local]);
   });
 });
 
@@ -818,40 +786,14 @@ describe('a row that names its project', () => {
 });
 
 // Regression, duplicate project header: the gateway files EVERY session under its
-// workspace `repo_root` when it has one (`state/session-project-root`). Branching
-// on `is_draft` here filed an ordinary session opened in a subdirectory of its
-// repository under that subdirectory, so the project got a second header holding
-// rows the first one was still counting.
+// workspace `root` (`state/session-project-root`). A second rule on this device
+// gave one project two headers.
 describe('the path a session is grouped under', () => {
-  it('is the repository root for an ordinary session in a subdirectory', () => {
-    const inSubdir = session('s1', {
-      workspace: { root: '/Users/me/vis/apps/vis-companion', repo_root: '/Users/me/vis' },
-    });
-    const atRoot = session('s2', {
-      workspace: { root: '/Users/me/vis', repo_root: '/Users/me/vis' },
-    });
+  it('is the workspace root, the same for two sessions of one project', () => {
+    const first = session('s1', { workspace: { root: '/Users/me/vis' } });
+    const second = session('s2', { workspace: { root: '/Users/me/vis/' } });
 
-    expect(groupByWorkDir([inSubdir, atRoot])).toEqual([
-      ['/Users/me/vis', [inSubdir, atRoot]],
-    ]);
-  });
-
-  it('is still the repository root for a draft clone', () => {
-    const draft = session('s3', {
-      workspace: {
-        root: '/Users/me/.vis/drafts/vis/wire',
-        repo_root: '/Users/me/vis',
-        is_draft: true,
-      },
-    });
-
-    expect(groupByWorkDir([draft])).toEqual([['/Users/me/vis', [draft]]]);
-  });
-
-  it('is the working directory when no repository was resolved', () => {
-    const loose = session('s4', { workspace: { root: '/Users/me/scratch/' } });
-
-    expect(groupByWorkDir([loose])).toEqual([['/Users/me/scratch', [loose]]]);
+    expect(groupByWorkDir([first, second])).toEqual([['/Users/me/vis', [first, second]]]);
   });
 });
 

@@ -4063,7 +4063,7 @@ state = _State()
 
 
 def workspace_root() -> Path:
-    """Return the active session workspace as a path, including its current draft.
+    """Return the active session workspace as a path.
 
     This is the primary working copy, not a language-specific project marker.
     Outside Vis, it is the process directory. A hosted call without a bound

@@ -135,14 +135,14 @@
 
 (defdescribe active-index-remains-shared-under-capacity-pressure-test
              (it "active index remains shared under capacity pressure"
-                 ;; An active worker must not lose its pool entry to another worker's draft scan.
+                 ;; An active worker must not lose its pool entry to another worker's root scan.
                  (with-pool
                    (fn [pool _]
                      (let [builds
                            (atom 0)
 
                            a
-                           (index/lease (java.io.File. "target/draft-a") true)]
+                           (index/lease (java.io.File. "target/root-a") true)]
 
                        (with-redefs-fn {#'index/open! (fn [& _]
                                                         (swap! builds inc)
@@ -155,7 +155,7 @@
                              (fn [first-handle]
                                (doseq [n (range 7)]
                                  (index/with-index*
-                                   (index/lease (java.io.File. (str "target/draft-" n)) true)
+                                   (index/lease (java.io.File. (str "target/root-" n)) true)
                                    identity))
                                (expect (index/with-index* a #(identical? first-handle %)))
                                (expect (= 8 @builds))))
@@ -174,13 +174,13 @@
     (with-pool
       (fn [_ _]
         (let [a
-              (index/lease (java.io.File. "target/draft-a") true)
+              (index/lease (java.io.File. "target/root-a") true)
 
               nested
-              (index/lease (java.io.File. "target/draft-a/src") true)
+              (index/lease (java.io.File. "target/root-a/src") true)
 
               b
-              (index/lease (java.io.File. "target/draft-ab") true)
+              (index/lease (java.io.File. "target/root-ab") true)
 
               syncs
               (atom [])]
@@ -202,8 +202,8 @@
                 (index/with-index* b identity)
                 ;; A file above a tree does not change it; an ignore file there does.
                 ;; A sibling with a shared prefix never changes.
-                (index/note-fs-write! (java.io.File. "target/draft-a/notes.md"))
-                (index/note-fs-write! (java.io.File. "target/draft-a/.gitignore"))
+                (index/note-fs-write! (java.io.File. "target/root-a/notes.md"))
+                (index/note-fs-write! (java.io.File. "target/root-a/.gitignore"))
                 (doseq [lease [a nested b a nested b]]
                   (index/with-index* lease identity))
                 (expect (= [[:refresh a-index 2] [:rescan nested-index]] @syncs))
@@ -443,7 +443,7 @@
                            (atom 0)
 
                            nested
-                           (index/lease (java.io.File. "target/draft-a/src") true)]
+                           (index/lease (java.io.File. "target/root-a/src") true)]
 
                        (with-redefs-fn {#'index/open! fake-index
                                         #'fff/rescan! (fn [& _]
@@ -458,7 +458,7 @@
                                                                       (thunk)))}
                          (fn []
                            (index/with-index* nested identity)
-                           (index/note-fs-write! (java.io.File. "target/draft-a/.gitignore"))
+                           (index/note-fs-write! (java.io.File. "target/root-a/.gitignore"))
                            (expect (= :interrupted
                                       (try (index/with-index* nested identity)
                                            (catch InterruptedException _ :interrupted))))
@@ -500,16 +500,16 @@
                         events))
                 (expect (= 1 (count (filter #(= :close (:event %)) events)))))))))))
 
-(defn- draft-switching-experiment
+(defn- root-switching-experiment
   "Real native scans of distinct fixture roots, not clones or user worktrees."
   [root-count rounds]
   (let [base (fs/create-temp-dir {:prefix "vis-fff-switching-"})]
     (try (let [leases (mapv (fn [n]
-                              (let [dir (fs/file base (str "draft-" n))]
+                              (let [dir (fs/file base (str "root-" n))]
                                 (fs/create-dirs dir)
                                 (dotimes [file-number 32]
                                   (spit (fs/file dir (str "marker-" n "-" file-number ".txt"))
-                                        (str "draft " n " contents\n")))
+                                        (str "root " n " contents\n")))
                                 (index/lease dir true)))
                             (range root-count))]
            (with-pool (fn [_ _]
@@ -530,12 +530,12 @@
                             :elapsed-ms (quot (- (System/nanoTime) started-at) 1000000))))))
          (finally (fs/delete-tree base)))))
 
-(defdescribe native-draft-switching-distinguishes-capacity-from-rescans-test
-             (it "native draft switching distinguishes capacity from rescans"
+(defdescribe native-root-switching-distinguishes-capacity-from-rescans-test
+             (it "native root switching distinguishes capacity from rescans"
                  ;; Roots exactly at the pinned budget reuse every round; one root above it evicts
                  ;; and rebuilds each index instead.
                  (doseq [[roots creates reuses evictions] [[6 6 12 0] [7 21 0 15]]]
-                   (let [stats (draft-switching-experiment roots 3)]
+                   (let [stats (root-switching-experiment roots 3)]
                      (expect (= creates (get-in stats [:counters :events :create])))
                      (expect (= reuses (get-in stats [:counters :events :reuse] 0)))
                      (expect (= evictions (get-in stats [:counters :evictions :capacity] 0)))

@@ -2,14 +2,9 @@
   "Retention for Vis-owned state: advisory inventory and bounded cleanup.
 
    ADVISORY (`scan` observes, `purge!` acts, `vis-agent doctor` renders): the
-   drafts store (`~/.vis/drafts`). A draft clone is a full copy of a trunk and
-   survives until someone applies or abandons it, so a machine that drafts daily
-   and never abandons accumulates gigabytes of dead clones. It holds recoverable
-   work, so nothing here deletes it on its own: `scan` is pure observation (no
-   mutation, never throws) and `purge!` is the explicit operator action behind
-   `vis-agent doctor --purge`. `scan` reports the gateway journals the same way,
-   because an operator asking what is reclaimable today should see them. It also
-   reports sandbox snapshots of sessions with no row, and temp files of killed writes.
+   gateway journals, sandbox snapshots of sessions with no row, and temp files of
+   killed writes. `scan` is pure observation (no mutation, never throws) and
+   `purge!` is the explicit operator action behind `vis-agent doctor --purge`.
 
    SELF-DELETING (`sweep-stale!`, once per process at startup): diagnostic logs,
    the gateway journals, the display caches and old downloaded
@@ -37,26 +32,19 @@
    prefix mirrors absolute source paths, so an entry whose source is gone is garbage
    whatever its age, and one whose source is live is a cache the next import wants.
 
-   `purge!` routes draft rows, including discarded-root retries, through
-   `workspace/abandon!` so backend bookkeeping owns primary and extra-root release.
-   A failed release never falls back to raw deletion. Only directories with no row
-   and journal files are removed directly, confined to the drafts or events store."
+   `purge!` removes journal files and sandbox snapshots directly, confined to the
+   events or sandbox store."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]))
 
-(def default-stale-days
-  "Age past which unattended state is worth mentioning. Two weeks: long enough
-   that a draft parked over a holiday is not nagged about, short enough that the
-   report still arrives while the operator remembers what the draft was for."
-  14)
+(def default-stale-days "Age past which unattended state is worth mentioning: two weeks." 14)
 
 (def ^:const day-ms 86400000)
 
@@ -96,11 +84,9 @@
 
 (defn- tree-stats
   "Recursive size in bytes plus the newest regular-file mtime, in ONE walk.
-   Symlinks are never followed (draft clones may be linked back to the
-   trunk; counting them would report the user's whole source tree as
-   reclaimable). The mtime is what makes an orphan directory safe to judge:
-   a directory's own timestamp only moves when entries are added or removed, so
-   a busy clone can look untouched for weeks by that measure alone. A file with
+   Symlinks are never followed. The mtime is what makes an orphan directory safe
+   to judge: a directory's own timestamp only moves when entries are added or
+   removed, so a busy tree can look untouched for weeks by that measure alone. A file with
    more than one hard link counts once: a fork shares its sandbox snapshots with
    the source when the walks share one `seen` set. Without the set, nothing is deduplicated."
   ([^File root] (tree-stats root nil))
@@ -156,13 +142,9 @@
   [^String parent ^String child]
   (boolean (and parent child (not= parent child) (.startsWith child (str parent File/separator)))))
 
-(defn- exists?
-  [^File f]
-  (try (Files/exists (.toPath f) (into-array LinkOption [])) (catch Throwable _ false)))
-
 ;; The self-deleting sweep
 ;;
-;; UNLIKE drafts and journals, everything below is DERIVED and nothing anyone
+;; UNLIKE journals, everything below is DERIVED and nothing anyone
 ;; can recover from: a diagnostic log of a process that exited, a picture whose
 ;; bytes are already DB-owned. Each of these directories gains an entry per shell
 ;; command, per rendered figure — forever — so each one needs a window, and
@@ -834,107 +816,6 @@
        (.setPriority Thread/MIN_PRIORITY)
        (.start)))))
 
-;; Drafts
-
-(defn- draft-activity-ms
-  "Most recent moment the workspace was demonstrably alive. `last-focused-at-ms`
-   is the honest signal; a never-focused draft falls back to creation."
-  ^long [ws]
-  (max (long (or (:last-focused-at-ms ws) 0))
-       (long (or (some-> ^java.util.Date (:created-at ws)
-                         .getTime)
-                 0))))
-
-(defn- draft-rows [db-info] (try (vec (p/db-workspace-list-drafts db-info)) (catch Throwable _ [])))
-
-(defn- draft-dirs
-  "Every `<drafts-root>/<repo>/<draft>` directory on disk. Dot-entries are
-   Vis-internal (`.fresh-seed`, `.trash`) and are never reported as drafts."
-  [^String drafts-root]
-  (let [visible (fn [^File dir]
-                  (->> (or (.listFiles dir) (make-array File 0))
-                       (filter #(and (.isDirectory ^File %)
-                                     (not (.startsWith (.getName ^File %) "."))))))]
-    (when drafts-root
-      (let [root (io/file drafts-root)]
-        (when (.isDirectory root) (vec (mapcat visible (visible root))))))))
-
-(defn- scan-drafts
-  [db-info ^long cutoff-ms ^long now-ms]
-  (let [drafts-root
-        (workspace/drafts-store-path)
-
-        rows
-        (draft-rows db-info)
-
-        by-root
-        (into {}
-              (mapcat (fn [ws]
-                        (for [path
-                              (cons (:root ws)
-                                    (keep (fn [{:keys [trunk clone]}]
-                                            (when (not= trunk clone) clone))
-                                          (workspace/extra-root-entries ws)))
-
-                              :when path]
-
-                          [(canonical (io/file path)) ws])))
-              rows)
-
-        entry
-        (fn [ws ^String path kind]
-          (let [activity (draft-activity-ms ws)]
-            (assoc (select-keys (tree-stats (io/file path)) [:bytes])
-              :kind kind
-              :workspace-id (:id ws)
-              :label (:label ws)
-              :state (:state ws)
-              :root path
-              :last-activity-ms (when (pos? activity) activity)
-              :age-days (when (pos? activity) (ms->days (- now-ms activity))))))
-
-        ;; Every owned clone keeps its row, even after the primary was removed.
-        ;; Discarded leftovers retry backend release rather than becoming orphans.
-        from-rows
-        (into []
-              (keep (fn [[path ws]]
-                      (when (and (under? drafts-root path) (exists? (io/file path)))
-                        (cond (= :discarded (:state ws)) (entry ws path :discarded)
-                              (< (draft-activity-ms ws) cutoff-ms) (entry ws path :stale)
-                              :else nil))))
-              by-root)
-
-        ;; A directory with no row is either debris from a crashed clone or a
-        ;; store written by a different DB. Either way it is only reclaimable once
-        ;; nothing inside it has been touched since the cutoff — the same bar the
-        ;; DB-backed drafts have to clear.
-        orphans
-        (into []
-              (keep (fn [^File d]
-                      (let [path
-                            (canonical d)
-
-                            {:keys [bytes newest-ms]}
-                            (tree-stats d)]
-
-                        (when (and (not (contains? by-root path)) (< (long newest-ms) cutoff-ms))
-                          {:kind :orphan
-                           :root path
-                           :label (.getName d)
-                           :last-activity-ms newest-ms
-                           :age-days (ms->days (- now-ms (long newest-ms)))
-                           :bytes bytes}))))
-              (draft-dirs drafts-root))
-
-        reclaimable
-        (into from-rows orphans)]
-
-    {:root drafts-root
-     :row-count (count rows)
-     :dir-count (count (draft-dirs drafts-root))
-     :reclaimable (vec (sort-by (comp - long #(or (:bytes %) 0)) reclaimable))
-     :bytes (reduce + 0 (map #(long (or (:bytes %) 0)) reclaimable))}))
-
 ;; Gateway journals
 
 (defn- scan-journals
@@ -1066,12 +947,12 @@
 ;; Public surface
 
 (defn scan
-  "Observe stale drafts and gateway journals. Pure: touches no state and never
-   throws — a missing DB, an absent drafts store, or an unreadable subtree all
-   degrade to empty findings.
+  "Observe stale gateway journals and sandbox snapshots. Pure: touches no state
+   and never throws — a missing DB or an unreadable subtree degrades to empty
+   findings.
 
-   Options: `:db-info` (nil is fine, drafts then reduce to on-disk orphans),
-   `:days` (defaults to `default-stale-days`) and `:now-ms` for tests."
+   Options: `:db-info` (nil is fine), `:days` (defaults to `default-stale-days`)
+   and `:now-ms` for tests."
   [{:keys [db-info days now-ms]}]
   (let [days
         (long (or days default-stale-days))
@@ -1082,9 +963,6 @@
         cutoff
         (- now (* days (long day-ms)))
 
-        drafts
-        (try (scan-drafts db-info cutoff now) (catch Throwable _ nil))
-
         journals
         (try (scan-journals cutoff now) (catch Throwable _ nil))
 
@@ -1092,32 +970,18 @@
         (try (scan-sandbox db-info cutoff now) (catch Throwable _ nil))
 
         parts
-        [drafts journals sandbox]]
+        [journals sandbox]]
 
     {:days days
      :cutoff-ms cutoff
-     :drafts drafts
      :journals journals
      :sandbox sandbox
      :bytes (reduce + 0 (map #(long (or (:bytes %) 0)) parts))
      :count (reduce + 0 (map #(count (:reclaimable %)) parts))}))
 
 (defn- purge-one!
-  [db-info drafts-root events-root sandbox-root {:keys [kind root workspace-id paths] :as item}]
+  [events-root sandbox-root {:keys [kind root paths] :as item}]
   (let [ok (case kind
-             ;; Retry discarded rows through the same backend as live drafts;
-             ;; raw deletion bypasses backend bookkeeping and cleanup refusals.
-             (:stale :discarded)
-             (try (let [{:keys [discard-future]} (workspace/abandon! db-info
-                                                                     {:workspace-id workspace-id
-                                                                      :reason :housekeeping})]
-                    (when discard-future (deref discard-future 30000 nil))
-                    (Files/notExists (.toPath (io/file root)) (make-array LinkOption 0)))
-                  (catch Throwable _ false))
-
-             :orphan
-             (boolean (and (under? drafts-root root) (pos? (delete-tree! (io/file root)))))
-
              :journal
              (boolean (and (under? events-root root)
                            (try (Files/deleteIfExists (.toPath (io/file root)))
@@ -1139,20 +1003,19 @@
 
    With `:is-dry-run` true nothing is touched: `:purged` still carries the plan
    with every item stamped `:is-purged false`, so operators can look first."
-  [{:keys [db-info is-dry-run] :as opts}]
-  (let [{:keys [drafts journals sandbox] :as report}
+  [{:keys [is-dry-run] :as opts}]
+  (let [{:keys [journals sandbox] :as report}
         (scan opts)
 
         items
-        (into (vec (:reclaimable drafts)) cat [(:reclaimable journals) (:reclaimable sandbox)])]
+        (into (vec (:reclaimable journals)) (:reclaimable sandbox))]
 
     (if is-dry-run
       (assoc report
         :purged (mapv #(assoc % :is-purged false) items)
         :reclaimed-bytes 0
         :is-dry-run true)
-      (let [done (mapv #(purge-one! db-info (:root drafts) (:root journals) (:root sandbox) %)
-                       items)]
+      (let [done (mapv #(purge-one! (:root journals) (:root sandbox) %) items)]
         (assoc report
           :purged done
           :is-dry-run false

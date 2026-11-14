@@ -61,9 +61,8 @@
                   line))
 
 (defdescribe specs-shape-test
-             (it "exposes only /cd and no human draft commands"
+             (it "exposes only /cd"
                  (expect (= ["cd"] (mapv :slash/name ws-slashes/specs)))
-                 (expect (nil? (slash/slash-by-path (env-with nil) ["draft"])))
                  (expect (= 1 (count (slash/active-slashes (env-with nil)))))))
 
 (defdescribe

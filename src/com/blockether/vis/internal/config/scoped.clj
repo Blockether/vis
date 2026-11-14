@@ -12,6 +12,7 @@
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as store]
@@ -79,7 +80,7 @@
                    (store/db-workspace-for-session db)))
 
         pinned-root
-        (some-> (or (:repo-root pinned-workspace) (:root pinned-workspace))
+        (some-> (:root pinned-workspace)
                 workspace/normalize-root)
 
         project
@@ -325,11 +326,17 @@
     (binding [workspace/*workspace-root* root]
       (get-in (config/load-project-config-raw) section {}))
 
-    (let [prefix (definition-prefix section)]
-      (into {}
-            (keep (fn [[k v]]
-                    (when (str/starts-with? k prefix) [(subs k (count prefix)) v])))
-            (store/db-scoped-settings db scope target-id)))))
+    (let [prefix
+          (definition-prefix section)
+
+          entries
+          (into {}
+                (keep (fn [[k v]]
+                        (when (str/starts-with? k prefix) [(subs k (count prefix)) v])))
+                (store/db-scoped-settings db scope target-id))]
+
+      ;; The store keeps a value as an older Vis version wrote it.
+      (get-in (config-validation/without-retired-keys (assoc-in {} section entries)) section))))
 
 (defn definition-layers
   "Named definitions of `section` at each scope of `target`, least specific first, as

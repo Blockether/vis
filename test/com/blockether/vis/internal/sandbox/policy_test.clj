@@ -249,11 +249,10 @@
           (doto (java.io.File. home ".m2") .mkdirs)
 
           cfg
-          {"workspace"
-           {"filesystem"
-            [{"id" "demo" "path" "~/demo" "description" "Sibling repo" "draft" "copy-and-apply"}
-             {"id" "ro" "path" "~/read-only" "access" "read-only" "draft" "not-allowed"}
-             {"id" "m2" "path" "~/.m2" "search" false "description" "Maven cache"}]}
+          {"workspace" {"filesystem"
+                        [{"id" "demo" "path" "~/demo" "description" "Sibling repo"}
+                         {"id" "ro" "path" "~/read-only" "access" "read-only"}
+                         {"id" "m2" "path" "~/.m2" "search" false "description" "Maven cache"}]}
            "jail" {"enabled" true
                    "filesystem" {"allow" ["demo" "ro" "m2"]}
                    "network" {"allowed_domains" ["example.com"] "inbound_ports" [5273]}}}
@@ -281,22 +280,17 @@
       (expect (= (str (.getPath home) "-other/AGENTS.md")
                  (paths/abbreviate-home (str (.getPath home) "-other/AGENTS.md") (.getPath home))))
       ;; User review: the session object listed each path up to three times. Now each path
-      ;; is in one list once, with only the facts that differ from the default. A root that
-      ;; opts OUT of the default `shared` isolation names its draft policy.
-      (expect (= [{"cwd" (in-home "demo") "description" "Sibling repo" "draft" "copy-and-apply"}
+      ;; is in one list once, with only the facts that differ from the default.
+      (expect (= [{"cwd" (in-home "demo") "description" "Sibling repo"}
                   {"cwd" (in-home ".m2") "description" "Maven cache" "no_search" true}
                   {"cwd" (in-home ".vis")
                    "description" (get config-validation/vis-home-entry "description")
-                   "no_search" true}
-                  {"cwd" (in-home "read-only") "mode" "read" "draft" "not-allowed"}]
+                   "no_search" true} {"cwd" (in-home "read-only") "mode" "read"}]
                  (one-list snapshot (.getPath project))))
       ;; The access block keeps only the rules.
       ;; Empty rule lists and default network settings are left out.
       (expect (not (contains? view "filesystem")))
       (expect (= {"allowed_domains" ["example.com"] "inbound_ports" [5273]} (get view "network")))
-      (expect (= {(.getCanonicalPath sibling) :copy-and-apply
-                  (.getCanonicalPath (java.io.File. home "read-only")) :not-allowed}
-                 (policy/draft-policies snapshot)))
       (expect (= [5273] (get-in view ["network" "inbound_ports"])))
       (expect (= "reload" (get view "changes_require")))
       ;; Confinement is named `jail` end to end: the access view says `is_jailed`,
@@ -371,12 +365,12 @@
         (expect (= [vis-home]
                    (keep #(when (get % "no_search") (get % "cwd")) (one-list snapshot base))))
         (expect (= (into (mapv (fn [root]
-                                 (cond-> {:trunk root :clone root :draft :shared}
+                                 (cond-> {:root root}
                                    (= vis-home root)
                                    (assoc :no-search? true)))
                                catalog)
                          (mapv (fn [root]
-                                 {:trunk root :clone root :draft :shared :no-search? true})
+                                 {:root root :no-search? true})
                                host-roots))
                    (workspace/env-filesystem-roots
                      {:security-policy snapshot
@@ -419,7 +413,7 @@
                    (policy/no-search-roots snapshot)))
         (expect (= [cache vis-home]
                    (keep #(when (get % "no_search") (get % "cwd")) (one-list snapshot base))))
-        (expect (true? (:no-search? (first (filter #(= cache (:trunk %)) entries)))))))
+        (expect (true? (:no-search? (first (filter #(= cache (:root %)) entries)))))))
   (it
     "keeps a stable generation for equivalent snapshots and changes it with policy"
     (let [base
@@ -590,36 +584,6 @@
               ;; A later spawn reuses the walk.
               (process-jail/runtime-policy jail)
               (expect (= 1 @walks)))))))))
-
-(defdescribe
-  deny-overlap-test
-  ;; Issue #396: the draft root check expanded each glob over the whole workspace.
-  (it "tests ancestors without a walk and walks only below the selected root"
-      (with-secret-project
-        (fn [root]
-          (let [starts
-                (atom [])
-
-                walk
-                @#'policy/walk-entries
-
-                nested
-                (str root "/**/.env")]
-
-            (with-redefs [policy/walk-entries (fn [start & args]
-                                                (swap! starts conj (str start))
-                                                (apply walk start args))]
-              (expect (= (str root "/secret.txt")
-                         (policy/deny-overlap [nested (str root "/secret.txt")] root)))
-              (expect (= (str root "/service")
-                         (policy/deny-overlap [(str root "/serv*")] (str root "/service"))))
-              (expect (nil? (policy/deny-overlap [(str root "/*.md")] (str root "/service"))))
-              (expect (nil? (policy/deny-overlap [nested] (str root "-elsewhere"))))
-              (expect (= [] @starts))
-              (expect (= (str root "/service/.env")
-                         (policy/deny-overlap [nested] (str root "/service"))))
-              (expect (= (str root "/service/.env") (policy/deny-overlap [nested] root)))
-              (expect (= [(str root "/service") root] @starts))))))))
 
 (defn- with-link-tree
   "A temp tree with `.env` files beside, before and below other entries."

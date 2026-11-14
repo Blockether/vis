@@ -102,103 +102,6 @@
        distinct
        vec))
 
-(def draft-required-message
-  "Use draft_create with roots=[...] before changing project files. Shared and unselected repositories remain read-only while drafts are enabled.")
-
-(defn- beneath?
-  [path parent]
-  (let [^Path child
-        (Paths/get ^String (workspace/normalize-root path) (make-array String 0))
-
-        ^Path ancestor
-        (Paths/get ^String (workspace/normalize-root parent) (make-array String 0))]
-
-    (.startsWith child ^Path ancestor)))
-
-(defn- blanket-grant?
-  "True for a whole-filesystem grant (`/`, `C:\\`) rather than a project checkout. A
-   disabled jail grants every host filesystem root, and protecting one of those
-   refuses every host write in a drafted session — the private draft copy included."
-  [path]
-  (nil? (.getParentFile (java.io.File. (str path)))))
-
-(defn draft-source-roots
-  "Project originals protected by the draft prerequisite; dependency caches and
-   whole-filesystem grants stay available."
-  [env]
-  (let [ws
-        (or (some-> (:workspace-atom env)
-                    deref)
-            (:workspace env))
-
-        policy
-        (:security-policy env)
-
-        no-search
-        (set (map workspace/normalize-root
-                  (concat (:security/no-search-roots env)
-                          (get-in policy [:process-jail :no-search]))))]
-
-    (vec (distinct (remove blanket-grant?
-                     (keep workspace/normalize-root
-                           (concat
-                             [(or (:repo-root ws) (:workspace/root env))]
-                             (:workspace/draft-protected-roots env)
-                             (keep (fn [[path draft-policy]]
-                                     (when (contains? #{:copy-only :copy-and-apply}
-                                                      (workspace/draft-policy-id draft-policy))
-                                       path))
-                                   (:draft-policies policy))
-                             (map :repo-root (workspace/draft-roots ws))
-                             (remove (fn [path]
-                                       (and (contains? no-search (workspace/normalize-root path))
-                                            (not (.exists (java.io.File. (str path) ".git")))))
-                               (concat (vals (:project-paths policy))
-                                       (:security/filesystem-roots env))))))))))
-
-(defn draft-policy
-  "Narrow a child policy to private copies and caches, keeping originals readable.
-   Explicit original-tree write denials also defeat a broad ancestor or implicit temp grant."
-  [policy env]
-  (if (= :off (workspace/draft-backend-setting))
-    policy
-    (let [sources
-          (draft-source-roots env)
-
-          roots
-          (when-let [f (:roots-fn policy)]
-            (f))
-
-          writable
-          (fn [paths]
-            (vec (remove #(some (fn [source]
-                                  (or (beneath? % source) (beneath? source %)))
-                                sources)
-                   paths)))]
-
-      (-> policy
-          (assoc :roots-fn (constantly (writable roots)))
-          (update :allow-read-write writable)
-          (update :allow-read #(vec (distinct (concat % roots (:allow-read-write policy) sources))))
-          (update :deny-write #(vec (distinct (concat % sources))))))))
-
-(defn- draft-copy?
-  "True when `path` lies in the private clone store. That store is where the draft
-   prerequisite steers writes TO, so a grant that happens to contain it (`~/.vis`, or a
-   `vis.drafts.dir` inside a checkout) never turns a draft copy back into an original."
-  [env path]
-  (boolean (some #(beneath? path %)
-                 (keep identity [(:workspace/drafts-home env) (workspace/drafts-store-path)]))))
-
-(defn draft-write-refusal
-  "Actionable host-writer refusal for an original path, independent of extension hooks."
-  [env path]
-  (when (and path
-             (not= :off (workspace/draft-backend-setting))
-             (not (draft-copy? env path))
-             (some #(beneath? path %) (draft-source-roots env)))
-    draft-required-message))
-
 (def ^:private deny-rule-settings
   "Configured filesystem deny rules, by the `vis.yml` key that declared them and
    the host operations each one closes. A READ rule closes writing too: a file
@@ -309,16 +212,6 @@
                      limited?
                      (not-any? #(rule-covers? % canonical) write-rules))
             (grant-refusal write-rules))))))
-
-(defn draft-policy-expanded?
-  "True when a live repository was not covered by the worker's launch-time write denials."
-  [env]
-  (let [protected (:workspace/draft-protected-roots env)]
-    (and (some? protected)
-         (not= :off (workspace/draft-backend-setting))
-         (boolean (some (fn [source]
-                          (not-any? #(beneath? source %) protected))
-                        (draft-source-roots env))))))
 
 ;; ── Processes that outlive their gateway ───────────────────────────────────
 ;; A confined process can leave its spawner's tree (a double fork, a crashed worker)

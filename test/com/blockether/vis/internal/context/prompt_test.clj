@@ -161,8 +161,7 @@
           (expect (every? #(not (contains? % :content)) rows)))))
   (it "ignores image bytes and keeps unknown guidance status unknown"
       (let [health (prompt/request-health
-                     {:workspace {:root "/work"}
-                      :filesystem-roots [{:trunk "/linked" :clone "/linked" :draft :shared}]}
+                     {:workspace {:root "/work"} :filesystem-roots [{:root "/linked"}]}
                      [{:role "user"
                        :content [{:type "text" :text "abcd"}
                                  {:type "image_url"
@@ -390,8 +389,7 @@
                                  {:found? true :path "/linked/AGENTS.md" :content "ąbcde"}})]
 
         (let [health (prompt/request-health {:workspace {:root "/work"}
-                                             :filesystem-roots
-                                             [{:trunk "/linked" :clone "/linked" :draft :shared}]}
+                                             :filesystem-roots [{:root "/linked"}]}
                                             [{:role "user" :content "abcd"}]
                                             [])]
           (expect (= [{:label "Conversation and tool results" :tokens 6}
@@ -402,7 +400,7 @@
                                   :path "/linked/AGENTS.md"
                                   :tokens (svar/count-tokens "unknown" "ąbcde")}}]
                      (:roots health))))))
-  (it "distinguishes missing guidance from read failures and never scans denied roots"
+  (it "distinguishes missing guidance from read failures"
       (doseq [[scan status] [[{:result {:found? false}} "missing"]
                              [{:warnings [{:reason "unreadable"}]} "error"]]]
         (let [calls (atom 0)]
@@ -411,12 +409,10 @@
                                          (swap! calls inc)
                                          scan)]
 
-            (let [health (prompt/request-health
-                           {:workspace {:root "/work"}
-                            :filesystem-roots [{:trunk "/linked" :clone "/linked" :draft :shared}
-                                               {:trunk "/denied" :clone "/denied" :denied? true}]}
-                           []
-                           [])]
+            (let [health (prompt/request-health {:workspace {:root "/work"}
+                                                 :filesystem-roots [{:root "/linked"}]}
+                                                []
+                                                [])]
               (expect (= 1 @calls))
               (expect (= status (get-in health [:roots 0 :guidance :status])))
               (expect (nil? (get-in health [:roots 0 :guidance :tokens])))))))))

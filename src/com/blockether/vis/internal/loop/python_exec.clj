@@ -23,7 +23,6 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.materializer :as live]
-            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
@@ -818,12 +817,6 @@
   policy-reload-epoch
   (atom 0))
 
-(defn- retire-policy!
-  "Mark only this environment's policy stale, so its next turn rebuilds it (#408)."
-  [environment]
-  (some-> ^java.util.concurrent.atomic.AtomicBoolean (:policy-stale environment)
-          (.set true)))
-
 (defn execute-code
   "Run a single :code block through the Python sandbox.
 
@@ -836,28 +829,14 @@
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [environment code & {:keys [timeout-ms tool-event-fn]}]
-  (let [opts (get-in environment [:sandbox-caps :network])]
-    (when (process-jail/draft-policy-expanded? environment)
-      (retire-policy! environment)
-      (throw
-        (ex-info
-          "A newly discovered repository needs a stricter worker policy. Start the next turn to rebuild the Python context before selecting or editing it; existing handles cannot be safely migrated."
-          {:type :draft/policy-expanded})))
-    (when (and (contains? opts :draft-required?)
-               (not= (:draft-required? opts) (not= :off (workspace/draft-backend-setting))))
-      (retire-policy! environment)
-      (throw
-        (ex-info
-          "Draft policy changed. Start the next turn to rebuild the Python context safely; existing variables are not silently migrated."
-          {:type :draft/policy-changed})))
-    ;; A subagent file grant changed the OS policy of this session. A built worker keeps its
-    ;; launch policy, so it restarts here and restores the saved helpers.
-    (when (and (process-jail/take-stale-worker! (:session-id environment))
-               (:python-sandbox-factory environment)
-               (env/sandbox-if-built environment))
-      (some-> (:python-context-retired-atom environment)
-              (reset! true))
-      (env/renew-python-sandbox! environment)))
+  ;; A subagent file grant changed the OS policy of this session. A built worker keeps its
+  ;; launch policy, so it restarts here and restores the saved helpers.
+  (when (and (process-jail/take-stale-worker! (:session-id environment))
+             (:python-sandbox-factory environment)
+             (env/sandbox-if-built environment))
+    (some-> (:python-context-retired-atom environment)
+            (reset! true))
+    (env/renew-python-sandbox! environment))
   ;; Running a block is exactly what a sandbox is FOR, so this is the ask that
   ;; builds one on a session whose first turn executes code.
   (let [python-context

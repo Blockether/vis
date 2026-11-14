@@ -547,12 +547,6 @@
    "read_session" ["Read session" "Read session" true]
    "get_session" ["Inspect session" "Inspected session" true]
    "list_sessions" ["Find sessions" "Found sessions" true]
-   "draft_status" ["Check draft status" "Checked draft status" false]
-   "draft_diff" ["Capture draft diff" "Captured draft diff" true]
-   "draft_create" ["Create draft" "Created draft" true]
-   "draft_sync" ["Synchronize draft" "Draft synchronization updated" true]
-   "draft_approve" ["Approve draft" "Approved draft" true]
-   "draft_discard" ["Discard draft" "Discarded draft" true]
    "main_agent_instructions" ["Read agent instructions" "Read agent instructions" false]
    "update_goal" ["Update goal" "Updated goal" false]
    "mcp__call" ["Call MCP tool" "Called MCP tool" true]})
@@ -560,7 +554,6 @@
 (def ^:private result-fields
   {"get_session" ["title" "goal_status" "turn_count" "model" "last_turn"]
    "list_sessions" ["title" "goal_status" "turn_count" "request_snippet" "reply_snippet"]
-   "draft_approve" ["files"]
    "mcp__call" ["content" "tools"]})
 
 (defn select-result
@@ -586,104 +579,6 @@
       (summary-line (cons (subs head (count "folded "))
                           (filter #(re-find #"^(estimated |removal estimate)" %) notes)))
       "Nothing to fold")))
-
-(defn- draft-summary
-  [op value]
-  (let [branch
-        (field value "branch")
-
-        target
-        (field value "target_branch")
-
-        pending
-        (field value "pending")
-
-        ahead
-        (field value "ahead")
-
-        kept
-        (field value "approved_ahead")
-
-        files
-        (field value "files")]
-
-    (case op
-      "draft_status"
-      (cond (true? (field value "recovery_required")) (summary-line ["Draft recovery required"
-                                                                     (field value "recovery_hint")])
-            (false? (field value "in_draft")) "No active draft"
-            (true? (field value "in_draft")) (summary-line
-                                               [(str branch (when target (str " → " target)))
-                                                (when (number? pending)
-                                                  (if (zero? (long pending))
-                                                    "No pending changes"
-                                                    (counted-label pending "pending file")))
-                                                (when (and (number? ahead) (pos? (long ahead)))
-                                                  (str (counted-label ahead "commit") " ahead"))])
-            :else "No draft status")
-
-      "draft_create"
-      (if branch
-        (summary-line [(str branch (when target (str " → " target)))
-                       (case (field value "clean")
-                         true
-                         "Clean snapshot"
-
-                         false
-                         "Includes pending changes"
-
-                         nil)])
-        "No draft result")
-
-      "draft_approve"
-      (if target
-        (summary-line
-          [(when (= "nothing-to-approve" (scalar (field value "status"))) "Nothing to approve")
-           (str (if (true? (field value "published")) "Published to " "Approved locally on ")
-                target) (when (seq files) (counted-label (count files) "file"))])
-        "No draft result")
-
-      "draft_sync"
-      (if-let [status (field value "status")]
-        (let [repositories (field value "repositories")
-              conflicts (reduce + 0 (map #(count (field % "conflicts")) repositories))]
-
-          (summary-line [(case (scalar status)
-                           "synced"
-                           "Synchronized"
-
-                           "conflicts"
-                           "Resolve conflicts"
-
-                           "aborted"
-                           "Synchronization aborted"
-
-                           "partial"
-                           "Partially synchronized"
-
-                           (scalar status))
-                         (when (seq repositories)
-                           (str (count repositories)
-                                (if (= 1 (count repositories)) " repository" " repositories")))
-                         (when (pos? (long conflicts)) (counted-label conflicts "conflict path"))]))
-        "No draft result")
-
-      "draft_diff"
-      (if-let [filename (field value "filename")]
-        (summary-line [filename
-                       (when-let [n (field value "repository_count")]
-                         (str n (if (= 1 n) " repository" " repositories")))
-                       (if (true? (field value "empty")) "No changes" "Diff attached")])
-        "No draft result")
-
-      "draft_discard"
-      (if-let [target (field value "root")]
-        (summary-line [(field value "label") (str "Returned to " target)
-                       (when (and (number? kept) (pos? (long kept)))
-                         (str (counted-label kept "approved commit") " kept"))
-                       (when-let [preserved (field value "preserved_root")]
-                         (str "Preserved " preserved))])
-        "No draft result"))))
 
 (defn- council-body
   [value key]
@@ -1118,7 +1013,6 @@
                 (contains? #{"doc" "defs" "patch" "shell"} op) path
                 (= op "grep") (or (first (str/split-lines (or text ""))) "")
                 (= op "fold_session") (fold-summary text)
-                (str/starts-with? op "draft_") (draft-summary op value)
                 (= op "update_goal") (if-let [status (field value "goal_status")]
                                        (label status)
                                        "No goal result")
@@ -1137,7 +1031,6 @@
                 (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
                                                                                "text" text}]
                 (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
-                (contains? #{"draft_status" "draft_create" "draft_discard" "draft_diff"} op) []
                 :else (result-blocks (visible-result
                                        (let [public
                                              (if (map? value)

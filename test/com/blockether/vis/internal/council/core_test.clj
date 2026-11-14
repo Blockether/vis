@@ -177,16 +177,13 @@
           (expect (document/valid? "council" definition value)))))))
 
 (defn- workspace-session
-  [db repo-root workspace-root owner-id]
+  [db root owner-id]
   (jdbc/execute! (:datasource db)
                  ["INSERT OR IGNORE INTO owner (id, name, created_at) VALUES (?, ?, 0)" owner-id
                   owner-id])
-  (let [workspace (ps/db-workspace-insert! db
-                                           {:id (str (random-uuid))
-                                            :repo-id "council-test"
-                                            :repo-root repo-root
-                                            :root workspace-root
-                                            :state :active})]
+  (let [workspace (ps/db-workspace-insert!
+                    db
+                    {:id (str (random-uuid)) :repo-id "council-test" :root root :state :active})]
     (str (h/store-session! db {:channel :api :owner-id owner-id :workspace-id (:id workspace)}))))
 
 (defdescribe
@@ -198,22 +195,22 @@
               (h/store)
 
               sid
-              (workspace-session db "/repo" "/repo" "local")
+              (workspace-session db "/repo" "local")
 
-              draft
-              (workspace-session db "/repo" "/draft" "local")
+              peer
+              (workspace-session db "/repo" "local")
 
               other
-              (workspace-session db "/other" "/other" "local")
+              (workspace-session db "/other" "local")
 
               owner
-              (workspace-session db "/repo" "/repo" "other-owner")
+              (workspace-session db "/repo" "other-owner")
 
               gid
               (council 'default-group db sid)]
 
           (expect (string? gid))
-          (expect (= gid (council 'default-group db draft)))
+          (expect (= gid (council 'default-group db peer)))
           (expect (not= gid (council 'default-group db other)))
           (expect (not= gid (council 'default-group db owner)))
           (expect (nil? (:project-id (ps/db-get-session db sid))))
@@ -224,9 +221,9 @@
                 (ps/db-create-project! db {:name "Explicit"})]
 
             (expect (= (str (:id project)) (council 'default-group db sid)))
-            (expect (= (str (:id project)) (council 'default-group db draft)))
-            (ps/db-set-session-project! db draft (:id explicit))
-            (expect (= (str (:id explicit)) (council 'default-group db draft)))
+            (expect (= (str (:id project)) (council 'default-group db peer)))
+            (ps/db-set-session-project! db peer (:id explicit))
+            (expect (= (str (:id explicit)) (council 'default-group db peer)))
             (expect (not= (council 'default-group db sid) (council 'default-group db owner))))))))
 
 (defdescribe
@@ -280,13 +277,13 @@
             (ps/db-create-project! db {:name "Registered repository" :workspace-root "/repo"})
 
             a
-            (workspace-session db "/repo" "/repo" "local")
+            (workspace-session db "/repo" "local")
 
             b
-            (workspace-session db "/repo" "/draft" "local")
+            (workspace-session db "/repo" "local")
 
             other
-            (workspace-session db "/other" "/other" "local")
+            (workspace-session db "/other" "local")
 
             update!
             (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)

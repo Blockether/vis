@@ -3,8 +3,6 @@
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            ;; Registers the `draft_backend` experimental toggle this test pins.
-            [com.blockether.vis.internal.foundation.drafts]
             [com.blockether.vis.internal.gateway.server.settings :as settings-api]
             [com.blockether.vis.internal.gateway.state :as gateway]
             [com.blockether.vis.internal.gateway.agents-test :as agent-http]
@@ -53,24 +51,15 @@
                               (.delete file)))))
 
             general
-            (get (first (filter #(= "general" (get % "id")) groups)) "toggles")
+            (get (first (filter #(= "general" (get % "id")) groups)) "toggles")]
 
-            rows
-            (filter #(get % "is_experimental") general)]
-
-        (expect (= #{"draft_backend"} (set (map #(get % "id") rows))))
         (expect (= ["subagents"]
                    (mapv #(get % "id")
                          (get (first (filter #(= "council" (get % "id")) general)) "children"))))
         ;; Apps, Sounds and Voice stand in General, not in sections of their own.
         (expect (empty? (filter #(#{"apps" "sounds" "voice"} (get % "id")) groups)))
         (expect (every? (set (map #(get % "id") general))
-                        ["apps_inline" "sounds" "speech_model_idle_unload"]))
-        ;; Experimental switches stand last in the General section.
-        (expect (= rows (take-last (count rows) general)))
-        (expect (every? #(true? (get % "is_experimental")) rows))
-        (expect (every? #(false? (get % "enabled")) (filter #(= "boolean" (get % "type")) rows)))
-        (expect (= "off" (get (first (filter #(= "draft_backend" (get % "id")) rows)) "value"))))
+                        ["apps_inline" "sounds" "speech_model_idle_unload"])))
       (toggles/hydrate-from-config! {"toggles" {"subagents" "on"}})
       (expect (toggles/enabled? "subagents"))
       (expect (= {"subagents" true} (select-keys (toggles/snapshot) ["subagents"])))))

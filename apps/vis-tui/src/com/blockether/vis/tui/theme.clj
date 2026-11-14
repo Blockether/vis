@@ -251,9 +251,6 @@
     :git
     [header-active-tab-fg code-success-fg]
 
-    :draft
-    [header-active-tab-fg footer-warning-fg]
-
     :warning
     [(contrast-ink warning-button-bg) warning-button-bg]
 

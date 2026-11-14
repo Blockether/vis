@@ -176,58 +176,16 @@
 
 (defdescribe
   compact-built-in-results-test
-  (it
-    "keeps routine draft and session outcomes on the summary line"
-    (doseq [[operation result summary]
-            [[:draft_status {:in_draft false} "No active draft"]
-             [:draft_status
-              {:in_draft true :branch "vis/review" :target_branch "main" :pending 2 :ahead 1}
-              "vis/review → main · 2 pending files · 1 commit ahead"]
-             [:draft_status
-              {"in_draft" true "branch" "vis/review" "target_branch" "main" "pending" 0 "ahead" 0}
-              "vis/review → main · No pending changes"]
-             ;; #246: recovery must not look like a clean or deleted draft.
-             [:draft_status
-              {:in_draft true :recovery_required true :recovery_hint "Use draft_discard()."}
-              "Draft recovery required · Use draft_discard()."]
-             [:draft_create {:branch "vis/review" :target_branch "main" :clean true}
-              "vis/review → main · Clean snapshot"]
-             [:draft_create {:branch "vis/review" :target_branch "main" :clean false}
-              "vis/review → main · Includes pending changes"]
-             [:draft_approve {:status "approved" :published false :target_branch "main" :files []}
-              "Approved locally on main"]
-             [:draft_approve
-              {:status "nothing-to-approve" :published true :target_branch "main" :files []}
-              "Nothing to approve · Published to main"]
-             [:draft_diff {:filename "DIFF-review.json" :empty true :checkpoint "internal"}
-              "DIFF-review.json · No changes"]
-             [:draft_diff {:filename "DIFF-review.json" :empty false :checkpoint "internal"}
-              "DIFF-review.json · Diff attached"]
-             [:draft_diff {:filename "DIFF-group.json" :empty false :repository_count 2}
-              "DIFF-group.json · 2 repositories · Diff attached"]
-             [:draft_sync {:status "synced" :repositories [{:status "synced"} {:status "synced"}]}
-              "Synchronized · 2 repositories"]
-             [:draft_sync {:status "conflicts" :repositories [{:conflicts ["a.txt" "b.txt"]}]}
-              "Resolve conflicts · 1 repository · 2 conflict paths"]
-             [:draft_sync {:status "aborted" :repositories [{:status "aborted"}]}
-              "Synchronization aborted · 1 repository"]
-             [:draft_discard {:label "review" :root "~/vis" :approved_ahead 1}
-              "review · Returned to ~/vis · 1 approved commit kept"]
-             [:draft_discard
-              {:status "recovered" :label "review" :root "~/vis" :preserved_root "~/draft"}
-              "review · Returned to ~/vis · Preserved ~/draft"]
-             [:update_goal {:goal_status "complete"} "Complete"]]]
-      (let [view (get-in (result-fixture [[operation "" result nil]]) ["rows" 0 "presentation"])]
-        (expect (contract/valid-presentation? view))
-        (expect (= summary (get view "summary")))
-        (expect (not (re-find #"\"type\" \"table\"" (pr-str view))))
-        (when-not (= :draft_sync operation) (expect (empty? (get view "content")))))))
+  (it "keeps a routine session outcome on the summary line"
+      (doseq [[operation result summary] [[:update_goal {:goal_status "complete"} "Complete"]]]
+        (let [view (get-in (result-fixture [[operation "" result nil]]) ["rows" 0 "presentation"])]
+          (expect (contract/valid-presentation? view))
+          (expect (= summary (get view "summary")))
+          (expect (not (re-find #"\"type\" \"table\"" (pr-str view))))
+          (expect (empty? (get view "content"))))))
   (it "names absent results instead of showing empty summaries or tables"
       (doseq [[operation _]
-              [[:draft_status "No draft status"] [:draft_create "No draft result"]
-               [:draft_approve "No draft result"] [:draft_discard "No draft result"]
-               [:draft_diff "No draft result"] [:draft_sync "No draft result"]
-               [:list_sessions "No sessions found"]]
+              [[:update_goal "No goal result"] [:list_sessions "No sessions found"]]
 
               result
               [nil {} []]]
@@ -235,24 +193,9 @@
         (let [view (result-view {:operation operation} result)]
           (expect (empty? (get view "content"))))))
   (it
-    "retains actionable evidence without metadata tables"
-    (doseq [[operation result summary evidence]
-            [[:draft_approve
-              {:status "approved" :published true :target_branch "main" :files ["src/example.clj"]}
-              "Published to main · 1 file" ["src/example.clj"]]]]
-      (let [view (result-view {:operation operation} result)
-            content (pr-str (get view "content"))]
-
-        (expect (contract/valid-presentation? view))
-        (expect (= summary (get view "summary")))
-        (doseq [text evidence]
-          (expect (str/includes? content text)))
-        (expect (not (str/includes? content "\"table\""))))))
-  (it
     "keeps binding registration, start policy, failure and cancellation intact"
     (doseq [[operation show-start?]
-            [[:draft_status false] [:draft_create true] [:draft_diff true] [:draft_approve true]
-             [:draft_discard true] [:update_goal false]]
+            [[:list_sessions true] [:update_goal false]]
 
             outcome
             [:failed :cancelled]]

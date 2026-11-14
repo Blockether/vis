@@ -63,10 +63,8 @@
 (defn thaw-blob "Thaw a nippy BLOB from a raw query result." [^bytes bs] (when bs (nippy/thaw bs)))
 
 (defn- fresh-workspace!
-  "Insert a lightweight workspace row (NO rift clone) rooted at a
-   throwaway temp dir, satisfying `session_state.workspace_id` (NOT
-   NULL, 1:1). Tests never `apply`, so a real CoW clone of cwd would
-   only be slow and litter ~/.rifts."
+  "Insert a workspace row rooted at a throwaway temp dir, satisfying
+   `session_state.workspace_id` (NOT NULL, 1:1)."
   [store]
   (let [root
         ;; The JVM deletes the empty root at exit. Without that, the suite left
@@ -79,9 +77,8 @@
         id
         (str (java.util.UUID/randomUUID))]
 
-    (:id (persistance/db-workspace-insert!
-           store
-           {:id id :repo-id "test" :repo-root root :root root :state :active :fork-ms 0}))))
+    (:id (persistance/db-workspace-insert! store
+                                           {:id id :repo-id "test" :root root :state :active}))))
 
 (defn store-session!
   "Test wrapper for `persistance/db-store-session!` that injects a fresh

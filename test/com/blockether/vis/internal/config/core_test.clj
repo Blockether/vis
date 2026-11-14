@@ -359,6 +359,67 @@
              (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
+  retired-key-never-freezes-a-store-test
+  "An older Vis version wrote `draft` on a `workspace.filesystem` entry from its own
+   settings screens. The contract no longer has that key. Each writer of a store
+   that Vis owns reads the whole map and the contract judges the whole map, so the
+   stored key refused each later write until a person edited YAML."
+  (it "drops the key from the machine store and lets the next write through"
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-retired-" (System/nanoTime))
+
+            path
+            (str tmp "/state.yml")]
+
+        (try (.mkdirs (io/file tmp))
+             (spit path
+                   (str "workspace:\n  filesystem:\n    - id: lib\n      path: /tmp\n"
+                        "      description: Old root\n      access: read-write\n"
+                        "      draft: copy-only\n"))
+             (with-redefs [config/config-dir
+                           (constantly tmp)
+
+                           config/state-path
+                           (constantly path)
+
+                           config/project-config-yaml-paths
+                           (constantly [(str tmp "/none/.vis/config.yml")])
+
+                           config/project-root-yaml-paths
+                           (constantly [])]
+
+               (config/update-machine-config! #(assoc % "agent_name" "probe"))
+               (expect (= "probe" (get (config/load-global-config-raw) "agent_name")))
+               (expect (=
+                         [{"id" "lib" "path" "/tmp" "description" "Old root" "access" "read-write"}]
+                         (get-in (config/load-global-config-raw) ["workspace" "filesystem"])))
+               (expect (not (str/includes? (slurp path) "draft"))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "drops the key from the project overlay and lets the next write through"
+      (let [dir
+            (.toFile (Files/createTempDirectory "vis-cfg-retired-project"
+                                                (make-array java.nio.file.attribute.FileAttribute
+                                                            0)))
+
+            overlay
+            (io/file dir ".vis" "config.yml")]
+
+        (try (.mkdirs (.getParentFile overlay))
+             (spit overlay
+                   (str "workspace:\n  filesystem:\n    - id: lib\n      path: /tmp\n"
+                        "      description: Old root\n      access: read-write\n"
+                        "      draft: not-allowed\n"))
+             (binding [workspace/*workspace-root* (.getCanonicalPath dir)]
+               (config/update-project-config! #(assoc-in % ["toggles" "subagents"] false))
+               (expect (= {"workspace" {"filesystem" [{"id" "lib"
+                                                       "path" "/tmp"
+                                                       "description" "Old root"
+                                                       "access" "read-write"}]}
+                           "toggles" {"subagents" false}}
+                          (config/load-project-config-raw))))
+             (finally (rm-rf! dir))))))
+
+(defdescribe
   derived-memory-never-freezes-the-store-test
   "`vision_memory` is a cache Vis writes about its OWN fleet — which endpoint
    refused pixels, which pair answered. Every writer of the machine store

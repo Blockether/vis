@@ -212,15 +212,7 @@ export interface Session {
   modified_at?: string;
   workspace?: {
     root?: string;
-    repo_root?: string;
     label?: string;
-    fork_ms?: number;
-    /**
-     * True when `root` is a DRAFT clone (~/.vis/drafts/<repo>/<label>) rather
-     * than a project root. A draft belongs to `repo_root`; `label` names the
-     * draft, not the project, so neither may be used as a grouping key.
-     */
-    is_draft?: boolean;
   } | null;
   [k: string]: unknown;
 }

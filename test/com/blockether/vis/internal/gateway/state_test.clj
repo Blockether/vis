@@ -29,8 +29,6 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.workspace.core :as workspace]
-            [com.blockether.vis.internal.workspace.drafts :as drafts]
-            [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel]))
@@ -47,43 +45,6 @@
                             (vector (str %))))
             ids))))
 
-;; #245: enforce draft isolation at the session-creation boundary, not only in the UI.
-(defdescribe
-  create-session-from-draft-root-test
-  (it "creates a fresh trunk workspace when a client sends another session's draft path"
-      (let [store
-            (sqlite/db-open! :memory)
-
-            session-id
-            (random-uuid)]
-
-        (try (let [draft (persistance/db-workspace-insert! store
-                                                           {:repo-id "source"
-                                                            :repo-root "/source"
-                                                            :root "/draft"
-                                                            :workspace-kind :draft
-                                                            :workspace-backend :worktree
-                                                            :state :active
-                                                            :fork-ms 1})]
-               (with-redefs-fn {#'lp/db-info (constantly store)
-                                #'lp/create! (fn [channel opts]
-                                               {:id session-id
-                                                :channel channel
-                                                :workspace-id (:workspace-id opts)})
-                                #'state/put-session! (fn [_ _]
-                                                       nil)}
-                 (fn []
-                   (let [created (state/create-session! {:channel :tui :root "/draft"})
-                         fresh (persistance/db-workspace-get store (get created "workspace_id"))]
-
-                     (expect (= "/source" (:root fresh)))
-                     (expect (not (workspace/draft? fresh)))
-                     (expect (not= (:id draft) (:id fresh)))
-                     (expect (= draft (persistance/db-workspace-get store (:id draft))))))))
-             (finally (sqlite/db-close! store))))))
-
-;; A session started in a project group without a folder belongs in that project's
-;; folder, not in the gateway process directory.
 (defdescribe
   create-session-in-project-group-test
   (it
@@ -162,262 +123,6 @@
                                                             store
                                                             (parse-uuid (get created "id")))))))))
                         (finally (sqlite/db-close! store) (.delete (io/file root)))))))
-
-(defn- with-draft-workspace
-  [ws f]
-  (expect (await-for 5000 @#'state/draft-status-reader))
-  (reset! @#'state/draft-status-cache {})
-  (with-redefs [lp/db-info
-                (constantly ::db)
-
-                persistance/db-latest-session-state-id
-                (constantly "state")
-
-                workspace/for-session
-                (constantly ws)
-
-                persistance/db-workspace-list-drafts
-                (constantly [])
-
-                config/agent-name
-                (constantly "Vis")
-
-                git/workspace-status
-                (constantly {})]
-
-    (try (f) (finally (expect (await-for 5000 @#'state/draft-status-reader))))))
-
-(def ^:private draft-workspace
-  {:id "draft-regression" :root "/draft" :repo-root "/source" :label "feature" :fork-ms 1})
-
-(defdescribe
-  session-workspace-recovery-test
-  ;; #247: a trunk row rooted inside a draft still needs a draft label in the footer.
-  (it "identifies a draft-rooted trunk without presenting it as owned or clean"
-      (let [trunk {:id "misrooted-session" :root "/draft/subdir" :repo-root "/draft/subdir"}]
-        (with-draft-workspace
-          trunk
-          (fn []
-            (with-redefs [persistance/db-workspace-list-drafts (constantly [draft-workspace])
-                          drafts/status (fn [_]
-                                          (throw (AssertionError. "unexpected draft summary")))]
-
-              (let [info (state/session-workspace-info "session")]
-                (expect (true? (get info "is_draft")))
-                (expect (true? (get info "recovery_required")))
-                (expect (= "misrooted-session" (get info "id")))
-                (expect (= "feature" (get info "label")))
-                (expect (= "/source/subdir" (get info "repo_root")))
-                (expect (= "/draft/subdir" (get info "root")))
-                (expect (nil? (get info "fork_ms")))
-                (expect (not (contains? info "draft_changes")))
-                (expect (empty? @@#'state/draft-status-cache))))))))
-  (it "marks an unrecognized draft directory for recovery rather than as ordinary Git"
-      (with-draft-workspace {:id "orphan-session"
-                             :root "/draft-store-regression/orphan"
-                             :repo-root "/draft-store-regression/orphan"}
-                            (fn []
-                              (with-redefs-fn {#'workspace/drafts-home
-                                               (constantly (io/file "/draft-store-regression"))}
-                                (fn []
-                                  (let [info (state/session-workspace-info "session")]
-                                    (expect (true? (get info "is_draft")))
-                                    (expect (true? (get info "recovery_required")))
-                                    (expect (nil? (get info "repo_root")))
-                                    (expect (nil? (get info "fork_ms")))
-                                    (expect (not (contains? info "draft_changes"))))))))))
-
-(defdescribe
-  session-workspace-draft-test
-  ;; #241: a failing summary must not erase the draft identity or claim clean zeroes.
-  (it "retains draft identity when the draft status reader fails"
-      (with-draft-workspace draft-workspace
-                            (fn []
-                              (with-redefs [drafts/status (fn [_]
-                                                            (throw (ex-info "summary unavailable"
-                                                                            {})))]
-                                (let [loading (state/session-workspace-info "session")]
-                                  (expect (true? (get loading "is_draft")))
-                                  (expect (= "draft-regression" (get loading "id")))
-                                  (expect (= "feature" (get loading "label"))))
-                                (expect (await-for 5000 @#'state/draft-status-reader))
-                                (let [info (state/session-workspace-info "session")]
-                                  (expect (= "draft-regression" (get info "id")))
-                                  (expect (nil? (get info "draft_changes"))))))))
-  (it
-    "reuses summaries and refreshes second-repository changes after expiry"
-    (with-draft-workspace
-      draft-workspace
-      (fn []
-        (let [now
-              (atom 1000)
-
-              calls
-              (atom 0)
-
-              second
-              (atom 0)]
-
-          (with-redefs [util/now-ms
-                        (fn ^long []
-                          (long @now))
-
-                        drafts/status
-                        (fn [_]
-                          (swap! calls inc)
-                          {:draft-changes {:modified @second :created 1 :deleted 0}
-                           :repositories [{:repo-root "/source" :pending 1}
-                                          {:repo-root "/second" :pending @second}]})]
-
-            (state/session-workspace-info "session")
-            (expect (await-for 5000 @#'state/draft-status-reader))
-            (let [info (state/session-workspace-info "session")]
-              (expect (= {"modified" 0 "created" 1 "deleted" 0} (get info "draft_changes")))
-              (expect (= "/second" (get-in info ["repositories" 1 "repo_root"]))))
-            (dotimes [_ 10]
-              (state/session-workspace-info "session"))
-            (expect (= 1 @calls))
-            (reset! second 2)
-            (swap! now + 5000)
-            (state/session-workspace-info "session")
-            (expect (await-for 5000 @#'state/draft-status-reader))
-            (expect (= {"modified" 2 "created" 1 "deleted" 0}
-                       (get (state/session-workspace-info "session") "draft_changes")))
-            (expect (= 2 @calls)))))))
-  (it "bounds pending work and coalesces cold requests without blocking the caller"
-      (with-draft-workspace
-        draft-workspace
-        (fn []
-          (let [entered
-                (promise)
-
-                release
-                (promise)
-
-                calls
-                (atom 0)]
-
-            (with-redefs [drafts/status (fn [_]
-                                          (swap! calls inc)
-                                          (deliver entered true)
-                                          (deref release 5000 nil)
-                                          {:draft-changes {:modified 0 :created 0 :deleted 0}})]
-              (try (state/session-workspace-info "session")
-                   (expect (true? (deref entered 5000 false)))
-                   (dotimes [_ 10]
-                     (state/session-workspace-info "session"))
-                   (expect (= 1 @calls))
-                   (dotimes [n 200]
-                     (#'state/cached-draft-status (assoc draft-workspace :id (str n))))
-                   (expect (= 128 (count @@#'state/draft-status-cache)))
-                   (expect (= 1 @calls))
-                   (finally (deliver release true)
-                            (expect (await-for 5000 @#'state/draft-status-reader)))))))))
-  (it "keeps ordinary workspaces unchanged and does not request a draft summary"
-      (with-draft-workspace (dissoc draft-workspace :fork-ms)
-                            (fn []
-                              (with-redefs [drafts/status (fn [_]
-                                                            (throw (AssertionError.
-                                                                     "unexpected draft read")))]
-                                (let [info (state/session-workspace-info "session")]
-                                  (expect (false? (get info "is_draft")))
-                                  (expect (not (contains? info "recovery_required")))
-                                  (expect (= "draft-regression" (get info "id")))
-                                  (expect (not (contains? info "draft_changes")))
-                                  (expect (not (contains? info "draft_error")))))))))
-
-(defdescribe
-  session-workspace-multiple-repositories-test
-  ;; #241: exercise the actual snapshot/aggregate path, not just its wire projection.
-  (it
-    "refreshes actual changes in the second repository without changing draft identity"
-    (let [base
-          (.toFile (java.nio.file.Files/createTempDirectory
-                     "vis-gateway-drafts"
-                     (make-array java.nio.file.attribute.FileAttribute 0)))
-
-          primary
-          (doto (io/file base "primary") .mkdirs)
-
-          secondary
-          (doto (io/file base "secondary") .mkdirs)
-
-          store
-          (sqlite/db-open! :memory)
-
-          draft
-          (atom nil)
-
-          run-git
-          (fn [root args]
-            (let [result (git/run-git root args)]
-              (expect (= 0 (:exit result)))))
-
-          now
-          (atom (util/now-ms))]
-
-      (try
-        (doseq [root [primary secondary]]
-          (run-git root ["init" "-q" "-b" "main"])
-          (run-git root ["config" "user.name" "Vis Test"])
-          (run-git root ["config" "user.email" "vis-test@example.invalid"])
-          (run-git root ["config" "commit.gpgsign" "false"])
-          (spit (io/file root "a.txt") "initial\n")
-          (run-git root ["add" "a.txt"])
-          (run-git root ["commit" "-q" "-m" "init"]))
-        (binding [workspace/*draft-backend* :worktree]
-          (reset! draft (workspace/create! store
-                                           {:root (.getPath primary)
-                                            :label "gateway-group"
-                                            :clean? true
-                                            :drafts-home (.getPath (io/file base "drafts"))
-                                            :filesystem-roots [{:trunk (.getPath secondary)
-                                                                :policy :copy-and-apply}]})))
-        (let [roots
-              (workspace/draft-roots @draft)
-
-              second-root
-              (io/file (:root (second roots)))]
-
-          (spit (io/file (:root @draft) "new.txt") "task\n")
-          (with-draft-workspace
-            @draft
-            (fn []
-              (with-redefs [util/now-ms (fn ^long []
-                                          (long @now))]
-                (state/session-workspace-info "session")
-                (expect (await-for 10000 @#'state/draft-status-reader))
-                (let [before (state/session-workspace-info "session")]
-                  (expect (= {"modified" 0 "created" 1 "deleted" 0} (get before "draft_changes")))
-                  (expect (= {"modified" 0 "created" 1 "deleted" 0} (get before "working_changes")))
-                  (expect (= 2 (count (get before "repositories"))))
-                  (spit (io/file second-root "a.txt") "changed in second\n")
-                  (swap! now + 2000)
-                  (state/session-workspace-info "session")
-                  (expect (await-for 10000 @#'state/draft-status-reader))
-                  (let [after (state/session-workspace-info "session")]
-                    (expect (= (get before "id") (get after "id")))
-                    (expect (= {"modified" 1 "created" 1 "deleted" 0} (get after "draft_changes")))
-                    (expect (= {"modified" 1 "created" 1 "deleted" 0}
-                               (get after "working_changes")))
-                    ;; #247: committing resets live file counts, not review.
-                    (run-git second-root ["add" "a.txt"])
-                    (run-git second-root ["commit" "-q" "-m" "feat: second"])
-                    (swap! now + 2000)
-                    (state/session-workspace-info "session")
-                    (expect (await-for 10000 @#'state/draft-status-reader))
-                    (let [committed (state/session-workspace-info "session")]
-                      (expect (= (get after "draft_changes") (get committed "draft_changes")))
-                      (expect (= {"modified" 0 "created" 1 "deleted" 0}
-                                 (get committed "working_changes")))
-                      (expect (= 1 (get committed "ahead"))))))))))
-        (finally (when @draft
-                   (when-let [discard (:discard-future
-                                        (workspace/abandon! store {:workspace-id (:id @draft)}))]
-                     (deref discard 10000 nil)))
-                 (sqlite/db-close! store)
-                 (doseq [file (reverse (file-seq base))]
-                   (io/delete-file file true)))))))
 
 (defdescribe
   session-usage-cache-metrics-test
@@ -4130,10 +3835,8 @@
         (let [store-row (fn [row]
                           (let [workspace (persistance/db-workspace-insert! store
                                                                             {:repo-id "search-test"
-                                                                             :repo-root "/search"
                                                                              :root "/search"
-                                                                             :state :active
-                                                                             :fork-ms 0})]
+                                                                             :state :active})]
                             (assoc row
                               :id (sqlite/db-store-session! store
                                                             (assoc row
@@ -4846,13 +4549,10 @@
                      #'bus/session-waiting? (constantly false)
                      #'state/resolve-workspace (fn [_db sid]
                                                  (resolve sid))
-                     #'workspace/draft? (constantly false)
                      #'config/agent-name (constantly "vis")}
       f)))
 
-(defn- repo-workspace
-  [sid]
-  {:root (str "/repo/" sid) :repo-root "/repo" :label (str "L" sid) :fork-ms 7})
+(defn- repo-workspace [sid] {:root (str "/repo/" sid) :label (str "L" sid)})
 
 (defdescribe
   gateway-every-session-payload-carries-its-path-test
@@ -4861,11 +4561,7 @@
                          (fn []
                            (let [ws (get (state/soul "a") "workspace")]
                              (expect (map? ws))
-                             (expect (= "/repo/a" (get ws "root")))
-                             (expect (= "/repo" (get ws "repo_root")))
-                             (expect (= "La" (get ws "label")))
-                             (expect (= 7 (get ws "fork_ms")))
-                             (expect (false? (get ws "is_draft")))))))
+                             (expect (= {"root" "/repo/a" "label" "La"} ws))))))
   (it "answers the SAME workspace value in a list row and in a single read"
       (with-pathed-fleet repo-workspace
                          (fn []
@@ -4903,8 +4599,7 @@
                      #'bus/waiting-requests (constantly (or waiting {}))
                      #'state/resolve-workspace (fn [_db sid]
                                                  (swap! resolutions inc)
-                                                 {:root (get roots sid)
-                                                  :repo-root (get roots sid)})}
+                                                 {:root (get roots sid)})}
       (fn []
         [(state/projects-overview) @resolutions]))))
 
@@ -4932,8 +4627,7 @@
                      #'bus/live-turns (constantly {})
                      #'bus/waiting-requests (constantly {})
                      #'state/resolve-workspace (fn [_db sid]
-                                                 {:root (get roots sid)
-                                                  :repo-root (get roots sid)})}
+                                                 {:root (get roots sid)})}
       (fn []
         (try (let [facts
                    (facts-of)
@@ -7026,10 +6720,6 @@
                             #'state/fleet-sinks (atom {::deletion #(swap! notified conj
                                                                      [@deleted %])})
                             #'lp/db-info (constantly :db)
-                            (requiring-resolve
-                              'com.blockether.vis.internal.workspace.core/discard-session-clones!)
-                            (fn [_db _sid]
-                              nil)
                             #'persistance/db-delete-session-tree! (fn [_db id]
                                                                     (swap! deleted conj id))}
              (fn []
@@ -7095,9 +6785,6 @@
           (swap! registry assoc sid {:turns {} :subscribers {::deletion #(swap! notified conj %)}})
           (with-redefs-fn {#'state/fleet-sinks (atom {::deletion #(swap! notified conj %)})
                            #'lp/db-info (constantly :db)
-                           (requiring-resolve
-                             'com.blockether.vis.internal.workspace.core/discard-session-clones!)
-                           (fn [& _])
                            #'persistance/db-delete-session-tree!
                            (fn [& _]
                              (throw (ex-info "Database unavailable" {})))}

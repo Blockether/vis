@@ -2,7 +2,7 @@
 
 The extension records a checkpoint around each block and each patch. The SDK
 program records one each time it polls. Both use one `Recorder`, so each journal
-has one writer. A root can change during a session, for example in a draft, so
+has one writer. A root can change during a session, for example with `/cd`, so
 each root of a session has its own journal.
 """
 

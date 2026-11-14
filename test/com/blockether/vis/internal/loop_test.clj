@@ -909,9 +909,8 @@
   [finish!]
   (let [db (persistance/db-create-connection! :memory)]
     (try
-      (let [ws (persistance/db-workspace-insert!
-                 db
-                 {:repo-id "fold-test" :repo-root "/tmp/vis-fold-test" :root "/tmp/vis-fold-test"})
+      (let [ws (persistance/db-workspace-insert! db
+                                                 {:repo-id "fold-test" :root "/tmp/vis-fold-test"})
             sid (persistance/db-store-session! db {:workspace-id (:id ws)})
             prior
             (persistance/db-store-session-turn! db {:parent-session-id sid :user-request "prior"})
@@ -4056,8 +4055,7 @@
             env-with
             (fn [roots]
               {:workspace/root (System/getProperty "user.dir")
-               :workspace {:repo-root (System/getProperty "user.dir")
-                           :root (System/getProperty "user.dir")}
+               :workspace {:root (System/getProperty "user.dir")}
                :security-policy {:jail-enabled true}
                :security/filesystem-roots roots
                :security/no-search-roots []})
@@ -4095,8 +4093,7 @@
     (let [env {:session-id "session-activity"
                :iteration-id "iteration-activity"
                :workspace/root (System/getProperty "user.dir")
-               :workspace {:root (System/getProperty "user.dir")
-                           :repo-root (System/getProperty "user.dir")}}]
+               :workspace {:root (System/getProperty "user.dir")}}]
       (tpc/with-own
         [pc (extension/builtin-sandbox-bindings (constantly env))]
         (let [events (atom [])

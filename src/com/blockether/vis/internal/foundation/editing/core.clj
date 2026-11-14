@@ -402,59 +402,35 @@
 
 (defn- rel-path
   [^File f]
-  ;; Reverse of safe-path's remap so the address the model SEES round-trips:
-  ;; a file under the primary cwd renders RELATIVE; a file under a context
-  ;; CLONE renders as its REAL (trunk) path — never the ~/.vis/drafts clone
-  ;; path. Outside the primary cwd, a path under home renders as `~/…`, which
-  ;; safe-path expands again; anything else stays absolute.
+  ;; The address the model SEES round-trips through safe-path: a file under the
+  ;; primary cwd renders RELATIVE. Outside the primary cwd, a path under home
+  ;; renders as `~/…`, which safe-path expands again; anything else stays absolute.
   (let [^java.nio.file.Path cwd-canon
         (canonical-path (workspace/cwd))
 
         ^java.nio.file.Path p
         (.toPath (.getCanonicalFile f))]
 
-    (cond (.startsWith p cwd-canon) (let [rel (paths/unixify (.relativize cwd-canon p))]
-                                      (if (str/blank? rel) "." rel))
-          :else (or (some (fn [{:keys [trunk clone]}]
-                            (let [^java.nio.file.Path cp
-                                  (canonical-path clone)
-
-                                  ^java.nio.file.Path tp
-                                  (canonical-path trunk)]
-
-                              (when (.startsWith p cp)
-                                (paths/abbreviate-home (paths/unixify
-                                                         (.resolve tp (.relativize cp p)))))))
-                          (workspace/filesystem-root-mappings))
-                    (paths/abbreviate-home (str p))))))
+    (if (.startsWith p cwd-canon)
+      (let [rel (paths/unixify (.relativize cwd-canon p))]
+        (if (str/blank? rel) "." rel))
+      (paths/abbreviate-home (str p)))))
 
 (defn- workspace-dir?
-  "True when `f` lies inside the primary cwd or a real draft-clone mapping.
+  "True when `f` lies inside the primary cwd.
 
-   Shared auxiliary filesystem roots are readable but do not own an index: a
-   depth-one `ls` of a mounted cache must not scan its whole tree. A draft clone
-   renders as its trunk address, so ownership must use the FILE, not `rel-path`."
+   Auxiliary filesystem roots are readable but do not own an index: a
+   depth-one `ls` of a mounted cache must not scan its whole tree."
   [^File f]
-  (let [^java.nio.file.Path p
-        (canonical-path f)
-
-        under?
-        (fn [x]
-          (.startsWith p ^java.nio.file.Path (canonical-path x)))]
-
-    (boolean (or (under? (workspace/cwd))
-                 (some
-                   (fn [{:keys [trunk clone]}]
-                     (when (and trunk clone (not= (canonical-path trunk) (canonical-path clone)))
-                       (or (under? clone) (under? trunk))))
-                   (workspace/filesystem-root-mappings))))))
+  (.startsWith ^java.nio.file.Path (canonical-path f)
+               ^java.nio.file.Path (canonical-path (workspace/cwd))))
 
 (defn- nearest-existing-dir
   "Climb `f` to its nearest ancestor that EXISTS as a directory AND still lies
    WITHIN the allowed roots. A file/path that is GONE resolves to the closest real
    directory above it — parent, then parent-of-parent, … — but the climb is BOUNDED
    by confinement: it NEVER ascends past the allowed roots (the primary cwd, the
-   bound filesystem-root clones, and the always-on temp/vis dirs that `safe-path`
+   bound filesystem roots, and the always-on temp/vis dirs that `safe-path`
    admits). An ancestor `safe-path` would reject stops the climb, so a stale/typo'd
    path resolves to the nearest real directory INSIDE the workspace — at worst an
    allowed root itself — never a directory above the confinement boundary (e.g. `/`
@@ -490,15 +466,14 @@
 
    The DEFAULT/unscoped `[\".\"]` (or a BLANK/nil entry, which the model routinely
    tacks on, e.g. `[\".github\" \"\"]`) expands to the FULL allowed-roots set — the
-   primary cwd PLUS every bound filesystem-root clone — EXCEPT roots flagged
+   primary cwd PLUS every bound filesystem root — EXCEPT roots flagged
    `search: false` in the `workspace.filesystem` catalog (e.g. `~/.vis`, the
    language/dependency caches), which are pruned from the default sweep as search
-   noise. The primary cwd is ALWAYS kept (so a session sitting in a draft or in
-   `~/.vis` still searches its own tree), and explicit paths still reach a pruned
-   root.
+   noise. The primary cwd is ALWAYS kept (so a session sitting in `~/.vis` still
+   searches its own tree), and explicit paths still reach a pruned root.
 
-   Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap); a
-   confinement violation propagates as is."
+   Explicit paths resolve through `safe-path` (confinement); a confinement
+   violation propagates as is."
   [paths]
   (let [paths (mapv #(let [s (str/trim (str %))] (if (str/blank? s) "." s)) paths)]
     (if (some #{"."} paths)
@@ -627,7 +602,7 @@
                :kind kind}})))
 
 (defn- fs-access-refusal
-  "First configured-deny, draft-policy or extension-owned `:fs/access` refusal, or
+  "First configured-deny or extension-owned `:fs/access` refusal, or
    nil when all paths are allowed. Host readers and writers use `file-read` and
    `file-write`. A path the OS cannot canonicalize refuses as `:unusable?` so the
    op fails with its own envelope instead of throwing out of the gate."
@@ -641,9 +616,6 @@
 
             (try (or (when-let [reason (process-jail/deny-refusal env operation absolute)]
                        {:reason reason :owner :policy :target target})
-                     (when (= "file-write" operation)
-                       (when-let [reason (process-jail/draft-write-refusal env absolute)]
-                         {:reason reason :owner :draft :target target}))
                      (when (extension/gate-hooked? :fs/access)
                        (some-> (extension/run-gate-hooks :fs/access
                                                          env
@@ -915,7 +887,7 @@
   "True when `rel-path` rendered a RELATIVE address for the listed directory, so
    `target-rel` is a usable PREFIX into the workspace index's own records.
 
-   Context clones and other roots use absolute or `~/…` addresses, so they cannot reuse
+   Other roots use absolute or `~/…` addresses, so they cannot reuse
    relative index records."
   [target-rel]
   (let [s (str target-rel)]

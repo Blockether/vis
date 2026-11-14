@@ -322,8 +322,6 @@ attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
 builders with `from blockether.vis.extension import ui`, then call `attach(ui.app(...))`.
 [Apps](live-views.md#apps) shows the components and how you answer a Send.
 
-See [draft diffs](drafts.md) for reviewable patches from an isolated working copy.
-
 ## Runtime locations
 
 | Runtime | Location |

@@ -66,7 +66,7 @@
                               (System/exit 1))
           :else
           (let [;; Fork = new session_state = new workspace pin (1:1).
-                ;; Mint a fresh isolated workspace for the fork.
+                ;; Mint a fresh workspace row for the fork.
                 ws-id
                 (:id (workspace/ensure-workspace! d {}))
 
@@ -233,8 +233,6 @@
       (commandline/stdout! (str "  Model:        " model)))
     (when-let [provider (:provider session)]
       (commandline/stdout! (str "  Provider:     " (name provider))))
-    ;; The backend-resolved root remains useful session metadata; whether the engine
-    ;; isolated it is intentionally not a human-facing mode.
     (when-let [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
                     (workspace/for-session d sid))]
       (commandline/stdout! (str "  Root:         " (:root ws))))
@@ -479,7 +477,7 @@
   (let [session
         (session-or-exit! (lp/db-info) (get parsed "session-id"))
 
-        ;; The gateway deletes the session, its draft clones and its sandbox state. A
+        ;; The gateway deletes the session and its sandbox state. A
         ;; gateway that has the session loaded must stop it: a running turn wrote the
         ;; files of a session that this process had deleted.
         response

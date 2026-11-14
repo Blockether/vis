@@ -35,9 +35,7 @@
   ([store] (bang-env store "/tmp"))
   ([store root]
    (let [ws
-         (persistance/db-workspace-insert!
-           store
-           {:repo-id "test" :repo-root root :root root :state :active :fork-ms 0})
+         (persistance/db-workspace-insert! store {:repo-id "test" :root root :state :active})
 
          soul-id
          (persistance/db-store-session! store
@@ -129,7 +127,7 @@
           (expect (= "" (:answer result))))))))
 
 ;; Regression: a `!`/`!&` bang turn ran in the PROCESS cwd instead of the
-;; session's own workspace root — inside a draft `!ls -la` listed the real repo.
+;; session's own workspace root — `!ls -la` listed the wrong directory.
 ;; The bang path calls the shell var DIRECTLY, so it bypassed the one seam that
 ;; binds `workspace/*workspace-root*` from the environment.
 (defdescribe run-turn-bang-workspace-cwd-test

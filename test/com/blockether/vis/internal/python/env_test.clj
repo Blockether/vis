@@ -924,7 +924,7 @@
                                   "filesystem_roots"
                                   [{"cwd" "/workspace/fff" "python_name" "fff_path"}
                                    {"cwd" "/workspace/library" "python_name" "library_path"}
-                                   {"cwd" "/cache"} {"cwd" "/private" "is_denied" true}]}})
+                                   {"cwd" "/cache"}]}})
       (expect
         (=
           "True\n"
@@ -943,12 +943,12 @@
                               "def fff_src():\n    return str(fff_path / 'src')"))))
       (ep/bind-ctx! ctx
                     {"workspace" {"root" "/workspace/main"
-                                  "filesystem_roots"
-                                  [{"cwd" "/drafts/fff" "python_name" "fff_path" "isolated" true}
-                                   {"cwd" "/workspace/svar" "python_name" "svar_path"}]}})
+                                  "filesystem_roots" [{"cwd" "/moved/fff" "python_name" "fff_path"}
+                                                      {"cwd" "/workspace/svar"
+                                                       "python_name" "svar_path"}]}})
       (expect
         (=
-          "/drafts/fff/src /workspace/svar False False\n"
+          "/moved/fff/src /workspace/svar False False\n"
           (:stdout
             (ep/run-python-block
               ctx

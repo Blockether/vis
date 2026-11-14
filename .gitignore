@@ -74,8 +74,6 @@ packages/vis-benchmark/swebench-harness/
 jobs/
 # Legacy local verification logs may still exist after removing verify.sh.
 .verification/
-# rift/bridge per-directory ULID marker — regenerated at runtime, never source.
-.rift
 # Claude Code local tooling state (machine-local settings + run locks).
 .claude/
 hs_err_pid*.log

@@ -125,7 +125,7 @@
 (defn session-readable-file
   "Resolve a file using the session's live filesystem roots and read gates. The same
    resolver serves previews, editor opens and attachment references, so none can
-   bypass draft or deny rules. Returns `{:file f}` or `{:error response}`."
+   bypass deny rules. Returns `{:file f}` or `{:error response}`."
   [sid requested]
   (let [root (get (state/session-workspace-info sid) "root")]
     (cond
@@ -164,7 +164,7 @@
    The machine already knows where it is, so it hands it to the operator's
    editor — the same press the TUI gives a path on the transcript.
 
-   Access follows the session's live read roots, draft mappings and file gates —
+   Access follows the session's live read roots and file gates —
    never the client's filesystem scope."
   [request]
   (let [sid (http/path-sid request)]

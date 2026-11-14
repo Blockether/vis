@@ -9,14 +9,14 @@ import type { Toggle } from '../../lib/types';
 import { MachineSettings } from './MachineSettings';
 
 const backend: Toggle = {
-  id: 'draft_backend',
-  label: 'Draft backend',
+  id: 'sample_mode',
+  label: 'Sample mode',
   type: 'enum',
-  description: 'Choose how drafts are isolated.',
-  choices: ['auto', 'worktree', 'rift', 'off'],
+  description: 'Choose how the sample works.',
+  choices: ['auto', 'fast', 'safe', 'off'],
   value: 'auto',
 };
-const gateway = { id: 'draft-dropdown-test', url: 'http://127.0.0.1:7890', token: 'test' };
+const gateway = { id: 'enum-dropdown-test', url: 'http://127.0.0.1:7890', token: 'test' };
 
 beforeEach(() => {
   vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
@@ -54,7 +54,7 @@ async function openSettings() {
       onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
     />,
   );
-  return await screen.findByRole('combobox', { name: 'Draft backend' });
+  return await screen.findByRole('combobox', { name: 'Sample mode' });
 }
 
 it('uses the shared touch picker for enum settings without saving a dismissed choice', async () => {
@@ -62,7 +62,7 @@ it('uses the shared touch picker for enum settings without saving a dismissed ch
   const save = vi.spyOn(GatewayClient.prototype, 'setSetting');
   const trigger = await openSettings();
   await user.pointer({ keys: '[TouchA]', target: trigger });
-  expect(screen.getByRole('listbox', { name: 'Draft backend' })).toBeVisible();
+  expect(screen.getByRole('listbox', { name: 'Sample mode' })).toBeVisible();
 
   await user.pointer({ keys: '[TouchA]', target: trigger });
   expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
@@ -71,7 +71,7 @@ it('uses the shared touch picker for enum settings without saving a dismissed ch
   await waitFor(() => expect(trigger).toHaveFocus());
 
   await user.pointer({ keys: '[TouchA]', target: trigger });
-  expect(screen.getByRole('listbox', { name: 'Draft backend' })).toBeVisible();
+  expect(screen.getByRole('listbox', { name: 'Sample mode' })).toBeVisible();
 });
 describe('settings the open session decides elsewhere', () => {
   // A project `vis.yml` with `shell: false` decides Shell for its sessions, so the
@@ -105,7 +105,7 @@ describe('settings the open session decides elsewhere', () => {
     expect(
       screen.getByText('Locked: Project settings turn this off for this session. Change it in Project settings.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Draft backend' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Sample mode' })).toBeDisabled();
     expect(
       screen.getByText('Locked: Group settings set this to off for this session. Change it in Group settings.'),
     ).toBeInTheDocument();
@@ -157,9 +157,9 @@ describe('rows under a boolean parent', () => {
   });
 });
 
-describe('draft backend dropdown', () => {
-  // #242 and #243: opening Settings must not opt the user into draft isolation.
-  it('shows off without saving and lets the user enable and disable drafts', async () => {
+describe('enum setting dropdown', () => {
+  // #242 and #243: opening Settings must not save a value that the user did not choose.
+  it('shows off without saving and lets the user turn the setting on and off', async () => {
     vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
       revision: 'toggles-1',
       groups: [{ id: 'sandbox', title: 'Sandbox', toggles: [{ ...backend, value: 'off' }] }],
@@ -175,23 +175,23 @@ describe('draft backend dropdown', () => {
       await userEvent.click(select);
       await userEvent.click(screen.getByRole('option', { name: value }));
       await waitFor(() => expect(select).toHaveTextContent(value));
-      expect(save).toHaveBeenLastCalledWith('draft_backend', 'value', value);
+      expect(save).toHaveBeenLastCalledWith('sample_mode', 'value', value);
     }
   });
 
   it('lists the configured choices and saves the chosen value, not a cycle', async () => {
     const save = vi
       .spyOn(GatewayClient.prototype, 'setSetting')
-      .mockResolvedValue({ ...backend, value: 'rift' });
+      .mockResolvedValue({ ...backend, value: 'safe' });
     const select = await openSettings();
     expect(select).toHaveTextContent('auto');
     await userEvent.click(select);
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(
       backend.choices,
     );
-    await userEvent.click(screen.getByRole('option', { name: 'rift' }));
-    await waitFor(() => expect(select).toHaveTextContent('rift'));
-    expect(save).toHaveBeenCalledExactlyOnceWith('draft_backend', 'value', 'rift');
+    await userEvent.click(screen.getByRole('option', { name: 'safe' }));
+    await waitFor(() => expect(select).toHaveTextContent('safe'));
+    expect(save).toHaveBeenCalledExactlyOnceWith('sample_mode', 'value', 'safe');
     expect(select).toBeEnabled();
   });
 
@@ -204,11 +204,11 @@ describe('draft backend dropdown', () => {
     );
     const select = await openSettings();
     await userEvent.click(select);
-    await userEvent.click(screen.getByRole('option', { name: 'worktree' }));
+    await userEvent.click(screen.getByRole('option', { name: 'fast' }));
     expect(select).toBeDisabled();
     expect(save).toHaveBeenCalledTimes(1);
-    finish({ ...backend, value: 'worktree' });
-    await waitFor(() => expect(select).toHaveTextContent('worktree'));
+    finish({ ...backend, value: 'fast' });
+    await waitFor(() => expect(select).toHaveTextContent('fast'));
     expect(select).toBeEnabled();
   });
 

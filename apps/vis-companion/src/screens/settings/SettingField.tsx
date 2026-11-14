@@ -255,12 +255,6 @@ function StringList({
   );
 }
 const ROOT_ACCESS: Record<string, string> = { 'read-write': 'Read and write', 'read-only': 'Read only' };
-const ROOT_DRAFT: Record<string, string> = {
-  shared: 'Edit the real folder',
-  'copy-and-apply': 'Edit a copy, apply on approval',
-  'copy-only': 'Edit a copy, never apply',
-  'not-allowed': 'Block the folder',
-};
 const RULE_ACCESS_HINT: Record<string, string> = {
   'read-only': 'Only GET, HEAD and OPTIONS requests.',
   'read-write': 'Every HTTP method.',
@@ -453,29 +447,15 @@ function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
                 onChange={(event) => update(index, 'id', event.target.value)}
               />
             </CardField>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <CardField label="Access">
-                <Select
-                  aria-label={`Root access ${index + 1}`}
-                  className="w-full"
-                  value={enumValue(workspaceProperties.access, access)}
-                  options={labelled(enumOptions(workspaceProperties.access, access), ROOT_ACCESS)}
-                  onValueChange={(next) => update(index, 'access', next)}
-                />
-              </CardField>
-              <CardField label="In a draft session" hint="A draft works on copies that you approve.">
-                <Select
-                  aria-label={`Root draft mode ${index + 1}`}
-                  className="w-full"
-                  value={String(row.draft ?? 'shared')}
-                  options={workspaceProperties.draft.enum.map((value) => ({
-                    value,
-                    label: ROOT_DRAFT[value] ?? value,
-                  }))}
-                  onValueChange={(next) => update(index, 'draft', next)}
-                />
-              </CardField>
-            </div>
+            <CardField label="Access">
+              <Select
+                aria-label={`Root access ${index + 1}`}
+                className="w-full"
+                value={enumValue(workspaceProperties.access, access)}
+                options={labelled(enumOptions(workspaceProperties.access, access), ROOT_ACCESS)}
+                onValueChange={(next) => update(index, 'access', next)}
+              />
+            </CardField>
             <CardField label="Description" hint="Optional. Tells the agent what the folder holds.">
               <Input
                 aria-label={`Root description ${index + 1}`}

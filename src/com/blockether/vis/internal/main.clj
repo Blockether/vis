@@ -2158,15 +2158,6 @@
   [{:keys [kind label root age-days bytes is-purged]}]
   (str "  "
        (case kind
-         :stale
-         "draft   "
-
-         :discarded
-         "discard "
-
-         :orphan
-         "orphan  "
-
          :journal
          "journal "
 
@@ -2195,9 +2186,9 @@
   (let [db-spec
         (config/resolve-db-spec)
 
-        ;; Housekeeping reads draft and session rows. A bare spec has no
-        ;; connection, so every row read answered nil, and live drafts and
-        ;; sandbox snapshots looked like orphans.
+        ;; Housekeeping reads session rows. A bare spec has no connection, so
+        ;; every row read answered nil, and live sandbox snapshots looked like
+        ;; orphans.
         db-info
         (try (persistance/db-shared-connection! db-spec) (catch Throwable _ nil))
 
@@ -2215,7 +2206,7 @@
                                                          (assoc :housekeeping-days days)))]
                            (commandline/stdout! (doctor/format-output msgs))
                            (System/exit (int (doctor/exit-code msgs))))
-          ;; Without rows every draft and snapshot would look orphaned.
+          ;; Without rows every snapshot would look orphaned.
           (nil? db-info) (do (commandline/stderr! (str "vis-agent: cannot open the database "
                                                        (pr-str (:path db-spec))
                                                        "; nothing was purged."))
@@ -2224,10 +2215,9 @@
                       (housekeeping/purge! {:db-info db-info :days days :is-dry-run is-dry-run})]
                   (commandline/stdout!
                     (if (zero? (long (or count 0)))
-                      (str
-                        "Nothing untouched for over "
-                        (:days report)
-                        " days — drafts, session journals and sandbox snapshots are already tidy.")
+                      (str "Nothing untouched for over "
+                           (:days report)
+                           " days — session journals and sandbox snapshots are already tidy.")
                       (str (if is-dry-run "Would reclaim " "Reclaimed ")
                            count
                            (if (= 1 (long count)) " item, " " items, ")
@@ -2884,12 +2874,12 @@
                      (shutdown-agents))))} provider-cli/command session-cli/command
     workspace-cli/command automation-cli/command
     {:cmd/name "doctor"
-     :cmd/doc "Run cross-extension diagnostics, and reclaim stale drafts / session journals."
+     :cmd/doc "Run cross-extension diagnostics, and reclaim stale session journals."
      :cmd/usage "vis-agent doctor [--purge] [--dry-run] [--days N]"
      :cmd/args [{:name "purge"
                  :kind :flag
                  :type :boolean
-                 :doc "Delete the stale drafts and session journals the report lists."}
+                 :doc "Delete the stale session journals and sandbox snapshots the report lists."}
                 {:name "dry-run"
                  :kind :flag
                  :type :boolean

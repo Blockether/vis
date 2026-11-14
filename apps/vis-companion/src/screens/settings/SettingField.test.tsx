@@ -260,14 +260,14 @@ it('offers the tool names of a tools row for completion (issue #416)', () => {
   expect(onChange).toHaveBeenLastCalledWith(['vis.files.*']);
 });
 
-it.each(['Root access 1', 'Root draft mode 1', 'Rule access 1'])(
+it.each(['Root access 1', 'Rule access 1'])(
   'keeps %s closed after a second touch without changing the setting',
   async (label) => {
     const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     const { onChange, onRawChange } = label.startsWith('Root')
       ? renderField(
           { id: 'workspaces', label: 'Workspace roots', type: 'array', editor: 'paths' },
-          [{ id: 'docs', path: '~/docs', access: 'read-only', draft: 'shared' }],
+          [{ id: 'docs', path: '~/docs', access: 'read-only' }],
         )
       : renderField(
           { id: 'network', label: 'Network', type: 'object', editor: 'network' },

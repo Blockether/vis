@@ -928,10 +928,10 @@
 
 (defn- root-guidance-estimate
   "Disk-only estimate; never contributes to sent-message totals or model read status."
-  [model {:keys [trunk clone]}]
-  (let [row {:path (paths/abbreviate-home clone)}]
+  [model {:keys [root]}]
+  (let [row {:path (paths/abbreviate-home root)}]
     (assoc row
-      :guidance (try (let [{:keys [result warnings]} (agents/scan-in (io/file (or trunk clone)))]
+      :guidance (try (let [{:keys [result warnings]} (agents/scan-in (io/file root))]
                        (cond (seq warnings) {:status "error"}
                              (:found? result) {:status "available"
                                                :path (paths/abbreviate-home (:path result))
@@ -1181,7 +1181,7 @@
           (group-by (juxt :label :path) parts)
 
           own
-          (get-in environment [:workspace :root])]
+          (workspace/normalize-root (get-in environment [:workspace :root]))]
 
       {:token-count-source :svar-estimate
        :token-count-model model
@@ -1193,7 +1193,7 @@
                               :tokens (reduce + 0 (map :tokens rows)))))
                         (distinct (map (juxt :label :path) parts)))
        :roots (into []
-                    (comp (remove #(or (:denied? %) (= own (:clone %)) (= own (:trunk %))))
+                    (comp (remove #(= own (:root %)))
                           (map (partial root-guidance-estimate model))
                           (distinct))
                     (workspace/env-filesystem-roots environment))})

@@ -106,8 +106,7 @@
                   "search" true
                   ;; #89: a root may be gated on the host OS and/or an existing path.
                   "when" {"os" ["macos" "linux" "wsl" "windows"] "exists" "/"}
-                  "optional" false
-                  "draft" "copy-and-apply"} {"id" "ref" "path" "~/reference" "access" "read-only"}
+                  "optional" false} {"id" "ref" "path" "~/reference" "access" "read-only"}
                  {"id" "gen" "path" "~/generated"}
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
    "jail" {"enabled" true
@@ -395,7 +394,7 @@
                               {"id" "mac-only" "path" "/opt/mac" "when" {"os" "macos"}}
                               {"id" "nix" "path" "/opt/nix" "when" {"os" ["linux" "windows"]}}
                               {"id" "gated" "path" "/opt/gated" "when" {"exists" "/opt/toolchain"}}
-                              {"id" "maybe" "path" "/opt/maybe" "optional" true "draft" "copy-only"}
+                              {"id" "maybe" "path" "/opt/maybe" "optional" true}
                               {"id" "stale" "path" "/opt/stale"}]}})
 
 (def ^:private mac-env
@@ -435,12 +434,6 @@
                          (config-validation/applicable-entries (get-in cross-machine-config
                                                                        ["workspace" "filesystem"])
                                                                mac-env))))))
-  (it "draft isolation follows the same host filter"
-      (expect (= {} (config-validation/workspace-draft-policies cross-machine-config mac-env)))
-      (expect (= {"/opt/maybe" :copy-only}
-                 (config-validation/workspace-draft-policies cross-machine-config
-                                                             {:os "macos"
-                                                              :exists? (constantly true)}))))
   (it "an allow list may name a root this host does not mount, but never an unknown id"
       (let [jailed (assoc cross-machine-config
                      "jail" {"enabled" true "filesystem" {"allow" ["here" "nix" "maybe"]}})]

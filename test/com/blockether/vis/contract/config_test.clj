@@ -46,8 +46,6 @@
       (let [schema (document/schema-document "config")]
         (expect (= (set (get-in schema ["$defs" "workspaceEntry" "properties" "access" "enum"]))
                    config/workspace-access-values))
-        (expect (= (set (get-in schema ["$defs" "workspaceEntry" "properties" "draft" "enum"]))
-                   config/workspace-draft-values))
         (expect (= (set (get-in schema ["$defs" "workspaceOs" "enum"])) config/workspace-os-values))
         (doseq [os config/workspace-os-values]
           (expect (config/definition-valid? "workspaceWhen" {"os" os}))

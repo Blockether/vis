@@ -942,12 +942,12 @@ function ChoiceControls() {
       </Group>
       <Group of="Select — one unavailable choice">
         <Select
-          aria-label="Draft backend"
+          aria-label="Sample mode"
           value="auto"
           onValueChange={noop}
           options={[
             { value: 'auto', label: 'Automatic' },
-            { value: 'rift', label: 'Rift · not installed', disabled: true },
+            { value: 'safe', label: 'Safe · not installed', disabled: true },
             { value: '', label: 'Off' },
           ]}
         />

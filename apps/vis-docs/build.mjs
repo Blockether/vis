@@ -186,10 +186,6 @@ await writeFile(
     '/python-project-instructions.md /project-instructions-api.md 301\n' +
     '/http-project-instructions /project-instructions-api.html 301\n/http-project-instructions.html /project-instructions-api.html 301\n' +
     '/http-project-instructions.md /project-instructions-api.md 301\n' +
-    '/python-drafts /drafts-api.html 301\n/python-drafts.html /drafts-api.html 301\n' +
-    '/python-drafts.md /drafts-api.md 301\n' +
-    '/http-drafts /drafts-api.html 301\n/http-drafts.html /drafts-api.html 301\n' +
-    '/http-drafts.md /drafts-api.md 301\n' +
     '/python-council /council-api.html 301\n/python-council.html /council-api.html 301\n' +
     '/python-council.md /council-api.md 301\n' +
     '/http-council /council-api.html 301\n/http-council.html /council-api.html 301\n' +

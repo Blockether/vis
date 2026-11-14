@@ -14,7 +14,7 @@
            [java.util ArrayList Collection]
            [java.util.concurrent ConcurrentHashMap ConcurrentLinkedQueue ForkJoinPool
             RecursiveAction]
-           [java.util.concurrent.atomic AtomicBoolean AtomicReference]
+           [java.util.concurrent.atomic AtomicBoolean]
            [java.util.function Function]))
 
 (def ^:private no-link-options (make-array LinkOption 0))
@@ -247,72 +247,6 @@
                                           patterns)))))))
 
 (defn- literal-rules [patterns] (vec (distinct (remove glob? patterns))))
-
-(defn- glob-matcher
-  ^PathMatcher [pattern]
-  (try (.getPathMatcher (FileSystems/getDefault) (str "glob:" pattern)) (catch Throwable _ nil)))
-
-(defn- crosses-directories?
-  [pattern]
-  (let [remainder (second (glob-split pattern))]
-    (or (str/includes? remainder "/") (str/includes? remainder "**"))))
-
-(defn deny-overlap
-  "The first path that a rule of `patterns` covers and that is `root`, an ancestor of `root` or a
-   path below it, else nil. Literal rules and ancestors need no walk. Below `root`, a glob walks
-   only its part of the tree inside `root`, and the walk stops at the first hit (#396)."
-  [patterns root]
-  (let [^Path selected
-        (Paths/get (str root) (make-array String 0))
-
-        under?
-        (fn [^Path path ^Path parent]
-          (.startsWith path parent))
-
-        globs
-        (keep (fn [pattern]
-                (when-let [matcher (glob-matcher pattern)]
-                  [pattern matcher]))
-              (filter glob? patterns))
-
-        walks
-        (reduce (fn [walks [pattern matcher]]
-                  (let [literal
-                        (Paths/get ^String (first (glob-split pattern)) (make-array String 0))
-
-                        crosses?
-                        (crosses-directories? pattern)
-
-                        start
-                        (cond (under? literal selected) literal
-                              (and crosses? (under? selected literal)) selected)]
-
-                    (cond-> walks
-                      start
-                      (update start
-                              (fn [[depth matchers]]
-                                [(max (long (or depth 0)) (if crosses? Long/MAX_VALUE 1))
-                                 (conj (or matchers []) matcher)])))))
-                {}
-                globs)]
-
-    (or (some (fn [rule]
-                (let [denied (Paths/get ^String rule (make-array String 0))]
-                  (when (or (under? selected denied) (under? denied selected)) rule)))
-              (literal-rules patterns))
-        (some (fn [[_ ^PathMatcher matcher]]
-                (some-> (paths/nearest-ancestor #(.matches matcher ^Path %) selected)
-                        str))
-              globs)
-        (some (fn [[start [depth matchers]]]
-                (let [found (AtomicReference.)]
-                  (walk-entries start
-                                depth
-                                (fn [^Path path]
-                                  (when (some #(.matches ^PathMatcher % path) matchers)
-                                    (.compareAndSet found nil (str path)))))
-                  (.get found)))
-              walks))))
 
 (defn- os-binds-deny-paths?
   "True when the OS jail of this host denies only concrete paths. The Linux jail binds
@@ -634,21 +568,10 @@
                  (zipmap git-files
                          (repeat "Git global configuration (automatic, process read-only).")))))
 
-         ;; Per-root DRAFT isolation policy, keyed by the SAME canonical path the
-         ;; filesystem grants use. Independent of `:jail-enabled`: a drafted session
-         ;; isolates catalog roots whether or not the OS jail confines them.
-         draft-policies
-         (into {}
-               (keep (fn [[path policy]]
-                       (when-let [rp (nearest-real-path path base-dir home)]
-                         [rp policy])))
-               (config-validation/workspace-draft-policies config))
-
          policy
          {:jail-enabled (true? (get-in config ["jail" "enabled"]))
           :network network
           :process-jail jail
-          :draft-policies draft-policies
           :project-paths (project-paths config base-dir home)}
 
          generation
@@ -734,12 +657,6 @@
 
       (assoc narrowed :generation (sha256 (dissoc narrowed :generation :base-dir :home))))))
 
-(defn draft-policies
-  "Canonical `{root-path -> draft policy}` for catalog roots that opt out of the
-   default `:shared` isolation. Empty for a catalog that declares no `draft` key."
-  [policy]
-  (or (:draft-policies policy) {}))
-
 (defn- host-filesystem-roots
   "Canonical host filesystem roots. With the jail disabled these represent
    unrestricted filesystem access."
@@ -774,7 +691,7 @@
 
 (defn access-view
   "Build the string-keyed model context from the exact enforcement snapshot. It
-   holds only the RULES: the paths, their modes, descriptions, search and draft
+   holds only the RULES: the paths, their modes, descriptions and search
    settings are in the one `session[\"workspace\"][\"filesystem_roots\"]` list. A
    subagent file grant adds its `\"write_rules\"`: outside them, every root is
    read only. A rule list that is empty and a default network setting are left

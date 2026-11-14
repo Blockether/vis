@@ -152,7 +152,7 @@
   "DELETE /v1/projects/:pid[?is_recursive=true] — by default member sessions
    scatter back to project-less (204, body-less).
 
-   `is_recursive=true` DELETES every member session (and its draft clones) before
+   `is_recursive=true` DELETES every member session before
    dropping the project row, and answers 200 with `{project_id,
    deleted_session_ids, session_count}`: a client needs those ids to prune local
    state (rows, snapshots, unsent drafts) without racing a re-read."

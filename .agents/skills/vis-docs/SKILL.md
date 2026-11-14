@@ -23,7 +23,7 @@ reference address developers who build with Vis.
 Keep the modules of `resources/vis-docs/site.edn` in this order:
 
 1. **Intro**: Rationale, Getting started, Running a gateway, then Reporting a bug.
-2. **Concepts**: one page for each feature, such as sessions, drafts, council, automations, forms, live views and decision models.
+2. **Concepts**: one page for each feature, such as sessions, council, automations, forms, live views and decision models.
 3. **Programmatic access**: the **Basics** group (Python SDK, HTTP API and Extension API), then the **Feature APIs** group.
 4. **Extensions**, then **Reference**.
 

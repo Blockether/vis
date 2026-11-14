@@ -291,7 +291,6 @@ Each concept page explains one feature: what it does, when to use it and how to 
 - [Context management](context-management.md) — how filtering and summaries keep conversations manageable.
 - [Project instructions](project-instructions.md) — tell the agent how your codebase works.
 - [Skills](skills.md) — reusable task instructions.
-- [Drafts](drafts.md) — review changes in a separate working copy.
 - [Council](council.md) — ask another session for help or a second review.
 - [Automations](automations.md) — run a prompt on a schedule or from a webhook.
 - [Siri and Shortcuts](shortcuts.md) — talk to Vis with the Action Button and use answers in shortcuts.
@@ -321,7 +320,6 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Sessions API](sessions-api.md) — sessions, messages, progress and saved work from Python or HTTP.
 - [Context management API](context-management-api.md) — context budget, usage and cache health from Python or HTTP.
 - [Project instructions API](project-instructions-api.md) — prompt templates, skills and goals from Python or HTTP.
-- [Drafts API](drafts-api.md) — draft settings and draft state from Python or HTTP.
 - [Council API](council-api.md) — Council messages and wakes from Python or HTTP.
 - [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
 - [Evaluations API](evals-api.md) — benchmark scores, failure causes and comparisons from Python or HTTP.

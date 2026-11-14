@@ -1807,7 +1807,7 @@ export function SessionsScreen({
         ?.sessions?.find((row) => row.id === openSession.sid)
     : undefined;
   const row = openSessionRow;
-  const openRoot = row?.workspace?.is_draft ? row.workspace.repo_root : row?.workspace?.root;
+  const openRoot = row?.workspace?.root;
   useCommands({
     'new-session':
       !!openSession && !!openRoot && (() => createSession(openSession.conn, openRoot, row?.group_id ?? undefined)),
@@ -2607,7 +2607,6 @@ function sessionViewFingerprint(session: Session): string {
     session.project_name,
     session.project_position,
     session.workspace?.root,
-    session.workspace?.repo_root,
     session.workspace?.label,
   ]);
 }

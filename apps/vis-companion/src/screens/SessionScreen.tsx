@@ -864,7 +864,6 @@ export function SessionScreen({
   const [turnsFresh, setTurnsFresh] = useState(false);
   // The composer holds a DRAFT MESSAGE, not a keystroke buffer: unsent text
   // survives leaving for the session list, backgrounding, and killing the app.
-  // (A "draft" in this system is an isolated agent workspace — different thing.)
   // The seed is synchronous off the in-memory mirror so a revisit paints what you
   // typed on the FIRST frame; the effect below covers the cold start, where
   // storage still has to be read.
@@ -5119,10 +5118,10 @@ export function SessionScreen({
 
   // A path is shortened the same way wherever it appears, so the screen resolves
   // the roots ONCE: the live ticker's own label reads them here, and the activity
-  // axis, four memoized components below, reads the same pair from the context.
+  // axis, four memoized components below, reads the same roots from the context.
   const workspaceRoots = useMemo(
-    () => [session?.workspace?.root, session?.workspace?.repo_root],
-    [session?.workspace?.root, session?.workspace?.repo_root],
+    () => [session?.workspace?.root],
+    [session?.workspace?.root],
   );
   // A PATH IN THIS TRANSCRIPT IS READ HERE, AND OPENED THERE. The device reading the
   // session rarely holds the tree the row names, so the press first shows the file

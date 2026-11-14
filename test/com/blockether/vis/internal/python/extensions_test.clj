@@ -1293,8 +1293,8 @@
       [root
        (.getCanonicalPath ^java.io.File (temp-dir))
 
-       draft
-       (.getCanonicalPath ^java.io.File (doto (io/file root "draft") .mkdirs))
+       moved
+       (.getCanonicalPath ^java.io.File (doto (io/file root "moved") .mkdirs))
 
        source
        (fn [ext-name]
@@ -1342,8 +1342,8 @@
                (expect (= (str root "/repos/b") (where "glob-b")))
                ;; #399: the extension names its nested project for its rules.
                (expect (= "repos/a" (:ext/project-path (registered "glob-a"))))
-               (swap! workspace assoc :root draft)
-               (expect (= (str draft "/repos/a") (where "glob-a")))))
+               (swap! workspace assoc :root moved)
+               (expect (= (str moved "/repos/a") (where "glob-a")))))
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it
@@ -1359,44 +1359,42 @@
           mode
           "nested_mode"]
 
-      (spit (io/file root "vis.yml") "toggles:\n  nested_mode: workspace\n")
-      (write-ext! (io/file root) "repos/a/vis.yml" "toggles:\n  nested_mode: nested\n")
-      (write-ext!
-        (io/file root)
-        "repos/a/.vis/extensions/a.py"
-        (str "import blockether.vis.extension as vis\n"
-             "mode = vis.Setting(id='nested_mode', label='Mode', type='enum', "
-             "choices=['default', 'workspace', 'nested', 'session', 'cli'], default='default', "
-             "scopes=['global', 'project', 'group', 'session'])\n"
-             "def read_mode() -> str:\n    \"Read the mode.\"\n    return mode.value()\n"
-             "vis.register_extension(vis.Extension(name='nested-mode', "
-             "description='Nested mode fixture', alias='nested_mode', settings=[mode], "
-             "symbols=[vis.Symbol(read_mode, activity=vis.Activity(label='Read mode', "
-             "show_start=False))]))\n"))
-      (try
-        (binding [workspace/*workspace-root* root]
-          (pyx/reload-python-extensions!
-            {:dirs []
-             :project-root root
-             :entries [{:name "repos" :source (str root "/repos/*/.vis/extensions/*.py")}]})
-          (expect (= [] (filter #(= root (:project-root %)) (pyx/load-failures))))
-          (let [read-mode (symbol-fn (registered "nested-mode") 'read_mode)
-                read-in (fn [env]
-                          (binding [extension/*current-environment* env]
-                            (:result (read-mode))))
-                ws-id (str (random-uuid))
-                _
-                (ps/db-workspace-insert!
-                  store
-                  {:id ws-id :repo-id "test" :repo-root root :root root :state :active :fork-ms 0})
-                sid (db-test/store-session! store
-                                            {:channel :tui :title "Nested" :workspace-id ws-id})
-                in-session (fn [snapshot]
-                             {:session-id sid
-                              :db-info store
-                              :workspace/root root
-                              :workspace-atom (atom {:root root})
-                              :config/toggles (atom snapshot)})]
+        (spit (io/file root "vis.yml") "toggles:\n  nested_mode: workspace\n")
+        (write-ext! (io/file root) "repos/a/vis.yml" "toggles:\n  nested_mode: nested\n")
+        (write-ext!
+          (io/file root)
+          "repos/a/.vis/extensions/a.py"
+          (str "import blockether.vis.extension as vis\n"
+               "mode = vis.Setting(id='nested_mode', label='Mode', type='enum', "
+               "choices=['default', 'workspace', 'nested', 'session', 'cli'], default='default', "
+               "scopes=['global', 'project', 'group', 'session'])\n"
+               "def read_mode() -> str:\n    \"Read the mode.\"\n    return mode.value()\n"
+               "vis.register_extension(vis.Extension(name='nested-mode', "
+               "description='Nested mode fixture', alias='nested_mode', settings=[mode], "
+               "symbols=[vis.Symbol(read_mode, activity=vis.Activity(label='Read mode', "
+               "show_start=False))]))\n"))
+        (try
+          (binding [workspace/*workspace-root* root]
+            (pyx/reload-python-extensions!
+              {:dirs []
+               :project-root root
+               :entries [{:name "repos" :source (str root "/repos/*/.vis/extensions/*.py")}]})
+            (expect (= [] (filter #(= root (:project-root %)) (pyx/load-failures))))
+            (let [read-mode (symbol-fn (registered "nested-mode") 'read_mode)
+                  read-in (fn [env]
+                            (binding [extension/*current-environment* env]
+                              (:result (read-mode))))
+                  ws-id (str (random-uuid))
+                  _ (ps/db-workspace-insert! store
+                                             {:id ws-id :repo-id "test" :root root :state :active})
+                  sid (db-test/store-session! store
+                                              {:channel :tui :title "Nested" :workspace-id ws-id})
+                  in-session (fn [snapshot]
+                               {:session-id sid
+                                :db-info store
+                                :workspace/root root
+                                :workspace-atom (atom {:root root})
+                                :config/toggles (atom snapshot)})]
 
             (expect (= "nested" (read-in {:workspace/root root})))
             ;; A session snapshot holds the workspace value; the nested project still decides.
@@ -1525,9 +1523,9 @@
 
 (defdescribe
   workspace-root-host-test
-  ;; Regression, #280: extension tools must follow the live session draft, not the process cwd.
+  ;; Regression, #280: extension tools must follow the live session root, not the process cwd.
   (it
-    "resolves a session workspace, then its new draft, through the public SDK"
+    "resolves a session workspace, then its new root, through the public SDK"
     (with-loaded
       {"root.py"
        "import blockether.vis.extension as vis\ndef root():\n    \"Read the active workspace root.\"\n    return str(vis.workspace_root())\nvis.register_extension(vis.Extension(name='root', description='root', alias='r', symbols=[vis.Symbol(root)]))"}
@@ -1535,8 +1533,8 @@
         (let [trunk
               (.getCanonicalPath ^java.io.File (temp-dir))
 
-              draft
-              (doto (io/file trunk "draft") .mkdirs)
+              moved
+              (doto (io/file trunk "moved") .mkdirs)
 
               workspace
               (atom {:root trunk})
@@ -1549,12 +1547,12 @@
 
           (binding [extension/*current-environment* env]
             (expect (= trunk (:result (root))))
-            (swap! workspace assoc :root (.getCanonicalPath ^java.io.File draft))
-            (expect (= (.getCanonicalPath ^java.io.File draft) (:result (root)))))))))
+            (swap! workspace assoc :root (.getCanonicalPath ^java.io.File moved))
+            (expect (= (.getCanonicalPath ^java.io.File moved) (:result (root)))))))))
   ;; Regression, #301: a slash command ran its callback in a session-less stub
   ;; environment, so `vis.workspace_root()` failed instead of naming the workspace.
   (it
-    "resolves the invoking session's workspace, then its draft, in a slash command turn"
+    "resolves the invoking session's workspace, then its new root, in a slash command turn"
     (with-loaded
       {"slashroot.py"
        "import blockether.vis.extension as vis\ndef where(ctx):\n    return str(vis.workspace_root())\nvis.register_extension(vis.Extension(name='slashroot', description='slashroot', slash_commands=[vis.SlashCommand('workspace-test', where)]))"}
@@ -1562,13 +1560,11 @@
         (let [trunk
               (.getCanonicalPath ^java.io.File (temp-dir))
 
-              draft
-              (.getCanonicalPath ^java.io.File (doto (io/file trunk "draft") .mkdirs))
+              moved
+              (.getCanonicalPath ^java.io.File (doto (io/file trunk "moved") .mkdirs))
 
               trunk-ws
-              (ps/db-workspace-insert!
-                store
-                {:repo-id "slashroot" :repo-root trunk :root trunk :fork-ms 0})
+              (ps/db-workspace-insert! store {:repo-id "slashroot" :root trunk})
 
               sid
               (ps/db-store-session! store
@@ -1595,17 +1591,12 @@
                   (get-in slash [:result :slash/title])))]
 
           (try (expect (= trunk (slash-root)))
-               ;; Entering a draft pins the session to the draft's working copy.
-               (ps/db-session-state-set-workspace! store
-                                                   (ps/db-latest-session-state-id store sid)
-                                                   (:id (ps/db-workspace-insert!
-                                                          store
-                                                          {:repo-id "slashroot"
-                                                           :repo-root trunk
-                                                           :root draft
-                                                           :parent-workspace-id (:id trunk-ws)
-                                                           :fork-ms 0})))
-               (expect (= draft (slash-root)))
+               ;; A change of directory pins the session to the new root.
+               (ps/db-session-state-set-workspace!
+                 store
+                 (ps/db-latest-session-state-id store sid)
+                 (:id (ps/db-workspace-insert! store {:repo-id "slashroot" :root moved})))
+               (expect (= moved (slash-root)))
                ;; Like a tool, the callback ran in the session's trusted worker.
                (expect (some? (:context (get @@#'pyx/session-contexts [ctx "slashroot"]))))
                (finally (ep/dispose-python-context! ctx)))))))
@@ -1621,8 +1612,7 @@
               (.getCanonicalPath ^java.io.File (temp-dir))
 
               ws
-              (ps/db-workspace-insert! store
-                                       {:repo-id "autoext" :repo-root root :root root :fork-ms 0})
+              (ps/db-workspace-insert! store {:repo-id "autoext" :root root})
 
               sid
               (ps/db-store-session! store {:channel :api :workspace-id (:id ws) :title "autoext"})
@@ -1682,8 +1672,7 @@
               (.getCanonicalPath ^java.io.File (temp-dir))
 
               ws
-              (ps/db-workspace-insert! store
-                                       {:repo-id "slashapp" :repo-root root :root root :fork-ms 0})
+              (ps/db-workspace-insert! store {:repo-id "slashapp" :root root})
 
               sid
               (ps/db-store-session! store {:channel :tui :workspace-id (:id ws) :title "slashapp"})
@@ -4324,7 +4313,7 @@ def before(call):
     return None
 
 vis.register_extension(vis.Extension(name='name-hook', description='Name fixture.',
-    op_hooks=[vis.OpHook(['nst.repl_start', 'nst/repl_start', 'nst.repl_strat', 'git/commit'], before)]))
+    op_hooks=[vis.OpHook(['nst.repl_start', 'nst/repl_start', 'nst.repl_strat', 'python_execution'], before)]))
 "}
       (fn [_ _]
         (expect

@@ -33,8 +33,8 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
   const columnRef = useRef<HTMLDivElement>(null);
   const children = useMemo(() => new Set(data.child_session_ids), [data.child_session_ids]);
   const roots = useMemo(
-    () => [session.workspace?.root, session.workspace?.repo_root],
-    [session.workspace?.root, session.workspace?.repo_root],
+    () => [session.workspace?.root],
+    [session.workspace?.root],
   );
   const outline = useMemo(() => turns.map((turn) => outlineEntry(turn)), [turns]);
   const teams = useMemo(() => agentsByTurn(data.agents), [data.agents]);

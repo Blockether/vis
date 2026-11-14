@@ -234,40 +234,6 @@
     :else
     [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
 
-(defn- draft-footer-spans
-  [{:strs [id label working_changes recovery_required ahead]}]
-  (let [identity
-        (or (not-empty label)
-            (some-> id
-                    str
-                    (subs 0 (min 8 (count (str id)))))
-            "?")
-
-        ;; Use the same live file-count notation as Git. Draft ahead compares
-        ;; against the landing target, not the branch's upstream or review snapshot.
-        status
-        (cond recovery_required "RECOVERY REQUIRED"
-              (not-every? number?
-                          (cons ahead
-                                (map #(get working_changes %) ["modified" "created" "deleted"])))
-              "CHANGES UNAVAILABLE"
-              :else (git-status-bits (assoc working_changes "ahead" ahead)))]
-
-    (cond-> [{:text (str " DRAFT (" identity (when-not status ")"))
-              :fg t/footer-fg-strong
-              :bold? true
-              :region :right
-              :priority 2
-              :tint :git}]
-      status
-      (conj {:text (str status ")")
-             :fg t/footer-fg-strong
-             :bold? true
-             :region :right
-             :priority 2
-             :join-left? true
-             :tint :git}))))
-
 (def ^:private session-cost-keys
   ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
    "cache_write_cost" "output_cost" "total_cost"])
@@ -592,9 +558,6 @@
         ws
         (:workspace db)
 
-        draft?
-        (true? (get ws "is_draft"))
-
         ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
         ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
         ;; the repo — the single source of truth every channel reads (web footer,
@@ -606,7 +569,7 @@
         (get ws "git")
 
         git-spans
-        (if draft? (draft-footer-spans ws) (git-footer-spans git-status))]
+        (git-footer-spans git-status)]
 
     (cond-> (vec git-spans)
       ;; Response controls read reasoning → verbosity → thinking → fast, matching

@@ -27,8 +27,6 @@
 
 (def workspace-access-values contract-config/workspace-access-values)
 
-(def workspace-draft-values contract-config/workspace-draft-values)
-
 (def workspace-os-values contract-config/workspace-os-values)
 
 (defn normalize-api-style
@@ -208,6 +206,17 @@
                         (:errors (explain-data config)))]
       [(apply dissoc config dropped) dropped])))
 
+(defn without-retired-keys
+  "Drop the keys that an older Vis version wrote and the contract no longer has, so
+   that a stored value cannot refuse the next write. Today this is `draft` on an
+   entry of `workspace.filesystem`."
+  [config]
+  (if (sequential? (get-in config ["workspace" "filesystem"]))
+    (update-in config
+               ["workspace" "filesystem"]
+               (partial mapv #(cond-> % (map? %) (dissoc "draft"))))
+    config))
+
 (defn config-error-panel
   [fields source]
   (into ["" (str "  Invalid Vis configuration" (when source (str " in " source)) ":") ""]
@@ -324,23 +333,6 @@
   "Search visibility defaults to true; only an explicit `search: false` opts out."
   [entry]
   (false? (get entry "search")))
-
-(defn entry-draft-policy
-  "The catalog entry draft policy as a keyword. Defaults to `:shared`."
-  [entry]
-  (case (some-> (get entry "draft")
-                str
-                str/lower-case)
-    "copy-only"
-    :copy-only
-
-    "copy-and-apply"
-    :copy-and-apply
-
-    "not-allowed"
-    :not-allowed
-
-    :shared))
 
 (defn host-os
   "This host's `when.os` token: `macos`, `windows`, `wsl` (Linux under WSL),
@@ -474,26 +466,11 @@
              nil))))
      (get-in config ["workspace" "filesystem"] []))))
 
-(defn workspace-draft-policies
-  "`{catalog-path -> policy}` for every declared root that opts OUT of the default
-   `:shared` behaviour. Independent of `jail.filesystem.allow`: the policy governs
-   draft isolation, which applies whether or not the OS jail is enabled. Roots
-   this host does not mount never appear."
-  ([config] (workspace-draft-policies config (mount-env)))
-  ([config env]
-   (assert-config! config)
-   (into {}
-         (keep (fn [entry]
-                 (let [policy (entry-draft-policy entry)]
-                   (when (not= :shared policy) [(get entry "path") policy]))))
-         (applicable-entries (get-in config ["workspace" "filesystem"] []) env))))
-
 (def vis-home-entry
   "The implicit session-state root, excluded from default search."
   {"id" "vis-home"
    "path" "~/.vis"
-   "description"
-   "Vis' own session folder — session DB, gateway event journals, state.yml, drafts, logs."
+   "description" "Vis' own session folder — session DB, gateway event journals, state.yml, logs."
    "search" false})
 
 (defn- same-root?

@@ -263,8 +263,8 @@
                 uri)))
   (it "redirects merged Python and HTTP pages to their API page and variant"
       (doseq [topic
-              ["automations" "configuration" "context-management" "council" "drafts"
-               "project-instructions" "sessions"]
+              ["automations" "configuration" "context-management" "council" "project-instructions"
+               "sessions"]
 
               variant
               ["python" "http"]

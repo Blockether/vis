@@ -9,8 +9,8 @@ import { Button, DialogFrame, Modal, Select } from './ui';
 
 const choices = [
   { value: 'auto', label: 'Automatic' },
-  { value: 'worktree', label: 'Worktree', disabled: true },
-  { value: 'rift', label: 'Rift' },
+  { value: 'fast', label: 'Fast', disabled: true },
+  { value: 'safe', label: 'Safe' },
   { value: '', label: 'Off' },
 ];
 
@@ -18,7 +18,7 @@ function BackendChoice() {
   const [value, setValue] = useState('auto');
   return (
     <>
-      <Select aria-label="Draft backend" value={value} onValueChange={setValue} options={choices} />
+      <Select aria-label="Sample mode" value={value} onValueChange={setValue} options={choices} />
       <Button variant="secondary">Continue</Button>
     </>
   );
@@ -32,7 +32,7 @@ describe('Select', () => {
         <BackendChoice />
       </form>,
     );
-    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    const trigger = screen.getByRole('combobox', { name: 'Sample mode' });
     expect(trigger.tagName).toBe('BUTTON');
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(trigger).toHaveTextContent('Automatic');
@@ -52,22 +52,22 @@ describe('Select', () => {
 
   it('navigates with arrows, Home/End and typeahead, skipping unavailable choices', async () => {
     render(<BackendChoice />);
-    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    const trigger = screen.getByRole('combobox', { name: 'Sample mode' });
     await userEvent.tab();
     expect(trigger).toHaveFocus();
     await userEvent.keyboard('{ArrowDown}');
     await waitFor(() => expect(screen.getByRole('option', { name: 'Automatic' })).toHaveFocus());
     await userEvent.keyboard('{ArrowDown}');
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Rift' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Safe' })).toHaveFocus());
     expect(trigger).toHaveTextContent('Automatic');
     await userEvent.keyboard('{End}');
     await waitFor(() => expect(screen.getByRole('option', { name: 'Off' })).toHaveFocus());
     await userEvent.keyboard('{Home}');
     await waitFor(() => expect(screen.getByRole('option', { name: 'Automatic' })).toHaveFocus());
-    await userEvent.keyboard('r');
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Rift' })).toHaveFocus());
+    await userEvent.keyboard('s');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Safe' })).toHaveFocus());
     await userEvent.keyboard('{Enter}');
-    expect(trigger).toHaveTextContent('Rift');
+    expect(trigger).toHaveTextContent('Safe');
     await waitFor(() => expect(trigger).toHaveFocus());
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Continue' })).toHaveFocus();
@@ -82,13 +82,13 @@ describe('Select', () => {
         }}
       >
         <Modal onDismiss={dismiss} size="fit">
-          <DialogFrame title="Draft settings">
+          <DialogFrame title="Sample settings">
             <BackendChoice />
           </DialogFrame>
         </Modal>
       </div>,
     );
-    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    const trigger = screen.getByRole('combobox', { name: 'Sample mode' });
     await userEvent.click(trigger);
     await userEvent.keyboard('{End}{Escape}');
     await waitFor(() => expect(trigger).toHaveFocus());
@@ -99,7 +99,7 @@ describe('Select', () => {
 
   it('dismisses an outside press without committing the highlighted choice', async () => {
     render(<BackendChoice />);
-    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    const trigger = screen.getByRole('combobox', { name: 'Sample mode' });
     await userEvent.click(trigger);
     await userEvent.keyboard('{End}');
     fireEvent.pointerDown(document.body, { pointerType: 'mouse' });
@@ -158,7 +158,7 @@ describe('Select', () => {
   it('keeps the controlled value until the owner accepts the change, then follows external updates', async () => {
     const change = vi.fn();
     const props = {
-      'aria-label': 'Draft backend',
+      'aria-label': 'Sample mode',
       value: 'auto',
       onValueChange: change,
       options: choices,
@@ -166,17 +166,17 @@ describe('Select', () => {
     const { rerender } = render(<Select {...props} />);
     const trigger = screen.getByRole('combobox');
     await userEvent.click(trigger);
-    await userEvent.click(screen.getByRole('option', { name: 'Rift' }));
-    expect(change).toHaveBeenCalledExactlyOnceWith('rift');
+    await userEvent.click(screen.getByRole('option', { name: 'Safe' }));
+    expect(change).toHaveBeenCalledExactlyOnceWith('safe');
     expect(trigger).toHaveTextContent('Automatic');
-    rerender(<Select {...props} value="rift" />);
-    expect(trigger).toHaveTextContent('Rift');
+    rerender(<Select {...props} value="safe" />);
+    expect(trigger).toHaveTextContent('Safe');
   });
 
   it('disables empty or saving controls, closes if disabled while open, and forwards focus', async () => {
     const ref = createRef<HTMLButtonElement>();
     const props = {
-      'aria-label': 'Draft backend',
+      'aria-label': 'Sample mode',
       value: 'auto',
       onValueChange: vi.fn(),
       options: choices,
@@ -229,7 +229,7 @@ describe('Select', () => {
   it('preserves unknown saved values instead of silently choosing a different option', () => {
     render(
       <Select
-        aria-label="Draft backend"
+        aria-label="Sample mode"
         value="remote-backend"
         onValueChange={vi.fn()}
         options={choices}
@@ -256,7 +256,7 @@ describe('Select', () => {
     });
     const styleSheets = document.head.querySelectorAll('style').length;
     render(<BackendChoice />);
-    await userEvent.click(screen.getByRole('combobox', { name: 'Draft backend' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Sample mode' }));
     const listbox = screen.getByRole('listbox');
     // A trigger near the foot of the screen has no room under it: the list stands on it.
     expect(listbox.style.left).toBe('40px');
@@ -269,7 +269,7 @@ describe('Select', () => {
 
   it('closes from its scrim or Tab without committing, and returns focus to the trigger', async () => {
     render(<BackendChoice />);
-    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    const trigger = screen.getByRole('combobox', { name: 'Sample mode' });
     await userEvent.click(trigger);
     await userEvent.click(screen.getByRole('listbox').parentElement as HTMLElement);
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
@@ -283,7 +283,7 @@ describe('Select', () => {
 
   it('closes on the phone back before the screen under it', async () => {
     render(<BackendChoice />);
-    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    const trigger = screen.getByRole('combobox', { name: 'Sample mode' });
     await userEvent.click(trigger);
     act(() => {
       expect(dismissTopLayer()).toBe(true);

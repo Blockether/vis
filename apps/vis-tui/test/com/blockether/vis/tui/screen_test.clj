@@ -4334,41 +4334,26 @@ therapy line 2"
                      (expect (empty? @events))))))
 
 (defdescribe
-  workspace-refresh-draft-test
-  (it
-    "refreshes creation, edits, approval and discard without a Git summary change"
-    ;; #241/#247: lifecycle changes cannot be deduplicated by Git or task-review counts.
-    (let [db
-          (atom {:session {:id "sid"}})
+  workspace-refresh-record-test
+  (it "refreshes a root change and a label change without a Git summary change"
+      ;; #241/#247: a change of the record cannot be deduplicated by the Git counts.
+      (let [db
+            (atom {:session {:id "sid"}})
 
           git
           {"is_workspace" true "modified" 0}
 
-          first-draft
-          {"root" "/draft"
-           "id" "draft-a"
-           "label" "first"
-           "fork_ms" 1
-           "is_draft" true
-           "pending" 1
-           "ahead" 0
-           "git" git
-           "draft_changes" {"modified" 1 "created" 0 "deleted" 0}}
+            start
+            {"root" "/start" "id" "ws" "git" git}
 
-          changed
-          (assoc first-draft "draft_changes" {"modified" 2 "created" 1 "deleted" 0})
+            moved
+            {"root" "/moved" "id" "ws" "label" "first" "git" git}
 
-          renamed
-          (assoc changed "label" "renamed")
+            renamed
+            (assoc moved "label" "renamed")
 
-          approved
-          (assoc renamed "pending" 0)
-
-          trunk
-          {"root" "/trunk" "id" "trunk" "is_draft" false "git" git}
-
-          snapshots
-          [trunk first-draft first-draft changed renamed approved trunk]
+            snapshots
+            [start moved moved renamed start]
 
           remaining
           (atom snapshots)
@@ -4382,39 +4367,38 @@ therapy line 2"
           done
           (promise)]
 
-      (with-redefs-fn {#'state/app-db db
-                       #'state/dispatch (fn [event]
-                                          (swap! events conj (subvec event 0 2))
-                                          (dispatch event))
-                       #'screen/workspace-refresh-ms 1
-                       #'vis/gateway-session-workspace
-                       (fn [_]
-                         (if-let [ws (first @remaining)]
-                           (do (swap! remaining rest) ws)
-                           (do (swap! db assoc :shutdown? true) (deliver done true) nil)))}
-        (fn []
-          (let [^Thread thread (#'screen/start-workspace-refresh-thread!)]
-            (try (expect (= true (deref done 3000 :timed-out)))
-                 (expect (= (mapv #(vector :set-workspace %)
-                                  [trunk first-draft changed renamed approved trunk])
-                            @events))
-                 (finally (swap! db assoc :shutdown? true)
-                          (.interrupt thread)
-                          (.join thread 3000)))))))))
+        (with-redefs-fn {#'state/app-db db
+                         #'state/dispatch (fn [event]
+                                            (swap! events conj (subvec event 0 2))
+                                            (dispatch event))
+                         #'screen/workspace-refresh-ms 1
+                         #'vis/gateway-session-workspace
+                         (fn [_]
+                           (if-let [ws (first @remaining)]
+                             (do (swap! remaining rest) ws)
+                             (do (swap! db assoc :shutdown? true) (deliver done true) nil)))}
+          (fn []
+            (let [^Thread thread (#'screen/start-workspace-refresh-thread!)]
+              (try (expect (= true (deref done 3000 :timed-out)))
+                   (expect (= (mapv #(vector :set-workspace %) [start moved renamed start])
+                              @events))
+                   (finally (swap! db assoc :shutdown? true)
+                            (.interrupt thread)
+                            (.join thread 3000)))))))))
 
 (defdescribe
   workspace-refresh-races-test
-  ;; #247: a late poll must not restore a discarded draft or cross session tabs.
+  ;; #247: a late poll must not restore an old record or cross session tabs.
   (it
     "keeps a response on its original tab when the reader switches sessions"
     (let [trunk
-          {"id" "trunk-a" "root" "/source-a" "is_draft" false}
+          {"id" "ws-a" "root" "/source-a"}
 
-          draft
-          {"id" "draft-a" "root" "/draft-a" "is_draft" true}
+          moved
+          {"id" "ws-a" "root" "/moved-a"}
 
           other
-          {"id" "trunk-b" "root" "/source-b" "is_draft" false}
+          {"id" "ws-b" "root" "/source-b"}
 
           db
           (atom {:session {:id "a"}
@@ -4435,26 +4419,26 @@ therapy line 2"
                                                            :workspace other
                                                            :workspace/root "/source-b"
                                                            :shutdown? true)
-                                                         draft)}
+                                                         moved)}
         (fn []
           (let [^Thread thread (#'screen/start-workspace-refresh-thread!)]
             (try (.join thread 3000)
                  (expect (not (.isAlive thread)))
                  (expect (= other (:workspace @db)))
                  (expect (= "/source-b" (:workspace/root @db)))
-                 (expect (= draft (get-in @db [:tab-locals :a :workspace])))
+                 (expect (= moved (get-in @db [:tab-locals :a :workspace])))
                  (finally (swap! db assoc :shutdown? true)
                           (.interrupt thread)
                           (.join thread 3000))))))))
-  (it "does not restore a discarded draft when an older poll finishes after turn-end refresh"
-      (let [draft
-            {"id" "draft" "root" "/draft" "is_draft" true}
+  (it "does not restore an old record when an older poll finishes after turn-end refresh"
+      (let [old
+            {"id" "ws" "root" "/old"}
 
             trunk
-            {"id" "trunk" "root" "/source" "is_draft" false}
+            {"id" "ws" "root" "/source"}
 
             db
-            (atom {:session {:id "a"} :active-tab-id :a :workspace draft})]
+            (atom {:session {:id "a"} :active-tab-id :a :workspace old})]
 
         (with-redefs-fn {#'state/app-db db
                          #'screen/workspace-refresh-ms 1
@@ -4462,7 +4446,7 @@ therapy line 2"
                                                            (state/dispatch [:set-workspace trunk
                                                                             :a])
                                                            (swap! db assoc :shutdown? true)
-                                                           draft)}
+                                                           old)}
           (fn []
             (let [^Thread thread (#'screen/start-workspace-refresh-thread!)]
               (try (.join thread 3000)
@@ -4473,14 +4457,14 @@ therapy line 2"
                             (.join thread 3000))))))))
   (it
     "repairs a stale local snapshot even when the gateway returns the previous poll's fact"
-    (let [draft
-          {"id" "draft" "root" "/draft" "is_draft" true}
+    (let [old
+          {"id" "ws" "root" "/old"}
 
           trunk
-          {"id" "trunk" "root" "/source" "is_draft" false}
+          {"id" "ws" "root" "/source"}
 
           db
-          (atom {:session {:id "a"} :active-tab-id :a :workspace draft})
+          (atom {:session {:id "a"} :active-tab-id :a :workspace old})
 
           requests
           (atom 0)
@@ -4494,7 +4478,7 @@ therapy line 2"
                                           (dispatch event)
                                           (when (= 1 @requests)
                                             ;; A delayed hydration restores the old snapshot.
-                                            (swap! db assoc :workspace draft)))
+                                            (swap! db assoc :workspace old)))
                        #'vis/gateway-session-workspace (fn [_]
                                                          (when (= 2 (swap! requests inc))
                                                            (swap! db assoc :shutdown? true))

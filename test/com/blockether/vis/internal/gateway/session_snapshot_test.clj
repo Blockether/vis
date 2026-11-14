@@ -26,13 +26,7 @@
         (temp-dir "vis-snapshot")
 
         trunk
-        (ps/db-workspace-insert! store
-                                 {:repo-id (str "repo-" title)
-                                  :repo-root root
-                                  :root root
-                                  :workspace-kind :trunk
-                                  :workspace-backend :live
-                                  :state :active})
+        (ps/db-workspace-insert! store {:repo-id (str "repo-" title) :root root :state :active})
 
         sid
         (str (random-uuid))

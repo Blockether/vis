@@ -33,9 +33,7 @@
                                     :ext/slash-commands slashes})
 
         ws
-        (persistance/db-workspace-insert!
-          store
-          {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
+        (persistance/db-workspace-insert! store {:repo-id "test" :root "/tmp" :state :active})
 
         soul-id
         (persistance/db-store-session! store

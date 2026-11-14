@@ -18,7 +18,7 @@
    - the body must NOT close `idx`; borrowed indexes cannot be evicted,
    - filesystem mutations call `note-fs-write!` with the changed path so the
      next search refreshes that path and reads its own writes. A refresh does not
-     rescan the tree, and unrelated drafts do not change."
+     rescan the tree."
   (:require [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.paths :as paths]

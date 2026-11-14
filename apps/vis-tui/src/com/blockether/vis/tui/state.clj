@@ -2856,8 +2856,7 @@
              ensure-tabs
              (assoc :session session
                     ;; The session's current gateway workspace record, JSON-keyed: "root"
-                    ;; is the active filesystem root; "repo_root" retains the canonical
-                    ;; project identity for internally isolated workspaces.
+                    ;; is the active filesystem root.
                     :workspace workspace
                     :title nil
                     ;; This tab is being REBOUND to another session, so the
@@ -7585,8 +7584,7 @@
                             :client-turn-id client-turn-id
                             :slash-turn? slash-turn?
                             :terminal-trace terminal-trace}])
-                        ;; A turn may have changed the session's workspace (`/cd <path>`,
-                        ;; or a future model-managed isolation action).
+                        ;; A turn may have changed the session's workspace (`/cd <path>`).
                         ;; Re-sync so header/footer reflect it. The gateway ws
                         ;; fact already carries the server-resolved :git status,
                         ;; so re-dispatch it — no client-side git walk here.

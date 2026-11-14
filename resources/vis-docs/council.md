@@ -71,10 +71,9 @@ save research, but does not guarantee lower cost or a prompt-cache hit.
 ## Groups and settings
 
 Sessions normally share a Council group when they belong to the same project.
-Without an assigned project, Vis uses the saved workspace's repository. Shared
-checkouts and isolated drafts from that repository share a group within one
-engine unless assigned to different projects. Separate engines have separate
-logs and participants.
+Without an assigned project, Vis uses the directory of the session. Sessions in
+the same directory share a group within one engine unless they are assigned to
+different projects. Separate engines have separate logs and participants.
 
 Filing sessions into a [session group](sessions.md#organize-sessions-into-groups) narrows
 that boundary further: the sessions in one group talk to each other instead of to the

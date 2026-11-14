@@ -315,26 +315,19 @@
       :warnings warnings})))
 
 (defn- extra-root-dirs
-  "The added filesystem roots' REAL (trunk) dirs as Files, for the stacked
-   guidance scan. Only the trunk is read — a draft clone wouldn't carry a
-   freshly-added rules file, and live roots have trunk==clone anyway. Reads
+  "The added filesystem roots as Files, for the stacked guidance scan. Reads
    the per-turn `*filesystem-roots*` binding (empty when unbound / single-root).
-   The session's OWN trunk↔clone pair (`:primary?`) is already the primary
-   chain, and a root the draft policy withholds (`:denied?`) must not be read
-   at all. Empty when the session does not read the project tier."
+   The session's own root is already the primary chain. Empty when the session
+   does not read the project tier."
   []
   (if (workspace/source-enabled? "project")
-    (into []
-          (comp (remove :primary?)
-                (remove :denied?)
-                (keep (fn [{:keys [trunk]}]
-                        (some-> trunk
-                                str
-                                str/trim
-                                not-empty
-                                ((fn [^String p]
-                                   (java.io.File. p)))))))
-          workspace/*filesystem-roots*)
+    (let [own (workspace/cwd-root)]
+      (into []
+            (comp (keep :root)
+                  (remove #(= own %))
+                  (map (fn [^String p]
+                         (java.io.File. p))))
+            workspace/*filesystem-roots*))
     []))
 
 (defn primary-instructions

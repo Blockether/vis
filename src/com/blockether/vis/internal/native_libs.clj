@@ -110,7 +110,7 @@
 
 (def ^:private resolver-libs
   "Libraries that read `<group>.<lib>.native.path` before they copy a bundled file."
-  [{:lib "fff"} {:lib "imaging"} {:lib "rift" :lib-base "rift_ffi"}])
+  [{:lib "fff"} {:lib "imaging"}])
 
 (defn- explicit-path?
   "True when the user already set the library's environment variable or property."
@@ -119,7 +119,7 @@
                (System/getProperty (str prop-prefix ".native.path")))))
 
 (defn stage-resolver-libs!
-  "Point fff, imaging and rift at stable copies before their first load. Never throws."
+  "Point fff and imaging at stable copies before their first load. Never throws."
   []
   (try (doseq [spec
                (map nr/spec resolver-libs)

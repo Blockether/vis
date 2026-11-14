@@ -36,7 +36,7 @@
 
 (def ^:private base-ctx
   {"session_id" "s1"
-   "session_workspace" {"root" "/repo" "isolated" false "vcs_kind" "git"}
+   "session_workspace" {"root" "/repo" "vcs_kind" "git"}
    "session_env" {"host" {"os" "macos"} "project" {"kind" "single"}}
    "session_routing" {"model" "gpt-5.5"}})
 
@@ -153,7 +153,7 @@
       ;; about 15% more input tokens for the same session.
       (let [roots
             (vec (for [n (range 12)]
-                   (array-map "cwd" (str "/Users/example/repository-" n) "draft" "shared")))
+                   (array-map "cwd" (str "/Users/example/repository-" n) "mode" "read")))
 
             block
             (cr/render-ctx-map (array-map "workspace" (array-map "root" "/Users/example"
@@ -170,7 +170,7 @@
           (str/starts-with?
             (second lines)
             " \"workspace\": {\"root\": \"/Users/example\", \"filesystem_roots\": [{\"cwd\": "))
-        (expect (str/ends-with? (second lines) "\"draft\": \"shared\"}]},"))
+        (expect (str/ends-with? (second lines) "\"mode\": \"read\"}]},"))
         (expect (= " \"routing\": {\"model\": \"example-model\"}" (nth lines 2)))
         (expect (= "}" (last lines)))))
   (it "renders a nested delta value on one line"

@@ -202,10 +202,6 @@
         (and (subset? (:deny-read-rules h) (:deny-read-rules d))
              (subset? (:deny-write-rules h) (:deny-write-rules d))
              (subset? (:deny-exec h) (:deny-exec d))
-             ;; A local catalog cannot relax the host's per-root draft restrictions.
-             (every? (fn [[path policy]]
-                       (= policy (get (:draft-policies desired) path)))
-                     (:draft-policies ceiling))
              (or (not (:jail-enabled ceiling))
                  (and (:jail-enabled desired)
                       (every? #(covered? (conj (:allow-read-write h) root) %) (:allow-read-write d))

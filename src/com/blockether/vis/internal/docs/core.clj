@@ -718,8 +718,8 @@
          "queue-and-cancel" "/docs/sessions"
          "token-optimization" "/docs/context-management"}
         (for [topic
-              ["automations" "configuration" "context-management" "council" "drafts"
-               "project-instructions" "sessions"]
+              ["automations" "configuration" "context-management" "council" "project-instructions"
+               "sessions"]
 
               variant
               ["python" "http"]]

@@ -4,15 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
-/** A session that works in a draft of the `notes` project, filed in one of its groups. */
+/** A session of the `notes` project, filed in one of its groups. */
 const inNotes = () =>
   sessionFixture({
     group_id: 'g-receipts',
-    workspace: {
-      root: '/Users/dev/.vis/drafts/notes/wire',
-      repo_root: '/Users/dev/notes',
-      is_draft: true,
-    },
+    workspace: { root: '/Users/dev/notes' },
   });
 
 async function runNewSession(text: string) {
@@ -34,7 +30,7 @@ describe('/new-session', () => {
     await runNewSession('/new-session Fix the login');
 
     await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('created', true));
-    // The project root, not the draft clone. Like the TUI command, it keeps no group.
+    // The project root. Like the TUI command, it keeps no group.
     expect(createSession).toHaveBeenCalledWith({
       channel: 'web',
       root: '/Users/dev/notes',
