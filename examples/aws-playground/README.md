@@ -280,8 +280,8 @@ activity returns its recorded result.
 A worker stops 90 seconds before the Lambda time limit. It parks the turn that runs, and
 the gateway of the next worker continues that turn. The run records the number of session
 turns before each request. Thus the new run process waits for the turn that continues
-and sends no second request. A run can use at most 12 processes. Vis continues one turn
-in at most three new workers, so keep a turn shorter than about 40 minutes.
+and sends no second request. Vis continues one turn in any number of new workers, until
+the turn is 8 hours old. A run can work for 8 hours, which is 36 processes.
 
 ```python
 from typing import Literal
@@ -470,14 +470,14 @@ again.
 Runs and workflows:
 
 - 3 runs work at the same time. The other runs wait in the queue. A waiting run uses no place.
-- A run can use at most 12 processes. Each worker change and each given file starts a new process.
+- A run can work for 8 hours (`VIS_RUN_LIMIT_S`), which is 36 processes. Each worker change and each given file starts a new process.
 - A run can have at most 1000 workflow activities.
 - `runs/index.json` holds the 300 newest runs, and `GET runs` returns the 100 newest.
 - The name of a workflow and the key of `ctx.receive` have the form `[a-z][a-z0-9_]{1,39}`.
 - A workflow file has exactly one function with `@workflow` and at most 200 000 characters.
 - A file for a waiting run is text of at most 300 000 bytes. Its name starts with a letter or a digit and has at most 80 characters: letters, digits, `.`, `_`, `-` and spaces.
 - `ctx.ask` and `ctx.document` wait 900 seconds for a turn, if you do not set `timeout=`.
-- Vis continues one turn in at most three new workers.
+- Vis continues one turn in any number of new workers, until the turn is 8 hours old. The Vis setting `turn_resume_limit` changes this time. A turn whose worker stopped three times in sequence without a handoff ends as interrupted.
 
 Files:
 
@@ -513,10 +513,11 @@ Time:
 | A session calls another provider API | `llm` accepts two calls and only the models of the stack. |
 | A session sends data to the internet | The network has no internet gateway and no NAT gateway. The resolver answers only for `amazonaws.com` names. Each endpoint accepts only the resources of this stack. |
 | A session pushes to another repository | Only `repo` has a key. The key is a deploy key of one repository. |
-| A session rewrites history | `repo` never uses force. A push that is not a fast-forward goes to a new branch. |
+| A session rewrites history | `repo` never uses force. A push that is not a fast-forward goes to a new branch. The ruleset "main is append-only" of GitHub refuses a deletion of `main` and a push to `main` that is not a fast-forward. |
+| Private work becomes public | The repository is public, because GitHub permits a ruleset on a private repository only with a paid plan. Each commit that a session publishes is public. For private work, use such a plan and make the repository private. |
 | A session makes GitHub run its code | `repo` refuses a push that changes `.github`. GitHub Actions is off for the repository. Do not turn on GitHub Actions in this repository: a workflow on `main` runs the code that a session wrote. |
 | A session changes the release of the next worker | `sync` owns `releases/` and `CURRENT`. The worker has another user id on EFS and cannot write there. EFS permits a mount only to the three function roles, each through its own access point. The role of `app` permits only a read. The worker role cannot write `repo/` in the bucket. |
-| A bad download gets into the image | The base image has a digest. Each file that `curl` downloads has a SHA-256 and each Python package has a hash. The extensions have an exact version, but no hash. The `dnf` packages have no version and no hash in the `Dockerfile`. |
+| A bad download gets into the image | Each download has a hash. The base image has a digest. Each file that `curl` downloads has a SHA-256, each Python package has a hash and each extension has a Git commit. The digest sets the Amazon Linux release, and `dnf` reads only the repository of that release. [`requirements/rpm.lock`](requirements/rpm.lock) has the header SHA-256 of each installed RPM, and the build stops when one differs. The image has no Java and no Maven library. |
 | A person without the password calls the stack | The `front` function compares the password in constant time and sets a signed, `HttpOnly`, `SameSite=Strict` cookie that ends after 7 days. A request that changes data must come from the same origin. A new password is in effect after 5 minutes. The static files are public. The pages, `/v1/` and `/play/api/` need the password or the cookie. |
 | A false webhook | `front` checks the `X-Hub-Signature-256` of GitHub. |
 | The credentials of the worker role leave the function | Each S3, SQS and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
@@ -576,7 +577,7 @@ PLAYGROUND_MODELS='[{"name":"<model>","context":<tokens>,"output_limit":<tokens>
 
 The script is safe to run again. It does these steps:
 
-1. Makes the private repository from [`repo-seed/`](repo-seed), if GitHub does not have it. Turns off GitHub Actions for the repository. Adds the ruleset "main is append-only", if the GitHub plan permits a ruleset.
+1. Makes the public repository from [`repo-seed/`](repo-seed), if GitHub does not have it. Turns off GitHub Actions for the repository. Adds the ruleset "main is append-only". The script does not change a repository that GitHub has: on a private repository, the ruleset needs a paid GitHub plan.
 2. Builds the image and pushes it to Amazon ECR. ECR keeps the 5 newest images.
 3. Stores the secrets in the Parameter Store. It makes the password, the webhook secret and the deploy key. GitHub gets the public half of the deploy key, with write access.
 4. Deploys [`template.yaml`](template.yaml).
@@ -612,6 +613,7 @@ one, add it to the `Environment` of the function in `template.yaml`.
 | `VIS_LIFETIME_S` | `900` | `worker`, `front` | The Lambda time limit of the worker. It must be equal to the `Timeout` of the worker in the template |
 | `VIS_HANDOFF_MARGIN_S` | `90` | `worker`, `front` | The seconds before the time limit at which a worker gives its work to a new worker |
 | `VIS_STREAM_S` | `870` | `front` | The seconds after which an event stream ends |
+| `VIS_RUN_LIMIT_S` | `28800` | `worker` | The seconds that one run can work |
 
 To remove the stack:
 

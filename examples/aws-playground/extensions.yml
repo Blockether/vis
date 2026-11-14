@@ -1,13 +1,16 @@
 # Extensions that the image installs and prepares at build time.
-# Each version is exact, so two builds install the same code.
+# Each `revision` is a full Git commit. Vis fetches that commit and verifies that it
+# is the commit of this file, so two builds install the same code.
 extensions:
+  # The commit of the release 3.4.0.
   vis-lang-interface:
     source: https://github.com/Blockether/vis-lang-interface
-    version: "3.4.0"
+    revision: e8960c56dcd4672efbb88bb21cc394cefaf57cae
+  # The commit of the release 1.16.10.
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
-    version: "1.16.10"
-  # The review app has no approved release: the commit is the exact version.
+    revision: 164d68893a695b1b1e55ad5466268fd8bf85840a
+  # The review app has no approved release.
   vis-review:
     source: https://github.com/Blockether/vis
     subdirectory: packages/vis-review

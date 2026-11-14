@@ -23,7 +23,8 @@ store() { aws ssm put-parameter --name "/$STACK/$1" --type SecureString --value 
 
 echo "1/6 repository $REPOSITORY"
 if ! gh repo view "$REPOSITORY" >/dev/null 2>&1; then
-  gh repo create "$REPOSITORY" --private --description "The repository of the Vis playground"
+  # A ruleset on a private repository needs a paid GitHub plan, so the repository is public.
+  gh repo create "$REPOSITORY" --public --description "The repository of the Vis playground"
   seed=$(mktemp -d)
   cp -R repo-seed/. "$seed"
   git -C "$seed" init --quiet --initial-branch main
@@ -33,14 +34,14 @@ if ! gh repo view "$REPOSITORY" >/dev/null 2>&1; then
   rm -rf "$seed"
 fi
 # A session can push to this repository. GitHub must not run code from it, and the
-# main branch must only grow. A ruleset needs a public repository or a paid plan.
+# main branch must only grow.
 gh api --method PUT "repos/$REPOSITORY/actions/permissions" -F enabled=false >/dev/null
 if ! gh api "repos/$REPOSITORY/rulesets" --jq '.[].name' 2>/dev/null | grep -qxF "main is append-only"; then
   jq -n '{name: "main is append-only", target: "branch", enforcement: "active",
           conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
           rules: [{type: "deletion"}, {type: "non_fast_forward"}]}' |
     gh api "repos/$REPOSITORY/rulesets" --method POST --input - >/dev/null 2>&1 ||
-    echo "  no ruleset: this GitHub plan does not permit one for this repository"
+    echo "  no ruleset: GitHub refused it. A private repository needs a paid plan for a ruleset"
 fi
 
 echo "2/6 image"

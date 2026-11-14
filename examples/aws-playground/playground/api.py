@@ -35,7 +35,7 @@ from typing import Any
 from blockether.vis.engine import GatewayError, Session, TransportError
 
 from playground import aws, sync, wire
-from playground.env import EFS, ENV, MODELS, REPO_FUNCTION, log, private
+from playground.env import EFS, ENV, LIFETIME, MODELS, REPO_FUNCTION, log, private
 
 NAME = re.compile(r"[a-z][a-z0-9_]{1,39}")
 SESSION = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
@@ -45,8 +45,10 @@ JSON = [*wire.JSON, ["cache-control", "no-store"]]
 SAMPLES = "/opt/playground/workflows"
 # The runs that work at the same time. The other runs wait.
 PARALLEL = 3
-# The processes that one run can use. A worker handoff starts a new process.
-STARTS = 12
+# The time that one run can work. A worker handoff starts a new process, and one
+# process works for at most the lifetime of a worker.
+RUN_LIMIT_S = int(ENV.get("VIS_RUN_LIMIT_S", "28800"))
+STARTS = -(-RUN_LIMIT_S // LIFETIME)
 # The activities that one run can have.
 STEPS = 1000
 LIVE = ("queued", "running")
@@ -217,7 +219,7 @@ class Runs:
             for run_id in ready[: max(0, PARALLEL - len(self.processes))]:
                 doc = self.doc(run_id)
                 if doc["starts"] >= STARTS:
-                    self.finish(doc, "failed", error=f"the run did not end in {STARTS} processes")
+                    self.finish(doc, "failed", error=f"the run did not end in {RUN_LIMIT_S // 3600} hours of work ({STARTS} processes)")
                     continue
                 doc["starts"] += 1
                 env = {**self.environment(), "PYTHONPATH": ENV.get("PYTHONPATH", ""), "PYTHONUNBUFFERED": "1"}

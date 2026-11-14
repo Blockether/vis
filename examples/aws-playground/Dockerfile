@@ -3,20 +3,25 @@
 # the Lambda custom runtime, and playground/runtime.py speaks the Lambda Runtime API.
 # Build for linux/arm64.
 #
-# The base image has a digest. Each file that curl downloads has a SHA-256 and each
-# Python package has a hash. The extensions have an exact version, but no hash.
-# The dnf packages have no version and no hash in this file.
+# Each download has a hash. The base image has a digest. Each file that curl downloads
+# has a SHA-256, each Python package has a hash and each extension has a Git commit.
+# The digest also sets the Amazon Linux release, and dnf reads only the repository of
+# that release. requirements/rpm.lock has the header SHA-256 of each installed RPM, and
+# the build stops when one differs. After a new base digest, write the lock again:
+#   rpm -qa --qf '%{NEVRA} %{SHA256HEADER}\n' | LC_ALL=C sort
 # To move to another Vis version, change VIS_RELEASE, its two checksums and
 # requirements/site.* together.
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:5c6ed3b38335b2aa424a045f1e564c8c508409ead0ff3f8bf5e62c31b94082cb
-ARG VIS_RELEASE=beta-ef46da579de875fb3e14321613a2af18a2b08aeb
-ARG VIS_AGENT_SHA256=6ed09c8baf3a75c4a81f8325b52ed40e895d5fc3f33d493ee51e7ababff57354
-ARG VIS_WEB_SHA256=b93469183052859846219bce6d7f5357c583138cd1d86137a8c5dcfb94bb3de1
+ARG VIS_RELEASE=beta-0e5986a54b7c4beca9888cb6b7453d6862b03dff
+ARG VIS_AGENT_SHA256=b8bbcc86951d8cff7dbdca44462ad89124492d485c9f6b9f5a8c75a5db930372
+ARG VIS_WEB_SHA256=61ec56af4dc490d875a6356ffbf278f0d3adf6c1a51e501fcfaeb64cc86f3ae6
 # git serves the repository functions and fetches the extensions. clang builds native
 # Python packages. Python 3.13 is the interpreter of the project. The image holds its
 # packages (music21, pytest and ruff), because a worker and the app have no internet.
 COPY requirements/ /opt/requirements/
 RUN dnf install -y git tar gzip findutils clang openssh-clients python3.13 python3.13-pip && dnf clean all \
+ && rpm -qa --qf '%{NEVRA} %{SHA256HEADER}\n' | LC_ALL=C sort > /tmp/rpm.now \
+ && ! grep -vxFf /opt/requirements/rpm.lock /tmp/rpm.now && ! grep -vxFf /tmp/rpm.now /opt/requirements/rpm.lock && rm /tmp/rpm.now \
  && python3.13 -m pip install --no-cache-dir --require-hashes -r /opt/requirements/project.txt && ln -s /usr/bin/python3.13 /usr/local/bin/python3 \
  && python3.13 -c "import music21; print('music21', music21.__version__)"
 RUN base=https://github.com/Blockether/vis/releases/download/${VIS_RELEASE} \
