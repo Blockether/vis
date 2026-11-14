@@ -1,1 +1,8 @@
-{"want": {}, "wantnot": {}, "want_tools": ["grep"], "verify": "verify.py"}
+{
+  "want": {},
+  "wantnot": {},
+  "want_tools": [
+    "grep"
+  ],
+  "verify": "verify.py"
+}
