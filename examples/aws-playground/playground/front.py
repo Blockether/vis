@@ -15,6 +15,7 @@ import http.cookies
 import json
 import mimetypes
 import os
+import re
 import time
 import urllib.parse
 import uuid
@@ -25,6 +26,7 @@ from typing import Any
 from playground import aws, wire
 from playground.env import (
     ANSWER_S,
+    APP_FUNCTION,
     DUE_S,
     ENV,
     LIFETIME,
@@ -38,7 +40,7 @@ from playground.runtime import Context, HttpStream
 
 VIS_WEB, PLAY_WEB, VENDOR = ENV.get("VIS_WEB_DIR", "/opt/vis-web"), "/opt/playground/web", "/opt/playground/vendor"
 # The pages of the playground, by path.
-PAGES = {"/play": "sessions.html", "/play/workflows": "workflows.html", "/play/factory": "factory.html", "/play/architecture": "architecture.html"}
+PAGES = {"/play": "sessions.html", "/play/workflows": "workflows.html", "/play/factory": "factory.html", "/play/studio": "studio.html", "/play/architecture": "architecture.html"}
 # The directories that a browser reads without the password, by path prefix.
 PUBLIC = {"/play/assets/": f"{PLAY_WEB}/assets", "/play/vendor/": VENDOR}
 SAFE = {"GET", "HEAD", "OPTIONS"}
@@ -48,7 +50,8 @@ SECURITY = {
     "referrer-policy": "no-referrer",
     "x-frame-options": "DENY",
 }
-# The playground pages load only their own files.
+# The playground pages load only their own files. `default-src` is also the rule for a
+# frame, so the Studio frame cannot go to another host.
 PAGE_POLICY = (
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
     "script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; "
@@ -69,6 +72,19 @@ RELAY_POLICY = "sandbox allow-downloads; default-src 'none'; style-src 'unsafe-i
 # The headers of a worker answer that the browser gets. The worker runs the code of a
 # session, so it cannot set a cookie, a redirect or a header that changes the browser rules.
 RELAYED = {"content-type", "content-encoding", "content-disposition", "content-range", "accept-ranges", "cache-control", "etag", "last-modified", "retry-after", "x-vis-client-lease-unknown"}
+# The app of the project runs in the app function. Its files come from `/app/<token>/`.
+# A page of the app has its own origin (`sandbox`). The front passes no cookie to the app.
+# The token in the path is the permission. It names one source and ends after APP_S.
+APP_S, APP_BODY = 3600, 1_000_000
+APP_SOURCE = re.compile(r"release|[0-9a-f]{12}(-[0-9a-f]{8})?")
+APP_METHODS = {"GET", "HEAD", "POST"}
+# The characters of a path and of a query, and of a host name with a port.
+APP_TARGET, APP_HOST = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*"), re.compile(r"[A-Za-z0-9.-]+(:[0-9]+)?")
+# The headers of an app answer that the browser gets, and the headers that the app gets.
+APP_RELAYED = {"content-type", "content-disposition", "cache-control", "etag", "last-modified"}
+APP_PASSED = {"accept", "accept-language", "content-type"}
+# A page with its own origin reads its own files only with these headers.
+APP_CORS = {"access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST", "access-control-allow-headers": "content-type"}
 # The life of the cookie, and the time after which the function reads the password again.
 SESSION_S, SECRET_S = 604800, 300
 # The password and the webhook secret that this function read, and the time of the last worker start.
@@ -192,6 +208,92 @@ def pushed(request: Request) -> HttpStream:
     return answer(202, b'{"fetch":"started"}')
 
 
+def app_token(source: str, expires: int) -> str:
+    """Return the token of one source: its end time, the source and a signature."""
+    signature = hmac.new(password().encode(), f"vis-app.{expires}.{source}".encode(), "sha256").hexdigest()
+    return f"{expires}.{source}.{signature}"
+
+
+def app_source(token: str) -> str | None:
+    """Return the source of a token that has not ended, or None."""
+    expires, _, rest = token.partition(".")
+    source = rest.rpartition(".")[0]
+    if not (expires.isdigit() and len(expires) <= 12 and int(expires) > time.time() and APP_SOURCE.fullmatch(source)):
+        return None
+    return source if hmac.compare_digest(token.encode(), app_token(source, int(expires)).encode()) else None
+
+
+def app_policy(request: Request, token: str) -> str | None:
+    """Return the rules of an app page: its own origin, and no address but its own files."""
+    host = request.headers.get("host", "")
+    if not APP_HOST.fullmatch(host):
+        return None
+    origin = ("http" if request.headers.get("x-forwarded-proto") == "http" else "https") + "://" + host
+    own = f"{origin}/app/{token}/"
+    return (
+        f"sandbox allow-scripts allow-downloads; default-src 'none'; script-src {own}; style-src {own} 'unsafe-inline'; "
+        f"img-src {own} data: blob:; media-src {own} data: blob:; font-src {own} data:; connect-src {own}; "
+        f"base-uri 'none'; form-action 'none'; frame-ancestors {origin}"
+    )
+
+
+def app(request: Request) -> HttpStream:
+    """Answer a call for the app of the project. The app function runs the code of the project."""
+    token, _, target = request.path[len("/app/") :].partition("/")
+    source, policy = app_source(token), app_policy(request, token)
+    if source is None or policy is None or request.path.count("/") < 3:
+        return error(404, "no such app")
+    if request.method == "OPTIONS":
+        return answer(204, b"", "text/plain", **APP_CORS)
+    if request.method not in APP_METHODS or len(request.body) > APP_BODY or not APP_TARGET.fullmatch(target + request.query):
+        return error(400, "the app does not take this call")
+    passed = {name: value for name, value in request.headers.items() if name in APP_PASSED}
+    body = base64.b64encode(request.body).decode()
+    raw, failed = aws.invoke(APP_FUNCTION, action="request", source=source, method=request.method, path="/" + target, query=request.query, headers=passed, body=body)
+    # The app function runs the code of a session: its answer sets no cookie, no redirect and no browser rule.
+    try:
+        reply = json.loads(raw)
+        status, data = reply["status"], base64.b64decode(reply["body"])
+        relayed = {name.lower(): value for name, value in reply["headers"] if name.lower() in APP_RELAYED and value.isprintable()}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        failed = True
+    if failed or type(status) is not int or not 200 <= status <= 599 or 300 <= status < 400:
+        log("the app function failed", raw[:300])
+        return error(502, "the app function failed")
+    headers = {"content-type": "application/octet-stream", "cache-control": "no-cache", **relayed, **SECURITY, **APP_CORS}
+    return HttpStream(status=status, headers={**headers, "x-frame-options": "SAMEORIGIN", "content-security-policy": policy}, chunks=[data])
+
+
+def studio(request: Request, path: str) -> HttpStream:
+    """Answer the Studio page: the sources of the app, the token of a source and its version."""
+    source = urllib.parse.parse_qs(request.query).get("source", [""])[0]
+    known = bool(APP_SOURCE.fullmatch(source))
+    if path == "/play/app/token" and known:
+        expires = int(time.time()) + APP_S
+        return answer(200, json.dumps({"path": f"/app/{app_token(source, expires)}/", "expires": expires}), **{"cache-control": "no-store"})
+    if path == "/play/app/version" and known:
+        event = {"action": "version", "source": source}
+    elif path == "/play/app/sources":
+        event = {"action": "sources"}
+    else:
+        return error(404, "no such path")
+    raw, failed = aws.invoke(APP_FUNCTION, **event)
+    try:
+        facts = json.loads(raw)
+        if "source" in event:
+            body: dict[str, Any] = {"version": str(facts["version"])[:64]}
+        else:
+            work = [{"name": item["name"], "modified": int(item["modified"])} for item in facts["work"][:50] if APP_SOURCE.fullmatch(str(item["name"]))]
+            release = str(facts["release"])
+            body = {"release": release if re.fullmatch(r"[0-9a-f]{0,64}", release) else "", "work": work}
+    except (ValueError, KeyError, TypeError):
+        failed = True
+    if failed:
+        log("the app function failed", raw[:300])
+        return error(502, "the app function failed")
+    return answer(200, json.dumps(body), **{"cache-control": "no-store"})
+
+
 def static(root: str, relative: str, **headers: str) -> HttpStream | None:
     """Return a file below root, or None. A path cannot leave root."""
     file = os.path.realpath(os.path.join(root, relative))
@@ -209,7 +311,9 @@ def static(root: str, relative: str, **headers: str) -> HttpStream | None:
 
 
 def route(request: Request, context: Context) -> HttpStream:
-    """Answer a call of the Function URL. The files, the sign-in and the signed webhook need no password."""
+    """Answer a call of the Function URL. The files, the sign-in, the signed webhook and an app token need no password."""
+    if request.path.startswith("/app/"):
+        return app(request)
     path = request.path.rstrip("/") or "/"
     if path == "/login" and request.method == "POST":
         return login(request)
@@ -234,6 +338,8 @@ def route(request: Request, context: Context) -> HttpStream:
                 return found
     if not known:
         return error(401, "sign in first")
+    if path.startswith("/play/app/") and request.method == "GET":
+        return studio(request, path)
     if request.method not in SAFE and not same_origin(request):
         return error(403, "this call must come from the playground")
     return relay(request, context)

@@ -339,3 +339,15 @@ figure { margin: 0; }
   .crate { display: none; }
   .product-body { max-height: none; padding: 14px; }
 }
+
+/* -- studio: the app of the project in a frame ---------------------------------------- */
+.booth { display: grid; grid-template-columns: 270px minmax(0, 1fr); height: calc(100dvh - var(--bar)); }
+.stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.stage-head { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line-strong); min-width: 0; } .stage-head .grow { flex: 1; }
+.stage iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
+.stage > .empty { margin: auto; }
+@media (max-width: 820px) {
+  .booth { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .booth .side { border-right: 0; border-bottom: 1px solid var(--line); } .booth .side-head p { display: none; }
+  .booth .list { display: flex; overflow-x: auto; } .booth .item { flex: 0 0 180px; border-bottom: 0; }
+}

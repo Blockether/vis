@@ -30,7 +30,7 @@ BINARY = "/opt/vis/vis-agent-native"
 HOST, PORT, TOKEN_FILE = "127.0.0.1", 7890, f"{WORKER_DIR}/gateway.token"
 PROVIDER = "playground"
 # The variables that the gateway and the tools of a session get. No AWS credentials.
-PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "JAVA_HOME", "MAVEN_LOCAL_REPO", "CLJ_CONFIG", "VIS_WEB_DIR")
+PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "VIS_WEB_DIR")
 
 
 def config(broker: str) -> str:

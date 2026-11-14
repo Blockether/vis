@@ -13,6 +13,10 @@ WORKER_FUNCTION = ENV.get("VIS_WORKER_FUNCTION", "")
 LLM_FUNCTION = ENV.get("VIS_LLM_FUNCTION", "")
 REPO_FUNCTION = ENV.get("VIS_REPO_FUNCTION", "")
 SYNC_FUNCTION = ENV.get("VIS_SYNC_FUNCTION", "")
+APP_FUNCTION = ENV.get("VIS_APP_FUNCTION", "")
+# The interpreter of the project and the WSGI app that the app function serves.
+APP_PYTHON = ENV.get("VIS_APP_PYTHON", "/usr/bin/python3.13")
+APP_ENTRY = ENV.get("VIS_APP_ENTRY", "studio.app:application")
 EFS = ENV.get("VIS_EFS", "/mnt/efs")
 HOME = ENV.get("VIS_HOME", "/tmp/home")
 # The files of the worker itself. A session must not copy them as its work.

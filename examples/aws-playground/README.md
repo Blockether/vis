@@ -2,15 +2,18 @@
 
 This example runs Vis as a service on AWS Lambda. The Python runtime that Vis embeds
 is the custom runtime of each function. Amazon S3 is the database. A GitHub repository
-on Amazon EFS is the project of each session. The example has a web application with
-four pages, a Vis extension and a set of workflows on the Vis SDK.
+on Amazon EFS is the project of each session. The project is a MIDI studio in Python:
+each song is [music21](https://www.music21.org/) code. The example has a web application
+with five pages, a Vis extension and a set of workflows on the Vis SDK. One function
+runs the web app of the project and shows each change of a session at once.
 
 | You want to | Read |
 | --- | --- |
 | See the parts and the data flow | [Architecture](#architecture) |
 | Call the stack from a script | [Addresses](#addresses) |
 | Write a workflow | [Workflows](#workflows) |
-| Make a specification from a README | [The software factory](#the-software-factory) |
+| Hear the project while a session changes it | [The Studio](#the-studio) |
+| Make a song from a brief | [The song factory](#the-song-factory) |
 | Read the files that a session attached | [Read the attached files with the SDK](#read-the-attached-files-with-the-sdk) |
 | Use structured output for a decision | [`decide.py`](decide.py) |
 | Know each limit of the stack | [Limits](#limits) |
@@ -33,6 +36,7 @@ flowchart LR
   subgraph private [Network without internet]
     worker[worker<br>Vis gateway, sessions, runs]
     sync[sync<br>releases]
+    app[app<br>the web app of the project]
     efs[(EFS<br>releases, work)]
   end
   s3[(S3<br>state, runs, files)]
@@ -44,6 +48,7 @@ flowchart LR
   worker -->|bundle| repo <-->|SSH| github
   repo --> sync --> efs
   worker --> efs
+  front -->|invoke| app -->|read only| efs
 ```
 
 One container image holds all the code. The variable `VIS_ROLE` selects the function.
@@ -55,6 +60,7 @@ One container image holds all the code. The variable `VIS_ROLE` selects the func
 | `llm` | outside the VPC, internet access, no public address | the provider URL and key | Accepts `GET /models` and `POST /chat/completions`. Adds the key and streams the answer. |
 | `repo` | outside the VPC, internet access, no public address | the GitHub deploy key | Copies the `main` branch to S3. Pushes the commits of a session. |
 | `sync` | VPC, no internet | no secret | Puts a snapshot on EFS and makes it the current release. |
+| `app` | VPC, a path only to EFS | no secret | Runs the web app of the project for the Studio page. Reads EFS, and cannot write it. Its role permits no call to an AWS service. |
 
 A worker is one invocation of the `worker` function. Only one worker is active at a
 time. A release is a snapshot of the `main` branch on EFS.
@@ -165,10 +171,40 @@ for each file. S3 holds only the newest version of a name.
 | `/` | Vis web, with the provider of the stack. The global apps button of its header opens the Workflows app. |
 | `/play` | The sessions and their Vis activities. Download a transcript. Fork from a turn or from an attached file. Publish the work. |
 | `/play/workflows` | The workflow editor with Python highlighting, the workflow activity dialog and the runs. A waiting run shows where to give its file. |
-| `/play/factory` | The software factory: the stations of the `software_factory` workflow as a line, a drop zone for the README, the SPEC with its GitHub commit, and the earlier orders |
+| `/play/factory` | The song factory: the stations of the `song_factory` workflow as a line, a drop zone for the brief, the song sheet with its GitHub commit, and the earlier orders |
+| `/play/studio` | The MIDI studio of the project in a frame: the published release, or a work directory that sessions change. A change of a source file shows at once. |
 | `/play/architecture` | The design with diagrams |
 
 The pages work on a phone and on a desktop. They use no framework and no build step.
+
+### The Studio
+
+The project is a web app: [`repo-seed/src/studio/app.py`](repo-seed/src/studio/app.py)
+shows each song as a piano roll, plays it with the Web Audio API and gives it as a
+Standard MIDI File. The page `/play/studio` runs this app in the `app` function and
+shows it in a frame.
+
+| Source | Directory on EFS | Content |
+| --- | --- | --- |
+| Published | `releases/<commit>` | The current release of the `main` branch |
+| Vis sessions | `work/<commit>` | The copy that the sessions of Vis web change |
+| Workflow run | `work/<commit>-<run>` | The copy of one workflow run |
+
+A session writes its files directly in a work directory, and the `app` function reads
+the same directory. The page asks for the stamp of the source files (`src/`) each 2.5
+seconds. When the stamp changes, the page loads the frame again and the app loads the
+modules of the project again. music21 stays loaded, so a change shows in less than a
+second. An error in the code of the project shows in the frame as a traceback.
+
+The project holds no setting of its deployment. The stack decides the interpreter
+(`VIS_APP_PYTHON`), the WSGI entry point (`VIS_APP_ENTRY`, `studio.app:application`),
+the limits and the permissions of the function ([`playground/app.py`](playground/app.py),
+[`template.yaml`](template.yaml)). The image holds the packages of the project, so the
+app needs no internet.
+
+The frame gets its files from `/app/<token>/`. The token names one source, has a
+signature made with the password and ends after one hour. [Security](#security) tells
+why the app cannot get more than the files of the project.
 
 ### The review of a session
 
@@ -256,29 +292,29 @@ from playground.workflows import activity, workflow
 
 
 class Analysis(BaseModel):
-    readiness: Literal["build", "clarify"]
+    decision: Literal["compose", "clarify"]
     questions: list[str]
 
 
-@activity(title="Analysis of the story")
-def analyse(ctx, story: str) -> Analysis:
-    return ctx.ask(f"Analyse this user story.\n\n{story}", Analysis)
+@activity(title="Analysis of the brief")
+def analyse(ctx, brief: str) -> Analysis:
+    return ctx.ask(f"Analyse this brief for a piece of MIDI music.\n\n{brief}", Analysis)
 
 
-@activity(title="Generate the SPEC")
-def spec(ctx, story: str):
-    return ctx.document("SPEC.md", f"Write the specification for: {story}")
+@activity(title="Write the arrangement")
+def arrangement(ctx, brief: str):
+    return ctx.document("ARRANGEMENT.md", f"Write the arrangement for: {brief}")
 
 
-@workflow(title="Story to SPEC")
-def story_to_spec(ctx, story: str = "As a customer I want to pay with a saved card."):
-    analysis = analyse(ctx, story)
-    if analysis.readiness == "build":
-        return {"spec": spec(ctx, story).name}
+@workflow(title="Brief to arrangement")
+def brief_to_arrangement(ctx, brief: str = "A calm lo-fi piece for a study playlist."):
+    analysis = analyse(ctx, brief)
+    if analysis.decision == "compose":
+        return {"arrangement": arrangement(ctx, brief).name}
     return {"questions": analysis.questions}
 ```
 
-This is a short form of [`workflows/story_to_spec.py`](workflows/story_to_spec.py).
+This is a short form of [`workflows/brief_to_arrangement.py`](workflows/brief_to_arrangement.py).
 
 | Call | Result |
 | --- | --- |
@@ -294,9 +330,18 @@ This is a short form of [`workflows/story_to_spec.py`](workflows/story_to_spec.p
 When a turn attached no file with the name, `ctx.document` sends one more request.
 After that, the workflow activity fails.
 
-The directory [`workflows/`](workflows) has six workflows: `story_to_spec`,
-`incident_triage`, `lead_qualification`, `repository_review`, `change_and_publish`
-and `software_factory`. A worker copies them to S3 when S3 has no workflow. After
+The directory [`workflows/`](workflows) has six workflows about MIDI music:
+
+| Workflow | Work |
+| --- | --- |
+| `brief_to_arrangement` | Analyses a music brief. Writes the arrangement and the mix notes, or the questions for the artist. |
+| `commission_intake` | Scores a request for music. Writes an offer outline, a call agenda or a decline message. |
+| `mix_triage` | Classifies a problem report about a track. Writes a revision plan and a message to the artist, or a ticket. |
+| `studio_review` | Runs the tests and the lint of the studio and reads each song. Writes a review, and a fix plan for high findings. |
+| `remix_and_publish` | Changes a song in `src/studio/songs.py`, tests it and pushes it to GitHub. |
+| `song_factory` | Waits for a brief, writes the song sheet, checks it, then records the song as music21 code and pushes it to GitHub. |
+
+A worker copies them to S3 when S3 has no workflow. After
 that, the page edits the copies in S3. A stack that has workflows does not get a new
 sample from a later image: save its source on the Workflows page.
 
@@ -307,9 +352,9 @@ run holds no worker and no place of the 3 runs that work at the same time. The
 Workflows page and the Factory page show where to give the file. A script can give it too:
 
 ```sh
-jq -n --rawfile content README.md '{name: "README.md", content: $content}' |
+jq -n --rawfile content brief.md '{name: "brief.md", content: $content}' |
   curl -H "Authorization: Bearer $PLAYGROUND_PASSWORD" --data-binary @- \
-    "$PLAYGROUND_URL/play/api/runs/<run>/inputs/readme"
+    "$PLAYGROUND_URL/play/api/runs/<run>/inputs/brief"
 ```
 
 The API accepts the file only when the run waits for that key. The file is text of at
@@ -318,24 +363,26 @@ run again. The new run process gets each recorded result at once, and `ctx.recei
 returns the file. The record of the workflow activity keeps only the key, the name and
 the size of the file.
 
-### The software factory
+### The song factory
 
-[`workflows/software_factory.py`](workflows/software_factory.py) makes a specification
-from a README and puts it in the GitHub repository. Its one input is `product`, the
-name of the product.
+[`workflows/song_factory.py`](workflows/song_factory.py) makes a song from a brief and
+puts it in the GitHub repository as music21 code. Its one input is `title`, the title
+of the song.
 
 | Station | Call | Result |
 | --- | --- | --- |
-| README intake | `ctx.receive("readme", …)` | The run waits for the README (`.md` or `.txt`) |
-| Write the SPEC | `ctx.document("SPEC.md", …)` | The session attaches `SPEC.md`: nine sections, and an identifier for each requirement |
+| Brief intake | `ctx.receive("brief", …)` | The run waits for the brief (`.md` or `.txt`) |
+| Write the song sheet | `ctx.document("SONG.md", …)` | The session attaches `SONG.md`: the key, the tempo, the form, the chords of each bar, the tracks and the drums |
 | Quality gate | `ctx.ask(…, Inspection)` | A validated `Inspection`: `verdict` (`pass` or `rework`), `score` (0 to 100) and `gaps` |
-| Rework the SPEC | `ctx.document("SPEC.md", …)` | Only for `rework`: the session attaches the next version of `SPEC.md`. There is one rework at most. |
-| Ship to GitHub | `ctx.ask(…, Shipment)` | The session writes the newest `SPEC.md` to the project directory and calls `playground.publish`. A validated `Shipment`: `branch`, `commit` and `url` |
+| Rework the sheet | `ctx.document("SONG.md", …)` | Only for `rework`: the session attaches the next version of `SONG.md`. There is one rework at most. |
+| Record and ship | `ctx.ask(…, Shipment)` | The session adds the song to `src/studio/songs.py`, runs the tests and calls `playground.publish`. A validated `Shipment`: `song`, `tests_passed`, `branch`, `commit` and `url` |
 
-The page `/play/factory` shows these stations as a line. Drop the README on the page
-to start an order. The page then shows the state of each station, the SPEC, its
-commit on GitHub and the earlier orders. Without the page, start a run of
-`software_factory` and give the file as in [A run waits for a person](#a-run-waits-for-a-person).
+The page `/play/factory` shows these stations as a line. Drop the brief on the page to
+start an order. The page then shows the state of each station, the song sheet, its
+commit on GitHub and the earlier orders. The button "Listen in the Studio" opens the
+work directory of the run on the Studio page: the song plays there as soon as the
+session writes it. Without the page, start a run of `song_factory` and give the file as
+in [A run waits for a person](#a-run-waits-for-a-person).
 
 ### The extension
 
@@ -439,6 +486,15 @@ Files:
 - A Git bundle for `repo` has at most 100 000 000 bytes. A commit message has at most 200 characters.
 - A model request has at most 5 000 000 bytes and asks for one answer.
 
+The Studio:
+
+- The `app` function keeps at most 3 copies of the project in work, each as one server process. It lists the 50 newest work directories.
+- A copy has 30 seconds to start. A request has 25 seconds and a body of at most 1 000 000 bytes. Its answer has at most 4 000 000 bytes.
+- The project gets the methods `GET`, `HEAD` and `POST`, and only the headers `accept`, `accept-language` and `content-type`.
+- A token of a source ends after 1 hour. The page asks for a new one before that.
+- The page asks for the version of the source each 2.5 seconds.
+- `app` serves at most 10 requests at the same time.
+
 Time:
 
 - The `front` function waits 55 seconds for the first part of an answer. Then it answers 504.
@@ -459,14 +515,17 @@ Time:
 | A session pushes to another repository | Only `repo` has a key. The key is a deploy key of one repository. |
 | A session rewrites history | `repo` never uses force. A push that is not a fast-forward goes to a new branch. |
 | A session makes GitHub run its code | `repo` refuses a push that changes `.github`. GitHub Actions is off for the repository. Do not turn on GitHub Actions in this repository: a workflow on `main` runs the code that a session wrote. |
-| A session changes the release of the next worker | `sync` owns `releases/` and `CURRENT`. The worker has another user id on EFS and cannot write there. EFS permits a mount only to the two function roles, each through its own access point. The worker role cannot write `repo/` in the bucket. |
-| A bad download gets into the image | The base image has a digest. Each file that `curl` downloads has a SHA-256 and each Python package has a hash. The extensions and the Maven libraries have an exact version, but no hash. The `dnf` packages have no version and no hash in the `Dockerfile`. |
+| A session changes the release of the next worker | `sync` owns `releases/` and `CURRENT`. The worker has another user id on EFS and cannot write there. EFS permits a mount only to the three function roles, each through its own access point. The role of `app` permits only a read. The worker role cannot write `repo/` in the bucket. |
+| A bad download gets into the image | The base image has a digest. Each file that `curl` downloads has a SHA-256 and each Python package has a hash. The extensions have an exact version, but no hash. The `dnf` packages have no version and no hash in the `Dockerfile`. |
 | A person without the password calls the stack | The `front` function compares the password in constant time and sets a signed, `HttpOnly`, `SameSite=Strict` cookie that ends after 7 days. A request that changes data must come from the same origin. A new password is in effect after 5 minutes. The static files are public. The pages, `/v1/` and `/play/api/` need the password or the cookie. |
 | A false webhook | `front` checks the `X-Hub-Signature-256` of GitHub. |
 | The credentials of the worker role leave the function | Each S3, SQS and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
 | A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `workflows/` and `tmp/`. |
+| The code of the project in the Studio gets more permissions | The code runs only in the `app` function. The role of `app` permits a write to its own log and a read of EFS, and nothing else: no bucket, no queue, no parameter and no other function. Its security group permits only NFS to EFS. Only `front` can invoke `app`. |
+| The page of the project acts as the person | The frame of the Studio has a `sandbox` attribute and each answer has a `sandbox` content security policy, so the page has an opaque origin. The front function passes no cookie or password to the app. The page can load only the addresses below its own token. A token is for one source and ends after 1 hour. It does not open `/v1/` or `/play/api/`. |
+| A false answer of `app` changes the session of the person | `front` does not trust the answer. It passes only a fixed list of headers, refuses a redirect and sets its own content security policy. An answer cannot set a cookie. |
 | A stored answer or a stored file runs script in the browser | Each relayed answer has a `sandbox` content security policy, and `front` passes only a fixed list of answer headers. The API sends each attached file and each temporary file as plain text and as a download. |
-| A flood of requests makes a large bill | The functions have a concurrency limit: 50 for `front`, 5 for `worker`, 20 for `llm`, 1 for `repo` and 1 for `sync`. A call cannot ask for more output tokens than the limit of the model. |
+| A flood of requests makes a large bill | The functions have a concurrency limit: 50 for `front`, 5 for `worker`, 20 for `llm`, 10 for `app`, 1 for `repo` and 1 for `sync`. A call cannot ask for more output tokens than the limit of the model. |
 
 ### The limit that you must know
 
@@ -485,6 +544,19 @@ sessions of the stack. For this reason:
 
 A session can also write in `work/` on EFS, which holds the project directories of the
 workers and of the runs. It cannot write a release.
+
+The Studio runs the code of the project, and a session can change that code. The same
+limit applies to the `app` function: the code can read the temporary credentials of the
+`app` role and each file on EFS. For this reason, the role and the network of `app` are
+the limit, not the process. Two facts stay:
+
+- The code in `app` can read the project directories of all sessions on EFS. It cannot change them.
+- A script in the frame of the Studio cannot open another host: the content security
+  policy stops a request, a frame and a navigation. But a browser does not stop each
+  path. In Chromium 156, a script in the frame can send packets to a WebRTC server on
+  the internet, and no policy directive stops that. Thus a session can send data out
+  through the browser of a person who opens the Studio. It can send only data that a
+  session can read, and never the cookie or the password of the person.
 
 ## Deploy
 
@@ -557,7 +629,7 @@ of their storage.
 
 ## Run it on your computer
 
-`python -m playground.local` runs all five functions in one process. It has directories
+`python -m playground.local` runs all six functions in one process. It has directories
 in place of S3, EFS and GitHub, and a list in place of SQS. The repository starts from
 the copy of [`repo-seed/`](repo-seed) in the image. The data is in `/tmp/local` of the
 container and goes away with it. Use it only for development: nothing isolates the key
@@ -584,17 +656,17 @@ the stack gives the value to the functions as `VIS_MODELS`.
 
 | Path | Content |
 | --- | --- |
-| [`Dockerfile`](Dockerfile) | The image: Vis, the extensions, Git, Java, Clojure, the Maven cache, and Python 3.13 with pytest and ruff for the project. It holds the Vis version and its checksums |
+| [`Dockerfile`](Dockerfile) | The image: Vis, the extensions, Git, and Python 3.13 with music21, pytest and ruff for the project. It holds the Vis version and its checksums |
 | [`requirements/`](requirements) | The Python packages of the image, each with its hashes |
 | [`extensions.yml`](extensions.yml) | The Vis extensions of the image |
 | [`vendor.sh`](vendor.sh) | The editor and the fonts of the pages, each with its checksum |
 | [`known_hosts`](known_hosts) | The SSH host keys of GitHub that `repo` accepts |
 | [`template.yaml`](template.yaml) | The stack |
 | [`deploy.sh`](deploy.sh) | The deployment |
-| [`playground/`](playground) | The five functions |
+| [`playground/`](playground) | The six functions. [`app.py`](playground/app.py) is the `app` function and [`harness.py`](playground/harness.py) is the server that it starts for one copy of the project |
 | [`extension/`](extension) | The Vis extension |
 | [`workflows/`](workflows) | The first workflows |
-| [`web/`](web) | The pages |
+| [`web/`](web) | The pages. [`studio.html`](web/studio.html) is the Studio |
 | [`repo-seed/`](repo-seed) | The first content of the repository |
 | [`decide.py`](decide.py) | The decision script |
 | [`ruff.toml`](ruff.toml) | The format of the Python code: the rules of the repository, with lines of at most 200 characters |

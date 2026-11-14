@@ -13,6 +13,7 @@ ROLES = {
     "llm": "playground.llm",
     "repo": "playground.repo",
     "sync": "playground.sync",
+    "app": "playground.app",
 }
 
 if __name__ == "__main__":

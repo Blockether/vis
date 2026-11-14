@@ -90,6 +90,7 @@ async function call(path, { method = "GET", body, raw = false } = {}) {
 
 export const play = (path, options) => call(`/play/api/${path}`, options);
 export const vis = (path, options) => call(`/v1/${path}`, options);
+export const app = (path, options) => call(`/play/app/${path}`, options);
 
 /** Show a short message in the corner. The tone is "good", "bad" or none. */
 export function toast(text, tone = "") {
@@ -449,7 +450,7 @@ export async function preview(path, name) {
 
 /** Fill the top bar, mark the link of this page and keep the release label current. */
 export function bar() {
-  const links = [["/play", "Sessions"], ["/play/workflows", "Workflows"], ["/play/factory", "Factory"], ["/play/architecture", "Architecture"]];
+  const links = [["/play", "Sessions"], ["/play/workflows", "Workflows"], ["/play/factory", "Factory"], ["/play/studio", "Studio"], ["/play/architecture", "Architecture"]];
   const repository = h("span", { class: "only-wide" });
   const commit = h("span", { text: "starting…" });
   const release = h("span", { class: "release", title: "The release of the repository that this worker uses" }, h("i"), h("span", {}, repository, commit));

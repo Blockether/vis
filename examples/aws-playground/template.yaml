@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Vis playground. Vis is the custom Lambda runtime of five functions from one image.
+  Vis playground. Vis is the custom Lambda runtime of six functions from one image.
   S3 is the database. EFS holds the repository. The worker has no route to the internet.
 
 Parameters:
   ImageUri:
     Type: String
-    Description: The image of the five functions, with its digest.
+    Description: The image of the six functions, with its digest.
   Repository:
     Type: String
     Description: The GitHub repository, as owner/name.
@@ -81,7 +81,7 @@ Resources:
       FileSystemPolicy:
         Version: "2012-10-17"
         Statement:
-          # The policy gives no access. Only the two function roles permit a mount, each
+          # The policy gives no access. Only three function roles permit a mount, each
           # through its own access point, so a client without a role or without an
           # access point gets nothing.
           - Effect: Deny
@@ -112,6 +112,17 @@ Resources:
         CreationInfo: {OwnerUid: "1001", OwnerGid: "1001", Permissions: "0755"}
 
   WorkerAccess:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser: {Uid: "1002", Gid: "1002"}
+      RootDirectory:
+        Path: /playground
+        CreationInfo: {OwnerUid: "1001", OwnerGid: "1001", Permissions: "0755"}
+
+  # The app function reads the files as the worker user, so it can read each file
+  # that a session wrote. Its role permits only `ClientMount`, so EFS refuses a write.
+  AppAccess:
     Type: AWS::EFS::AccessPoint
     Properties:
       FileSystemId: !Ref FileSystem
@@ -174,6 +185,34 @@ Resources:
       FromPort: 2049
       ToPort: 2049
       DestinationSecurityGroupId: !Ref FileSystemGroup
+
+  # The app function runs the code of the project. It can open a connection only to
+  # EFS: it has no path to S3, to the queue or to another function.
+  AppGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: The app function
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - {IpProtocol: "-1", CidrIp: 127.0.0.1/32, Description: none}
+
+  AppToFileSystem:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AppGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      DestinationSecurityGroupId: !Ref FileSystemGroup
+
+  FileSystemFromApp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref FileSystemGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref AppGroup
 
   FileSystemGroup:
     Type: AWS::EC2::SecurityGroup
@@ -313,6 +352,7 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-worker"
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-repo"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-app"
 
   Front:
     Type: AWS::Lambda::Function
@@ -334,6 +374,7 @@ Resources:
           VIS_QUEUE_URL: !Ref Queue
           VIS_WORKER_FUNCTION: !Sub "${AWS::StackName}-worker"
           VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
+          VIS_APP_FUNCTION: !Sub "${AWS::StackName}-app"
           VIS_TOKEN_PARAMETER: !Sub "/${AWS::StackName}/password"
           VIS_WEBHOOK_PARAMETER: !Sub "/${AWS::StackName}/webhook-secret"
 
@@ -677,6 +718,71 @@ Resources:
         Variables:
           VIS_ROLE: sync
           VIS_BUCKET: !Ref Bucket
+
+  # ---------------------------------------------------------------- app
+  # The web app of the project, for the Studio page. This function is the jail of the
+  # app: the project cannot change a setting of it. Only the front function invokes it.
+  AppLog:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-app", RetentionInDays: 14}
+
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: app
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The code of the project can get the credentials of this role. They permit
+              # a write to this log group and a read-only mount, and nothing else: no S3,
+              # no queue, no parameter and no other function.
+              - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${AppLog.Arn}:*"}
+              - Effect: Allow
+                Action: elasticfilesystem:ClientMount
+                Resource: !GetAtt FileSystem.Arn
+                Condition: {StringEquals: {elasticfilesystem:AccessPointArn: !GetAtt AppAccess.Arn}}
+              # The Lambda service needs these to put the function in the network.
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+              # The code of the function must not use them.
+              - Effect: Deny
+                Action: ec2:*
+                Resource: "*"
+                Condition:
+                  ArnEquals:
+                    lambda:SourceFunctionArn: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-app"
+
+  App:
+    Type: AWS::Lambda::Function
+    DependsOn: [MountTarget, AppToFileSystem, FileSystemFromApp]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-app"
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      Role: !GetAtt AppRole.Arn
+      MemorySize: 2048
+      Timeout: 60
+      # A page loads some files at the same time. The limit protects the account and the cost.
+      ReservedConcurrentExecutions: 10
+      LoggingConfig: {LogGroup: !Ref AppLog}
+      VpcConfig: {SubnetIds: [!Ref PrivateSubnet], SecurityGroupIds: [!Ref AppGroup]}
+      FileSystemConfigs: [{Arn: !GetAtt AppAccess.Arn, LocalMountPath: /mnt/efs}]
+      Environment:
+        Variables:
+          VIS_ROLE: app
 
 Outputs:
   Url:

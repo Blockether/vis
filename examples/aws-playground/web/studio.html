@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf3eb">
+<title>Vis Playground · Studio</title>
+<link rel="icon" href="/play/assets/logo.svg">
+<link rel="stylesheet" href="/play/assets/app.css">
+</head>
+<body>
+<header class="bar"></header>
+<div class="booth">
+  <aside class="side" aria-label="Sources">
+    <div class="side-head">
+      <h2>Studio</h2>
+      <p class="small muted" style="margin:0">The MIDI studio of the project runs in its own Lambda function. A work directory is the copy that Vis sessions change: an edit shows here at once.</p>
+    </div>
+    <div class="list" id="sources"></div>
+  </aside>
+  <main class="stage" id="stage"></main>
+</div>
+<script type="module" src="/play/assets/studio.js"></script>
+</body>
+</html>

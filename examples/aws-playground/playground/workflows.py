@@ -14,18 +14,18 @@ activity reads the files of that turn with `Session.attachments` of the SDK. A r
 also wait for a file from a person with `ctx.receive`. A waiting run has no process.
 
     class Verdict(BaseModel):
-        decision: Literal["build", "clarify"]
+        decision: Literal["compose", "clarify"]
         reason: str
 
-    @activity(title="Analysis of the story")
-    def analyse(ctx, story: str) -> Verdict:
-        return ctx.ask(f"Analyse this user story: {story}", Verdict)
+    @activity(title="Analysis of the brief")
+    def analyse(ctx, brief: str) -> Verdict:
+        return ctx.ask(f"Analyse this music brief: {brief}", Verdict)
 
-    @workflow(title="Story to SPEC")
-    def story_to_spec(ctx, story: str = "As a user ..."):
-        verdict = analyse(ctx, story)
-        if verdict.decision == "build":
-            return write_spec(ctx, story)
+    @workflow(title="Brief to arrangement")
+    def brief_to_arrangement(ctx, brief: str = "A calm piece ..."):
+        verdict = analyse(ctx, brief)
+        if verdict.decision == "compose":
+            return arrangement(ctx, brief)
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Run the whole playground on one machine, without AWS: `python -m playground.local`.
 
-The front function, the relay, the worker, the llm function, the repo function and
-the sync function run as they are. Only the AWS services have a replacement: S3 is a
+The front function, the relay, the worker, the llm function, the repo function, the
+sync function and the app function run as they are. Only the AWS services have a replacement: S3 is a
 directory, the queue is a list, a parameter is an environment variable and an
 invocation is a function call. GitHub is a bare repository in a directory.
 
@@ -36,6 +36,7 @@ SETTINGS = {
     "VIS_LLM_FUNCTION": "llm",
     "VIS_REPO_FUNCTION": "repo",
     "VIS_SYNC_FUNCTION": "sync",
+    "VIS_APP_FUNCTION": "app",
     "VIS_EFS": f"{ROOT}/efs",
     "VIS_REPO": "local/vis-playground",
     "VIS_REPO_URL": f"{ROOT}/github.git",
@@ -50,7 +51,7 @@ for name, value in SETTINGS.items():
     os.environ.setdefault(name, value)
 os.environ.setdefault("PLAYGROUND_DEPLOY_KEY", "not used: GitHub is a directory")
 
-from playground import aws, front, llm, repo, runtime, sync, worker  # noqa: E402 - the settings come first
+from playground import app, aws, front, llm, repo, runtime, sync, worker  # noqa: E402 - the settings come first
 
 
 def refusal(code: str, operation: str) -> ClientError:
@@ -159,7 +160,7 @@ class Functions:
         if FunctionName == "worker":
             self.wake.set()
             return {}
-        handler = {"repo": repo.handler, "sync": sync.handler}[FunctionName]
+        handler = {"repo": repo.handler, "sync": sync.handler, "app": app.handler}[FunctionName]
         try:
             return {"Payload": io.BytesIO(json.dumps(handler(json.loads(Payload), context())).encode())}
         except Exception as failure:  # as Lambda reports a failed function
@@ -204,7 +205,7 @@ class Page(BaseHTTPRequestHandler):
             "requestContext": {"http": {"method": self.command}},
             "rawPath": path,
             "rawQueryString": query,
-            "headers": {name.lower(): value for name, value in self.headers.items()},
+            "headers": {"x-forwarded-proto": "http", **{name.lower(): value for name, value in self.headers.items()}},
             "cookies": [part.strip() for part in (self.headers.get("cookie") or "").split(";") if part.strip()],
             "body": base64.b64encode(body).decode(),
             "isBase64Encoded": True,
@@ -229,7 +230,7 @@ class Page(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
 
-    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = serve
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = serve
 
 
 def main() -> None:

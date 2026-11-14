@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIDI studio</title>
+<link rel="stylesheet" href="public/app.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>MIDI studio</h1>
+    <p>Music from Python code. music21 composes it, the browser plays it.</p>
+  </header>
+  <nav id="songs" aria-label="Songs"></nav>
+  <section id="song" hidden>
+    <h2 id="title"></h2>
+    <p id="facts"></p>
+    <div class="controls">
+      <button id="play" type="button">Play</button>
+      <button id="stop" type="button">Stop</button>
+      <a id="download" download>Download the MIDI file</a>
+    </div>
+    <canvas id="roll" width="960" height="320" aria-label="Piano roll"></canvas>
+    <ul id="legend"></ul>
+  </section>
+  <p id="status" role="status">Loading the songs.</p>
+</main>
+<script src="public/app.js"></script>
+</body>
+</html>

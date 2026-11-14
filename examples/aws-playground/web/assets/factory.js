@@ -1,17 +1,17 @@
-// The factory page: the workflow `software_factory` as a production line.
-// An order is one run. A README goes in at the first station. SPEC.md comes out and goes to GitHub.
+// The factory page: the workflow `song_factory` as a production line.
+// An order is one run. A brief goes in at the first station. SONG.md comes out, and the song goes to GitHub as code.
 import { OPEN, TONE, ago, bar, button, cancelRun, chip, download, drop, empty, filePath, fileRow, fill, giveFile, github, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, textOf, versionOf, waiting } from "/play/assets/common.js";
 
-const WORKFLOW = "software_factory";
+const WORKFLOW = "song_factory";
 // The glyph of each station, by the name of its workflow activity.
-const GLYPHS = { intake: "upload", specify: "pencil", inspect: "eye", rework: "fork", ship: "globe" };
+const GLYPHS = { intake: "upload", arrange: "pencil", inspect: "eye", rework: "fork", record: "globe" };
 const WORDS = { idle: "Idle", skipped: "Not needed", running: "At work", waiting: "Waits for a file", completed: "Done", failed: "Failed", cancelled: "Stopped" };
 
 const orders = document.getElementById("orders");
 const floor = document.getElementById("floor");
 // The fragment goes into request paths: accept only a run id.
 const orderId = () => /^#([0-9a-f]{32})$/.exec(location.hash)?.[1] || null;
-// flow: the workflow. runs: its runs. id, doc: the open order. file: a README that waits for the first station of its new order.
+// flow: the workflow. runs: its runs. id, doc: the open order. file: a brief that waits for the first station of its new order.
 // spec: the text of the shown document, with the key of its version. drawn: the data of the last draw.
 const state = { flow: null, runs: [], id: orderId(), doc: null, file: null, spec: { key: "", text: null }, drawn: "" };
 
@@ -31,9 +31,9 @@ async function give(doc, given) {
 }
 
 /** Make a new order. Its first station gets the file as soon as it waits. */
-async function order(file, product) {
+async function order(file, title) {
   const given = await textOf(file);
-  const run = await play("runs", { method: "POST", body: { workflow: WORKFLOW, input: product ? { product } : {} } });
+  const run = await play("runs", { method: "POST", body: { workflow: WORKFLOW, input: title ? { title } : {} } });
   state.file = { id: run.id, given };
   select(run.id);
 }
@@ -97,7 +97,7 @@ function card(doc, { title, status, step }) {
 /** Return the product: the newest Markdown document that the session attached. */
 function product(doc) {
   const file = (doc.files || []).findLast((entry) => /\.md$/i.test(entry.name));
-  if (!file) return h("section", { class: "card product" }, empty("No product yet", "The specification shows here when a station attaches it."));
+  if (!file) return h("section", { class: "card product" }, empty("No product yet", "The song sheet shows here when a station attaches it."));
   const path = filePath(doc.session_id, file.name);
   const key = `${path}:${file.version || 0}:${file.size}`;
   if (state.spec.key !== key) {
@@ -120,11 +120,11 @@ function product(doc) {
 
 /** Return the floor without an order: what the factory does, and the zone that starts an order. */
 function welcome() {
-  const name = h("input", { class: "input", value: state.flow.inputs[0]?.default || "", "aria-label": "Product name" });
+  const name = h("input", { class: "input", value: state.flow.inputs[0]?.default || "", "aria-label": "Song title" });
   return [
-    h("div", { class: "hero" }, h("span", { class: "eyebrow", text: "Software factory" }), h("h1", { text: "A README goes in. A checked specification comes out." }), h("p", { class: "muted", text: state.flow.description })),
+    h("div", { class: "hero" }, h("span", { class: "eyebrow", text: "Song factory" }), h("h1", { text: "A brief goes in. A checked song comes out." }), h("p", { class: "muted", text: state.flow.description })),
     line(null),
-    h("section", { class: "card start" }, h("label", { class: "field" }, h("span", { text: "Product" }), name), drop("Give the README of the product", ".md,.txt", (file) => order(file, name.value.trim()))),
+    h("section", { class: "card start" }, h("label", { class: "field" }, h("span", { text: "Song title" }), name), drop("Give the brief of the song", ".md,.txt", (file) => order(file, name.value.trim()))),
   ];
 }
 
@@ -136,13 +136,16 @@ function draw() {
   if (!state.id) return fill(floor, welcome());
   if (!doc) return;
   const shipped = doc.status === "completed" && doc.result?.value;
+  const studio = /\/work\/([0-9a-f]{12}-[0-9a-f]{8})$/.exec(doc.root || "")?.[1];
   const head = h(
     "div",
     { class: "order-head" },
-    h("div", {}, h("span", { class: "eyebrow", text: `Order ${doc.id.slice(0, 8)} · ${ago(doc.created * 1000)}` }), h("h1", { text: doc.input.product || state.flow.inputs[0]?.default || doc.title })),
+    h("div", {}, h("span", { class: "eyebrow", text: `Order ${doc.id.slice(0, 8)} · ${ago(doc.created * 1000)}` }), h("h1", { text: doc.input.title || state.flow.inputs[0]?.default || doc.title })),
     chip(doc.status, TONE[doc.status], doc.status === "running"),
     h("span", { class: "grow" }),
     doc.session_id && h("a", { class: "btn small", href: `/play#${doc.session_id}` }, icon("open"), h("span", { text: "Open the session" })),
+    // The run works in its own copy of the project. The Studio page plays that copy while the run changes it.
+    studio && h("a", { class: "btn small", href: `/play/studio#${studio}` }, icon("play"), h("span", { text: "Listen in the Studio" })),
     OPEN.has(doc.status) && button("Cancel", { class: "small", onclick: press(() => cancelRun(doc.id).then(refresh)) }, "stop"),
   );
   const done = shipped?.url && h("div", { class: "shipped" }, icon("check"), h("span", {}, "Shipped. ", h("code", { text: (shipped.files || []).join(", ") }), " is in the repository at ", github(shipped.url, shipped.commit || "the commit"), "."));
@@ -160,7 +163,7 @@ function drawOrders() {
       h("span", { class: "small muted", text: ago(run.created * 1000) }),
     ),
   );
-  fill(orders, rows.length ? rows : empty("No orders", "Give a README to start the first order."));
+  fill(orders, rows.length ? rows : empty("No orders", "Give a brief to start the first order."));
 }
 
 /** Read the orders and the open order, then draw what changed. */
