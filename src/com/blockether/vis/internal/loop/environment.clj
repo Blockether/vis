@@ -1089,7 +1089,7 @@
 (def ^:private env-idle-ttl-ms
   "Idle window before a cached session env's Python session is disposed by the
    background reaper. Override with `VIS_ENV_IDLE_TTL_MS`; <= 0 disables the TTL
-   sweep. Default 60 min. This is the only age limit on a sandbox: a session that
+   sweep. Default 15 min. This is the only age limit on a sandbox: a session that
    keeps working keeps its interpreter, however many turns it runs.
 
    The window is longer than the time a person needs to read an answer and write
@@ -1103,7 +1103,7 @@
   (delay (or (some-> (System/getenv "VIS_ENV_IDLE_TTL_MS")
                      str/trim
                      parse-long)
-             (* 60 60 1000))))
+             (* 15 60 1000))))
 
 (def ^:private env-cache-max
   "Soft cap on resident session envs. After the TTL sweep, if the cache still
