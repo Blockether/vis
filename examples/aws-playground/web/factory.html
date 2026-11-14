@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf3eb">
+<title>Vis Playground · Software factory</title>
+<link rel="icon" href="/play/assets/logo.svg">
+<link rel="stylesheet" href="/play/assets/app.css">
+</head>
+<body>
+<header class="bar"></header>
+<div class="factory">
+  <aside class="orders" aria-label="Orders">
+    <div class="side-head">
+      <div class="row"><h2>Orders</h2><button class="btn small primary right" type="button" id="new">New order</button></div>
+      <p class="small muted" style="margin:0">One order is one run of the workflow <code>software_factory</code>, in one Vis session.</p>
+    </div>
+    <div class="list" id="orders"></div>
+  </aside>
+  <main class="floor" id="floor"></main>
+</div>
+<script type="module" src="/play/assets/factory.js"></script>
+</body>
+</html>

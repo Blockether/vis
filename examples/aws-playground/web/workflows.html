@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="/play/vendor/cm-codemirror.min.css">
 <link rel="stylesheet" href="/play/assets/app.css">
 </head>
-<body data-page="/play/workflows">
+<body>
 <header class="bar"></header>
 <div class="tabs only-phone" id="phone-tabs" role="tablist">
   <button type="button" data-pane="list" aria-selected="false">Workflows</button>
@@ -20,7 +20,7 @@
   <section class="side" aria-label="Workflows">
     <div class="side-head">
       <div class="row"><h2>Workflows</h2><button class="btn small primary right" type="button" id="new">New</button></div>
-      <p class="small muted" style="margin:0">Python on the Vis SDK. Each activity is a turn of one Vis session.</p>
+      <p class="small muted" style="margin:0">Python on the Vis SDK. Each activity sends its requests to one Vis session.</p>
     </div>
     <div class="list" id="list"></div>
   </section>
@@ -41,7 +41,6 @@
 <script src="/play/vendor/cm-closebrackets.min.js"></script>
 <script src="/play/vendor/cm-comment.min.js"></script>
 <script src="/play/vendor/cm-active-line.min.js"></script>
-
 <script type="module" src="/play/assets/workflows.js"></script>
 </body>
 </html>

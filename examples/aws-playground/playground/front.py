@@ -2,8 +2,9 @@
 
 It answers the Function URL. It checks the password, serves the Vis web app and the
 playground pages, and relays every API call to the live worker. A call goes to SQS and
-its answer comes back as S3 objects (see `wire.py`). The front function has no network
-path to the worker, the file system or the model provider.
+its answer comes back as S3 objects (see `wire.py`). It also takes the webhook of
+GitHub and the tick of the schedule. The front function has no network path to the
+worker or the file system, and no permission to read the provider key.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from typing import Any
 from playground import aws, wire
 from playground.env import (
     ANSWER_S,
+    DUE_S,
     ENV,
     LIFETIME,
     QUEUE,
@@ -36,7 +38,9 @@ from playground.runtime import Context, HttpStream
 
 VIS_WEB, PLAY_WEB, VENDOR = ENV.get("VIS_WEB_DIR", "/opt/vis-web"), "/opt/playground/web", "/opt/playground/vendor"
 # The pages of the playground, by path.
-PAGES = {"/play": "sessions.html", "/play/workflows": "workflows.html", "/play/architecture": "architecture.html"}
+PAGES = {"/play": "sessions.html", "/play/workflows": "workflows.html", "/play/factory": "factory.html", "/play/architecture": "architecture.html"}
+# The directories that a browser reads without the password, by path prefix.
+PUBLIC = {"/play/assets/": f"{PLAY_WEB}/assets", "/play/vendor/": VENDOR}
 SAFE = {"GET", "HEAD", "OPTIONS"}
 SECURITY = {
     "strict-transport-security": "max-age=63072000",
@@ -61,14 +65,13 @@ WEB_POLICY = (
 )
 # An answer of the worker can hold text from a session. As a document, it gets no
 # network, no cookie and no access to the pages of this address.
-RELAY_POLICY = (
-    "sandbox allow-downloads; default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; "
-    "font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-)
+RELAY_POLICY = "sandbox allow-downloads; default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 # The headers of a worker answer that the browser gets. The worker runs the code of a
 # session, so it cannot set a cookie, a redirect or a header that changes the browser rules.
 RELAYED = {"content-type", "content-encoding", "content-disposition", "content-range", "accept-ranges", "cache-control", "etag", "last-modified", "retry-after", "x-vis-client-lease-unknown"}
+# The life of the cookie, and the time after which the function reads the password again.
 SESSION_S, SECRET_S = 604800, 300
+# The password and the webhook secret that this function read, and the time of the last worker start.
 _state: dict[str, Any] = {"woke": 0.0}
 
 
@@ -124,6 +127,7 @@ class Request:
 
     @property
     def target(self) -> str:
+        """The path and the query, as the gateway gets them."""
         return self.path + ("?" + self.query if self.query else "")
 
 
@@ -159,19 +163,18 @@ def login_page(message: str = "", status: int = 200) -> HttpStream:
     return answer(status, page, "text/html; charset=utf-8", **{"content-security-policy": PAGE_POLICY, "cache-control": "no-store"})
 
 
+def redirect(location: str, value: str, age: int) -> HttpStream:
+    """Send the browser to a page and set the cookie. An age of 0 removes the cookie."""
+    reply = answer(303, b"", "text/plain", location=location)
+    reply.cookies = [f"vis={value}; Path=/; Max-Age={age}; HttpOnly; Secure; SameSite=Strict"]
+    return reply
+
+
 def login(request: Request) -> HttpStream:
     given = urllib.parse.parse_qs(request.body.decode(errors="replace")).get("password", [""])[0]
     if not same_origin(request) or not hmac.compare_digest(given.encode(), password().encode()):
         return login_page("Wrong password.", 401)
-    reply = answer(303, b"", "text/plain", location="/play")
-    reply.cookies = [f"vis={cookie(int(time.time()) + SESSION_S)}; Path=/; Max-Age={SESSION_S}; HttpOnly; Secure; SameSite=Strict"]
-    return reply
-
-
-def logout() -> HttpStream:
-    reply = answer(303, b"", "text/plain", location="/")
-    reply.cookies = ["vis=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict"]
-    return reply
+    return redirect("/play", cookie(int(time.time()) + SESSION_S), SESSION_S)
 
 
 def pushed(request: Request) -> HttpStream:
@@ -185,7 +188,7 @@ def pushed(request: Request) -> HttpStream:
     if not hmac.compare_digest(signature.encode(), request.headers.get("x-hub-signature-256", "").encode()):
         return error(401, "the signature is not valid")
     # The report only starts the fetch. The repo function reads the commit from GitHub itself.
-    aws.client("lambda").invoke(FunctionName=REPO_FUNCTION, InvocationType="Event", Payload=b'{"action":"fetch"}')
+    aws.start(REPO_FUNCTION, action="fetch")
     return answer(202, b'{"fetch":"started"}')
 
 
@@ -206,21 +209,19 @@ def static(root: str, relative: str, **headers: str) -> HttpStream | None:
 
 
 def route(request: Request, context: Context) -> HttpStream:
+    """Answer a call of the Function URL. The files, the sign-in and the signed webhook need no password."""
     path = request.path.rstrip("/") or "/"
     if path == "/login" and request.method == "POST":
         return login(request)
     if path == "/logout" and request.method == "POST":
-        return logout() if same_origin(request) else error(403, "this call must come from the playground")
+        return redirect("/", "", 0) if same_origin(request) else error(403, "this call must come from the playground")
     if path == "/hooks/github" and request.method == "POST":
         return pushed(request)
     known = authed(request)
     if request.method in ("GET", "HEAD"):
-        if path.startswith("/play/assets/"):
-            found = static(f"{PLAY_WEB}/assets", path[len("/play/assets/") :])
-            return found or error(404, "no such file")
-        if path.startswith("/play/vendor/"):
-            found = static(VENDOR, path[len("/play/vendor/") :])
-            return found or error(404, "no such file")
+        for prefix, root in PUBLIC.items():
+            if path.startswith(prefix):
+                return static(root, path[len(prefix) :]) or error(404, "no such file")
         if path in PAGES or path == "/":
             if not known:
                 return login_page()
@@ -245,7 +246,7 @@ def wake() -> None:
     _state["woke"] = time.time()
     if not aws.alive(aws.lease()[0]):
         log("waking worker")
-        aws.client("lambda").invoke(FunctionName=WORKER_FUNCTION, InvocationType="Event", Payload=b'{"kind":"wake"}')
+        aws.start(WORKER_FUNCTION, kind="wake")
 
 
 def parts(rid: str, deadline: float) -> Iterator[tuple[bytes, bool]]:
@@ -314,14 +315,14 @@ def tick() -> dict[str, str]:
     """Start a worker when work waits and no worker lives. A schedule calls this each minute."""
     data, _ = aws.lease()
     due = data.get("next_due")
-    if aws.alive(data) or not (data.get("running") or data.get("parked") or data.get("runs") or (due and due - time.time() < 120)):
+    if aws.alive(data) or not (data.get("running") or data.get("parked") or data.get("runs") or (due and due - time.time() < DUE_S)):
         return {"tick": "nothing to do"}
-    aws.client("lambda").invoke(FunctionName=WORKER_FUNCTION, InvocationType="Event", Payload=b'{"kind":"tick"}')
+    aws.start(WORKER_FUNCTION, kind="tick")
     return {"tick": "worker started"}
 
 
 def handler(event: dict[str, Any], context: Context) -> Any:
-    if "requestContext" not in event:
+    if "requestContext" not in event:  # the schedule, not the Function URL
         return tick()
     try:
         return route(Request.of(event), context)

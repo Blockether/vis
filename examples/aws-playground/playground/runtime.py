@@ -1,10 +1,10 @@
 """The AWS Lambda custom runtime of the playground, in plain Python.
 
-Vis runs this module with its embedded Python (`vis-agent python -m playground`). The
-module is a client of the Lambda Runtime API: it gets one invocation, calls the handler
-and sends the answer. The image has no AWS base image and no Lambda adapter.
+The image starts `python3 -m playground` with the Python that Vis embeds. This module
+is a client of the Lambda Runtime API: it gets one invocation, calls the handler and
+sends the answer. The image has no AWS Lambda base image and no Lambda adapter.
 
-A handler takes `(event, context)`. It returns a value that JSON can hold, or an
+A handler takes `(event, context)`. It returns a value that JSON can hold, or a
 `Stream` when the caller reads the answer in parts.
 """
 
@@ -47,6 +47,7 @@ class Stream:
     content_type = "application/octet-stream"
 
     def parts(self) -> Iterable[bytes]:
+        """Yield the chunks that have bytes. An empty chunk would end a chunked answer."""
         return (chunk for chunk in self.chunks if chunk)
 
 
@@ -60,12 +61,14 @@ class HttpStream(Stream):
     content_type = HTTP_INTEGRATION
 
     def parts(self) -> Iterable[bytes]:
+        """Yield the status and the headers in the form of Lambda, then the body."""
         head = {"statusCode": self.status, "headers": self.headers, "cookies": self.cookies}
         yield json.dumps(head).encode() + PRELUDE_END
         yield from super().parts()
 
 
 def _api() -> http.client.HTTPConnection:
+    """Open a connection to the Runtime API. It has no timeout: the wait for the next invocation has no limit."""
     return http.client.HTTPConnection(os.environ["AWS_LAMBDA_RUNTIME_API"], timeout=None)
 
 
@@ -98,7 +101,7 @@ def next_invocation() -> tuple[Any, Context]:
 
 
 def _error_body(error: BaseException) -> bytes:
-    # The invoker gets the type. The text of an error can hold data of the function, so it stays in the log.
+    """Return the failure report for the invoker. The text of an error can hold data of the function, so it stays in the log."""
     return json.dumps({"errorType": type(error).__name__, "errorMessage": "the function failed. Its log has the cause."}).encode()
 
 
@@ -123,10 +126,7 @@ def send_stream(request_id: str, stream: Stream) -> None:
                 conn.send(b"%x\r\n%s\r\n" % (len(chunk), chunk))
         except Exception as error:  # the status line is gone: only a trailer can report it
             traceback.print_exc()
-            trailers = (
-                b"Lambda-Runtime-Function-Error-Type: %s\r\n" % type(error).__name__.encode()
-                + b"Lambda-Runtime-Function-Error-Body: %s\r\n" % base64.b64encode(_error_body(error))
-            )
+            trailers = b"Lambda-Runtime-Function-Error-Type: %s\r\n" % type(error).__name__.encode() + b"Lambda-Runtime-Function-Error-Body: %s\r\n" % base64.b64encode(_error_body(error))
         conn.send(b"0\r\n" + trailers + b"\r\n")
         conn.getresponse().read()
     finally:

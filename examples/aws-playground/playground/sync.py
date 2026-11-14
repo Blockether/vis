@@ -24,6 +24,7 @@ from playground.env import EFS, log
 from playground.runtime import Context
 
 RELEASES, WORK, CURRENT = f"{EFS}/releases", f"{EFS}/work", f"{EFS}/CURRENT"
+# The number of releases that stay on EFS, and the days that an unused work directory stays.
 KEEP, WORK_DAYS = 5, 14
 
 
@@ -48,6 +49,7 @@ def unpack(sha: str, key: str) -> None:
 
 
 def current() -> str:
+    """Return the commit of the current release, or an empty string before the first sync."""
     try:
         with open(CURRENT, encoding="utf-8") as file:
             return json.load(file)["sha"]
@@ -113,6 +115,7 @@ def prune(keep: str) -> None:
 
 
 def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
+    """Make the snapshot of the commit `sha` the current release."""
     sha = str(event.get("sha", ""))
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("sha must be a commit id")

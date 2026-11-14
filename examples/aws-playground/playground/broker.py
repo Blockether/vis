@@ -1,7 +1,7 @@
 """The broker: a loopback HTTP server in the worker.
 
-The gateway and the tools of a session have no AWS credentials and no route to the
-internet. The broker is their only way out. `/v1/` is the model provider of the
+The gateway and the tools of a session have no AWS credentials in their environment
+and no route to the internet. The broker is their only way out. `/v1/` is the model provider of the
 gateway: the broker sends each call to the llm function. `/play/api/` is the
 playground API, for the workflow runs and the Vis extension.
 """
@@ -48,6 +48,8 @@ def ask(method: str, path: str, headers: dict[str, str], body: bytes) -> tuple[d
 
 
 class Handler(BaseHTTPRequestHandler):
+    """One call of the gateway, of a workflow run or of the Vis extension."""
+
     protocol_version = "HTTP/1.1"
     api: Api
 
@@ -55,6 +57,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def serve(self) -> None:
+        """Answer a call. After a failure the connection closes, because the answer can be in the middle."""
         body = self.rfile.read(int(self.headers.get("content-length") or 0))
         try:
             if self.path.startswith("/v1/"):
@@ -62,14 +65,14 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path.startswith("/play/api/"):
                 self.complete(*self.api.handle(self.command, self.path, body))
             else:
-                self.complete(404, [["content-type", "application/json"]], b'{"error":"no such path"}')
+                self.complete(404, wire.JSON, b'{"error":"no such path"}')
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
         except Exception as failure:  # the caller gets a plain answer, the log gets the cause
             log("broker failed", self.command, self.path, repr(failure))
             self.close_connection = True
             if not getattr(self, "started", False):
-                self.complete(502, [["content-type", "application/json"]], b'{"error":{"message":"the broker failed"}}')
+                self.complete(502, wire.JSON, b'{"error":{"message":"the broker failed"}}')
 
     do_GET = do_POST = do_PUT = do_DELETE = serve
 
@@ -97,6 +100,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class Broker:
+    """The server. It listens on a free port of the loopback interface."""
+
     def __init__(self, api: Api) -> None:
         handler = type("BrokerHandler", (Handler,), {"api": api})
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)

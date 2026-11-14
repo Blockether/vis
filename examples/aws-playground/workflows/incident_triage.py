@@ -2,14 +2,13 @@
 
 from typing import Literal
 
-from playground.workflows import activity, workflow
 from pydantic import BaseModel, Field
+
+from playground.workflows import activity, workflow
 
 
 class Triage(BaseModel):
-    severity: Literal["sev1", "sev2", "sev3", "sev4"] = Field(
-        description="sev1: all customers down or data loss. sev2: a main function fails for many. sev3: a workaround exists. sev4: cosmetic"
-    )
+    severity: Literal["sev1", "sev2", "sev3", "sev4"] = Field(description="sev1: all customers down or data loss. sev2: a main function fails for many. sev3: a workaround exists. sev4: cosmetic")
     component: str
     customers_affected: bool
     summary: str

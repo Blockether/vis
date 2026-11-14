@@ -31,6 +31,7 @@ class Lease:
         self.data = data
 
     def renew(self, **fields: Any) -> None:
+        """Keep the lease for LEASE_TTL more seconds."""
         self.write(expires=time.time() + LEASE_TTL, **fields)
 
     def release(self, **fields: Any) -> None:

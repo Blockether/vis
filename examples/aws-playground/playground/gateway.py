@@ -15,7 +15,16 @@ import subprocess
 import time
 from typing import Any
 
-from playground.env import ENV, HOME, MODELS, PRIVATE_TMP, WORKER_DIR, log, private
+from playground.env import (
+    ENV,
+    HOME,
+    MODELS,
+    PRIVATE_TMP,
+    WORKER_DIR,
+    log,
+    private,
+    write_secret,
+)
 
 BINARY = "/opt/vis/vis-agent-native"
 HOST, PORT, TOKEN_FILE = "127.0.0.1", 7890, f"{WORKER_DIR}/gateway.token"
@@ -26,11 +35,7 @@ PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCA
 
 def config(broker: str) -> str:
     """Return the Vis configuration: one provider, which is the broker."""
-    models = "".join(
-        f"      - name: {m['name']}\n        context: {m['context']}\n"
-        f"        output_limit: {m['output_limit']}\n        is_tool_calls_supported: true\n"
-        for m in MODELS
-    )
+    models = "".join(f"      - name: {m['name']}\n        context: {m['context']}\n        output_limit: {m['output_limit']}\n        is_tool_calls_supported: true\n" for m in MODELS)
     return (
         "providers:\n"
         f"  - id: {PROVIDER}\n    compatibility: openai\n    base_url: {broker}/v1\n"
@@ -73,12 +78,9 @@ class Gateway:
         os.makedirs(os.path.join(HOME, ".vis"), exist_ok=True)
         with open(os.path.join(HOME, ".vis", "config.yml"), "w", encoding="utf-8") as file:
             file.write(config(self.broker))
-        with open(os.open(private("gateway.token"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as file:
-            file.write(self.token)
+        write_secret(private("gateway.token"), self.token)
         command = [BINARY, f"-Duser.home={HOME}", "gateway", "start", "--host", HOST, "--port", str(PORT)]
-        self.process = subprocess.Popen(
-            [*command, "--token-file", TOKEN_FILE, "--require-token"], cwd=self.project, env=environment(self.broker)
-        )
+        self.process = subprocess.Popen([*command, "--token-file", TOKEN_FILE, "--require-token"], cwd=self.project, env=environment(self.broker))
         deadline = time.time() + 60
         while time.time() < deadline:
             if self.process.poll() is not None:
@@ -94,6 +96,7 @@ class Gateway:
         raise RuntimeError("the gateway did not start in 60 s")
 
     def headers(self) -> dict[str, str]:
+        """Return the headers of a call that the worker makes or relays."""
         head = {"authorization": f"Bearer {self.token}", "content-type": "application/json"}
         return {**head, "x-vis-protocol": self.protocol} if self.protocol else head
 
@@ -107,6 +110,13 @@ class Gateway:
             return answer.status, (json.loads(raw) if raw else None)
         finally:
             connection.close()
+
+    def cancel(self, session: str) -> None:
+        """Cancel the turn that runs in a session. The gateway cancels a turn only by its id."""
+        _, row = self.call("GET", f"/v1/sessions/{session}")
+        turn = (row or {}).get("current_turn_id")
+        if turn:
+            self.call("POST", f"/v1/sessions/{session}/turns/{turn}/cancel", {})
 
     def running(self) -> int:
         """Return the number of sessions with a running turn."""
@@ -137,6 +147,7 @@ class Gateway:
             return 0
 
     def stop(self, kill: bool = False) -> None:
+        """End the process. `kill` gives it no time to write: for a worker that lost the lease."""
         if self.process is None or self.process.poll() is not None:
             return
         self.process.kill() if kill else self.process.terminate()

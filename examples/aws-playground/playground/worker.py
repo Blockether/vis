@@ -15,10 +15,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from blockether.vis.engine import GatewayClient
+
 from playground import aws, gateway, state, sync
 from playground.api import Api
 from playground.broker import Broker
 from playground.env import (
+    DUE_S,
     IDLE_S,
     LIFETIME,
     MARGIN,
@@ -31,6 +34,7 @@ from playground.lease import Lease
 from playground.relay import Relay
 from playground.runtime import Context
 
+# The worker renews the lease each RENEW_S and looks for state to save each SAVE_S.
 RENEW_S, SAVE_S = 30, 15
 
 
@@ -43,7 +47,7 @@ def project() -> tuple[str, str]:
     release = sync.current()
     if not release:
         # The first worker of a new stack asks for the first release.
-        aws.client("lambda").invoke(FunctionName=REPO_FUNCTION, Payload=b'{"action":"fetch","force":true}')
+        aws.invoke(REPO_FUNCTION, action="fetch", force=True)
         release = sync.current()
     if not release:
         raise RuntimeError("EFS has no release of the repository")
@@ -57,12 +61,15 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     restored = time.time()
     root, release = project()
     cloned = time.time()
+    # The API needs the address of the broker, and the broker serves the API.
     api = Api(root, release, lambda: gateway.environment(broker.url))
     broker = Broker(api)
     broker.start()
     engine = gateway.Gateway(root, broker.url)
     engine.start()
-    api.cancel_turn = lambda session: engine.call("POST", f"/v1/sessions/{session}/cancel-current", {})
+    api.cancel_turn = engine.cancel
+    # Each call gets its own SDK client: one client serves one thread.
+    api.session = lambda session: GatewayClient(f"http://{gateway.HOST}:{gateway.PORT}", token=engine.token).session(session)
     relay = Relay(engine, api)
     pool = ThreadPoolExecutor(max_workers=64)
     queue = aws.client("sqs")
@@ -93,7 +100,7 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
                 reason = "handoff"
                 break
             busy = relay.inflight or running or api.runs.live()
-            if not busy and now - relay.last > IDLE_S and not (due and due - now < 120):
+            if not busy and now - relay.last > IDLE_S and not (due and due - now < DUE_S):
                 break
     except aws.ClientError as failure:
         # Another worker took the lease. This worker must not write state again.
@@ -114,11 +121,12 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     held.release(running=0, parked=parked, runs=runs, next_due=due)
     log("worker stops:", reason, "parked", parked, "runs", runs)
     if reason == "handoff" and (parked or runs):
-        aws.client("lambda").invoke(FunctionName=WORKER_FUNCTION, InvocationType="Event", Payload=b'{"kind":"handoff"}')
+        aws.start(WORKER_FUNCTION, kind="handoff")
     return {"worker": reason, "parked": parked, "runs": runs}
 
 
 def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
+    """Work as the one live worker, or return at once when another worker lives."""
     held = Lease.acquire()
     if held is None:
         return {"worker": "another worker holds the lease"}

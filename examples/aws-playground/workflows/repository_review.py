@@ -2,8 +2,9 @@
 
 from typing import Literal
 
-from playground.workflows import activity, workflow
 from pydantic import BaseModel, Field
+
+from playground.workflows import activity, workflow
 
 
 class Finding(BaseModel):

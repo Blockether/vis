@@ -16,13 +16,15 @@ import tarfile
 import time
 
 from playground import aws
-from playground.env import HOME, LEASE_TTL, log, private
+from playground.env import HOME, log, private
 from playground.lease import Lease
 from playground.sync import safe
 
 # Caches and logs are not state. The next worker builds them again.
 # Vis extracts `.vis/native` and `.vis/python/vis-guest` from its binary at each start.
 UNSAVED = (".vis/logs", ".vis/models", ".vis/cache", ".vis/native", ".vis/python/vis-guest", ".m2", ".gitlibs", ".cache", ".clojure/.cpcache")
+# The journal files of SQLite and the lock files. A checkpoint has a consistent copy
+# of each database, so these files stay out.
 JOURNALS = ("-wal", "-shm", "-journal", ".lock")
 
 
@@ -62,7 +64,7 @@ def restore(key: str | None) -> None:
     if data is None:
         raise RuntimeError(f"the lease names the checkpoint {key}, but S3 does not have it")
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        # A session can make a link to an absolute path. Such a link is skipped: it must not stop the worker.
+        # A session can make a link to an absolute path. The restore skips such a link: it must not stop the worker.
         archive.extractall(HOME, filter=safe)
     log("restored", key, len(data), "bytes")
 
@@ -104,7 +106,7 @@ def save(held: Lease) -> str:
     data = pack()
     aws.put(key, data, IfNoneMatch="*")
     try:
-        held.write(expires=time.time() + LEASE_TTL, state=key)
+        held.renew(state=key)
     except aws.ClientError:
         aws.delete(key)
         raise

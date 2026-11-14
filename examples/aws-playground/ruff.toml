@@ -1,0 +1,6 @@
+# The format and the checks of the Python code of this example. The rules come from the
+# `ruff.toml` of the Vis repository, so this file works only in a copy of that repository.
+extend = "../../ruff.toml"
+line-length = 200
+# The first content of the playground repository is another project.
+extend-exclude = ["repo-seed"]

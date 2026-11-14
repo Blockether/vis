@@ -1,7 +1,8 @@
 """Change and publish: make a change in the repository, test it, then push it to GitHub."""
 
-from playground.workflows import activity, workflow
 from pydantic import BaseModel, Field
+
+from playground.workflows import activity, workflow
 
 
 class Change(BaseModel):
@@ -19,8 +20,7 @@ class Publication(BaseModel):
 @activity(title="Implement the change")
 def implement(ctx, request: str) -> Change:
     return ctx.ask(
-        f"Make this change in the project directory:\n\n{request}\n\nAdd or change a test for it. "
-        "Then run `py.run_tests()` for Python code or `clj.lint_code()` for Clojure code and read the result.",
+        f"Make this change in the project directory:\n\n{request}\n\nAdd or change a test for it. Then run `py.run_tests()` for Python code or `clj.lint_code()` for Clojure code and read the result.",
         Change,
     )
 

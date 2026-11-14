@@ -2,8 +2,9 @@
 
 from typing import Literal
 
-from playground.workflows import activity, workflow
 from pydantic import BaseModel, Field
+
+from playground.workflows import activity, workflow
 
 
 class Analysis(BaseModel):
@@ -12,9 +13,7 @@ class Analysis(BaseModel):
     acceptance_criteria: list[str]
     open_questions: list[str] = Field(description="Questions that block the work. Empty when the story is clear")
     risk: Literal["low", "medium", "high"]
-    decision: Literal["build", "clarify", "reject"] = Field(
-        description="build: the story is clear. clarify: a blocking question is open. reject: the story has no value or is not possible"
-    )
+    decision: Literal["build", "clarify", "reject"] = Field(description="build: the story is clear. clarify: a blocking question is open. reject: the story has no value or is not possible")
     reason: str
 
 

@@ -1,7 +1,7 @@
 """Run the whole playground on one machine, without AWS: `python -m playground.local`.
 
 The front function, the relay, the worker, the llm function, the repo function and
-the sync function run as they are. Only the AWS services are replaced: S3 is a
+the sync function run as they are. Only the AWS services have a replacement: S3 is a
 directory, the queue is a list, a parameter is an environment variable and an
 invocation is a function call. GitHub is a bare repository in a directory.
 
@@ -62,6 +62,8 @@ class Bucket:
 
     def __init__(self) -> None:
         self.root, self.lock = f"{ROOT}/s3", threading.Lock()
+        # The metadata of each object that this process wrote.
+        self.meta: dict[str, dict[str, str]] = {}
 
     def path(self, key: str) -> str:
         return os.path.join(self.root, key)
@@ -83,7 +85,7 @@ class Bucket:
     def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
         if self.tag(Key) is None:
             raise refusal("404", "HeadObject")
-        return {"ContentLength": os.path.getsize(self.path(Key))}
+        return {"ContentLength": os.path.getsize(self.path(Key)), "Metadata": self.meta.get(Key, {})}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, **options: Any) -> dict[str, Any]:  # noqa: N803
         with self.lock:
@@ -95,6 +97,7 @@ class Bucket:
             with open(temporary, "wb") as file:
                 file.write(Body)
             os.replace(temporary, self.path(Key))
+            self.meta[Key] = options.get("Metadata", {})
             return {"ETag": self.tag(Key)}
 
     def delete_object(self, Bucket: str, Key: str) -> None:  # noqa: N803
@@ -136,11 +139,14 @@ class Queue:
 
 
 class Parameters:
+    """SSM as environment variables."""
+
     def get_parameter(self, Name: str, WithDecryption: bool) -> dict[str, Any]:  # noqa: N803
         return {"Parameter": {"Value": os.environ[Name]}}
 
 
 def context(seconds: float = 900) -> runtime.Context:
+    """Return the context of an invocation that can work for some seconds."""
     return runtime.Context(uuid.uuid4().hex, int((time.time() + seconds) * 1000), "local")
 
 
@@ -188,7 +194,7 @@ class Page(BaseHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, *args: Any) -> None:
+    def log_message(self, *args: Any) -> None:  # the front function writes its own log
         pass
 
     def serve(self) -> None:
@@ -230,10 +236,11 @@ def main() -> None:
     os.makedirs(ROOT, exist_ok=True)
     github(os.environ.get("PLAYGROUND_SEED", "/opt/playground/repo-seed"))
     print("first release:", repo.fetch(), flush=True)
-    server = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Page)  # noqa: S104 - a container port
+    port = int(os.environ.get("PORT", "8080"))
+    server = ThreadingHTTPServer(("0.0.0.0", port), Page)  # noqa: S104 - a container port
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print("playground on http://localhost:8080", flush=True)
+    print(f"playground on http://localhost:{port}", flush=True)
     while True:
         # The schedule of the stack: a tick each minute, and a worker when one is wanted.
         if Functions.wake.wait(timeout=60):

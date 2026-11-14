@@ -14,6 +14,8 @@ from typing import Any
 
 HOP = {"connection", "content-length", "transfer-encoding", "host", "keep-alive"}
 LAST, MORE = b"E", b"M"
+# The headers of a JSON answer, as pairs of name and value.
+JSON = [["content-type", "application/json"]]
 
 
 def frame(head: dict[str, Any], body: bytes = b"") -> bytes:

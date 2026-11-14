@@ -1,4 +1,4 @@
-# boto3 and vis-agent==0.5.17 (the Vis SDK), for the Python of Vis.
+# boto3 and vis-agent==0.5.18 (the Vis SDK), for the Python of Vis.
 # Make this file again with:
 #   uv pip compile site.in --generate-hashes --no-header --python-version 3.14 --python-platform aarch64-manylinux_2_28
 aiohappyeyeballs==2.7.1 \
@@ -2244,9 +2244,9 @@ uvicorn==0.54.0 \
     --hash=sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf \
     --hash=sha256:a2e33cbfaa0306f8e6b0c13e0cb89d7d7a2da3e62b90c66e18c33d9807b28620
     # via harbor
-vis-agent==0.5.17 \
-    --hash=sha256:1f8b921b9151ad2de2825725bb7b0cb53485ecb4006290612cf40304bd4a56bc \
-    --hash=sha256:b5039a3f93d8b914b6d6c23c94ec7c82eaabc17e2ecf75745f61899edf4026d0
+vis-agent==0.5.18 \
+    --hash=sha256:938acf6eceeb2d9933274250e8c9a0c3ad244845fa2c3a1451a9122d45a11230 \
+    --hash=sha256:f69398927dd3e0ec216e28ef5600afe71c2c078534dee0260ef7a830250aab01
     # via -r site.in
 websockets==15.0.1 \
     --hash=sha256:0701bc3cfcb9164d04a14b149fd74be7347a530ad3bbf15ab2c678a2cd3dd9a2 \

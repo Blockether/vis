@@ -1,6 +1,6 @@
 """One workflow run: `python -m playground.run <run id>`.
 
-The worker starts this process next to the gateway. The process has no AWS
+The worker starts this process next to the gateway. Its environment has no AWS
 credentials. It talks to the gateway with the Vis SDK and to the playground API.
 """
 
@@ -17,7 +17,7 @@ from blockether.vis.engine import GatewayClient
 
 from playground.client import Playground
 from playground.gateway import HOST, PORT, PROVIDER, TOKEN_FILE
-from playground.workflows import Context, encode
+from playground.workflows import Context, Waiting, encode
 
 
 def load(name: str, source: str) -> Callable[..., Any]:
@@ -35,27 +35,25 @@ def load(name: str, source: str) -> Callable[..., Any]:
 def main(run_id: str) -> int:
     api = Playground()
     run = api.call("GET", f"runs/{run_id}")
-
-    def event(kind: str, **fields: Any) -> None:
-        api.call("POST", f"runs/{run_id}/events", {"type": kind, **fields})
-
     try:
         function = load(run["workflow"], run["source"])
         with open(TOKEN_FILE, encoding="utf-8") as file:
             client = GatewayClient(f"http://{HOST}:{PORT}", token=file.read().strip())
-        if run.get("session_id"):
+        if run.get("session_id"):  # an earlier process of this run made the session
             session = client.session(run["session_id"])
         else:
             options = client.session_options(os.getcwd())
             model = function.__workflow__["model"]
             session = client.create_session(provider=PROVIDER if model else None, model=model, **options)
             session.update(title=f"{run['title']} · run {run_id[:8]}")
-        event("started", session_id=session.id)
+        api.event(run_id, "started", session_id=session.id)
         result = function(Context(run, session, api), **run["input"])
-        event("completed", result=encode(result))
+        api.event(run_id, "completed", result=encode(result))
+        return 0
+    except Waiting:  # the API has the event: this process ends and a new one continues the run
         return 0
     except Exception as failure:
-        event("failed", error=f"{type(failure).__name__}: {failure}", trace=traceback.format_exc()[-3000:])
+        api.event(run_id, "failed", error=f"{type(failure).__name__}: {failure}", trace=traceback.format_exc()[-3000:])
         return 1
 
 

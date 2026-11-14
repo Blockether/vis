@@ -11,7 +11,6 @@ import base64
 import http.client
 import json
 import queue
-import re
 import threading
 import time
 from typing import Any
@@ -21,13 +20,18 @@ from playground.api import Api
 from playground.env import QUEUE, log
 from playground.gateway import HOST, PORT, Gateway
 
-# An event stream collects its bytes for this time, then writes one S3 object.
+# An event stream collects its bytes for COLLECT_S, writes one S3 object, then waits PAUSE_S.
 COLLECT_S, PAUSE_S = 0.2, 0.15
-# The read of one turn. The gateway of Vis 0.5.17 knows only the turns of its own process.
-TURN = re.compile(r"/v1/sessions/([0-9a-f-]{36})/turns/([0-9a-f-]{36})")
+
+
+def reply(rid: str, head: dict[str, Any], body: bytes) -> None:
+    """Write a complete answer: the one part of a call."""
+    aws.put(f"relay/{rid}/0", wire.LAST + wire.frame(head, body))
 
 
 class Relay:
+    """The calls that this worker answers, and their messages in the queue."""
+
     def __init__(self, gateway: Gateway, api: Api) -> None:
         self.gateway, self.api = gateway, api
         self.inflight, self.last = 0, time.time()
@@ -52,6 +56,7 @@ class Relay:
         return None if known else call
 
     def _delete(self, rid: str) -> None:
+        """Remove the message of a call from the queue. The caller holds the lock."""
         receipt = self._receipts.pop(rid, None)
         self._answered[rid] = time.time()
         if receipt:
@@ -79,10 +84,9 @@ class Relay:
         rid = call["id"]
         try:
             self.answer(call)
-        except Exception as failure:  # the browser gets the cause as a plain answer
+        except Exception as failure:  # the browser gets a plain answer, the log gets the cause
             log("call failed", call["method"], call["path"], repr(failure))
-            body = json.dumps({"error": "the Vis worker could not answer the call"}).encode()
-            aws.put(f"relay/{rid}/0", wire.LAST + wire.frame({"status": 502, "headers": [["content-type", "application/json"]]}, body))
+            reply(rid, {"status": 502, "headers": wire.JSON}, b'{"error": "the Vis worker could not answer the call"}')
         finally:
             self.done(rid)
             with self._lock:
@@ -90,6 +94,7 @@ class Relay:
                 self.last = time.time()
 
     def body(self, call: dict[str, Any]) -> bytes:
+        """Return the body of a call. A large body comes in its own S3 object."""
         if "body_key" in call:
             data, _ = aws.get(call["body_key"])
             aws.delete(call["body_key"])
@@ -100,10 +105,9 @@ class Relay:
         rid, body = call["id"], self.body(call)
         if call["path"].startswith("/play/api/"):
             status, headers, data = self.api.handle(call["method"], call["path"], body)
-            aws.put(f"relay/{rid}/0", wire.LAST + wire.frame({"status": status, "headers": headers}, data))
-            return
+            return reply(rid, {"status": status, "headers": headers}, data)
         headers = {**call["headers"], **self.gateway.headers(), "host": f"{HOST}:{PORT}"}
-        if "content-type" in call["headers"]:
+        if "content-type" in call["headers"]:  # the gateway headers name JSON: the type of the call wins
             headers["content-type"] = call["headers"]["content-type"]
         connection = http.client.HTTPConnection(HOST, PORT, timeout=max(5.0, call["deadline"] - time.time()))
         try:
@@ -111,32 +115,10 @@ class Relay:
             answer = connection.getresponse()
             head = {"status": answer.status, "headers": [[k, v] for k, v in answer.getheaders() if k.lower() not in wire.HOP]}
             if "text/event-stream" not in (answer.getheader("content-type") or ""):
-                data = answer.read()
-                if answer.status == 404 and call["method"] == "GET" and (turn := TURN.fullmatch(call["path"].partition("?")[0])):
-                    head, data = self.stored(turn[1], turn[2], headers) or (head, data)
-                aws.put(f"relay/{rid}/0", wire.LAST + wire.frame(head, data))
-                return
+                return reply(rid, head, answer.read())
             self.stream(call, head, answer)
         finally:
             connection.close()
-
-    def stored(self, session: str, turn: str, headers: dict[str, str]) -> tuple[dict[str, Any], bytes] | None:
-        """Answer the read of a turn that a gateway of an earlier worker ran.
-
-        The turn list of the session has each stored turn. Without this answer, a
-        client that waits for a turn gets 404 when the turn ends at a worker change.
-        """
-        connection = http.client.HTTPConnection(HOST, PORT, timeout=30)
-        try:
-            connection.request("GET", f"/v1/sessions/{session}/turns", None, headers)
-            answer = connection.getresponse()
-            rows = json.loads(answer.read()).get("turns", []) if answer.status == 200 else []
-        except (OSError, ValueError, AttributeError, http.client.HTTPException):
-            return None
-        finally:
-            connection.close()
-        found = next((row for row in rows if row.get("turn_id") == turn), None)
-        return found and ({"status": 200, "headers": [["content-type", "application/json"]]}, json.dumps(found).encode())
 
     def stream(self, call: dict[str, Any], head: dict[str, Any], answer: http.client.HTTPResponse) -> None:
         """Write an event stream as S3 objects until it ends or the deadline comes."""

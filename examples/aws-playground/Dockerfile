@@ -1,14 +1,17 @@
 # The Vis playground on AWS Lambda. One clean image for every function of the stack.
-# There is no AWS base image and no Lambda adapter: the embedded Python of Vis is the
-# Lambda custom runtime, and playground/runtime.py speaks the Lambda Runtime API.
+# There is no AWS Lambda base image and no Lambda adapter: the embedded Python of Vis is
+# the Lambda custom runtime, and playground/runtime.py speaks the Lambda Runtime API.
 # Build for linux/arm64.
 #
-# Each download has a pin: the base image by digest, each file by SHA-256 and each
-# Python package by hash. To move to another release, change the pins together.
+# The base image has a digest. Each file that curl downloads has a SHA-256 and each
+# Python package has a hash. The extensions and the Maven artifacts have an exact
+# version, but no hash. The dnf packages have no version and no hash in this file.
+# To move to another Vis version, change VIS_RELEASE, its two checksums and
+# requirements/site.* together.
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:5c6ed3b38335b2aa424a045f1e564c8c508409ead0ff3f8bf5e62c31b94082cb
-ARG VIS_RELEASE=v0.5.17
-ARG VIS_AGENT_SHA256=f5f1e53945c9e23d24af75738b9e81126310547005a3fe102d6b570f1cdf9add
-ARG VIS_WEB_SHA256=275c6f9b00990595f0a6e39d16f32afd007bea17f94e0ca6c23f3952150a414d
+ARG VIS_RELEASE=v0.5.18
+ARG VIS_AGENT_SHA256=3f88c0676e983c607bbb923754806a7ae83f5f4cdc62047cbeda30dc175d047c
+ARG VIS_WEB_SHA256=a6c60f8a5c0f56e3964ec48fcfddb3185593597831a772c10b848d96d32b0a9c
 ARG CLOJURE_VERSION=1.12.5.1654
 ARG CLOJURE_SHA256=28f81b0833c0a072f4370ae0eb1e4c5a4f9f4a34035cd7607ea9f253a8b06da1
 # git serves the repository functions and fetches the extensions. clang builds native
@@ -55,6 +58,9 @@ RUN mkdir -p /opt/clojure /opt/vis-build/empty && echo '{:mvn/local-repo "/opt/m
 COPY vendor.sh /opt/vendor.sh
 RUN sh /opt/vendor.sh /opt/playground/vendor && rm /opt/vendor.sh
 COPY known_hosts /opt/playground/known_hosts
+# Only `python -m playground.local` reads this copy: it is the first commit of its
+# repository. A stack gets its project from GitHub.
+COPY repo-seed/ /opt/playground/repo-seed/
 COPY workflows/ /opt/playground/workflows/
 COPY extension/ /opt/vis-extensions/
 COPY web/ /opt/playground/web/

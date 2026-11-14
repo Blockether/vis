@@ -13,7 +13,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from playground.env import BUCKET, LEASE
 
-__all__ = ["BotoCoreError", "ClientError", "alive", "client", "delete", "get", "keys", "lease", "parameter", "put"]
+__all__ = ["BotoCoreError", "ClientError", "alive", "client", "delete", "get", "invoke", "keys", "lease", "metadata", "parameter", "put", "start"]
 
 
 @functools.cache
@@ -33,6 +33,16 @@ def get(key: str) -> tuple[bytes | None, str | None]:
     except ClientError as error:
         if error.response["Error"]["Code"] in ("NoSuchKey", "404"):
             return None, None
+        raise
+
+
+def metadata(key: str) -> dict[str, str] | None:
+    """Return the metadata of an S3 object, or None when there is no object."""
+    try:
+        return client("s3").head_object(Bucket=BUCKET, Key=key)["Metadata"]
+    except ClientError as error:
+        if error.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return None
         raise
 
 
@@ -56,6 +66,17 @@ def keys(prefix: str) -> list[dict[str, Any]]:
 def parameter(name: str) -> str:
     """Return the decrypted value of an SSM parameter."""
     return client("ssm").get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]
+
+
+def invoke(function: str, **event: Any) -> tuple[bytes, bool]:
+    """Run a function with an event and wait. Return its answer, and True when the function failed."""
+    answer = client("lambda").invoke(FunctionName=function, Payload=json.dumps(event).encode())
+    return answer["Payload"].read(), bool(answer.get("FunctionError"))
+
+
+def start(function: str, **event: Any) -> None:
+    """Start a function with an event. Do not wait for its end."""
+    client("lambda").invoke(FunctionName=function, InvocationType="Event", Payload=json.dumps(event).encode())
 
 
 def lease() -> tuple[dict[str, Any], str | None]:

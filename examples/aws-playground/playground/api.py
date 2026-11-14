@@ -8,8 +8,9 @@ and the Vis extension reach it through the broker. S3 holds all its data:
     runs/<id>/run.json           the run and its activities
     runs/<id>/workflow.py        the source that the run uses, also after an edit
     runs/<id>/results/<n>.json   the result of activity n, for a new start of the run
-    artifacts/<session>/<name>   the documents of a session
-    tmp/<session>/<path>         the files that a session wrote, kept for some days
+    runs/<id>/inputs/<key>.json  a file that a person gave to a waiting run
+    artifacts/<session>/<name>   a copy of each file that a session attached
+    tmp/<session>/<path>         the files that a session wrote, kept for 7 days
     outbox/<id>.bundle           commits that wait for the repo function
 """
 
@@ -31,20 +32,28 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from playground import aws, sync
+from blockether.vis.engine import GatewayError, Session, TransportError
+
+from playground import aws, sync, wire
 from playground.env import EFS, ENV, MODELS, REPO_FUNCTION, log, private
 
 NAME = re.compile(r"[a-z][a-z0-9_]{1,39}")
 SESSION = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 RUN = re.compile(r"[0-9a-f]{32}")
 FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,79}")
-JSON = [["content-type", "application/json"], ["cache-control", "no-store"]]
+JSON = [*wire.JSON, ["cache-control", "no-store"]]
 SAMPLES = "/opt/playground/workflows"
 # The runs that work at the same time. The other runs wait.
 PARALLEL = 3
 # The processes that one run can use. A worker handoff starts a new process.
 STARTS = 12
+# The activities that one run can have.
+STEPS = 1000
 LIVE = ("queued", "running")
+# A waiting run has no process: it needs a file from a person.
+OPEN = (*LIVE, "waiting")
+# The largest file that a person gives to a run, and the largest attached file that S3 gets.
+INPUT_LIMIT, ARTIFACT_LIMIT = 300_000, 2_000_000
 Answer = tuple[int, list[list[str]], bytes]
 
 
@@ -57,6 +66,7 @@ class Refused(Exception):
 
 
 def need(pattern: re.Pattern[str], value: Any, what: str) -> str:
+    """Return a value that has the form of a pattern, or refuse it. The value becomes a part of an S3 key."""
     if not isinstance(value, str) or not pattern.fullmatch(value):
         raise Refused(400, f"{what} is not valid")
     return value
@@ -71,6 +81,7 @@ def relative(path: Any) -> str:
 
 
 def literal(node: ast.expr | None) -> Any:
+    """Return the value of a constant in the source, or None for other code."""
     try:
         return None if node is None else ast.literal_eval(node)
     except ValueError:
@@ -125,6 +136,7 @@ class Runs:
         self.index: list[dict[str, Any]] = json.loads(raw) if raw else []
 
     def doc(self, run_id: str) -> dict[str, Any]:
+        """Return the one object of a run. Read it from S3 at its first use."""
         with self.lock:  # two callers must get the same object, or one of them loses its change
             if run_id not in self.docs:
                 raw, _ = aws.get(f"runs/{run_id}/run.json")
@@ -147,6 +159,7 @@ class Runs:
         aws.put("runs/index.json", json.dumps(self.index[:300]).encode())
 
     def create(self, workflow: str, source: str, about: dict[str, Any], given: dict[str, Any]) -> dict[str, Any]:
+        """Record a new run with a copy of its source, and start it when a place is free."""
         known = {item["name"] for item in about["inputs"]}
         unknown = set(given) - known
         if unknown:
@@ -179,7 +192,7 @@ class Runs:
         return doc
 
     def fill(self) -> None:
-        """Start waiting runs while a place is free, and close the runs whose process stopped."""
+        """Start queued runs while a place is free, and close the runs whose process stopped."""
         with self.lock:
             for run_id, process in list(self.processes.items()):
                 if process.poll() is not None:
@@ -187,8 +200,8 @@ class Runs:
                     doc = self.doc(run_id)
                     if doc["status"] in LIVE:
                         self.finish(doc, "failed", error=f"the run process stopped with exit code {process.returncode}")
-            waiting = [line["id"] for line in reversed(self.index) if line["status"] in LIVE and line["id"] not in self.processes]
-            for run_id in waiting[: max(0, PARALLEL - len(self.processes))]:
+            ready = [line["id"] for line in reversed(self.index) if line["status"] in LIVE and line["id"] not in self.processes]
+            for run_id in ready[: max(0, PARALLEL - len(self.processes))]:
                 doc = self.doc(run_id)
                 if doc["starts"] >= STARTS:
                     self.finish(doc, "failed", error=f"the run did not end in {STARTS} processes")
@@ -203,45 +216,57 @@ class Runs:
                 log("run started", run_id, doc["workflow"], "start", doc["starts"])
 
     def finish(self, doc: dict[str, Any], status: str, **fields: Any) -> None:
-        doc.update(status=status, finished=time.time(), **fields)
+        """End a run, and the activity that it left running or waiting."""
+        doc.update(status=status, finished=time.time(), waiting=None, **fields)
         for activity in doc["activities"]:
-            if activity["status"] == "running":
+            if activity["status"] in ("running", "waiting"):
                 activity.update(status="cancelled" if status == "cancelled" else "failed", finished=time.time())
         self.write(doc)
 
     def event(self, run_id: str, event: dict[str, Any]) -> None:
         """Record what a run process reports."""
-        kind, now = event.get("type"), time.time()
+        kind, now, seq = event.get("type"), time.time(), event.get("seq")
+        # The number of an activity becomes a part of an S3 key.
+        if seq is not None and (type(seq) is not int or not 0 <= seq < STEPS):
+            raise Refused(400, "seq is not the number of an activity")
         with self.lock:
             doc = self.doc(run_id)
             if doc["status"] not in LIVE:
                 raise Refused(409, f"the run is {doc['status']}")
-            steps = {step["seq"]: step for step in doc["activities"]}
-            step = steps.get(event.get("seq"))
+            step = next((step for step in doc["activities"] if step["seq"] == seq), None)
             if kind == "started":
-                doc.update(status="running", session_id=event["session_id"], started=doc["started"] or now)
-            elif kind == "activity_started":
-                fresh = {"seq": event["seq"], "name": event["name"], "title": event["title"], "status": "running"}
+                session = need(SESSION, event.get("session_id"), "the session id")
+                doc.update(status="running", session_id=session, started=doc["started"] or now)
+            elif kind == "activity_started" and seq is not None and isinstance(event.get("name"), str):
+                name = event["name"][:80]
+                fresh = {"seq": seq, "name": name, "title": str(event.get("title") or name)[:200], "status": "running"}
                 fresh.update(started=now, finished=None, result=None, error=None, artifacts=[], notes=[])
-                if step and step["name"] == event["name"]:  # the same activity continues in a new process
+                if step and step["name"] == name:  # the same activity continues in a new process
                     fresh.update(started=step["started"], artifacts=step["artifacts"], notes=step["notes"])
-                doc["activities"] = [s for s in doc["activities"] if s["seq"] != event["seq"]] + [fresh]
+                doc["activities"] = [s for s in doc["activities"] if s["seq"] != seq] + [fresh]
             elif kind == "activity_completed" and step:
-                record = {"name": event["name"], "result": event["result"]}
-                aws.put(f"runs/{run_id}/results/{event['seq']}.json", json.dumps(record).encode())
-                step.update(status="completed", finished=now, result=event["result"])
+                record = {"name": event.get("name"), "result": event.get("result")}
+                aws.put(f"runs/{run_id}/results/{seq}.json", json.dumps(record).encode())
+                step.update(status="completed", finished=now, result=record["result"])
             elif kind == "activity_failed" and step:
                 step.update(status="failed", finished=now, error=event.get("error"))
-            elif kind == "asked":
-                doc.setdefault("asked", {})[str(event["key"])] = int(event["turns"])
+            elif kind == "asked" and type(event.get("turns")) is int:
+                doc.setdefault("asked", {})[str(event.get("key"))[:40]] = event["turns"]
             elif kind == "note":
-                (step["notes"] if step else doc["notes"]).append({"at": now, "text": event.get("text", "")})
+                (step["notes"] if step else doc["notes"]).append({"at": now, "text": str(event.get("text", ""))[:2000]})
+            elif kind == "waiting":
+                asked = {"seq": seq, "key": need(NAME, event.get("key"), "the input key")}
+                doc.update(status="waiting", waiting={**asked, "title": str(event.get("title", ""))[:200], "accept": str(event.get("accept", ""))[:100]})
+                if step:
+                    step["status"] = "waiting"
+                # The process ends by itself now. Without it, the run uses no place.
+                self.processes.pop(run_id, None)
             elif kind == "completed":
                 return self.finish(doc, "completed", result=event.get("result"))
             elif kind == "failed":
                 return self.finish(doc, "failed", error=event.get("error"), trace=event.get("trace"))
             else:
-                raise Refused(400, "unknown event")
+                raise Refused(400, "the event is not valid")
             self.write(doc)
 
     def attach(self, session: str, name: str) -> None:
@@ -256,13 +281,28 @@ class Runs:
                 step["artifacts"].append(name)
                 self.write(doc)
 
+    def give(self, run_id: str, key: str, name: str, content: str) -> dict[str, Any]:
+        """Store the file that a waiting run asked for, and put the run in the queue again."""
+        with self.lock:
+            doc = self.doc(run_id)
+            if doc["status"] != "waiting" or doc["waiting"]["key"] != key:
+                raise Refused(409, "the run does not wait for this input")
+            aws.put(f"runs/{run_id}/inputs/{key}.json", json.dumps({"name": name, "content": content}).encode())
+            doc.update(status="queued", waiting=None)
+            for step in doc["activities"]:
+                if step["status"] == "waiting":  # the activity continues when a process takes the run
+                    step["status"] = "running"
+            self.write(doc)
+            self.fill()
+            return doc
+
     def cancel(self, run_id: str) -> dict[str, Any]:
         with self.lock:
             doc = self.doc(run_id)
             process = self.processes.pop(run_id, None)
             if process and process.poll() is None:
                 process.kill()
-            if doc["status"] in LIVE:
+            if doc["status"] in OPEN:
                 self.finish(doc, "cancelled")
             return doc
 
@@ -278,12 +318,18 @@ class Runs:
 
 
 class Api:
+    """The routes of the API. `environment` returns the variables of a process that works for a session."""
+
     def __init__(self, project: str, release: str, environment: Callable[[], dict[str, str]]) -> None:
         self.project, self.release, self.environment = project, release, environment
         self.started = time.time()
         self.runs = Runs(release, environment)
+        # The worker sets these after the gateway starts: cancel the turn of a session, and open a session with the SDK.
         self.cancel_turn: Callable[[str], None] = lambda session: None
-        self.routes: list[tuple[str, re.Pattern[str], Callable[..., Any]]] = [
+        self.session: Callable[[str], Session] | None = None
+        # The copy that S3 has of each attached file: (session, name) -> its turn and version.
+        self.copied: dict[tuple[str, str], dict[str, Any]] = {}
+        routes: list[tuple[str, str, Callable[..., Any]]] = [
             ("GET", r"status", self.status),
             ("GET", r"workflows", self.workflows),
             ("POST", r"workflows/check", self.check),
@@ -296,16 +342,17 @@ class Api:
             ("POST", r"runs/(\w+)/cancel", self.cancel),
             ("POST", r"runs/(\w+)/events", self.event),
             ("GET", r"runs/(\w+)/results/(\d+)", self.result),
+            ("GET", r"runs/(\w+)/inputs/(\w+)", self.given),
+            ("POST", r"runs/(\w+)/inputs/(\w+)", self.give),
             ("GET", r"artifacts", self.artifacts),
-            ("POST", r"artifacts", self.keep),
             ("GET", r"artifacts/([\w-]+)/(.+)", self.artifact),
             ("GET", r"tmp", self.temporary),
             ("GET", r"tmp/([\w-]+)/(.+)", self.temporary_file),
             ("POST", r"tmp", self.sync),
             ("POST", r"publish", self.publish),
         ]
-        self.routes = [(method, re.compile(pattern), function) for method, pattern, function in self.routes]
-        if not aws.keys("workflows/"):
+        self.routes = [(method, re.compile(pattern), function) for method, pattern, function in routes]
+        if not aws.keys("workflows/"):  # a new stack starts with the workflows of the image
             for path in sorted(glob.glob(f"{SAMPLES}/*.py")):
                 with open(path, "rb") as file:
                     aws.put(f"workflows/{os.path.basename(path)}", file.read())
@@ -395,7 +442,7 @@ class Api:
     def show(self, run_id: str, **_: Any) -> dict[str, Any]:
         doc = self.runs.copy(need(RUN, run_id, "the run id"))
         raw, _ = aws.get(f"runs/{run_id}/workflow.py")
-        files = self.files("artifacts", doc["session_id"]) if doc["session_id"] else []
+        files = self.documents(doc["session_id"]) if doc["session_id"] else []
         return {**doc, "source": (raw or b"").decode(), "artifacts": files}
 
     def cancel(self, run_id: str, **_: Any) -> dict[str, Any]:
@@ -412,27 +459,64 @@ class Api:
         raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/results/{int(seq)}.json")
         return json.loads(raw) if raw else None
 
+    def given(self, run_id: str, key: str, **_: Any) -> Any:
+        """Return the file that a person gave to a run, or null."""
+        raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/inputs/{need(NAME, key, 'the input key')}.json")
+        if raw is None:
+            return None
+        record = json.loads(raw)
+        return {**record, "size": len(record["content"].encode())}
+
+    def give(self, run_id: str, key: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        name, content = need(FILE, payload.get("name"), "the file name"), payload.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise Refused(400, "the file is empty or is not text")
+        if len(content.encode()) > INPUT_LIMIT:
+            raise Refused(413, "the file is too large")
+        return self.runs.give(need(RUN, run_id, "the run id"), need(NAME, key, "the input key"), name, content)
+
     # -- artifacts and temporary files -----------------------------------------
 
     def files(self, kind: str, session: str) -> list[dict[str, Any]]:
+        """List the files of a session below `artifacts/` or `tmp/`."""
         prefix = f"{kind}/{need(SESSION, session, 'the session id')}/"
-        return [
-            {"name": item["Key"][len(prefix) :], "size": item["Size"], "at": item["LastModified"].timestamp()}
-            for item in aws.keys(prefix)
-        ]
+        return [{"name": item["Key"][len(prefix) :], "size": item["Size"], "at": item["LastModified"].timestamp()} for item in aws.keys(prefix)]
+
+    def stored(self, session: str, name: str) -> dict[str, Any]:
+        """Return the turn and the version of the copy that S3 has of an attached file."""
+        known = (session, name)
+        if known not in self.copied:  # a new worker: the metadata of the object names its copy
+            found = aws.metadata(f"artifacts/{session}/{name}") or {}
+            self.copied[known] = {"turn": found.get("turn"), "version": int(found.get("version", 0))}
+        return self.copied[known]
+
+    def mirror(self, session: str) -> None:
+        """Copy each new file that a session attached to `artifacts/<session>/`.
+
+        Vis keeps the attached files of a session. S3 has a copy, so the pages read all
+        documents from one place.
+        """
+        if self.session is None:
+            return
+        try:
+            files = [file for file in self.session(session).attachments() if file.filename and FILE.fullmatch(file.filename)]
+            newest = {file.filename: file for file in sorted(files, key=lambda file: file.version)}
+            for name, file in newest.items():
+                if self.stored(session, name)["version"] < file.version and file.size <= ARTIFACT_LIMIT:
+                    about = {"turn": file.turn_id, "version": file.version}
+                    aws.put(f"artifacts/{session}/{name}", file.read(), ContentType="text/plain; charset=utf-8", Metadata={key: str(value) for key, value in about.items() if value is not None})
+                    self.copied[session, name] = about
+                    self.runs.attach(session, name)
+        except (GatewayError, TransportError) as failure:  # the gateway does not know the session, or it stops
+            log("no copy of the attached files", session, repr(failure))
+
+    def documents(self, session: str) -> list[dict[str, Any]]:
+        """List the artifacts of a session, each with the turn that attached it and its version."""
+        self.mirror(need(SESSION, session, "the session id"))
+        return [{**file, **self.stored(session, file["name"])} for file in self.files("artifacts", session)]
 
     def artifacts(self, query: dict[str, str], **_: Any) -> dict[str, Any]:
-        return {"artifacts": self.files("artifacts", query.get("session", ""))}
-
-    def keep(self, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
-        session = need(SESSION, payload.get("session"), "the session id")
-        name = need(FILE, payload.get("name"), "the artifact name")
-        content = str(payload.get("content", "")).encode()
-        if len(content) > 2_000_000:
-            raise Refused(413, "the artifact is too large")
-        aws.put(f"artifacts/{session}/{name}", content, ContentType="text/plain; charset=utf-8")
-        self.runs.attach(session, name)
-        return {"name": name, "session": session, "size": len(content)}
+        return {"artifacts": self.documents(query.get("session", ""))}
 
     def artifact(self, session: str, name: str, **_: Any) -> Answer:
         key = f"artifacts/{need(SESSION, session, 'the session id')}/{need(FILE, name, 'the artifact name')}"
@@ -468,6 +552,7 @@ class Api:
     # -- publishing ------------------------------------------------------------
 
     def git(self, root: str, *arguments: str, check: bool = True) -> str:
+        """Run Git in a project directory, with the environment of a session. Return its output."""
         done = subprocess.run(["git", *arguments], cwd=root, env=self.environment(), capture_output=True, text=True, timeout=120)
         if check and done.returncode:
             raise Refused(500, f"git {arguments[0]} failed: {done.stderr.strip()[-300:]}")
@@ -487,7 +572,8 @@ class Api:
         head = self.git(root, "rev-parse", "HEAD")
         if head == base:
             raise Refused(409, "there are no new commits to publish")
-        publication, bundle = uuid.uuid4().hex, private(f"{uuid.uuid4().hex}.bundle")
+        publication = uuid.uuid4().hex
+        bundle = private(f"{publication}.bundle")
         self.git(root, "branch", "--force", "publish", "HEAD")
         try:
             self.git(root, "bundle", "create", bundle, "publish", f"^{base}")
@@ -496,10 +582,9 @@ class Api:
         finally:
             if os.path.exists(bundle):
                 os.remove(bundle)
-        request = json.dumps({"action": "publish", "id": publication}).encode()
-        answer = aws.client("lambda").invoke(FunctionName=REPO_FUNCTION, Payload=request)
-        result = json.loads(answer["Payload"].read())
-        if answer.get("FunctionError"):
+        raw, failed = aws.invoke(REPO_FUNCTION, action="publish", id=publication)
+        result = json.loads(raw)
+        if failed:
             log("publish failed", result)
             raise Refused(502, "the repo function could not push the commits")
         if result.get("refused"):

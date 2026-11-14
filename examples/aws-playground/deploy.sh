@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy the Vis playground: the image, the secrets, the stack and the GitHub hooks.
-# The script is safe to run again. It keeps each secret that exists.
+# The script is safe to run again. It keeps each secret that exists: to change one,
+# write its parameter with `aws ssm put-parameter --overwrite`.
 #
 #   REPOSITORY=owner/vis-playground PLAYGROUND_LLM_URL=https://host/v1 PLAYGROUND_LLM_KEY=... ./deploy.sh
 set -euo pipefail
@@ -45,6 +46,10 @@ fi
 echo "2/6 image"
 aws ecr describe-repositories --repository-names "$STACK" >/dev/null 2>&1 ||
   aws ecr create-repository --repository-name "$STACK" --image-scanning-configuration scanOnPush=true >/dev/null
+# Each run pushes one image. ECR keeps the 5 newest images and removes the others.
+aws ecr put-lifecycle-policy --repository-name "$STACK" --lifecycle-policy-text '{"rules":[{"rulePriority":1,
+  "description":"Keep the 5 newest images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+  "action":{"type":"expire"}}]}' >/dev/null
 aws ecr get-login-password | "$ENGINE" login --username AWS --password-stdin "$registry" >/dev/null
 tag=$(date -u +%Y%m%d%H%M%S)
 "$ENGINE" build --platform linux/arm64 --tag "$registry/$STACK:$tag" .

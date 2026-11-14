@@ -9,6 +9,10 @@ When a worker stops in the middle of a run, the next worker starts the function 
 and each recorded activity returns its result at once. So write the function like a
 Temporal workflow: decide only from its input and from the results of activities.
 
+A document of a run is a native Vis attachment: the session calls `attach`, and the
+activity reads the files of that turn with `Session.attachments` of the SDK. A run can
+also wait for a file from a person with `ctx.receive`. A waiting run has no process.
+
     class Verdict(BaseModel):
         decision: Literal["build", "clarify"]
         reason: str
@@ -28,13 +32,12 @@ from __future__ import annotations
 
 import functools
 import time
-import traceback
 import typing
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, TypeVar
 
-from blockether.vis.engine import GatewayError, Session, Turn, final_answer
+from blockether.vis.engine import Attachment, GatewayError, Session, Turn, final_answer
 from pydantic import BaseModel
 
 from playground.client import Playground
@@ -43,24 +46,35 @@ Model = TypeVar("Model", bound=BaseModel)
 # The statuses of a turn that does not run any more.
 ENDED = ("completed", "failed", "cancelled", "suspended", "error")
 
-__all__ = ["ActivityError", "Artifact", "Context", "activity", "workflow"]
+__all__ = ["ActivityError", "Artifact", "Context", "Upload", "Waiting", "activity", "workflow"]
 
 
 class ActivityError(RuntimeError):
     """An activity did not get a usable answer from its session."""
 
 
+class Waiting(BaseException):
+    """The run waits for a person. It is not an `Exception`, so no activity catches it by accident."""
+
+
 @dataclass(frozen=True)
 class Artifact:
-    """A document of a run. It lives in S3 and shows in the transcript and in the run."""
+    """A document that the session of a run attached. S3 holds a copy for the pages."""
 
     name: str
     session: str
     size: int
+    version: int = 1
 
-    @property
-    def path(self) -> str:
-        return f"/play/api/artifacts/{self.session}/{self.name}"
+
+@dataclass(frozen=True)
+class Upload:
+    """A file that a person gave to a run. The record of the activity keeps only its name and size."""
+
+    key: str
+    name: str
+    size: int
+    text: str = field(repr=False)
 
 
 def workflow(title: str = "", description: str = "", model: str | None = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -92,16 +106,20 @@ def encode(value: Any) -> dict[str, Any]:
         return {"kind": "model", "type": type(value).__name__, "value": value.model_dump(mode="json")}
     if isinstance(value, Artifact):
         return {"kind": "artifact", "value": asdict(value)}
+    if isinstance(value, Upload):
+        return {"kind": "upload", "value": {"key": value.key, "name": value.name, "size": value.size}}
     if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
         return {"kind": "json", "value": value}
     return {"kind": "json", "value": str(value)}
 
 
-def decode(recorded: dict[str, Any], function: Callable[..., Any]) -> Any:
-    """Build the result of an activity again from its record."""
+def decode(recorded: dict[str, Any], function: Callable[..., Any], upload: Callable[[str], Upload | None]) -> Any:
+    """Build the result of an activity again from its record. `upload` reads a file that a person gave."""
     value = recorded["value"]
     if recorded["kind"] == "artifact":
         return Artifact(**value)
+    if recorded["kind"] == "upload":
+        return upload(value["key"])
     if recorded["kind"] == "model":
         returns = typing.get_type_hints(function).get("return")
         if isinstance(returns, type) and issubclass(returns, BaseModel):
@@ -114,26 +132,28 @@ class Context:
 
     def __init__(self, run: dict[str, Any], session: Session, api: Playground) -> None:
         self.run_id, self.input, self.session = run["id"], run["input"], session
+        # The number of the next activity, the activity that runs, and its requests until now.
         self._api, self._next, self._current, self._turns = api, 0, None, 0
         # For each request of an activity: the number of session turns before it.
         self._asked: dict[str, int] = dict(run.get("asked") or {})
 
     def _event(self, kind: str, **fields: Any) -> Any:
-        return self._api.call("POST", f"runs/{self.run_id}/events", {"type": kind, **fields})
+        return self._api.event(self.run_id, kind, **fields)
 
     def _step(self, function: Callable[..., Any], title: str, arguments: tuple[Any, ...], named: dict[str, Any]) -> Any:
+        """Run an activity and record its result, or return the result that an earlier process recorded."""
         if self._current is not None:  # an activity in an activity is a plain call
             return function(self, *arguments, **named)
         seq, self._next = self._next, self._next + 1
         recorded = self._api.call("GET", f"runs/{self.run_id}/results/{seq}")
         if recorded and recorded["name"] == function.__name__:
-            return decode(recorded["result"], function)
+            return decode(recorded["result"], function, self._upload)
         self._event("activity_started", seq=seq, name=function.__name__, title=title)
         self._current, self._turns = seq, 0
         try:
             result = function(self, *arguments, **named)
         except Exception as failure:
-            self._event("activity_failed", seq=seq, error=f"{type(failure).__name__}: {failure}", trace=traceback.format_exc()[-1500:])
+            self._event("activity_failed", seq=seq, error=f"{type(failure).__name__}: {failure}")
             raise
         finally:
             self._current = None
@@ -152,10 +172,14 @@ class Context:
                 return model.model_validate_json(final_answer(earlier or {}) or "")
             except ValueError:  # no earlier answer, or one that does not fit: the SDK asks
                 return self.session.run(request, response_model=model, timeout=timeout)
+        return final_answer(self._turn(request, timeout, earlier)) or ""
+
+    def _turn(self, request: str, timeout: float, earlier: dict[str, Any] | None) -> dict[str, Any]:
+        """Return the completed turn of a request. Send the request when no earlier process completed it."""
         turn = earlier if earlier and earlier.get("status") == "completed" else self.session.send(request).wait(timeout=timeout)
         if turn.get("status") != "completed":
             raise ActivityError(f"the turn ended with the status {turn.get('status')!r}")
-        return final_answer(turn) or ""
+        return turn
 
     def _earlier(self, timeout: float) -> dict[str, Any] | None:
         """Return the end of the turn that an earlier process of this run started for this request.
@@ -172,7 +196,9 @@ class Context:
             self._event("asked", key=key, turns=len(turns))
             return None
         end = time.monotonic() + timeout
-        while sent := turns[self._asked[key] :]:
+        # The turns of this request end where the next request of the activity starts.
+        after = self._asked.get(f"{self._current}:{self._turns + 1}")
+        while sent := turns[self._asked[key] : after]:
             if sent[-1]["status"] in ENDED:
                 return sent[-1]
             try:
@@ -184,28 +210,43 @@ class Context:
             turns = self.session.turns()
         return None
 
-    def artifact(self, name: str, content: str) -> Artifact:
-        """Save a document of the run in S3."""
-        body = {"session": self.session.id, "name": name, "content": content, "source": "workflow"}
-        return Artifact(**self._api.call("POST", "artifacts", body))
-
     def document(self, name: str, request: str, *, timeout: float = 900) -> Artifact:
-        """Let the session write a document and save it as an artifact.
+        """Let the session write a document and attach it.
 
-        The session saves the document with the `playground.save_artifact` tool, so the
-        transcript shows it as a Vis activity. When the session only answers with the
-        text, the playground saves that answer.
+        The session attaches the file with the native `attach` verb of Vis, so the
+        transcript shows it. The SDK gives the files of exactly that turn. A document
+        with a name that the session used before becomes the next version of that file.
         """
-        answer = self.ask(
-            f"{request}\n\nWrite the complete document as Markdown. Save it with one Python block that calls "
-            f"`playground.save_artifact({name!r}, content)`. Then answer with a summary of at most three sentences.",
-            timeout=timeout,
-        )
-        saved = self._api.call("GET", f"artifacts?session={self.session.id}")["artifacts"]
-        found = next((item for item in saved if item["name"] == name), None)
-        if found:
-            return Artifact(name, self.session.id, found["size"])
-        return self.artifact(name, answer)
+        how = f"Write the complete document as Markdown. Attach it with one Python block that calls `attach(content.encode(), {name!r})`. Then answer with a summary of at most three sentences."
+        found = self._attached(name, f"{request}\n\n{how}", timeout) or self._attached(name, f"That turn attached no file {name!r}. {how}", timeout)
+        if found is None:
+            raise ActivityError(f"the session attached no file {name!r}")
+        # This read makes the API copy the file to S3 and show it in the activity.
+        self._api.call("GET", f"artifacts?session={self.session.id}")
+        return Artifact(name, self.session.id, found.size, found.version)
+
+    def _attached(self, name: str, request: str, timeout: float) -> Attachment | None:
+        """Send a request and return the newest file with a name that its turn attached."""
+        turn = self._turn(request, timeout, self._earlier(timeout))
+        files = [file for file in self.session.attachments(turn["turn_id"]) if file.filename == name]
+        return max(files, key=lambda file: file.version, default=None)
+
+    def receive(self, key: str, title: str, *, accept: str = "") -> Upload:
+        """Wait for a file from a person. `accept` names the file types for the page, such as `.md,.txt`.
+
+        The run process ends while the run waits, so a waiting run holds no worker.
+        When the person gives the file, the playground starts the run again and this
+        call returns the file.
+        """
+        found = self._upload(key)
+        if found is None:
+            self._event("waiting", seq=self._current, key=key, title=title, accept=accept)
+            raise Waiting(key)
+        return found
+
+    def _upload(self, key: str) -> Upload | None:
+        given = self._api.call("GET", f"runs/{self.run_id}/inputs/{key}")
+        return Upload(key, given["name"], given["size"], given["content"]) if given else None
 
     def note(self, text: str) -> None:
         """Add a line to the log of the run."""

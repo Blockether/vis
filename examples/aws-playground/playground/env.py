@@ -29,11 +29,15 @@ MODELS = json.loads(ENV.get("VIS_MODELS") or "null") or [
 # A worker stops MARGIN seconds before the Lambda time limit and starts its successor.
 MARGIN = int(ENV.get("VIS_HANDOFF_MARGIN_S", "90"))
 LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - MARGIN
+# A worker without work stops after IDLE_S.
 IDLE_S = int(ENV.get("VIS_IDLE_S", "300"))
 # A relayed event stream ends after STREAM_S; the client connects again from its cursor.
 STREAM_S = int(ENV.get("VIS_STREAM_S", "870"))
+# A worker starts, or stays alive, when an automation is due in DUE_S.
+DUE_S = 120
 # The front waits ANSWER_S for the first part of an answer.
 ANSWER_S = 55
+# A worker that stops without a release loses the lease after LEASE_TTL.
 LEASE, LEASE_TTL = "lease.json", 90
 
 
@@ -41,6 +45,12 @@ def private(name: str) -> str:
     """Return the path of a worker file, in a directory that only the worker user reads."""
     os.makedirs(WORKER_DIR, mode=0o700, exist_ok=True)
     return os.path.join(WORKER_DIR, name)
+
+
+def write_secret(path: str, text: str) -> None:
+    """Write a file that only the user of this function can read."""
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as file:
+        file.write(text)
 
 
 def log(*parts: object) -> None:

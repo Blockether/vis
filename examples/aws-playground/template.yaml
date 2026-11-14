@@ -41,6 +41,8 @@ Resources:
       LifecycleConfiguration:
         Rules:
           - {Id: versions, Status: Enabled, NoncurrentVersionExpiration: {NoncurrentDays: 7}, ExpiredObjectDeleteMarker: true}
+          # There is no rule for `state/`. A rule can remove the only checkpoint of a
+          # stack that nobody used for some days. See "S3 is the database" in the README.
           # The work files of a session are temporary.
           - {Id: tmp, Status: Enabled, Prefix: tmp/, ExpirationInDays: 7}
           - {Id: relay, Status: Enabled, Prefix: relay/, ExpirationInDays: 1}
@@ -332,7 +334,6 @@ Resources:
           VIS_QUEUE_URL: !Ref Queue
           VIS_WORKER_FUNCTION: !Sub "${AWS::StackName}-worker"
           VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
-          VIS_REPO: !Ref Repository
           VIS_TOKEN_PARAMETER: !Sub "/${AWS::StackName}/password"
           VIS_WEBHOOK_PARAMETER: !Sub "/${AWS::StackName}/webhook-secret"
 
@@ -359,7 +360,7 @@ Resources:
       Principal: "*"
       InvokedViaFunctionUrl: true
 
-  # A schedule starts a worker when work waits and no worker lives.
+  # A schedule starts a worker when work waits and no worker is active.
   Tick:
     Type: AWS::Events::Rule
     Properties:
@@ -394,8 +395,8 @@ Resources:
             Statement:
               - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${WorkerLog.Arn}:*"}
               # The code of a session can read the credentials of this role. Each data
-              # permission works only from the network of the stack, so the credentials
-              # have no use in another place.
+              # permission works only from the network of the stack. In another place,
+              # the credentials permit only a write to the log group above.
               - Effect: Allow
                 Action: [s3:GetObject, s3:PutObject]
                 Resource:
@@ -469,6 +470,7 @@ Resources:
       Architectures: [arm64]
       Role: !GetAtt WorkerRole.Arn
       MemorySize: 3008
+      # `VIS_LIFETIME_S` of `playground/env.py` has the same value. Change the two together.
       Timeout: 900
       EphemeralStorage: {Size: 4096}
       # One worker holds the lease. The others are a handoff or a start that ends at once.
@@ -681,6 +683,8 @@ Outputs:
     Description: The address of the playground.
     Value: !GetAtt FrontUrl.FunctionUrl
   Bucket:
+    Description: The bucket. It stays when you delete the stack.
     Value: !Ref Bucket
   FileSystem:
+    Description: The EFS file system of the releases and the project directories.
     Value: !Ref FileSystem

@@ -6,7 +6,7 @@ model, then applies the payment policy and selects the next step:
 
     pay       a second structured answer gives the payment order
     escalate  a second structured answer names the approver and the question
-    reject    the session writes the reply to the vendor as an artifact in S3
+    reject    the session attaches the reply to the vendor, and the script lists the files of that turn
 
 Usage:
     PLAYGROUND_URL=https://<id>.lambda-url.<region>.on.aws PLAYGROUND_PASSWORD=... python decide.py
@@ -18,7 +18,6 @@ import json
 import os
 import sys
 import urllib.request
-from collections.abc import Callable
 from datetime import date
 from typing import Any, Literal
 
@@ -48,11 +47,15 @@ class Review(BaseModel):
 
 
 class Payment(BaseModel):
+    """The order that the session gives for an invoice that the policy pays."""
+
     pay_on: date
     reference: str = Field(description="The text of the bank transfer, at most 60 characters", max_length=60)
 
 
 class Escalation(BaseModel):
+    """Who must approve an invoice that the policy does not pay, and what to ask."""
+
     approver: Literal["team_lead", "finance_director", "cfo"]
     question: str = Field(description="The one question that the approver must answer")
 
@@ -66,23 +69,23 @@ def decide(review: Review) -> Literal["pay", "escalate", "reject"]:
     return "pay"
 
 
-def handle(session: Session, invoice: str, play: Callable[[str], Any]) -> dict[str, object]:
+def handle(session: Session, invoice: str) -> dict[str, object]:
     """Review one invoice in its session and do the step that the policy selects."""
     review = session.run(f"You are an accounts payable clerk. Read this invoice. Do not write code.\n\n{invoice}", response_model=Review, timeout=600)
     decision = decide(review)
-    if decision == "pay":
-        step = session.run("Give the payment order for this invoice. Pay on the due date.", response_model=Payment, timeout=600)
-    elif decision == "escalate":
-        step = session.run("This invoice needs an approval. Name the approver and the one question to ask.", response_model=Escalation, timeout=600)
-    else:
+    outcome = {"review": review.model_dump(), "decision": decision}
+    if decision == "reject":
         session.run(
-            "Write the reply to the vendor that asks for a corrected invoice. Save it with one Python block that calls "
-            "`playground.save_artifact('VENDOR_REPLY.md', content)`. Then answer with one sentence.",
+            "Write the reply to the vendor that asks for a corrected invoice. Attach it with one Python block that calls `attach(content.encode(), 'VENDOR_REPLY.md')`. Then answer with one sentence.",
             timeout=600,
         )
-        saved = play(f"artifacts?session={session.id}")["artifacts"]
-        return {"review": review.model_dump(), "decision": decision, "artifacts": [item["name"] for item in saved]}
-    return {"review": review.model_dump(), "decision": decision, "step": step.model_dump(mode="json")}
+        # The SDK gives the files that the last turn attached.
+        return {**outcome, "artifacts": [file.filename for file in session.attachments(-1)]}
+    if decision == "pay":
+        step = session.run("Give the payment order for this invoice. Pay on the due date.", response_model=Payment, timeout=600)
+    else:
+        step = session.run("This invoice needs an approval. Name the approver and the one question to ask.", response_model=Escalation, timeout=600)
+    return {**outcome, "step": step.model_dump(mode="json")}
 
 
 def main() -> int:
@@ -101,7 +104,7 @@ def main() -> int:
             session = client.create_session(**options)
             session.update(title=f"Invoice approval {number}")
             try:
-                outcome = handle(session, invoice, play)
+                outcome = handle(session, invoice)
             except StructuredOutputError as failure:
                 outcome = {"decision": "escalate", "error": f"the session gave no valid answer: {failure}"}
             print(json.dumps({"session": session.id, **outcome}, indent=2, default=str))

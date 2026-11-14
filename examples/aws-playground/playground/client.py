@@ -18,6 +18,8 @@ class PlaygroundError(RuntimeError):
 
 
 class Playground:
+    """The playground API at the address of the broker."""
+
     def __init__(self, base: str | None = None) -> None:
         self.base = (base or os.environ["PLAYGROUND_BROKER"]).rstrip("/") + "/play/api/"
 
@@ -34,3 +36,7 @@ class Playground:
             except (ValueError, KeyError, TypeError):
                 message = f"HTTP {failure.code}"
             raise PlaygroundError(message) from None
+
+    def event(self, run_id: str, kind: str, **fields: Any) -> Any:
+        """Report what a run process did. The API records it in the run."""
+        return self.call("POST", f"runs/{run_id}/events", {"type": kind, **fields})

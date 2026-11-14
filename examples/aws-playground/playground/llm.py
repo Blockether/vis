@@ -20,11 +20,15 @@ from playground import aws, wire
 from playground.env import ENV, MODELS, log
 from playground.runtime import Context, Stream
 
+# The calls that a chat model needs.
 ALLOWED = {("GET", "/models"), ("POST", "/chat/completions")}
+# The headers of a call that go to the provider.
 PASSED = ("content-type", "accept")
 # The form of a header value that goes to the provider.
 HEADER = re.compile(r"[\w/+.;=,* -]{1,100}", re.ASCII)
+# The largest request, in bytes.
 LIMIT = 5_000_000
+# The URL and the key of the provider, after the first call.
 _state: dict[str, Any] = {}
 
 
@@ -44,8 +48,7 @@ def provider() -> tuple[urllib.parse.SplitResult, str]:
 
 def problem(status: int, message: str) -> bytes:
     """Return a complete answer that reports a problem."""
-    head = {"status": status, "headers": [["content-type", "application/json"]]}
-    return wire.frame(head, json.dumps({"error": {"message": message}}).encode())
+    return wire.frame({"status": status, "headers": wire.JSON}, json.dumps({"error": {"message": message}}).encode())
 
 
 def checked(method: str, path: str, body: bytes) -> tuple[str | None, bytes]:
@@ -109,6 +112,7 @@ def answer(method: str, path: str, headers: dict[str, str], body: bytes) -> Iter
 
 
 def handler(event: dict[str, Any], context: Context) -> Stream:
+    """Answer one provider call of the broker. The event has the method, the path, two headers and a gzip body."""
     method, path = str(event.get("method", "")).upper(), str(event.get("path", ""))
     try:
         # Stop at the limit: a small gzip body can hold much more data than the function has memory.
