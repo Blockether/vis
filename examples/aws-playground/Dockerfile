@@ -9,9 +9,9 @@
 # To move to another Vis version, change VIS_RELEASE, its two checksums and
 # requirements/site.* together.
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:5c6ed3b38335b2aa424a045f1e564c8c508409ead0ff3f8bf5e62c31b94082cb
-ARG VIS_RELEASE=v0.5.18
-ARG VIS_AGENT_SHA256=3f88c0676e983c607bbb923754806a7ae83f5f4cdc62047cbeda30dc175d047c
-ARG VIS_WEB_SHA256=a6c60f8a5c0f56e3964ec48fcfddb3185593597831a772c10b848d96d32b0a9c
+ARG VIS_RELEASE=beta-ef46da579de875fb3e14321613a2af18a2b08aeb
+ARG VIS_AGENT_SHA256=6ed09c8baf3a75c4a81f8325b52ed40e895d5fc3f33d493ee51e7ababff57354
+ARG VIS_WEB_SHA256=b93469183052859846219bce6d7f5357c583138cd1d86137a8c5dcfb94bb3de1
 ARG CLOJURE_VERSION=1.12.5.1654
 ARG CLOJURE_SHA256=28f81b0833c0a072f4370ae0eb1e4c5a4f9f4a34035cd7607ea9f253a8b06da1
 # git serves the repository functions and fetches the extensions. clang builds native
