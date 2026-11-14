@@ -26,7 +26,12 @@ const row = (index: number) => ({
 const rows = (from: number, to: number) => Array.from({ length: to - from }, (_, at) => row(from + at));
 
 /** A session of `total` turns that holds the newest `held` of them. */
-function sessionHolding(held: number, total: number, transcriptEarlier: () => Promise<unknown>) {
+function sessionHolding(
+  held: number,
+  total: number,
+  transcriptEarlier: () => Promise<unknown>,
+  warmTurnTraces: () => Promise<void> | null = () => null,
+) {
   let offset = total - held;
   return renderSessionScreen({
     client: {
@@ -37,6 +42,7 @@ function sessionHolding(held: number, total: number, transcriptEarlier: () => Pr
           offset = 0;
           return older;
         }),
+      warmTurnTraces,
     },
   });
 }
@@ -83,7 +89,61 @@ describe('scrolling up to the oldest turn', () => {
       scrollNearOldest();
       expect(transcriptEarlier).toHaveBeenCalledOnce();
     });
-    expect(await screen.findByText('Turn 23')).toBeInTheDocument();
+    // The page joins the held turns. The mark, still near, then reveals them.
+    await waitFor(() => {
+      scrollNearOldest();
+      expect(screen.getByText('Turn 23')).toBeInTheDocument();
+    });
+  });
+
+  // User report: the transcript jumped some turns back in the first flick of a session.
+  // The session opened with fewer turns than its window takes, and the page that landed
+  // in the flick mounted into the spare room, above the reader.
+  it('holds a page that lands while the window has spare room', async () => {
+    const transcriptEarlier = vi.fn(() => Promise.resolve(rows(0, 30)));
+    sessionHolding(3, 30, transcriptEarlier);
+    await screen.findByText('Turn 27');
+
+    await waitFor(() => {
+      scrollNearOldest();
+      expect(transcriptEarlier).toHaveBeenCalledOnce();
+    });
+    await act(async () => {
+      await transcriptEarlier.mock.results[0].value;
+    });
+    // Each turn of the page is still held above the three turns on screen.
+    expect(screen.getByLabelText('27 earlier turns')).toBeInTheDocument();
+
+    await waitFor(() => {
+      scrollNearOldest();
+      expect(screen.getByText('Turn 26')).toBeInTheDocument();
+    });
+  });
+
+  // User report: a session full of images jumped under a reader who scrolled up. Its turns
+  // mounted with their newest steps only, and the earlier steps made them taller later.
+  it('mounts earlier turns after their earlier steps are read', async () => {
+    let finishRead!: () => void;
+    const read = new Promise<void>((resolve) => {
+      finishRead = resolve;
+    });
+    sessionHolding(12, 12, () => Promise.resolve(null), () => read);
+    // The mark arms when the opening window is mounted to its oldest turn.
+    await waitFor(() =>
+      expect(
+        [...watchers].some((watcher) =>
+          [...watcher.targets].some((target) => target.hasAttribute('data-earlier-turns')),
+        ),
+      ).toBe(true),
+    );
+
+    await act(async () => scrollNearOldest());
+    // The window did not widen: the rule above the oldest turn still counts the held turns.
+    expect(screen.getByLabelText('4 earlier turns')).toBeInTheDocument();
+    expect(screen.queryByText('Turn 3')).not.toBeInTheDocument();
+
+    await act(async () => finishRead());
+    expect(await screen.findByText('Turn 3')).toBeInTheDocument();
   });
 
   it('reads the next page while held turns are still above the reader', async () => {

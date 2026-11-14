@@ -71,6 +71,7 @@ export function renderSessionScreen({
     voiceModel: () => Promise.resolve(null),
     queuedTurns: () => Promise.resolve({ turns: [], paused: null }),
     turnTrace: () => Promise.resolve(null),
+    warmTurnTraces: () => null,
     submitTurn: () => Promise.resolve(null),
     cancelTurn: () => Promise.resolve(null),
     cancelCurrentTurn: () => Promise.resolve(null),

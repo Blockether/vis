@@ -161,7 +161,12 @@ import {
 } from '../lib/share-intake';
 import { attachmentsFromSharedFiles } from '../lib/share-files';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
-import { readerMayBeScrolling, readerOwnsScroll, releaseReaderScroll } from '../lib/reader-gesture';
+import {
+  readerMayBeScrolling,
+  readerOwnsScroll,
+  releaseReaderScroll,
+  untilScrollRests,
+} from '../lib/reader-gesture';
 import { glideTo } from '../lib/scroll-glide';
 import {
   arrivedAtEnd,
@@ -288,9 +293,13 @@ const HYDRATE_TURNS_PER_FRAME = 2;
 // instead, and cap the wait so a device dropping frames still gets its
 // transcript well before the last-resort watchdog below.
 const OPENING_RAMP_MAX_MS = 800;
-// How far above the screen the oldest bubble starts the next earlier load: two
-// screens, so the turns are mounted before a reader scrolling up reaches them.
-const LOAD_EARLIER_MARGIN = '200%';
+// How far above the screen the oldest bubble starts the next earlier load. The turns
+// mount only when the transcript rests, so the margin is the distance of one flick:
+// a reader who stops in it finds the turns mounted before the next flick ends.
+const LOAD_EARLIER_MARGIN = '600%';
+// How long a reveal of earlier turns waits for their earlier steps. After this time
+// the turns mount with their newest steps only, and read the rest themselves.
+const EARLIER_STEPS_WAIT_MS = 1200;
 // Last-resort reveal for the loading veil. The veil is dropped by whoever
 // finishes first — the transcript read, or the scroll effect one animation
 // frame after the first paint — and BOTH can be lost on mobile: a webview that
@@ -333,6 +342,17 @@ function isSettledRow(turn: TranscriptTurn): boolean {
 
 function rowId(turn: TranscriptTurn): string {
   return turn.turn_id;
+}
+
+/** Ends when `work` ends or after `ms`, whichever comes first. `work` must not reject. */
+function settledWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(resolve, ms);
+    void work.then(() => {
+      window.clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 /** The settled durable row for this exact canonical turn id. */
@@ -5274,42 +5294,62 @@ export function SessionScreen({
     anchorPrepend();
   };
 
+  // The turns that the next reveal mounts. A long turn holds only its newest steps.
+  // Steps that land after the turn mounted make it taller than the transcript
+  // measured it, and the view jumps under a reader who scrolls. So their steps are
+  // read ahead, and the reveal waits for a read that is not complete.
+  const nextEarlierTurns = useMemo(
+    () => paintableTurns.slice(Math.max(0, visibleStart - INITIAL_VISIBLE_TURNS), visibleStart),
+    [paintableTurns, visibleStart],
+  );
+  useEffect(() => {
+    if (!loading) void client.warmTurnTraces(sid, nextEarlierTurns);
+  }, [client, sid, loading, nextEarlierTurns]);
+  // The session whose reveal waits for those steps.
+  const revealingEarlierRef = useRef('');
+
   // "Earlier" has two sources: rows already fetched but hidden by the render
-  // window, and history still on the gateway. Reveal local rows first — that is
-  // free — and read the next gateway page while some of them are still left, so
-  // a reader scrolling up does not wait at the top for the network.
+  // window, and history still on the gateway. Reveal local rows first, and read
+  // the next gateway page while some of them are still left, so a reader
+  // scrolling up does not wait at the top for the network.
   const loadEarlierTurns = () => {
-    if (visibleStart > 0) {
-      prependEarlier();
-      setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
-      if (visibleStart <= 2 * INITIAL_VISIBLE_TURNS) readEarlierPage(false);
+    if (visibleStart <= 0) {
+      // The window can be wider than the turns in hand: a session can open with fewer
+      // turns than the window takes. Close it to them, or the page would mount into
+      // the spare room at once, above a reader who is in motion.
+      setVisibleTurnCount((count) => Math.min(count, windowedTurns));
+      readEarlierPage();
       return;
     }
-    readEarlierPage(true);
+    if (revealingEarlierRef.current === sid) return;
+    if (visibleStart <= 2 * INITIAL_VISIBLE_TURNS) readEarlierPage();
+    const asked = sid;
+    revealingEarlierRef.current = asked;
+    const steps = client.warmTurnTraces(sid, nextEarlierTurns, true);
+    // The turns land above the reader, so they wait until the transcript stops moving.
+    // Measured on an iOS simulator: turns that mounted in a flick showed the transcript
+    // some hundred pixels away from its line for one frame, at each step of the ramp.
+    void (steps ? settledWithin(steps, EARLIER_STEPS_WAIT_MS) : Promise.resolve())
+      .then(() => untilScrollRests())
+      .then(() => {
+        if (revealingEarlierRef.current === asked) revealingEarlierRef.current = '';
+        if (earlierSidRef.current !== asked) return;
+        prependEarlier();
+        setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
+      });
   };
-  // `reveal` widens the window by the page for a reader already at the top. A
-  // page read ahead only joins the held rows: the window counts from the newest
-  // turn, so nothing on screen moves until the reader scrolls to it.
-  const readEarlierPage = (reveal: boolean) => {
+  // A page only joins the held rows: the window counts from the newest turn, so
+  // nothing on screen moves. The mark then reveals them as it reveals each held row.
+  const readEarlierPage = () => {
     if (loadingEarlier || earlierFailed || earlierRemaining <= 0) return;
     setLoadingEarlier(true);
-    const held = turns.length;
     const asked = sid;
     void client
       .transcriptEarlier(sid, undefined, undefined, true)
       .then((older) => {
         if (earlierSidRef.current !== asked) return;
         // No page means the window already starts at the first turn.
-        if (!older) {
-          setEarlierRemaining(client.transcriptWindow(sid).offset);
-          return;
-        }
-        if (reveal) {
-          prependEarlier();
-          // Keep every bubble that was on screen, plus the page that just landed.
-          setVisibleTurnCount((count) => count + Math.max(0, older.length - held));
-        }
-        setTurns(older);
+        if (older) setTurns(older);
         setEarlierRemaining(client.transcriptWindow(sid).offset);
       })
       .catch((cause: unknown) => {

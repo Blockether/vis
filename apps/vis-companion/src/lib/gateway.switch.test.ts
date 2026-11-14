@@ -105,13 +105,32 @@ describe('bounded reads during session switches', () => {
     expect(fetched).toHaveBeenCalledTimes(2);
   });
 
+  // Regression, user report: a session full of images jumped under a reader who scrolled up.
+  // Its turns mounted short, and their earlier steps made them taller a moment later.
+  it('reads the earlier steps of a page of turns before they mount', async () => {
+    const steps = [{ position: 1 }, { position: 2 }];
+    const fetched = vi.fn(async () => new Response(JSON.stringify({ iterations: steps })));
+    vi.stubGlobal('fetch', fetched);
+    const { GatewayClient, TRANSCRIPT_PAGE } = await import('./gateway');
+    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const page = Array.from({ length: TRANSCRIPT_PAGE }, (_, index) => ({
+      turn_id: `t${index}`, status: 'completed', iterations: [{ position: 2 }], iterations_offset: 1,
+    }));
+    await client.warmTurnTraces('s1', [...page, { turn_id: 'short', status: 'completed', iterations: [] }]);
+    expect(fetched).toHaveBeenCalledTimes(TRANSCRIPT_PAGE);
+    for (const turn of page) expect(client.cachedTurnTrace('s1', turn)).toEqual(steps);
+    // Nothing is left to read, so the caller does not wait.
+    expect(client.warmTurnTraces('s1', page)).toBeNull();
+    expect(fetched).toHaveBeenCalledTimes(TRANSCRIPT_PAGE);
+  });
+
   it('keeps only the newest turn traces', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ iterations: [{ position: 2 }] }))));
-    const { GatewayClient, SESSION_CACHE_LIMIT } = await import('./gateway');
+    const { GatewayClient, TURN_TRACE_CACHE_LIMIT } = await import('./gateway');
     const client = new GatewayClient({ url: 'http://gateway.example.com' });
     const turn = (turn_id: string) => ({ turn_id, iterations: [], iterations_offset: 1 });
-    for (let index = 0; index <= SESSION_CACHE_LIMIT; index += 1) await client.turnTrace('s1', `t${index}`);
+    for (let index = 0; index <= TURN_TRACE_CACHE_LIMIT; index += 1) await client.turnTrace('s1', `t${index}`);
     expect(client.cachedTurnTrace('s1', turn('t0'))).toBeNull();
-    expect(client.cachedTurnTrace('s1', turn(`t${SESSION_CACHE_LIMIT}`))).toHaveLength(1);
+    expect(client.cachedTurnTrace('s1', turn(`t${TURN_TRACE_CACHE_LIMIT}`))).toHaveLength(1);
   });
 });

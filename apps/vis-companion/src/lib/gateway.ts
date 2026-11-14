@@ -784,6 +784,12 @@ export const TRANSCRIPT_PAGE = 24;
 /** The newest turns whose earlier steps the opening reads with the transcript. */
 const OPENING_TRACE_TURNS = 2;
 
+/**
+ * Complete turn traces kept in memory. A page of history mounts from this cache, and
+ * the page before it is read ahead, so the bound is two pages.
+ */
+export const TURN_TRACE_CACHE_LIMIT = 2 * TRANSCRIPT_PAGE;
+
 /** One windowed transcript response. */
 export interface TranscriptPage {
   turns: TranscriptTurn[];
@@ -5209,32 +5215,42 @@ export class GatewayClient {
     if (warming && (await warming)) {
       const rows = this.cachedTranscript(sid);
       if (rows) {
-        this.warmTurnTraces(sid, rows);
+        void this.warmTurnTraces(sid, rows.slice(-OPENING_TRACE_TURNS), true);
         return rows;
       }
     }
     const rows = await this.transcript(sid, signal, TRANSCRIPT_PAGE, true);
-    this.warmTurnTraces(sid, rows);
+    // The session opens at its end, so its newest turns are in view. Their `TurnTrace`
+    // read started only after they mounted, and the loading sheet waited for it.
+    void this.warmTurnTraces(sid, rows.slice(-OPENING_TRACE_TURNS), true);
     return rows;
   }
 
   /**
-   * Start reading the earlier steps of the newest long turns with the opening page.
-   * The session opens at its end, so these turns are in view. Their `TurnTrace` read
-   * started only after they mounted, and the loading sheet waited for it.
+   * Start reading the earlier steps of the long turns in `rows`, before these turns
+   * mount. A turn that mounts with its newest steps only becomes taller when the rest
+   * lands. The transcript measured it before that, so the view jumps under a reader
+   * who scrolls. The result ends when each read ends, and it never rejects. It is null
+   * when no row needs a read.
    */
-  private warmTurnTraces(sid: string, rows: readonly TranscriptTurn[]): void {
-    for (const turn of rows.slice(-OPENING_TRACE_TURNS)) {
+  warmTurnTraces(sid: string, rows: readonly TranscriptTurn[], urgent = false): Promise<void> | null {
+    const reads: Promise<unknown>[] = [];
+    for (const turn of rows) {
       if (!(turn.iterations_offset ?? 0) || turn.status === 'running') continue;
       const key = `${sid}\u0000${turn.turn_id}`;
-      if (this.turnTraceWarms.has(key) || this.cachedTurnTrace(sid, turn)) continue;
-      const read = this.readTurnTrace(sid, turn.turn_id, undefined, true).finally(() => {
-        if (this.turnTraceWarms.get(key) === read) this.turnTraceWarms.delete(key);
-      });
-      this.turnTraceWarms.set(key, read);
+      let read = this.turnTraceWarms.get(key);
+      if (!read) {
+        if (this.cachedTurnTrace(sid, turn)) continue;
+        const started = this.readTurnTrace(sid, turn.turn_id, undefined, urgent).finally(() => {
+          if (this.turnTraceWarms.get(key) === started) this.turnTraceWarms.delete(key);
+        });
+        this.turnTraceWarms.set(key, started);
+        read = started;
+      }
       // A failed warm costs nothing: the turn reads its steps again when it mounts.
-      read.catch(() => undefined);
+      reads.push(read.catch(() => undefined));
     }
+    return reads.length ? Promise.all(reads).then(() => undefined) : null;
   }
 
   /**
@@ -5941,7 +5957,7 @@ export class GatewayClient {
    * The rows also go to `cachedTurnTrace` for the next visit.
    */
   turnTrace(sid: string, tid: string, signal?: AbortSignal): Promise<TranscriptIteration[]> {
-    // Join the read that the opening started. It has no signal, so no caller aborts it.
+    // Join the read that a warm started. It has no signal, so no caller aborts it.
     const warming = this.turnTraceWarms.get(`${sid}\u0000${tid}`);
     if (warming) return warming.catch(() => this.readTurnTrace(sid, tid, signal));
     return this.readTurnTrace(sid, tid, signal);
@@ -5965,7 +5981,7 @@ export class GatewayClient {
     const key = `${sid}\u0000${tid}`;
     this.turnTraces.delete(key);
     this.turnTraces.set(key, rows);
-    while (this.turnTraces.size > SESSION_CACHE_LIMIT) {
+    while (this.turnTraces.size > TURN_TRACE_CACHE_LIMIT) {
       const oldest = this.turnTraces.keys().next();
       if (oldest.done) break;
       this.turnTraces.delete(oldest.value);
