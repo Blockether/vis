@@ -4,7 +4,7 @@ Review what a session changed: a write journal of every block, diffs, checks, an
 
 One package `vis_review` holds all the logic. Two thin doors use it:
 
-- `extension.py`: the Vis extension. It records the journal from op hooks and opens the app with `/review`.
+- `extension.py`: the Vis extension. It records the journal from op hooks and opens the app at the first step of a session.
 - `python -m vis_review`: an SDK program. It records the journal by polling and opens the same app through the gateway.
 
 ## Write journal
@@ -27,7 +27,7 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 
 ## The app
 
-`/review` (key `R`) opens the app of the session. The app shows:
+The first Python block or patch of a session opens the app of that session, so the session apps always list it. `/review` (key `R`) opens it again after you closed it. The app shows:
 
 - The checkpoints. Pick one to see its changes, or pick **All changes**.
 - The changed files with their added and removed line counts. Pick one to see only its diff.

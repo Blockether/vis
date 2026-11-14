@@ -2,8 +2,9 @@
 
 Before each Python block, the journal records the changes made since the last
 block, by a person or another program. After each block and each patch, it
-records what that step changed. `/review` opens the app of this session: the
-checkpoints, the changed files and their diff, the checks, an AI review and undo.
+records what that step changed. The first step of a session opens the app of that
+session: the checkpoints, the changed files and their diff, the checks, an AI
+review and undo. `/review` opens the app again after a person closed it.
 The logic lives in `vis_review`; the SDK program `python -m vis_review` uses it too.
 """
 
@@ -33,6 +34,10 @@ def _record(kind, label_of):
         return
     root = vis.workspace_root()
     RECORDER.record(session_id, root, kind, label_of(str(root)))
+    # The first step opens the app, so a person sees it without `/review`.
+    journal = RECORDER.journal(session_id, root)
+    if RECORDER.app(session_id, journal.root) is None:
+        _app(session_id, journal).open()
 
 
 def before_block(call):
@@ -63,13 +68,8 @@ def _ask(request, model):
     return vis.run(request, response_model=model)
 
 
-def run_review(ctx):
-    """Open the review app of this session."""
-    session_id = str(ctx.get("session_id") or "")
-    if not session_id:
-        return vis.err("Open /review in a session", "The journal records one session.")
-    root = str(vis.workspace_root())
-    journal = RECORDER.journal(session_id, root)
+def _app(session_id, journal):
+    """The review app of a session and a journal, made once and not yet open."""
     app = RECORDER.app(session_id, journal.root)
     if app is None:
         session = vis.sessions.get(session_id)
@@ -83,6 +83,17 @@ def run_review(ctx):
             key="review-" + hashlib.sha256(journal.root.encode()).hexdigest()[:8],
         )
         RECORDER.keep(session_id, app)
+    return app
+
+
+def run_review(ctx):
+    """Open the review app of this session."""
+    session_id = str(ctx.get("session_id") or "")
+    if not session_id:
+        return vis.err("Open /review in a session", "The journal records one session.")
+    root = str(vis.workspace_root())
+    journal = RECORDER.journal(session_id, root)
+    app = _app(session_id, journal)
     try:
         app.open()
     except Exception as error:  # noqa: BLE001 - shown to the person and logged
