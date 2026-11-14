@@ -20,6 +20,7 @@ from blockether.vis.engine import GatewayClient
 
 from playground import aws, gateway, state, sync
 from playground.api import Api
+from playground.apps import Workflows
 from playground.broker import Broker
 from playground.env import (
     DUE_S,
@@ -79,7 +80,9 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     engine.name(root, title(release))
     api.cancel_turn, api.runs.name_project = engine.cancel, engine.name
     # Each call gets its own SDK client: one client serves one thread.
-    api.session = lambda session: GatewayClient(f"http://{gateway.HOST}:{gateway.PORT}", token=engine.token).session(session)
+    client = lambda: GatewayClient(f"http://{gateway.HOST}:{gateway.PORT}", token=engine.token)  # noqa: E731
+    api.session = lambda session: client().session(session)
+    Workflows(api, client()).start()
     relay = Relay(engine, api)
     pool = ThreadPoolExecutor(max_workers=64)
     queue = aws.client("sqs")

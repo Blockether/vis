@@ -6,7 +6,8 @@ It gives every session of the playground three things:
   The copy is temporary: S3 removes it after 7 days.
 - The `playground` tools: list and start workflows, read a run with `run_status`, and
   publish the commits of the project to GitHub.
-- The `/workflows` command, which opens a panel that starts workflows.
+- The `/workflows` command, which starts a workflow. The Workflows app of Vis is not here:
+  the worker owns it (`playground/apps.py`), because a global app belongs to no session.
 
 The extension has no AWS credentials in its environment (code of a session can read
 those of the worker process: see the README). It calls the playground API of the worker on
@@ -22,7 +23,6 @@ import logging
 import os
 import stat
 import threading
-import time
 import urllib.error
 import urllib.request
 
@@ -38,8 +38,6 @@ FILE_LIMIT, CALL_LIMIT, SCAN_LIMIT = 1_000_000, 4_000_000, 20_000
 # For each directory: the size and the time of its files at the last scan.
 _seen = {}
 _lock = threading.Lock()
-# The open workflows panel of each session.
-_panels = {}
 
 
 def call(method, path, body=None, timeout=120):
@@ -167,20 +165,9 @@ def _copy(session, label, root, changed, removed):
 # -- tools ----------------------------------------------------------------------
 
 
-def _input(about, value):
-    """Return the input of a run from a dict, a JSON text or a plain text."""
-    if isinstance(value, dict):
-        return value
-    text = str(value or "").strip()
-    if text.startswith("{"):
-        return json.loads(text)
-    return {about["inputs"][0]["name"]: text} if text and about["inputs"] else {}
-
-
 def _run(name, value):
-    """Start a run of a workflow and return the run."""
-    about = api("GET", f"workflows/{name}")
-    return api("POST", "runs", {"workflow": name, "input": _input(about, value)})
+    """Start a run of a workflow and return the run. The input is a dict, a JSON text or a plain text."""
+    return api("POST", "runs", {"workflow": name, "input": value or {}})
 
 
 def _present(headline, summary, *content, **options):
@@ -216,8 +203,8 @@ def render_status(phase, args, kwargs, result, error):
         return _failure("Read workflow run", error)
     if phase != "success":
         return None
-    rows = [(step["title"], step["status"], ", ".join(step["artifacts"])) for step in result["activities"]]
-    table = vis.ActivityTable(("Activity", "Status", "Artifacts"), tuple(rows)) if rows else vis.ActivityText("No activity started.")
+    rows = [(step["title"], step["status"], ", ".join(step["files"])) for step in result["activities"]]
+    table = vis.ActivityTable(("Activity", "Status", "Files"), tuple(rows)) if rows else vis.ActivityText("No activity started.")
     return _present(f"Workflow run {result['id'][:8]}", f"{result['title']} is {result['status']}", table, outcome=result["status"])
 
 
@@ -251,7 +238,7 @@ class Playground:
 
     @vis.method(activity=vis.Activity(label="Read workflow run", render=render_status, show_start=False))
     def run_status(self, run_id: str) -> dict:
-        """Return a run: its status, its activities with their results, and its artifacts."""
+        """Return a run: its status, its activities with their results, and its files."""
         run = api("GET", f"runs/{run_id}")
         run.pop("source", None)
         return run
@@ -266,106 +253,25 @@ class Playground:
         return api("POST", "publish", {"root": str(vis.workspace_root()), "message": message}, timeout=300)
 
 
-# -- the /workflows panel --------------------------------------------------------
+# -- the /workflows command ------------------------------------------------------
 
 
-# The tone of a run status. The names are the live tones of the Vis view contract.
-TONES = {"queued": "idle", "running": "running", "waiting": "warn", "completed": "ok", "failed": "error", "cancelled": "warn"}
-
-
-def _rows():
-    lines = api("GET", "runs")["runs"][:12]
-    return [
-        vis.ui.table_row(
-            line["id"],
-            [line["title"], line["status"], f"{sum(1 for _, status in line['activities'] if status == 'completed')}/{len(line['activities'])}"],
-            tone=TONES[line["status"]],
-        )
-        for line in lines
-    ]
-
-
-def _follow(view, run_id):
-    """Show the progress of a run in the panel until the run ends."""
-    while True:
-        time.sleep(3)
-        try:
-            run, rows = api("GET", f"runs/{run_id}"), _rows()
-        except (OSError, RuntimeError):  # the worker stopped: the next panel reads the runs again
-            return
-        done = sum(1 for step in run["activities"] if step["status"] == "completed")
-        view["runs"].replace(rows)
-        # A waiting run needs a file from a person. The Workflows page of the playground takes it.
-        need = f" It waits for a file: {run['waiting']['title']}. Give it on the Workflows page." if run["status"] == "waiting" else ""
-        view["state"].set(f"{run['title']}: {run['status']}. Activities completed: {done}.{need}", tone=TONES[run["status"]])
-        # A live view sends the first update at once and keeps the next for a later call.
-        # Without this call, the last status of a run stays in the buffer.
-        view.flush()
-        if run["status"] not in ("queued", "running", "waiting"):
-            return
-
-
-def _start(view, name, text):
-    run = _run(name, text)
-    view["state"].set(f"{run['title']}: run {run['id'][:8]} started", tone="running")
-    threading.Thread(target=_follow, args=(view, run["id"]), daemon=True).start()
-    return run
-
-
-def _panel_event(session):
-    def handle(event):
-        view = _panels.get(session)
-        if view is None or event.type != "submit" or event.node_id != "run":
-            return
-        try:
-            _start(view, event.values["workflow"], event.values.get("input"))
-        except Exception as failure:  # noqa: BLE001 - shown to the person
-            view["state"].set(f"The run did not start: {failure}", tone="error")
-
-    return handle
-
-
-def open_workflows(ctx):
-    """Open the workflows panel, or start a run with `/workflows <name> <input>`."""
-    session = str(ctx.get("session_id") or "")
-    if not session:
-        return vis.err("Open /workflows in a session")
+def start_workflow(ctx):
+    """Start a run with `/workflows <name> <input>`, or list the workflows."""
     flows = api("GET", "workflows")["workflows"]
+    names = ", ".join(flow["name"] for flow in flows)
     words = ctx.get("args") or []
-    if words:
-        if words[0] not in {flow["name"] for flow in flows}:
-            return vis.err(f"No workflow {words[0]}", "Workflows: " + ", ".join(flow["name"] for flow in flows))
-        run = _run(words[0], " ".join(words[1:]))
-        return vis.ok(f"Run {run['id'][:8]} of {run['title']} started", "Open **Workflows** in the playground to follow it.", {"run_id": run["id"]})
-    view = vis.live(
-        "Workflows",
-        [
-            vis.ui.paragraph("intro", "Start a workflow of the playground. One run is one Vis session."),
-            vis.ui.group(
-                "start",
-                vis.ui.select("workflow", [vis.ui.option(flow["name"], flow["title"]) for flow in flows], label="Workflow", is_required=True),
-                vis.ui.multiline("input", label="Input", description="A text for the first input, or a JSON object."),
-                vis.ui.button("run", "Run workflow", action="submit", variant="primary"),
-            ),
-            vis.ui.status("state", "Ready", tone="idle"),
-            vis.ui.table(
-                "runs",
-                [vis.ui.table_column("workflow", "Workflow"), vis.ui.table_column("status", "Status"), vis.ui.table_column("done", "Activities")],
-                rows=_rows(),
-            ),
-        ],
-        placement="panel",
-        key="playground-workflows",
-        session_id=session,
-        on_event=_panel_event(session),
-    )
-    _panels[session] = view
-    return vis.ok("Workflows are open", f"{len(flows)} workflows. Select one and press Run workflow.")
+    if not words:
+        return vis.ok(f"{len(flows)} workflows", f"Open **Workflows** with the global apps button in the header of Vis, or start one with `/workflows <name> <input>`. Workflows: {names}.")
+    if words[0] not in {flow["name"] for flow in flows}:
+        return vis.err(f"No workflow {words[0]}", "Workflows: " + names)
+    run = _run(words[0], " ".join(words[1:]))
+    return vis.ok(f"Run {run['id'][:8]} of {run['title']} started", "Open **Workflows** with the global apps button in the header of Vis to follow it.", {"run_id": run["id"]})
 
 
 PROMPT = """The playground runs on AWS Lambda. The project directory is a clone of the GitHub repository of the playground.
 - There is no internet access. Do not install packages.
-- `attach(text.encode(), "SPEC.md")` saves a document. Use it for each document that a person asks for. The playground shows each attached file as an artifact.
+- `attach(text.encode(), "SPEC.md")` saves a document. Use it for each document that a person asks for. The playground shows each attached file on its pages.
 - `list_attachments()` lists the documents of the session and `read_attachment(name)` returns the bytes of one. Attach a new version with the same name.
 - `playground.publish(message)` commits the project and pushes it to GitHub. Use it only when a person asks to publish.
 - `playground.workflows()` and `playground.run_workflow(name, input)` list and start the workflows."""
@@ -380,7 +286,7 @@ vis.register_extension(
         alias="playground",
         prompt=PROMPT,
         symbols=[vis.Symbol(Playground(), name="playground")],
-        slash_commands=[vis.SlashCommand("workflows", open_workflows, doc="Open the workflows of the playground, or start one.", usage="/workflows [name] [input]")],
+        slash_commands=[vis.SlashCommand("workflows", start_workflow, doc="Start a workflow of the playground, or list the workflows.", usage="/workflows [name] [input]")],
         op_hooks=[vis.OpHook(STEPS, before_step), vis.OpHook(STEPS, after_step, phase="after")],
     )
 )

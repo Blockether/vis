@@ -1,4 +1,4 @@
-"""The playground API: workflows, runs, artifacts, temporary files and publishing.
+"""The playground API: workflows, runs, attached files, temporary files and publishing.
 
 The browser reaches it through the front function and the relay. The workflow runs
 and the Vis extension reach it through the broker. S3 holds all its data:
@@ -9,7 +9,7 @@ and the Vis extension reach it through the broker. S3 holds all its data:
     runs/<id>/workflow.py        the source that the run uses, also after an edit
     runs/<id>/results/<n>.json   the result of activity n, for a new start of the run
     runs/<id>/inputs/<key>.json  a file that a person gave to a waiting run
-    artifacts/<session>/<name>   a copy of each file that a session attached
+    attached/<session>/<name>    a copy of each file that a session attached
     tmp/<session>/<path>         the files that a session wrote, kept for 7 days
     outbox/<id>.bundle           commits that wait for the repo function
 """
@@ -53,7 +53,7 @@ LIVE = ("queued", "running")
 # A waiting run has no process: it needs a file from a person.
 OPEN = (*LIVE, "waiting")
 # The largest file that a person gives to a run, and the largest attached file that S3 gets.
-INPUT_LIMIT, ARTIFACT_LIMIT = 300_000, 2_000_000
+INPUT_LIMIT, ATTACHED_LIMIT = 300_000, 2_000_000
 Answer = tuple[int, list[list[str]], bytes]
 
 
@@ -122,6 +122,17 @@ def describe(name: str, source: str) -> dict[str, Any]:
         "activities": [{"name": node.name, "title": kept.get("title") or node.name} for node, kept in activities if kept is not None],
         "lines": source.count("\n") + 1,
     }
+
+
+def inputs(about: dict[str, Any], text: str) -> dict[str, Any]:
+    """Return the input of a run from a text: a JSON object, or the value of the first input."""
+    text = text.strip()
+    if not text.startswith("{"):
+        return {about["inputs"][0]["name"]: text} if text and about["inputs"] else {}
+    try:
+        return json.loads(text)
+    except ValueError:
+        raise Refused(400, "the input is not a JSON object") from None
 
 
 class Runs:
@@ -244,9 +255,9 @@ class Runs:
             elif kind == "activity_started" and seq is not None and isinstance(event.get("name"), str):
                 name = event["name"][:80]
                 fresh = {"seq": seq, "name": name, "title": str(event.get("title") or name)[:200], "status": "running"}
-                fresh.update(started=now, finished=None, result=None, error=None, artifacts=[], notes=[])
+                fresh.update(started=now, finished=None, result=None, error=None, files=[], notes=[])
                 if step and step["name"] == name:  # the same activity continues in a new process
-                    fresh.update(started=step["started"], artifacts=step["artifacts"], notes=step["notes"])
+                    fresh.update(started=step["started"], files=step["files"], notes=step["notes"])
                 doc["activities"] = [s for s in doc["activities"] if s["seq"] != seq] + [fresh]
             elif kind == "activity_completed" and step:
                 record = {"name": event.get("name"), "result": event.get("result")}
@@ -274,15 +285,15 @@ class Runs:
             self.write(doc)
 
     def attach(self, session: str, name: str) -> None:
-        """Show an artifact in the running activity of the run of a session."""
+        """Show an attached file in the running activity of the run of a session."""
         with self.lock:
             line = next((row for row in self.index if row["session_id"] == session and row["status"] == "running"), None)
             if not line:
                 return
             doc = self.doc(line["id"])
             step = next((s for s in doc["activities"] if s["status"] == "running"), None)
-            if step and name not in step["artifacts"]:
-                step["artifacts"].append(name)
+            if step and name not in step["files"]:
+                step["files"].append(name)
                 self.write(doc)
 
     def give(self, run_id: str, key: str, name: str, content: str) -> dict[str, Any]:
@@ -348,8 +359,8 @@ class Api:
             ("GET", r"runs/(\w+)/results/(\d+)", self.result),
             ("GET", r"runs/(\w+)/inputs/(\w+)", self.given),
             ("POST", r"runs/(\w+)/inputs/(\w+)", self.give),
-            ("GET", r"artifacts", self.artifacts),
-            ("GET", r"artifacts/([\w-]+)/(.+)", self.artifact),
+            ("GET", r"attached", self.attached),
+            ("GET", r"attached/([\w-]+)/(.+)", self.attached_file),
             ("GET", r"tmp", self.temporary),
             ("GET", r"tmp/([\w-]+)/(.+)", self.temporary_file),
             ("POST", r"tmp", self.sync),
@@ -438,16 +449,19 @@ class Api:
 
     def run(self, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
         name, given = payload.get("workflow"), payload.get("input") or {}
-        if not isinstance(given, dict):
-            raise Refused(400, "input must be an object")
         source = self.source(name)
-        return self.runs.create(name, source, describe(name, source), given)
+        about = describe(name, source)
+        if isinstance(given, str):
+            given = inputs(about, given)
+        if not isinstance(given, dict):
+            raise Refused(400, "input must be an object or a text")
+        return self.runs.create(name, source, about, given)
 
     def show(self, run_id: str, **_: Any) -> dict[str, Any]:
         doc = self.runs.copy(need(RUN, run_id, "the run id"))
         raw, _ = aws.get(f"runs/{run_id}/workflow.py")
         files = self.documents(doc["session_id"]) if doc["session_id"] else []
-        return {**doc, "source": (raw or b"").decode(), "artifacts": files}
+        return {**doc, "source": (raw or b"").decode(), "files": files}
 
     def cancel(self, run_id: str, **_: Any) -> dict[str, Any]:
         doc = self.runs.cancel(need(RUN, run_id, "the run id"))
@@ -479,10 +493,10 @@ class Api:
             raise Refused(413, "the file is too large")
         return self.runs.give(need(RUN, run_id, "the run id"), need(NAME, key, "the input key"), name, content)
 
-    # -- artifacts and temporary files -----------------------------------------
+    # -- attached files and temporary files ------------------------------------
 
     def files(self, kind: str, session: str) -> list[dict[str, Any]]:
-        """List the files of a session below `artifacts/` or `tmp/`."""
+        """List the files of a session below `attached/` or `tmp/`."""
         prefix = f"{kind}/{need(SESSION, session, 'the session id')}/"
         return [{"name": item["Key"][len(prefix) :], "size": item["Size"], "at": item["LastModified"].timestamp()} for item in aws.keys(prefix)]
 
@@ -490,12 +504,12 @@ class Api:
         """Return the turn and the version of the copy that S3 has of an attached file."""
         known = (session, name)
         if known not in self.copied:  # a new worker: the metadata of the object names its copy
-            found = aws.metadata(f"artifacts/{session}/{name}") or {}
+            found = aws.metadata(f"attached/{session}/{name}") or {}
             self.copied[known] = {"turn": found.get("turn"), "version": int(found.get("version", 0))}
         return self.copied[known]
 
     def mirror(self, session: str) -> None:
-        """Copy each new file that a session attached to `artifacts/<session>/`.
+        """Copy each new file that a session attached to `attached/<session>/`.
 
         Vis keeps the attached files of a session. S3 has a copy, so the pages read all
         documents from one place.
@@ -506,24 +520,24 @@ class Api:
             files = [file for file in self.session(session).attachments() if file.filename and FILE.fullmatch(file.filename)]
             newest = {file.filename: file for file in sorted(files, key=lambda file: file.version)}
             for name, file in newest.items():
-                if self.stored(session, name)["version"] < file.version and file.size <= ARTIFACT_LIMIT:
+                if self.stored(session, name)["version"] < file.version and file.size <= ATTACHED_LIMIT:
                     about = {"turn": file.turn_id, "version": file.version}
-                    aws.put(f"artifacts/{session}/{name}", file.read(), ContentType="text/plain; charset=utf-8", Metadata={key: str(value) for key, value in about.items() if value is not None})
+                    aws.put(f"attached/{session}/{name}", file.read(), ContentType="text/plain; charset=utf-8", Metadata={key: str(value) for key, value in about.items() if value is not None})
                     self.copied[session, name] = about
                     self.runs.attach(session, name)
         except (GatewayError, TransportError) as failure:  # the gateway does not know the session, or it stops
             log("no copy of the attached files", session, repr(failure))
 
     def documents(self, session: str) -> list[dict[str, Any]]:
-        """List the artifacts of a session, each with the turn that attached it and its version."""
+        """List the attached files of a session, each with the turn that attached it and its version."""
         self.mirror(need(SESSION, session, "the session id"))
-        return [{**file, **self.stored(session, file["name"])} for file in self.files("artifacts", session)]
+        return [{**file, **self.stored(session, file["name"])} for file in self.files("attached", session)]
 
-    def artifacts(self, query: dict[str, str], **_: Any) -> dict[str, Any]:
-        return {"artifacts": self.documents(query.get("session", ""))}
+    def attached(self, query: dict[str, str], **_: Any) -> dict[str, Any]:
+        return {"files": self.documents(query.get("session", ""))}
 
-    def artifact(self, session: str, name: str, **_: Any) -> Answer:
-        key = f"artifacts/{need(SESSION, session, 'the session id')}/{need(FILE, name, 'the artifact name')}"
+    def attached_file(self, session: str, name: str, **_: Any) -> Answer:
+        key = f"attached/{need(SESSION, session, 'the session id')}/{need(FILE, name, 'the file name')}"
         return self.download(key, name)
 
     def download(self, key: str, name: str) -> Answer:

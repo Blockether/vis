@@ -50,8 +50,8 @@ def story_to_spec(ctx, story: str = "As a shop owner, I want to export my orders
         ctx.note(f"Rejected: {analysis.reason}")
         return {"decision": "reject", "reason": analysis.reason}
     if analysis.decision == "clarify":
-        return {"decision": "clarify", "artifacts": [ask_owner(ctx, analysis).name]}
+        return {"decision": "clarify", "files": [ask_owner(ctx, analysis).name]}
     made = [write_spec(ctx, analysis).name]
     if analysis.risk != "low":
         made.append(plan_tests(ctx).name)
-    return {"decision": "build", "risk": analysis.risk, "artifacts": made}
+    return {"decision": "build", "risk": analysis.risk, "files": made}

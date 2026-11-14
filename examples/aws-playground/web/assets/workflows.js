@@ -1,6 +1,6 @@
 // The workflows page: write a workflow in Python, add activities, run it and watch the run.
 /* global CodeMirror */
-import { OPEN, TONE, activities, activity, ago, artifactPath, bar, button, cancelRun, chip, clock, dialog, drop, empty, field, fileRow, fill, giveFile, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, span, stepBars, structured, textOf, toast, turnsOf, value, versionOf, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, dialog, drop, empty, field, filePath, fileRow, fill, giveFile, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, span, stepBars, structured, textOf, toast, turnsOf, value, versionOf, waiting } from "/play/assets/common.js";
 
 const studio = document.querySelector("#studio");
 const list = document.querySelector("#list");
@@ -47,22 +47,22 @@ def ${name}(ctx, request: str = "Describe the request here."):
     if made.decision == "stop":
         ctx.note(f"Stopped: {made.reason}")
         return {"decision": "stop", "reason": made.reason}
-    return {"decision": "go", "artifacts": [report(ctx).name]}
+    return {"decision": "go", "files": [report(ctx).name]}
 `;
 
 const SNIPPETS = {
-  decision: (name, title, prompt, artifact) => `class ${artifact}(BaseModel):
+  decision: (name, title, prompt, made) => `class ${made}(BaseModel):
     decision: Literal["yes", "no"] = Field(description="yes: ... no: ...")
     reason: str
 
 
 @activity(title=${JSON.stringify(title)})
-def ${name}(ctx) -> ${artifact}:
-    return ctx.ask(${JSON.stringify(prompt)}, ${artifact})
+def ${name}(ctx) -> ${made}:
+    return ctx.ask(${JSON.stringify(prompt)}, ${made})
 `,
-  document: (name, title, prompt, artifact) => `@activity(title=${JSON.stringify(title)})
+  document: (name, title, prompt, made) => `@activity(title=${JSON.stringify(title)})
 def ${name}(ctx):
-    return ctx.document(${JSON.stringify(artifact)}, ${JSON.stringify(prompt)})
+    return ctx.document(${JSON.stringify(made)}, ${JSON.stringify(prompt)})
 `,
   answer: (name, title, prompt) => `@activity(title=${JSON.stringify(title)})
 def ${name}(ctx) -> str:
@@ -246,14 +246,14 @@ function create() {
 
 function addActivity() {
   const title = h("input", { class: "input", placeholder: "Analysis of the story", maxlength: "60" });
-  const kind = h("select", { class: "input" }, h("option", { value: "decision", text: "Structured decision — a Pydantic model that the workflow branches on" }), h("option", { value: "document", text: "Document — an artifact in S3 and in the transcript" }), h("option", { value: "answer", text: "Plain answer — text" }));
+  const kind = h("select", { class: "input" }, h("option", { value: "decision", text: "Structured decision — a Pydantic model that the workflow branches on" }), h("option", { value: "document", text: "Document — a file in S3 and in the transcript" }), h("option", { value: "answer", text: "Plain answer — text" }));
   const prompt = h("textarea", { class: "input", placeholder: "What Vis does in this activity" });
   const add = () => {
     const name = pythonName(title.value) || "new_activity";
     // A document has a file name. A decision has the name of its Pydantic model.
     const model = name.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join("");
-    const artifact = kind.value === "document" ? `${name.toUpperCase()}.md` : model;
-    const snippet = SNIPPETS[kind.value](name, title.value || name, prompt.value || "Describe the work here.", artifact);
+    const made = kind.value === "document" ? `${name.toUpperCase()}.md` : model;
+    const snippet = SNIPPETS[kind.value](name, title.value || name, prompt.value || "Describe the work here.", made);
     const rows = editor.getValue().split("\n");
     const entry = rows.findIndex((row) => row.startsWith("@workflow"));
     if (entry < 0) return toast("The file has no @workflow function.", "bad");
@@ -358,9 +358,9 @@ function closeRun() {
   drawRuns();
 }
 
-/** Return the row of an artifact of a session, with a button that shows its text. */
-function artifactRow(session, file) {
-  const path = artifactPath(session, file.name);
+/** Return the row of an attached file of a session, with a button that shows its text. */
+function attachedRow(session, file) {
+  const path = filePath(session, file.name);
   const row = fileRow(file.name, file.size, versionOf(file));
   row.className = "row card file-row";
   row.append(button("View", { class: "small", onclick: press(() => preview(path, file.name)) }, "eye"));
@@ -389,10 +389,10 @@ function stepCard(step, doc) {
       "div",
       { class: "step-body" },
       h("div", { class: "row wrap" }, h("b", { text: step.title }), h("span", { class: "small muted", text: span(to - from) }), kind === "model" && chip(result.type, "violet")),
-      step.error && h("div", { class: "problem", style: "border-radius:8px;border:0", text: step.error }),
+      step.error && h("div", { class: "problem", style: "border:0", text: step.error }),
       (kind === "model" || kind === "json") && padded(structured(result.value)),
       step.status === "waiting" && drop(doc.waiting.title, doc.waiting.accept, giver(doc)),
-      kind === "artifact" && artifactRow(doc.session_id, result.value),
+      kind === "document" && attachedRow(doc.session_id, result.value),
       kind === "upload" && padded(fileRow(result.value.name, result.value.size)),
       notes(step.notes),
       rows.length > 0 && more(plural(rows.length, "Vis activity", "Vis activities"), h("div", { class: "acts", style: "margin-top:6px" }, rows.map(activity))),
@@ -432,9 +432,9 @@ function drawRun() {
       doc.waiting && !steps.some((step) => step.status === "waiting") && drop(doc.waiting.title, doc.waiting.accept, giver(doc)),
       notes(doc.notes),
       // A failed step shows its error itself.
-      doc.error && !steps.some((step) => step.error === doc.error) && h("div", { class: "problem", style: "border-radius:10px;border:0;white-space:pre-wrap", text: doc.error }),
+      doc.error && !steps.some((step) => step.error === doc.error) && h("div", { class: "problem", style: "border:0;white-space:pre-wrap", text: doc.error }),
       doc.result && h("div", {}, h("h4", { style: "margin-bottom:6px", text: "Result" }), padded(structured(doc.result.value))),
-      doc.artifacts?.length > 0 && h("div", { style: "display:grid;gap:6px" }, h("h4", { text: "Artifacts in S3" }), doc.artifacts.map((file) => artifactRow(doc.session_id, file))),
+      doc.files?.length > 0 && h("div", { style: "display:grid;gap:6px" }, h("h4", { text: "Files" }), doc.files.map((file) => attachedRow(doc.session_id, file))),
     ),
   );
 }

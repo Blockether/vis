@@ -435,7 +435,7 @@ export const cancelRun = (id) => play(`runs/${id}/cancel`, { method: "POST", bod
 export const stepBars = (run) => h("span", { class: "steps" }, (run.activities.length ? run.activities : [["", "queued"]]).map(([title, status]) => h("i", { class: status, title })));
 
 /** Return the path of a document that a session attached. */
-export const artifactPath = (session, name) => `/play/api/artifacts/${session}/${encodeURIComponent(name)}`;
+export const filePath = (session, name) => `/play/api/attached/${session}/${encodeURIComponent(name)}`;
 
 /** Return the version label of a document. A file without a version has no label. */
 export const versionOf = (file) => (file.version ? `version ${file.version}` : "");

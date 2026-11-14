@@ -405,7 +405,7 @@ Resources:
                   - !Sub "${Bucket.Arn}/relay/*"
                   - !Sub "${Bucket.Arn}/runs/*"
                   - !Sub "${Bucket.Arn}/workflows/*"
-                  - !Sub "${Bucket.Arn}/artifacts/*"
+                  - !Sub "${Bucket.Arn}/attached/*"
                   - !Sub "${Bucket.Arn}/tmp/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
@@ -425,7 +425,7 @@ Resources:
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
                 Condition:
-                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, artifacts/*, tmp/*]}
+                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*]}
                   StringEquals: {aws:SourceVpc: !Ref Vpc}
               - Effect: Allow
                 Action: [sqs:ReceiveMessage, sqs:DeleteMessage]

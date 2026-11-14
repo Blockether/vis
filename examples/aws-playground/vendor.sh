@@ -15,8 +15,6 @@ d0676055ec033a6f8f8f225b3fe47f8b6b2388e5beba4765d24152f106077806  cm-matchbracke
 d48f92696b5cd5dc27055c73d1c34c4fa4e4e1e5e7b5baea58e5c23ca9777a36  cm-closebrackets.min.js  https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.21/addon/edit/closebrackets.min.js
 3d61185ba22e42699a6263b832396dac0cc8c1bda97946d718ccaf4197bf6898  cm-comment.min.js  https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.21/addon/comment/comment.min.js
 6b5973470168d480f70a87affe7b1f93bea82369d790a23349c6a4816ae11708  cm-active-line.min.js  https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.21/addon/selection/active-line.min.js
-3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62  inter-latin.woff2  https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.3.0/files/inter-latin-wght-normal.woff2
-34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956  inter-latin-ext.woff2  https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.3.0/files/inter-latin-ext-wght-normal.woff2
 18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e  jetbrains-mono-latin.woff2  https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-wght-normal.woff2
 79bfdab9ba467e26eea4122e6f2567e188dd8a09a8c730d501fc487c4ab99c6e  jetbrains-mono-latin-ext.woff2  https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-ext-wght-normal.woff2
 FILES

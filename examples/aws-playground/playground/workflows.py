@@ -46,7 +46,7 @@ Model = TypeVar("Model", bound=BaseModel)
 # The statuses of a turn that does not run any more.
 ENDED = ("completed", "failed", "cancelled", "suspended", "error")
 
-__all__ = ["ActivityError", "Artifact", "Context", "Upload", "Waiting", "activity", "workflow"]
+__all__ = ["ActivityError", "Context", "Document", "Upload", "Waiting", "activity", "workflow"]
 
 
 class ActivityError(RuntimeError):
@@ -58,7 +58,7 @@ class Waiting(BaseException):
 
 
 @dataclass(frozen=True)
-class Artifact:
+class Document:
     """A document that the session of a run attached. S3 holds a copy for the pages."""
 
     name: str
@@ -104,8 +104,8 @@ def encode(value: Any) -> dict[str, Any]:
     """Make a result that JSON can hold."""
     if isinstance(value, BaseModel):
         return {"kind": "model", "type": type(value).__name__, "value": value.model_dump(mode="json")}
-    if isinstance(value, Artifact):
-        return {"kind": "artifact", "value": asdict(value)}
+    if isinstance(value, Document):
+        return {"kind": "document", "value": asdict(value)}
     if isinstance(value, Upload):
         return {"kind": "upload", "value": {"key": value.key, "name": value.name, "size": value.size}}
     if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
@@ -116,8 +116,8 @@ def encode(value: Any) -> dict[str, Any]:
 def decode(recorded: dict[str, Any], function: Callable[..., Any], upload: Callable[[str], Upload | None]) -> Any:
     """Build the result of an activity again from its record. `upload` reads a file that a person gave."""
     value = recorded["value"]
-    if recorded["kind"] == "artifact":
-        return Artifact(**value)
+    if recorded["kind"] == "document":
+        return Document(**value)
     if recorded["kind"] == "upload":
         return upload(value["key"])
     if recorded["kind"] == "model":
@@ -210,7 +210,7 @@ class Context:
             turns = self.session.turns()
         return None
 
-    def document(self, name: str, request: str, *, timeout: float = 900) -> Artifact:
+    def document(self, name: str, request: str, *, timeout: float = 900) -> Document:
         """Let the session write a document and attach it.
 
         The session attaches the file with the native `attach` verb of Vis, so the
@@ -222,8 +222,8 @@ class Context:
         if found is None:
             raise ActivityError(f"the session attached no file {name!r}")
         # This read makes the API copy the file to S3 and show it in the activity.
-        self._api.call("GET", f"artifacts?session={self.session.id}")
-        return Artifact(name, self.session.id, found.size, found.version)
+        self._api.call("GET", f"attached?session={self.session.id}")
+        return Document(name, self.session.id, found.size, found.version)
 
     def _attached(self, name: str, request: str, timeout: float) -> Attachment | None:
         """Send a request and return the newest file with a name that its turn attached."""

@@ -46,4 +46,4 @@ def repository_review(ctx):
     high = [finding for finding in inspection.findings if finding.severity == "high"]
     if high or not inspection.python_tests_passed:
         made.append(fix_plan(ctx).name)
-    return {"findings": len(inspection.findings), "high": len(high), "tests_passed": inspection.python_tests_passed, "artifacts": made}
+    return {"findings": len(inspection.findings), "high": len(high), "tests_passed": inspection.python_tests_passed, "files": made}

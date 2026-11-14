@@ -47,5 +47,5 @@ def incident_triage(ctx, report: str = "Since 09:40 UTC the checkout page return
         made = [postmortem(ctx, triage).name]
         if triage.customers_affected:
             made.insert(0, customer_update(ctx, triage).name)
-        return {"severity": triage.severity, "page_on_call": True, "artifacts": made}
-    return {"severity": triage.severity, "page_on_call": False, "artifacts": [ticket(ctx, triage).name]}
+        return {"severity": triage.severity, "page_on_call": True, "files": made}
+    return {"severity": triage.severity, "page_on_call": False, "files": [ticket(ctx, triage).name]}

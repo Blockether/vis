@@ -1,4 +1,4 @@
-// The sessions page: each session of the gateway, its Vis activities, artifacts and files.
+// The sessions page: each session of the gateway, its Vis activities and its files.
 import { activities, activity, ago, bar, button, chip, clock, count, dialog, download, empty, field, fill, github, guard, h, item, loading, markdown, play, plural, press, preview, redraw, size, span, structured, toast, turnsOf, versionOf, vis, waiting } from "/play/assets/common.js";
 
 const panes = document.querySelector("#panes");
@@ -22,10 +22,10 @@ function sessionId(hash) {
 const TONE = { completed: "good", done: "good", failed: "bad", error: "bad" };
 const live = (session) => LIVE.has(session.status) || Boolean(session.current_turn_id);
 const working = () => chip("working", "amber", true);
-// The text of a tab that has no rows, by the API name of the tab.
-const NONE = {
-  artifacts: ["No artifacts", "A session saves a document with attach(content, name) of Vis. The site copies each attached file to S3."],
-  tmp: ["No files", "Each file that a tool writes in the project or in /tmp is copied here."],
+// The two lists of the Files tab, by their API name: the title, and the text of a list without rows.
+const LISTS = {
+  attached: ["Attached files", "No attached files", "A session saves a document with attach(content, name) of Vis. The site copies each attached file to S3."],
+  tmp: ["Written files", "No written files", "Each file that a tool writes in the project or in /tmp is copied here."],
 };
 
 async function load() {
@@ -69,9 +69,9 @@ async function select(id, quiet = false) {
   if (!id) return drawEmpty();
   if (!quiet) fill(detail, loading("Loading the session…"));
   try {
-    const [turns, artifacts, files] = await Promise.all([turnsOf(id), play(`artifacts?session=${id}`), play(`tmp?session=${id}`)]);
+    const [turns, attached, written] = await Promise.all([turnsOf(id), play(`attached?session=${id}`), play(`tmp?session=${id}`)]);
     if (state.selected !== id) return;
-    state.loaded = { id, turns, artifacts: artifacts.artifacts, files: files.files };
+    state.loaded = { id, turns, attached: attached.files, written: written.files };
     drawDetail();
   } catch (error) {
     if (!quiet) fill(detail, empty("The session did not load", error.message));
@@ -79,7 +79,7 @@ async function select(id, quiet = false) {
 }
 
 function drawEmpty() {
-  fill(detail, empty("Select a session", "You see its Vis activities, its artifacts and the files that it wrote."));
+  fill(detail, empty("Select a session", "You see its Vis activities and its files."));
 }
 
 // -- actions --------------------------------------------------------------------------
@@ -93,7 +93,7 @@ async function fork(turn) {
   await select(made.session.id);
 }
 
-/** Return the turn that attached an artifact. A row without the turn id gives the turn that was at work at its time. */
+/** Return the turn that attached a file. A row without the turn id gives the turn that was at work at its time. */
 function turnOf(row) {
   const at = row.at * 1000;
   const turns = state.loaded.turns;
@@ -170,9 +170,12 @@ function turnCard(turn) {
   );
 }
 
+/** Return one list of the Files tab: its title, then its rows. */
 function fileRows(kind, rows, id) {
-  if (!rows.length) return empty(...NONE[kind], "card");
-  return h(
+  const [title, ...none] = LISTS[kind];
+  const heading = h("h4", { class: "section", text: title });
+  if (!rows.length) return [heading, empty(...none, "card")];
+  const list = h(
     "div",
     { class: "card files" },
     rows.map((row) => {
@@ -186,11 +189,12 @@ function fileRows(kind, rows, id) {
           { class: "row" },
           button("View", { class: "small", onclick: press(() => preview(path, row.name)) }, "eye"),
           button("", { class: "small", title: "Download", "aria-label": `Download ${row.name}`, onclick: press(() => download(path, row.name)) }, "download"),
-          kind === "artifacts" && button("Fork", { class: "small", title: "Make a new session from the moment that wrote this artifact", onclick: press(() => fork(turnOf(row))) }, "fork"),
+          kind === "attached" && button("Fork", { class: "small", title: "Make a new session from the moment that attached this file", onclick: press(() => fork(turnOf(row))) }, "fork"),
         ),
       );
     }),
   );
+  return [heading, list];
 }
 
 /** Return the box that sends a new request to the session. The draft stays when the page draws again. */
@@ -203,7 +207,7 @@ function composer(session) {
 }
 
 function drawDetail() {
-  const { id, turns, artifacts, files } = state.loaded;
+  const { id, turns, attached, written } = state.loaded;
   const session = state.sessions.find((row) => row.id === id) || { id, workspace: {} };
   const run = state.runs[id];
   const root = session.workspace?.root || "";
@@ -215,8 +219,7 @@ function drawDetail() {
   const tab = (key, label, rows) => h("button", { type: "button", role: "tab", "aria-selected": String(state.tab === key), onclick: () => ((state.tab = key), drawDetail()) }, label, h("span", { class: "count", text: String(rows.length) }));
   const bodies = {
     activity: () => (turns.length ? turns.map(turnCard) : empty("No turns yet", "Send the first request below.", "card")),
-    artifacts: () => fileRows("artifacts", artifacts, id),
-    files: () => fileRows("tmp", files, id),
+    files: () => [...fileRows("attached", attached, id), ...fileRows("tmp", written, id)],
   };
   const head = h(
     "div",
@@ -244,7 +247,7 @@ function drawDetail() {
       inProject && button("Publish", { onclick: () => publish(session) }, "upload"),
     ),
   );
-  const tabs = h("div", { class: "tabs", role: "tablist" }, tab("activity", "Activity", turns), tab("artifacts", "Artifacts", artifacts), tab("files", "Files", files));
+  const tabs = h("div", { class: "tabs", role: "tablist" }, tab("activity", "Activity", turns), tab("files", "Files", [...attached, ...written]));
   redraw(detail, main, "details.act", () => fill(detail, head, tabs, bodies[state.tab](), state.tab === "activity" && composer(session)));
 }
 

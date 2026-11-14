@@ -45,4 +45,4 @@ def lead_qualification(
 ):
     lead = qualify(ctx, message)
     step = {"proposal": proposal, "discovery_call": agenda, "decline": decline}[lead.next_step]
-    return {"company": lead.company, "fit_score": lead.fit_score, "next_step": lead.next_step, "artifacts": [step(ctx, lead).name]}
+    return {"company": lead.company, "fit_score": lead.fit_score, "next_step": lead.next_step, "files": [step(ctx, lead).name]}

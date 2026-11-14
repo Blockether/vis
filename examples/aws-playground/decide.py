@@ -80,7 +80,7 @@ def handle(session: Session, invoice: str) -> dict[str, object]:
             timeout=600,
         )
         # The SDK gives the files that the last turn attached.
-        return {**outcome, "artifacts": [file.filename for file in session.attachments(-1)]}
+        return {**outcome, "files": [file.filename for file in session.attachments(-1)]}
     if decision == "pay":
         step = session.run("Give the payment order for this invoice. Pay on the due date.", response_model=Payment, timeout=600)
     else:

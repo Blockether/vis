@@ -1,6 +1,6 @@
 // The factory page: the workflow `software_factory` as a production line.
 // An order is one run. A README goes in at the first station. SPEC.md comes out and goes to GitHub.
-import { OPEN, TONE, ago, artifactPath, bar, button, cancelRun, chip, download, drop, empty, fileRow, fill, giveFile, github, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, textOf, versionOf, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, ago, bar, button, cancelRun, chip, download, drop, empty, filePath, fileRow, fill, giveFile, github, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, textOf, versionOf, waiting } from "/play/assets/common.js";
 
 const WORKFLOW = "software_factory";
 // The glyph of each station, by the name of its workflow activity.
@@ -54,7 +54,7 @@ function line(doc) {
   const moving = active >= 0 && all[active].status === "running";
   return h(
     "div",
-    { class: `line ${moving ? "moving" : ""}`, style: `--n:${all.length};--at:${at}`, role: "list", "aria-label": "Stations" },
+    { class: `conveyor ${moving ? "moving" : ""}`, style: `--n:${all.length};--at:${at}`, role: "list", "aria-label": "Stations" },
     h("div", { class: "belt" }, h("i")),
     doc && h("div", { class: "crate", title: "The product of this order" }, icon("file")),
     all.map(({ name, title, status, step }, index) => {
@@ -85,7 +85,7 @@ function card(doc, { title, status, step }) {
           ? h("p", { class: "small bad-text", text: step.error || "The station failed." })
           : result?.kind === "upload"
             ? fileRow(result.value.name, result.value.size)
-            : result?.kind === "artifact"
+            : result?.kind === "document"
               ? fileRow(result.value.name, result.value.size, versionOf(result.value))
               : result?.kind === "model"
                 ? [typeof result.value.score === "number" && gauge(result.value.score), structured(result.value), result.value.url && h("p", { class: "small" }, github(result.value.url, "Open the commit on GitHub"))]
@@ -96,9 +96,9 @@ function card(doc, { title, status, step }) {
 
 /** Return the product: the newest Markdown document that the session attached. */
 function product(doc) {
-  const file = (doc.artifacts || []).findLast((entry) => /\.md$/i.test(entry.name));
+  const file = (doc.files || []).findLast((entry) => /\.md$/i.test(entry.name));
   if (!file) return h("section", { class: "card product" }, empty("No product yet", "The specification shows here when a station attaches it."));
-  const path = artifactPath(doc.session_id, file.name);
+  const path = filePath(doc.session_id, file.name);
   const key = `${path}:${file.version || 0}:${file.size}`;
   if (state.spec.key !== key) {
     state.spec = { key, text: null };
@@ -145,7 +145,7 @@ function draw() {
     doc.session_id && h("a", { class: "btn small", href: `/play#${doc.session_id}` }, icon("open"), h("span", { text: "Open the session" })),
     OPEN.has(doc.status) && button("Cancel", { class: "small", onclick: press(() => cancelRun(doc.id).then(refresh)) }, "stop"),
   );
-  const done = shipped?.url && h("div", { class: "shipped" }, icon("check"), h("span", {}, "Shipped. ", h("code", { text: (shipped.artifacts || []).join(", ") }), " is in the repository at ", github(shipped.url, shipped.commit || "the commit"), "."));
+  const done = shipped?.url && h("div", { class: "shipped" }, icon("check"), h("span", {}, "Shipped. ", h("code", { text: (shipped.files || []).join(", ") }), " is in the repository at ", github(shipped.url, shipped.commit || "the commit"), "."));
   const cards = stations(doc).map((station) => card(doc, station));
   fill(floor, head, done, doc.error && h("div", { class: "problem", text: doc.error }), line(doc), h("div", { class: "bench" }, product(doc), h("div", { class: "bench-cards" }, cards)));
 }

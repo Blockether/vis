@@ -39,7 +39,7 @@ def failure(ctx):
 def change_and_publish(ctx, request: str = "Add a function `slugify(text)` to the Python package that makes a URL slug, with tests."):
     change = implement(ctx, request)
     if not change.tests_passed:
-        return {"published": False, "artifacts": [failure(ctx).name]}
+        return {"published": False, "files": [failure(ctx).name]}
     publication = publish(ctx, change)
     ctx.note(f"Published {publication.commit[:12]} to {publication.branch}")
     return {"published": True, "branch": publication.branch, "url": publication.url, "files": change.files_changed}

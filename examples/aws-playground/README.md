@@ -35,7 +35,7 @@ flowchart LR
     sync[sync<br>releases]
     efs[(EFS<br>releases, work)]
   end
-  s3[(S3<br>state, runs, artifacts)]
+  s3[(S3<br>state, runs, files)]
   queue[[SQS]]
   front --> queue --> worker
   worker <--> s3
@@ -84,7 +84,7 @@ the standard library. It supports plain answers and streamed answers.
 | `runs/<run>/workflow.py` | The source that the run uses, also after an edit of the workflow | permanent |
 | `runs/<run>/results/<n>.json` | The result of workflow activity `n` | permanent |
 | `runs/<run>/inputs/<key>.json` | A file that a person gave to a waiting run | permanent |
-| `artifacts/<session>/<name>` | A copy of the newest version of each file that a session attached | permanent |
+| `attached/<session>/<name>` | A copy of the newest version of each file that a session attached | permanent |
 | `tmp/<session>/<path>` | The files that a session wrote in `/tmp` and in its project | 7 days |
 | `relay/<call>/…` | The parts of one answer on the way to the browser | 1 day |
 | `outbox/<id>.bundle` | The commits that a session publishes | 1 day |
@@ -137,10 +137,10 @@ repository.
 The extension has a hook after each `python_execution`, `patch` and `shell` operation.
 The hook finds the files that changed in `/tmp` and in the project directory and sends
 them to `tmp/<session>/tmp/` and `tmp/<session>/project/`. The Files tab of a session
-shows them. S3 removes them after 7 days. The hook copies only regular files. It does
+shows them below the attached files. S3 removes them after 7 days. The hook copies only regular files. It does
 not follow a link.
 
-### An artifact is a Vis attachment
+### A document is a Vis attachment
 
 A document of a session is a native Vis attachment. The extension adds no tool for it.
 The model calls the verbs that each Vis session has:
@@ -153,8 +153,8 @@ read_attachment("SPEC.md")  # the bytes of the newest version
 
 Vis keeps each version of an attached file in the session, so the transcript shows the
 file and a checkpoint holds it. The pages read documents from S3. Thus the API copies
-each new attached file to `artifacts/<session>/<name>` when a page or a workflow lists
-the artifacts of a session (`Api.mirror` in [`playground/api.py`](playground/api.py)).
+each new attached file to `attached/<session>/<name>` when a page or a workflow lists
+the attached files of a session (`Api.mirror` in [`playground/api.py`](playground/api.py)).
 The S3 object has the metadata `version` and `turn`, and the list gives the two values
 for each file. S3 holds only the newest version of a name.
 
@@ -162,8 +162,8 @@ for each file. S3 holds only the newest version of a name.
 
 | Page | Content |
 | --- | --- |
-| `/` | Vis web, with the provider of the stack |
-| `/play` | The sessions and their Vis activities. Download a transcript. Fork from a turn or from an artifact. Publish the work. |
+| `/` | Vis web, with the provider of the stack. The global apps button of its header opens the Workflows app. |
+| `/play` | The sessions and their Vis activities. Download a transcript. Fork from a turn or from an attached file. Publish the work. |
 | `/play/workflows` | The workflow editor with Python highlighting, the workflow activity dialog and the runs. A waiting run shows where to give its file. |
 | `/play/factory` | The software factory: the stations of the `software_factory` workflow as a line, a drop zone for the README, the SPEC with its GitHub commit, and the earlier orders |
 | `/play/architecture` | The design with diagrams |
@@ -221,12 +221,12 @@ The playground API has these addresses below `/play/api/`. A body and an answer 
 | `DELETE workflows/<name>` | | Removes a workflow |
 | `GET runs` | | The 100 newest runs |
 | `POST runs` | `{workflow, input}` | Starts a run. `input` is an object of the inputs of the workflow |
-| `GET runs/<id>` | | One run with its workflow activities, its source and its artifacts |
+| `GET runs/<id>` | | One run with its workflow activities, its source and its attached files |
 | `POST runs/<id>/cancel` | | Cancels a run and the turn of its session |
 | `GET runs/<id>/inputs/<key>` | | The file that a person gave to the run, or `null` |
 | `POST runs/<id>/inputs/<key>` | `{name, content}` | Gives a file to a waiting run and starts the run again |
-| `GET artifacts?session=<id>` | | The artifacts of a session, each with `name`, `size`, `at`, `turn` and `version` |
-| `GET artifacts/<session>/<name>` | | One artifact as a download |
+| `GET attached?session=<id>` | | The attached files of a session, each with `name`, `size`, `at`, `turn` and `version` |
+| `GET attached/<session>/<name>` | | One attached file as a download |
 | `GET tmp?session=<id>` | | The temporary files of a session |
 | `GET tmp/<session>/<path>` | | One temporary file as a download |
 | `POST publish` | `{root, message}` | Commits a project directory and pushes it to GitHub |
@@ -286,7 +286,7 @@ This is a short form of [`workflows/story_to_spec.py`](workflows/story_to_spec.p
 | `@activity(title=)` | Makes a function a workflow activity. Its first argument is `ctx`. |
 | `ctx.ask(request, Model)` | Calls `Session.run(request, response_model=Model)` of the SDK and returns a validated Pydantic object. The workflow branches on it. |
 | `ctx.ask(request)` | Returns the text of the answer. |
-| `ctx.document(name, request)` | Lets the session write a document and attach it with `attach`. Then it reads the files of that turn with `Session.attachments` of the SDK. It returns an `Artifact` (`name`, `session`, `size`, `version`). The document is in the transcript, in S3 and in the run. |
+| `ctx.document(name, request)` | Lets the session write a document and attach it with `attach`. Then it reads the files of that turn with `Session.attachments` of the SDK. It returns a `Document` (`name`, `session`, `size`, `version`). The document is in the transcript, in S3 and in the run. |
 | `ctx.receive(key, title, accept=".md,.txt")` | Waits for a file from a person. It returns an `Upload` (`key`, `name`, `size`, `text`). |
 | `ctx.note(text)` | Adds a line to the log of the run. |
 
@@ -345,14 +345,31 @@ commit on GitHub and the earlier orders. Without the page, start a run of
 | --- | --- |
 | `playground.workflows()` | The workflows |
 | `playground.run_workflow(name, input)` | A new run. `input` is an object of the inputs, or a text for the first input |
-| `playground.run_status(run_id)` | The state of a run, its workflow activities and its artifacts |
+| `playground.run_status(run_id)` | The state of a run, its workflow activities and its files |
 | `playground.publish(message)` | A push to GitHub |
 
-The extension has no tool for documents: see [An artifact is a Vis attachment](#an-artifact-is-a-vis-attachment).
+The extension has no tool for documents: see [A document is a Vis attachment](#a-document-is-a-vis-attachment).
 Its prompt tells the model to use `attach`.
 
-In Vis web, the command `/workflows` opens a panel that starts a workflow and shows its
-runs. `/workflows <name> <input>` starts a run without the panel.
+The command `/workflows <name> <input>` starts a run from a session. Without a name,
+it lists the workflows.
+
+### The Workflows app
+
+The worker opens one global app of Vis with the name Workflows
+([`playground/apps.py`](playground/apps.py)). Vis web shows each global app behind the
+global apps button of its header, with or without an open session. The app has two
+tabs:
+
+| Tab | Content |
+| --- | --- |
+| Run | Select a workflow, give its input and start a run. Then the tab shows the status of the run and its workflow activities. |
+| History | The number of runs in progress, completed and failed, and the last 30 runs with their status and their completed workflow activities. |
+
+The worker is an SDK program: it calls `GatewayClient.attach_app` with
+`scope="global"`, and one thread reads the actions of a person and paints the app. A
+tab is a button with `is_selected`. The app has no Interrupt button, because an app
+has no turn to interrupt.
 
 ### Read the attached files with the SDK
 
@@ -443,12 +460,12 @@ Time:
 | A session rewrites history | `repo` never uses force. A push that is not a fast-forward goes to a new branch. |
 | A session makes GitHub run its code | `repo` refuses a push that changes `.github`. GitHub Actions is off for the repository. Do not turn on GitHub Actions in this repository: a workflow on `main` runs the code that a session wrote. |
 | A session changes the release of the next worker | `sync` owns `releases/` and `CURRENT`. The worker has another user id on EFS and cannot write there. EFS permits a mount only to the two function roles, each through its own access point. The worker role cannot write `repo/` in the bucket. |
-| A bad download gets into the image | The base image has a digest. Each file that `curl` downloads has a SHA-256 and each Python package has a hash. The extensions and the Maven artifacts have an exact version, but no hash. The `dnf` packages have no version and no hash in the `Dockerfile`. |
+| A bad download gets into the image | The base image has a digest. Each file that `curl` downloads has a SHA-256 and each Python package has a hash. The extensions and the Maven libraries have an exact version, but no hash. The `dnf` packages have no version and no hash in the `Dockerfile`. |
 | A person without the password calls the stack | The `front` function compares the password in constant time and sets a signed, `HttpOnly`, `SameSite=Strict` cookie that ends after 7 days. A request that changes data must come from the same origin. A new password is in effect after 5 minutes. The static files are public. The pages, `/v1/` and `/play/api/` need the password or the cookie. |
 | A false webhook | `front` checks the `X-Hub-Signature-256` of GitHub. |
 | The credentials of the worker role leave the function | Each S3, SQS and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
 | A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `workflows/` and `tmp/`. |
-| A stored answer or a stored file runs script in the browser | Each relayed answer has a `sandbox` content security policy, and `front` passes only a fixed list of answer headers. The API sends each artifact and each temporary file as plain text and as a download. |
+| A stored answer or a stored file runs script in the browser | Each relayed answer has a `sandbox` content security policy, and `front` passes only a fixed list of answer headers. The API sends each attached file and each temporary file as plain text and as a download. |
 | A flood of requests makes a large bill | The functions have a concurrency limit: 50 for `front`, 5 for `worker`, 20 for `llm`, 1 for `repo` and 1 for `sync`. A call cannot ask for more output tokens than the limit of the model. |
 
 ### The limit that you must know

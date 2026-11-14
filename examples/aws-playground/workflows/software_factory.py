@@ -72,4 +72,4 @@ def software_factory(ctx, product: str = "Vis playground"):
         spec = rework(ctx, inspection)
     shipment = ship(ctx, product)
     ctx.note(f"Shipped {spec.name} as {shipment.commit[:12]} to {shipment.branch}")
-    return {"verdict": inspection.verdict, "score": inspection.score, "commit": shipment.commit[:12], "url": shipment.url, "artifacts": [spec.name]}
+    return {"verdict": inspection.verdict, "score": inspection.score, "commit": shipment.commit[:12], "url": shipment.url, "files": [spec.name]}

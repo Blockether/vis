@@ -4,7 +4,7 @@
 # Build for linux/arm64.
 #
 # The base image has a digest. Each file that curl downloads has a SHA-256 and each
-# Python package has a hash. The extensions and the Maven artifacts have an exact
+# Python package has a hash. The extensions and the Maven libraries have an exact
 # version, but no hash. The dnf packages have no version and no hash in this file.
 # To move to another Vis version, change VIS_RELEASE, its two checksums and
 # requirements/site.* together.
@@ -46,7 +46,7 @@ RUN HOME=/opt/vis-build /opt/vis/vis-agent extension sync --global --trust \
 ENV PYTHONPATH=/opt/playground:/opt/playground/site \
     PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 RUN $VIS_PYTHON -c "import boto3; from blockether.vis.engine import Agent, GatewayClient; print('sdk ok')"
-# A worker has no internet, so the image holds each Maven artifact that the clj
+# A worker has no internet, so the image holds each Maven library that the clj
 # extension and the project need. The user configuration names that repository.
 ENV MAVEN_LOCAL_REPO=/opt/m2 CLJ_CONFIG=/opt/clojure
 COPY repo-seed/deps.edn /opt/vis-build/project/deps.edn
