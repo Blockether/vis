@@ -1,11 +1,13 @@
 // The factory page: the workflow `song_factory` as a production line.
 // An order is one run. A prompt goes in. A person approves the song sheet and then the song. The song goes to GitHub as code.
-import { OPEN, TONE, ago, bar, button, cancelRun, chip, decided, download, empty, filePath, fileRow, fill, gate, github, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, versionOf, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, ago, bar, button, cancelRun, chip, decided, download, empty, filePath, fileRow, fill, gate, github, guard, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, versionOf, waiting } from "/play/assets/common.js";
 
 const WORKFLOW = "song_factory";
 // The glyph of each station, by the name of its workflow activity.
 const GLYPHS = { specify: "pencil", approve_sheet: "eye", rework: "fork", record: "play", approve_song: "eye", ship: "globe" };
 const WORDS = { idle: "Idle", skipped: "Not needed", running: "At work", waiting: "Waits for a decision", completed: "Done", failed: "Failed", cancelled: "Stopped" };
+// The longest brief, in characters. A brief is a part of the first request to the model.
+const BRIEF_LIMIT = 20000;
 
 const orders = document.getElementById("orders");
 const floor = document.getElementById("floor");
@@ -107,13 +109,44 @@ function product(doc) {
   return h("section", { class: "card product" }, head, h("div", { class: "product-body" }, state.spec.text === null ? loading("Loading the document…") : markdown(state.spec.text)));
 }
 
-/** Return the floor without an order: what the factory does, and the zone that starts an order. */
+/** Put the text of a brief file in the box. The person can change it before the order starts. */
+async function useFile(box, file) {
+  if (!file) return;
+  if (file.size > BRIEF_LIMIT) throw new Error(`The file is larger than ${BRIEF_LIMIT / 1000} kB.`);
+  const text = (await file.text()).trim();
+  if (!text) throw new Error("The file is empty.");
+  box.value = text;
+  box.focus();
+}
+
+/** Return the floor without an order: what the factory does, and the card that starts an order. */
 function welcome() {
-  const prompt = h("textarea", { class: "input", rows: 4, "aria-label": "Prompt", text: state.flow.inputs[0]?.default || "" });
+  const brief = h("textarea", { class: "input brief", rows: 10, maxlength: BRIEF_LIMIT, "aria-label": "Brief", text: state.flow.inputs[0]?.default || "" });
+  const file = h("input", { type: "file", accept: ".md,.txt", hidden: true, "aria-label": "Brief file" });
+  const choose = button("Use a file", { onclick: () => file.click() }, "upload");
+  const take = (given) => guard(choose, () => useFile(brief, given));
+  // An empty value lets the person choose the same file again.
+  file.addEventListener("change", () => take(file.files[0]).then(() => (file.value = "")));
+  const start = h(
+    "section",
+    { class: "card start" },
+    h("label", { class: "field" }, h("span", { text: "The song that you want" }), brief),
+    h("div", { class: "row wrap" }, button("Start the order", { class: "primary", onclick: press(() => order(brief.value.trim())) }, "play"), choose, file, h("span", { class: "small muted", text: "Write the brief, or drop a .md or .txt file on it." })),
+  );
+  start.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    start.classList.add("over");
+  });
+  start.addEventListener("dragleave", () => start.classList.remove("over"));
+  start.addEventListener("drop", (event) => {
+    event.preventDefault();
+    start.classList.remove("over");
+    take(event.dataTransfer.files[0]);
+  });
   return [
     h("div", { class: "hero" }, h("span", { class: "eyebrow", text: "Song factory" }), h("h1", { text: "A prompt goes in. You approve the song sheet and the song." }), h("p", { class: "muted", text: state.flow.description })),
     line(null),
-    h("section", { class: "card start" }, h("label", { class: "field" }, h("span", { text: "The song that you want" }), prompt), button("Start the order", { class: "primary", onclick: press(() => order(prompt.value.trim())) }, "play")),
+    start,
   ];
 }
 
