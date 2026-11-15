@@ -618,7 +618,7 @@ function WideAgentTable(props: TableProps) {
   );
 }
 
-// The leader row on a wide screen, in the columns of an agent row: no title, its newest line, its
+// The leader row on a wide screen, in the columns of an agent row: no title, so its newest line takes the title cell too, its
 // time with the part that it waited for its agents, and its status. It opens nothing: the leader
 // is this session.
 function WideLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
@@ -626,8 +626,7 @@ function WideLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
   return (
     <li className={`py-1 ${WIDE_ROW}`} data-leader-row data-hover-note-frame>
       <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
-      <span className={CELL_RULE} />
-      <HoverNote className={`min-w-0 ${CELL_RULE}`} note={leader.note}>
+      <HoverNote className={`col-span-2 min-w-0 ${CELL_RULE}`} note={leader.note}>
         <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
       </HoverNote>
       <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${CELL_RULE}`}>{leaderTime(times)}</span>
@@ -713,10 +712,8 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           <li className={LEGEND_ROW} data-hover-note-frame>
             <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
             <span className={`font-bold uppercase ${CELL_RULE} ${LEGEND_LAST} ${LEADER_INK}`}>{LEADER_ROLE}</span>
-            <span className={`${CELL_RULE} ${LEGEND_LAST}`}>
-              <span className="whitespace-nowrap text-dialog-hint sm:hidden">{leaderWaited(times)}</span>
-            </span>
-            <HoverNote className={LEGEND_NOTE} note={leader.note}>
+            <span className="whitespace-nowrap text-dialog-hint sm:hidden">{leaderWaited(times)}</span>
+            <HoverNote className={`${LEGEND_NOTE} sm:col-span-2`} note={leader.note}>
               <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>
           </li>
@@ -751,8 +748,7 @@ export interface TeamProps {
 }
 
 /**
- * The subagents of one turn as a table in a frame: the team line with the counts of the agents
- * by status, then the row of the leader, then one row for each agent in spawn order. An agent
+ * The subagents of one turn as a table in a frame: the team line with its time, then the row of the leader, then one row for each agent in spawn order. An agent
  * row opens the session of its agent; the leader row opens nothing. The dock shows the table without the frame. A subagent never asks a person: its
  * leader answers it, so a row has no question and no control for one.
  */

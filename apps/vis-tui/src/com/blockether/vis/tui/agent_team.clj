@@ -813,11 +813,30 @@
 
       (str (get row column-key)))))
 
+(defn- line-columns
+  "The cells of table line `line`. A leader row has no title, so its newest line takes the title
+   cell and the detail cell, with no rail between them."
+  [{:keys [kind row]} columns]
+  (let [columns (vec columns)
+        i (first (keep-indexed #(when (= :label (:key %2)) %1) columns))]
+    (cond (not (and i (= :row kind) (leader? row)))
+          columns
+
+          (= :now (:key (get columns (inc (long i)))))
+          (-> (subvec columns 0 i)
+              (conj {:key :now
+                     :w (+ (long (:w (columns i))) 3 (long (:w (columns (inc (long i))))))})
+              (into (subvec columns (+ (long i) 2))))
+
+          :else
+          (assoc-in columns [i :key] :now))))
+
 (defn table-segments
   "The painted parts of one table line: `[col text part]` vectors. `part` is `:chrome` for
    the grid, `:head` for a title, `:more` for the hidden count, else the column key."
   [{:keys [kind] :as line} columns now-ms]
-  (let [widths (map #(+ 2 (long (:w %))) columns)]
+  (let [columns (line-columns line columns)
+        widths (map #(+ 2 (long (:w %))) columns)]
     (case kind
       :top
       [[0 (p/boxed-horiz-line widths \┌ \┬ \┐) :chrome]]
@@ -1043,36 +1062,6 @@
   [cols]
   (max 1 (- (long cols) 5)))
 
-(def ^:private summary-words
-  "The status words of the dock summary line, in their order."
-  ["RUNNING" "WAITING" "QUEUED" "DONE" "FAILED" "BLOCKED"])
-
-(defn count-parts
-  "The status counts of `rows` in summary order: `{:text :tone}` maps, such as
-   `{:text \"2 RUNNING\" :tone :running}`. A status without a row has no part."
-  [rows]
-  (let [counts (frequencies (map :status rows))]
-    (vec (for [word summary-words
-               :let [n (get counts word 0)]
-               :when (pos? (long n))]
-
-           {:text (str n " " word) :tone (tone word)}))))
-
-(def ^:private count-mark "The mark before each status count of the summary line." "•")
-
-(defn summary-counts
-  "The status counts of `rows` as the summary line writes them, such as
-   `• 2 RUNNING  • 1 QUEUED  • 1 DONE`."
-  [rows]
-  (str/join "  " (map #(str count-mark " " (:text %)) (count-parts rows))))
-
-(def ^:private strip-cell "One agent of the status strip of the summary line." "■")
-
-(defn- strip-text
-  "The status strip of `tones`: one `strip-cell` for each agent, with one space between."
-  [tones]
-  (str/join " " (repeat (count tones) strip-cell)))
-
 (defn- summary-hint
   [expanded?]
   (str (keymap/label-or-palette :toggle-agent-dock) (if expanded? " hide details" " details")))
@@ -1098,12 +1087,10 @@
           active? (duration-text (- (long now-ms) (long start))))))
 
 (defn summary-segments
-  "The painted parts of the dock summary line at `width` cells: `[col text part tone]` vectors.
-   `part` is `:head`, `:time`, `:mark`, `:count`, `:strip` or `:hint`; a mark, count or strip
-   has the `tone` of its status. The time of the team follows the head, then a marked count for
-   each status, then a strip with one cell for each agent in its status ink. A short line drops
-   the strip first, then the hint, then the last counts."
-  [{:keys [counts strip expanded? span active?]} width now-ms]
+  "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors.
+   `part` is `:head`, `:time` or `:hint`. The time of the team follows the head. A short line
+   drops the hint first, then the time."
+  [{:keys [expanded? span active?]} width now-ms]
   (let [width
         (long width)
 
@@ -1119,66 +1106,23 @@
         time-col
         (+ (count head) 3)
 
-        counts-col
-        (if time (+ time-col (long (dw time)) 3) time-col)
+        time?
+        (and time (<= (+ time-col (long (dw time))) width))
+
+        end
+        (if time? (+ time-col (long (dw time))) (count head))
 
         hint
         (summary-hint expanded?)
 
         hint-w
-        (long (dw hint))
-
-        ;; A count takes its mark, one space and its text.
-        count-ws
-        (mapv #(+ 2 (long (dw (:text %)))) counts)
-
-        hint?
-        (>= (- width hint-w) (+ counts-col (min 12 (long (or (first count-ws) 0))) 3))
-
-        limit
-        (if hint? (- width hint-w 3) width)
-
-        [count-segs end]
-        (reduce (fn [[out col] [{:keys [text tone]} w]]
-                  (let [col
-                        (long col)
-
-                        w
-                        (long w)
-
-                        room
-                        (- (long limit) col)]
-
-                    (cond (>= room w) [(conj out
-                                             [col count-mark :mark tone]
-                                             [(+ col 2) text :count tone]) (+ col w 2)]
-                          ;; Only the first count shortens; a later count that does not fit goes.
-                          (and (empty? out) (> room 4))
-                          (reduced [(conj out
-                                          [col count-mark :mark tone]
-                                          [(+ col 2) (p/ellipsize text (- room 2)) :count tone])
-                                    (long limit)])
-                          :else (reduced [out col]))))
-                [[] counts-col]
-                (map vector counts count-ws))
-
-        strip-col
-        (if (seq count-segs) (inc (long end)) counts-col)
-
-        strip-s
-        (strip-text strip)]
+        (long (dw hint))]
 
     (cond-> [[0 head :head]]
-      (and time (<= (+ time-col (long (dw time))) width))
+      time?
       (conj [time-col time :time])
 
-      true
-      (into count-segs)
-
-      (and (seq strip) (<= (+ (long strip-col) (long (dw strip-s))) (long limit)))
-      (conj [strip-col strip-s :strip (vec strip)])
-
-      hint?
+      (>= (- width hint-w) (+ (long end) 3))
       (conj [(- width hint-w) hint :hint]))))
 
 (def ^:private ^:const dock-keys
@@ -1273,8 +1217,6 @@
 
              head
              {:line {:kind :summary
-                     :counts (count-parts rows)
-                     :strip (mapv :tone rows)
                      :expanded? expanded?
                      :span (team-span team)
                      :active? (boolean (some active? team))}}
@@ -1319,27 +1261,12 @@
 (defn- paint-summary-line!
   "Paint the dock summary line at screen row `y` from column `left` across `width` cells."
   [^TextGraphics g left y width line now-ms]
-  (doseq [[col text part tone] (summary-segments line width now-ms)]
-    (let [x (+ (long left) (long col))
-          ink #(t/legible-ink (tone-ink %) t/terminal-bg)]
-
+  (doseq [[col text part] (summary-segments line width now-ms)]
+    (let [x (+ (long left) (long col))]
       (case part
         :head
         (do (p/set-colors! g t/code-block-fg t/terminal-bg)
             (p/styled g [p/BOLD] (p/put-str! g x y text)))
-
-        :mark
-        (do (p/set-colors! g (ink tone) t/terminal-bg) (p/put-str! g x y text))
-
-        :count
-        (do (p/set-colors! g (ink tone) t/terminal-bg)
-            (p/styled g [p/ITALIC] (p/put-str! g x y text)))
-
-        ;; One cell for each agent, in its status ink.
-        :strip
-        (doseq [[i agent-tone] (map-indexed vector tone)]
-          (p/set-colors! g (ink agent-tone) t/terminal-bg)
-          (p/put-str! g (+ x (* (long i) (inc (count strip-cell)))) y strip-cell))
 
         (do (p/set-colors! g t/dialog-hint t/terminal-bg) (p/put-str! g x y text)))))
   (p/clear-styles! g))

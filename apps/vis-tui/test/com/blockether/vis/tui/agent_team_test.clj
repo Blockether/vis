@@ -359,26 +359,6 @@
                      base
                      events))))))
 
-(defdescribe
-  summary-counts-test
-  (it
-    "counts the rows of each status in a fixed order"
-    (doseq [[agents label]
-            [[nil ""] [[{"status" "completed"}] "• 1 DONE"]
-             [[{"status" "completed"} {"status" "running" "iterations_used" 3 "iteration_budget" 20}
-               {"status" "running" "pending_input" true "pending_input_count" 2}
-               {"status" "queued"}] "• 2 RUNNING  • 1 QUEUED  • 1 DONE"]
-             ;; A question goes to the leader, not to the person, so its agent still runs.
-             [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
-               {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
-              "• 3 RUNNING  • 1 DONE"]
-             ;; Four status words only: a passed verdict is done; a failed verdict, a cancel and
-             ;; a spent budget are failed.
-             [[{"status" "completed" "outcome" "passed"} {"status" "completed" "outcome" "failed"}
-               {"status" "failed"} {"status" "cancelled"} {"status" "budget_limited"}]
-              "• 1 DONE  • 4 FAILED"]]]
-      (expect (= label (team/summary-counts (map-indexed #(team/team-row (inc %1) %2) agents)))))))
-
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
              (it "old tab response does not repaint new tab"
                  (let [entered
@@ -689,9 +669,10 @@
           ;; User report 2026-10-31: the dock touched the C-g row under it.
           (expect (= "" (peek text)) "A blank line parts the dock from the row below")
           (expect (str/starts-with? line "Agents   "))
-          (expect (str/includes? line "3 RUNNING"))
           ;; The team time follows the head: from the first spawn to now while agents work.
-          (expect (str/starts-with? line "Agents   1m 04s   • 3 RUNNING"))
+          (expect (str/starts-with? line "Agents   1m 04s   "))
+          ;; User decision 2026-11-15: the team line shows no status counts, as in the Companion.
+          (expect (not (re-find #"RUNNING|DONE|FAILED|•|■" line)))
           (expect (not (str/includes? line "waiting")))
           (expect (not (str/includes? line "asking")))
           (expect (str/ends-with? line "C-x b a details")))
@@ -704,7 +685,7 @@
              (finally (team/toggle-dock! "leader")))
         (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
         (expect (= ["Agents" ""] (team/dock-text "leader" "turn-1" 6 now-ms))
-                "A narrow line drops the counts and the hint"))
+                "A narrow line drops the time and the hint"))
       (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]
         (expect (zero? (team/dock-height "leader" nil 120)) "No dock after a finished team")
         (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
@@ -752,6 +733,8 @@
           (expect (not (str/includes? leader "waited 1m 00s of"))
                   "The wait stands after the time, not in the title")
           (expect (str/includes? leader "Shipped the fix"))
+          ;; User report 2026-11-15: the leader has no title, so its line takes the title cell too.
+          (expect (re-find #"^│ LEADER +│ Shipped the fix" leader))
           (expect (not (str/includes? leader "**")))
           (expect (re-find #"DONE +│ +3m 20s \(waited 1m 00s\)" leader))
           (expect (< (.indexOf ^java.util.List text leader)
@@ -769,9 +752,9 @@
                    row (nth text 4)]
 
                (expect (str/includes? row "LEADER"))
-               (expect (str/includes? row "Waiting for the parser fix"))
+               (expect (re-find #"LEADER +│ Waiting for the parser fix" row)
+                       "The live leader line takes the title cell too")
                (expect (re-find #"RUNNING +│ +1m 30s \(waited 30s\)" row))
-               (expect (str/includes? (first text) "3 RUNNING") "The summary counts agents only")
                (expect (str/includes? (nth text 5) "Map the gateway routes"))
                (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1))
                        "Digit 1 still opens agent 1")
