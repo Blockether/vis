@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the TUI uses Lanterna 3.1.5-vis.62. Lanterna owns the inline style marks of a line: their range, their painted cells and their carry across a wrap. The TUI has one namespace for the row markers and one for text with ANSI colours.
 
 ### Removed
-- Examples: the `examples/live-apps/` and `examples/aws-lambda/` directories are gone. `examples/aws-playground/` is the example that runs Vis on AWS Lambda.
+- Examples: the `examples/live-apps/` and `examples/aws-lambda/` directories are gone. `examples/durable-lambda/` is the example that runs Vis on AWS Lambda.
 - Drafts: Vis has no draft workspaces. The tools `draft_create`, `draft_status`, `draft_diff`, `draft_sync`, `draft_approve` and `draft_discard`, the setting `draft_backend`, the `draft` key of a `workspace.filesystem` entry and the two manual pages are gone. A session always works in its own directory, as it did with the default `draft_backend: off`.
 - Drafts: Vis does not ship the Rift library and makes no Git worktree for a session. The operation names `draft/create`, `draft/sync`, `draft/approve`, `draft/discard` and `git/commit` are gone, so a hook on one of them matches no operation.
 - Drafts: the workspace of a session has only `root` and `label` in a session row, and `id`, `root`, `agent_name`, `label` and `git` in the workspace answer. The keys `repo_root`, `fork_ms`, `is_draft`, `draft`, `backend`, `branch`, `ahead`, `pending`, `repositories`, `draft_changes`, `working_changes`, `draft_error` and `recovery_required` are gone.
