@@ -2508,6 +2508,16 @@
   ;; order for eviction and the IDs currently on screen.
   (atom {:transmits {} :order [] :placed #{} :next-id 1}))
 
+(defn- image-ready!
+  "Ask for a frame from the picture worker: a picture that was not ready is ready."
+  []
+  (state/dispatch [:bump-render-version]))
+
+(def ^:private ^:dynamic *wait-for-pictures*
+  "True while a modal paints: no frame follows it, so its pictures are prepared in
+   the paint that shows them."
+  false)
+
 (def ^:private kitty-max-transmits
   "Cap on distinct images kept uploaded in the terminal before the oldest
    off-screen one is freed — bounds terminal-side image memory over a long session."
@@ -2536,33 +2546,55 @@
    and re-placing it on later frames. Regions have independent cached image and
    placement IDs even when they reference the same file. Placements leaving the
    viewport are deleted without freeing data; evict the oldest off-screen
-   uploads above the cache cap. Mutates `kitty-image-state`."
+   uploads above the cache cap. Mutates `kitty-image-state`.
+
+   The picture worker decodes and scales a new picture. Its box stays empty and
+   `:pending?` stays set until the worker asks for the frame that uploads it.
+   Under [[*wait-for-pictures*]] the picture is prepared here."
   [^StringBuilder sb regions]
-  (let [st @kitty-image-state]
-    (loop [rs regions
-           transmits (:transmits st)
-           order (:order st)
-           placed #{}
-           next-id (long (:next-id st))]
+  (let [st
+        @kitty-image-state
+
+        pending?
+        (volatile! false)]
+
+    (loop [rs
+           regions
+
+           transmits
+           (:transmits st)
+
+           order
+           (:order st)
+
+           placed
+           #{}
+
+           next-id
+           (long (:next-id st))]
 
       (if-let [{:keys [row col img]} (first rs)]
         (let [tkey [(:id img) (:path img) (:cols img) (:rows img)]
               [transmits order next-id entry]
               (if-let [e (get transmits tkey)]
                 [transmits order next-id e]
-                (if-let [{:keys [data w h]} (timg/kitty-png (:path img)
-                                                            (:mime img)
-                                                            {:cols (:cols img)
-                                                             :rows (:rows img)
-                                                             :width (:width img)
-                                                             :height (:height img)
-                                                             :view (:view img)})]
-                  (let [id next-id
-                        e {:id id :img-w w :img-h h}]
+                (let [box {:cols (:cols img)
+                           :rows (:rows img)
+                           :width (:width img)
+                           :height (:height img)
+                           :view (:view img)}
+                      png (if *wait-for-pictures*
+                            (timg/kitty-png (:path img) (:mime img) box)
+                            (timg/kitty-png-ready (:path img) (:mime img) box image-ready!))]
 
-                    (.append sb ^String (timg/kitty-transmit data id))
-                    [(assoc transmits tkey e) (conj order tkey) (inc (long next-id)) e])
-                  [transmits order next-id nil]))]
+                  (if (map? png)
+                    (let [id next-id
+                          e {:id id :img-w (:w png) :img-h (:h png)}]
+
+                      (.append sb ^String (timg/kitty-transmit (:data png) id))
+                      [(assoc transmits tkey e) (conj order tkey) (inc (long next-id)) e])
+                    (do (when (= :pending png) (vreset! pending? true))
+                        [transmits order next-id nil]))))]
 
           (if entry
             (do (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
@@ -2593,8 +2625,11 @@
                                      ^String (timg/kitty-free-image (:id (get transmits victim))))
                             (recur (dissoc transmits victim) (vec (remove #(= % victim) order))))
                         [transmits order])))]
-              (reset! kitty-image-state
-                {:transmits transmits :order order :placed placed :next-id next-id})))))))
+              (reset! kitty-image-state {:transmits transmits
+                                         :order order
+                                         :placed placed
+                                         :next-id next-id
+                                         :pending? @pending?})))))))
 
 (defn- region->html-media
   [{:keys [row col img]}]
@@ -2653,7 +2688,11 @@
           (.append sb "8") ;; DECRC restore cursor
           (try (when out (.write out (.getBytes (.toString sb) "UTF-8")) (.flush out))
                (catch Throwable _ nil))))
-      (reset! image-paint-state signature))))
+      ;; A frame with a picture in work must not match the next frame, or the upload
+      ;; of the ready picture is skipped.
+      (reset! image-paint-state (if (and (= proto :kitty) (:pending? @kitty-image-state))
+                                  (conj signature ::image-pending)
+                                  signature)))))
 
 (defn- drop-terminal-images!
   "Remove every image from the active terminal media layer."
@@ -2763,7 +2802,8 @@
   "Place the kept transcript pictures and the modal's own pictures."
   []
   (let [{:keys [kept own]} @modal-images]
-    (paint-terminal-images! (into (vec kept) own))))
+    (binding [*wait-for-pictures* true]
+      (paint-terminal-images! (into (vec kept) own)))))
 
 (defn- images-clear-of
   "The image `regions` whose whole box stays outside every `[left top right bottom]`

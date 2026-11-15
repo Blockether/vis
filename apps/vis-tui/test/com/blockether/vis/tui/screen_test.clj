@@ -3276,8 +3276,8 @@ therapy line 2"
                          (mapv rest (re-seq #"a=p,i=(\d+),p=(\d+)" s)))]
 
         (with-redefs [screen/kitty-image-state image-state
-                      timg/kitty-png (fn [_ _ _]
-                                       {:data "AAAA" :w 100 :h 120})]
+                      timg/kitty-png-ready (fn [_ _ _ _]
+                                             {:data "AAAA" :w 100 :h 120})]
 
           (let [initial (emit [first-region second-region])
                 pairs (placements initial)
@@ -3300,6 +3300,76 @@ therapy line 2"
                 (expect (str/includes? pruned (str "a=d,d=I,i=" first-id ",q=2")))
                 (expect (not (str/includes? pruned (str "a=d,d=I,i=" (first second-pair) ",q=2"))))
                 (expect (= 1 (count (:transmits @image-state))))))))))))
+
+;; A picture that came into view was decoded and scaled in the frame that showed it.
+;; One large screenshot held a scroll frame for more than 100 ms.
+(defdescribe
+  kitty-picture-preparation-test
+  (let [run (fn [png check]
+              (let [region {:row 2
+                            :col 3
+                            :img {:id "turn/image/1"
+                                  :path (str "/tmp/vis-prepare-" (random-uuid) ".png")
+                                  :mime "image/png"
+                                  :cols 10
+                                  :rows 6
+                                  :width 100
+                                  :height 120}}
+                    threads (atom [])
+                    asked (promise)
+                    wire (java.io.ByteArrayOutputStream.)
+                    paint (fn [row]
+                            (.reset wire)
+                            (#'screen/paint-terminal-images! [(assoc region :row row)])
+                            (.toString wire "UTF-8"))
+                    paint-modal (fn []
+                                  (.reset wire)
+                                  (with-redefs [screen/modal-images (atom {:kept [] :own [region]})]
+                                    (#'screen/paint-modal-images!))
+                                  (.toString wire "UTF-8"))]
+
+                (with-redefs [screen/kitty-image-state
+                              (atom {:transmits {} :order [] :placed #{} :next-id 1})
+                              screen/image-paint-state (atom nil)
+                              screen/last-image-regions (atom [])
+                              vis/tty-out (delay wire)
+                              timg/images-protocol (constantly :kitty)
+                              timg/kitty-png (fn [_ _ _]
+                                               (swap! threads conj (Thread/currentThread))
+                                               png)
+                              state/dispatch (fn [event]
+                                               (deliver asked event))]
+
+                  (check {:paint paint :paint-modal paint-modal :threads threads :asked asked}))))]
+    (it "prepares a new picture off the painting thread and uploads it in a later frame"
+        (run {:data "AAAA" :w 100 :h 120}
+             (fn [{:keys [paint threads asked]}]
+               (let [first-frame (paint 2)
+                     event (deref asked 5000 :no-frame)
+                     second-frame (paint 2)]
+
+                 (expect (not (str/includes? first-frame "a=t")))
+                 (expect (= [:bump-render-version] event))
+                 (expect (= 1 (count @threads)))
+                 (expect (not= (Thread/currentThread) (first @threads)))
+                 (expect (str/includes? second-frame "a=t"))
+                 (expect (str/includes? second-frame "a=p"))))))
+    (it "prepares a file without a picture one time while its box scrolls"
+        (run nil
+             (fn [{:keys [paint threads asked]}]
+               (paint 2)
+               ;; The worker asks for a frame after the failed request too.
+               (deref asked 5000 :no-frame)
+               (dotimes [row 5]
+                 (paint (+ 3 row)))
+               (expect (= 1 (count @threads))))))
+    ;; No frame follows the paint of a modal, so a picture that is not ready stays away.
+    (it "uploads the picture of a modal in the paint that shows it"
+        (run {:data "AAAA" :w 100 :h 120}
+             (fn [{:keys [paint-modal]}]
+               (let [shown (paint-modal)]
+                 (expect (str/includes? shown "a=t"))
+                 (expect (str/includes? shown "a=p"))))))))
 
 ;; Regression, reported bug: dropping a picture into a turn and letting the view
 ;; auto-scroll to the bottom tore the drawing off its frame — it kept the screen
@@ -4340,8 +4410,8 @@ therapy line 2"
       (let [db
             (atom {:session {:id "sid"}})
 
-          git
-          {"is_workspace" true "modified" 0}
+            git
+            {"is_workspace" true "modified" 0}
 
             start
             {"root" "/start" "id" "ws" "git" git}
@@ -4355,17 +4425,17 @@ therapy line 2"
             snapshots
             [start moved moved renamed start]
 
-          remaining
-          (atom snapshots)
+            remaining
+            (atom snapshots)
 
-          events
-          (atom [])
+            events
+            (atom [])
 
-          dispatch
-          state/dispatch
+            dispatch
+            state/dispatch
 
-          done
-          (promise)]
+            done
+            (promise)]
 
         (with-redefs-fn {#'state/app-db db
                          #'state/dispatch (fn [event]

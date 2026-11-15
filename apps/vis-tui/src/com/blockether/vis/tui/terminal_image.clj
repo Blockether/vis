@@ -16,7 +16,8 @@
             [com.blockether.vis.tui.format :as fmt]
             [com.blockether.vis.tui.primitives :as p])
   (:import [com.googlecode.lanterna.terminal.image TerminalImage TerminalImage$Protocol]
-           [java.util Base64]))
+           [java.util Base64]
+           [java.util.concurrent LinkedBlockingDeque]))
 
 ;; Capability detection
 
@@ -408,6 +409,89 @@
     (when-let [data (read-base64 path)]
       {:data data :w width :h height})
     (transcode->png path box)))
+
+(def ^:private prepare-ready-limit
+  "Prepared pictures kept for the next frame: the same number as [[view-cache-limit]]."
+  64)
+
+(def ^:private prepare-backlog
+  "Requests that wait for the worker. A fast scroll passes more pictures than it
+   shows, so the oldest requests leave the queue."
+  16)
+
+(def ^:private prepare-failed-limit 4096)
+
+(defonce ^:private prepare-state
+  ;; `:ready` payloads by key, oldest first in `:order`; `:failed` keys that gave no
+  ;; picture; `:pending` keys in the queue or in work.
+  (atom {:ready {} :order [] :failed #{} :pending #{}}))
+
+(defonce ^:private prepare-queue (LinkedBlockingDeque.))
+
+(defn- prepare-key
+  "Identity of one prepared picture. A file that changes, or that appears later,
+   gets a new key, so a failure is not kept for it."
+  [path mime box]
+  (let [f (io/file (str path))]
+    [(.getAbsolutePath f) (.lastModified f) (.length f) mime box]))
+
+(defn- prepared
+  [state key png]
+  (let [state (update state :pending disj key)]
+    (if png
+      (let [order (conj (:order state) key)
+            [gone kept] (split-at (max 0 (- (count order) (long prepare-ready-limit))) order)]
+
+        (assoc state
+          :ready (apply dissoc (assoc (:ready state) key png) gone)
+          :order (vec kept)))
+      (update state :failed #(conj (if (< (count %) (long prepare-failed-limit)) % #{}) key)))))
+
+(defn- prepare-loop
+  []
+  (loop []
+
+    (let [{:keys [key path mime box on-ready]}
+          (.takeFirst ^LinkedBlockingDeque prepare-queue)
+
+          png
+          (try (kitty-png path mime box) (catch Throwable _ nil))]
+
+      (swap! prepare-state prepared key png)
+      (when on-ready (try (on-ready) (catch Throwable _ nil))))
+    (recur)))
+
+(defonce ^:private prepare-worker
+  (delay
+    (doto (Thread. ^Runnable prepare-loop "vis-tui-image-prepare") (.setDaemon true) (.start))))
+
+(defn kitty-png-ready
+  "[[kitty-png]] for a caller that must not wait, such as the render thread. Returns
+   the payload when it is ready, nil when the file gives no picture, and `:pending`
+   after it gave the work to the picture worker. `on-ready` (0-arg) runs on the
+   worker after each request, also a failed one: the next call then gives the
+   answer, and asks again for a request that left the queue."
+  [path mime box on-ready]
+  (let [key
+        (prepare-key path mime box)
+
+        state
+        @prepare-state
+
+        ^LinkedBlockingDeque queue
+        prepare-queue]
+
+    (or (get (:ready state) key)
+        (cond (contains? (:failed state) key) nil
+              (contains? (:pending state) key) :pending
+              :else (do (swap! prepare-state update :pending conj key)
+                        (.offerFirst queue
+                                     {:key key :path path :mime mime :box box :on-ready on-ready})
+                        (when (> (.size queue) (long prepare-backlog))
+                          (when-let [stale (.pollLast queue)]
+                            (swap! prepare-state update :pending disj (:key stale))))
+                        @prepare-worker
+                        :pending)))))
 
 (defn render-sequence
   "Full escape sequence that draws the image at `path` (`mime`) into a
