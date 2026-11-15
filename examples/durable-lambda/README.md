@@ -14,6 +14,7 @@ its own deployment.
 | See the parts | [Architecture](#architecture) |
 | Write a workflow with a gate | [Workflows](#workflows) |
 | Start the stack | [Deploy](#deploy), [Run it on your computer](#run-it-on-your-computer) |
+| Know the size, the cold start and the speed | [Performance](#performance) |
 | Know each key, address, limit and variable | [docs/reference.md](docs/reference.md) |
 | Know what a session can and cannot get | [docs/security.md](docs/security.md) |
 
@@ -281,6 +282,27 @@ the stack. The fixed cost is
 about 20 USD each month, for two interface endpoints and the EFS file system. The
 image gives its workflows only to a stack that has none: a stack with workflows keeps
 its own files.
+
+## Performance
+
+Measured on 2026-11-15 in `eu-central-1` on arm64, with a small number of samples.
+The times of a call are from one computer in Europe.
+
+| Measure | Value |
+| --- | --- |
+| Image in ECR | 1.58 GB compressed, 3.64 GB on disk. The speech model is 0.49 GB of the compressed size |
+| Cold start of a function (`Init Duration`) | `front` 0.3 to 0.4 s, `worker` 0.6 to 1.2 s, `llm` 0.4 to 0.6 s, `repo` 0.4 s, `sync` 0.7 s. The first start after a new image: 1.4 s |
+| Worker start, from the invocation to a ready gateway | 1.9 s: state from S3 0.1 s, project 0.1 s, Vis gateway 1.7 s |
+| First answer when no worker runs | 3.9 s for `GET /healthz` through `front`, SQS, `worker` and S3 |
+| Answer when a worker runs | 0.3 s for the same call and for `GET /dashboard/api/status` |
+| Page `/dashboard` | 0.2 to 0.3 s. `front` serves a page without the worker |
+| Memory in use | `front` 86 MB, `llm` 81 MB, `repo` 104 MB, `sync` 69 MB. `worker` 634 MB with an idle gateway, 2953 MB with the speech model and two runs |
+| Dictation of 6.4 s of speech | 7.5 s for the first recording, which loads the model, then 0.6 s |
+| Run of `song_factory` | 14 to 24 minutes: 1 to 3 minutes to the song sheet, 11 to 20 minutes to record the song. A script decided each gate at once |
+| Run of `remix_and_publish` | 8 minutes |
+
+A worker stops after 300 s without work, so the next call pays the first answer time
+again. A run continues when its worker changes.
 
 ## Run it on your computer
 
