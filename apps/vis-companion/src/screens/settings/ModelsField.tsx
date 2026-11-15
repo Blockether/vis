@@ -3,7 +3,7 @@ import { IconButton, Text } from '../../components/ui';
 import { PlusIcon, StarIcon, TrashIcon } from '../../components/icons';
 import type { ModelPref, SettingValue, Toggle } from '../../lib/types';
 import { ProviderRouterDialog } from '../RouterScreen';
-import { SettingMachine } from './SettingField';
+import { SettingMachine, SettingTag } from './SettingField';
 
 type Model = { provider: string; model: string };
 
@@ -48,7 +48,7 @@ export function ModelsField({
     <div className="min-w-0 px-3 py-2 sm:px-4">
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4">
         <div className="min-w-0">
-          <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
+          <Text as="p" variant="label" className="break-words">{toggle.label}<SettingTag /></Text>
           {toggle.description && (
             <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>
           )}

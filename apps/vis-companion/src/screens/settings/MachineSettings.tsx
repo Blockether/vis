@@ -58,7 +58,7 @@ import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsLoading, SettingsPanel, SettingsSection } from './SettingsLayout';
 import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
-import { ownsLegend, SettingField, SettingMachine } from './SettingField';
+import { ownsLegend, SettingField, SettingMachine, SettingState, SettingTag } from './SettingField';
 import { machineLabel } from '../../lib/fleet';
 import { AutomationsPanel } from './AutomationsPanel';
 import { PresetsField } from './PresetsField';
@@ -150,7 +150,7 @@ export function StringSetting({
     >
       <div className="min-w-0">
         <Text as="p" variant="label" className="break-words">
-          {toggle.label}
+          {toggle.label}<SettingTag />
         </Text>
         {toggle.description && (
           <Text as="p" variant="description" className="mt-0.5 break-words">
@@ -258,7 +258,7 @@ export function SecretSetting({
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-4">
       <div className="min-w-0">
         <Text as="p" variant="label" className="break-words">
-          {toggle.label}
+          {toggle.label}<SettingTag />
         </Text>
         {toggle.description && (
           <Text as="p" variant="description" className="mt-0.5 break-words">
@@ -402,7 +402,7 @@ export function ValueSetting({
       {!ownsLegend(toggle) && (
         <div>
           <Text as="p" variant="label">
-            {toggle.label}
+            {toggle.label}<SettingTag />
           </Text>
           {toggle.description && (
             <Text as="p" variant="description" className="mt-0.5">
@@ -465,7 +465,7 @@ export function scopeTitle(scope: SettingsScope): string {
 }
 
 /**
- * Why this row is read-only here, or null. A wider scope decides an inherited extension
+ * Why this row is read-only here, or null: the tooltip of its `(locked)` mark. A wider scope decides an inherited extension
  * setting (#373). A more specific scope can also decide the row for the open session:
  * changing it here would not change what that session uses.
  */
@@ -477,7 +477,7 @@ export function lockNote(toggle: Toggle): string | null {
   const denied = toggle.type === 'enum' ? toggle.value === toggle.choices?.[0] : toggle.enabled === false;
   if (toggle.inheritance === 'restrict' && denied && toggle.source
       && toggle.source !== 'default' && toggle.source !== toggle.scope) {
-    return `Locked: ${toggle.source} settings deny this permission. This scope cannot allow it.`;
+    return `${toggle.source.charAt(0).toUpperCase()}${toggle.source.slice(1)} settings deny this permission. This scope cannot allow it.`;
   }
   const by = toggle.overridden_by;
   if (!by) return null;
@@ -488,7 +488,7 @@ export function lockNote(toggle: Toggle): string | null {
       : (toggle.type === 'enum' || toggle.type === 'number') && by.value !== undefined
         ? `set this to ${String(by.value)}`
         : 'set this';
-  return `Locked: ${where} ${effect} for this session. Change it in ${where}.`;
+  return `${where} ${effect} for this session. Change it in ${where}.`;
 }
 
 /**
@@ -541,59 +541,64 @@ export function SettingRow({ toggle, busy, head, error, onToggle, onPick, onInhe
   onOpenSettings?: (where: SettingDecidedIn) => void;
 }) {
   const lock = lockNote(toggle);
+  // One word beside the label says the state; the reason is its tooltip.
+  const state = lock
+    ? { word: 'locked' as const, reason: lock }
+    : onInherit && !toggle.is_override
+      ? { word: 'inherited' as const, reason: `Inherited from ${toggle.source ?? 'default'}` }
+      : null;
   const isSecret = toggle.editor === 'secret';
   // Only the target that holds the value can remove it.
   const isOwnSecret = isSecret
     && (toggle.is_override === true || (toggle.is_set === true && toggle.source === (toggle.scope ?? 'global')));
   return (
-    <div>
-      {isSecret ? (
-        <SecretSetting key={toggle.id} toggle={toggle} busy={busy} disabled={lock !== null}
-          onSave={onPick} onRemove={isOwnSecret ? (onRemove ?? onInherit) : undefined} />
-      ) : toggle.editor === 'presets' ? (
-        <PresetsField toggle={toggle} busy={busy} disabled={lock !== null} error={error} onSave={onPick} />
-      ) : toggle.editor === 'models' ? (
-        <ModelsField toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
-      ) : toggle.type === 'string' ? (
-        <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
-      ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (
-        <ValueSetting key={`${toggle.id}:${JSON.stringify(toggle.value)}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
-      ) : (
-        <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] ${head || toggle.type === 'boolean' ? 'items-center' : 'items-start'} gap-x-4 gap-y-2 px-3 py-2 sm:px-4`}>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Text as={head ? (head.level === 4 ? 'h4' : head.level === 5 ? 'h5' : 'h6') : 'p'} id={head?.id} variant={head ? 'heading' : 'label'} className="break-words">{toggle.label}</Text>
-              {toggle.is_experimental && (
-                <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">Experimental</span>
-              )}
-              {head?.scope && <Text variant="meta" className="ms-auto">{head.scope}</Text>}
+    <SettingState.Provider value={state}>
+      <div>
+        {isSecret ? (
+          <SecretSetting key={toggle.id} toggle={toggle} busy={busy} disabled={lock !== null}
+            onSave={onPick} onRemove={isOwnSecret ? (onRemove ?? onInherit) : undefined} />
+        ) : toggle.editor === 'presets' ? (
+          <PresetsField toggle={toggle} busy={busy} disabled={lock !== null} error={error} onSave={onPick} />
+        ) : toggle.editor === 'models' ? (
+          <ModelsField toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
+        ) : toggle.type === 'string' ? (
+          <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
+        ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (
+          <ValueSetting key={`${toggle.id}:${JSON.stringify(toggle.value)}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
+        ) : (
+          <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] ${head || toggle.type === 'boolean' ? 'items-center' : 'items-start'} gap-x-4 gap-y-2 px-3 py-2 sm:px-4`}>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Text as={head ? (head.level === 4 ? 'h4' : head.level === 5 ? 'h5' : 'h6') : 'p'} id={head?.id} variant={head ? 'heading' : 'label'} className="break-words">{toggle.label}</Text>
+                {toggle.is_experimental && (
+                  <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">Experimental</span>
+                )}
+                <SettingTag />
+                {head?.scope && <Text variant="meta" className="ms-auto">{head.scope}</Text>}
+              </div>
+              {/* The row that names an extension omits the shared Auto/On/Off explanation. */}
+              {!head && toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
             </div>
-            {/* The row that names an extension omits the shared Auto/On/Off explanation. */}
-            {!head && toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
+            {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy || lock !== null} onClick={onToggle} />}
+            {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} disabled={lock !== null} onPick={(value) => void onPick(value)} />}
           </div>
-          {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy || lock !== null} onClick={onToggle} />}
-          {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} disabled={lock !== null} onPick={(value) => void onPick(value)} />}
-        </div>
-      )}
-      {lock && (
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
-          <Text as="p" variant="description" className="min-w-0 break-words">{lock}</Text>
-          {toggle.decided_in && onOpenSettings && (
+        )}
+        {toggle.decided_in && onOpenSettings && (
+          <div className="flex justify-end px-3 pb-2 sm:px-4">
             <Button variant="secondary" density="panel" onClick={() => onOpenSettings(toggle.decided_in!)}>
               Open {scopeTitle(toggle.decided_in.scope)} settings
             </Button>
-          )}
-        </div>
-      )}
-      {/* The lock note of an inherited extension row already names the scope that decides it. */}
-      {onInherit && !toggle.decided_in && (
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
-          <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
-          {/* A secret row removes its own value with a confirmed Remove instead. */}
-          {toggle.is_override && !isSecret && <Button variant="secondary" density="panel" disabled={busy || (lock !== null && toggle.inheritance !== 'restrict')} onClick={onInherit}>Use inherited value</Button>}
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+        {onInherit && toggle.is_override && !toggle.decided_in && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
+            <Text variant="description">Set here</Text>
+            {/* A secret row removes its own value with a confirmed Remove instead. */}
+            {!isSecret && <Button variant="secondary" density="panel" disabled={busy || (lock !== null && toggle.inheritance !== 'restrict')} onClick={onInherit}>Use inherited value</Button>}
+          </div>
+        )}
+      </div>
+    </SettingState.Provider>
   );
 }
 

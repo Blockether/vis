@@ -3865,6 +3865,7 @@
              :experimental? (boolean (get row "is_experimental"))
              :source (get row "source")
              :is-override? (boolean override?)
+             :inherited? (boolean (and *settings-target* (not (get row "is_override"))))
              :label (str (get row "label"))
              :description (str (get row "description"))}
       ;; A secret row says only whether a value is saved. Keep any value out of client state.
@@ -4517,7 +4518,7 @@
       (with-tools-rows)))
 
 (defn- settings-option-label
-  [{:keys [label type toggle-id experimental? locked is-override?]} _values]
+  [{:keys [label type toggle-id experimental? locked is-override? inherited?]} _values]
   (if (contains? #{:registry-toggle :text-setting :secret-setting :number-setting
                    :structured-setting}
                  type)
@@ -4525,7 +4526,9 @@
       (str label
            (when is-override? "  [Override]")
            (when (if (some? experimental?) experimental? (:experimental? spec)) "  [Experimental]")
-           (when locked "  [Locked]")))
+           ;; One word says the state. F1 and Enter give the reason (user).
+           (cond locked " (locked)"
+                 inherited? " (inherited)")))
     label))
 
 (defn- settings-option-value

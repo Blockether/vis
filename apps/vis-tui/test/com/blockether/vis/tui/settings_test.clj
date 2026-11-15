@@ -369,7 +369,12 @@
                            "label" "Read filesystem"
                            "description" "Allow filesystem reads."
                            "source" "project"
-                           "is_override" true}]}]))
+                           "is_override" true}
+                          {"id" "compact_inherited"
+                           "type" "boolean"
+                           "enabled" false
+                           "label" "Write filesystem"
+                           "source" "global"}]}]))
 
           calls
           (atom [])
@@ -384,10 +389,11 @@
           frames
           (mapv cap/frame-text (:frames capture))]
 
-      (expect (= 2 (count rows)))
+      (expect (= 3 (count rows)))
       (expect (= "Allow filesystem reads." (:description (second rows))))
       (expect (= [["compact_override" target]] @calls))
       (expect (str/includes? (first frames) "[Override]"))
+      (expect (str/includes? (first frames) "Write filesystem (inherited)"))
       (expect (not (str/includes? (first frames) "Source:")))
       (expect (some #(str/includes? % "Source: project") frames))))
   (it "marks no override and offers no inherit in global settings"
@@ -418,6 +424,7 @@
         (expect (false? (:is-override? (second rows))))
         (expect (empty? @calls))
         (expect (not-any? #(str/includes? % "[Override]") frames))
+        (expect (not-any? #(str/includes? % "(inherited)") frames))
         (expect (not-any? #(str/includes? % "overrides the inherited value") frames))))
   (it "explains locked values and prevents both edit and inherit in details"
       (let [row
@@ -913,7 +920,7 @@
       ;; The choice row is the extension's own row, so its name shows once.
       (expect (= 1 (count (filter #(str/includes? % "language-clojure") lines))))
       (expect (= 1 (count (filter #(str/includes? % "vis-spel") lines))))
-      (expect (re-find #"vis-spel\s+global\s+Auto" (str (line "vis-spel "))))
+      (expect (re-find #"vis-spel \(inherited\)\s+global\s+Auto" (str (line "vis-spel "))))
       ;; A packaged skill stands one level in from its extension, without its name again.
       (expect (= (+ 2 (long (str/index-of (line "vis-spel ") "vis-spel")))
                  (long (str/index-of (line " browser") "browser"))))

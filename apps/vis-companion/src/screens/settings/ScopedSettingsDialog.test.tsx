@@ -41,12 +41,12 @@ it('writes and inherits only the selected owner, without carrying form state to 
     return response(target).groups[0].toggles[0];
   });
   const view = renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
-  await screen.findByText('Inherited from global');
+  await screen.findByText('(inherited)');
   await user.click(screen.getByRole('switch', { name: 'Subagents a: off' }));
   await screen.findByText('Set here');
   expect(write).toHaveBeenLastCalledWith('subagents', 'toggle', undefined, target);
   await user.click(screen.getByRole('button', { name: 'Use inherited value' }));
-  await screen.findByText('Inherited from global');
+  await screen.findByText('(inherited)');
   expect(write).toHaveBeenLastCalledWith('subagents', 'inherit', undefined, target);
   await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'missing');
   view.rerender(<ScopedSettingsDialog client={client} target={{ scope: 'session', target_id: 'b' }} onClose={() => {}} />);
@@ -84,7 +84,7 @@ it('removes a session secret with a confirmation, and an inherited secret offers
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   const question = screen.getByRole('group', { name: 'Remove Knowledge base token?' });
   await user.click(within(question).getByRole('button', { name: 'Remove' }));
-  await screen.findByText('Inherited from global');
+  await screen.findByText('(inherited)');
   expect(write).toHaveBeenLastCalledWith('graphify_kb_token', 'inherit', undefined, target);
   expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Replace' })).toBeEnabled();
@@ -255,10 +255,10 @@ it('locks inherited extension rows and opens the settings that decide them', asy
 
   expect(await screen.findByRole('switch', { name: 'Machine flag: on' })).toBeDisabled();
   expect(screen.getByRole('switch', { name: 'Project flag: off' })).toBeDisabled();
-  expect(screen.getByText('Set in Machine settings. You cannot change it per session.')).toBeInTheDocument();
-  expect(screen.getByText('Set in Project settings. You cannot change it per session.')).toBeInTheDocument();
-  // The lock note names the deciding scope, so the inherited-from line does not repeat it.
-  expect(screen.queryByText(/Inherited from/)).toBeNull();
+  expect(screen.getByTitle('Set in Machine settings. You cannot change it per session.')).toHaveTextContent('(locked)');
+  expect(screen.getByTitle('Set in Project settings. You cannot change it per session.')).toHaveTextContent('(locked)');
+  // A locked row shows one mark: `(locked)` replaces `(inherited)`.
+  expect(screen.queryByText('(inherited)')).toBeNull();
 
   await user.click(screen.getByRole('button', { name: 'Open Project settings' }));
   expect(onClose).toHaveBeenCalledTimes(1);

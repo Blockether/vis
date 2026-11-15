@@ -50,6 +50,15 @@ export const ownsLegend = (setting: Toggle) =>
 /** The machine whose settings these are, so a folder field can browse its disk. */
 export const SettingMachine = createContext<{ client: GatewayClient; label: string } | null>(null);
 
+/** The state that a row shows beside its label, with the reason as the tooltip. */
+export const SettingState = createContext<{ word: 'locked' | 'inherited'; reason: string } | null>(null);
+
+/** `(locked)` or `(inherited)` beside a row label. One word replaces a sentence under the row (user). */
+export function SettingTag() {
+  const state = useContext(SettingState);
+  return state && <Text variant="meta" title={state.reason}>{` (${state.word})`}</Text>;
+}
+
 const HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE'];
 function methodOptions(extra: string[] = []) {
   return [...new Set([...HTTP_METHODS, ...extra.filter(Boolean)])].map((value) => ({ value, label: value }));
@@ -120,7 +129,7 @@ function AccessGroup({ setting, children }: { setting: Toggle; children: ReactNo
         >
           <span className="min-w-0 flex-1">
             <Text variant="label" tone="inherit" className="block">
-              {setting.label}
+              {setting.label}<SettingTag />
             </Text>
             {setting.description && (
               <Text variant="description" className="mt-0.5 block">
@@ -197,9 +206,12 @@ function StringList({
   disabled,
   numbers = false,
   suggestions,
+  tag,
 }: {
   /** The visible legend. */
   label: string;
+  /** The row state beside the legend, only where the legend names the setting. */
+  tag?: ReactNode;
   /** One sentence on what the list does. */
   hint?: string;
   /** The accessible prefix; it keeps nested control names unique. */
@@ -216,7 +228,7 @@ function StringList({
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-2">
       <ListHeader label={`Add ${name.toLowerCase()}`} hint={hint} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
-        {label}
+        {label}{tag}
       </ListHeader>
       {/* Hidden, but a trailing child would keep the spacing margin under the last row. */}
       {!!suggestions?.length && (
@@ -400,7 +412,7 @@ function WorkspaceEditor({ setting, value, disabled, onChange }: FieldProps) {
           machine ? pick('new', anchor) : onChange([...rows, { id: '', path: '', access: 'read-write' }])
         }
       >
-        {setting.label}
+        {setting.label}<SettingTag />
       </ListHeader>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
@@ -757,6 +769,7 @@ export function SettingField(props: FieldProps) {
     return (
       <StringList
         label={setting.label}
+        tag={<SettingTag />}
         hint={setting.description}
         value={value}
         disabled={disabled}

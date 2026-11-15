@@ -3,7 +3,7 @@ import { Button, ConfirmRow, IconButton, Input, Select, Text } from '../../compo
 import { PencilIcon, PlayIcon, PlusIcon, TrashIcon } from '../../components/icons';
 import { homeifyPath } from '../../lib/path';
 import type { CustomPreset, PresetsOptions, PresetsValue, SettingValue, Toggle } from '../../lib/types';
-import { SettingMachine } from './SettingField';
+import { SettingMachine, SettingTag } from './SettingField';
 import { FormLabel } from './SettingsLayout';
 
 /** The value of a presets row, with a missing or broken part read as empty. */
@@ -154,7 +154,7 @@ export function PresetsField({
   return (
     <div className="flex min-w-0 flex-col gap-3 px-3 py-2 sm:px-4">
       <div className="min-w-0">
-        <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
+        <Text as="p" variant="label" className="break-words">{toggle.label}<SettingTag /></Text>
         {toggle.description && (
           <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>
         )}

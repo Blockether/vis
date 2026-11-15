@@ -4058,12 +4058,12 @@
             (expect (= shell-note (:locked shell)))
             ;; Global settings are the root scope: an explicit value there overrides nothing.
             (expect (false? (:is-override? shell)))
-            (expect (= "Shell commands  [Locked]" (settings-option-label shell {})))
+            (expect (= "Shell commands (locked)" (settings-option-label shell {})))
             (expect (= [:inherit shell-note] [(:type inherit) (:locked inherit)]))
             (expect
               (= "Group settings set this to low for this session. Change it in Group settings."
                  (:locked reasoning)))
-            (expect (= "Reasoning  [Locked]" (settings-option-label reasoning {})))
+            (expect (= "Reasoning (locked)" (settings-option-label reasoning {})))
             (expect (= "high" (#'dlg/settings-option-value reasoning {})))
             (expect (nil? (:locked unlocked)))
             (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]

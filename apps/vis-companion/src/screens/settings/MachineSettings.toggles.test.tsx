@@ -102,13 +102,12 @@ describe('settings the open session decides elsewhere', () => {
     const shell = await screen.findByRole('switch', { name: 'Shell commands: on' });
     expect(settings).toHaveBeenCalledWith(undefined, undefined, 's1');
     expect(shell).toBeDisabled();
-    expect(
-      screen.getByText('Locked: Project settings turn this off for this session. Change it in Project settings.'),
-    ).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Sample mode' })).toBeDisabled();
-    expect(
-      screen.getByText('Locked: Group settings set this to off for this session. Change it in Group settings.'),
-    ).toBeInTheDocument();
+    // One word beside each locked label; the reason is its tooltip.
+    expect(screen.getAllByText('(locked)').map((mark) => mark.title)).toEqual([
+      'Group settings set this to off for this session. Change it in Group settings.',
+      'Project settings turn this off for this session. Change it in Project settings.',
+    ]);
     expect(screen.getByRole('switch', { name: 'Council: on' })).toBeEnabled();
     await userEvent.click(shell);
     expect(save).not.toHaveBeenCalled();
