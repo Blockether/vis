@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Drafts: Vis ignores a `draft` key that an older version stored in the machine settings, in the project settings of `.vis/config.yml` or in the settings of a group or a session. The next save of those settings removes the key. In a `vis.yml` or `~/.vis/config.yml` that a person writes, Vis reports the key by name and does not apply the access settings of that file. Remove the key there.
 
 ### Fixed
+- grep: the gateway no longer stops when a program makes a file shorter while Vis has it in the search index. Before, the next search read past the new end of the file, the system ended the gateway with a bus error and each open session lost its connection. `com.blockether/fff` is at 0.12.20.
 - Companion: on Android, the Back button closes an open menu and does not leave the app. A tap that opens a menu of the session header or of a project does not close it at once.
 - Companion: a file that the phone app shares keeps its file name. Before, the name started with a number.
 - Companion: the phone app removes the files that it kept for a share after one day. Before, the file of a completed share stayed in the cache of the app.
