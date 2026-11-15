@@ -90,6 +90,7 @@ class LiveView(_ViewRecord):
     shortcuts: tuple[Mapping[str, Any], ...] | None = None
     agent_note: str | None = None
     surfaces: Mapping[str, Any] | None = None
+    icon: str | None = None
     settings_key: str | None = None
     scope: str | None = None
     is_persistent: bool | None = None
