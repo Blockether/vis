@@ -320,6 +320,29 @@
                  ["-cp" (System/getProperty "java.class.path") "clojure.main" "-m"
                   "com.blockether.vis.core"]))))
 
+(defn launcher-argv
+  "Prefix argv that runs this Vis from ANY directory, for a child that a tool starts in a
+   project (#479). The host's own `-Duser.dir` would send that child to the directory where
+   this process started, and a relative classpath entry resolves against that directory."
+  ([] (launcher-argv (base-argv)))
+  ([argv]
+   (let [separator
+         java.io.File/pathSeparator
+
+         absolute
+         (fn [classpath]
+           (->> (str/split classpath (re-pattern (java.util.regex.Pattern/quote separator)))
+                (map #(.getAbsolutePath (io/file %)))
+                (str/join separator)))
+
+         argv
+         (into [] (remove #(str/starts-with? % "-Duser.dir=")) argv)
+
+         at
+         (.indexOf ^java.util.List argv "-cp")]
+
+     (if (neg? at) argv (update argv (inc at) absolute)))))
+
 (defn spawn-argv
   "Full argv to launch a fresh gateway daemon for `db` on `port`. Serve flags
    follow the `gateway start` subcommand. `:base` lets a caller override the

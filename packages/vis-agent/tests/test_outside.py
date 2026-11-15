@@ -120,6 +120,36 @@ def test_python_environment_defaults_to_project_outside_vis():
     assert vis.python_environment() == "project"
 
 
+def test_python_runtime_finds_vis_outside_the_engine(tmp_path, monkeypatch):
+    # Regression, #479: an extension must not search PATH or guess the Vis home itself.
+    agent = tmp_path / "bin" / "vis-agent"
+    agent.parent.mkdir()
+    agent.write_text("#!/bin/sh\n")
+    agent.chmod(0o755)
+    monkeypatch.setenv("PATH", str(agent.parent))
+    monkeypatch.delenv("VIS_PYTHON_PACKAGES", raising=False)
+    monkeypatch.setenv("VIS_HOME", str(tmp_path / "home"))
+    runtime = vis.python_runtime()
+    assert runtime.shared_packages == tmp_path / "home" / "python" / "packages"
+    assert runtime.uv("sync", shared=True) == [
+        str(agent),
+        "python",
+        "--shared",
+        "uv",
+        "sync",
+    ]
+    assert runtime.python("-m", "pytest") == [str(agent), "python", "-m", "pytest"]
+    monkeypatch.setenv("VIS_PYTHON_PACKAGES", str(tmp_path / "packages"))
+    assert vis.python_runtime().shared_packages == tmp_path / "packages"
+
+
+def test_python_runtime_names_a_missing_vis(tmp_path, monkeypatch):
+    # #479: without a Vis, a command must fail with its cause, not run a program named None.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(RuntimeError, match="found no Vis"):
+        vis.python_runtime().uv("sync")
+
+
 def test_session_bound_operations_refuse_without_the_host():
     with pytest.raises(_outside.Refused, match="vis\\.jailed_shell"):
         vis._host.jailed_shell({"command": "true"})

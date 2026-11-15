@@ -1495,19 +1495,33 @@ runner or a REPL. It returns `project` or `shared` from `python.environment` in 
 project's [configuration](configuration.md#python-extension-environment).
 
 ```python
-import shutil
-
 import blockether.vis.extension as vis
 
+runtime = vis.python_runtime()
 if vis.python_environment() == "shared":
-    command = [shutil.which("vis-agent"), "python", "--shared", "-m", "pytest"]
+    command = runtime.python("-m", "pytest", shared=True)
 else:
-    command = ["uv", "run", "python", "-m", "pytest"]
+    command = runtime.uv("run", "python", "-m", "pytest")
 ```
 
-With `shared`, start Python with `vis-agent python --shared`. That interpreter imports Vis shared
-packages and does not use the project's `.venv`. With `project`, the default, use the project's own
-environment. Outside a Vis process, the function returns `project`.
+With `shared`, start Python with `runtime.python(..., shared=True)`. That interpreter imports Vis
+shared packages and does not use the project's `.venv`. With `project`, the default, use the
+project's own environment. Outside a Vis process, the function returns `project`.
+
+Call `vis.python_runtime()` to get the commands. Do not search `PATH` for `vis-agent`, and do not
+compute the Vis home directory. Vis can run as a native binary in a container or from a second
+installation, and then these locations are different. The result has these fields and methods:
+
+- `python(*args, shared=False)` returns the command that runs Vis Python, like `vis-agent python`.
+- `uv(*args, shared=False)` returns the command that runs the bundled uv, like `vis-agent python uv`.
+- `launcher` is the command that starts this Vis again from any directory.
+- `shared_packages` is the directory of the Vis shared packages.
+- `python_executable` and `uv_executable` are the bundled programs, or None when Vis does not know them.
+
+The commands from `python()` and `uv()` apply the package index and the bytecode cache of Vis. A
+direct call of `uv_executable` does not apply them. Outside a Vis process, the launcher is
+`vis-agent` from `PATH`. When no Vis is found, `launcher` is empty, and `python()` and `uv()` raise
+`RuntimeError`.
 
 ## Find and read sessions
 

@@ -132,6 +132,27 @@
                    (expect (= (str "-Duser.home=" (System/getProperty "user.home"))
                               (second (disco/base-argv)))))))
 
+;; Regression, #479: a tool starts `vis-agent python` in a project. The host's own
+;; `-Duser.dir` and a relative classpath sent that child to the directory of the gateway.
+(defdescribe launcher-argv-runs-from-any-directory
+             (it "launcher argv runs from any directory"
+                 (let [separator
+                       java.io.File/pathSeparator
+
+                       argv
+                       (disco/launcher-argv ["/jdk/bin/java" "-Duser.dir=/gateway" "-Xmx1g" "-cp"
+                                             (str "src" separator "/lib/a.jar") "clojure.main" "-m"
+                                             "com.blockether.vis.core"])
+
+                       classpath
+                       (str/split (nth argv 3) (re-pattern separator))]
+
+                   (expect (= ["/jdk/bin/java" "-Xmx1g" "-cp"] (subvec argv 0 3)))
+                   (expect (= ["clojure.main" "-m" "com.blockether.vis.core"] (subvec argv 4)))
+                   (expect (= [(.getAbsolutePath (io/file "src")) "/lib/a.jar"] classpath))
+                   (expect (= ["/opt/vis" "-Duser.home=/h"]
+                              (disco/launcher-argv ["/opt/vis" "-Duser.home=/h"]))))))
+
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: a managed
 ;; gateway inherited terminal stop signals and froze with its WSL TUI parent.
 (defdescribe unix-launch-cmd-renames-and-protects-the-daemon

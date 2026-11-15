@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
@@ -141,6 +142,21 @@ def workspace_files():
 def python_environment():
     """Use the project environment when no Vis session owns this call."""
     return "project"
+
+
+def python_runtime():
+    """Find Vis on `PATH` and its shared packages by the documented environment rule."""
+    agent = shutil.which("vis-agent")
+    packages = os.environ.get("VIS_PYTHON_PACKAGES")
+    if not packages:
+        home = os.environ.get("VIS_HOME") or Path.home() / ".vis"
+        packages = Path(home) / "python" / "packages"
+    return {
+        "launcher": [agent] if agent else [],
+        "python_executable": None,
+        "uv_executable": None,
+        "shared_packages": str(packages),
+    }
 
 
 def setting_declaration(spec):
@@ -1705,6 +1721,7 @@ _IMPLEMENTATIONS = {
     "workspace_root": workspace_root,
     "project_root": workspace_root,
     "python_environment": python_environment,
+    "python_runtime": python_runtime,
     "workspace_files": workspace_files,
     "setting_declaration": setting_declaration,
     "setting": setting,

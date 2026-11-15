@@ -1750,6 +1750,19 @@
                                    [{"environment" "shared"} "shared"]]]
           (with-redefs [config/load-config-raw (constantly (if python {"python" python} {}))]
             (expect (= expected (environment)))))))
+  ;; Regression, #479: an extension found Vis Python only through `PATH` and guessed directories.
+  (it
+    "names the launcher, the executables and the shared packages of this Vis through the public SDK"
+    (with-loaded
+      {"where.py"
+       "import blockether.vis.extension as vis\ndef where():\n    \"Read where this Vis keeps its Python.\"\n    found = vis.python_runtime()\n    return {'uv': found.uv('sync', shared=True), 'python': str(found.python_executable), 'bundled_uv': str(found.uv_executable), 'packages': str(found.shared_packages)}\nvis.register_extension(vis.Extension(name='where', description='where', alias='w', symbols=[vis.Symbol(where)]))"}
+      (fn [_ _]
+        (let [found (:result ((symbol-fn (registered "where") 'where)))]
+          (expect (.canExecute (io/file (first (get found "uv")))))
+          (expect (= ["python" "--shared" "uv" "sync"] (take-last 4 (get found "uv"))))
+          (expect (.canExecute (io/file (get found "python"))))
+          (expect (.canExecute (io/file (get found "bundled_uv"))))
+          (expect (= (str (runtime/packages-dir)) (get found "packages")))))))
   (it
     "reads and searches sessions through the canonical doors with the introspection toggle OFF"
     (let [store

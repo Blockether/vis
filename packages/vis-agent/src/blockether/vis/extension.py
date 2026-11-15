@@ -74,6 +74,10 @@ class Host(Protocol):
         """Read the project's `python.environment`: `project` or `shared`."""
         ...
 
+    def python_runtime(self) -> Mapping[str, Any]:
+        """Read where this Vis keeps its Python: launcher, executables and shared packages."""
+        ...
+
     def workspace_files(self) -> list[str] | None:
         """List the files that Git sees in the working copy, or None without Git."""
         ...
@@ -4108,6 +4112,70 @@ def python_environment() -> Literal["project", "shared"]:
     """
     value = _host.python_environment()
     return "shared" if value == "shared" else "project"
+
+
+@dataclass(frozen=True, slots=True)
+class PythonRuntime:
+    """Where the Vis that hosts this call keeps its Python.
+
+    `launcher` is the command that runs this Vis again, from any directory. It
+    is empty when the process has no Vis. `python_executable` and
+    `uv_executable` are the bundled programs, or None when the host does not
+    know them. `shared_packages` is the directory of the Vis shared packages.
+
+    Build each command with `python()` or `uv()`. These go through the
+    launcher, so the package index, the bytecode cache and the shared package
+    workflow of Vis apply. A direct call of `uv_executable` does not apply them.
+    """
+
+    launcher: tuple[str, ...]
+    python_executable: Path | None
+    uv_executable: Path | None
+    shared_packages: Path
+
+    def python(self, *args: str, shared: bool = False) -> list[str]:
+        """Return the command that runs Vis Python with `args`, like `vis-agent python`.
+
+        With `shared=True`, Python sees the Vis shared packages and not the
+        project's `.venv`, like `vis-agent python --shared`.
+        """
+        if not self.launcher:
+            raise RuntimeError(
+                "vis.python_runtime found no Vis in this process; install vis-agent "
+                "or put it on PATH."
+            )
+        mode = ("--shared",) if shared else ()
+        return [*self.launcher, "python", *mode, *args]
+
+    def uv(self, *args: str, shared: bool = False) -> list[str]:
+        """Return the command that runs the bundled uv with `args`, like `vis-agent python uv`."""
+        return self.python("uv", *args, shared=shared)
+
+
+def python_runtime() -> PythonRuntime:
+    """Return where the Vis that hosts this call keeps its Python.
+
+    Use it to start project Python or uv. Do not search `PATH` for `vis-agent`
+    and do not compute the Vis home: a native binary in a container, or a
+    second installation, has another layout. Outside Vis, the launcher is
+    `vis-agent` from `PATH`, and the shared packages follow
+    `VIS_PYTHON_PACKAGES`, then `VIS_HOME`, then `~/.vis`.
+    """
+    found = _host.python_runtime()
+
+    def path(name: str) -> Path | None:
+        value = found.get(name)
+        return Path(value) if value else None
+
+    packages = path("shared_packages")
+    if packages is None:
+        raise RuntimeError("vis.python_runtime: the host named no shared packages.")
+    return PythonRuntime(
+        launcher=tuple(str(part) for part in found.get("launcher") or ()),
+        python_executable=path("python_executable"),
+        uv_executable=path("uv_executable"),
+        shared_packages=packages,
+    )
 
 
 def log(level, msg):

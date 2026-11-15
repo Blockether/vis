@@ -24,6 +24,7 @@
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.contract.config :as contract-config]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
@@ -1571,6 +1572,18 @@ else:
                          "run vis-agent python --shared uv --help. "
                          "Use vis-agent python uv for other uv commands.")
                     {}))))
+
+(defn locations
+  "Where this Vis keeps its Python, for a trusted extension that starts project Python (#479).
+   An extension must not search `PATH` or guess the Vis home: a native binary in a container
+   or a second installation has neither. `launcher` runs this Vis again from any directory."
+  []
+  (ensure-library!)
+  {"launcher" (discovery/launcher-argv)
+   "python_executable" (Interpreter/pythonExecutable)
+   "uv_executable" (some-> (runtime/uv-executable)
+                           str)
+   "shared_packages" (str (runtime/packages-dir))})
 
 (defn shared-environment?
   "True when merged config selects shared packages for project extensions.

@@ -1245,6 +1245,11 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             ;; #379: tools that start project Python follow the project's `python.environment`.
             (if (python-runtime/shared-environment?) "shared" "project")))
     (put! g
+          "__vis_host_python_runtime__"
+          (fn []
+            ;; #479: an extension reaches this Vis's Python without a `PATH` search.
+            (python-runtime/locations)))
+    (put! g
           "__vis_host_read_session__"
           (fn [target]
             (session-read "read_session" introspection/read-session target)))
