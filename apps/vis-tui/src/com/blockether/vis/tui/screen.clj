@@ -2516,9 +2516,10 @@
   (atom {:transmits {} :order [] :placed #{} :next-id 1}))
 
 (defn- image-ready!
-  "Ask for a frame from the picture worker: a picture that was not ready is ready."
+  "Ask for a full frame from the picture worker: a picture that was not ready is ready.
+   A live tick, a header tick and a header hover frame paint no pictures."
   []
-  (state/dispatch [:bump-render-version]))
+  (state/dispatch [:bump-render-version :full-frame]))
 
 (def ^:private ^:dynamic *wait-for-pictures*
   "True while a modal paints: no frame follows it, so its pictures are prepared in

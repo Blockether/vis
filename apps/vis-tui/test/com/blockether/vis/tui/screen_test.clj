@@ -3349,6 +3349,7 @@ therapy line 2"
                                   :height 120}}
                     threads (atom [])
                     asked (promise)
+                    dispatch state/dispatch
                     wire (java.io.ByteArrayOutputStream.)
                     paint (fn [row]
                             (.reset wire)
@@ -3372,7 +3373,11 @@ therapy line 2"
                               state/dispatch (fn [event]
                                                (deliver asked event))]
 
-                  (check {:paint paint :paint-modal paint-modal :threads threads :asked asked}))))]
+                  (check {:paint paint
+                          :paint-modal paint-modal
+                          :threads threads
+                          :asked asked
+                          :dispatch dispatch}))))]
     (it "prepares a new picture off the painting thread and uploads it in a later frame"
         (run {:data "AAAA" :w 100 :h 120}
              (fn [{:keys [paint threads asked]}]
@@ -3381,11 +3386,32 @@ therapy line 2"
                      second-frame (paint 2)]
 
                  (expect (not (str/includes? first-frame "a=t")))
-                 (expect (= [:bump-render-version] event))
+                 (expect (= :bump-render-version (first event)))
                  (expect (= 1 (count @threads)))
                  (expect (not= (Thread/currentThread) (first @threads)))
                  (expect (str/includes? second-frame "a=t"))
                  (expect (str/includes? second-frame "a=p"))))))
+    ;; Regression: while a turn ran, the frame that the worker asked for was a live tick.
+    ;; A live tick paints no pictures, so the box stayed empty until the next scroll.
+    (it "asks for a frame that paints pictures while a turn runs"
+        (run {:data "AAAA" :w 100 :h 120}
+             (fn [{:keys [paint asked dispatch]}]
+               (paint 2)
+               (let [event (deref asked 5000 :no-frame)
+                     db (atom {})
+                     path (fn [last-db]
+                            (choose-frame-path (frame-change-flags {:last-db last-db
+                                                                    :db @db
+                                                                    :last-layout {:total-h 10
+                                                                                  :inner-h 5}
+                                                                    :same-size? true
+                                                                    :cols 80})))]
+
+                 (with-redefs [state/app-db db]
+                   (dispatch event))
+                 (with-redefs-fn {#'screen/force-full-frame? (delay false)
+                                  #'screen/partial-live-frame? (constantly true)}
+                   #(do (expect (= :full (path {}))) (expect (= :partial-live (path @db)))))))))
     (it "prepares a file without a picture one time while its box scrolls"
         (run nil
              (fn [{:keys [paint threads asked]}]
