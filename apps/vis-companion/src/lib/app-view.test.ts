@@ -165,7 +165,7 @@ describe('newerAppView', () => {
     expect(lost.is_disconnected).toBe(true);
     const back = newerAppView(lost, { ...app(), seq: 8 });
     expect(back.is_disconnected).toBeUndefined();
-    expect(appStateWord(back)).toBe('Live');
+    expect(appStateWord(back)).toBe('');
   });
 });
 

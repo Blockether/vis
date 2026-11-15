@@ -1578,12 +1578,14 @@
 (def ^:private editor-h "Rows of the editor field." 5)
 
 (defn- title
-  "The app's name and its ONE lifecycle word (#430). The state counter is the
-   gateway's, not the human's; Save reports its own state in the status line."
+  "The app's name, then its ONE lifecycle word when it is not live (#430). The state
+   counter is the gateway's, not the human's; Save reports its own state in the status line."
   [view]
-  (str (app/icon-mark view) "  " (or (not-empty (str (:title view))) "App")
-       "  ·  "
-       (get model/status-label (model/status view))))
+  (str (app/icon-mark view)
+       "  "
+       (or (not-empty (str (:title view))) "App")
+       (when-let [word (get model/status-label (model/status view))]
+         (str "  ·  " word))))
 
 (def ^:private app-region
   "The dialog region of the app surface: the whole terminal width without an anchor.

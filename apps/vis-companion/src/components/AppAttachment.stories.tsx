@@ -47,7 +47,7 @@ type Story = StoryObj<typeof meta>;
 export const AllStates: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByRole('button', { name: 'Open app Code review' })).toHaveTextContent('Live');
+    await expect(canvas.getByRole('button', { name: 'Open app Code review' })).not.toHaveTextContent('Live');
     await expect(canvas.getByRole('button', { name: 'Open app Release form' })).toHaveTextContent(
       'Disconnected',
     );

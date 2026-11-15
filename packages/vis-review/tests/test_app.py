@@ -585,7 +585,7 @@ def test_many_findings_keep_the_view_valid(tmp_path, recorder):
     app.refresh()
     diff = recorder.node("diff")
     assert len(diff["threads"]) == limit
-    assert "1 more finding not shown" in diff["label"]
+    assert "1 more finding not shown" in recorder.node("notice")["detail"]
 
 
 def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
@@ -600,5 +600,9 @@ def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
     edit(root, "z.py", "z = 1  \n")
     journal.checkpoint("block")
     app.refresh()
-    assert not recorder.node("diff").get("threads")
+    diff = recorder.node("diff")
+    assert not diff.get("threads")
     assert "z.py:1" in recorder.node("notice")["detail"]
+    # User report 2026-11-15: the names of the cut files were the heading of the diff.
+    assert not diff.get("label")
+    assert "Too large to show: a.py, z.py" in recorder.node("notice")["detail"]

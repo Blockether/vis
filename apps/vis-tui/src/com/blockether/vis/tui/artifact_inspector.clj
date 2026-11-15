@@ -177,7 +177,9 @@
   [{:keys [source filename size version version-count title app-status label] :as row}]
   (if (app-model/app-row? row)
     [(or (not-empty (str title)) filename)
-     (str "App" (when app-status (str " · " (get app-model/status-label app-status))))]
+     (str "App"
+          (when-let [word (get app-model/status-label app-status)]
+            (str " · " word)))]
     (if (= :sent source)
       [filename (not-empty (str label))]
       [filename

@@ -128,7 +128,9 @@
            :description (if (:picker-global? view)
                           "Opens over the terminal"
                           (str "Opens in the " (target-label (session-target view))))
-           :hint (str (when (:picker-global? view) "global · ") (status-label view))
+           :hint (str/join " · "
+                           (remove str/blank?
+                             [(when (:picker-global? view) "global") (status-label view)]))
            :view-id (str (:id view))})
         views))
 

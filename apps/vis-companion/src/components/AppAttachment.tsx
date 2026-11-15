@@ -325,6 +325,12 @@ export function AppSurface({
   const rememberScroll = useReviewScroll(memoryKey, surface, view !== null);
   const keyQueue = useRef<{ tail: Promise<unknown>; waiting: number }>({ tail: Promise.resolve(), waiting: 0 });
   const isReadOnly = !view || view.is_closed === true || view.is_disconnected === true;
+  // A refusal from before the outage is old news when the app takes actions again.
+  const [wasReadOnly, setWasReadOnly] = useState(isReadOnly);
+  if (wasReadOnly !== isReadOnly) {
+    setWasReadOnly(isReadOnly);
+    if (!isReadOnly) setFormStatus('idle');
+  }
   const shortcuts = useMemo(() => (isReadOnly ? [] : (view?.shortcuts ?? [])), [isReadOnly, view?.shortcuts]);
 
   const actions = useMemo<AppNodeActions | undefined>(() => {
@@ -482,7 +488,7 @@ export function AppSurface({
   const state = view ? (sid === null ? globalAppStateWord(view) : appStateWord(view)) : '';
   const subtitle = view ? (
     <span className="flex items-center gap-2">
-      <span>{state}</span>
+      {state && <span>{state}</span>}
       {/* A read-only app says why in its state word; an old refusal adds nothing. */}
       <ActionStatus status={isReadOnly ? 'idle' : formStatus} isOnBand />
     </span>
@@ -716,11 +722,12 @@ export function AppListRow({
   stateWord?: (view: LiveViewModel) => string;
   onOpen: (view: LiveViewModel) => void;
 }) {
+  const word = stateWord(view);
   return (
     <ListRow onClick={() => onOpen(view)} title={view.title} aria-label={`Open app ${view.title}`} className={APP_ROW_FOCUS}>
       <AppIcon name={view.icon} className="size-4 shrink-0 text-accent-ink" />
       <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">{view.title}</span>
-      <span className="shrink-0 font-mono text-meta text-footer-muted">{stateWord(view)}</span>
+      {word && <span className="shrink-0 font-mono text-meta text-footer-muted">{word}</span>}
     </ListRow>
   );
 }

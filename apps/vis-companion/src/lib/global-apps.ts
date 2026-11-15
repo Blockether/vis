@@ -68,7 +68,7 @@ export function foldGlobalAppView(view: LiveView, event: SseEvent): AppFold {
  * opened app keeps its picture, but the list leaves it out.
  */
 export function listedGlobalApps(apps: readonly LiveView[]): LiveView[] {
-  return apps.filter((app) => appStateWord(app) === 'Live');
+  return apps.filter((app) => appStateWord(app) === '');
 }
 
 /** The state word of a global app. A stale picture waits for its program. */

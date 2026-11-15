@@ -105,7 +105,8 @@ describe('AppSurface', () => {
     const { client, liveView } = fakeClient([view(3), view(9, 'From the other client')], async () => ({}));
     open(client, hub);
     expect(await screen.findByText('Bumped it.')).toBeInTheDocument();
-    expect(screen.getByText('Live')).toBeInTheDocument();
+    // A live app is the usual case: its header shows no state word.
+    expect(screen.queryByText('Live')).toBeNull();
     act(() =>
       emit({
         type: VIEW_PATCH_EVENT,
@@ -580,7 +581,7 @@ describe('AppSurface focus, names and owner loss', () => {
         view: { ...wizardWire(), seq: 3 },
       } as SseEvent),
     );
-    expect(await screen.findByText('Live')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Disconnected')).toBeNull());
     expect(nodeButton('next')).toHaveProperty('disabled', false);
     // Its one key is on the Next button, so no legend shows, but the key works again.
     expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
@@ -599,7 +600,7 @@ describe('AppSurface focus, names and owner loss', () => {
     expect(await screen.findByText('Disconnected')).toBeInTheDocument();
     expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
     act(() => emit({ type: VIEW_OPEN_EVENT, kind: 'live', view_id: 'app-1', view: { ...wizardWire(), seq: 4 } } as SseEvent));
-    expect(await screen.findByText('Live')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Disconnected')).toBeNull());
   });
 });
 

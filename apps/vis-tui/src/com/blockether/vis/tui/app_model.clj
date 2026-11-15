@@ -33,8 +33,8 @@
         :else :live))
 
 (def status-label
-  "The badge text of each lifecycle state."
-  {:live "Live" :stale "Disconnected" :closed "Closed" :archived "Archived"})
+  "The badge text of each lifecycle state. A live app is the usual case and has none."
+  {:stale "Disconnected" :closed "Closed" :archived "Archived"})
 
 (defn read-only?
   "True when the app takes no more actions: it is closed or archived."

@@ -34,6 +34,8 @@ ui = vis.ui
 
 # Characters of patch text the diff node shows; the contract allows 1 MB.
 MOST_PATCH_CHARS = 900_000
+# File names of the cut files that the notice lists.
+MOST_CUT_NAMES = 5
 # Unchanged lines around each change; full files show every line, as "Expand all" does.
 CONTEXT_LINES = 3
 FULL_CONTEXT = 1_000_000
@@ -315,9 +317,11 @@ class ReviewApp:
         images = self.image_nodes(diffs)
         patch, cut = _patch_of(diffs)
         shown = {d.path for d in diffs if d.patch and d.path not in cut}
-        notice = self._notice(_off_lines(findings, shown))
+        newest = self.journal.entries[-1].at if self.journal.entries else 0
+        threads, left = _threads(findings, shown, int(newest * 1000) or 1)
+        notice = self._notice([*_left_out(cut, left), *_off_lines(findings, shown)])
         return [
-            self._diff(patch, cut, shown, diffs, diffs_all, findings, end),
+            self._diff(patch, threads, diffs, diffs_all, end),
             *([notice] if notice else []),
             *([ui.group("images", *images, label="Changed images")] if images else []),
         ]
@@ -362,7 +366,8 @@ class ReviewApp:
     def _notice(self, off_lines: list[str]) -> dict | None:
         """The result of the last action, or None while there is nothing to tell.
 
-        A finding on a shown line is a thread of the diff; the others are listed here.
+        A finding on a shown line is a thread of the diff; the others are listed here,
+        after the files and the findings that the diff leaves out.
         """
         text, tone = self.notice
         detail = "\n\n".join(part for part in (self.ai_summary, *off_lines) if part)
@@ -499,26 +504,9 @@ class ReviewApp:
         return f"#{max(self.start, 0)}"
 
     def _diff(
-        self,
-        patch: str,
-        cut: list[str],
-        shown: set[str],
-        diffs,
-        diffs_all,
-        findings,
-        end: int,
+        self, patch: str, threads: list[dict], diffs, diffs_all, end: int
     ) -> dict:
-        """The diff node of `patch` with its toolbar and one thread for each finding on a line."""
-        newest = self.journal.entries[-1].at if self.journal.entries else 0
-        threads, left = _threads(findings, shown, int(newest * 1000) or 1)
-        notes = [
-            *(["Cut to fit: " + ", ".join(cut[:5])] if cut else []),
-            *(
-                [f"{left} more finding{'' if left == 1 else 's'} not shown"]
-                if left
-                else []
-            ),
-        ]
+        """The diff node of `patch` with its toolbar and `threads`, one for each finding on a line."""
         return ui.diff(
             "diff",
             patch or "No change in this range.\n",
@@ -526,7 +514,6 @@ class ReviewApp:
             new_revision=f"#{end}"
             if self.end is not None and not self.against
             else "now",
-            label="; ".join(notes) or None,
             threads=threads,
             children=self._toolbar(diffs_all, bool(diffs)),
         )
@@ -912,6 +899,17 @@ def _where(finding) -> str:
     if finding.line:
         return f"{finding.path}:{finding.line}"
     return finding.path or "-"
+
+
+def _left_out(cut: list[str], left: int) -> list[str]:
+    """What the diff leaves out, one text each: the files over the size limit and the
+    count of findings over the thread limit."""
+    more = len(cut) - MOST_CUT_NAMES
+    names = ", ".join(cut[:MOST_CUT_NAMES]) + (f" and {more} more" if more > 0 else "")
+    return [
+        *([f"Too large to show: {names}"] if cut else []),
+        *([f"{left} more finding{'' if left == 1 else 's'} not shown"] if left else []),
+    ]
 
 
 def _off_lines(findings, shown: set[str]) -> list[str]:

@@ -109,12 +109,12 @@ export function sendAction(
   };
 }
 
-/** The state word of an app card. */
+/** The state word of an app card. A live app is the usual case and has no word. */
 export function appStateWord(view: Pick<LiveView, 'is_closed' | 'is_archived' | 'is_disconnected'>): string {
   if (view.is_closed) return 'Closed';
   if (view.is_archived) return 'Archived';
   if (view.is_disconnected) return 'Disconnected';
-  return 'Live';
+  return '';
 }
 
 /** The name of an app before its view arrives: the filename without `.app.json`. */

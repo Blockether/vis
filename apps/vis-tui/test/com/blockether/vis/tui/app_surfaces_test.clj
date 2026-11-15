@@ -232,6 +232,16 @@
                    (expect (true? (keymap/verb-available? (dissoc db :app-views)
                                                           {:show-when :has-apps})))
                    (expect (= ["Ready" "global · Ready"] (mapv :hint rows)))))
+             ;; User report 2026-11-15: the word "Live" on each app says nothing.
+             (it "gives a live app no state word"
+                 (let [views
+                       [(app "a" "Review" nil) (app "g" "Board" nil :picker-global? true)
+                        (app "b" "Form" nil :is-stale true)]
+
+                       rows
+                       (app-surfaces/picker-items views (comp model/status-label model/status))]
+
+                   (expect (= ["" "global" "Disconnected"] (mapv :hint rows)))))
              (it "shows a small footer marker only while the app pane is hidden"
                  (let [db {:app-views {"s" {:view (app "s" "Review" nil)}}}]
                    (expect (= "1 app C-x b o" (app-surfaces/apps-marker db)))
