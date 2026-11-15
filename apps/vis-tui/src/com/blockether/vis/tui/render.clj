@@ -41,9 +41,77 @@
   "The smallest RESULT body, in characters, whose rows `card-body` keeps."
   4096)
 
-(defonce ^:private ^com.blockether.vis.render.BoundedCache card-body-cache (BoundedCache. 64))
+(def ^:private ^:const card-body-memo-max-rows
+  "The most RESULT rows that `card-body` keeps over all bodies. A session with hundreds of
+   large outputs stays in the memo at two widths, so a press after \"expand all\" does not
+   lay out a megabyte of text again."
+  300000)
 
-(defonce ^:private ^AtomicLong card-body-cache-gen (AtomicLong.))
+(def ^:private ^:const card-body-memo-max-bodies 2048)
+
+(defonce ^:private ^java.util.LinkedHashMap card-body-memo
+  ;; Access-order: the first entry is the least recently used one. Guarded by its monitor.
+  (java.util.LinkedHashMap. 64 (float 0.75) true))
+
+(defonce ^:private ^AtomicLong card-body-memo-rows (AtomicLong.))
+
+(defonce ^:private ^AtomicLong card-body-memo-gen (AtomicLong.))
+
+(defonce ^:private ^com.blockether.vis.render.BoundedCache step-text-cache
+  ;; Pure results from the text of one step: the colored and folded rows of its code and
+  ;; the display fences of its output. A press on one disclosure formats each open step of
+  ;; the turn again; the code and the output of the other steps did not change.
+  (BoundedCache. 4096))
+
+(defonce ^:private ^AtomicLong step-text-cache-gen (AtomicLong.))
+
+(defn- kept-card-body
+  "The kept body for key `k`, or nil. A hit becomes the most recently used entry."
+  [k]
+  (let [^java.util.LinkedHashMap memo card-body-memo]
+    (locking memo (.get memo k))))
+
+(defn- keep-card-body!
+  "Keep body `v` for key `k` unless the memo was cleared after generation `gen0`. Then drop
+   the least recently used bodies until the memo is in its row and body limits. The newest
+   body always stays. Returns the kept body."
+  [k v ^long gen0]
+  (let [^java.util.LinkedHashMap memo
+        card-body-memo
+
+        ^AtomicLong kept-rows
+        card-body-memo-rows
+
+        ^AtomicLong gen
+        card-body-memo-gen]
+
+    (locking memo
+      (if-not (== gen0 (.get gen))
+        v
+        (or (.get memo k)
+            (do (.put memo k v)
+                (.addAndGet kept-rows (count (:rows v)))
+                (let [it (.iterator (.entrySet memo))]
+                  (while (and (> (.size memo) 1)
+                              (or (> (.get kept-rows) (long card-body-memo-max-rows))
+                                  (> (.size memo) (long card-body-memo-max-bodies))))
+                    (let [^java.util.Map$Entry e (.next it)]
+                      (.addAndGet kept-rows (- (count (:rows (.getValue e)))))
+                      (.remove it))))
+                v))))))
+
+(defn- clear-card-bodies!
+  []
+  (let [^java.util.LinkedHashMap memo
+        card-body-memo
+
+        ^AtomicLong kept-rows
+        card-body-memo-rows
+
+        ^AtomicLong gen
+        card-body-memo-gen]
+
+    (locking memo (.clear memo) (.set kept-rows 0) (.incrementAndGet gen))))
 
 (defmacro with-cache
   "Generation-guarded double-checked read/compute/put on an access-order
@@ -105,7 +173,8 @@
    key tuple doesn't capture, or from tests."
   []
   (clear-cache! fmt-cache fmt-cache-gen)
-  (clear-cache! card-body-cache card-body-cache-gen))
+  (clear-card-bodies!)
+  (clear-cache! step-text-cache step-text-cache-gen))
 
 (defn cache-size
   "Current number of entries (handy for tests/diagnostics)."
@@ -6129,8 +6198,11 @@
   (let [s (str stdout)]
     ;; A plain search skips the regex, which tests every line, for output without a fence.
     (when (str/includes? s "````vis-")
-      (some->> (re-seq display-fence-re s)
-               vec))))
+      (:fences (with-cache step-text-cache
+                           step-text-cache-gen
+                           [::fences s]
+                           {:fences (some->> (re-seq display-fence-re s)
+                                             vec)})))))
 
 (defn shown-file-rows
   "Upper bound of the rows that the display fences in one form's `stdout` paint
@@ -6167,11 +6239,16 @@
   "Remove the display fences from `stdout`, because the transcript shows them
    below the step. Output without a fence stays unchanged."
   [stdout]
-  (if (and (string? stdout) (str/includes? stdout "````vis-") (re-find display-fence-re stdout))
-    (some-> (str/replace stdout display-fence-re "")
-            (str/replace #"^(?:[ \t]*\n)+" "")
-            str/trimr
-            not-empty)
+  (if (and (string? stdout) (str/includes? stdout "````vis-"))
+    (:text (with-cache step-text-cache
+                       step-text-cache-gen
+                       [::stripped stdout]
+                       {:text (if (re-find display-fence-re stdout)
+                                (some-> (str/replace stdout display-fence-re "")
+                                        (str/replace #"^(?:[ \t]*\n)+" "")
+                                        str/trimr
+                                        not-empty)
+                                stdout)}))
     stdout))
 
 (defn- strip-produced-artifact-transport
@@ -6476,11 +6553,16 @@
 
     (if (< (count body-text) card-body-memo-min-chars)
       (body (vis/markdown->ast body-text))
-      (or (locking card-body-cache (.get card-body-cache k))
-          (let [ast (vis/markdown->ast body-text)]
+      (or (kept-card-body k)
+          (let [gen0
+                (.get ^AtomicLong card-body-memo-gen)
+
+                ast
+                (vis/markdown->ast body-text)]
+
             (if (some disclosure-code-block? (nthrest ast 2))
               (body ast)
-              (with-cache card-body-cache card-body-cache-gen k (body ast))))))))
+              (keep-card-body! k (body ast) gen0)))))))
 
 (defn- tool-card-entries
   "Render one stdout card (`vis/result-card` descriptor) into TUI line entries.
@@ -8571,6 +8653,33 @@
     (seq (:children row))
     (update :children #(mapv (partial scoped-activity-row scope) %))))
 
+(defn- thinking-text-entries
+  "The line entries of one thinking text at `fill-w` columns, kept by the text, the width
+   and the active width method. A collapsed THINKING section shows three rows, but its
+   headline counts all rows, so each format of the turn needs the full layout."
+  [^String thinking-text fill-w]
+  (with-cache
+    step-text-cache
+    step-text-cache-gen
+    [::thinking thinking-text fill-w (UnicodeWidth/getWidthMethod)]
+    (vec (or (seq (layout/ast->entries (vis/reasoning->ast thinking-text) fill-w {:mode :thinking}))
+             (mapv (fn [row]
+                     {:line (str thinking-marker row) :meta nil})
+                   (wrap-text thinking-text fill-w))))))
+
+(defn- joined-text
+  "`parts` joined with `separator`, kept by the parts. A group of forms gets the same
+   string object on each format, so the caches that take the text as their key find it by
+   identity and do not hash and compare a large output again."
+  ^String [separator parts]
+  (let [parts (vec parts)]
+    (if (= 1 (count parts))
+      (str (first parts))
+      (:text (with-cache step-text-cache
+                         step-text-cache-gen
+                         [::joined separator parts]
+                         {:text (str/join separator parts)})))))
+
 (defn- execution-group
   "Display-only aggregation. Wire forms, invocation ids and their lifecycles remain unchanged."
   [forms]
@@ -8615,10 +8724,10 @@
                (map-indexed #(assoc %2 :sequence %1))
                vec)]
 
-      {:code (str/join "\n\n" (map #(or (:display-code %) (:code %)) forms))
+      {:code (joined-text "\n\n" (map #(or (:display-code %) (:code %)) forms))
        :display-language "python"
        :comment (:comment (first forms))
-       :stdout (str/join "\n" (keep #(not-empty (:stdout %)) forms))
+       :stdout (joined-text "\n" (keep #(not-empty (:stdout %)) forms))
        :error (some :error forms)
        :group-errors (vec (keep :error forms))
        :success? (case state
@@ -8769,6 +8878,29 @@
                    (into (fence (re-groups matcher)))))
         (into out (prose (subs text at)))))))
 
+(defn- colored-code-lines
+  "The rows of `code-text` with their colors, or nil for a language without colors. Source
+   that already carries ANSI keeps its colors and Python gets `PythonHighlighter`'s."
+  [^String code-text code-language]
+  (:lines (with-cache step-text-cache
+                      step-text-cache-gen
+                      [::colored code-text code-language]
+                      {:lines (cond (str/includes? code-text "\u001b[") (str/split-lines code-text)
+                                    (= "python" code-language)
+                                    (str/split-lines (PythonHighlighter/highlight code-text)))})))
+
+(defn- folded-code-rows
+  "The display rows of each line of `code-text` at `width` columns. A colored row folds
+   SGR-aware, so each wrapped row keeps its color."
+  [^String code-text code-language ^long width]
+  (with-cache step-text-cache
+              step-text-cache-gen
+              [::folded code-text code-language width (UnicodeWidth/getWidthMethod)]
+              (mapv (fn [plain colored]
+                      (if colored (p/ansi-fold-cols colored width) (p/fold-cols plain width)))
+                    (str/split-lines code-text)
+                    (or (colored-code-lines code-text code-language) (repeat nil)))))
+
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
@@ -8883,27 +9015,16 @@
 
                 entries
                 (into []
-                      (mapcat
-                        (fn [thinking-text]
-                          (when (and (string? thinking-text) (not (str/blank? thinking-text)))
-                            ;; Thinking text comes from the LLM as plain
-                            ;; markdown; lift to canonical IR via the SHARED
-                            ;; `vis/reasoning->ir` (normalize + :soft-break
-                            ;; :hard) — the SAME path the web thinking card
-                            ;; uses, so a bold heading keeps its own line
-                            ;; instead of collapsing onto its body. Then walk
-                            ;; in `:thinking` mode (iter-header-bg / italic).
-                            (let [ast (vis/reasoning->ast thinking-text)]
-                              (or (seq (layout/ast->entries ast
-                                                            fill-w
-                                                            {:mode :thinking
-                                                             :session-id session-id
-                                                             :session-turn-id session-turn-id
-                                                             :detail-expansions detail-expansions
-                                                             :iteration-number iteration-number
-                                                             :section :thinking}))
-                                  (mapv #(line-entry (str thinking-marker %))
-                                        (wrap-text thinking-text fill-w)))))))
+                      (mapcat (fn [thinking-text]
+                                (when (and (string? thinking-text) (not (str/blank? thinking-text)))
+                                  ;; Thinking text comes from the LLM as plain
+                                  ;; markdown; lift to canonical IR via the SHARED
+                                  ;; `vis/reasoning->ir` (normalize + :soft-break
+                                  ;; :hard) — the SAME path the web thinking card
+                                  ;; uses, so a bold heading keeps its own line
+                                  ;; instead of collapsing onto its body. Then walk
+                                  ;; in `:thinking` mode (iter-header-bg / italic).
+                                  (thinking-text-entries thinking-text fill-w))))
                       texts)]
 
             (when (seq entries)
@@ -9130,10 +9251,7 @@
                 ;; colors and Python gets `PythonHighlighter`'s; both fold SGR-aware
                 ;; below. Any other language folds plain.
                 colored-lines
-                (cond digest-closed? nil
-                      (str/includes? code-text "\u001b[") (str/split-lines code-text)
-                      (= "python" code-language) (str/split-lines (PythonHighlighter/highlight
-                                                                    code-text)))
+                (when-not digest-closed? (colored-code-lines code-text code-language))
 
                 inline-error-code-lines
                 (when (and error (not digest-closed?) (not (:group-errors form)))
@@ -9148,13 +9266,7 @@
                 (when-not digest-closed?
                   (or (some->> inline-error-code-lines
                                (mapv vector))
-                      (mapv (fn [plain colored]
-                              (let [width (max 1 (- (long fill-w) 2))]
-                                (if colored
-                                  (p/ansi-fold-cols colored width)
-                                  (p/fold-cols plain width))))
-                            (str/split-lines code-text)
-                            (or colored-lines (repeat nil)))))
+                      (folded-code-rows code-text code-language (max 1 (- (long fill-w) 2)))))
 
                 code-node-id
                 (when session-id

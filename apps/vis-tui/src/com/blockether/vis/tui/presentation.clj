@@ -171,6 +171,13 @@
         (nil? x) ""
         :else ""))
 
+(defn- inline-node
+  "`head` with the inline `children` that have content. A child without text canonicalizes
+   to nil; a node that kept the nil was not canonical, and each later `->ast` built the
+   whole tree again."
+  [head children]
+  (into head (remove nil?) children))
+
 (defn- string->span
   "Lift a raw text string into a [:span ...] node, collapsing soft breaks
    unless `preserve-ws?` is set. Empty strings become nil (filtered out)."
@@ -222,7 +229,7 @@
                             (if (= "" text) nil [:span attrs text]))
             (contains? inline-tags tag) (let [child-nodes (canon-inline-children children
                                                                                  preserve-ws?)]
-                                          (into [tag attrs] child-nodes))
+                                          (inline-node [tag attrs] child-nodes))
             :else
             ;; Unknown/retired tags are not preserved in canonical IR. This is
             ;; deliberate for removed answer affordances such as :details/:summary:
@@ -296,14 +303,14 @@
     (cond (every? #(= :block %) classified) (map-keep-identity canon-block children)
           (every? #(= :inline %) classified)
           (let [inline-children (canon-inline-children children false)]
-            (if (seq inline-children) [(into [:p {}] inline-children)] []))
+            (if (seq inline-children) [(inline-node [:p {}] inline-children)] []))
           :else (loop [out []
                        buf []
                        cs (seq children)]
 
                   (let [flush (fn [out buf]
                                 (let [inl (canon-inline-children buf false)]
-                                  (if (seq inl) (conj out (into [:p {}] inl)) out)))]
+                                  (if (seq inl) (conj out (inline-node [:p {}] inl)) out)))]
                     (if (nil? cs)
                       (flush out buf)
                       (let [c (first cs)]
@@ -347,7 +354,7 @@
 
         (let [flush (fn [out buf]
                       (let [inl (canon-inline-children buf false)]
-                        (if (seq inl) (conj out (into [:p {}] inl)) out)))]
+                        (if (seq inl) (conj out (inline-node [:p {}] inl)) out)))]
           (if (nil? cs)
             (flush out buf)
             (let [c (first cs)]
@@ -419,17 +426,41 @@
                   children))
 
       (:th :td)
-      (into [tag attrs] (canon-block-children children))
+      (inline-node [tag attrs] (canon-block-children children))
 
       (:p :h)
-      (into [tag attrs] (canon-block-children children))
+      (inline-node [tag attrs] (canon-block-children children))
 
       :quote
       ;; quote contains blocks; loose inlines bucket into :p
       (into [:quote attrs] (canon-blocks-strict children))
 
       ;; should not happen — caller dispatches by block?/inline?
-      (into [tag attrs] (canon-block-children children)))))
+      (inline-node [tag attrs] (canon-block-children children)))))
+
+(defn- canonical-ast
+  "Canonical `[:ast & blocks]` of `v`, a value that holds no lazy sequence: the output of
+   the `->ast` sanitizer or of the Markdown parser."
+  [v]
+  (if (canonical? v)
+    v
+    (let [raw-children
+          (cond (and (vector? v) (= :ast (first v))) (let [v (ensure-attrs v)]
+                                                       (drop 2 v))
+                (string? v) [v]
+                (and (vector? v) (keyword? (first v))) [v]
+                (sequential? v) (seq v)
+                :else [[:code {:lang "edn"} (pr-str v)]])
+
+          coerced
+          (mapv (fn [x]
+                  (cond (string? x) x
+                        (and (vector? x) (keyword? (first x))) x
+                        (nil? x) nil
+                        :else [:code {:lang "edn"} (pr-str x)]))
+                raw-children)]
+
+      (into [:ast {}] (canon-blocks-strict (filter some? coerced))))))
 
 (defn ->ast
   "Soft-normalize any answer-input value into canonical [:ast & blocks].
@@ -492,23 +523,7 @@
                  (set? x) (cwalk/walk sanitize identity x)
                  (and (sequential? x) (not (string? x))) (bounded-seq x)
                  :else x))]
-        (let [v (sanitize v)]
-          (if (canonical? v)
-            v
-            (let [raw-children (cond (and (vector? v) (= :ast (first v))) (let [v (ensure-attrs v)]
-                                                                            (drop 2 v))
-                                     (string? v) [v]
-                                     (and (vector? v) (keyword? (first v))) [v]
-                                     (sequential? v) (seq v)
-                                     :else [[:code {:lang "edn"} (pr-str v)]])
-                  coerced (mapv (fn [x]
-                                  (cond (string? x) x
-                                        (and (vector? x) (keyword? (first x))) x
-                                        (nil? x) nil
-                                        :else [:code {:lang "edn"} (pr-str x)]))
-                                raw-children)]
-
-              (into [:ast {}] (canon-blocks-strict (filter some? coerced))))))))))
+        (canonical-ast (sanitize v))))))
 
 (defn ast? "True when x is a canonical [:ast ...] AST." [x] (and (vector? x) (= :ast (first x))))
 
@@ -750,7 +765,9 @@
                                 doc (.parse ^Parser md-parser ^String prepared)
                                 blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
 
-                            (->ast (into [:ast {}] blocks))))
+                            ;; The parser builds vectors only, so the sanitizer of
+                            ;; `->ast` has nothing to realize.
+                            (canonical-ast (into [:ast {}] blocks))))
          :else
          ;; non-string, non-canonical — best-effort coerce via ->ast
          (->ast text))))

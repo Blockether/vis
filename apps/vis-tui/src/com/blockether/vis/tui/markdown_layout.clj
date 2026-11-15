@@ -516,10 +516,21 @@
   ;; The render thread and the layout prewarm thread share it.
   (BoundedCache. 1024))
 
+(def ^:private block-opt-keys
+  "The options that the layout of one block reads. Callers also pass options for later
+   stages and for their own use; those must not be part of the cache key of a block."
+  [:code-fence? :code-spacing?])
+
 (defn- cached-block-lines
-  "Lines of `block`, cached by its value, `width`, `opts` and the active width method."
+  "Lines of `block`, cached by its value, `width`, the block options of `opts` and the
+   active width method. The layout gets only those options, so the key holds each input."
   [block width opts]
-  (let [k [block width opts (UnicodeWidth/getWidthMethod)]]
+  (let [opts
+        (select-keys opts block-opt-keys)
+
+        k
+        [block width opts (UnicodeWidth/getWidthMethod)]]
+
     (or (.get ^BoundedCache block-lines-cache k)
         (.put ^BoundedCache block-lines-cache k (vec (block->lines block width opts))))))
 
@@ -1955,7 +1966,11 @@
                                 (disj (or s #{}) :code)))
                      runs)
                runs)]
-    (apply str (map run->sentinel-segment runs))))
+    (if (== 1 (count runs))
+      (str (run->sentinel-segment (first runs)))
+      (let [sb (StringBuilder.)]
+        (run! #(.append sb (str (run->sentinel-segment %))) runs)
+        (.toString sb)))))
 
 (defn lines->sentinel-strings
   "Convert walker output (vector of `{:runs :block-tag :block-level?}`
@@ -2003,6 +2018,127 @@
    many columns keeps its natural spacing and ends ragged instead."
   5)
 
+(defn- gap-char?
+  "True for a character that the regex class `\\s` matches."
+  [^long c]
+  (or (== c 32) (and (<= 9 c) (<= c 13))))
+
+(defn- gap-count
+  "The number of whitespace runs in `text`."
+  ^long [^String text]
+  (let [n (.length text)]
+    (loop [i 0
+           in-gap? false
+           gaps 0]
+
+      (if (== i n)
+        gaps
+        (let [gap? (gap-char? (int (.charAt text i)))]
+          (recur (inc i) gap? (if (and gap? (not in-gap?)) (inc gaps) gaps)))))))
+
+(defn- gap-strings
+  "The whitespace runs of `text`, in order."
+  [^String text]
+  (let [n (.length text)]
+    (loop [i 0
+           start -1
+           out (transient [])]
+
+      (cond (== i n) (persistent! (if (neg? start) out (conj! out (.substring text start n))))
+            (gap-char? (int (.charAt text i))) (recur (inc i) (if (neg? start) i start) out)
+            :else (recur (inc i) -1 (if (neg? start) out (conj! out (.substring text start i))))))))
+
+(defn- gap-end
+  "The index after the whitespace run of `text` that starts at `i`."
+  ^long [^String text ^long i]
+  (let [n (.length text)]
+    (loop [j i]
+      (if (and (< j n) (gap-char? (int (.charAt text j)))) (recur (inc j)) j))))
+
+(defn- same-words?
+  "True when `a` and `b` have the same words in the same order, with a whitespace run at
+   the same places. The length of a whitespace run and whitespace at the end do not count.
+   Equal to a compare of both texts split at whitespace runs."
+  [^String a ^String b]
+  (let [na
+        (.length a)
+
+        nb
+        (.length b)]
+
+    (loop [i
+           0
+
+           j
+           0]
+
+      (let [i2
+            (gap-end a i)
+
+            j2
+            (gap-end b j)]
+
+        (cond (and (== i2 na) (== j2 nb)) true
+              (or (== i2 na) (== j2 nb)) false
+              (not= (> i2 i) (> j2 j)) false
+              (== (int (.charAt a i2)) (int (.charAt b j2))) (recur (inc i2) (inc j2))
+              :else false)))))
+
+(defn- starts-in-gap? [^String text] (and (pos? (.length text)) (gap-char? (int (.charAt text 0)))))
+
+(defn- ends-in-gap?
+  "True when the regex `\\s$` finds a match in `text`: `$` also matches before one line
+   terminator at the end."
+  [^String text]
+  (let [n
+        (.length text)
+
+        gap-at?
+        (fn [^long i]
+          (and (>= i 0) (gap-char? (int (.charAt text i)))))]
+
+    (or (gap-at? (dec n))
+        (and (pos? n)
+             (contains? #{0x85 0x2028 0x2029} (int (.charAt text (dec n))))
+             (gap-at? (- n 2))))))
+
+(defn- widen-gaps
+  "`text` with each whitespace run replaced by the next string of `widened`. `gap-i` holds
+   the count of strings already used. With `continued-gap?`, the first run continues the
+   gap that ended the run before, so it is dropped."
+  ^String [^String text widened ^longs gap-i continued-gap?]
+  (let [n
+        (.length text)
+
+        sb
+        (StringBuilder. (+ n 8))]
+
+    (loop [i 0]
+      (when (< i n)
+        (let [j (gap-end text i)]
+          (if (== j i)
+            (do (.append sb (.charAt text i)) (recur (inc i)))
+            (do (when-not (and (zero? i) continued-gap?)
+                  (let [k (aget gap-i 0)]
+                    (aset gap-i 0 (inc k))
+                    (.append sb
+                             ^String
+                             (if (< k (count widened)) (nth widened k) (.substring text i j)))))
+                (recur j))))))
+    (.toString sb)))
+
+(defn- content-text
+  "The text of `runs` after the first `prefix-n` runs. Inline code is literal: its spaces
+   become no-break spaces, so they belong to a word and never to a gap."
+  ^String [runs ^long prefix-n]
+  (let [sb (StringBuilder.)]
+    (run! (fn [r]
+            (let [text (str (:text r))]
+              (.append sb
+                       (if (contains? (:style r) :code) (str/replace text #"\s" "\u00a0") text))))
+          (nthrest runs prefix-n))
+    (.toString sb)))
+
 (defn justify-line-runs
   "Full-justify ONE soft-wrapped walker line's `runs` to `width` display columns
    by widening the inter-word whitespace INSIDE its text runs. The styled twin
@@ -2045,89 +2181,56 @@
                                   (str/blank? (str (:text r)))))
                             runs))
 
-         content
-         (drop prefix-n runs)
+         ;; Most lines have no slack, or too much of it. A large output has thousands of
+         ;; lines, so find that before the text of the line is built.
+         slack
+         (- width
+            (long (reduce (fn [^long acc r]
+                            (+ acc (run-width r)))
+                          0
+                          runs)))
 
          text
-         (apply str
-           (map (fn [r]
-                  (cond-> (str (:text r))
-                    (contains? (:style r) :code)
-                    (str/replace #"\s" "\u00a0")))
-                content))
+         (when (pos? slack) (content-text runs prefix-n))
 
-         gaps
-         (vec (re-seq #"\s+" text))
-
-         prefix-w
-         (long (reduce + 0 (map run-width (take prefix-n runs))))
-
-         slack
-         (- width prefix-w (long (reduce + 0 (map run-width content))))
+         gap-n
+         (if text (gap-count text) 0)
 
          stretched
-         (when (and (pos? (count gaps))
-                    (pos? slack)
-                    (if full?
-                      (<= slack (* (dec (long max-gap)) (count gaps)))
-                      (< slack (count gaps))))
-           (p/justify-line text (- width prefix-w)))
+         (when (and (pos? gap-n)
+                    (if full? (<= slack (* (dec (long max-gap)) gap-n)) (< slack gap-n)))
+           (p/justify-line text (- width (long (reduce + 0 (map run-width (take prefix-n runs)))))))
 
          widened
-         (when stretched (vec (re-seq #"\s+" stretched)))]
+         (when stretched (gap-strings stretched))]
 
-     (if (or (nil? stretched)
-             (not= (count widened) (count gaps))
-             (not= (str/split text #"\s+") (str/split stretched #"\s+")))
+     (if (or (nil? stretched) (not= (count widened) gap-n) (not (same-words? text stretched)))
        runs
-       (let [idx
-             (volatile! -1)
+       (let [gap-i
+             (long-array 1)
 
-             previous-ended-in-whitespace?
-             (volatile! false)]
+             ^booleans previous-ended-in-gap?
+             (boolean-array 1)]
 
-         (vec
-           (map-indexed
-             (fn [^long i r]
-               (cond (< i prefix-n) r
-                     (contains? (:style r) :code) (do (vreset! previous-ended-in-whitespace? false)
-                                                      r)
-                     :else (update r
-                                   :text
-                                   (fn [t]
-                                     (let [t
-                                           (str t)
+         (into []
+               (map-indexed
+                 (fn [^long i r]
+                   (cond (< i prefix-n) r
+                         (contains? (:style r) :code) (do (aset previous-ended-in-gap? 0 false) r)
+                         :else (let [^String t
+                                     (str (:text r))
 
-                                           first-match?
-                                           (volatile! true)
+                                     widened-t
+                                     (widen-gaps t
+                                                 widened
+                                                 gap-i
+                                                 (and (aget previous-ended-in-gap? 0)
+                                                      (starts-in-gap? t)))]
 
-                                           starts-in-whitespace?
-                                           (boolean (re-find #"^\s" t))
-
-                                           continued-gap?
-                                           (and @previous-ended-in-whitespace?
-                                                starts-in-whitespace?)
-
-                                           replaced
-                                           (str/replace t
-                                                        #"\s+"
-                                                        (fn [original]
-                                                          (let [continuation? (and @first-match?
-                                                                                   continued-gap?)]
-                                                            (vreset! first-match? false)
-                                                            (if continuation?
-                                                              ""
-                                                              (nth widened
-                                                                   (long (vswap! idx
-                                                                                 (fn [^long v]
-                                                                                   (inc v))))
-                                                                   original)))))]
-
-                                       (when (seq t)
-                                         (vreset! previous-ended-in-whitespace?
-                                                  (boolean (re-find #"\s$" t))))
-                                       replaced)))))
-             runs)))))))
+                                 (when (pos? (.length t))
+                                   (aset previous-ended-in-gap? 0 (boolean (ends-in-gap? t))))
+                                 (assoc r :text widened-t)))))
+               runs))))))
 
 (defn ast->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.
