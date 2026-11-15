@@ -276,7 +276,8 @@ Runs and workflows:
 - The name of a workflow and the key of `ctx.gate` have the form `[a-z][a-z0-9_]{1,39}`.
 - A workflow file has exactly one function with `@workflow` and at most 200 000 characters.
 - The title of a gate has at most 200 characters and its text at most 2000. The comment of a decision has at most 4000 characters.
-- `ctx.ask` and `ctx.document` wait 900 seconds for a turn, if you do not set `timeout=`.
+- `ctx.ask`, `ctx.document` and `ctx.delegate` wait 900 seconds for a turn, if you do not set `timeout=`. The turn of `ctx.delegate` includes the work of its subagents. A subagent that does not complete fails the activity.
+- `llm=` of `ctx.ask`, `ctx.document` and `ctx.delegate` names one of the models of the stack (`VIS_MODELS`). `provider=` is necessary only for a gateway with more than one provider.
 - Vis continues one turn in any number of new workers, until the turn is 8 hours old. The Vis setting `turn_resume_limit` changes this time. A turn whose worker stopped three times in sequence without a handoff ends as interrupted.
 
 Files:

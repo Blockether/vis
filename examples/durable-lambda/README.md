@@ -118,9 +118,35 @@ def song_factory(ctx, prompt: str = "A slow song about a night train"):
 | `@activity(title=, retries=0)` | A step of a run. With `retries`, a failed step runs again in a fork of the session |
 | `ctx.ask(request, Model)` | A validated Pydantic object from the session |
 | `ctx.ask(request)` | The answer as text |
+| `ctx.ask(request, llm="qwen3.8-max")` | The answer of another language model, for this request only. `ctx.document` and `ctx.delegate` take `llm=` too |
+| `ctx.delegate(tasks)` | The session gives each task to its own subagent. Returns the answer of each subagent, in the order of the tasks |
 | `ctx.document(name, request)` | The session writes a file and attaches it. Returns a `Document` |
 | `ctx.gate(key, title, about="", document=None)` | Stops the run until a person decides. Sends the decision to the session as one turn. Returns a `Decision` with `approved` and `comment` |
 | `ctx.note(text)` | A line in the record of the run |
+
+### Models and subagents
+
+A run uses the model of its session: `@workflow(model=)` selects it. `llm=` selects
+another model of the stack for one request, and the next request uses the model of the
+session again. A request on another model does not use the prompt cache.
+
+```python
+@activity(title="Review the song")
+def review(ctx) -> list[str]:
+    plan = ctx.ask("Name the two weakest parts of the song.", llm="qwen3.8-max")
+    return ctx.delegate([
+        {"task": f"Check the chords. {plan}", "role": "research", "title": "Chords"},
+        {"task": f"Check the drums. {plan}", "role": "research", "model": "gpt-oss-120b"},
+    ])
+```
+
+A task of `ctx.delegate` is a text, or a dict with `task` and optional `title`, `role`
+(`research`, `implement` or `verify`), `model`, `provider`, `iteration_budget` and
+`files`. A subagent has the context of the session and works in the same directory.
+The session starts the subagents in one turn, with a Python block that `ctx.delegate`
+gives. The answers come from the tool output of that turn, not from the text of the
+session. Thus the transcript has the delegation: a new process of the run and a fork
+start no second subagent. A subagent that does not complete fails the activity.
 
 ### A gate
 
