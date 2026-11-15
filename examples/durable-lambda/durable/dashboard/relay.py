@@ -13,24 +13,18 @@ from collections.abc import Iterator
 from typing import Any
 
 from durable import aws, wire
-from durable.dashboard.web import SECURITY, Request, error
+from durable.dashboard.web import RELAY_POLICY, RELAYED, SECURITY, Request, error
 from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
-from durable.settings import ANSWER_S, LIFETIME, QUEUE, STREAM_S, WORKER_FUNCTION
+from durable.settings import ANSWER_S, LIFETIME, MESSAGE_LIMIT, QUEUE, STREAM_S, WAKE_S, WORKER_FUNCTION
 
-# An answer of the worker can hold text from a session. As a document, it gets no
-# network, no cookie and no access to the pages of this address.
-RELAY_POLICY = "sandbox allow-downloads; default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-# The headers of a worker answer that the browser gets. The worker runs the code of a
-# session, so it cannot set a cookie, a redirect or a header that changes the browser rules.
-RELAYED = {"content-type", "content-encoding", "content-disposition", "content-range", "accept-ranges", "cache-control", "etag", "last-modified", "retry-after", "x-vis-client-lease-unknown"}
 # The time of the last worker start.
 _state = {"woke": 0.0}
 
 
 def wake() -> None:
-    """Start a worker when no live worker holds the lease (at most every 5 s)."""
-    if time.time() - _state["woke"] < 5:
+    """Start a worker when no live worker holds the lease, at most each WAKE_S."""
+    if time.time() - _state["woke"] < WAKE_S:
         return
     _state["woke"] = time.time()
     if not aws.alive(aws.lease()[0]):
@@ -73,7 +67,7 @@ def relay(request: Request, context: Context) -> HttpStream:
         # The worker adds its own gateway token: a token of the caller never reaches the gateway.
         "headers": {k: v for k, v in request.headers.items() if k not in wire.HOP | {"cookie", "authorization"} and not k.startswith("x-amz")},
     }
-    if len(request.body) > 150_000:
+    if len(request.body) > MESSAGE_LIMIT:
         aws.put(f"relay/{rid}/request", request.body)
         message["body_key"] = f"relay/{rid}/request"
     else:
@@ -93,6 +87,7 @@ def relay(request: Request, context: Context) -> HttpStream:
     headers = {**relayed, **SECURITY, "content-security-policy": RELAY_POLICY}
 
     def body() -> Iterator[bytes]:
+        """Yield the first bytes, then each later part of the answer."""
         yield data
         for chunk, _ in source:
             yield chunk

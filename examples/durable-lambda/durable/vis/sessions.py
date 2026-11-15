@@ -14,6 +14,7 @@ from typing import Any
 from durable import worktree
 from durable.domain import SESSION, Conflict, Refused, need
 from durable.helpers import log
+from durable.settings import HOME_S, PLACES, WORK
 from durable.vis.gateway import Gateway
 from durable.workflows.runs import Runs
 from durable.worktree import FAILURES, Workspaces, name_of
@@ -23,6 +24,7 @@ class Sessions:
     """The work directories of the sessions of this worker."""
 
     def __init__(self, release: str, workspaces: Workspaces, runs: Runs) -> None:
+        """Start without a gateway. `release` is the release of this worker, for a session that starts before a newer release."""
         self.release, self.workspaces, self.runs = release, workspaces, runs
         # The worker sets these after the gateway starts: the gateway and the group of the sessions of a person.
         self.engine: Gateway | None = None
@@ -34,7 +36,7 @@ class Sessions:
         """Return the work directory of a session, or refuse a session that the gateway does not have."""
         need(SESSION, session, "the session id")
         at, root = self.homes.get(session, (0.0, ""))
-        if is_fresh or time.time() - at > 60:
+        if is_fresh or time.time() - at > HOME_S:
             row = self.engine.soul(session) if self.engine else None
             root = ((row or {}).get("workspace") or {}).get("root") or ""
             self.homes[session] = (time.time(), root)
@@ -54,9 +56,9 @@ class Sessions:
 
     def places(self) -> list[tuple[str, str]]:
         """Return the id and the title of each session that a run can work in: a session with a turn in a clone of the repository."""
-        rows = self.engine.sessions("") if self.engine else []
-        found = [row for row in rows if os.path.dirname(os.path.realpath((row.get("workspace") or {}).get("root") or "/")) == os.path.realpath(worktree.WORK)]
-        return [(row["id"], f"{row.get('title') or 'Untitled session'} · {row['id'][:8]}") for row in found[:50]]
+        rows = self.engine.sessions() if self.engine else []
+        found = [row for row in rows if os.path.dirname(os.path.realpath((row.get("workspace") or {}).get("root") or "/")) == os.path.realpath(WORK)]
+        return [(row["id"], f"{row.get('title') or 'Untitled session'} · {row['id'][:8]}") for row in found[:PLACES]]
 
     def place(self, body: bytes) -> tuple[bytes, str | None]:
         """Give a new session its own work directory. Return the body for the gateway, and the directory.
@@ -111,7 +113,7 @@ class Sessions:
         else:
             names = [name for name in map(name_of, roots) if name]
         for name in names:
-            if os.path.realpath(f"{worktree.WORK}/{name}") not in used:
+            if os.path.realpath(f"{WORK}/{name}") not in used:
                 self.workspaces.remove(name)
 
     def directory(self, session: str) -> str:

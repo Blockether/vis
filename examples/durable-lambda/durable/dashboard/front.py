@@ -17,42 +17,25 @@ from typing import Any
 
 from durable import aws
 from durable.dashboard.relay import relay
-from durable.dashboard.web import Request, answer, error
+from durable.dashboard.web import PAGE_POLICY, WEB_POLICY, Request, answer, error
 from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
-from durable.settings import DUE_S, ENV, REPO_FUNCTION, WORKER_FUNCTION
+from durable.settings import DUE_S, PLAY_WEB, REPO_FUNCTION, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
 
-VIS_WEB, PLAY_WEB, VENDOR = ENV.get("VIS_WEB_DIR", "/opt/vis-web"), "/opt/durable/web", "/opt/durable/vendor"
 # The pages of Durable Lambda, by path.
 PAGES = {"/play": "sessions.html", "/play/workflows": "workflows.html", "/play/factory": "factory.html", "/play/architecture": "architecture.html"}
 # The directories of static files, by path prefix.
 PUBLIC = {"/play/assets/": f"{PLAY_WEB}/assets", "/play/vendor/": VENDOR}
-# The Durable Lambda pages load only their own files.
-PAGE_POLICY = (
-    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; "
-    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
-)
-# The Vis web app starts with inline scripts. It shows text that a session wrote, so
-# it loads images and data only from this address: a link in a transcript cannot
-# send data to another host.
-WEB_POLICY = (
-    "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; "
-    "worker-src 'self' blob:; frame-src 'self' blob: data:; object-src 'none'; base-uri 'self'; "
-    "form-action 'self'; frame-ancestors 'none'"
-)
 # The webhook secret that this function read.
 _state: dict[str, Any] = {}
 
 
 def pushed(request: Request) -> HttpStream:
     """Start a fetch of the repository when GitHub reports a push. GitHub signs the report."""
-    name = ENV.get("VIS_WEBHOOK_PARAMETER")
-    if not name:
+    if not WEBHOOK_PARAMETER:
         return error(404, "no such path")
     if "webhook" not in _state:
-        _state["webhook"] = aws.parameter(name)
+        _state["webhook"] = aws.parameter(WEBHOOK_PARAMETER)
     signature = "sha256=" + hmac.new(_state["webhook"].encode(), request.body, "sha256").hexdigest()
     if not hmac.compare_digest(signature.encode(), request.headers.get("x-hub-signature-256", "").encode()):
         return error(401, "the signature is not valid")
@@ -106,6 +89,7 @@ def tick() -> dict[str, str]:
 
 
 def handler(event: dict[str, Any], context: Context) -> Any:
+    """Answer a call of the Function URL, or the tick of the schedule. A failure becomes a plain 500 answer."""
     if "requestContext" not in event:  # the schedule, not the Function URL
         return tick()
     try:

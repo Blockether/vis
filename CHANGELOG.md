@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Examples: the `durable` package of `examples/durable-lambda/` has one module for each task. `settings.py`, `helpers.py` and `domain.py` have the shared rules, `git.py` and `worktree.py` have the repository, `app.py` has the routes, and the packages `dashboard/`, `vis/` and `workflows/` have the front function, the work with Vis and the workflows. The README lists each module.
+- Examples: in `examples/durable-lambda/`, `durable/settings.py` is the one module that reads the environment and has each path, limit, time and name. The worker calls the Vis gateway with the Vis SDK and not with its own HTTP calls. Each function and class of the package has a docstring.
 - Performance: with an open digest, the TUI renders the steps of a long turn on a pool of threads. The first frame of a turn with 111 steps takes 22 ms instead of 150-225 ms. A computer with fewer than three processors uses one thread, as before.
 - Performance: while a turn runs with an open digest, the TUI builds only the rows that changed. A frame takes 1.2-1.7 ms instead of 16 ms, and a frame with a new step takes 7-9 ms instead of 35-46 ms.
 - Performance: the TUI uses Lanterna 3.1.5-vis.61. A width measure of 14 799 transcript rows takes 14 ms instead of 97 ms.

@@ -13,7 +13,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from durable.settings import BUCKET, LEASE
 
-__all__ = ["BotoCoreError", "ClientError", "alive", "client", "delete", "get", "invoke", "keys", "lease", "metadata", "parameter", "put", "start"]
+__all__ = ["BotoCoreError", "ClientError", "alive", "client", "delete", "get", "head", "invoke", "keys", "lease", "parameter", "put", "start"]
 
 
 @functools.cache
@@ -25,23 +25,29 @@ def client(name: str) -> Any:
     return boto3.client(name, config=Config(retries=retries, read_timeout=900 if slow else 60))
 
 
+def absent(error: ClientError) -> bool:
+    """Return True when S3 says that it has no such object. Each other failure is an error."""
+    return error.response["Error"]["Code"] in ("NoSuchKey", "404")
+
+
 def get(key: str) -> tuple[bytes | None, str | None]:
     """Return the bytes and the ETag of an S3 object, or (None, None)."""
     try:
         answer = client("s3").get_object(Bucket=BUCKET, Key=key)
         return answer["Body"].read(), answer["ETag"]
     except ClientError as error:
-        if error.response["Error"]["Code"] in ("NoSuchKey", "404"):
+        if absent(error):
             return None, None
         raise
 
 
-def metadata(key: str) -> dict[str, str] | None:
-    """Return the metadata of an S3 object, or None when there is no object."""
+def head(key: str) -> dict[str, Any] | None:
+    """Return the size and the metadata of an S3 object without its bytes, or None when there is no object."""
     try:
-        return client("s3").head_object(Bucket=BUCKET, Key=key)["Metadata"]
+        answer = client("s3").head_object(Bucket=BUCKET, Key=key)
+        return {"size": answer["ContentLength"], "metadata": answer.get("Metadata") or {}}
     except ClientError as error:
-        if error.response["Error"]["Code"] in ("NoSuchKey", "404"):
+        if absent(error):
             return None
         raise
 
@@ -52,6 +58,7 @@ def put(key: str, body: bytes, **options: Any) -> str:
 
 
 def delete(key: str) -> None:
+    """Remove an S3 object. An object that S3 does not have is not a failure."""
     client("s3").delete_object(Bucket=BUCKET, Key=key)
 
 

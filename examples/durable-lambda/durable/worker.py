@@ -19,16 +19,18 @@ from durable import aws, core
 from durable.app import Api
 from durable.helpers import log
 from durable.lambda_runtime import Context
-from durable.settings import DUE_S, IDLE_S, LIFETIME, MARGIN, QUEUE, WORKER_FUNCTION
+from durable.settings import CALLS, DRAIN_S, DUE_S, IDLE_S, LAST_SAVE_S, LIFETIME, MARGIN, QUEUE, RENEW_S, SAVE_S, SETTLE_S, WORKER_FUNCTION
 from durable.vis import gateway, registry
 from durable.vis.broker import Broker
 from durable.vis.relay import Relay
 
-# The worker renews the lease each RENEW_S and looks for state to save each SAVE_S.
-RENEW_S, SAVE_S = 30, 15
-
 
 def work(held: core.Lease, context: Context) -> dict[str, Any]:
+    """Run the gateway and answer the calls until the worker is idle or near its time limit.
+
+    The steps: restore the state, start the broker and the gateway, loop over the
+    queue, then park the turns, save the state and release the lease.
+    """
     started = time.time()
     core.restore(held.data.get("state"))
     restored = time.time()
@@ -42,7 +44,7 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
     engine.start()
     registry.register(engine, api)
     relay = Relay(engine, api)
-    pool = ThreadPoolExecutor(max_workers=64)
+    pool = ThreadPoolExecutor(max_workers=CALLS)
     queue = aws.client("sqs")
     saved, renewed, checked = core.fingerprint(), 0.0, time.time()
     # One thread at a time copies the changed work directories to S3.
@@ -74,6 +76,7 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
             if now - started > LIFETIME or context.remaining_s() < MARGIN:
                 reason = "handoff"
                 break
+            # An idle worker stops, unless an automation is due soon.
             busy = relay.inflight or running or api.runs.live()
             if not busy and now - relay.last > IDLE_S and not (due and due - now < DUE_S):
                 break
@@ -86,9 +89,9 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
     api.runs.stop()
     # The event streams stay open while the gateway drains: a client sees the end of a
     # turn that completes now. A later gateway does not send those events again.
-    parked = engine.drain(max(5.0, min(45.0, context.remaining_s() - 40)))
+    parked = engine.drain(max(5.0, min(DRAIN_S, context.remaining_s() - LAST_SAVE_S)))
     engine.stop()
-    relay.settle(8.0)
+    relay.settle(SETTLE_S)
     pool.shutdown(wait=False, cancel_futures=True)
     broker.stop()
     # The gateway and the runs stopped, so each work directory has its last files.

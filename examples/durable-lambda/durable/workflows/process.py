@@ -15,7 +15,7 @@ from typing import Any
 
 from blockether.vis.engine import GatewayClient
 
-from durable.vis.gateway import HOST, PORT, PROVIDER, TOKEN_FILE
+from durable.settings import GATEWAY_URL, PROVIDER, RUN_GROUP, TOKEN_FILE
 from durable.workflows.client import Durable
 from durable.workflows.sdk import Context, Waiting, encode
 
@@ -33,19 +33,24 @@ def load(name: str, source: str) -> Callable[..., Any]:
 
 
 def main(run_id: str) -> int:
+    """Work on one run until it ends or waits for a person. Return the exit code of the process.
+
+    The API has each result, so a new process of the same run continues after the
+    last completed activity.
+    """
     api = Durable()
     run = api.call("GET", f"runs/{run_id}")
     try:
         function = load(run["workflow"], run["source"])
         with open(TOKEN_FILE, encoding="utf-8") as file:
-            client = GatewayClient(f"http://{HOST}:{PORT}", token=file.read().strip())
+            client = GatewayClient(GATEWAY_URL, token=file.read().strip())
         if run.get("session_id"):  # an earlier process of this run made the session
             session = client.session(run["session_id"])
         else:
             # The run works in its own directory. Its session is in the group of the runs, in the one project.
             options = client.session_options(os.getcwd())
-            if os.environ.get("DURABLE_GROUP"):
-                options["group_id"] = os.environ["DURABLE_GROUP"]
+            if RUN_GROUP:
+                options["group_id"] = RUN_GROUP
             model = function.__workflow__["model"]
             session = client.create_session(provider=PROVIDER if model else None, model=model, **options)
             session.update(title=f"{run['title']} · run {run_id[:8]}")

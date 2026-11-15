@@ -13,9 +13,7 @@ from typing import Any
 
 from durable import aws
 from durable.domain import NAME, Refused, need
-
-# The workflows of the image. A new stack starts with them.
-SAMPLES = "/opt/durable/workflows"
+from durable.settings import SAMPLES, WORKFLOW_LIMIT
 
 
 def literal(node: ast.expr | None) -> Any:
@@ -96,7 +94,7 @@ def listing() -> list[dict[str, Any]]:
 
 def save(name: str, source: str) -> dict[str, Any]:
     """Store the source of a workflow that is valid. Return what it says about itself."""
-    if len(source) > 200_000:
+    if len(source) > WORKFLOW_LIMIT:
         raise Refused(413, "the workflow is too large")
     about = describe(need(NAME, name, "the workflow name"), source)
     aws.put(f"workflows/{name}.py", source.encode())
@@ -104,6 +102,7 @@ def save(name: str, source: str) -> dict[str, Any]:
 
 
 def remove(name: str) -> None:
+    """Remove the source of a workflow."""
     aws.delete(f"workflows/{need(NAME, name, 'the workflow name')}.py")
 
 

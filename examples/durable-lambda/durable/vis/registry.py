@@ -5,11 +5,9 @@ from __future__ import annotations
 import hashlib
 import os
 
-from blockether.vis.engine import GatewayClient
-
 from durable import aws, worktree
 from durable.app import Api
-from durable.settings import ENV, HOME, REPO_FUNCTION
+from durable.settings import HOME, PEOPLE_GROUP, PROJECT_DIR, PROJECT_NAME, REPO_FUNCTION, WORK
 from durable.vis import gateway
 from durable.vis.liveapps.workflows import Workflows
 
@@ -41,8 +39,8 @@ def project() -> tuple[str, str]:
         release = worktree.current()
     if not release:
         raise RuntimeError("EFS has no release of the repository")
-    worktree.sweep(worktree.MAIN)
-    main, moved = f"{worktree.WORK}/{worktree.MAIN}", f"{worktree.WORK}/{worktree.MAIN}/.git/durable-earlier"
+    worktree.sweep(PROJECT_DIR)
+    main, moved = f"{WORK}/{PROJECT_DIR}", f"{WORK}/{PROJECT_DIR}/.git/durable-earlier"
     earlier = "" if os.path.isdir(main) else worktree.earlier()
     if earlier:
         # The directory keeps its work. The note is for a worker that stops before it saves the journals.
@@ -59,9 +57,8 @@ def register(engine: gateway.Gateway, api: Api) -> None:
     """Give the API its gateway, make the session groups of the project and start the live apps."""
     root = api.project
     api.sessions.engine, api.runs.busy = engine, engine.busy
-    api.runs.group = engine.organize(root, ENV.get("VIS_REPO", "").rpartition("/")[2] or "durable")
-    api.sessions.people = engine.group(root, gateway.PEOPLE)
-    # Each call gets its own SDK client: one client serves one thread.
-    client = lambda: GatewayClient(f"http://{gateway.HOST}:{gateway.PORT}", token=engine.token)  # noqa: E731
-    api.files.open = lambda session: client().session(session)
-    Workflows(api, client()).start()
+    api.runs.group = engine.organize(root, PROJECT_NAME)
+    api.sessions.people = engine.group(root, PEOPLE_GROUP)
+    # `engine.client` gives each thread its own SDK client.
+    api.files.open = lambda session: engine.client().session(session)
+    Workflows(api, engine.client).start()

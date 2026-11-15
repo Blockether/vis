@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import blockether.vis.extension as vis
@@ -20,14 +21,13 @@ from blockether.vis.engine import GatewayClient, GatewayError, TransportError
 from durable.app import Api
 from durable.domain import OPEN, Refused
 from durable.helpers import log
+from durable.settings import APP_RUNS, LOOK_S
 
 TABS = (("run", "Run"), ("history", "History"))
 # The tone of a status. The names are the live tones of the Vis view contract.
 TONES = {"queued": "idle", "running": "running", "waiting": "warn", "completed": "ok", "failed": "error", "cancelled": "warn"}
 # The counters of the History tab: an id, a label, the statuses that it counts and its tone.
 COUNTS = (("open", "In progress", OPEN, "running"), ("completed", "Completed", ("completed",), "ok"), ("failed", "Failed", ("failed",), "error"))
-# The runs that the History tab lists, and the seconds between two looks at the runs.
-LISTED, LOOK_S = 30, 2
 # The value of the session field for a run that makes its own session.
 NEW = "new"
 
@@ -38,13 +38,15 @@ def tabs(tab: str) -> dict[str, Any]:
 
 
 def done(activities: list[list[str]]) -> str:
+    """Return the completed activities of a run as `completed/all`."""
     return f"{sum(1 for _, status in activities if status == 'completed')}/{len(activities)}"
 
 
 class Workflows(threading.Thread):
     """Open the Workflows app and serve it until the gateway stops."""
 
-    def __init__(self, api: Api, client: GatewayClient) -> None:
+    def __init__(self, api: Api, client: Callable[[], GatewayClient]) -> None:
+        """Keep the API and `client`, which returns the SDK client of the thread that calls it."""
         super().__init__(name="workflows-app", daemon=True)
         self.api, self.client = api, client
         self.tab = "run"
@@ -88,6 +90,7 @@ class Workflows(threading.Thread):
 
     def history_tab(self) -> dict[str, Any]:
         # Three columns: a phone shows them without a break in a word.
+        """Return the counters and the table of the last runs, without their data."""
         columns = [("workflow", "Workflow"), ("started", "Started (UTC)"), ("status", "Status")]
         return vis.ui.column(
             "body",
@@ -102,7 +105,7 @@ class Workflows(threading.Thread):
             counts = {count: sum(1 for line in lines if line["status"] in statuses) for count, _, statuses, _ in COUNTS}
             rows = [
                 (line["id"], [line["title"], time.strftime("%d %b %H:%M", time.gmtime(line["created"])), f"{line['status'].capitalize()} {done(line['activities'])}"], TONES[line["status"]])
-                for line in lines[:LISTED]
+                for line in lines[:APP_RUNS]
             ]
             return {"counts": counts, "rows": rows}
         if self.refusal:
@@ -159,6 +162,7 @@ class Workflows(threading.Thread):
     # -- the actions of a person ---------------------------------------------------
 
     def handle(self, app: Any, event: Any) -> None:
+        """Do one action of a person: change the tab, start a run or show the form again."""
         if event.type == "activate" and event.node_id in {f"tab-{name}" for name, _ in TABS}:
             self.show(app, event.node_id.removeprefix("tab-"))
         elif event.type == "submit" and event.node_id == "start-run":
@@ -176,6 +180,7 @@ class Workflows(threading.Thread):
             self.show(app, "run")
 
     def run(self) -> None:
+        """Open the app with the SDK client of this thread, then serve its events and paint it until the gateway stops."""
         app = vis.ui.app(
             "Workflows",
             tabs(self.tab),
@@ -187,7 +192,7 @@ class Workflows(threading.Thread):
             is_persistent=False,
         )
         try:
-            app = self.client.attach_app(app, owner="durable")
+            app = self.client().attach_app(app, owner="durable")
             while True:
                 # The wait is also the pause between two looks at the runs.
                 for event in app.events(timeout=LOOK_S):

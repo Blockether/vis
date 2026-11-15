@@ -1,23 +1,23 @@
-"""The rules of the Durable Lambda API: its names, its limits, the statuses of a run and its refusals."""
+"""The rules of the Durable Lambda API: the form of its names, the statuses of a run and its refusals.
+
+The limits of the API are settings: see `settings.py`.
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
+# The form of each name that becomes a part of an S3 key: the name of a workflow or
+# of an input, the id of a session, the id of a run and the name of a file.
 NAME = re.compile(r"[a-z][a-z0-9_]{1,39}")
 SESSION = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 RUN = re.compile(r"[0-9a-f]{32}")
 FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,79}")
-# The runs that work at the same time. The other runs wait.
-PARALLEL = 3
-# The activities that one run can have.
-STEPS = 1000
+# The statuses of a run that has, or waits for, a process.
 LIVE = ("queued", "running")
 # A waiting run has no process: it needs a file from a person.
 OPEN = (*LIVE, "waiting")
-# The largest file that a person gives to a run, and the largest attached file that S3 gets.
-INPUT_LIMIT, ATTACHED_LIMIT = 300_000, 2_000_000
 # An answer of the API: the status, the headers and the body.
 Answer = tuple[int, list[list[str]], bytes]
 
@@ -26,6 +26,7 @@ class Refused(Exception):
     """A call that the API does not accept."""
 
     def __init__(self, status: int, message: str, **detail: Any) -> None:
+        """Keep the HTTP status of the answer and the fields that its JSON body gets."""
         super().__init__(message)
         self.status, self.detail = status, detail
 
@@ -34,6 +35,7 @@ class Conflict(Exception):
     """Git could not put the work of a workspace on the new release."""
 
     def __init__(self, files: list[str]) -> None:
+        """Keep the files that Git could not merge."""
         super().__init__("the work does not apply to the new release")
         self.files = files
 

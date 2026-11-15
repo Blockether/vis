@@ -27,7 +27,12 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
+# The settings of the local run itself: its directory, the source of the first commit
+# and its port. They come before `settings.py`, because they set what it reads.
 ROOT = os.environ.get("DURABLE_LOCAL", "/tmp/local")
+SEED = os.environ.get("DURABLE_SEED", "")
+PORT = int(os.environ.get("PORT", "8080"))
+# The variables that `template.yaml` sets in a stack.
 SETTINGS = {
     "VIS_BUCKET": "local",
     "VIS_QUEUE_URL": "local",
@@ -50,9 +55,11 @@ os.environ.setdefault("DURABLE_DEPLOY_KEY", "not used: GitHub is a directory")
 
 from durable import aws, git, lambda_runtime, llm, worker, worktree  # noqa: E402 - the settings come first
 from durable.dashboard import front  # noqa: E402
+from durable.settings import GIT_EMAIL, GIT_NAME, REPO_URL  # noqa: E402
 
 
 def refusal(code: str, operation: str) -> ClientError:
+    """Return the error that boto3 raises when a service refuses an operation."""
     return ClientError({"Error": {"Code": code, "Message": code}}, operation)
 
 
@@ -60,14 +67,17 @@ class Bucket:
     """S3 as a directory. A write can be conditional, as in S3."""
 
     def __init__(self) -> None:
+        """Use the directory `s3` of the local run."""
         self.root, self.lock = f"{ROOT}/s3", threading.Lock()
         # The metadata of each object that this process wrote.
         self.meta: dict[str, dict[str, str]] = {}
 
     def path(self, key: str) -> str:
+        """Return the file of a key."""
         return os.path.join(self.root, key)
 
     def tag(self, key: str) -> str | None:
+        """Return the ETag of an object, or None when there is no object."""
         try:
             with open(self.path(key), "rb") as file:
                 return '"' + hashlib.md5(file.read()).hexdigest() + '"'  # noqa: S324 - an ETag, as in S3
@@ -75,6 +85,7 @@ class Bucket:
             return None
 
     def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803 - the names of boto3
+        """Return the bytes and the ETag of an object."""
         tag = self.tag(Key)
         if tag is None:
             raise refusal("NoSuchKey", "GetObject")
@@ -82,11 +93,13 @@ class Bucket:
             return {"Body": io.BytesIO(file.read()), "ETag": tag}
 
     def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
+        """Return the size and the metadata of an object."""
         if self.tag(Key) is None:
             raise refusal("404", "HeadObject")
         return {"ContentLength": os.path.getsize(self.path(Key)), "Metadata": self.meta.get(Key, {})}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, **options: Any) -> dict[str, Any]:  # noqa: N803
+        """Write an object with one rename. `IfMatch` and `IfNoneMatch` make the write conditional."""
         with self.lock:
             tag = self.tag(Key)
             if ("IfNoneMatch" in options and tag) or ("IfMatch" in options and options["IfMatch"] != tag):
@@ -100,13 +113,16 @@ class Bucket:
             return {"ETag": self.tag(Key)}
 
     def delete_object(self, Bucket: str, Key: str) -> None:  # noqa: N803
+        """Remove an object."""
         if os.path.exists(self.path(Key)):
             os.remove(self.path(Key))
 
     def get_paginator(self, name: str) -> Bucket:
+        """Return the bucket: `paginate` gives the one page of a list."""
         return self
 
     def paginate(self, Bucket: str, Prefix: str) -> list[dict[str, Any]]:  # noqa: N803
+        """Return one page with each object below a prefix."""
         found = []
         for folder, _, names in os.walk(self.root):
             for name in names:
@@ -122,18 +138,22 @@ class Queue:
     """SQS as a list."""
 
     def __init__(self) -> None:
+        """Start with no message."""
         self.messages: queue.Queue[str] = queue.Queue()
 
     def send_message(self, QueueUrl: str, MessageBody: str) -> None:  # noqa: N803
+        """Add a message."""
         self.messages.put(MessageBody)
 
     def receive_message(self, QueueUrl: str, MaxNumberOfMessages: int, WaitTimeSeconds: int) -> dict[str, Any]:  # noqa: N803
+        """Wait for one message and return it, or return no message."""
         try:
             return {"Messages": [{"Body": self.messages.get(timeout=WaitTimeSeconds), "ReceiptHandle": uuid.uuid4().hex}]}
         except queue.Empty:
             return {}
 
     def delete_message(self, QueueUrl: str, ReceiptHandle: str) -> None:  # noqa: N803
+        """Do nothing: a received message is not in the list."""
         pass
 
 
@@ -141,6 +161,7 @@ class Parameters:
     """SSM as environment variables."""
 
     def get_parameter(self, Name: str, WithDecryption: bool) -> dict[str, Any]:  # noqa: N803
+        """Return the value of the environment variable with the name of the parameter."""
         return {"Parameter": {"Value": os.environ[Name]}}
 
 
@@ -155,6 +176,7 @@ class Functions:
     wake = threading.Event()
 
     def invoke(self, FunctionName: str, Payload: bytes = b"{}", InvocationType: str = "RequestResponse") -> dict[str, Any]:  # noqa: N803
+        """Call the handler of the repo or the sync function. A worker start only sets a flag for `main`."""
         if FunctionName == "worker":
             self.wake.set()
             return {}
@@ -165,10 +187,12 @@ class Functions:
             return {"FunctionError": "Unhandled", "Payload": io.BytesIO(json.dumps({"errorMessage": str(failure)}).encode())}
 
     def invoke_with_response_stream(self, FunctionName: str, Payload: bytes) -> dict[str, Any]:  # noqa: N803
+        """Call the llm function and return its answer as stream events."""
         answer = llm.handler(json.loads(Payload), context())
         return {"EventStream": ({"PayloadChunk": {"Payload": chunk}} for chunk in answer.parts())}
 
 
+# Each module asks `aws.client` for a service, so one replacement here serves the whole package.
 SERVICES = {"s3": Bucket(), "sqs": Queue(), "ssm": Parameters(), "lambda": Functions()}
 aws.client = lambda name: SERVICES[name]  # type: ignore[assignment]
 
@@ -179,20 +203,20 @@ def github(seed: str) -> None:
     `seed` is a clone of the project with a main branch, or a directory of files for the
     first commit. Without it, the repository starts with one README file.
     """
-    if os.path.isdir(SETTINGS["VIS_REPO_URL"]):
+    if os.path.isdir(REPO_URL):
         return
     if os.path.isdir(f"{seed}/.git"):
-        subprocess.run(["git", "-c", "safe.directory=*", "clone", "--quiet", "--bare", "--branch", "main", seed, SETTINGS["VIS_REPO_URL"]], check=True)
+        subprocess.run(["git", "-c", "safe.directory=*", "clone", "--quiet", "--bare", "--branch", "main", seed, REPO_URL], check=True)
         return
     work = f"{ROOT}/seed"
     shutil.copytree(seed, work) if os.path.isdir(seed) else os.makedirs(work)
     if not os.listdir(work):
         with open(f"{work}/README.md", "w", encoding="utf-8") as file:
             file.write("# project\n")
-    identity = ["-c", "user.name=Durable Lambda", "-c", "user.email=durable-lambda@blockether.com"]
+    identity = ["-c", f"user.name={GIT_NAME}", "-c", f"user.email={GIT_EMAIL}"]
     for command in (["init", "--quiet", "--initial-branch", "main"], ["add", "--all"], [*identity, "commit", "--quiet", "--message", "Start the project"]):
         subprocess.run(["git", *command], cwd=work, check=True)
-    subprocess.run(["git", "clone", "--quiet", "--bare", work, SETTINGS["VIS_REPO_URL"]], check=True)
+    subprocess.run(["git", "clone", "--quiet", "--bare", work, REPO_URL], check=True)
 
 
 class Page(BaseHTTPRequestHandler):
@@ -201,9 +225,11 @@ class Page(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *args: Any) -> None:  # the front function writes its own log
+        """Write no line for a call."""
         pass
 
     def serve(self) -> None:
+        """Make the event of a Function URL from the request, call the front function and send its answer in chunks."""
         path, _, query = self.path.partition("?")
         body = self.rfile.read(int(self.headers.get("content-length") or 0))
         event = {
@@ -236,14 +262,14 @@ class Page(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    """Make the repository and its first release, serve the pages and start a worker when one is wanted."""
     os.makedirs(ROOT, exist_ok=True)
-    github(os.environ.get("DURABLE_SEED", ""))
+    github(SEED)
     print("first release:", git.fetch(), flush=True)
-    port = int(os.environ.get("PORT", "8080"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), Page)  # noqa: S104 - a container port
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Page)  # noqa: S104 - a container port
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"Durable Lambda on http://localhost:{port}", flush=True)
+    print(f"Durable Lambda on http://localhost:{PORT}", flush=True)
     while True:
         # The schedule of the stack: a tick each minute, and a worker when one is wanted.
         if Functions.wake.wait(timeout=60):

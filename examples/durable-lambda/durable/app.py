@@ -22,28 +22,28 @@ import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
-from durable import aws, wire, worktree
-from durable.domain import FILE, INPUT_LIMIT, NAME, RUN, Answer, Refused, need
-from durable.settings import ENV, MODELS
+from durable import aws, wire
+from durable.domain import FILE, NAME, RUN, Answer, Refused, need
+from durable.settings import INPUT_LIMIT, MODELS, REPO, RUNS_LISTED, WORK
 from durable.vis.files import Files
 from durable.vis.sessions import Sessions
 from durable.workflows import source
 from durable.workflows.runs import Runs
 from durable.worktree import Workspaces
 
-JSON = [*wire.JSON, ["cache-control", "no-store"]]
-
 
 class Api:
     """The routes of the API. `environment` returns the variables of a process that works for a session."""
 
     def __init__(self, project: str, release: str, environment: Callable[[], dict[str, str]]) -> None:
+        """Make the owner of each kind of data and the table of the routes. `project` is the project directory and `release` is its commit."""
         self.project, self.release = project, release
         self.started = time.time()
         self.workspaces = Workspaces(environment)
         self.runs = Runs(release, environment, self.workspaces)
         self.sessions = Sessions(release, self.workspaces, self.runs)
         self.files = Files(self.runs.attach, self.sessions.touch)
+        # The method, the path below `/play/api/` and the function of each route. A group of the path is an argument.
         routes: list[tuple[str, str, Callable[..., Any]]] = [
             ("GET", r"status", self.status),
             ("GET", r"workflows", self.workflows),
@@ -84,20 +84,21 @@ class Api:
                 found = pattern.fullmatch(path)
                 if verb == method and found:
                     answer = function(*found.groups(), query=query, payload=payload)
-                    return answer if isinstance(answer, tuple) else (200, JSON, json.dumps(answer).encode())
+                    return answer if isinstance(answer, tuple) else (200, wire.JSON, json.dumps(answer).encode())
             raise Refused(404, "no such path")
         except Refused as refusal:
-            return refusal.status, JSON, json.dumps({"error": str(refusal), **refusal.detail}).encode()
+            return refusal.status, wire.JSON, json.dumps({"error": str(refusal), **refusal.detail}).encode()
         except ValueError:
-            return 400, JSON, b'{"error":"the body is not JSON"}'
+            return 400, wire.JSON, b'{"error":"the body is not JSON"}'
 
     # -- status ----------------------------------------------------------------
 
     def status(self, **_: Any) -> dict[str, Any]:
+        """Return the release, the repository and the models of the stack, and the number of live runs."""
         return {
             "release": self.release,
             "project": self.project,
-            "repository": ENV.get("VIS_REPO", ""),
+            "repository": REPO,
             "models": [model["name"] for model in MODELS],
             "started": self.started,
             "live_runs": self.runs.live(),
@@ -106,28 +107,35 @@ class Api:
     # -- workflows -------------------------------------------------------------
 
     def workflows(self, **_: Any) -> dict[str, Any]:
+        """List the workflows."""
         return {"workflows": source.listing()}
 
     def workflow(self, name: str, **_: Any) -> dict[str, Any]:
+        """Return one workflow: what it says about itself and its source."""
         text = source.read(name)
         return {**source.describe(name, text), "source": text}
 
     def check(self, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        """Describe a source that is not saved, or refuse a source that is not a workflow."""
         return source.describe("draft", str(payload.get("source", "")))
 
     def save(self, name: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        """Store the source of a workflow."""
         return source.save(name, str(payload.get("source", "")))
 
     def remove(self, name: str, **_: Any) -> dict[str, Any]:
+        """Remove a workflow. Its runs keep their own copy of the source."""
         source.remove(name)
         return {"removed": name}
 
     # -- runs ------------------------------------------------------------------
 
     def list_runs(self, **_: Any) -> dict[str, Any]:
-        return {"runs": self.runs.index[:100]}
+        """List the last runs, the newest first."""
+        return {"runs": self.runs.index[:RUNS_LISTED]}
 
     def run(self, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        """Start a run of a workflow, in its own new session or in the session that the call names."""
         name, given = payload.get("workflow"), payload.get("input") or {}
         text = source.read(name)
         about = source.describe(name, text)
@@ -139,27 +147,31 @@ class Api:
         if not session:
             return self.runs.create(name, text, about, given)
         root = self.sessions.home(session)
-        if os.path.dirname(os.path.realpath(root)) != os.path.realpath(worktree.WORK):
+        if os.path.dirname(os.path.realpath(root)) != os.path.realpath(WORK):
             raise Refused(400, "the session does not work in a directory of Durable Lambda")
         return self.runs.create(name, text, about, given, session, root)
 
     def show(self, run_id: str, **_: Any) -> dict[str, Any]:
+        """Return a run with its source and the files that its session attached."""
         doc = self.runs.copy(need(RUN, run_id, "the run id"))
         raw, _ = aws.get(f"runs/{run_id}/workflow.py")
         files = self.files.documents(doc["session_id"]) if doc["session_id"] else []
         return {**doc, "source": (raw or b"").decode(), "files": files}
 
     def cancel(self, run_id: str, **_: Any) -> dict[str, Any]:
+        """Cancel a run and the turn that runs in its session."""
         doc = self.runs.cancel(need(RUN, run_id, "the run id"))
         if doc["session_id"]:
             self.sessions.cancel(doc["session_id"])
         return doc
 
     def event(self, run_id: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        """Record what a run process reports."""
         self.runs.event(need(RUN, run_id, "the run id"), payload)
         return {"recorded": True}
 
     def result(self, run_id: str, seq: str, **_: Any) -> Any:
+        """Return the recorded result of an activity, or null."""
         raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/results/{int(seq)}.json")
         return json.loads(raw) if raw else None
 
@@ -172,6 +184,7 @@ class Api:
         return {**record, "size": len(record["content"].encode())}
 
     def give(self, run_id: str, key: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        """Take the file that a waiting run asked for."""
         name, content = need(FILE, payload.get("name"), "the file name"), payload.get("content")
         if not isinstance(content, str) or not content.strip():
             raise Refused(400, "the file is empty or is not text")

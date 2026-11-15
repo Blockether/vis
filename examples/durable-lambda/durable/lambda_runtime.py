@@ -21,7 +21,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from durable.settings import RUNTIME_API
+
+# The path prefix of the Runtime API.
 BASE = "/2018-06-01/runtime"
+# The content type of a streamed HTTP answer, and the bytes that end its JSON prelude.
 HTTP_INTEGRATION = "application/vnd.awslambda.http-integration-response"
 PRELUDE_END = b"\x00" * 8
 
@@ -68,10 +72,11 @@ class HttpStream(Stream):
 
 def _api() -> http.client.HTTPConnection:
     """Open a connection to the Runtime API. It has no timeout: the wait for the next invocation has no limit."""
-    return http.client.HTTPConnection(os.environ["AWS_LAMBDA_RUNTIME_API"], timeout=None)
+    return http.client.HTTPConnection(RUNTIME_API, timeout=None)
 
 
 def _post(path: str, body: bytes, headers: dict[str, str] | None = None) -> None:
+    """Send one answer or one failure report to the Runtime API."""
     conn = _api()
     try:
         conn.request("POST", BASE + path, body=body, headers=headers or {})

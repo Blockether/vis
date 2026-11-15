@@ -40,6 +40,7 @@ from typing import Any, TypeVar
 from blockether.vis.engine import Attachment, GatewayError, Session, Turn, final_answer
 from pydantic import BaseModel
 
+from durable.settings import TURN_S
 from durable.workflows.client import Durable
 
 Model = TypeVar("Model", bound=BaseModel)
@@ -81,6 +82,7 @@ def workflow(title: str = "", description: str = "", model: str | None = None) -
     """Mark the function that a run calls. `model` selects the model of the session."""
 
     def mark(function: Callable[..., Any]) -> Callable[..., Any]:
+        """Record the title, the description and the model on the function."""
         function.__workflow__ = {"title": title or function.__name__, "description": description, "model": model}  # type: ignore[attr-defined]
         return function
 
@@ -91,8 +93,11 @@ def activity(title: str = "") -> Callable[[Callable[..., Any]], Callable[..., An
     """Make a function a recorded step. Its first argument is the context of the run."""
 
     def wrap(function: Callable[..., Any]) -> Callable[..., Any]:
+        """Return the function as a step of the run."""
+
         @functools.wraps(function)
         def call(ctx: Context, *arguments: Any, **named: Any) -> Any:
+            """Run the step in the context of the run, which records its result."""
             return ctx._step(function, title or function.__name__, arguments, named)
 
         return call
@@ -131,6 +136,7 @@ class Context:
     """The run that a workflow function works in."""
 
     def __init__(self, run: dict[str, Any], session: Session, api: Durable) -> None:
+        """Keep the run, its Vis session and the client of the Durable Lambda API."""
         self.run_id, self.input, self.session = run["id"], run["input"], session
         # The number of the next activity, the activity that runs, and its requests until now.
         self._api, self._next, self._current, self._turns = api, 0, None, 0
@@ -138,6 +144,7 @@ class Context:
         self._asked: dict[str, int] = dict(run.get("asked") or {})
 
     def _event(self, kind: str, **fields: Any) -> Any:
+        """Report to the API what this run process did."""
         return self._api.event(self.run_id, kind, **fields)
 
     def _step(self, function: Callable[..., Any], title: str, arguments: tuple[Any, ...], named: dict[str, Any]) -> Any:
@@ -160,7 +167,7 @@ class Context:
         self._event("activity_completed", seq=seq, name=function.__name__, result=encode(result))
         return result
 
-    def ask(self, request: str, model: type[Model] | None = None, *, timeout: float = 900) -> Any:
+    def ask(self, request: str, model: type[Model] | None = None, *, timeout: float = TURN_S) -> Any:
         """Send a request to the session of the run.
 
         With a Pydantic model, return a validated instance: the SDK asks the session to
@@ -210,7 +217,7 @@ class Context:
             turns = self.session.turns()
         return None
 
-    def document(self, name: str, request: str, *, timeout: float = 900) -> Document:
+    def document(self, name: str, request: str, *, timeout: float = TURN_S) -> Document:
         """Let the session write a document and attach it.
 
         The session attaches the file with the native `attach` verb of Vis, so the
@@ -245,6 +252,7 @@ class Context:
         return found
 
     def _upload(self, key: str) -> Upload | None:
+        """Return the file that a person gave for a key, or None."""
         given = self._api.call("GET", f"runs/{self.run_id}/inputs/{key}")
         return Upload(key, given["name"], given["size"], given["content"]) if given else None
 

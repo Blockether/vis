@@ -20,11 +20,9 @@ from typing import Any
 from durable import aws, wire
 from durable.app import Api
 from durable.helpers import log
-from durable.settings import QUEUE
-from durable.vis.gateway import HOST, PORT, Gateway
+from durable.settings import ANSWERED_S, CHUNK, COLLECT_S, GATEWAY_PORT, LOOPBACK, PAUSE_S, QUEUE
+from durable.vis.gateway import Gateway
 
-# An event stream collects its bytes for COLLECT_S, writes one S3 object, then waits PAUSE_S.
-COLLECT_S, PAUSE_S = 0.2, 0.15
 # The gateway calls that make a session and start a turn, and the calls that delete one session or many sessions.
 CREATE, TURN = re.compile(r"/v1/sessions/?"), re.compile(r"/v1/sessions/([0-9a-f-]{36})/turns/?")
 ONE, MANY = re.compile(r"/v1/sessions/([0-9a-f-]{36})/?"), re.compile(r"/v1/(session-groups|projects)/[^/]+/?")
@@ -39,6 +37,7 @@ class Relay:
     """The calls that this worker answers, and their messages in the queue."""
 
     def __init__(self, gateway: Gateway, api: Api) -> None:
+        """Start without an open call. `gateway` gets the calls of Vis and `api` gets the calls of `/play/api/`."""
         self.gateway, self.api = gateway, api
         self.inflight, self.last = 0, time.time()
         # True when the worker stops: each open event stream then ends.
@@ -57,7 +56,7 @@ class Relay:
             if rid in self._answered or call["answer_by"] < now:
                 known = True
                 self._delete(rid)
-            for old in [key for key, at in self._answered.items() if now - at > 1200]:
+            for old in [key for key, at in self._answered.items() if now - at > ANSWERED_S]:
                 del self._answered[old]
         return None if known else call
 
@@ -108,11 +107,16 @@ class Relay:
         return base64.b64decode(call.get("body") or "")
 
     def answer(self, call: dict[str, Any]) -> None:
+        """Send a call to the API or to the gateway and write its answer.
+
+        A call that makes, uses or deletes a session also changes its work directory:
+        see `vis/sessions.py`.
+        """
         rid, body = call["id"], self.body(call)
         if call["path"].startswith("/play/api/"):
             status, headers, data = self.api.handle(call["method"], call["path"], body)
             return reply(rid, {"status": status, "headers": headers}, data)
-        headers = {**call["headers"], **self.gateway.headers(), "host": f"{HOST}:{PORT}"}
+        headers = {**call["headers"], **self.gateway.headers(), "host": f"{LOOPBACK}:{GATEWAY_PORT}"}
         if "content-type" in call["headers"]:  # the gateway headers name JSON: the type of the call wins
             headers["content-type"] = call["headers"]["content-type"]
         method, path = call["method"], call["path"].partition("?")[0]
@@ -132,7 +136,8 @@ class Relay:
             after = lambda status, data: status < 300 and self.api.sessions.reap(roots)  # noqa: E731
         elif method == "DELETE" and MANY.fullmatch(path):
             after = lambda status, data: status < 300 and self.api.sessions.reap(None)  # noqa: E731
-        connection = http.client.HTTPConnection(HOST, PORT, timeout=max(5.0, call["deadline"] - time.time()))
+        # The call goes to the gateway as it is: the SDK does not relay the call of another client.
+        connection = http.client.HTTPConnection(LOOPBACK, GATEWAY_PORT, timeout=max(5.0, call["deadline"] - time.time()))
         try:
             connection.request(call["method"], call["path"], body or None, headers)
             answer = connection.getresponse()
@@ -154,8 +159,9 @@ class Relay:
         rid, chunks = call["id"], queue.Queue()
 
         def read() -> None:
+            """Read the stream in a thread, so the writer can stop at the deadline."""
             try:
-                while chunk := answer.read1(65536):
+                while chunk := answer.read1(CHUNK):
                     chunks.put(chunk)
             except (OSError, http.client.HTTPException):
                 pass

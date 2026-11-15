@@ -38,13 +38,17 @@ from durable import aws
 from durable.domain import Conflict, Refused
 from durable.helpers import log, private, remove_file, safe
 from durable.lambda_runtime import Context
-from durable.settings import EFS, REPO_FUNCTION
+from durable.settings import BUNDLE_LIMIT, CURRENT, GIT_S, PROJECT_DIR, RELEASES, RELEASES_KEPT, REPO_FUNCTION, STALE_S, WORK, WORK_DAYS
 
-RELEASES, WORK, CURRENT = f"{EFS}/releases", f"{EFS}/work", f"{EFS}/CURRENT"
-# The name of the one project directory. It follows the releases, so its sessions stay in one project.
-MAIN = "main"
-# The number of releases that stay on EFS, and the days that an unused work directory stays.
-KEEP, WORK_DAYS = 5, 14
+# The form of the name of a workspace. The name is a part of an S3 key. The project directory is not a workspace.
+WORKSPACE = re.compile(r"[0-9a-f][0-9a-f-]{7,63}")
+# The form of the directory name of a workflow run, and of the name that the project
+# directory of a release had in earlier versions.
+RUN_DIR, RELEASE_DIR = re.compile(r"[0-9a-f]{12}-[0-9a-f]{8}"), re.compile(r"[0-9a-f]{12}")
+# The Git ref of the last copy of a workspace, in its directory.
+REF = "refs/durable/snapshot"
+# The failures of Git, of the file system and of S3. A caller reports them and continues.
+FAILURES = (RuntimeError, OSError, subprocess.SubprocessError, aws.ClientError, aws.BotoCoreError)
 
 
 def unpack(sha: str, key: str) -> None:
@@ -101,7 +105,7 @@ def earlier() -> str:
 
     Before `work/main`, each release had a project directory with the commit as its name.
     """
-    found = [entry.path for entry in os.scandir(WORK) if re.fullmatch(r"[0-9a-f]{12}", entry.name) and os.path.isfile(f"{entry.path}/.git/durable-base")]
+    found = [entry.path for entry in os.scandir(WORK) if RELEASE_DIR.fullmatch(entry.name) and os.path.isfile(f"{entry.path}/.git/durable-base")]
     return max(found, key=lambda path: os.lstat(f"{path}/.git").st_mtime, default="")
 
 
@@ -112,13 +116,14 @@ def advance(release: str, environment: dict[str, str]) -> str:
     takes the release as a fast-forward, else as a merge. When Git refuses both, the
     directory stays as it is and the next worker tries again.
     """
-    target = clone(release, MAIN, environment)
+    target = clone(release, PROJECT_DIR, environment)
     note = f"{target}/.git/durable-base"
     with open(note, encoding="utf-8") as file:
         if file.read().strip() == release:
             return target
 
     def git(*arguments: str) -> bool:
+        """Run Git in the project directory. Return True when the command worked."""
         return subprocess.run(["git", *arguments], cwd=target, env=environment, capture_output=True, check=False).returncode == 0
 
     merged = git("fetch", "--quiet", f"{RELEASES}/{release}", "HEAD") and (git("merge", "--quiet", "--ff-only", "FETCH_HEAD") or git("merge", "--quiet", "--no-edit", "FETCH_HEAD"))
@@ -156,8 +161,8 @@ def prune(keep: str) -> None:
     """Remove the old releases and the parts of a failed sync."""
     entries = sorted(os.scandir(RELEASES), key=lambda entry: entry.stat().st_mtime, reverse=True)
     releases = [entry for entry in entries if not entry.name.startswith(".")]
-    stale = [entry for entry in entries if entry.name.startswith(".") and time.time() - entry.stat().st_mtime > 3600]
-    for entry in stale + [entry for entry in releases[KEEP:] if entry.name != keep]:
+    stale = [entry for entry in entries if entry.name.startswith(".") and time.time() - entry.stat().st_mtime > STALE_S]
+    for entry in stale + [entry for entry in releases[RELEASES_KEPT:] if entry.name != keep]:
         shutil.rmtree(entry.path, ignore_errors=True)
 
 
@@ -186,26 +191,19 @@ def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
 
 # -- the workspaces ----------------------------------------------------------------
 
-# The name of a workspace is a part of an S3 key. The project directory `main` is not a workspace.
-NAME = re.compile(r"[0-9a-f][0-9a-f-]{7,63}")
-# The commit of the last copy, in the directory.
-REF = "refs/durable/snapshot"
-# The largest bundle that S3 gets.
-LIMIT = 100_000_000
-FAILURES = (RuntimeError, OSError, subprocess.SubprocessError, aws.ClientError, aws.BotoCoreError)
-
 
 def name_of(root: str) -> str | None:
     """Return the name of the workspace of a directory, or None for another directory."""
     root = os.path.realpath(root)
     name = os.path.basename(root)
-    return name if os.path.dirname(root) == os.path.realpath(WORK) and NAME.fullmatch(name) else None
+    return name if os.path.dirname(root) == os.path.realpath(WORK) and WORKSPACE.fullmatch(name) else None
 
 
 class Workspaces:
     """The workspaces of this worker. `environment` returns the variables of a Git process."""
 
     def __init__(self, environment: Callable[[], dict[str, str]]) -> None:
+        """Start without a known workspace. The worker reads S3 at the first use of each workspace."""
         self.environment = environment
         self.lock = threading.Lock()
         # One thread at a time changes a workspace or makes its copy.
@@ -217,12 +215,13 @@ class Workspaces:
         self.saved: dict[str, dict[str, Any] | None] = {}
 
     def held(self, name: str) -> threading.RLock:
+        """Return the lock of a workspace. Its holder is the one thread that changes or copies the workspace."""
         with self.lock:
             return self.locks.setdefault(name, threading.RLock())
 
     def git(self, root: str, *arguments: str, check: bool = True, extra: dict[str, str] | None = None) -> str:
         """Run Git in a directory and return its output."""
-        done = subprocess.run(["git", *arguments], cwd=root, env={**self.environment(), **(extra or {})}, capture_output=True, text=True, timeout=300)
+        done = subprocess.run(["git", *arguments], cwd=root, env={**self.environment(), **(extra or {})}, capture_output=True, text=True, timeout=GIT_S)
         if check and done.returncode:
             raise RuntimeError(f"git {arguments[0]} failed: {done.stderr.strip()[-300:]}")
         return done.stdout.strip()
@@ -255,7 +254,7 @@ class Workspaces:
     def names(self) -> set[str]:
         """Return the name of each workspace that EFS or S3 has."""
         found = {entry.name for entry in os.scandir(WORK) if name_of(entry.path)}
-        return found | {name for name in (item["Key"].split("/")[1] for item in aws.keys("work/")) if NAME.fullmatch(name)}
+        return found | {name for name in (item["Key"].split("/")[1] for item in aws.keys("work/")) if WORKSPACE.fullmatch(name)}
 
     def mark(self, root: str) -> None:
         """Record that a session changed a workspace."""
@@ -304,7 +303,7 @@ class Workspaces:
                 try:
                     self.git(root, "bundle", "create", file, REF, "--branches", f"^{base}")
                     size = os.path.getsize(file)
-                    if size > LIMIT:
+                    if size > BUNDLE_LIMIT:
                         log("no copy of the workspace", name, "its bundle has", size, "bytes")
                         return known
                     with open(file, "rb") as source:
@@ -404,7 +403,7 @@ class Workspaces:
 
     def remove(self, name: str) -> None:
         """Remove a workspace: its directory and its copy in S3."""
-        if not NAME.fullmatch(name):
+        if not WORKSPACE.fullmatch(name):
             return
         with self.held(name):
             with self.lock:

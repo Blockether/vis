@@ -679,11 +679,21 @@ the stack gives the value to the functions as `VIS_MODELS`.
 
 Each module has one task. A function imports only the modules of its role.
 
+`settings.py` is the one module that reads the environment. Each path, limit, time and
+name of the stack is there, in sections with comments. A constant in another module is
+the form of the data of that module, for example the pattern of a route. It is not a
+setting. `local.py` is the exception: it sets the environment before the package starts.
+
+The worker calls the Vis gateway with the Vis SDK, and a workflow uses a Vis session for
+each model call. The `llm` function is not a model client. It is the only code that has
+the provider key, and the only way from the gateway to the provider: the worker has no
+route to the internet and no key.
+
 | Module | Task |
 | --- | --- |
 | [`handler.py`](durable/handler.py) | The handler of each role. `python -m durable` starts the runtime with the handler that `VIS_ROLE` selects |
 | [`lambda_runtime.py`](durable/lambda_runtime.py) | The Lambda Runtime API |
-| [`settings.py`](durable/settings.py) | The settings of the stack, from the environment |
+| [`settings.py`](durable/settings.py) | Each setting of the stack: the environment, the paths, the limits, the times and the names |
 | [`helpers.py`](durable/helpers.py) | The log, private files and the filter of an archive |
 | [`domain.py`](durable/domain.py) | The rules of the API: the names, the limits, the statuses of a run and the refusals |
 | [`aws.py`](durable/aws.py) | Each call to S3, SQS, the Parameter Store and Lambda |
@@ -691,10 +701,10 @@ Each module has one task. A function imports only the modules of its role.
 | [`core.py`](durable/core.py) | The lease and the checkpoints of the Vis home |
 | [`git.py`](durable/git.py) | The `repo` function: the fetch from GitHub and the push to GitHub |
 | [`worktree.py`](durable/worktree.py) | The `sync` function and the directories on EFS: the releases, the work directories and their copy in S3 |
-| [`llm.py`](durable/llm.py) | The `llm` function |
+| [`llm.py`](durable/llm.py) | The `llm` function: it adds the provider key to a model call of the gateway and streams the answer |
 | [`worker.py`](durable/worker.py) | The `worker` function: the loop of the one live worker |
 | [`app.py`](durable/app.py) | The routes of the Durable Lambda API |
 | [`dashboard/`](durable/dashboard) | The `front` function: `front.py` has the pages and the webhook, `relay.py` sends a call to the worker, `web.py` has the request and the answer |
-| [`vis/`](durable/vis) | What the worker does with Vis: `gateway.py` runs the gateway, `relay.py` answers the calls of the queue, `broker.py` is the way out of the gateway, `sessions.py` gives each session its work directory, `files.py` copies the files of a session, `registry.py` registers the project, the groups and the apps, `liveapps/` has the Workflows app |
+| [`vis/`](durable/vis) | What the worker does with Vis: `gateway.py` runs the gateway and calls it with the Vis SDK, `relay.py` answers the calls of the queue, `broker.py` sends the model calls of the gateway to the `llm` function, `sessions.py` gives each session its work directory, `files.py` copies the files of a session, `registry.py` registers the project, the groups and the apps, `liveapps/` has the Workflows app |
 | [`workflows/`](durable/workflows) | The workflows: `sdk.py` has `@workflow` and `@activity`, `source.py` reads a workflow file, `runs.py` keeps the runs, `process.py` is the process of one run, `client.py` calls the API from that process |
 | [`local.py`](durable/local.py) | All the functions in one process, without AWS |

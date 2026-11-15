@@ -21,24 +21,17 @@ from typing import Any
 from durable import aws
 from durable.helpers import log, write_secret
 from durable.lambda_runtime import Context
-from durable.settings import BUCKET, ENV, SYNC_FUNCTION
+from durable.settings import BRANCH, BUNDLE_LIMIT, DEPLOY_KEY_FILE, DEPLOY_KEY_PARAMETER, ENV, GIT_S, GUARDED, KNOWN_HOSTS, REPO, REPO_URL, SYNC_FUNCTION
 
-REPO = ENV.get("VIS_REPO", "")
-# Another address is for a test with a repository in a directory.
-URL = ENV.get("VIS_REPO_URL") or f"git@github.com:{REPO}.git"
-KEY_FILE, KNOWN_HOSTS = "/tmp/deploy-key", "/opt/durable/known_hosts"
-# The largest bundle, in bytes.
-LIMIT = 100_000_000
-MAIN, INCOMING = "refs/heads/main", "refs/heads/incoming"
-# GitHub runs the workflow files of this directory with internet access.
-GUARDED = ".github"
+# The branch of the stack, and the name that the commits of a bundle get in the clone.
+MAIN, INCOMING = f"refs/heads/{BRANCH}", "refs/heads/incoming"
 
 
 def environment() -> dict[str, str]:
     """Return the environment of Git, with the deploy key and the pinned host keys of GitHub."""
-    if not os.path.exists(KEY_FILE):
-        write_secret(KEY_FILE, aws.parameter(ENV["VIS_DEPLOY_KEY_PARAMETER"]).strip() + "\n")
-    ssh = f"ssh -F /dev/null -i {KEY_FILE} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={KNOWN_HOSTS} -o GlobalKnownHostsFile=/dev/null"
+    if not os.path.exists(DEPLOY_KEY_FILE):
+        write_secret(DEPLOY_KEY_FILE, aws.parameter(DEPLOY_KEY_PARAMETER).strip() + "\n")
+    ssh = f"ssh -F /dev/null -i {DEPLOY_KEY_FILE} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={KNOWN_HOSTS} -o GlobalKnownHostsFile=/dev/null"
     return {
         "PATH": ENV.get("PATH", "/usr/bin:/bin"),
         "HOME": "/tmp",
@@ -52,7 +45,7 @@ def environment() -> dict[str, str]:
 
 def git(*arguments: str, cwd: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run Git with the deploy key. A failure raises, unless `check` is false."""
-    done = subprocess.run(["git", *arguments], cwd=cwd, env=environment(), capture_output=True, text=True, timeout=240)
+    done = subprocess.run(["git", *arguments], cwd=cwd, env=environment(), capture_output=True, text=True, timeout=GIT_S)
     if check and done.returncode:
         raise RuntimeError(f"git {arguments[0]} failed: {done.stderr.strip()[-400:]}")
     return done
@@ -60,7 +53,7 @@ def git(*arguments: str, cwd: str | None = None, check: bool = True) -> subproce
 
 def head() -> str:
     """Return the commit of the main branch on GitHub."""
-    line = git("ls-remote", URL, MAIN).stdout.split()
+    line = git("ls-remote", REPO_URL, MAIN).stdout.split()
     if not line:
         raise RuntimeError("the repository has no main branch")
     return line[0]
@@ -69,7 +62,7 @@ def head() -> str:
 def clone(folder: str, *options: str) -> str:
     """Clone the main branch into `folder/repo` and return that path."""
     target = os.path.join(folder, "repo")
-    git("clone", "--quiet", "--branch", "main", *options, URL, target)
+    git("clone", "--quiet", "--branch", BRANCH, *options, REPO_URL, target)
     return target
 
 
@@ -100,7 +93,7 @@ def fetch(force: bool = False) -> dict[str, Any]:
     return {"sha": sha, "changed": True}
 
 
-class Refused(ValueError):
+class Rejected(ValueError):
     """The function does not push these commits. The session gets the reason."""
 
 
@@ -117,20 +110,20 @@ def push(publication: str, data: bytes) -> dict[str, Any]:
         sha = git("rev-parse", "--verify", INCOMING, cwd=target).stdout.strip()
         base = git("merge-base", MAIN, INCOMING, cwd=target, check=False).stdout.strip()
         if not base:
-            raise Refused("the commits do not start from the main branch")
+            raise Rejected("the commits do not start from the main branch")
         forward = base in (sha, git("rev-parse", "--verify", MAIN, cwd=target).stdout.strip())
         # A repeated publication: main or a branch of an earlier publication has the commits, so there is nothing to check or to push.
-        earlier = "main" if base == sha else git("for-each-ref", "--count=1", "--points-at", sha, "--format=%(refname:lstrip=2)", "refs/heads/durable", cwd=target).stdout.strip()
-        branch = earlier or ("main" if forward else f"durable/{publication[:12]}")
+        earlier = BRANCH if base == sha else git("for-each-ref", "--count=1", "--points-at", sha, "--format=%(refname:lstrip=2)", "refs/heads/durable", cwd=target).stdout.strip()
+        branch = earlier or (BRANCH if forward else f"durable/{publication[:12]}")
         if not earlier:
             guarded = tree(target, INCOMING, GUARDED)
             touched = git("rev-list", "--full-history", "--max-count=1", f"{base}..{INCOMING}", "--", GUARDED, cwd=target).stdout.strip()
             if touched or guarded != tree(target, base, GUARDED):
-                raise Refused(f"a session cannot change the directory {GUARDED}, because GitHub runs its files")
+                raise Rejected(f"a session cannot change the directory {GUARDED}, because GitHub runs its files")
             if guarded != tree(target, MAIN, GUARDED):
-                raise Refused(f"the main branch changed the directory {GUARDED} after this session started: start a new session")
+                raise Rejected(f"the main branch changed the directory {GUARDED} after this session started: start a new session")
             git("push", "--quiet", "origin", f"{INCOMING}:refs/heads/{branch}", cwd=target)
-    return {"branch": branch, "sha": sha, "url": f"https://github.com/{REPO}/commit/{sha}", "merged": branch == "main", "pushed": not earlier}
+    return {"branch": branch, "sha": sha, "url": f"https://github.com/{REPO}/commit/{sha}", "merged": branch == BRANCH, "pushed": not earlier}
 
 
 def publish(publication: str) -> dict[str, Any]:
@@ -139,13 +132,14 @@ def publish(publication: str) -> dict[str, Any]:
         raise ValueError("id must be a publication id")
     key = f"outbox/{publication}.bundle"
     try:
-        if aws.client("s3").head_object(Bucket=BUCKET, Key=key)["ContentLength"] > LIMIT:
-            raise Refused("the bundle is too large")
+        # Look at the size first: the function does not read a bundle that is too large.
+        if (aws.head(key) or {"size": 0})["size"] > BUNDLE_LIMIT:
+            raise Rejected("the bundle is too large")
         data, _ = aws.get(key)
-        if not data or len(data) > LIMIT:
-            raise Refused("the bundle is empty or too large")
+        if not data or len(data) > BUNDLE_LIMIT:
+            raise Rejected("the bundle is empty or too large")
         result = push(publication, data)
-    except Refused as refusal:
+    except Rejected as refusal:
         log("refused", publication, str(refusal))
         return {"refused": str(refusal)}
     finally:

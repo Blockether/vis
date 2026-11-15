@@ -33,6 +33,7 @@ class Lease:
     """The lease of this worker. `data` is the last content that it wrote."""
 
     def __init__(self, data: dict[str, Any], etag: str | None) -> None:
+        """Keep what the lease said and its ETag. The first write makes this worker the owner."""
         self.id = str(uuid.uuid4())
         self.data, self.etag, self.saves = data, etag, 0
 

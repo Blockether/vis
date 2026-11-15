@@ -1,16 +1,18 @@
 """A client of the Durable Lambda API, for the code that runs next to the gateway.
 
-The broker of the worker serves the API on the loopback interface. Its address is in
-`DURABLE_BROKER`. The workflow runs use this client. It needs only the standard library.
+The broker of the worker serves the API on the loopback interface. The worker gives
+its address to each run process (`BROKER` of `settings.py`). The workflow runs use
+this client. It needs only the standard library.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import urllib.error
 import urllib.request
 from typing import Any
+
+from durable.settings import API_S, BROKER
 
 
 class DurableError(RuntimeError):
@@ -21,9 +23,12 @@ class Durable:
     """The Durable Lambda API at the address of the broker."""
 
     def __init__(self, base: str | None = None) -> None:
-        self.base = (base or os.environ["DURABLE_BROKER"]).rstrip("/") + "/play/api/"
+        """Use the address `base`, or the broker of the worker that started this process."""
+        if not (base or BROKER):
+            raise DurableError("this process has no address of the broker")
+        self.base = (base or BROKER).rstrip("/") + "/play/api/"
 
-    def call(self, method: str, path: str, body: Any = None, timeout: float = 120) -> Any:
+    def call(self, method: str, path: str, body: Any = None, timeout: float = API_S) -> Any:
         """Call the API and return the JSON answer."""
         data = None if body is None else json.dumps(body).encode()
         request = urllib.request.Request(self.base + path, data, {"content-type": "application/json"}, method=method)

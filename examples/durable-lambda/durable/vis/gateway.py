@@ -3,6 +3,11 @@
 The gateway listens only on the loopback interface with a token that this worker
 makes at each start. Its model provider is the broker of this worker, so the gateway
 never holds a provider key. Its environment has no AWS credentials.
+
+The worker calls the gateway with the Vis SDK: `Gateway.client` gives the
+`GatewayClient` of the calling thread. Two routes are not in the SDK, because they are
+not for an application: the health check and the drain. `Gateway.call` is for them.
+The relay sends the calls of the browser to the gateway as they are (see `vis/relay.py`).
 """
 
 from __future__ import annotations
@@ -10,23 +15,36 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import re
 import secrets
 import subprocess
+import threading
 import time
 from typing import Any
-from urllib.parse import quote
+
+from blockether.vis.engine import GatewayClient, GatewayError
 
 from durable.helpers import log, private, write_secret
-from durable.settings import EFS, ENV, HOME, MODELS, PRIVATE_TMP, WORKER_DIR
+from durable.settings import (
+    DRAIN_GRACE_S,
+    ENV,
+    GATEWAY_PORT,
+    GATEWAY_START_S,
+    GATEWAY_URL,
+    GIT_EMAIL,
+    GIT_NAME,
+    HOME,
+    LOOPBACK,
+    MODELS,
+    PRIVATE_TMP,
+    PROVIDER,
+    RUNS_GROUP,
+    TOKEN_FILE,
+    VIS_BINARY,
+    VIS_PYTHON_NATIVE,
+    WORK,
+)
+from durable.worktree import RELEASE_DIR, RUN_DIR
 
-BINARY = "/opt/vis/vis-agent-native"
-HOST, PORT, TOKEN_FILE = "127.0.0.1", 7890, f"{WORKER_DIR}/gateway.token"
-PROVIDER = "durable"
-# The session group of the workflow runs, and the directory names of a run and of an earlier release.
-GROUP, RUN_DIR, RELEASE_DIR = "Workflows", re.compile(r"[0-9a-f]{12}-[0-9a-f]{8}"), re.compile(r"[0-9a-f]{12}")
-# The session group of the sessions that a person starts. Each has its own directory, and the group keeps it in the one project.
-PEOPLE = "Sessions"
 # The variables that the gateway and the tools of a session get. No AWS credentials.
 PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "VIS_WEB_DIR")
 
@@ -48,7 +66,8 @@ def environment(broker: str) -> dict[str, str]:
     env.update(
         HOME=HOME,
         TMPDIR="/tmp",
-        VIS_PYTHON_NATIVE_PATH="/opt/vis/vis-agent-python/libvispython.so",
+        VIS_PYTHON_NATIVE_PATH=VIS_PYTHON_NATIVE,
+        # `settings.py` reads the first as BROKER. The Vis extension of the image reads the two.
         DURABLE_BROKER=broker,
         DURABLE_PRIVATE_TMP=":".join(PRIVATE_TMP),
         # The release directory on EFS has another owner. Git must accept it.
@@ -56,9 +75,9 @@ def environment(broker: str) -> dict[str, str]:
         GIT_CONFIG_KEY_0="safe.directory",
         GIT_CONFIG_VALUE_0="*",
         GIT_CONFIG_KEY_1="user.name",
-        GIT_CONFIG_VALUE_1="Durable Lambda",
+        GIT_CONFIG_VALUE_1=GIT_NAME,
         GIT_CONFIG_KEY_2="user.email",
-        GIT_CONFIG_VALUE_2="durable-lambda@blockether.com",
+        GIT_CONFIG_VALUE_2=GIT_EMAIL,
     )
     return env
 
@@ -67,19 +86,23 @@ class Gateway:
     """One gateway process and the calls that the worker makes to it."""
 
     def __init__(self, project: str, broker: str) -> None:
+        """Make the token of the gateway. `project` is its directory and `broker` is the address of its model provider."""
         self.project, self.broker = project, broker
         self.token = secrets.token_urlsafe(32)
         self.protocol = ""
         self.process: subprocess.Popen[bytes] | None = None
+        # The SDK client of each thread: one client serves one thread.
+        self._clients = threading.local()
 
     def start(self) -> None:
+        """Write the configuration and the token, start the process and wait until it answers."""
         os.makedirs(os.path.join(HOME, ".vis"), exist_ok=True)
         with open(os.path.join(HOME, ".vis", "config.yml"), "w", encoding="utf-8") as file:
             file.write(config(self.broker))
-        write_secret(private("gateway.token"), self.token)
-        command = [BINARY, f"-Duser.home={HOME}", "gateway", "start", "--host", HOST, "--port", str(PORT)]
+        write_secret(private(os.path.basename(TOKEN_FILE)), self.token)
+        command = [VIS_BINARY, f"-Duser.home={HOME}", "gateway", "start", "--host", LOOPBACK, "--port", str(GATEWAY_PORT)]
         self.process = subprocess.Popen([*command, "--token-file", TOKEN_FILE, "--require-token"], cwd=self.project, env=environment(self.broker))
-        deadline = time.time() + 60
+        deadline = time.time() + GATEWAY_START_S
         while time.time() < deadline:
             if self.process.poll() is not None:
                 raise RuntimeError(f"the gateway stopped with exit code {self.process.returncode}")
@@ -91,16 +114,29 @@ class Gateway:
                     return
             except OSError:
                 time.sleep(0.2)
-        raise RuntimeError("the gateway did not start in 60 s")
+        raise RuntimeError(f"the gateway did not start in {GATEWAY_START_S} s")
+
+    # -- the two ways to call the gateway -----------------------------------------
+
+    def client(self) -> GatewayClient:
+        """Return the SDK client of the calling thread.
+
+        A client takes a lease in the gateway only for a live app, so it needs no
+        close: the worker and its gateway stop together.
+        """
+        found = getattr(self._clients, "client", None)
+        if found is None:
+            found = self._clients.client = GatewayClient(GATEWAY_URL, token=self.token)
+        return found
 
     def headers(self) -> dict[str, str]:
-        """Return the headers of a call that the worker makes or relays."""
+        """Return the headers of a call that the worker makes without the SDK, or relays."""
         head = {"authorization": f"Bearer {self.token}", "content-type": "application/json"}
         return {**head, "x-vis-protocol": self.protocol} if self.protocol else head
 
     def call(self, method: str, path: str, body: Any = None, timeout: float = 30) -> tuple[int, Any]:
-        """Call the gateway and return the status and the JSON answer."""
-        connection = http.client.HTTPConnection(HOST, PORT, timeout=timeout)
+        """Call a route that the SDK does not have. Return the status and the JSON answer."""
+        connection = http.client.HTTPConnection(LOOPBACK, GATEWAY_PORT, timeout=timeout)
         try:
             connection.request(method, path, None if body is None else json.dumps(body), self.headers())
             answer = connection.getresponse()
@@ -109,47 +145,64 @@ class Gateway:
         finally:
             connection.close()
 
-    def sessions(self, query: str) -> list[dict[str, Any]]:
-        """Return each session of a list, also the archived sessions."""
+    # -- the sessions -------------------------------------------------------------
+
+    def sessions(self, **query: Any) -> list[dict[str, Any]]:
+        """Return each session of a list, also the archived sessions. `query` selects the list.
+
+        The SDK gives one page for each call. A failure raises: a part of the list is
+        not the list, and a caller removes what no session uses.
+        """
         rows: dict[str, dict[str, Any]] = {}
-        cursor = ""
+        query = {"limit": 200, "archived": "include", **query}
         while True:
-            status, page = self.call("GET", f"/v1/sessions?limit=200&archived=include&{query}{cursor}")
-            if status != 200:  # a part of the list is not the list: a caller removes what no session uses
-                raise RuntimeError(f"the gateway did not list the sessions: HTTP {status}")
+            page = self.client().list_sessions(**query)
             rows.update((row["id"], row) for row in (page.get("sessions") or []) + (page.get("awaiting") or []))
             if not page.get("has_more") or not page.get("next_cursor"):
                 return list(rows.values())
-            cursor = f"&after={page['next_cursor']}"
+            query["after"] = page["next_cursor"]
 
     def roots(self) -> set[str]:
         """Return the directory of each session that has a turn. The gateway does not list an empty session."""
-        return {os.path.realpath((row.get("workspace") or {}).get("root") or self.project) for row in self.sessions("")}
+        return {os.path.realpath((row.get("workspace") or {}).get("root") or self.project) for row in self.sessions()}
+
+    def soul(self, session: str) -> dict[str, Any] | None:
+        """Return a session, or None when the gateway does not give it."""
+        try:
+            return self.client().get_session(session)
+        except GatewayError:
+            return None
 
     def is_gone(self, session: str) -> bool:
         """Return True when the gateway says that it does not have a session."""
-        return self.call("GET", f"/v1/sessions/{session}")[0] == 404
-
-    def soul(self, session: str) -> dict[str, Any] | None:
-        """Return a session, or None when the gateway does not have it."""
-        status, row = self.call("GET", f"/v1/sessions/{session}")
-        return row if status == 200 else None
+        try:
+            self.client().get_session(session)
+        except GatewayError as failure:
+            return failure.status == 404
+        return False
 
     def busy(self, session: str) -> bool:
         """Return True while a turn runs in a session."""
         row = self.soul(session) or {}
         return row.get("status") == "running" or bool(row.get("current_turn_id"))
 
+    def cancel(self, session: str) -> None:
+        """Cancel the turn that runs in a session. The gateway cancels a turn only by its id."""
+        turn = (self.soul(session) or {}).get("current_turn_id")
+        if turn:
+            try:
+                self.client().post_session_turn_cancel(session, turn)
+            except GatewayError as failure:  # the turn ended before the call
+                log("no cancel of the turn", session, repr(failure))
+
+    # -- the one project and its groups -------------------------------------------
+
     def group(self, root: str, name: str) -> str:
         """Return the id of a session group of the project. Make the group when the project does not have it."""
-        _, listed = self.call("GET", f"/v1/session-groups?archived=include&root={quote(root, safe='')}")
+        client = self.client()
+        listed = client.get_session_groups(query={"archived": "include", "root": root})
         found = next((row["id"] for row in (listed or {}).get("groups") or [] if row["name"] == name), None)
-        if found is None:
-            status, made = self.call("POST", "/v1/session-groups", {"name": name, "root": root})
-            if status != 201:
-                raise RuntimeError(f"the gateway did not make the session group: HTTP {status}")
-            found = made["id"]
-        return found
+        return found or client.post_session_groups(body={"name": name, "root": root})["id"]
 
     def organize(self, root: str, name: str) -> str:
         """Make the one project and its group of workflow runs. Return the id of the group.
@@ -159,57 +212,57 @@ class Gateway:
         session of a run joins the group and keeps its directory, and each other session
         moves to the project directory. A project that has no session left goes.
         """
-        self.call("POST", "/v1/projects/actions/ensure", {"root": root, "name": name})
-        group = self.group(root, GROUP)
-        _, projects = self.call("GET", "/v1/projects")
-        for project in (projects or {}).get("projects") or []:
+        client = self.client()
+        client.post_projects_ensure(body={"root": root, "name": name})
+        group = self.group(root, RUNS_GROUP)
+        for project in (client.get_projects() or {}).get("projects") or []:
             folder, parent = os.path.basename(str(project.get("workspace_root"))), os.path.dirname(str(project.get("workspace_root")))
             is_run = bool(RUN_DIR.fullmatch(folder))
-            if parent != f"{EFS}/work" or not (is_run or RELEASE_DIR.fullmatch(folder)):
+            if parent != WORK or not (is_run or RELEASE_DIR.fullmatch(folder)):
                 continue
-            for session in self.sessions(f"project_id={project['id']}"):
-                if is_run:
-                    status, _ = self.call("PUT", f"/v1/sessions/{session['id']}/group", {"group_id": group})
-                    is_moved = status == 200
-                else:
+            try:
+                for session in self.sessions(project_id=project["id"]):
+                    if is_run:
+                        client.put_session_group(session["id"], body={"group_id": group})
+                        continue
                     # The gateway answers 200 also when it did not move the session, so read the answer.
-                    status, moved = self.call("PATCH", f"/v1/sessions/{session['id']}/workspace/root", {"path": root})
-                    is_moved = status == 200 and ((moved or {}).get("workspace") or {}).get("root") == root
-                if not is_moved:
-                    # The project stays, so the next worker tries again.
-                    log("session stays in its earlier project", session["id"], status)
-            if not self.sessions(f"project_id={project['id']}"):
-                self.call("DELETE", f"/v1/projects/{project['id']}")
+                    moved = client.patch_session_workspace_root(session["id"], body={"path": root})
+                    if ((moved or {}).get("workspace") or {}).get("root") != root:
+                        log("session stays in its earlier project", session["id"])
+                if not self.sessions(project_id=project["id"]):
+                    client.delete_project(project["id"])
+            except GatewayError as failure:
+                # The project stays, so the next worker tries again.
+                log("an earlier project stays", project["id"], repr(failure))
         return group
 
-    def cancel(self, session: str) -> None:
-        """Cancel the turn that runs in a session. The gateway cancels a turn only by its id."""
-        turn = (self.soul(session) or {}).get("current_turn_id")
-        if turn:
-            self.call("POST", f"/v1/sessions/{session}/turns/{turn}/cancel", {})
+    # -- what the worker loop asks ------------------------------------------------
 
     def running(self) -> int:
-        """Return the number of sessions with a running turn."""
-        count, cursor = 0, ""
-        while True:
-            _, page = self.call("GET", f"/v1/sessions?limit=200{cursor}")
-            rows = (page.get("sessions") or []) + (page.get("awaiting") or [])
-            count += sum(1 for row in rows if row.get("status") == "running")
-            if not page.get("has_more") or not page.get("next_cursor"):
-                return count
-            cursor = f"&after={page['next_cursor']}"
+        """Return the number of sessions with a running turn. A gateway that refuses the list reports none."""
+        try:
+            return sum(1 for row in self.sessions() if row.get("status") == "running")
+        except GatewayError as failure:
+            log("no list of the sessions", repr(failure))
+            return 0
 
     def next_due(self) -> float | None:
-        """Return the time of the next scheduled automation."""
-        _, page = self.call("GET", "/v1/automations")
+        """Return the time of the next scheduled automation, or None."""
+        try:
+            page = self.client().get_automations()
+        except GatewayError as failure:
+            log("no list of the automations", repr(failure))
+            return None
         rows = page if isinstance(page, list) else (page or {}).get("automations") or []
         times = [row["next_run_at"] / 1000 for row in rows if row.get("enabled") and row.get("next_run_at")]
         return min(times, default=None)
 
+    # -- the end of the process ---------------------------------------------------
+
     def drain(self, timeout_s: float) -> int:
         """Park the running turns for the next worker. Return their number."""
         try:
-            body = {"timeout_ms": int(timeout_s * 1000), "grace_ms": 10000}
+            body = {"timeout_ms": int(timeout_s * 1000), "grace_ms": DRAIN_GRACE_S * 1000}
             _, answer = self.call("POST", "/v1/admin/drain", body, timeout=timeout_s + 15)
             return int((answer or {}).get("parked") or 0)
         except (OSError, ValueError) as failure:

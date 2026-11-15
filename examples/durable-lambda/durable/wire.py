@@ -12,10 +12,12 @@ import json
 import struct
 from typing import Any
 
+# The headers of one connection. They do not go from one side of the relay to the other.
 HOP = {"connection", "content-length", "transfer-encoding", "host", "keep-alive"}
+# The first byte of a part: the last part, or a part that more parts follow.
 LAST, MORE = b"E", b"M"
-# The headers of a JSON answer, as pairs of name and value.
-JSON = [["content-type", "application/json"]]
+# The headers of a JSON answer, as pairs of name and value. No cache keeps such an answer.
+JSON = [["content-type", "application/json"], ["cache-control", "no-store"]]
 
 
 def frame(head: dict[str, Any], body: bytes = b"") -> bytes:

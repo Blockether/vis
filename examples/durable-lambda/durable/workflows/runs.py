@@ -21,9 +21,9 @@ from collections.abc import Callable
 from typing import Any
 
 from durable import aws, worktree
-from durable.domain import LIVE, NAME, OPEN, PARALLEL, SESSION, STEPS, Refused, need
+from durable.domain import LIVE, NAME, OPEN, SESSION, Refused, need
 from durable.helpers import log
-from durable.settings import ENV, RUN_LIMIT_S, STARTS
+from durable.settings import ENV, PARALLEL, RUN_LIMIT_S, RUNS_KEPT, STARTS, STEPS
 from durable.worktree import FAILURES, Workspaces
 
 
@@ -31,6 +31,7 @@ class Runs:
     """The workflow runs. Only the worker that holds the lease writes them."""
 
     def __init__(self, release: str, environment: Callable[[], dict[str, str]], workspaces: Workspaces) -> None:
+        """Read the index of the runs. `environment` returns the variables of a run process."""
         self.release, self.environment, self.workspaces = release, environment, workspaces
         self.lock = threading.RLock()
         self.docs: dict[str, dict[str, Any]] = {}
@@ -62,7 +63,7 @@ class Runs:
         line = {key: doc.get(key) for key in ("id", "workflow", "title", "status", "created", "finished", "session_id")}
         line["activities"] = [[a["title"], a["status"]] for a in doc["activities"]]
         self.index = [line] + [old for old in self.index if old["id"] != doc["id"]]
-        aws.put("runs/index.json", json.dumps(self.index[:300]).encode())
+        aws.put("runs/index.json", json.dumps(self.index[:RUNS_KEPT]).encode())
 
     def create(self, workflow: str, source: str, about: dict[str, Any], given: dict[str, Any], session: str | None = None, root: str | None = None) -> dict[str, Any]:
         """Record a new run with a copy of its source, and start it when a place is free.
@@ -124,6 +125,7 @@ class Runs:
                 # A run in the session of a person waits until the turn of that person ends.
                 if not doc["starts"] and doc["session_id"] and self.busy(doc["session_id"]):
                     continue
+                # `settings.py` of the run process reads the group as RUN_GROUP.
                 env = {**self.environment(), "PYTHONPATH": ENV.get("PYTHONPATH", ""), "PYTHONUNBUFFERED": "1", "DURABLE_GROUP": self.group}
                 # A new run starts from the newest release, also when the worker is older.
                 release = worktree.current() or self.release
@@ -227,6 +229,7 @@ class Runs:
             return doc
 
     def cancel(self, run_id: str) -> dict[str, Any]:
+        """Stop the process of a run and end the run as cancelled."""
         with self.lock:
             doc = self.doc(run_id)
             process = self.processes.pop(run_id, None)
@@ -237,6 +240,7 @@ class Runs:
             return doc
 
     def live(self) -> int:
+        """Return the number of runs that have, or wait for, a process."""
         return sum(1 for line in self.index if line["status"] in LIVE)
 
     def roots(self) -> set[str]:

@@ -27,6 +27,7 @@ def log(*parts: object) -> None:
 
 
 def remove_file(path: str) -> None:
+    """Remove a file. A file that is not there is not a failure."""
     if os.path.exists(path):
         os.remove(path)
 

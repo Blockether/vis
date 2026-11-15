@@ -15,14 +15,16 @@ from typing import Any
 from blockether.vis.engine import GatewayError, Session, TransportError
 
 from durable import aws
-from durable.domain import ATTACHED_LIMIT, FILE, SESSION, Answer, Refused, need, relative
+from durable.domain import FILE, SESSION, Answer, Refused, need, relative
 from durable.helpers import log
+from durable.settings import ATTACHED_LIMIT
 
 
 class Files:
     """The files of the sessions. `attach` records an attached file in the runs of its session. `touch` records that a session changed its work directory."""
 
     def __init__(self, attach: Callable[[str, str], None], touch: Callable[..., None]) -> None:
+        """Start without a gateway and without a known copy."""
         self.attach, self.touch = attach, touch
         # The worker sets this after the gateway starts: open a session with the SDK.
         self.open: Callable[[str], Session] | None = None
@@ -38,7 +40,7 @@ class Files:
         """Return the turn and the version of the copy that S3 has of an attached file."""
         known = (session, name)
         if known not in self.copied:  # a new worker: the metadata of the object names its copy
-            found = aws.metadata(f"attached/{session}/{name}") or {}
+            found = (aws.head(f"attached/{session}/{name}") or {}).get("metadata", {})
             self.copied[known] = {"turn": found.get("turn"), "version": int(found.get("version", 0))}
         return self.copied[known]
 
@@ -68,13 +70,16 @@ class Files:
         return [{**file, **self.stored(session, file["name"])} for file in self.listed("attached", session)]
 
     def attached(self, query: dict[str, str], **_: Any) -> dict[str, Any]:
+        """List the attached files of the session of the query."""
         return {"files": self.documents(query.get("session", ""))}
 
     def attached_file(self, session: str, name: str, **_: Any) -> Answer:
+        """Return one attached file of a session as a download."""
         key = f"attached/{need(SESSION, session, 'the session id')}/{need(FILE, name, 'the file name')}"
         return self.download(key, name)
 
     def download(self, key: str, name: str) -> Answer:
+        """Return an S3 object as a download with a safe file name, or refuse a key that S3 does not have."""
         raw, _ = aws.get(key)
         if raw is None:
             raise Refused(404, "no such file")
@@ -84,9 +89,11 @@ class Files:
         return 200, [*headers, ["content-disposition", f'attachment; filename="{filename}"']], raw
 
     def temporary(self, query: dict[str, str], **_: Any) -> dict[str, Any]:
+        """List the files that the session of the query wrote."""
         return {"files": self.listed("tmp", query.get("session", ""))}
 
     def temporary_file(self, session: str, path: str, **_: Any) -> Answer:
+        """Return one file that a session wrote as a download."""
         return self.download(f"tmp/{need(SESSION, session, 'the session id')}/{relative(path)}", path)
 
     def sync(self, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
