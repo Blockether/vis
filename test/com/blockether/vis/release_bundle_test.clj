@@ -3519,6 +3519,12 @@
                                  "<clojure.main><-m><com.blockether.vis.tui.main><--continue>")
                   output)
           (expect (str/includes? output "<-Duser.dir=") output)
+          ;; #479: the engine starts Vis again through this wrapper, so it gets its path.
+          (expect (str/includes? output
+                                 (str "<-J-Dvis.agent.launcher="
+                                      (.getCanonicalPath (io/file "bin/vis-agent"))
+                                      ">"))
+                  output)
           (expect (str/includes? output "/apps/vis-tui/src:") output))
         (finally (delete-tree! root)))))
   (it

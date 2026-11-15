@@ -153,6 +153,38 @@
                    (expect (= ["/opt/vis" "-Duser.home=/h"]
                               (disco/launcher-argv ["/opt/vis" "-Duser.home=/h"]))))))
 
+;; Regression, #479: on a JVM host the launcher was the bare `java` command. A child lost
+;; what only the `vis-agent` wrapper sets, and a relative `-Dvis.db.path` of the host named
+;; a file in the project of the child.
+(defdescribe
+  launcher-argv-of-a-jvm-host
+  (it "is the wrapper that started this JVM, while that file can run"
+      (let [wrapper
+            (java.io.File/createTempFile "vis-agent" "")
+
+            java
+            ["/jdk/bin/java" "-Dvis.agent.launcher=/gone" "-cp" "/lib/a.jar" "clojure.main" "-m"
+             "com.blockether.vis.core"]]
+
+        (try (.setExecutable wrapper true)
+             (expect (= [(.getPath wrapper)]
+                        (disco/launcher-argv java (.getPath wrapper) "/gateway")))
+             (.setExecutable wrapper false)
+             (expect (= java (disco/launcher-argv java (.getPath wrapper) "/gateway")))
+             (expect (= java (disco/launcher-argv java "/gone/vis-agent" "/gateway")))
+             (expect (= java (disco/launcher-argv java nil "/gateway")))
+             (finally (.delete wrapper)))))
+  (it "keeps the files of the host when no wrapper started this JVM"
+      (expect (= ["/jdk/bin/java" "-Dvis.db.path=/gateway/target/vis.mdb" "-Dvis.home=/gateway/home"
+                  "-Dvis.logs.dir=/var/logs" "-Dvis.measure=true" "-Dvis.db.leak-detection-ms=0"
+                  "-Xmx1g" "-cp" "/gateway/src" "clojure.main"]
+                 (disco/launcher-argv ["/jdk/bin/java" "-Dvis.db.path=target/vis.mdb"
+                                       "-Dvis.home=home" "-Dvis.logs.dir=/var/logs"
+                                       "-Dvis.measure=true" "-Dvis.db.leak-detection-ms=0"
+                                       "-Duser.dir=/gateway" "-Xmx1g" "-cp" "src" "clojure.main"]
+                                      nil
+                                      "/gateway")))))
+
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: a managed
 ;; gateway inherited terminal stop signals and froze with its WSL TUI parent.
 (defdescribe unix-launch-cmd-renames-and-protects-the-daemon

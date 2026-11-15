@@ -322,26 +322,56 @@
 
 (defn launcher-argv
   "Prefix argv that runs this Vis from ANY directory, for a child that a tool starts in a
-   project (#479). The host's own `-Duser.dir` would send that child to the directory where
-   this process started, and a relative classpath entry resolves against that directory."
-  ([] (launcher-argv (base-argv)))
-  ([argv]
+   project (#479).
+
+   A native binary is its own launcher. On a JVM, the launcher is the `vis-agent` wrapper
+   that started this process, which names itself in `vis.agent.launcher`: only the wrapper
+   knows the Java, the trust store and the source that it selected. It is a property and
+   not a variable, because a child process inherits a variable and can be another Vis.
+
+   A JVM without a wrapper that can run uses its own `java` command. The host's own
+   `-Duser.dir` would send the child to the directory where this process started. A
+   relative classpath entry, and a relative Vis path such as `-Dvis.db.path`, name files
+   of this process, so they become absolute against `directory`, the host's `user.dir`."
+  ([]
+   (launcher-argv (base-argv)
+                  (when-not (util/native-image?) (System/getProperty "vis.agent.launcher"))
+                  (System/getProperty "user.dir")))
+  ([argv] (launcher-argv argv nil (System/getProperty "user.dir")))
+  ([argv wrapper directory]
    (let [separator
          java.io.File/pathSeparator
 
          absolute
-         (fn [classpath]
-           (->> (str/split classpath (re-pattern (java.util.regex.Pattern/quote separator)))
-                (map #(.getAbsolutePath (io/file %)))
+         (fn [path]
+           (let [file (io/file path)]
+             (if (.isAbsolute file) path (.getPath (io/file directory path)))))
+
+         classpath
+         (fn [entries]
+           (->> (str/split entries (re-pattern (java.util.regex.Pattern/quote separator)))
+                (map absolute)
                 (str/join separator)))
 
+         vis-path
+         (fn [argument]
+           (if-let [[_ property path] (re-matches #"(-Dvis(?:\.[^=]+)?\.(?:dir|path|home)=)(.+)"
+                                                  argument)]
+             (str property (absolute path))
+             argument))
+
          argv
-         (into [] (remove #(str/starts-with? % "-Duser.dir=")) argv)
+         (into [] (comp (remove #(str/starts-with? % "-Duser.dir=")) (map vis-path)) argv)
 
          at
          (.indexOf ^java.util.List argv "-cp")]
 
-     (if (neg? at) argv (update argv (inc at) absolute)))))
+     (cond (some-> wrapper
+                   io/file
+                   .canExecute)
+           [wrapper]
+           (neg? at) argv
+           :else (update argv (inc at) classpath)))))
 
 (defn spawn-argv
   "Full argv to launch a fresh gateway daemon for `db` on `port`. Serve flags

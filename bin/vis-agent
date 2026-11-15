@@ -2510,5 +2510,7 @@ ensure_source_prepared "$source_root" || exit 1
 # cached classpath is read back (`-Spath` costs no JVM once the cache is fresh),
 # every relative entry is anchored to the source root, and `-Scp` hands the
 # absolute one over; the alias' :jvm-opts/:main-opts still come from the cache.
+# `vis.agent.launcher` names this file to the engine. An extension starts Vis again
+# through it, for example for `vis-agent python`, and so gets the same choices.
 vis_classpath="$(absolute_project_classpath "$source_root" -Spath -M:vis)" || exit 1
-run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} -Scp "$vis_classpath" -M:vis "$@"
+run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "-J-Dvis.agent.launcher=$bin_dir/${launcher_path##*/}" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} -Scp "$vis_classpath" -M:vis "$@"
