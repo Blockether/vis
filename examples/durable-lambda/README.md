@@ -115,6 +115,7 @@ def song_factory(ctx, prompt: str = "A slow song about a night train"):
 | Call | Result |
 | --- | --- |
 | `@workflow(title=, description=, model=)` | The entry of the file. Its parameters are the inputs of a run |
+| `@workflow(activities=[...], requests=[...])` | The middleware of the run: functions around each activity and around each request |
 | `@activity(title=, retries=0)` | A step of a run. With `retries`, a failed step runs again in a fork of the session |
 | `ctx.ask(request, Model)` | A validated Pydantic object from the session |
 | `ctx.ask(request)` | The answer as text |
@@ -147,6 +148,50 @@ The session starts the subagents in one turn, with a Python block that `ctx.dele
 gives. The answers come from the tool output of that turn, not from the text of the
 session. Thus the transcript has the delegation: a new process of the run and a fork
 start no second subagent. A subagent that does not complete fails the activity.
+
+### Middleware
+
+A workflow can have middleware, as a Ring handler has. A middleware is a function
+around a call: it gets the context, the call as a value and the next function. An
+activity still returns its typed result, and the workflow function stays plain Python.
+
+```python
+from collections.abc import Callable
+from dataclasses import replace
+from typing import TypeVar
+
+from durable.workflows import Context, Reply, Request, Send, Step, activity, workflow
+
+T = TypeVar("T")
+
+
+def audited(ctx: Context, step: Step, call: Callable[[], T]) -> T:
+    result = call()
+    ctx.note(f"{step.title} gave a {type(result).__name__}")
+    return result
+
+
+def cheap(ctx: Context, request: Request, send: Send) -> Reply:
+    if ctx.step and ctx.step.name == "specify":
+        return send(replace(request, llm="qwen3.8-max"))
+    return send(request)
+
+
+@workflow(title="Song factory", activities=[audited], requests=[cheap])
+def song_factory(ctx, prompt: str = "A slow song about a night train"):
+    ...
+```
+
+| Middleware | Gets | The next function |
+| --- | --- | --- |
+| `activities=[...]` | Each activity as a `Step`: `seq`, `name`, `title`, `arguments` and `named` | `call()` runs the activity and returns its result |
+| `requests=[...]` | Each request of an activity as a `Request`: `text`, `llm`, `provider` and `timeout` | `send(request)` returns a `Reply`: the `text` of the answer and the `turn_id` |
+
+- The first middleware of a list is the outer one.
+- `ctx.step` is the activity that runs.
+- A middleware of `activities` can return another result, or a result for an activity that failed. With `retries`, each attempt goes through the middleware.
+- A middleware of `requests` can change the request with `dataclasses.replace`, and it can send more than one request. The decision of a gate does not go through it.
+- A middleware runs again in each new process of the run, as the code of an activity does. The transcript knows a request by the text that the last middleware sends. Thus a middleware that changes the text must give the same text each time.
 
 ### A gate
 

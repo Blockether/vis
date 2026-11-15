@@ -27,6 +27,11 @@ their answers.
 A gate stops a run until a person decides: `ctx.gate` returns the decision, approve or
 reject, with the comment of the person. A waiting run has no process.
 
+A workflow can have middleware, as a Ring handler has: `@workflow(activities=[...],
+requests=[...])`. A middleware of `activities` is `(ctx, step, call)` around each
+activity, and a middleware of `requests` is `(ctx, request, send)` around each request
+of an activity. An activity still returns its typed result.
+
     class Work(BaseModel):
         song: str
         tests_passed: bool
@@ -56,8 +61,8 @@ import functools
 import json
 import time
 import typing
-from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field
 from typing import Any, TypeVar
 
 from blockether.vis.engine import Attachment, GatewayError, Session, Turn, final_answer
@@ -76,7 +81,7 @@ DELEGATED = "DELEGATED "
 # The start of the request that puts the decision of a person in the transcript. A JSON object follows on the same line.
 GATE = "The decision of a person at a gate of this workflow run: "
 
-__all__ = ["ActivityError", "Context", "Decision", "Document", "Waiting", "activity", "workflow"]
+__all__ = ["ActivityError", "Around", "Context", "Decision", "Document", "Reply", "Request", "Send", "Step", "Through", "Waiting", "activity", "workflow"]
 
 
 class ActivityError(RuntimeError):
@@ -106,6 +111,48 @@ class Decision:
     comment: str = ""
 
 
+@dataclass(frozen=True)
+class Step:
+    """One activity of a run, as its middleware gets it: its number in the run, its function name, its title and its arguments."""
+
+    seq: int
+    name: str
+    title: str
+    arguments: tuple[Any, ...] = ()
+    named: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Request:
+    """One request to the session of a run, as its middleware gets it. Without `llm`, the turn uses the model of the session."""
+
+    text: str
+    llm: str | None = None
+    provider: str | None = None
+    timeout: float = TURN_S
+
+
+@dataclass(frozen=True)
+class Reply:
+    """The answer text of a completed turn, and the id of that turn."""
+
+    text: str
+    turn_id: str
+
+
+# The next function of a request middleware: it sends the request and returns the answer of its turn.
+Send = Callable[[Request], Reply]
+# A middleware around each activity: `(ctx, step, call)`. `call()` runs the activity and returns its result.
+Around = Callable[["Context", Step, Callable[[], Any]], Any]
+# A middleware around each request: `(ctx, request, send)`.
+Through = Callable[["Context", Request, Send], Reply]
+
+
+def within(ctx: Context, through: Through, send: Send) -> Send:
+    """Return `send` in the request middleware `through`."""
+    return lambda request: through(ctx, request, send)
+
+
 def route(llm: str | None, provider: str | None) -> dict[str, str]:
     """Return the turn fields that select the model `llm` for one request. Without a provider, it is the provider of the stack."""
     if llm is None:
@@ -115,12 +162,27 @@ def route(llm: str | None, provider: str | None) -> dict[str, str]:
     return {"provider": provider or PROVIDER, "model": llm}
 
 
-def workflow(title: str = "", description: str = "", model: str | None = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Mark the function that a run calls. `model` selects the model of the session."""
+def workflow(
+    title: str = "", description: str = "", model: str | None = None, *, activities: Sequence[Around] = (), requests: Sequence[Through] = ()
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Mark the function that a run calls. `model` selects the model of the session.
+
+    `activities` and `requests` are the middleware of the run. A middleware of
+    `activities` is `(ctx, step, call)`: it gets each activity as a `Step`, and `call()`
+    runs the activity and returns its result. A middleware of `requests` is
+    `(ctx, request, send)`: it gets each request of an activity as a `Request`, and
+    `send(request)` returns the `Reply` of its turn. The first middleware of a list is
+    the outer one.
+
+    A middleware runs again in each new process of the run, as the code of an activity
+    does. The transcript knows a request by the text that the last middleware sends.
+    Thus a middleware that changes the text must give the same text each time.
+    """
 
     def mark(function: Callable[..., Any]) -> Callable[..., Any]:
-        """Record the title, the description and the model on the function."""
-        function.__workflow__ = {"title": title or function.__name__, "description": description, "model": model}  # type: ignore[attr-defined]
+        """Record the title, the description, the model and the middleware on the function."""
+        about = {"title": title or function.__name__, "description": description, "model": model, "activities": tuple(activities), "requests": tuple(requests)}
+        function.__workflow__ = about  # type: ignore[attr-defined]
         return function
 
     return mark
@@ -188,9 +250,15 @@ def decided(request: str, key: str) -> dict[str, Any] | None:
 class Context:
     """The run that a workflow function works in."""
 
-    def __init__(self, run: dict[str, Any], session: Session, api: Durable, fresh: Callable[[], Session] | None = None) -> None:
-        """Keep the run, its Vis session and the client of the Durable Lambda API. `fresh` makes a new session for the run."""
+    def __init__(self, run: dict[str, Any], session: Session, api: Durable, fresh: Callable[[], Session] | None = None, activities: Sequence[Around] = (), requests: Sequence[Through] = ()) -> None:
+        """Keep the run, its Vis session and the client of the Durable Lambda API.
+
+        `fresh` makes a new session for the run. `activities` and `requests` are the middleware of the workflow.
+        """
         self.run_id, self.input, self.session = run["id"], run["input"], session
+        # The activity that runs, for a middleware. Between two activities, it is None.
+        self.step: Step | None = None
+        self._around, self._through = tuple(activities), tuple(requests)
         # The number of the next activity, the activity that runs, and its start that the API does not have yet.
         self._api, self._fresh, self._next, self._current, self._start = api, fresh, 0, None, None
         # The transcript of the run: the turns of its session after the turns of a person, and the place of the next request.
@@ -243,6 +311,11 @@ class Context:
             return function(self, *arguments, **named)
         seq, self._next = self._next, self._next + 1
         self._current, self._start = seq, {"seq": seq, "name": function.__name__, "title": title}
+        self.step = Step(seq, function.__name__, title, arguments, named)
+        # The activity in the middleware of the workflow. The first middleware is the outer one.
+        call: Callable[[], Any] = functools.partial(function, self, *arguments, **named)
+        for around in reversed(self._around):
+            call = functools.partial(around, self, self.step, call)
         if self._retry and seq == self._failed:
             self._leave()
         try:
@@ -250,7 +323,7 @@ class Context:
                 # The place in the transcript where the activity starts. A retry forks the session there.
                 at, kept = self._at, self._kept
                 try:
-                    result = function(self, *arguments, **named)
+                    result = call()
                     break
                 except Exception as failure:
                     error = f"{type(failure).__name__}: {failure}"
@@ -262,7 +335,7 @@ class Context:
                     self._at, self._kept = at, kept
                     self._fork()
         finally:
-            self._current = None
+            self._current = self.step = None
         if self._start and self._done.get(seq) == function.__name__:
             self._start = None  # the transcript had each request, and the run shows the result
             return result
@@ -299,20 +372,25 @@ class Context:
                     raise
             time.sleep(2)
 
-    def _request(self, request: str, timeout: float, model: dict[str, str] | None = None) -> dict[str, Any]:
-        """Return the completed turn of a request: the turn of the transcript, or a new turn of the session.
-
-        `model` has the provider and the model of a new turn. Without it, the turn uses the model of the session.
-        """
-        turn = self._recorded(lambda text: text == request, timeout)
+    def _send(self, request: Request) -> Reply:
+        """Return the answer of a request: of its turn in the transcript, or of a new turn of the session."""
+        using = route(request.llm, request.provider)
+        turn = self._recorded(lambda text: text == request.text, request.timeout)
         if turn is None:
             self._leave()
             self._report()
-            turn = self.session.send(request, **(model or {})).wait(timeout=timeout)
+            turn = self.session.send(request.text, **using).wait(timeout=request.timeout)
             if turn.get("status") != "completed":
                 raise ActivityError(f"the turn ended with the status {turn.get('status')!r}")
             self._kept = turn["turn_id"]
-        return turn
+        return Reply(final_answer(turn) or "", turn["turn_id"])
+
+    def _request(self, text: str, timeout: float, llm: str | None = None, provider: str | None = None) -> Reply:
+        """Send a request of an activity through the middleware of the workflow. The first middleware is the outer one."""
+        send: Send = self._send
+        for through in reversed(self._through):
+            send = within(self, through, send)
+        return send(Request(text, llm, provider, timeout))
 
     def ask(self, request: str, model: type[Model] | None = None, *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> Any:
         """Send a request to the session of the run.
@@ -325,14 +403,13 @@ class Context:
         when it is not the provider of the stack. The next request uses the model of
         the session again. A request on another model does not use the prompt cache.
         """
-        using = route(llm, provider)
         if model is None:
-            return final_answer(self._request(request, timeout, using)) or ""
+            return self._request(request, timeout, llm, provider).text
         form = f"Answer with exactly one JSON value and no other text, without a Markdown fence. The value must match this JSON Schema:\n{json.dumps(model.model_json_schema())}"
         request = f"{request}\n\n{form}"
         for _ in range(CORRECTIONS + 1):
             try:
-                return model.model_validate_json(final_answer(self._request(request, timeout, using)) or "")
+                return model.model_validate_json(self._request(request, timeout, llm, provider).text)
             except ValidationError as invalid:
                 problems = "\n".join(f"- {'.'.join(map(str, problem['loc'])) or '$'}: {problem['msg']}" for problem in invalid.errors(include_url=False, include_input=False))
                 request = f"Your answer is not valid:\n{problems}\n\nKeep the completed work. {form}"
@@ -360,7 +437,6 @@ class Context:
                 task["provider"] = PROVIDER
         if not given:
             return []
-        using = route(llm, provider)
         block = (
             "import json\n"
             f"records = await council.run(json.loads({json.dumps(given)!r}))\n"
@@ -376,7 +452,7 @@ class Context:
         )
         request = f"Give each task of this Python block to its own subagent. {how}"
         for _ in range(CORRECTIONS + 1):
-            records = self._delegated(self._request(request, timeout, using)["turn_id"])
+            records = self._delegated(self._request(request, timeout, llm, provider).turn_id)
             if records is not None:
                 break
             request = f"That turn started no subagent: its tool output has no line that starts with {DELEGATED!r}. {how}"
@@ -410,19 +486,18 @@ class Context:
         with a name that the session used before becomes the next version of that file.
         `llm` and `provider` select the model of the request, as in `ask`.
         """
-        using = route(llm, provider)
         how = f"Write the complete document as Markdown. Attach it with one Python block that calls `attach(content.encode(), {name!r})`. Then answer with a summary of at most three sentences."
-        found = self._attached(name, f"{request}\n\n{how}", timeout, using) or self._attached(name, f"That turn attached no file {name!r}. {how}", timeout, using)
+        found = self._attached(name, Request(f"{request}\n\n{how}", llm, provider, timeout)) or self._attached(name, Request(f"That turn attached no file {name!r}. {how}", llm, provider, timeout))
         if found is None:
             raise ActivityError(f"the session attached no file {name!r}")
         # This read makes the API copy the file to S3 and show it in the activity.
         self._api.call("GET", f"attached?session={self.session.id}")
         return Document(name, self.session.id, found.size, found.version)
 
-    def _attached(self, name: str, request: str, timeout: float, model: dict[str, str]) -> Attachment | None:
+    def _attached(self, name: str, request: Request) -> Attachment | None:
         """Make a request and return the newest file with a name that its turn attached."""
-        turn = self._request(request, timeout, model)
-        files = [file for file in self.session.attachments(turn["turn_id"]) if file.filename == name]
+        reply = self._request(request.text, request.timeout, request.llm, request.provider)
+        files = [file for file in self.session.attachments(reply.turn_id) if file.filename == name]
         return max(files, key=lambda file: file.version, default=None)
 
     def gate(self, key: str, title: str, *, about: str = "", document: Document | None = None) -> Decision:
@@ -444,10 +519,13 @@ class Context:
             raise Waiting(key)
         if turn is None:
             line = json.dumps({"key": key, "title": title, "approved": made["approved"], "comment": made["comment"]})
-            self._request(f"{GATE}{line}\n\nAnswer with one short line. Do no other work.", TURN_S)
+            # The decision is not a request of an activity: it does not go through the middleware.
+            self._send(Request(f"{GATE}{line}\n\nAnswer with one short line. Do no other work."))
         return Decision(key, bool(made["approved"]), str(made["comment"]))
 
     def note(self, text: str) -> None:
         """Add a line to the log of the run."""
-        self._report()
+        # The run has the activity that it shows as completed: a new process reports it again only for new work.
+        if not (self._start and self._done.get(self._current) == self._start["name"]):
+            self._report()
         self._event("note", text=str(text)[:2000], seq=self._current)

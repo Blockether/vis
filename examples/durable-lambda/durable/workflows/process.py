@@ -60,7 +60,8 @@ def main(run_id: str) -> int:
         if run.get("base") is None:  # the turns that the session had before the run are not the transcript of the run
             run["base"] = len(session.turns())
         api.event(run_id, "started", session_id=session.id, base=run["base"])
-        result = function(Context(run, session, api, fresh), **run["input"])
+        about = function.__workflow__
+        result = function(Context(run, session, api, fresh, about["activities"], about["requests"]), **run["input"])
         api.event(run_id, "completed", result=encode(result))
         return 0
     except Waiting:  # the API has the event: this process ends and a new one continues the run
