@@ -30,6 +30,26 @@
       } catch (e) {
         /* Private mode / storage disabled: the default palette is the answer. */
       }
+      // The theme of a white label is the only palette. The gateway brand (the
+      // saved copy, `brand.ts`) comes before the build brand (`window.__VIS_BRAND__`).
+      try {
+        var saved = null;
+        try {
+          saved = JSON.parse(localStorage.getItem('vis.webBrand') || 'null');
+        } catch (e) {
+          /* No saved brand. */
+        }
+        var theme = (saved && saved.theme) || (window.__VIS_BRAND__ || {}).theme;
+        if (theme && typeof theme.base === 'string') {
+          var root = document.documentElement;
+          root.dataset.theme = theme.base;
+          for (var name in theme.colors || {}) {
+            if (name.indexOf('--') === 0) root.style.setProperty(name, String(theme.colors[name]));
+          }
+        }
+      } catch (e) {
+        /* A damaged brand: `paintStoredTheme()` decides. */
+      }
     </script>
   </head>
   <body>

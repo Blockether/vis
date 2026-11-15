@@ -1407,6 +1407,37 @@ def test_global_apps_read_and_act_on_the_global_routes():
     ]
 
 
+def test_a_web_brand_is_checked_before_it_is_sent():
+    def respond(method, path, body):
+        if path.startswith(("/v1/capabilities", "/v1/clients")):
+            return compatible(method, path, body)
+        if method == "DELETE":
+            return 204, b""
+        return 200, json.loads(body) if body else {}
+
+    link = {"icon": "git", "label": "Source", "href": "https://example.test/code"}
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        saved = client.set_web_brand(name="Acme", links=[link], theme={"base": "paper"})
+        with pytest.raises(ValueError, match="href"):
+            client.set_web_brand(href="javascript:alert(1)")
+        with pytest.raises(ValueError, match="icon"):
+            client.set_web_brand(links=[{**link, "icon": "no-such-icon"}])
+        client.clear_web_brand()
+        assert client.web_brand() == {}
+    assert saved == {"name": "Acme", "links": [link], "theme": {"base": "paper"}}
+    sent = [
+        (method, path, body)
+        for method, path, _, body in calls
+        if not path.startswith(("/v1/capabilities", "/v1/clients"))
+    ]
+    assert [(method, path) for method, path, _ in sent] == [
+        ("PUT", "/v1/web/brand"),
+        ("DELETE", "/v1/web/brand"),
+        ("GET", "/v1/web/brand"),
+    ]
+    assert json.loads(sent[0][2]) == saved
+
+
 def test_group_is_get_or_create_and_sessions_join_it():
     held = []
     lost_race = {"left": 1}

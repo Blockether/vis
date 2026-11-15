@@ -1805,6 +1805,27 @@
     },
     {
       "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "web_brand"
+        },
+        "put": {
+          "request": "json",
+          "response": "json",
+          "request_schema": "web_brand",
+          "response_schema": "web_brand"
+        },
+        "delete": {
+          "request": "none",
+          "response": "empty"
+        }
+      },
+      "path": "/v1/web/brand"
+    },
+    {
+      "audience": "sdk",
       "path": "/v1/automations",
       "operations": {
         "get": {
@@ -2065,6 +2086,100 @@
         },
         "secret_match": {
           "type": "boolean"
+        }
+      }
+    },
+    "web_brand": {
+      "description": "The white label of the web app that this gateway serves. An absent key keeps the Vis default. A GET needs no token, because the app shows the brand before it connects.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The name beside the logo and in the page title.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "logo": {
+          "description": "The picture of the brand: an `https://` address, a path of the web app, or a base64 `data:image/` URL of a PNG, JPEG, WebP or SVG picture.",
+          "type": "string",
+          "maxLength": 262144,
+          "pattern": "^(https://|/[^/]|data:image/(png|jpeg|webp|svg\\+xml);base64,)"
+        },
+        "href": {
+          "description": "The address that the logo opens.",
+          "$ref": "#/$defs/web_brand_href"
+        },
+        "links": {
+          "description": "The icon links of the header, in order.",
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/web_brand_link"
+          }
+        },
+        "theme": {
+          "$ref": "#/$defs/web_brand_theme"
+        }
+      }
+    },
+    "web_brand_href": {
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https?://"
+    },
+    "web_brand_link": {
+      "description": "One icon link of the header. It opens in a new tab.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "icon",
+        "label",
+        "href"
+      ],
+      "properties": {
+        "icon": {
+          "$ref": "view.json#/$defs/app_icon"
+        },
+        "label": {
+          "description": "The accessible name and the tooltip of the link.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "href": {
+          "$ref": "#/$defs/web_brand_href"
+        }
+      }
+    },
+    "web_brand_theme": {
+      "description": "The only theme of the web app. While a brand has one, the app shows no theme choice. `base` names a theme that the app ships. `colors` replaces CSS variables of that theme.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "base": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
+        "colors": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "pattern": "^--[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          }
         }
       }
     },

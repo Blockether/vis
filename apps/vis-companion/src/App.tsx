@@ -77,10 +77,13 @@ import { discardSharedFiles } from './lib/share-files';
 import { connectWebLaunch, type WebLaunch } from './lib/web-launch';
 import { applyTheme, resolveTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
-import { IconButton } from './components/ui';
+import { IconButton, IconLink } from './components/ui';
+import { BrandLogo } from './components/BrandLogo';
+import { useBrand, VIS_NAME } from './lib/brand';
+import { appIconName } from './lib/view';
 import { CommandSurface } from './components/CommandSurface';
 import { CommandProvider, CommandRegistry, useCommands, type CommandHandlers } from './lib/commands';
-import { AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
+import { AppIcon, AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
 import { GlobalApps, useGlobalApps } from './components/GlobalApps';
 import { listedGlobalApps } from './lib/global-apps';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -1644,6 +1647,25 @@ export function Header({
   // Reserve the iPhone island inside the header background so every action sits
   // below it. iPad has no island; browsers keep their visible status-bar inset.
   const nativeIos = isIosNativeApp();
+  // A white label replaces the mark, the name and the address behind them. A brand
+  // logo without a name stands alone: such a logo often holds the name already.
+  const brand = useBrand();
+  const name = brand.name ?? VIS_NAME;
+  const word = brand.name ?? (brand.logo ? null : 'VIS');
+  const mark = (
+    <>
+      <BrandLogo
+        className={brand.logo ? 'h-8 w-auto max-w-32 object-contain' : 'h-8 w-9 -translate-y-px object-contain'}
+      />
+      {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
+          hard offset rather than the dialog's black shadow. */}
+      {word && (
+        <span className="truncate font-mono text-head font-extrabold tracking-[0.14em] text-white [text-shadow:2px_2px_0_var(--dialog-shadow)] blockether-dark:[text-shadow:2px_2px_0_var(--primary)]">
+          {word}
+        </span>
+      )}
+    </>
+  );
   return (
     <header
       className={`relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : ''}`}
@@ -1669,18 +1691,36 @@ export function Header({
             uneven space above and below it. The nudge moves the ink only: the box
             stays where the row put it. */}
         {/* `data-wordmark` places the memory overlay's dot just after the wordmark. */}
-        <div className="flex h-12 items-center gap-2.5" aria-label="Vis" data-wordmark>
-          <img src="/vis-logo.png" alt="" className="h-8 w-9 -translate-y-px object-contain" />
-          {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
-              hard offset rather than the dialog's black shadow. */}
-          <span className="font-mono text-head font-extrabold tracking-[0.14em] text-white [text-shadow:2px_2px_0_var(--dialog-shadow)] blockether-dark:[text-shadow:2px_2px_0_var(--primary)]">
-            VIS
-          </span>
-        </div>
+        {brand.href ? (
+          <a
+            href={brand.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex h-12 min-w-0 items-center gap-2.5"
+            aria-label={name}
+            data-wordmark
+          >
+            {mark}
+          </a>
+        ) : (
+          <div className="flex h-12 min-w-0 items-center gap-2.5" aria-label={name} data-wordmark>
+            {mark}
+          </div>
+        )}
         {/* Global destinations share the same labelled icon controls. The negative margin
             takes back the empty face beside the last 16px glyph, so it ends on the bar's
             inset exactly as the mark starts on it. */}
         <div className="-mr-2 ml-auto flex h-12 items-center gap-2 mouse:-mr-1.5">
+          {/* The icon links of a white label. A phone has no room for them beside the mark. */}
+          {brand.links && brand.links.length > 0 && (
+            <div className="hidden items-center gap-2 sm:flex">
+              {brand.links.map((link) => (
+                <IconLink key={`${link.label} ${link.href}`} label={link.label} href={link.href}>
+                  <AppIcon name={appIconName(link.icon)} className="size-4" />
+                </IconLink>
+              ))}
+            </div>
+          )}
           {onSearch && (
             <IconButton
               type="button"
@@ -1720,9 +1760,10 @@ export function Header({
 }
 
 function Splash() {
+  const name = useBrand().name ?? VIS_NAME;
   return (
-    <div className="flex h-full items-center justify-center bg-ink" aria-label="Loading Vis">
-      <img src="/vis-logo.png" alt="Vis" className="h-16 w-auto animate-pulse object-contain" />
+    <div className="flex h-full items-center justify-center bg-ink" aria-label={`Loading ${name}`}>
+      <BrandLogo alt={name} className="h-16 w-auto animate-pulse object-contain" />
     </div>
   );
 }

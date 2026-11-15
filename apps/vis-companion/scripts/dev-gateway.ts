@@ -104,7 +104,7 @@ export async function discoverDevGatewayConnections(
   return [...unique.values()];
 }
 
-function scriptLiteral(value: unknown): string {
+export function scriptLiteral(value: unknown): string {
   return JSON.stringify(value)
     .replaceAll('<', '\\u003c')
     .replaceAll('\u2028', '\\u2028')

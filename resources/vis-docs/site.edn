@@ -67,6 +67,10 @@
       "Hear a sound when a turn finishes, when Vis waits for your answer and when a turn fails."
       :page "sounds"
       :title "Sounds"}
+     {:blurb
+      "Give the web app your own name, logo, header links and theme, on a gateway or in your own build."
+      :page "white-label"
+      :title "White label"}
     {:blurb
      "Understand where the agent runs Python, which packages it uses and what it can access."
      :page "python-sandbox"
@@ -139,6 +143,11 @@
         :label "Sounds"
         :page "sounds-api"
         :title "Sounds API"}
+       {:blurb
+        "Read, set and remove the brand of the web app that a gateway serves from Python or with HTTP requests."
+        :label "White label"
+        :page "white-label-api"
+        :title "White label API"}
       {:blurb
        "Read and change settings for the gateway, a project, a group or a session from Python or with HTTP requests."
        :label "Configuration"

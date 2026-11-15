@@ -534,6 +534,61 @@ class ExecutionLayer(ABC):
         validate("view", "operator_action", body)
         return self.post_app_actions(view_id, body=body)
 
+    def web_brand(self) -> dict[str, JSONValue]:
+        """Read the white label of the web app that this gateway serves.
+
+        The answer has only the keys that are set: `name`, `logo`, `href`,
+        `links` and `theme`. An empty answer means the Vis default.
+        """
+        brand = self.get_web_brand()
+        if not isinstance(brand, dict):
+            raise ProtocolError("invalid web brand response")
+        return brand
+
+    def set_web_brand(
+        self,
+        *,
+        name: str | None = None,
+        logo: str | None = None,
+        href: str | None = None,
+        links: Iterable[Mapping[str, str]] | None = None,
+        theme: Mapping[str, JSONValue] | None = None,
+    ) -> dict[str, JSONValue]:
+        """Replace the white label of the web app that this gateway serves.
+
+        `name` shows beside the logo and in the page title. `logo` is an
+        `https://` address, a path of the web app or a base64 `data:image/`
+        URL. `href` is the address that the logo opens. `links` are the icon
+        links of the header: each has `icon` (an app icon name), `label` and
+        `href`. `theme` makes one theme the only theme, and the app then shows
+        no theme choice: `base` names a shipped theme, `colors` replaces its
+        CSS variables and `label` names it.
+
+        The call replaces the whole brand: an argument that is None goes back
+        to the Vis default. An open page shows the new brand after a reload.
+        Answers the saved brand.
+        """
+        body: dict[str, JSONValue] = {}
+        if name is not None:
+            body["name"] = name
+        if logo is not None:
+            body["logo"] = logo
+        if href is not None:
+            body["href"] = href
+        if links is not None:
+            body["links"] = [{**link} for link in links]
+        if theme is not None:
+            body["theme"] = {**theme}
+        validate("gateway", "web_brand", body)
+        brand = self.put_web_brand(body=body)
+        if not isinstance(brand, dict):
+            raise ProtocolError("invalid web brand response")
+        return brand
+
+    def clear_web_brand(self) -> None:
+        """Remove the white label: the web app shows the Vis default again."""
+        self.delete_web_brand()
+
     def create_session(
         self,
         *,
@@ -2566,6 +2621,35 @@ class ExecutionLayer(ABC):
             body=body,
         )
         return response.json()
+
+    def get_web_brand(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/web/brand — json response."""
+        response = self._request(
+            "GET", "/v1/web/brand", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def put_web_brand(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PUT /v1/web/brand — json response."""
+        response = self._request(
+            "PUT", "/v1/web/brand", path={}, query=query, timeout=timeout, body=body
+        )
+        return response.json()
+
+    def delete_web_brand(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> None:
+        """DELETE /v1/web/brand — empty response."""
+        self._request("DELETE", "/v1/web/brand", path={}, query=query, timeout=timeout)
+        return None
 
     def post_session_voice(
         self,

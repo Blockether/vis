@@ -17,13 +17,22 @@
    A web launch connects a fresh browser without a pasted token. `vis-agent web`
    asks its gateway for a one-time launch code that expires in [[LAUNCH_TTL_MS]].
    The code goes into the URL fragment, and the app exchanges it once for the
-   gateway id and token. The long-lived token never enters a URL."
+   gateway id and token. The long-lived token never enters a URL.
+
+   A brand is the white label of the web app: its name, logo and link, the icon
+   links of its header and its one theme. An SDK program saves it here, and the
+   app reads it without a token, because it shows the brand before it connects."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.channel.theme :as theme]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.server.instance :as instance]
-            [com.blockether.vis.internal.util :as util])
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util]
+            [taoensso.telemere :as tel])
   (:import [java.io File]))
 
 (def ^:private content-types
@@ -241,5 +250,63 @@
         :launch-not-found
         "This launch link was already used or has expired. Run `vis-agent web` again."))))
 
+(defn brand-file
+  "The file that holds the brand of the web app, below the Vis state directory."
+  ^File []
+  (io/file (paths/vis-home) "gateway" "web-brand.json"))
+
+(defn brand-fault
+  "Why wire value `brand` is not a brand that the web app can show, or nil. The
+   schema checks the shape; the shipped themes check `theme`."
+  [brand]
+  (or (document/explain-text (document/explain-json "gateway" "web_brand" brand) brand)
+      (when-let [{:strs [base colors]} (get brand "theme")]
+        (if-let [shipped (get theme/built-in-themes base)]
+          (when-let [unknown (seq (remove (set (keys (theme/theme->web-css-vars shipped)))
+                                          (keys colors)))]
+            (str "theme.colors - the theme " base " has no variable " (str/join ", " (sort unknown))))
+          (str "theme.base - the web app ships no theme "
+               base
+               "; it ships "
+               (str/join ", " (sort (keys theme/built-in-themes))))))))
+
+(defn brand
+  "The saved brand of the web app as wire data, or `{}` when none is saved. A file
+   that holds no valid brand counts as none, so a damaged file shows plain Vis."
+  []
+  (let [file (brand-file)]
+    (if-not (.isFile file)
+      {}
+      (let [saved (wire/parse-json (slurp file))
+            fault (brand-fault saved)]
+
+        (if fault
+          (do (tel/log! :warn ["gateway: ignored the saved web brand" (str file) fault]) {})
+          saved)))))
+
+(defn- brand-handler
+  "GET /v1/web/brand; the saved brand, or `{}`."
+  [_request]
+  (assoc-in (http/canonical-json-response (brand)) [:headers "Cache-Control"] "no-cache"))
+
+(defn- set-brand-handler
+  "PUT /v1/web/brand; replace the whole brand, or write nothing."
+  [request]
+  (let [given (http/body-json request)]
+    (if-let [fault (brand-fault given)]
+      (http/error-response 400 :invalid-brand fault)
+      (do (paths/spit-private! (brand-file) (wire/canonical-json-str given))
+          (http/canonical-json-response given)))))
+
+(defn- clear-brand-handler
+  "DELETE /v1/web/brand; forget the brand, so the web app shows plain Vis again."
+  [_request]
+  (io/delete-file (brand-file) true)
+  {:status 204 :headers {} :body nil})
+
 (def handlers
-  {[:post "/v1/web/launches"] launch-handler [:post "/v1/web/launches/redeem"] redeem-handler})
+  {[:post "/v1/web/launches"] launch-handler
+   [:post "/v1/web/launches/redeem"] redeem-handler
+   [:get "/v1/web/brand"] brand-handler
+   [:put "/v1/web/brand"] set-brand-handler
+   [:delete "/v1/web/brand"] clear-brand-handler})

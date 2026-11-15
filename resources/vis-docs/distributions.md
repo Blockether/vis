@@ -377,6 +377,8 @@ and npm. Later runs rebuild it only after the Companion sources change. A gatewa
 running serves the new build without a restart. To serve a different build, set `VIS_WEB_DIR` before
 the gateway starts. Point it to a directory that contains the build's `index.html`.
 
+To give the web app your own name, logo and theme, read [White label](white-label.md).
+
 <a id="windows-app"></a>
 
 ## Open the desktop app

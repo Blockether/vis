@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GatewayConn, SpeechPrefs, ThemePref, Toggle } from '../lib/types';
 import { GatewayClient } from '../lib/gateway';
+import { useBrand } from '../lib/brand';
 import { applyTheme } from '../lib/theme';
 import {
   setPythonCodeShown,
@@ -92,6 +93,8 @@ export function SettingsDialog({
   const summarizeSteps = useStepsSummarized();
   const zen = useZenMode();
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
+  // A white label with a theme has one palette, so there is nothing to choose.
+  const hasBrandTheme = useBrand().theme !== undefined;
   const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -405,24 +408,26 @@ export function SettingsDialog({
                 </div>
               )}
             </div>
-            <SettingsPanel title="Theme">
-              <div className="grid grid-cols-1 gap-px bg-dialog-edge">
-                {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized
-                    Dark`, `Vis Light`, so a trailing `light`/`dark` restated the last word
-                    of its own row six times down the list. The name is the whole answer. */}
-                {THEMES.map((choice) => (
-                  <ChoiceCell
-                    key={choice.id}
-                    title={choice.label}
-                    variant="list"
-                    isSelected={pref === choice.id}
-                    isLeaf
-                    disabled={pending?.startsWith('theme:') ?? false}
-                    onClick={() => void chooseTheme(choice)}
-                  />
-                ))}
-              </div>
-            </SettingsPanel>
+            {!hasBrandTheme && (
+              <SettingsPanel title="Theme">
+                <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+                  {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized
+                      Dark`, `Vis Light`, so a trailing `light`/`dark` restated the last word
+                      of its own row six times down the list. The name is the whole answer. */}
+                  {THEMES.map((choice) => (
+                    <ChoiceCell
+                      key={choice.id}
+                      title={choice.label}
+                      variant="list"
+                      isSelected={pref === choice.id}
+                      isLeaf
+                      disabled={pending?.startsWith('theme:') ?? false}
+                      onClick={() => void chooseTheme(choice)}
+                    />
+                  ))}
+                </div>
+              </SettingsPanel>
+            )}
             <DiagnosticsPanel isOpen={diagOpen} onToggle={() => setDiagOpen((open) => !open)} />
           </SettingsColumn>
         </div>

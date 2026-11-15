@@ -1,3 +1,4 @@
+import { BrandLogo } from '../components/BrandLogo';
 import { SidebarToggle } from '../components/ui';
 
 /**
@@ -23,12 +24,7 @@ export function EmptyPane({ sidebar }: { sidebar?: { isShown: boolean; onToggle:
         </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
-        <img
-          src="/vis-logo.png"
-          alt=""
-          className="w-16 max-w-full object-contain"
-          aria-hidden="true"
-        />
+        <BrandLogo className="w-16 max-w-full object-contain" />
         <div className="mt-4 max-w-md">
           <h2 className="text-head font-semibold text-dialog-foreground">Pick a session</h2>
           <p className="mt-1 text-body text-dialog-hint">

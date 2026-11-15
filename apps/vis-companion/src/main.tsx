@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { loadBrand } from './lib/brand';
 import { captureContextMenu, captureLinkClicks } from './lib/desktop';
 import { installDiagnostics } from './lib/diagnostics';
 import { loadHost, stampShellHost } from './lib/host';
@@ -28,6 +29,11 @@ stampShellHost();
 // backgrounded webview. `index.html` already stamped the raw stored id during
 // parse; this settles it against the shipped catalog.
 paintStoredTheme();
+// The gateway that serves this page can carry a white label. Its saved copy painted
+// the frame above; a changed answer paints the brand theme again.
+void loadBrand().then((isChanged) => {
+  if (isChanged) paintStoredTheme();
+});
 // One native question, asked before any field can be focused: is this iOS build
 // a Mac window? The keyboard driver reads the answer synchronously (`pointer.ts`).
 void loadHost();

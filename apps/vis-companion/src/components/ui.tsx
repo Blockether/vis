@@ -362,6 +362,22 @@ export const IconButton = forwardRef<
   );
 });
 
+/** An icon that opens an address in a new tab. It has the box and the ink of an `IconButton`. */
+export function IconLink({ label, href, children }: { label: string; href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={label}
+      title={label}
+      className={`${iconControlClass} grid size-8 shrink-0 place-items-center self-center bg-transparent text-white transition-colors duration-150 after:absolute after:-inset-1.5 after:content-[""] hover:bg-white/5 mouse:size-7 mouse:after:content-none motion-reduce:transition-none`}
+    >
+      {children}
+    </a>
+  );
+}
+
 /**
  * A CHIP: one small word that is ON or OFF, and there is only one of it.
  *

@@ -62,6 +62,7 @@ import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
+import { BrandLogo } from '../components/BrandLogo';
 import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
@@ -5977,12 +5978,7 @@ export function SessionScreen({
                 not a small dialog inside it. */}
                   {!turns.length && !runningTurn ? (
                     <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
-                      <img
-                        src="/vis-logo.png"
-                        alt=""
-                        className="w-14 max-w-full object-contain sm:w-16"
-                        aria-hidden="true"
-                      />
+                      <BrandLogo className="w-14 max-w-full object-contain sm:w-16" />
                       <div className="mt-4 max-w-md">
                         <h2 className="text-head font-semibold text-dialog-foreground">
                           What would you like to work on?

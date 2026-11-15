@@ -1501,6 +1501,8 @@
                         ;; A browser that `vis-agent web` opened holds only a one-time
                         ;; launch code, which this route exchanges for the token.
                         (= "/v1/web/launches/redeem" uri)
+                        ;; The web app shows its brand before it connects.
+                        (and (= :get (:request-method request)) (= "/v1/web/brand" uri))
                         ;; A media element cannot send the token. The signed ticket
                         ;; of the file preview authorizes it, and the handler checks it.
                         (fs-api/content-ticket-request? request)

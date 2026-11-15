@@ -4025,6 +4025,41 @@
                 (finally (.stop server)))))))))
 
 (defdescribe
+  the-web-app-reads-its-brand-before-it-connects
+  (it "the web app reads its brand before it connects"
+      ;; The connect screen has no token yet. Only a holder of the token changes the brand.
+      (let [base (.toFile (java.nio.file.Files/createTempDirectory
+                            "vis-web-brand"
+                            (make-array java.nio.file.attribute.FileAttribute 0)))
+            brand {"name" "Acme" "href" "https://acme.example"}]
+
+        (with-redefs [web/brand-file (constantly (io/file base "web-brand.json"))]
+          (with-server-state!
+            {:require-token? true :token "sekret" :host "0.0.0.0" :port 7890}
+            (fn []
+              (let [server (jetty/run-jetty ((rv 'app) "sekret" [])
+                                            {:port 0 :host "127.0.0.1" :join? false})
+                    url (str "http://127.0.0.1:" (bound-port server) "/v1/web/brand")
+                    protocol {"X-Vis-Protocol" (str gateway-contract/protocol-version)}
+                    put (fn [headers]
+                          (http/put url
+                                    {:headers (merge protocol
+                                                     {"Content-Type" "application/json"}
+                                                     headers)
+                                     :body (wire/json-str brand)
+                                     :throw false}))
+                    read (fn []
+                           (http/get url {:headers protocol :throw false}))]
+
+                (try (expect (= 401 (:status (put {}))))
+                     (expect (= {} (wire/parse-json (:body (read)))))
+                     (expect (= 200 (:status (put {"Authorization" "Bearer sekret"}))))
+                     (expect (= brand (wire/parse-json (:body (read)))))
+                     (expect (= 401 (:status (http/delete url {:headers protocol :throw false}))))
+                     (finally (.stop server)
+                              (run! io/delete-file (reverse (file-seq base))))))))))))
+
+(defdescribe
   attachment-bytes-never-run-as-the-gateway-origin
   (it "attachment bytes never run as the gateway origin"
       ;; The web app shares the gateway origin and keeps saved gateway tokens there,

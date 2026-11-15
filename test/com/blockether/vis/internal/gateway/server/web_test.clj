@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.server.web-test
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.server.web :as web]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
@@ -171,3 +172,38 @@
                    (expect (web/redeem-launch! a 1001)))
                  (expect (not (web/redeem-launch! "guessed-code")))
                  (expect (not (web/redeem-launch! nil)))))
+
+(defdescribe
+  a-brand-is-saved-whole-or-not-at-all
+  (it "a brand is saved whole or not at all"
+      (let [base (.toFile (Files/createTempDirectory "vis-web-brand" (make-array FileAttribute 0)))
+            call (fn [method body]
+                   (with-redefs [web/brand-file (constantly (io/file base "gateway" "web-brand.json"))]
+                     ((get web/handlers [method "/v1/web/brand"])
+                      (cond-> {:request-method method}
+                        body
+                        (assoc :body (java.io.StringReader. (wire/json-str body)))))))
+            saved (fn []
+                    (wire/parse-json (:body (call :get nil))))
+            brand {"name" "Acme"
+                   "logo" "data:image/png;base64,AAAA"
+                   "href" "https://acme.example"
+                   "links" [{"icon" "book" "label" "Docs" "href" "https://acme.example/docs"}]
+                   "theme" {"base" "blockether-dark" "colors" {"--primary" "#ff0055"}}}]
+
+        (try (expect (= {} (saved)))
+             (expect (= 200 (:status (call :put brand))))
+             (expect (= brand (saved)))
+             ;; A link that runs a script, a logo from another scheme, an icon, a theme or
+             ;; a variable that the app does not ship: each is refused and changes nothing.
+             (doseq [wrong [(assoc brand "href" "javascript:alert(1)")
+                            (assoc brand "logo" "//elsewhere.example/logo.png")
+                            (assoc-in brand ["links" 0 "icon"] "no-such-icon")
+                            (assoc-in brand ["theme" "base"] "no-such-theme")
+                            (assoc-in brand ["theme" "colors"] {"--no-such-variable" "#000000"})
+                            (assoc brand "extra" true)]]
+               (expect (= 400 (:status (call :put wrong)))))
+             (expect (= brand (saved)))
+             (expect (= 204 (:status (call :delete nil))))
+             (expect (= {} (saved)))
+             (finally (delete-tree! base))))))

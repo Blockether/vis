@@ -1,18 +1,14 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
 import { recordDiagnostic } from '../lib/diagnostics';
+import { BrandLogo } from './BrandLogo';
 import { Button } from './ui';
 
 /** The deterministic recovery surface; the boundary only supplies the caught message. */
 export function ErrorFallback({ message, onReload }: { message: string; onReload: () => void }) {
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-4 bg-ink px-[max(1.25rem,env(safe-area-inset-left))] py-[max(1.25rem,env(safe-area-inset-top))] text-center text-white">
-      <img
-        src="/vis-logo.png"
-        alt=""
-        className="w-16 max-w-full object-contain"
-        aria-hidden="true"
-      />
+      <BrandLogo className="w-16 max-w-full object-contain" />
       <p className="text-title">Vis hit an error</p>
       <p className="max-w-sm text-ui text-footer-muted">
         The screen stopped rendering. Your sessions remain safe on the gateway, and unsent messages

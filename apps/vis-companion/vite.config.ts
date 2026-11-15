@@ -10,10 +10,26 @@ import {
   discoverDevGatewayConnections,
   prependHeadScript,
   sameOriginConnectionStorageScript,
+  scriptLiteral,
 } from './scripts/dev-gateway.ts';
 import { companionBuildInfo } from './scripts/build-info.ts';
+import { brandFault, type Brand } from './src/lib/brand-record.ts';
 
 const buildInfo = companionBuildInfo();
+/**
+ * The white label of this build: the JSON file that `VIS_WEB_BRAND` names, with the
+ * rules of `web_brand` in the gateway contract. A brand that breaks a rule stops the build.
+ */
+function buildBrand(): Brand | null {
+  const file = process.env.VIS_WEB_BRAND;
+  if (!file) return null;
+  const brand: unknown = JSON.parse(readFileSync(resolve(file), 'utf8'));
+  const fault = brandFault(brand);
+  if (fault) throw new Error(`VIS_WEB_BRAND ${file}: ${fault}`);
+  return brand as Brand;
+}
+const escapeHtml = (text: string) =>
+  text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 // `vite build --mode export` writes the HTML transcript export template (`transcript-export.html`)
 // beside the web bundle. The engine copies that one file and writes a session's JSON into it, so
 // the page must hold all its code, styles and fonts: an export opens without a gateway or network.
@@ -56,6 +72,8 @@ const DEV_BLANK_PAGE_RECOVERY = [
 ].join('\n');
 // https://vite.dev/config/
 export default defineConfig(async ({ command, mode }) => {
+  // The transcript export is a document of a session, not the app: it keeps the Vis look.
+  const brand = mode === 'export' ? null : buildBrand();
   const devGateways = command === 'serve' ? await discoverDevGatewayConnections() : [];
   if (command === 'serve') {
     console.info(
@@ -155,6 +173,29 @@ export default defineConfig(async ({ command, mode }) => {
         transformIndexHtml() {
           const children = mode === 'web' ? sameOriginConnectionStorageScript() : '';
           return children ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }] : [];
+        },
+      },
+      {
+        // The page carries the build brand before the bundle loads: the title and the
+        // tab icon as markup, the record itself for `index.html` and `brand.ts`.
+        name: 'vis-web-brand',
+        transformIndexHtml(html: string) {
+          if (!brand) return html;
+          const { name, logo } = brand;
+          return {
+            html: html
+              .replace('<title>Vis</title>', () => `<title>${escapeHtml(name ?? 'Vis')}</title>`)
+              .replace('<link rel="icon" type="image/png" href="/vis-logo.png" />', (icon) =>
+                logo ? `<link rel="icon" href="${escapeHtml(logo)}" />` : icon,
+              ),
+            tags: [
+              {
+                tag: 'script',
+                children: `window.__VIS_BRAND__ = ${scriptLiteral(brand)};`,
+                injectTo: 'head-prepend' as const,
+              },
+            ],
+          };
         },
       },
       ...(mode === 'export' ? [inlineExportPage()] : []),
