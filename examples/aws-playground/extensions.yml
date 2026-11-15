@@ -14,4 +14,4 @@ extensions:
   vis-review:
     source: https://github.com/Blockether/vis
     subdirectory: packages/vis-review
-    revision: aed7d500953303f9621f694699a1a226d1ee9cd4
+    revision: 709f01a4e0df736ae83782d10b455879d21b0ddf

@@ -12,9 +12,9 @@
 # To move to another Vis version, change VIS_RELEASE, its two checksums and
 # requirements/site.* together.
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:5c6ed3b38335b2aa424a045f1e564c8c508409ead0ff3f8bf5e62c31b94082cb
-ARG VIS_RELEASE=beta-0e5986a54b7c4beca9888cb6b7453d6862b03dff
-ARG VIS_AGENT_SHA256=b8bbcc86951d8cff7dbdca44462ad89124492d485c9f6b9f5a8c75a5db930372
-ARG VIS_WEB_SHA256=61ec56af4dc490d875a6356ffbf278f0d3adf6c1a51e501fcfaeb64cc86f3ae6
+ARG VIS_RELEASE=beta-709f01a4e0df736ae83782d10b455879d21b0ddf
+ARG VIS_AGENT_SHA256=b9d2c6a3b4084e6723d712c83eaf532d472e761d9703e993d18f6e0915f2f87c
+ARG VIS_WEB_SHA256=1dae40e609186177ba24bd60fe47ddd57a9283e5e1f13992ca13f9bd27d4b883
 # git serves the repository functions and fetches the extensions. clang builds native
 # Python packages. Python 3.13 is the interpreter of the project. The image holds its
 # packages (music21, pytest and ruff), because a worker and the app have no internet.
