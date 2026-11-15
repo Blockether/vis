@@ -48,7 +48,7 @@ def call(method, path, body=None, timeout=120):
     Thus it cannot share this call with `durable/workflows/client.py`.
     """
     data = None if body is None else json.dumps(body).encode()
-    address = os.environ["DURABLE_BROKER"] + "/play/api/" + path
+    address = os.environ["DURABLE_BROKER"] + "/dashboard/api/" + path
     request = urllib.request.Request(address, data, {"content-type": "application/json"}, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as answer:

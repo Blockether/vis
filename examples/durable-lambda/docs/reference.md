@@ -74,7 +74,7 @@ files of another session.
 | A session starts | The worker makes a clone of the newest release and gives it to the session as its directory. |
 | A step of a session ends | The extension tells the worker. In at most 15 seconds, the worker copies the Git work of the directory to `work/<name>/` in S3. A worker also copies the work when it stops. |
 | The directory is gone | The next turn or run of the session makes it again from the copy in S3. The worker removes a directory that nothing changed for 14 days, and a new file system has no directory. |
-| `main` moved | The session keeps its release. The Sessions page shows that the directory is behind. **Resync** puts the work on the newest release. |
+| `main` moved | The session keeps its release. `GET /dashboard/api/sessions/<id>/workspace` shows that the directory is behind. `POST /dashboard/api/sessions/<id>/resync` puts the work on the newest release. |
 | A person deletes the session | The worker removes the directory and the copy in S3. |
 
 The copy is a Git bundle. It holds each branch of the directory and one commit with
@@ -169,13 +169,15 @@ call. Only the webhook checks its caller.
 | Address | Result |
 | --- | --- |
 | `POST /hooks/github` | Starts a fetch of `main`. Needs the signature of GitHub |
-| `GET /play/assets/*`, `GET /play/vendor/*` | The scripts, the styles, the editor and the fonts of the pages |
+| `GET /dashboard/assets/*`, `GET /dashboard/vendor/*` | The scripts, the styles, the editor and the fonts of the pages |
 | `GET /<file>` | The static files of Vis web |
-| `GET /`, `/play`, `/play/workflows`, `/play/factory`, `/play/architecture` | The pages |
+| `GET /dashboard`, `/dashboard/factory` | The pages of the dashboard |
+| `GET /dashboard/vis` | Vis web |
+| `GET /` | Goes to `/dashboard` |
 | `/v1/*` | The Vis gateway: sessions, turns, events, attached files |
-| `/play/api/*` | The Durable Lambda API of the worker |
+| `/dashboard/api/*` | The Durable Lambda API of the worker |
 
-The Durable Lambda API has these addresses below `/play/api/`. A body and an answer are JSON.
+The Durable Lambda API has these addresses below `/dashboard/api/`. A body and an answer are JSON.
 
 | Method and address | Body | Result |
 | --- | --- | --- |
@@ -316,6 +318,7 @@ Time:
 | `DURABLE_LLM_KEY` | none; necessary at the first run | The key of the provider |
 | `DURABLE_MODELS` | `glm-5.3`, `gpt-oss-120b`, `qwen3.8-max` | A JSON list of `{name, context, output_limit}`. Set it for each other provider: `llm` refuses a model that is not in the list |
 | `STACK` | `durable-lambda` | The name of the stack and the prefix of each resource |
+| `DURABLE_MACHINE_NAME` | the name of the stack | The machine name of the gateway, 1 to 64 characters. Vis web and the Vis apps show it for this stack. The worker gets it as `VIS_MACHINE_NAME` |
 | `AWS_REGION` | `eu-central-1` | The region |
 | `ENGINE` | `docker` | `docker` or `podman`. The stack of this example was made with `podman` |
 

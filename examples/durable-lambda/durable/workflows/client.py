@@ -26,7 +26,7 @@ class Durable:
         """Use the address `base`, or the broker of the worker that started this process."""
         if not (base or BROKER):
             raise DurableError("this process has no address of the broker")
-        self.base = (base or BROKER).rstrip("/") + "/play/api/"
+        self.base = (base or BROKER).rstrip("/") + "/dashboard/api/"
 
     def call(self, method: str, path: str, body: Any = None, timeout: float = API_S) -> Any:
         """Call the API and return the JSON answer."""

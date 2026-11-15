@@ -48,7 +48,7 @@ WEBHOOK_PARAMETER = ENV.get("VIS_WEBHOOK_PARAMETER", "")
 VIS_BINARY = "/opt/vis/vis-agent-native"
 VIS_PYTHON_NATIVE = "/opt/vis/vis-agent-python/libvispython.so"
 # The Vis web app, the Durable Lambda pages and the pinned files of other projects.
-VIS_WEB, PLAY_WEB, VENDOR = ENV.get("VIS_WEB_DIR", "/opt/vis-web"), "/opt/durable/web", "/opt/durable/vendor"
+VIS_WEB, PAGES_WEB, VENDOR = ENV.get("VIS_WEB_DIR", "/opt/vis-web"), "/opt/durable/web", "/opt/durable/vendor"
 # The workflows that a new stack starts with.
 SAMPLES = "/opt/durable/workflows"
 # The pinned host keys of GitHub.

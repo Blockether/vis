@@ -207,13 +207,14 @@ push. After 3 rejections at one gate, the run ends without a push.
 
 | Page | Content |
 | --- | --- |
-| `/` | Vis web. The global apps button of its header opens the Workflows app: Run, Gates and History |
-| `/play` | The sessions: transcript, files, work directory, resync and publish |
-| `/play/workflows` | The workflow editor and the runs. A waiting run shows its gate |
-| `/play/factory` | The song factory as a line of stations: give a prompt, decide at each gate, see the commit |
-| `/play/architecture` | This design with diagrams |
+| `/dashboard` | The workflow editor and the runs. A waiting run shows its gate. `/` goes here |
+| `/dashboard/factory` | The song factory as a line of stations: give a prompt, decide at each gate, see the commit |
+| `/dashboard/vis` | Vis web with the sessions. The global apps button of its header opens the Workflows app: Run, Gates and History |
 
 The stack has no sign-in: each person who has the address can use each page.
+
+Vis web can take dictation. The image holds the speech-to-text model NVIDIA Parakeet
+TDT 0.6B v3 (CC BY 4.0), and the worker loads it at the first recording.
 
 ## Deploy
 
@@ -227,7 +228,9 @@ DURABLE_MODELS='[{"name":"<model>","context":<tokens>,"output_limit":<tokens>}]'
 ./deploy.sh
 ```
 
-The script is safe to run again and prints the address of the stack. The fixed cost is
+The script is safe to run again and prints the address of the stack. Vis web and the
+Vis apps show the stack with its machine name: `DURABLE_MACHINE_NAME`, else the name of
+the stack. The fixed cost is
 about 20 USD each month, for two interface endpoints and the EFS file system. The
 image gives its workflows only to a stack that has none: a stack with workflows keeps
 its own files.

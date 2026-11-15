@@ -20,12 +20,14 @@ from durable.dashboard.relay import relay
 from durable.dashboard.web import PAGE_POLICY, WEB_POLICY, Request, answer, error
 from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
-from durable.settings import DUE_S, PLAY_WEB, REPO_FUNCTION, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
+from durable.settings import DUE_S, PAGES_WEB, REPO_FUNCTION, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
 
 # The pages of Durable Lambda, by path.
-PAGES = {"/play": "sessions.html", "/play/workflows": "workflows.html", "/play/factory": "factory.html", "/play/architecture": "architecture.html"}
+PAGES = {"/dashboard": "workflows.html", "/dashboard/factory": "factory.html"}
+# The path of the Vis web app. Its files stay at the root, where its page asks for them.
+VIS_PAGE = "/dashboard/vis"
 # The directories of static files, by path prefix.
-PUBLIC = {"/play/assets/": f"{PLAY_WEB}/assets", "/play/vendor/": VENDOR}
+PUBLIC = {"/dashboard/assets/": f"{PAGES_WEB}/assets", "/dashboard/vendor/": VENDOR}
 # The webhook secret that this function read.
 _state: dict[str, Any] = {}
 
@@ -70,9 +72,11 @@ def route(request: Request, context: Context) -> HttpStream:
             if path.startswith(prefix):
                 return static(root, path[len(prefix) :]) or error(404, "no such file")
         if path in PAGES:
-            return static(PLAY_WEB, PAGES[path], **{"content-security-policy": PAGE_POLICY}) or error(404, "no such page")
-        if not path.startswith(("/v1/", "/play/")):
-            found = static(VIS_WEB, "index.html" if path == "/" else path.lstrip("/"), **{"content-security-policy": WEB_POLICY})
+            return static(PAGES_WEB, PAGES[path], **{"content-security-policy": PAGE_POLICY}) or error(404, "no such page")
+        if path == "/":
+            return answer(302, b"", location="/dashboard")
+        if path == VIS_PAGE or not path.startswith(("/v1/", "/dashboard/")):
+            found = static(VIS_WEB, "index.html" if path == VIS_PAGE else path.lstrip("/"), **{"content-security-policy": WEB_POLICY})
             if found:
                 return found
     return relay(request, context)

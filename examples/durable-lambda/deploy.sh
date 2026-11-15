@@ -12,6 +12,7 @@ REGION=${AWS_REGION:-eu-central-1}
 REPOSITORY=${REPOSITORY:?set REPOSITORY to owner/name}
 ENGINE=${ENGINE:-docker}
 MODELS=${DURABLE_MODELS:-}
+MACHINE_NAME=${DURABLE_MACHINE_NAME:-$STACK}
 export AWS_REGION=$REGION AWS_DEFAULT_REGION=$REGION AWS_PAGER=
 
 account=$(aws sts get-caller-identity --query Account --output text)
@@ -77,7 +78,7 @@ echo "4/6 stack $STACK"
 prefixes=$(aws ec2 describe-managed-prefix-lists --filters "Name=prefix-list-name,Values=com.amazonaws.$REGION.s3" --query 'PrefixLists[0].PrefixListId' --output text)
 aws cloudformation deploy --stack-name "$STACK" --template-file template.yaml --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset \
-  --parameter-overrides "ImageUri=$registry/$STACK@$digest" "Repository=$REPOSITORY" "Models=$MODELS" "S3PrefixList=$prefixes"
+  --parameter-overrides "ImageUri=$registry/$STACK@$digest" "Repository=$REPOSITORY" "Models=$MODELS" "MachineName=$MACHINE_NAME" "S3PrefixList=$prefixes"
 url=$(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='Url'].OutputValue" --output text)
 
 echo "5/6 webhook"

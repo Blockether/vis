@@ -5,7 +5,7 @@ and no route to the internet. The broker is their only way out. It has two parts
 
     /v1/         the model provider of the gateway. The broker sends each call to the
                  llm function (see `llm.py`), which holds the provider key.
-    /play/api/   the Durable Lambda API, for the workflow runs and the Vis extension.
+    /dashboard/api/   the Durable Lambda API, for the workflow runs and the Vis extension.
 
 The address of the broker is in the Vis configuration as the one provider, so each
 session gets its models from Vis and no code of a session sees the key.
@@ -69,7 +69,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path.startswith("/v1/"):
                 self.model(body)
-            elif self.path.startswith("/play/api/"):
+            elif self.path.startswith("/dashboard/api/"):
                 self.complete(*self.api.handle(self.command, self.path, body))
             else:
                 self.complete(404, wire.JSON, b'{"error":"no such path"}')
@@ -112,7 +112,7 @@ class Broker:
     """The server. It listens on a free port of the loopback interface."""
 
     def __init__(self, api: Api) -> None:
-        """Bind the server and keep its address. The API answers the calls of `/play/api/`."""
+        """Bind the server and keep its address. The API answers the calls of `/dashboard/api/`."""
         handler = type("BrokerHandler", (Handler,), {"api": api})
         self.server = ThreadingHTTPServer((LOOPBACK, 0), handler)
         self.server.daemon_threads = True

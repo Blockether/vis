@@ -39,10 +39,23 @@ export function h(tag, props = {}, ...children) {
   return node;
 }
 
+// The data that an element shows, when `update` filled it.
+const drawn = new WeakMap();
+
 /** Replace the children of `node`. Like `h`, it skips null, undefined and false. */
 export function fill(node, ...children) {
+  drawn.delete(node);
   node.replaceChildren(...kept(children));
   return node;
+}
+
+/** Fill `node` with the result of `build`, but only when `data` changed. `data` is each value that `build` shows.
+ *  An equal draw keeps the elements: an icon does not flicker, an animation does not start again and a typed text stays. */
+export function update(node, data, build) {
+  const key = JSON.stringify(data);
+  if (drawn.get(node) === key) return;
+  fill(node, build());
+  drawn.set(node, key);
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -88,7 +101,7 @@ async function call(path, { method = "GET", body, raw = false } = {}) {
   return data;
 }
 
-export const play = (path, options) => call(`/play/api/${path}`, options);
+export const api = (path, options) => call(`/dashboard/api/${path}`, options);
 export const vis = (path, options) => call(`/v1/${path}`, options);
 
 /** Show a short message in the corner. The tone is "good", "bad" or none. */
@@ -143,6 +156,13 @@ export function span(ms) {
   return `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
 }
 
+/** Return the text of the time from `from` to `to`, in ms. Without `to` the time still grows, and the text counts each second. */
+export const elapsed = (from, to) => h("span", { "data-since": to ? null : from, text: span((to || Date.now()) - from) });
+setInterval(() => document.querySelectorAll("[data-since]").forEach((node) => (node.textContent = span(Date.now() - node.dataset.since))), 1000);
+
+/** Return the minute of now. A draw that shows an age has it in its data, so the age stays current. */
+export const minute = () => Math.floor(Date.now() / 60000);
+
 /** Return a file size, such as "1.4 kB". */
 export function size(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -150,18 +170,15 @@ export function size(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Return a number in short form, such as "52k". */
-export const count = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n ?? 0));
-
 // -- Markdown ---------------------------------------------------------------------
 
 /** Return a link that opens in a new tab and gives the other site no data about this page. */
 export const outside = (href, text) => h("a", { href, target: "_blank", rel: "noopener noreferrer", text });
 
-/** Return the text of one row as nodes: code, bold text and links. */
+/** Return the text of one row as nodes: code, bold text, emphasis and links. */
 function inline(text) {
   const out = [];
-  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[[^\]\n]+\]\((https?:\/\/[^)\s]+)\))|(https?:\/\/[^\s<>)\]]+)/g;
+  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[[^\]\n]+\]\((https?:\/\/[^)\s]+)\))|(\*[^*\s](?:[^*\n]*[^*\s])?\*)|(https?:\/\/[^\s<>)\]]+)/g;
   let at = 0;
   for (const found of text.matchAll(pattern)) {
     if (found.index > at) out.push(text.slice(at, found.index));
@@ -169,6 +186,7 @@ function inline(text) {
     if (found[1]) out.push(h("code", { text: token.slice(1, -1) }));
     else if (found[2]) out.push(h("strong", {}, inline(token.slice(2, -2))));
     else if (found[3]) out.push(outside(found[4], token.slice(1, token.indexOf("]("))));
+    else if (found[5]) out.push(h("em", {}, inline(token.slice(1, -1))));
     else out.push(outside(token, token));
     at = found.index + token.length;
   }
@@ -396,7 +414,7 @@ export const TONE = { completed: "good", failed: "bad", running: "amber", waitin
 const COMMENT_LIMIT = 4000;
 
 /** Send the decision of a person to the gate where a run waits. The run then starts again. */
-export const decideGate = (run, approved, comment) => play(`runs/${run.id}/gates/${run.waiting.key}`, { method: "POST", body: { approved, comment } });
+export const decideGate = (run, approved, comment) => api(`runs/${run.id}/gates/${run.waiting.key}`, { method: "POST", body: { approved, comment } });
 
 /** Return the gate where a run waits: what to check, its document, a comment and the two decisions. `after` runs when the API has the decision. */
 export function gate(run, after) {
@@ -422,16 +440,19 @@ export function gate(run, after) {
 export const decided = (made) => h("div", { class: "row wrap" }, chip(made.approved ? "Approved" : "Rejected", made.approved ? "good" : "bad"), made.comment && h("span", { class: "small", text: made.comment }));
 
 /** Stop a run. */
-export const cancelRun = (id) => play(`runs/${id}/cancel`, { method: "POST", body: {} });
+export const cancelRun = (id) => api(`runs/${id}/cancel`, { method: "POST", body: {} });
 
 /** Start a failed run again. It continues in a fork of its session, before the failed activity. */
-export const retryRun = (id) => play(`runs/${id}/retry`, { method: "POST", body: {} });
+export const retryRun = (id) => api(`runs/${id}/retry`, { method: "POST", body: {} });
 
 /** Return one small bar for each activity of a run of a list. */
 export const stepBars = (run) => h("span", { class: "steps" }, (run.activities.length ? run.activities : [["", "queued"]]).map(([title, status]) => h("i", { class: status, title })));
 
 /** Return the path of a document that a session attached. */
-export const filePath = (session, name) => `/play/api/attached/${session}/${encodeURIComponent(name)}`;
+export const filePath = (session, name) => `/dashboard/api/attached/${session}/${encodeURIComponent(name)}`;
+
+/** Return the address of a session in Vis web. */
+export const sessionPath = (id) => `/dashboard/vis#/s/${id}`;
 
 /** Return the version label of a document. A file without a version has no label. */
 export const versionOf = (file) => (file.version ? `version ${file.version}` : "");
@@ -443,23 +464,12 @@ export async function preview(path, name) {
   dialog(name, body, [button("Download", { onclick: press(() => download(path, name)) }, "download")]);
 }
 
-/** Fill the top bar, mark the link of this page and keep the release label current. */
+/** Keep the release label of the top bar current. The bar itself is markup of the page, so it shows with the first paint. */
 export function bar() {
-  const links = [["/play", "Sessions"], ["/play/workflows", "Workflows"], ["/play/factory", "Factory"], ["/play/architecture", "Architecture"]];
-  const repository = h("span", { class: "only-wide" });
-  const commit = h("span", { text: "starting…" });
-  const release = h("span", { class: "release", title: "The release of the repository that this worker uses" }, h("i"), h("span", {}, repository, commit));
-  document.querySelector("header.bar").append(
-    h("a", { class: "brand", href: "/play" }, h("img", { src: "/play/assets/logo.svg", alt: "" }), h("span", {}, "Durable Lambda ", h("small", { text: "on AWS Lambda" }))),
-    h("nav", { class: "nav", "aria-label": "Pages" }, links.map(([href, text]) => h("a", { href, text, "aria-current": href === location.pathname.replace(/\/$/, "") ? "page" : null }))),
-    h("span", { class: "grow" }),
-    release,
-    // A phone shows only the icon of the button, and only the commit of the release.
-    h("a", { class: "btn dark small", href: "/", title: "The Vis web app, on the same gateway", "aria-label": "Open Vis" }, icon("open"), h("span", { class: "only-wide", text: "Open Vis" })),
-  );
+  const [release, repository, commit] = ["release", "repository", "commit"].map((id) => document.getElementById(id));
   const refresh = async () => {
     try {
-      const status = await play("status");
+      const status = await api("status");
       release.classList.add("live");
       repository.textContent = `${status.repository.split("/").pop()}@`;
       commit.textContent = status.release.slice(0, 7);

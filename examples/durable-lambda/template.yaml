@@ -14,6 +14,11 @@ Parameters:
     Type: String
     Default: ""
     Description: A JSON list of the models that the provider offers. Empty for the default list.
+  MachineName:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    Description: The name that the clients of Vis show for this stack.
   S3PrefixList:
     Type: String
     Description: The id of the AWS prefix list of S3 in this region (pl-...).
@@ -470,7 +475,8 @@ Resources:
       Code: {ImageUri: !Ref ImageUri}
       Architectures: [arm64]
       Role: !GetAtt WorkerRole.Arn
-      MemorySize: 3008
+      # The speech model takes about 1.7 GB while it is loaded. Two runs and the model used 2.9 GB.
+      MemorySize: 4096
       # `VIS_LIFETIME_S` of `durable/settings.py` has the same value. Change the two together.
       Timeout: 900
       EphemeralStorage: {Size: 4096}
@@ -489,6 +495,7 @@ Resources:
           VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
           VIS_REPO: !Ref Repository
           VIS_MODELS: !Ref Models
+          VIS_MACHINE_NAME: !Ref MachineName
 
   # A failed worker start must not run two more times.
   WorkerInvokes:

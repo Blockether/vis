@@ -9,12 +9,18 @@
 # that release. requirements/rpm.lock has the header SHA-256 of each installed RPM, and
 # the build stops when one differs. After a new base digest, write the lock again:
 #   rpm -qa --qf '%{NEVRA} %{SHA256HEADER}\n' | LC_ALL=C sort
-# To move to another Vis version, change VIS_RELEASE, its two checksums and
-# requirements/site.* together.
+# Vis comes from one commit: VIS_COMMIT names the beta build of that commit, the two
+# SHA-256 values are its engine and its web app, and the build stops when the engine
+# reports another commit. To move to another commit, change VIS_COMMIT, its two
+# checksums, the revision in extensions.yml and requirements/site.* together.
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:5c6ed3b38335b2aa424a045f1e564c8c508409ead0ff3f8bf5e62c31b94082cb
-ARG VIS_RELEASE=beta-709f01a4e0df736ae83782d10b455879d21b0ddf
+ARG VIS_COMMIT=709f01a4e0df736ae83782d10b455879d21b0ddf
 ARG VIS_AGENT_SHA256=b9d2c6a3b4084e6723d712c83eaf532d472e761d9703e993d18f6e0915f2f87c
 ARG VIS_WEB_SHA256=1dae40e609186177ba24bd60fe47ddd57a9283e5e1f13992ca13f9bd27d4b883
+# The speech-to-text model of Vis web: NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0), from the
+# Vis asset pack. resources/vis-models/manifest.edn of Vis has the address and the hash.
+ARG PARAKEET_URL=https://github.com/Blockether/vis/releases/download/assets-pack/parakeet-asr-onnx.tar.bz2
+ARG PARAKEET_SHA256=5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf
 # git serves the repository functions and fetches the extensions. clang builds native
 # Python packages. Python 3.13 is the interpreter of the project. The image holds its
 # packages (music21, pytest and ruff), because a worker has no internet.
@@ -24,11 +30,19 @@ RUN dnf install -y git tar gzip findutils clang openssh-clients python3.13 pytho
  && ! grep -vxFf /opt/requirements/rpm.lock /tmp/rpm.now && ! grep -vxFf /tmp/rpm.now /opt/requirements/rpm.lock && rm /tmp/rpm.now \
  && python3.13 -m pip install --no-cache-dir --require-hashes -r /opt/requirements/project.txt && ln -s /usr/bin/python3.13 /usr/local/bin/python3 \
  && python3.13 -c "import music21; print('music21', music21.__version__)"
-RUN base=https://github.com/Blockether/vis/releases/download/${VIS_RELEASE} \
+# The model is in the image, because a worker has no internet. Vis reads it from
+# VIS_SPEECH_MODELS_DIR and loads it at the first recording.
+ENV VIS_SPEECH_MODELS_DIR=/opt/vis-models
+RUN curl -fsSL -o /tmp/parakeet.tar.bz2 "$PARAKEET_URL" \
+ && printf '%s  %s\n' "${PARAKEET_SHA256}" /tmp/parakeet.tar.bz2 | sha256sum -c - \
+ && python3.13 -c "import tarfile; tarfile.open('/tmp/parakeet.tar.bz2').extractall('$VIS_SPEECH_MODELS_DIR', filter='data')" \
+ && rm /tmp/parakeet.tar.bz2 && chmod -R a+rX "$VIS_SPEECH_MODELS_DIR" \
+ && test -f "$VIS_SPEECH_MODELS_DIR/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/encoder.int8.onnx"
+RUN base=https://github.com/Blockether/vis/releases/download/beta-${VIS_COMMIT} \
  && curl -fsSL -o /tmp/agent.tar.gz "$base/vis-agent-linux-arm64.tar.gz" && curl -fsSL -o /tmp/web.tar.gz "$base/vis-web.tar.gz" \
  && printf '%s  %s\n' "${VIS_AGENT_SHA256}" /tmp/agent.tar.gz "${VIS_WEB_SHA256}" /tmp/web.tar.gz | sha256sum -c - \
  && mkdir -p /opt/vis && tar xzf /tmp/agent.tar.gz -C /opt/vis && tar xzf /tmp/web.tar.gz -C /opt && rm /tmp/agent.tar.gz /tmp/web.tar.gz \
- && /opt/vis/vis-agent --version
+ && test "$(cut -d' ' -f2 /opt/vis/vis-agent-native.build)" = "${VIS_COMMIT}" && /opt/vis/vis-agent --version
 # Lambda can write only /tmp and runs as a user without root. Install the extensions,
 # the Vis SDK and their bytecode in the image, and let every user read them.
 ENV VIS_EXTENSIONS_DIR=/opt/vis-extensions VIS_PYTHON_PYCACHE_PREFIX=/opt/vis-pycache \

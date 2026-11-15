@@ -1,6 +1,6 @@
 /* Durable Lambda pages. They use the look of Vis web: one mono font, no round corner, hairlines, the Vis colours and type scale. */
-@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: swap; src: url("/play/vendor/jetbrains-mono-latin.woff2") format("woff2-variations"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
-@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: swap; src: url("/play/vendor/jetbrains-mono-latin-ext.woff2") format("woff2-variations"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: swap; src: url("/dashboard/vendor/jetbrains-mono-latin.woff2") format("woff2-variations"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: swap; src: url("/dashboard/vendor/jetbrains-mono-latin-ext.woff2") format("woff2-variations"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
 
 :root {
   --amber: #ffc420; --amber-deep: #f0ad00; --amber-ink: #261e00; --amber-soft: #f2dda0; --warn: #7a4a00; --warn-line: #a55b05;
@@ -29,7 +29,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* -- top bar ------------------------------------------------------------------ */
 .bar { position: sticky; top: 0; z-index: 30; height: var(--bar); display: flex; align-items: center; gap: 16px; padding: 0 16px; background: var(--cream); border-bottom: 1px solid var(--ink); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; text-decoration: none; white-space: nowrap; }
-.brand img { width: 28px; height: 28px; }
+.brand svg { width: 28px; height: 28px; flex: none; }
 .brand small { font-weight: 500; color: var(--muted); font-size: 10px; letter-spacing: .08em; }
 .nav { display: flex; gap: 6px; margin-left: 8px; }
 .nav a { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border: 1px solid transparent; text-decoration: none; font-weight: 500; font-size: 11px; color: var(--ink); }
@@ -81,7 +81,6 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .empty .spin { margin: 0 auto 12px; }
 
 /* -- two panes ---------------------------------------------------------------- */
-.panes { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); height: calc(100dvh - var(--bar)); }
 .side { border-right: 1px solid var(--line-strong); display: flex; flex-direction: column; min-height: 0; background: var(--page); }
 .side-head { padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line-strong); }
 .list { overflow-y: auto; flex: 1; padding: 0; display: grid; gap: 0; align-content: start; }
@@ -89,24 +88,11 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .item:hover { background: var(--hover); }
 .item[aria-selected="true"] { background: var(--cream); box-shadow: inset 3px 0 0 var(--amber); }
 .item .title { font-weight: 600; font-size: 12px; }
-.main { overflow-y: auto; min-width: 0; }
-.main-inner { max-width: 980px; margin: 0 auto; padding: 20px 24px 72px; display: grid; gap: 14px; }
-.head { display: grid; gap: 10px; }
 .tabs { display: flex; gap: 6px; overflow-x: auto; }
 .tabs button { height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); background: var(--input); font-weight: 500; font-size: 11px; color: var(--ink); cursor: pointer; white-space: nowrap; }
 .tabs button[aria-selected="true"] { background: var(--amber); border-color: var(--amber); color: var(--amber-ink); font-weight: 600; }
-.tabs button[aria-selected="true"] .count { color: var(--amber-ink); }
-.tabs .count { margin-left: 6px; font: 10px var(--mono); color: var(--muted); }
-.back { display: none; }
 
-/* -- a turn and its Vis activities --------------------------------------------- */
-.turn { display: grid; }
-.turn-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.turn-no { font: 600 10px var(--mono); color: var(--muted); }
-.turn-body { padding: 14px 16px; display: grid; gap: 12px; }
-.request { background: var(--cream-light); border: 1px solid var(--line); border-left: 3px solid var(--amber); padding: 10px 12px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 132px; overflow: hidden; position: relative; }
-.request.open { max-height: none; }
-.request:not(.open)::after { content: ""; position: absolute; inset: auto 0 0 0; height: 34px; background: linear-gradient(transparent, var(--cream-light)); }
+/* -- Vis activities --------------------------------------------- */
 .acts { display: grid; gap: 2px; }
 
 .act > summary { list-style: none; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 6px 8px; cursor: pointer; }
@@ -134,7 +120,6 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .block td { padding: 6px 12px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
 .block tr:last-child td { border-bottom: 0; }
 .scroll-x { overflow-x: auto; }
-.answer { border-top: 1px dashed var(--line-strong); padding-top: 12px; }
 .md { font-size: 12px; overflow-wrap: anywhere; }
 .md h1, .md h2, .md h3 { margin: 1em 0 .4em; } .md h1 { font-size: 15px; } .md h2 { font-size: 13px; } .md h3 { font-size: 12px; }
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
@@ -144,13 +129,9 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .md pre code { background: none; padding: 0; }
 .md blockquote { margin: 0 0 .7em; padding: 2px 12px; border-left: 3px solid var(--line-strong); color: var(--charcoal); }
 .md table { border-collapse: collapse; margin: 0 0 .7em; font-size: 11px; display: block; overflow-x: auto; }
-.md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; } .md th { background: var(--cream-soft); }
+/* A cell breaks only between words. A wide table then scrolls, and a narrow screen does not cut a word into letters. */
+.md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; overflow-wrap: break-word; } .md th { background: var(--cream-soft); }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
-.meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.files { display: grid; }
-.file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--line); }
-.file:last-child { border-bottom: 0; }
-.file .name { font: 500 11px var(--mono); overflow-wrap: anywhere; }
 .file-row { padding: 8px 10px; }
 
 /* -- dialog and toast ------------------------------------------------------------ */
@@ -216,30 +197,6 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .kv dt { color: var(--muted); font: 11px var(--mono); } .kv dd { margin: 0; overflow-wrap: anywhere; }
 .decision { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; background: var(--ink); color: var(--amber); font: 600 11px var(--mono); }
 
-/* -- architecture page --------------------------------------------------------------- */
-.doc { max-width: 1040px; margin: 0 auto; padding: 44px 28px 110px; display: grid; gap: 22px; }
-.doc .lead { font-size: 15px; color: var(--charcoal); max-width: 70ch; }
-.doc h1 { font-size: 24px; } .doc h2 { font-size: 17px; margin-top: 26px; padding-top: 26px; border-top: 1px solid var(--line); }
-.doc p, .doc li { max-width: 76ch; } .doc ul, .doc ol { margin: 0; padding-left: 1.25em; display: grid; gap: 5px; }
-.figure { padding: 20px; overflow-x: auto; } .figure svg { display: block; min-width: 720px; width: 100%; height: auto; }
-.figure figcaption { margin-top: 12px; font-size: 11px; color: var(--muted); }
-figure { margin: 0; }
-/* The diagrams. The SVG source in architecture.html has only shapes, text and these class names. */
-.figure svg .b { fill: #fff; stroke: var(--charcoal); stroke-width: 1.5; } .figure svg .pub { fill: var(--amber); stroke: var(--charcoal); stroke-width: 1.5; }
-.figure svg .store { fill: var(--cream-light); stroke: var(--line-strong); stroke-width: 1.5; } .figure svg .ext { fill: var(--ink); stroke: var(--ink); }
-.figure svg .sec { fill: var(--violet-soft); stroke: var(--violet); stroke-width: 1.5; }
-.figure svg .zone { fill: rgba(63, 63, 63, .04); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 6 5; }
-.figure svg .t, .figure svg .te { font: 600 13px var(--mono); fill: var(--ink); } .figure svg .te { fill: var(--cream); }
-.figure svg .s, .figure svg .se { font: 500 10px var(--mono); fill: #5d564d; } .figure svg .se { fill: var(--line-strong); }
-.figure svg .z { font: 600 10px var(--mono); fill: var(--muted); letter-spacing: .04em; }
-.figure svg .a { fill: none; stroke: var(--charcoal); stroke-width: 1.6; } .figure svg .aa { fill: none; stroke: var(--amber-deep); stroke-width: 2.2; }
-.figure svg .l { font: 500 10px var(--mono); fill: var(--charcoal); } .figure svg .lb { fill: var(--cream); opacity: .92; }
-.figure svg .n { font: 700 11px var(--mono); fill: var(--ink); } .figure svg .nc { fill: var(--amber); stroke: var(--charcoal); stroke-width: 1.2; }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
-.tile { padding: 18px; display: grid; gap: 7px; align-content: start; } .tile p { margin: 0; font-size: 12px; color: var(--charcoal); }
-.tile .tag { font: 600 10px var(--mono); color: var(--warn); background: var(--amber-soft); padding: 2px 8px; justify-self: start; }
-.table { width: 100%; border-collapse: collapse; font-size: 11px; } .table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--line-strong); }
-.table td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; } .table tr:last-child td { border-bottom: 0; } .table td:first-child { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
 .hero { display: grid; gap: 14px; padding: 8px 0 4px; } .hero .eyebrow { font: 600 11px var(--mono); color: var(--warn); letter-spacing: .08em; text-transform: uppercase; }
 .note { border-left: 3px solid var(--amber-deep); background: var(--cream-light); padding: 12px 16px; }
 
@@ -249,19 +206,14 @@ figure { margin: 0; }
 @media (max-width: 820px) {
   :root { --bar: 54px; }
   .bar { padding: 0 12px; gap: 8px; }
-  .brand small { display: none; } .brand { min-width: 0; } .brand span { overflow: hidden; text-overflow: ellipsis; }
-  .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); gap: 6px; background: var(--cream); border-top: 1px solid var(--ink); }
-  .nav a { flex: 1; justify-content: center; height: 36px; padding: 0 4px; }
-  .panes { grid-template-columns: 1fr; height: calc(100dvh - var(--bar) - 56px); }
-  .panes .main { display: none; } .panes.detail .side { display: none; } .panes.detail .main { display: block; }
+  /* A phone shows the logo without the name, and the state of the worker without the release. */
+  .brand span, .release > span { display: none; } .release { padding: 0 8px; }
+  .nav { margin: 0; gap: 2px; } .nav a { padding: 0 8px; }
   .side { border-right: 0; }
-  .main-inner { padding: 14px 12px 40px; gap: 14px; }
-  .back { display: inline-flex; }
   h1 { font-size: 17px; }
-  .turn-head, .turn-body { padding-left: 12px; padding-right: 12px; }
   .act-body { margin-left: 0; }
   .act .sum { display: none; }
-  .studio { display: block; height: calc(100dvh - var(--bar) - 56px - 40px); overflow: hidden; }
+  .studio { display: block; height: calc(100dvh - var(--bar) - 40px); overflow: hidden; }
   #phone-tabs { height: 40px; background: var(--cream-soft); } #phone-tabs button { flex: 1; }
   .studio > section { display: none; height: 100%; }
   .studio[data-pane="list"] > .side, .studio[data-pane="editor"] > .work, .studio[data-pane="runs"] > .runs { display: flex; position: static; width: auto; }
@@ -269,15 +221,7 @@ figure { margin: 0; }
   /* On a phone, only `data-pane` selects the pane. The overlay of the middle width does not apply. */
   .studio.show-runs:not([data-pane="runs"]) > .runs { display: none; }
   .only-wide { display: none !important; }
-  /* A table is a list on a phone. Each row is a block, and each cell after the first shows the name of its column. */
-  .table, .table tbody, .table tr, .table td { display: block; } .table tr:has(th) { display: none; }
-  .table tr { padding: 11px 14px; border-bottom: 1px solid var(--line); } .table tr:last-child { border-bottom: 0; }
-  .table td { padding: 2px 0; border: 0; } .table td:first-child { white-space: normal; overflow-wrap: anywhere; font-weight: 600; }
-  .table td:not(:first-child)::before { content: attr(data-label) " "; display: block; margin-top: 5px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-  /* A diagram is wider than a phone. Its caption stays in view and tells how to see the rest. */
-  .figure figcaption { position: sticky; left: 0; max-width: calc(100vw - 70px); } .figure figcaption::before { content: "Swipe the diagram to see all of it. "; font-weight: 600; color: var(--charcoal); }
-  .doc { padding: 24px 14px 110px; } .doc h1 { font-size: 24px; } .doc .lead { font-size: 13px; }
-  .toasts { bottom: 74px; right: 12px; }
+  .toasts { right: 12px; }
   dialog { width: calc(100vw - 16px); }
 }
 @media (min-width: 821px) { .only-phone { display: none !important; } }
@@ -287,7 +231,7 @@ figure { margin: 0; }
 .orders { border-right: 1px solid var(--line-strong); display: flex; flex-direction: column; min-height: 0; background: var(--page); }
 .floor { overflow-y: auto; min-width: 0; padding: 26px clamp(14px, 3vw, 36px) 60px; display: grid; gap: 20px; align-content: start; }
 .floor .hero p { max-width: 62ch; margin: 0; }
-.order-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; } .order-head .grow { flex: 1; }
+.order-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; } .order-head .grow { flex: 1; } .order-head > div { min-width: 0; max-width: 100%; }
 .eyebrow { font: 600 11px var(--mono); color: var(--warn); letter-spacing: .08em; text-transform: uppercase; }
 .shipped { display: flex; align-items: center; gap: 10px; padding: 11px 14px; background: var(--good-soft); color: var(--good); font-weight: 500; }
 .floor > .problem { border: 1px solid #efc9c3; }
@@ -321,9 +265,10 @@ figure { margin: 0; }
 .start.over .brief { background: var(--amber-soft); border: 1px dashed var(--warn-line); }
 .start .btn { height: 34px; padding: 0 16px; font-size: 12px; }
 .gate { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--amber-deep); background: var(--input); } .gate p { margin: 0; }
-@media (max-width: 1100px) { .bench { grid-template-columns: 1fr; } }
+/* In one column the cards come first: a gate stays above the long document. */
+@media (max-width: 1100px) { .bench { grid-template-columns: 1fr; } .bench-cards { order: -1; } }
 @media (max-width: 820px) {
-  .factory { display: block; height: auto; padding-bottom: 70px; }
+  .factory { display: block; height: auto; }
   .orders { border-right: 0; border-bottom: 1px solid var(--line); }
   .orders .list { display: flex; overflow-x: auto; padding: 8px 12px; } .orders .item { flex: 0 0 190px; }
   .orders .empty { padding: 14px; flex: 1; }
@@ -338,4 +283,6 @@ figure { margin: 0; }
   @keyframes belt { to { background-position: 0 24px; } }
   .crate { display: none; }
   .product-body { max-height: none; padding: 14px; }
+  /* The prompt of an order is its title. On a phone it takes the rows that it needs. */
+  .order-head h1 { white-space: normal; }
 }

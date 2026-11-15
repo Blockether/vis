@@ -43,7 +43,7 @@ class Api:
         self.runs = Runs(release, environment, self.workspaces)
         self.sessions = Sessions(release, self.workspaces, self.runs)
         self.files = Files(self.runs.attach, self.sessions.touch)
-        # The method, the path below `/play/api/` and the function of each route. A group of the path is an argument.
+        # The method, the path below `/dashboard/api/` and the function of each route. A group of the path is an argument.
         routes: list[tuple[str, str, Callable[..., Any]]] = [
             ("GET", r"status", self.status),
             ("GET", r"workflows", self.workflows),
@@ -73,7 +73,7 @@ class Api:
     def handle(self, method: str, target: str, body: bytes) -> Answer:
         """Answer one call. The answer is a status, the headers and the body."""
         url = urllib.parse.urlsplit(target)
-        path = urllib.parse.unquote(url.path)[len("/play/api/") :].rstrip("/")
+        path = urllib.parse.unquote(url.path)[len("/dashboard/api/") :].rstrip("/")
         query = dict(urllib.parse.parse_qsl(url.query))
         try:
             payload = json.loads(body) if body else {}

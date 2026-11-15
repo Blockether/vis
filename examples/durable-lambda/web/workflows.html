@@ -5,14 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#faf3eb">
 <title>Durable Lambda · Workflows</title>
-<link rel="icon" href="/play/assets/logo.svg">
-<link rel="stylesheet" href="/play/vendor/cm-codemirror.min.css">
-<link rel="stylesheet" href="/play/assets/app.css">
+<link rel="icon" href="/dashboard/assets/logo.svg">
+<link rel="stylesheet" href="/dashboard/vendor/cm-codemirror.min.css">
+<link rel="stylesheet" href="/dashboard/assets/app.css">
 </head>
 <body>
-<header class="bar"></header>
+<header class="bar">
+  <a class="brand" href="/dashboard" aria-label="Durable Lambda">
+    <svg viewBox="0 0 1230 1381" aria-hidden="true"><path d="M614.79,125.623l-489.167,282.375l0,564.792l489.125,282.417l489.125,-282.417l0,-564.792l-489.083,-282.375Zm0,912.834l-301.417,-174.042l0,-122.958l409.209,-0l193.666,122.958l-301.458,174.042Zm107.75,-399.125l-409.167,-0l0,-122.959l301.417,-174.041l301.417,174.041l-193.667,122.959Z" fill="#fc0" stroke="#404040" stroke-width="25"/></svg>
+    <span>Durable Lambda <small>on AWS Lambda</small></span>
+  </a>
+  <nav class="nav" aria-label="Pages"><a href="/dashboard" aria-current="page">Workflows</a><a href="/dashboard/factory">Factory</a></nav>
+  <span class="grow"></span>
+  <span class="release" id="release" title="The release of the repository that this worker uses"><i></i><span><span class="only-wide" id="repository"></span><span id="commit">starting…</span></span></span>
+  <a class="btn dark small" href="/dashboard/vis" title="Vis web: the sessions of this gateway">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6 M20 4l-9 9 M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
+    <span>Sessions</span>
+  </a>
+</header>
 <div class="tabs only-phone" id="phone-tabs" role="tablist">
-  <button type="button" data-pane="list" aria-selected="false">Workflows</button>
+  <button type="button" data-pane="list" aria-selected="false">List</button>
   <button type="button" data-pane="editor" aria-selected="true">Editor</button>
   <button type="button" data-pane="runs" aria-selected="false">Runs</button>
 </div>
@@ -35,12 +47,12 @@
     <div class="runs-body" id="runs"></div>
   </section>
 </div>
-<script src="/play/vendor/cm-codemirror.min.js"></script>
-<script src="/play/vendor/cm-python.min.js"></script>
-<script src="/play/vendor/cm-matchbrackets.min.js"></script>
-<script src="/play/vendor/cm-closebrackets.min.js"></script>
-<script src="/play/vendor/cm-comment.min.js"></script>
-<script src="/play/vendor/cm-active-line.min.js"></script>
-<script type="module" src="/play/assets/workflows.js"></script>
+<script src="/dashboard/vendor/cm-codemirror.min.js"></script>
+<script src="/dashboard/vendor/cm-python.min.js"></script>
+<script src="/dashboard/vendor/cm-matchbrackets.min.js"></script>
+<script src="/dashboard/vendor/cm-closebrackets.min.js"></script>
+<script src="/dashboard/vendor/cm-comment.min.js"></script>
+<script src="/dashboard/vendor/cm-active-line.min.js"></script>
+<script type="module" src="/dashboard/assets/workflows.js"></script>
 </body>
 </html>

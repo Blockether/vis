@@ -46,7 +46,7 @@ from durable.settings import (
 from durable.worktree import RELEASE_DIR, RUN_DIR
 
 # The variables that the gateway and the tools of a session get. No AWS credentials.
-PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "VIS_WEB_DIR")
+PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "VIS_WEB_DIR", "VIS_SPEECH_MODELS_DIR", "VIS_MACHINE_NAME")
 
 
 def config(broker: str) -> str:

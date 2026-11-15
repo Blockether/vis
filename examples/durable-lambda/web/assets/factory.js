@@ -1,6 +1,6 @@
 // The factory page: the workflow `song_factory` as a production line.
 // An order is one run. A prompt goes in. A person approves the song sheet and then the song. The song goes to GitHub as code.
-import { OPEN, TONE, ago, bar, button, cancelRun, chip, decided, download, empty, filePath, fileRow, fill, gate, github, guard, h, icon, item, loading, markdown, play, press, read, retryRun, size, span, stepBars, structured, versionOf, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, ago, api, bar, button, cancelRun, chip, decided, download, empty, filePath, fileRow, fill, gate, github, h, icon, item, loading, markdown, minute, press, read, retryRun, sessionPath, size, span, stepBars, structured, update, versionOf, waiting } from "/dashboard/assets/common.js";
 
 const WORKFLOW = "song_factory";
 // The glyph of each station, by the name of its workflow activity.
@@ -14,8 +14,8 @@ const floor = document.getElementById("floor");
 // The fragment goes into request paths: accept only a run id.
 const orderId = () => /^#([0-9a-f]{32})$/.exec(location.hash)?.[1] || null;
 // flow: the workflow. runs: its runs. id, doc: the open order.
-// spec: the text of the shown document, with the key of its version. drawn: the data of the last draw.
-const state = { flow: null, runs: [], id: orderId(), doc: null, spec: { key: "", text: null }, drawn: "" };
+// spec: the text of the shown document, with the key of its version.
+const state = { flow: null, runs: [], id: orderId(), doc: null, spec: { key: "", text: null } };
 
 /** Return the stations of an order: each workflow activity with the state of its step. */
 function stations(doc) {
@@ -28,12 +28,12 @@ function stations(doc) {
 
 /** Make a new order from a prompt. Without a prompt, the workflow uses its own. */
 async function order(prompt) {
-  const run = await play("runs", { method: "POST", body: { workflow: WORKFLOW, input: prompt ? { prompt } : {} } });
+  const run = await api("runs", { method: "POST", body: { workflow: WORKFLOW, input: prompt ? { prompt } : {} } });
   await select(run.id);
 }
 
 function select(id) {
-  Object.assign(state, { id, doc: null, drawn: "" });
+  Object.assign(state, { id, doc: null });
   history.replaceState(null, "", id ? `#${id}` : location.pathname);
   drawOrders();
   if (id) fill(floor, loading("Loading the order…"));
@@ -152,11 +152,13 @@ function welcome() {
 
 function draw() {
   const doc = state.doc;
-  const data = JSON.stringify([state.id, doc, state.spec.key, state.spec.text?.length]);
-  if (data === state.drawn) return; // a new draw would take the file dialog and the scroll position away
-  state.drawn = data;
-  if (!state.id) return fill(floor, welcome());
-  if (!doc) return;
+  if (state.id && !doc) return; // the order loads
+  // An equal draw would take the typed text and the scroll position away.
+  update(floor, [state.id, doc, state.spec.key, state.spec.text?.length], () => (state.id ? orderFloor(doc) : welcome()));
+}
+
+/** Return the floor of an order: its head, the line, the product and the cards of the stations. */
+function orderFloor(doc) {
   const shipped = doc.status === "completed" && doc.result?.value;
   const head = h(
     "div",
@@ -164,34 +166,33 @@ function draw() {
     h("div", {}, h("span", { class: "eyebrow", text: `Order ${doc.id.slice(0, 8)} · ${ago(doc.created * 1000)}` }), h("h1", { class: "clip", text: shipped?.song || doc.input.prompt || state.flow.inputs[0]?.default || doc.title })),
     chip(doc.status, TONE[doc.status], doc.status === "running"),
     h("span", { class: "grow" }),
-    doc.session_id && h("a", { class: "btn small", href: `/play#${doc.session_id}` }, icon("open"), h("span", { text: "Open the session" })),
+    doc.session_id && h("a", { class: "btn small", href: sessionPath(doc.session_id) }, icon("open"), h("span", { text: "Open the session" })),
     OPEN.has(doc.status) && button("Cancel", { class: "small", onclick: press(() => cancelRun(doc.id).then(refresh)) }, "stop"),
     doc.status === "failed" && button("Retry in a fork", { class: "small", onclick: press(() => retryRun(doc.id).then(refresh)) }, "fork"),
   );
   const done = shipped?.url && h("div", { class: "shipped" }, icon("check"), h("span", {}, "Shipped. The song ", h("code", { text: shipped.song }), " is in the repository at ", github(shipped.url, shipped.commit || "the commit"), "."));
   const cards = stations(doc).map((station) => card(doc, station));
-  fill(floor, head, done, doc.error && h("div", { class: "problem", text: doc.error }), line(doc), h("div", { class: "bench" }, product(doc), h("div", { class: "bench-cards" }, cards)));
+  return [head, done, doc.error && h("div", { class: "problem", text: doc.error }), line(doc), h("div", { class: "bench" }, product(doc), h("div", { class: "bench-cards" }, cards))];
 }
 
 function drawOrders() {
-  const rows = state.runs.map((run) =>
+  const row = (run) =>
     item(
       run.id === state.id,
       () => select(run.id),
       h("span", { class: "row" }, h("span", { class: "title", text: `Order ${run.id.slice(0, 8)}` }), h("span", { class: "right" }, chip(run.status, TONE[run.status], run.status === "running"))),
       stepBars(run),
       h("span", { class: "small muted", text: ago(run.created * 1000) }),
-    ),
-  );
-  fill(orders, rows.length ? rows : empty("No orders", "Write a prompt to start the first order."));
+    );
+  update(orders, [state.id, state.runs, minute()], () => (state.runs.length ? state.runs.map(row) : empty("No orders", "Write a prompt to start the first order.")));
 }
 
 /** Read the orders and the open order, then draw what changed. */
 async function refresh() {
-  state.runs = (await play("runs")).runs.filter((run) => run.workflow === WORKFLOW);
+  state.runs = (await api("runs")).runs.filter((run) => run.workflow === WORKFLOW);
   drawOrders();
   if (state.id) {
-    const doc = await play(`runs/${state.id}`);
+    const doc = await api(`runs/${state.id}`);
     if (doc.id !== state.id) return;
     state.doc = doc;
   }
@@ -204,7 +205,7 @@ document.getElementById("new").addEventListener("click", () => select(null));
 addEventListener("hashchange", () => orderId() !== state.id && select(orderId()));
 fill(floor, loading("Loading the factory…"));
 try {
-  state.flow = await play(`workflows/${WORKFLOW}`);
+  state.flow = await api(`workflows/${WORKFLOW}`);
   await refresh();
   // The page reads again while a run can change.
   setInterval(() => !document.hidden && (OPEN.has(state.doc?.status) || state.runs.some((run) => OPEN.has(run.status))) && refresh().catch(() => {}), 3000);

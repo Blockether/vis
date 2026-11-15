@@ -1,6 +1,6 @@
 // The workflows page: write a workflow in Python, add activities, run it and watch the run.
 /* global CodeMirror */
-import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, decided, dialog, empty, field, filePath, fileRow, fill, gate, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, retryRun, span, stepBars, structured, toast, turnsOf, value, versionOf, vis, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, activities, activity, ago, api, bar, button, cancelRun, chip, clock, decided, dialog, elapsed, empty, field, filePath, fileRow, fill, gate, guard, h, icon, item, loading, minute, padded, plural, press, preview, redraw, retryRun, sessionPath, span, stepBars, structured, toast, turnsOf, update, value, versionOf, vis, waiting } from "/dashboard/assets/common.js";
 
 const studio = document.querySelector("#studio");
 const list = document.querySelector("#list");
@@ -110,7 +110,7 @@ async function check() {
   if (marked !== null) editor.removeLineClass(marked, "background", "cm-error-line");
   marked = null;
   try {
-    state.about = await play("workflows/check", { method: "POST", body: { source: editor.getValue() } });
+    state.about = await api("workflows/check", { method: "POST", body: { source: editor.getValue() } });
     problem.hidden = true;
   } catch (error) {
     state.about = null;
@@ -125,16 +125,18 @@ async function check() {
 
 function drawOutline() {
   const about = state.about;
-  if (!about) return fill(outline, h("span", { class: "small muted", text: "Correct the source to see the activities." }));
   const none = (text) => h("span", { class: "small muted", text });
-  fill(
-    outline,
-    h("h4", { text: "Activities" }),
-    about.activities.map((step) => h("button", { class: "chip amber", type: "button", title: `Go to ${step.name}`, text: step.title, onclick: () => jump(`def ${step.name}(`) })),
-    !about.activities.length && none("none yet"),
-    h("h4", { style: "margin-left:10px", text: "Inputs" }),
-    about.inputs.map((input) => chip(input.name, "mono")),
-    !about.inputs.length && none("none"),
+  update(outline, about && [about.activities, about.inputs], () =>
+    about
+      ? [
+          h("h4", { text: "Activities" }),
+          about.activities.map((step) => h("button", { class: "chip amber", type: "button", title: `Go to ${step.name}`, text: step.title, onclick: () => jump(`def ${step.name}(`) })),
+          !about.activities.length && none("none yet"),
+          h("h4", { style: "margin-left:10px", text: "Inputs" }),
+          about.inputs.map((input) => chip(input.name, "mono")),
+          !about.inputs.length && none("none"),
+        ]
+      : none("Correct the source to see the activities."),
   );
 }
 
@@ -149,7 +151,8 @@ function jump(text) {
 
 function drawHead() {
   const about = state.about;
-  fill(head,
+  // The editor calls this at each change of the text. Only a new name, title or saved state gives new buttons.
+  update(head, [state.name, dirty(), about?.title], () => [
     h("span", { class: "name clip", text: state.name ? `${state.name}.py` : "no workflow" }),
     dirty() && chip("not saved", "amber"),
     about && h("span", { class: "small muted clip only-wide", text: about.title }),
@@ -161,19 +164,18 @@ function drawHead() {
       // Only a middle width has this button: there the runs are an overlay. A phone has tabs.
       button("Runs", { class: "small only-narrow only-wide", onclick: () => studio.classList.toggle("show-runs") }, "list"),
     ),
-  );
+  ]);
 }
 
 // -- workflows -------------------------------------------------------------------------------
 
 async function loadList() {
-  state.workflows = (await play("workflows")).workflows;
+  state.workflows = (await api("workflows")).workflows;
   drawList();
 }
 
 function drawList() {
-  fill(
-    list,
+  update(list, [state.name, state.workflows, minute()], () =>
     state.workflows.map((flow) =>
       item(
         flow.name === state.name,
@@ -188,7 +190,7 @@ function drawList() {
 
 async function open(name) {
   if (dirty() && state.name && !confirm(`Discard the changes of ${state.name}.py?`)) return;
-  const found = await play(`workflows/${name}`);
+  const found = await api(`workflows/${name}`);
   state.name = name;
   state.about = found;
   state.saved = found.source;
@@ -206,7 +208,7 @@ async function save() {
   const control = document.querySelector("#save");
   return guard(control, async () => {
     const source = editor.getValue();
-    await play(`workflows/${state.name}`, { method: "PUT", body: { source } });
+    await api(`workflows/${state.name}`, { method: "PUT", body: { source } });
     state.saved = source;
     toast(`Saved ${state.name}.py in S3.`, "good");
     drawHead();
@@ -218,7 +220,7 @@ async function save() {
 async function remove() {
   if (!confirm(`Delete ${state.name}.py? The runs stay.`)) return;
   await guard(null, async () => {
-    await play(`workflows/${state.name}`, { method: "DELETE" });
+    await api(`workflows/${state.name}`, { method: "DELETE" });
     state.name = state.saved = "";
     editor.setValue("");
     await loadList();
@@ -233,7 +235,7 @@ function create() {
   const make = async () => {
     if (!/^[a-z][a-z0-9_]*$/.test(name.value)) throw new Error("The file name must be a Python name in lower case.");
     if (state.workflows.some((flow) => flow.name === name.value)) throw new Error("A workflow with this name exists.");
-    await play(`workflows/${name.value}`, { method: "PUT", body: { source: TEMPLATE(name.value, title.value || name.value) } });
+    await api(`workflows/${name.value}`, { method: "PUT", body: { source: TEMPLATE(name.value, title.value || name.value) } });
     box.close();
     // The editor counts as saved, so `open` does not ask about the changes of the old file.
     state.saved = editor.getValue();
@@ -278,7 +280,7 @@ function addActivity() {
 async function run() {
   if (!state.name) return;
   if (dirty() && !(await save())) return;
-  const about = state.about || (await play(`workflows/${state.name}`));
+  const about = state.about || (await api(`workflows/${state.name}`));
   // An input with a text default, or with no default, is text. Each other input is JSON.
   const isText = (input) => typeof input.default === "string" || input.default === null;
   const areas = about.inputs.map((input) => {
@@ -292,7 +294,7 @@ async function run() {
   const where = h("select", { class: "input" }, h("option", { value: "", text: "A new session for this run" }), [...known.values()].map((row) => h("option", { value: row.id, text: `${row.title || "Untitled session"} · ${row.id.slice(0, 8)}` })));
   const start = async () => {
     const input = Object.fromEntries(areas.map(([given, area]) => [given.name, isText(given) ? area.value : JSON.parse(area.value)]));
-    const made = await play("runs", { method: "POST", body: { workflow: state.name, input, session: where.value || null } });
+    const made = await api("runs", { method: "POST", body: { workflow: state.name, input, session: where.value || null } });
     box.close();
     toast("The run started.", "good");
     await loadRuns();
@@ -304,16 +306,15 @@ async function run() {
 }
 
 async function loadRuns() {
-  state.runs = (await play("runs")).runs;
+  state.runs = (await api("runs")).runs;
   if (!state.run) drawRuns();
 }
 
 function drawRuns() {
   if (state.run) return drawRun();
   const shown = state.runs.filter((run) => state.all || !state.name || run.workflow === state.name);
-  fill(runsHead, h("div", { class: "row" }, h("h2", { text: "Runs" }), chip(String(shown.length), "mono"), button(state.all ? "All workflows" : "This workflow", { class: "small right", title: "Change the filter", onclick: () => ((state.all = !state.all), drawRuns()) })));
-  fill(
-    runsBody,
+  update(runsHead, ["runs", shown.length, state.all], () => h("div", { class: "row" }, h("h2", { text: "Runs" }), chip(String(shown.length), "mono"), button(state.all ? "All workflows" : "This workflow", { class: "small right", title: "Change the filter", onclick: () => ((state.all = !state.all), drawRuns()) })));
+  update(runsBody, ["runs", shown, minute()], () => [
     shown.map((run) =>
       h(
         "button",
@@ -324,7 +325,7 @@ function drawRuns() {
       ),
     ),
     !shown.length && empty("No runs yet", "Start a run with the Run button."),
-  );
+  ]);
 }
 
 async function openRun(id) {
@@ -346,7 +347,7 @@ async function openRun(id) {
 async function refreshRun() {
   const id = state.run;
   if (!id) return;
-  const doc = await play(`runs/${id}`);
+  const doc = await api(`runs/${id}`);
   // When the transcript does not load, the page keeps the turns that it has.
   const turns = doc.session_id ? await turnsOf(doc.session_id).catch(() => state.turns) : state.turns;
   if (state.run !== id) return;
@@ -387,7 +388,7 @@ function stepCard(step, doc) {
     h(
       "div",
       { class: "step-body" },
-      h("div", { class: "row wrap" }, h("b", { text: step.title }), h("span", { class: "small muted", text: span(to - from) }), kind === "model" && chip(result.type, "violet")),
+      h("div", { class: "row wrap" }, h("b", { text: step.title }), h("span", { class: "small muted" }, elapsed(from, step.finished * 1000)), kind === "model" && chip(result.type, "violet")),
       step.error && h("div", { class: "problem", style: "border:0", text: step.error }),
       (kind === "model" || kind === "json") && padded(structured(result.value)),
       step.status === "waiting" && gate(doc, refreshRun),
@@ -407,25 +408,22 @@ function drawRun() {
     await cancelRun(doc.id);
     await refreshRun();
   };
-  const facts = [`run ${doc.id.slice(0, 8)}`, clock(doc.created * 1000), doc.started && span(((doc.finished || Date.now() / 1000) - doc.started) * 1000), doc.starts > 1 && `${doc.starts} starts`];
-  fill(
-    runsHead,
+  const facts = [`run ${doc.id.slice(0, 8)}`, clock(doc.created * 1000), doc.started && elapsed(doc.started * 1000, doc.finished * 1000), doc.starts > 1 && `${doc.starts} starts`].filter(Boolean);
+  update(runsHead, ["run", doc.id, doc.title, doc.status, doc.created, doc.started, doc.finished, doc.starts, doc.session_id], () => [
     h("div", { class: "row" }, button("Runs", { class: "quiet small", onclick: closeRun }, "back"), status(doc.status)),
     h("h2", { text: doc.title }),
-    h("div", { class: "small muted", text: facts.filter(Boolean).join(" · ") }),
+    h("div", { class: "small muted" }, facts.flatMap((fact, index) => (index ? [" · ", fact] : [fact]))),
     h(
       "div",
       { class: "row wrap" },
-      doc.session_id && h("a", { class: "btn small", href: `/play#${doc.session_id}` }, h("span", { text: "Session and transcript" })),
-      doc.session_id && h("a", { class: "btn small", href: `/#/s/${doc.session_id}` }, h("span", { text: "Open in Vis" })),
+      doc.session_id && h("a", { class: "btn small", href: sessionPath(doc.session_id) }, icon("open"), h("span", { text: "Open the session" })),
       busy && button("Cancel", { class: "small danger", onclick: press(cancel) }, "stop"),
       doc.status === "failed" && button("Retry in a fork", { class: "small", onclick: press(() => retryRun(doc.id).then(refreshRun)) }, "fork"),
     ),
-  );
+  ]);
   const steps = [...doc.activities].sort((a, b) => a.seq - b.seq);
   redraw(runsBody, runsBody, "details", () =>
-    fill(
-      runsBody,
+    update(runsBody, ["run", doc, state.turns], () => [
       Object.keys(doc.input || {}).length > 0 && more("Input", h("div", { class: "block pad", style: "margin-top:6px" }, value(doc.input))),
       steps.length ? h("div", { class: "timeline" }, steps.map((step) => stepCard(step, doc))) : busy && !doc.waiting && waiting(doc.status === "queued" ? "The run waits for a free place…" : "The run starts its Vis session…"),
       // A workflow can have a gate outside an activity. Then no step shows the gate.
@@ -435,7 +433,7 @@ function drawRun() {
       doc.error && !steps.some((step) => step.error === doc.error) && h("div", { class: "problem", style: "border:0;white-space:pre-wrap", text: doc.error }),
       doc.result && h("div", {}, h("h4", { style: "margin-bottom:6px", text: "Result" }), padded(structured(doc.result.value))),
       doc.files?.length > 0 && h("div", { style: "display:grid;gap:6px" }, h("h4", { text: "Files" }), doc.files.map((file) => attachedRow(doc.session_id, file))),
-    ),
+    ]),
   );
 }
 

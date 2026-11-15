@@ -1,7 +1,7 @@
 """The relay of the worker: it answers the calls that the front function sends.
 
 A call arrives as one SQS message. The worker sends it to the gateway, or to the
-Durable Lambda API for `/play/api/`, and writes the answer as S3 objects (see `wire.py`).
+Durable Lambda API for `/dashboard/api/`, and writes the answer as S3 objects (see `wire.py`).
 An event stream becomes a series of objects, so the browser gets each event at once.
 """
 
@@ -37,7 +37,7 @@ class Relay:
     """The calls that this worker answers, and their messages in the queue."""
 
     def __init__(self, gateway: Gateway, api: Api) -> None:
-        """Start without an open call. `gateway` gets the calls of Vis and `api` gets the calls of `/play/api/`."""
+        """Start without an open call. `gateway` gets the calls of Vis and `api` gets the calls of `/dashboard/api/`."""
         self.gateway, self.api = gateway, api
         self.inflight, self.last = 0, time.time()
         # True when the worker stops: each open event stream then ends.
@@ -113,7 +113,7 @@ class Relay:
         see `vis/sessions.py`.
         """
         rid, body = call["id"], self.body(call)
-        if call["path"].startswith("/play/api/"):
+        if call["path"].startswith("/dashboard/api/"):
             status, headers, data = self.api.handle(call["method"], call["path"], body)
             return reply(rid, {"status": status, "headers": headers}, data)
         headers = {**call["headers"], **self.gateway.headers(), "host": f"{LOOPBACK}:{GATEWAY_PORT}"}
