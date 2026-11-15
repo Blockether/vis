@@ -69,9 +69,10 @@ async function select(id, quiet = false) {
   if (!id) return drawEmpty();
   if (!quiet) fill(detail, loading("Loading the session…"));
   try {
-    const [turns, attached, written] = await Promise.all([turnsOf(id), play(`attached?session=${id}`), play(`tmp?session=${id}`)]);
+    // A session outside the repository has no work directory of Durable Lambda.
+    const [turns, attached, written, work] = await Promise.all([turnsOf(id), play(`attached?session=${id}`), play(`tmp?session=${id}`), play(`sessions/${id}/workspace`).catch(() => null)]);
     if (state.selected !== id) return;
-    state.loaded = { id, turns, attached: attached.files, written: written.files };
+    state.loaded = { id, turns, attached: attached.files, written: written.files, work };
     drawDetail();
   } catch (error) {
     if (!quiet) fill(detail, empty("The session did not load", error.message));
@@ -91,6 +92,32 @@ async function fork(turn) {
   await load();
   state.tab = "activity";
   await select(made.session.id);
+}
+
+/** Put the work of a session on the newest release of the repository. A conflict shows its files. */
+async function resync(id) {
+  try {
+    const done = await play(`sessions/${id}/resync`, { method: "POST", body: {} });
+    toast(done.resynced ? "The work is on the newest release." : "The directory has the newest release.", "good");
+  } catch (error) {
+    const files = error.data?.files || [];
+    if (!files.length) throw error;
+    const about = h("p", { class: "muted", text: "Git found a conflict in these files. The directory stays as it was. Change the work in these files, then resync again." });
+    dialog("The work does not apply to the new release", [about, h("div", { class: "block pad mono small" }, files.map((name) => h("div", { text: name })))]);
+  }
+  await select(id, true);
+}
+
+/** Return the chips of the work directory of a session: its release, its work and its copy in S3. */
+function workChips(work) {
+  return [
+    h("span", { class: "chip mono", title: work.root, text: work.root.split("/").slice(-2).join("/") }),
+    h("span", { class: "chip mono", title: "The release of the repository that the directory started from", text: `release ${work.base.slice(0, 12)}` }),
+    work.is_behind && chip("behind the repository", "amber"),
+    work.commits > 0 && chip(plural(work.commits, "commit")),
+    work.changed > 0 && chip(plural(work.changed, "changed file")),
+    work.name && chip(work.saved ? `S3 copy ${ago(work.saved * 1000)}` : "no S3 copy yet", work.saved ? "" : "amber"),
+  ];
 }
 
 /** Return the turn that attached a file. A row without the turn id gives the turn that was at work at its time. */
@@ -203,11 +230,11 @@ function composer(session) {
   draft.value = state.draft;
   draft.addEventListener("input", () => (state.draft = draft.value));
   const sendButton = button("Send", { class: "primary", onclick: press(() => send(session, draft.value.trim())) }, "play");
-  return h("div", { class: "card", style: "padding:12px;display:grid;gap:8px" }, draft, h("div", { class: "row" }, h("span", { class: "small muted", text: "The request runs in this session, with the same project directory." }), h("span", { class: "right" }, sendButton)));
+  return h("div", { class: "card", style: "padding:12px;display:grid;gap:8px" }, draft, h("div", { class: "row" }, h("span", { class: "small muted", text: "The request runs in this session, with the same work directory." }), h("span", { class: "right" }, sendButton)));
 }
 
 function drawDetail() {
-  const { id, turns, attached, written } = state.loaded;
+  const { id, turns, attached, written, work } = state.loaded;
   const session = state.sessions.find((row) => row.id === id) || { id, workspace: {} };
   const run = state.runs[id];
   const root = session.workspace?.root || "";
@@ -236,7 +263,7 @@ function drawDetail() {
       tokens > 0 && chip(`${count(tokens)} tokens`),
       cost > 0 && chip(`$${cost.toFixed(2)}`),
       run && h("a", { class: "chip amber", href: `/play/workflows#run=${run.id}`, text: `workflow · ${run.title}` }),
-      h("span", { class: "chip mono", title: root, text: root.split("/").slice(-2).join("/") }),
+      work ? workChips(work) : h("span", { class: "chip mono", title: root, text: root.split("/").slice(-2).join("/") }),
     ),
     h(
       "div",
@@ -244,6 +271,7 @@ function drawDetail() {
       h("a", { class: "btn dark", href: `/#/s/${encodeURIComponent(id)}` }, h("span", { text: "Open in Vis" })),
       button("Transcript", { onclick: () => transcripts(session) }, "download"),
       button("Fork", { title: "Make a new session with each turn of this session", onclick: press(() => fork(null)) }, "fork"),
+      work?.name && work.is_behind && button("Resync", { title: "Put the work of this session on the newest release of the repository", onclick: press(() => resync(id)) }, "download"),
       inProject && button("Publish", { onclick: () => publish(session) }, "upload"),
     ),
   );

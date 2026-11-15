@@ -43,7 +43,9 @@ Resources:
           - {Id: versions, Status: Enabled, NoncurrentVersionExpiration: {NoncurrentDays: 7}, ExpiredObjectDeleteMarker: true}
           # There is no rule for `state/`. A rule can remove the only checkpoint of a
           # stack that nobody used for some days. See "S3 is the database" in the README.
-          # The work files of a session are temporary.
+          # There is no rule for `work/` either: the copy of the work of a session stays
+          # until a person deletes the session.
+          # The files of a session that the pages show are temporary.
           - {Id: tmp, Status: Enabled, Prefix: tmp/, ExpirationInDays: 7}
           - {Id: relay, Status: Enabled, Prefix: relay/, ExpirationInDays: 1}
           - {Id: outbox, Status: Enabled, Prefix: outbox/, ExpirationInDays: 1}
@@ -407,6 +409,7 @@ Resources:
                   - !Sub "${Bucket.Arn}/workflows/*"
                   - !Sub "${Bucket.Arn}/attached/*"
                   - !Sub "${Bucket.Arn}/tmp/*"
+                  - !Sub "${Bucket.Arn}/work/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
                 Action: s3:DeleteObject
@@ -415,6 +418,7 @@ Resources:
                   - !Sub "${Bucket.Arn}/relay/*"
                   - !Sub "${Bucket.Arn}/workflows/*"
                   - !Sub "${Bucket.Arn}/tmp/*"
+                  - !Sub "${Bucket.Arn}/work/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
                 Action: s3:PutObject
@@ -425,7 +429,7 @@ Resources:
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
                 Condition:
-                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*]}
+                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*, work/*]}
                   StringEquals: {aws:SourceVpc: !Ref Vpc}
               - Effect: Allow
                 Action: [sqs:ReceiveMessage, sqs:DeleteMessage]

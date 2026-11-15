@@ -11,8 +11,10 @@ import base64
 import http.client
 import json
 import queue
+import re
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from durable import aws, wire
@@ -22,6 +24,9 @@ from durable.gateway import HOST, PORT, Gateway
 
 # An event stream collects its bytes for COLLECT_S, writes one S3 object, then waits PAUSE_S.
 COLLECT_S, PAUSE_S = 0.2, 0.15
+# The gateway calls that make a session and start a turn, and the calls that delete one session or many sessions.
+CREATE, TURN = re.compile(r"/v1/sessions/?"), re.compile(r"/v1/sessions/([0-9a-f-]{36})/turns/?")
+ONE, MANY = re.compile(r"/v1/sessions/([0-9a-f-]{36})/?"), re.compile(r"/v1/(session-groups|projects)/[^/]+/?")
 
 
 def reply(rid: str, head: dict[str, Any], body: bytes) -> None:
@@ -109,13 +114,36 @@ class Relay:
         headers = {**call["headers"], **self.gateway.headers(), "host": f"{HOST}:{PORT}"}
         if "content-type" in call["headers"]:  # the gateway headers name JSON: the type of the call wins
             headers["content-type"] = call["headers"]["content-type"]
+        method, path = call["method"], call["path"].partition("?")[0]
+        # What the worker does with the answer of the gateway, for a call that makes or deletes a session.
+        after: Callable[[int, bytes], Any] | None = None
+        turn, one = TURN.fullmatch(path), ONE.fullmatch(path)
+        if method == "POST" and CREATE.fullmatch(path):
+            body, made = self.api.place(body)
+            # The body has a new length: the connection counts it.
+            headers = {name: value for name, value in headers.items() if name.lower() != "content-length"}
+            if made:
+                after = lambda status, data: self.api.placed(made, status, data)  # noqa: E731
+        elif method == "POST" and turn:
+            self.api.touch(turn.group(1))
+        elif method == "DELETE" and one:
+            roots = self.api.leaving(one.group(1))
+            after = lambda status, data: status < 300 and self.api.reap(roots)  # noqa: E731
+        elif method == "DELETE" and MANY.fullmatch(path):
+            after = lambda status, data: status < 300 and self.api.reap(None)  # noqa: E731
         connection = http.client.HTTPConnection(HOST, PORT, timeout=max(5.0, call["deadline"] - time.time()))
         try:
             connection.request(call["method"], call["path"], body or None, headers)
             answer = connection.getresponse()
             head = {"status": answer.status, "headers": [[k, v] for k, v in answer.getheaders() if k.lower() not in wire.HOP]}
             if "text/event-stream" not in (answer.getheader("content-type") or ""):
-                return reply(rid, head, answer.read())
+                data = answer.read()
+                if after:
+                    try:
+                        after(answer.status, data)
+                    except Exception as failure:  # the gateway answered: the call keeps its answer
+                        log("no work directory change", method, path, repr(failure))
+                return reply(rid, head, data)
             self.stream(call, head, answer)
         finally:
             connection.close()

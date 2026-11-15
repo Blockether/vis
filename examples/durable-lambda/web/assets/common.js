@@ -84,7 +84,12 @@ async function call(path, { method = "GET", body, raw = false } = {}) {
   } catch {
     // The answer has no JSON body.
   }
-  if (!answer.ok) throw new Error((data && (data.error?.message || data.error || data.message)) || `The call failed (HTTP ${answer.status}).`);
+  if (!answer.ok) {
+    const failure = new Error((data && (data.error?.message || data.error || data.message)) || `The call failed (HTTP ${answer.status}).`);
+    // The answer can say more than its text, such as the files of a Git conflict.
+    failure.data = data;
+    throw failure;
+  }
   return data;
 }
 

@@ -1,6 +1,6 @@
 // The workflows page: write a workflow in Python, add activities, run it and watch the run.
 /* global CodeMirror */
-import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, dialog, drop, empty, field, filePath, fileRow, fill, giveFile, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, span, stepBars, structured, textOf, toast, turnsOf, value, versionOf, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, dialog, drop, empty, field, filePath, fileRow, fill, giveFile, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, span, stepBars, structured, textOf, toast, turnsOf, value, versionOf, vis, waiting } from "/play/assets/common.js";
 
 const studio = document.querySelector("#studio");
 const list = document.querySelector("#list");
@@ -286,16 +286,21 @@ async function run() {
     area.value = isText(input) ? input.default || "" : JSON.stringify(input.default);
     return [input, area];
   });
+  // A run makes its own session, or it works in a session of the repository that a person selects.
+  const listed = await vis("sessions?limit=100").catch(() => ({}));
+  const known = new Map([...(listed.awaiting || []), ...(listed.sessions || [])].filter((row) => /\/work\/[^/]+$/.test(row.workspace?.root || "")).map((row) => [row.id, row]));
+  const where = h("select", { class: "input" }, h("option", { value: "", text: "A new session for this run" }), [...known.values()].map((row) => h("option", { value: row.id, text: `${row.title || "Untitled session"} · ${row.id.slice(0, 8)}` })));
   const start = async () => {
     const input = Object.fromEntries(areas.map(([given, area]) => [given.name, isText(given) ? area.value : JSON.parse(area.value)]));
-    const made = await play("runs", { method: "POST", body: { workflow: state.name, input } });
+    const made = await play("runs", { method: "POST", body: { workflow: state.name, input, session: where.value || null } });
     box.close();
     toast("The run started.", "good");
     await loadRuns();
     await openRun(made.id);
   };
   const fields = areas.map(([input, area]) => field(input.name, area, "mono"));
-  const box = dialog(`Run · ${about.title}`, [h("p", { class: "muted", text: about.description }), fields, !fields.length && h("p", { class: "small muted", text: "This workflow has no inputs." })], [button("Start the run", { class: "primary", onclick: press(start) }, "play")]);
+  const place = [field("Session", where), h("p", { class: "small muted", text: "In a session that you select, the run works in the directory of that session. It starts when the turn of the session ends." })];
+  const box = dialog(`Run · ${about.title}`, [h("p", { class: "muted", text: about.description }), fields, !fields.length && h("p", { class: "small muted", text: "This workflow has no inputs." }), place], [button("Start the run", { class: "primary", onclick: press(start) }, "play")]);
 }
 
 async function loadRuns() {

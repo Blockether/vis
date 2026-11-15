@@ -2,10 +2,11 @@
 
 It gives every session of Durable Lambda three things:
 
-- A copy in S3 of each file that a step wrote in the project directory or in `/tmp`.
-  The copy is temporary: S3 removes it after 7 days.
-- The `durable` tools: list and start workflows, read a run with `run_status`, and
-  publish the commits of the project to GitHub.
+- A copy in S3 of each file that a step wrote in the work directory or in `/tmp`.
+  The copy is temporary: S3 removes it after 7 days. Each step also tells the worker
+  that the work directory changed, so the worker copies its Git work to S3.
+- The `durable` tools: list and start workflows, read a run with `run_status`, put the
+  work directory on the newest release, and publish its commits to GitHub.
 - The `/workflows` command, which starts a workflow. The Workflows app of Vis is not here:
   the worker owns it (`durable/apps.py`), because a global app belongs to no session.
 
@@ -54,7 +55,9 @@ def call(method, path, body=None, timeout=120):
             return answer.read()
     except urllib.error.HTTPError as failure:
         try:
-            message = json.loads(failure.read())["error"]
+            found = json.loads(failure.read())
+            # A refused resync names the files that Git could not merge.
+            message = found["error"] + "".join(f"\n- {name}" for name in found.get("files") or [])
         except (ValueError, KeyError, TypeError):
             message = f"HTTP {failure.code}"
         raise RuntimeError(message) from None
@@ -120,7 +123,7 @@ def before_step(step):
 
 
 def after_step(step):
-    """Copy each file that changed to `tmp/<session>/` in S3."""
+    """Copy each file that changed to `tmp/<session>/` in S3, and report the step to the worker."""
     session = _session_id()
     if not session:
         return
@@ -134,15 +137,17 @@ def after_step(step):
                 changed = [path for path, state in current.items() if previous.get(path) != state]
                 removed = [f"{label}/{path}" for path in previous if path not in current]
                 changes.append((label, root, changed, removed))
-        for label, root, changed, removed in changes:
-            _copy(session, label, root, changed, removed)
+        sent = [_copy(session, label, root, changed, removed) for label, root, changed, removed in changes]
+        if not any(sent):
+            # A step can change only the Git data, as a commit does. The worker gets a report of each step.
+            api("POST", "tmp", {"session": session})
     except Exception:  # noqa: BLE001 - a copy error must never stop a step
         LOG.exception("durable: after %s", step.get("op"))
 
 
 def _copy(session, label, root, changed, removed):
-    """Send the changed files of one directory to the API, in calls of at most CALL_LIMIT bytes."""
-    batch, size = [], 0
+    """Send the changed files of one directory to the API, in calls of at most CALL_LIMIT bytes. Return True after a call."""
+    batch, size, is_sent = [], 0, False
     for path in changed:
         try:
             with open(os.open(os.path.join(root, path), os.O_RDONLY | os.O_NOFOLLOW), "rb") as file:
@@ -155,19 +160,28 @@ def _copy(session, label, root, changed, removed):
             continue
         if size + len(data) > CALL_LIMIT and batch:
             api("POST", "tmp", {"session": session, "files": batch})
-            batch, size = [], 0
+            batch, size, is_sent = [], 0, True
         batch.append({"path": f"{label}/{path}", "data": base64.b64encode(data).decode()})
         size += len(data)
     if batch or removed:
         api("POST", "tmp", {"session": session, "files": batch, "removed": removed})
+        is_sent = True
+    return is_sent
 
 
 # -- tools ----------------------------------------------------------------------
 
 
-def _run(name, value):
-    """Start a run of a workflow and return the run. The input is a dict, a JSON text or a plain text."""
-    return api("POST", "runs", {"workflow": name, "input": value or {}})
+def _run(name, value, session=None):
+    """Start a run of a workflow and return the run. The input is a dict, a JSON text or a plain text.
+
+    Without a session, the run makes its own session. `current` names the session of this step.
+    """
+    if session == "current":
+        session = _session_id()
+        if not session:
+            raise RuntimeError("this step has no session")
+    return api("POST", "runs", {"workflow": name, "input": value or {}, "session": session})
 
 
 def _present(headline, summary, *content, **options):
@@ -208,6 +222,27 @@ def render_status(phase, args, kwargs, result, error):
     return _present(f"Workflow run {result['id'][:8]}", f"{result['title']} is {result['status']}", table, outcome=result["status"])
 
 
+def _directory(result):
+    """Describe a work directory in one line."""
+    release = f"release {result['base'][:12]}" + (f", behind release {result['release'][:12]}" if result["is_behind"] else ", the newest release")
+    return f"{release}, {result['commits']} commit(s), {result['changed']} changed file(s)"
+
+
+def render_workspace(phase, args, kwargs, result, error):
+    if phase == "failure":
+        return _failure("Read the work directory", error)
+    return _present("Read the work directory", _directory(result), outcome="behind" if result["is_behind"] else "current") if phase == "success" else None
+
+
+def render_resync(phase, args, kwargs, result, error):
+    if phase == "failure":
+        return _failure("Resync with the repository", error)
+    if phase != "success":
+        return _present("Resync with the repository", "Putting the work on the newest release")
+    did = "The work is on the newest release" if result["resynced"] else "The directory had the newest release"
+    return _present("Resync with the repository", f"{did}: {_directory(result)}", outcome="resynced" if result["resynced"] else "current")
+
+
 def render_publish(phase, args, kwargs, result, error):
     if phase == "failure":
         return _failure("Publish to GitHub", error)
@@ -228,13 +263,15 @@ class Durable:
         return api("GET", "workflows")["workflows"]
 
     @vis.method(tag="mutation", activity=vis.Activity(label="Start workflow", render=render_run))
-    def run_workflow(self, name: str, input: dict | str | None = None) -> dict:  # noqa: A002 - the tool argument is `input`
+    def run_workflow(self, name: str, input: dict | str | None = None, session: str | None = None) -> dict:  # noqa: A002 - the tool argument is `input`
         """Start a run of a workflow. `input` is a dict of its inputs, or a text for its first input.
 
-        The run works in its own Vis session. This call returns at once with the run id.
-        Read the progress with `run_status`.
+        Without `session`, the run works in its own new Vis session and directory. With
+        the id of a session, or with `"current"` for this session, the run works in that
+        session and in its directory: it starts when the turn of the session ends. This
+        call returns at once with the run id. Read the progress with `run_status`.
         """
-        return _run(name, input)
+        return _run(name, input, session)
 
     @vis.method(activity=vis.Activity(label="Read workflow run", render=render_status, show_start=False))
     def run_status(self, run_id: str) -> dict:
@@ -243,9 +280,24 @@ class Durable:
         run.pop("source", None)
         return run
 
+    @vis.method(activity=vis.Activity(label="Read the work directory", render=render_workspace, show_start=False))
+    def workspace(self) -> dict:
+        """Return the work directory of this session: its release, the newest release, its commits and its changed files."""
+        return api("GET", f"sessions/{vis.session.id}/workspace")
+
+    @vis.method(tag="mutation", activity=vis.Activity(label="Resync with the repository", render=render_resync))
+    def resync(self) -> dict:
+        """Put the work of this session on the newest release of the repository.
+
+        The commits of the session move to the release with a rebase, and the files that
+        are not committed go on them again. When Git finds a conflict, the directory
+        stays as it was and the error names the files.
+        """
+        return api("POST", f"sessions/{vis.session.id}/resync", {"is_own_turn": True}, timeout=300)
+
     @vis.method(tag="external", activity=vis.Activity(label="Publish to GitHub", render=render_publish))
     def publish(self, message: str) -> dict:
-        """Commit the work in the project directory and push it to the GitHub repository of Durable Lambda.
+        """Commit the work in the directory of this session and push it to the GitHub repository of Durable Lambda.
 
         The push goes to the main branch. When main moved, it goes to a new branch
         `durable/<id>`. The result names the branch, the commit and its URL.
@@ -269,12 +321,13 @@ def start_workflow(ctx):
     return vis.ok(f"Run {run['id'][:8]} of {run['title']} started", "Open **Workflows** with the global apps button in the header of Vis to follow it.", {"run_id": run["id"]})
 
 
-PROMPT = """Durable Lambda runs on AWS Lambda. The project directory is a clone of the GitHub repository of Durable Lambda.
+PROMPT = """Durable Lambda runs on AWS Lambda. The work directory of this session is its own clone of the GitHub repository of Durable Lambda. S3 keeps a copy of its Git work.
 - There is no internet access. Do not install packages.
 - `attach(text.encode(), "SPEC.md")` saves a document. Use it for each document that a person asks for. Durable Lambda shows each attached file on its pages.
 - `list_attachments()` lists the documents of the session and `read_attachment(name)` returns the bytes of one. Attach a new version with the same name.
-- `durable.publish(message)` commits the project and pushes it to GitHub. Use it only when a person asks to publish.
-- `durable.workflows()` and `durable.run_workflow(name, input)` list and start the workflows."""
+- `durable.publish(message)` commits the work and pushes it to GitHub. Use it only when a person asks to publish.
+- `durable.workspace()` shows if the directory is behind the newest release. `durable.resync()` puts the work on the newest release.
+- `durable.workflows()` and `durable.run_workflow(name, input)` list and start the workflows. A run makes its own session. With `session="current"` it works in this session after this turn."""
 
 # The operations that can write a file.
 STEPS = ["python_execution", "patch", "shell"]
@@ -282,7 +335,7 @@ STEPS = ["python_execution", "patch", "shell"]
 vis.register_extension(
     vis.Extension(
         name="durable",
-        description="Durable Lambda on AWS Lambda: workflows, copies of the session files in S3 and publishing to GitHub.",
+        description="Durable Lambda on AWS Lambda: workflows, a work directory for each session with a copy in S3, and publishing to GitHub.",
         alias="durable",
         prompt=PROMPT,
         symbols=[vis.Symbol(Durable(), name="durable")],

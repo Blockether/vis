@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Examples: in `examples/durable-lambda/`, each session works in its own clone of the repository, and S3 keeps a copy of that work. A new worker or a new file system gets the work back. A session can put its work on the newest release (resync), a workflow run can work in a session that a person selects, and a delete of a session removes its work.
 - Apps: choose one of 32 icons with `vis.ui.app(..., icon="review")`. The app menu and header show the icon in Companion and a text mark in the terminal. Review uses its own code review icon. Reopen an app by key to change its icon without replacing its state.
 - Components: four new components for forms and live views. `vis.ui.badge` shows a row of short labels, `vis.ui.listing` shows a list with bullets or numbers, `vis.ui.chart` shows numbers as bars or lines, and `vis.ui.datetime` takes a date, a time or both as text in the form of its `mode`. The terminal and the Companion app draw each of them.
 - Companion: `npm run storybook:contrast` takes `CONTRAST_THEMES` (a list of themes to check) and `CONTRAST_REPORT` (a file for all failures as JSON).

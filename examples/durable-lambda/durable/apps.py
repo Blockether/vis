@@ -27,6 +27,8 @@ TONES = {"queued": "idle", "running": "running", "waiting": "warn", "completed":
 COUNTS = (("open", "In progress", OPEN, "running"), ("completed", "Completed", ("completed",), "ok"), ("failed", "Failed", ("failed",), "error"))
 # The runs that the History tab lists, and the seconds between two looks at the runs.
 LISTED, LOOK_S = 30, 2
+# The value of the session field for a run that makes its own session.
+NEW = "new"
 
 
 def tabs(tab: str) -> dict[str, Any]:
@@ -65,13 +67,20 @@ class Workflows(threading.Thread):
                 vis.ui.button("new-run", "New run"),
             )
         flows = self.api.workflows()["workflows"]
+        sessions = [vis.ui.option(session, title) for session, title in self.api.places()]
         return vis.ui.column(
             "body",
-            vis.ui.paragraph("about", "Select a workflow and give its input. Each run works in its own Vis session."),
+            vis.ui.paragraph("about", "Select a workflow and give its input. A run works in its own new Vis session, or in a session that you select."),
             vis.ui.group(
                 "start",
                 vis.ui.select("workflow", [vis.ui.option(flow["name"], flow["title"]) for flow in flows], label="Workflow", is_required=True),
                 vis.ui.multiline("input", label="Input", description="A text for the first input of the workflow, or a JSON object."),
+                vis.ui.select(
+                    "session",
+                    [vis.ui.option(NEW, "A new session for this run"), *sessions],
+                    label="Session",
+                    description="In a session that you select, the run works in the directory of that session.",
+                ),
                 vis.ui.button("start-run", "Run workflow", action="submit", variant="primary"),
             ),
         )
@@ -154,7 +163,9 @@ class Workflows(threading.Thread):
         elif event.type == "submit" and event.node_id == "start-run":
             values = event.values or {}
             try:
-                self.followed, self.refusal = self.api.run({"workflow": values.get("workflow"), "input": values.get("input") or ""})["id"], ""
+                session = values.get("session")
+                asked = {"workflow": values.get("workflow"), "input": values.get("input") or "", "session": None if session in (None, "", NEW) else session}
+                self.followed, self.refusal = self.api.run(asked)["id"], ""
             except Refused as refusal:
                 self.followed, self.refusal = None, str(refusal)
             else:

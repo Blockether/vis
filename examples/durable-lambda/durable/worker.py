@@ -59,8 +59,9 @@ def keep_review(old: str, new: str) -> None:
 def project() -> tuple[str, str]:
     """Return the project directory and the commit of the current release.
 
-    All sessions that a person starts work in the one directory `work/main`. It takes
-    each new release, so a session and its project stay when the repository changes.
+    `work/main` is the directory of the one project of Vis. It takes each new release,
+    so the project stays when the repository changes. Each session works in its own
+    clone next to it: see `durable/workspaces.py`.
     """
     release = sync.current()
     if not release:
@@ -95,7 +96,9 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     broker.start()
     engine = gateway.Gateway(root, broker.url)
     engine.start()
-    api.cancel_turn, api.runs.group = engine.cancel, engine.organize(root, ENV.get("VIS_REPO", "").rpartition("/")[2] or "durable")
+    api.engine, api.runs.busy = engine, engine.busy
+    api.runs.group = engine.organize(root, ENV.get("VIS_REPO", "").rpartition("/")[2] or "durable")
+    api.people = engine.group(root, gateway.PEOPLE)
     # Each call gets its own SDK client: one client serves one thread.
     client = lambda: GatewayClient(f"http://{gateway.HOST}:{gateway.PORT}", token=engine.token)  # noqa: E731
     api.session = lambda session: client().session(session)
@@ -104,6 +107,8 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     pool = ThreadPoolExecutor(max_workers=64)
     queue = aws.client("sqs")
     saved, renewed, checked = state.fingerprint(), 0.0, time.time()
+    # One thread at a time copies the changed work directories to S3.
+    copying = pool.submit(int)
     running, due, reason = 0, None, "idle"
     ready = time.time()
     log(f"worker ready in {ready - started:.1f} s: state {restored - started:.1f}, project {cloned - restored:.1f}, gateway {ready - cloned:.1f}, release {release[:12]}")
@@ -126,6 +131,8 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
                 if current != saved:
                     state.save(held)
                     saved = current
+                if copying.done():
+                    copying = pool.submit(api.workspaces.save)
             if now - started > LIFETIME or context.remaining_s() < MARGIN:
                 reason = "handoff"
                 break
@@ -146,6 +153,8 @@ def work(held: Lease, context: Context) -> dict[str, Any]:
     relay.settle(8.0)
     pool.shutdown(wait=False, cancel_futures=True)
     broker.stop()
+    # The gateway and the runs stopped, so each work directory has its last files.
+    api.workspaces.save(is_last=True)
     state.save(held)
     runs = api.runs.live()
     held.release(running=0, parked=parked, runs=runs, next_due=due)

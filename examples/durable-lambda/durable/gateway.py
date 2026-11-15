@@ -34,6 +34,8 @@ HOST, PORT, TOKEN_FILE = "127.0.0.1", 7890, f"{WORKER_DIR}/gateway.token"
 PROVIDER = "durable"
 # The session group of the workflow runs, and the directory names of a run and of an earlier release.
 GROUP, RUN_DIR, RELEASE_DIR = "Workflows", re.compile(r"[0-9a-f]{12}-[0-9a-f]{8}"), re.compile(r"[0-9a-f]{12}")
+# The session group of the sessions that a person starts. Each has its own directory, and the group keeps it in the one project.
+PEOPLE = "Sessions"
 # The variables that the gateway and the tools of a session get. No AWS credentials.
 PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "VIS_WEB_DIR")
 
@@ -121,11 +123,42 @@ class Gateway:
         rows: dict[str, dict[str, Any]] = {}
         cursor = ""
         while True:
-            _, page = self.call("GET", f"/v1/sessions?limit=200&archived=include&{query}{cursor}")
+            status, page = self.call("GET", f"/v1/sessions?limit=200&archived=include&{query}{cursor}")
+            if status != 200:  # a part of the list is not the list: a caller removes what no session uses
+                raise RuntimeError(f"the gateway did not list the sessions: HTTP {status}")
             rows.update((row["id"], row) for row in (page.get("sessions") or []) + (page.get("awaiting") or []))
             if not page.get("has_more") or not page.get("next_cursor"):
                 return list(rows.values())
             cursor = f"&after={page['next_cursor']}"
+
+    def roots(self) -> set[str]:
+        """Return the directory of each session that has a turn. The gateway does not list an empty session."""
+        return {os.path.realpath((row.get("workspace") or {}).get("root") or self.project) for row in self.sessions("")}
+
+    def is_gone(self, session: str) -> bool:
+        """Return True when the gateway says that it does not have a session."""
+        return self.call("GET", f"/v1/sessions/{session}")[0] == 404
+
+    def soul(self, session: str) -> dict[str, Any] | None:
+        """Return a session, or None when the gateway does not have it."""
+        status, row = self.call("GET", f"/v1/sessions/{session}")
+        return row if status == 200 else None
+
+    def busy(self, session: str) -> bool:
+        """Return True while a turn runs in a session."""
+        row = self.soul(session) or {}
+        return row.get("status") == "running" or bool(row.get("current_turn_id"))
+
+    def group(self, root: str, name: str) -> str:
+        """Return the id of a session group of the project. Make the group when the project does not have it."""
+        _, listed = self.call("GET", f"/v1/session-groups?archived=include&root={quote(root, safe='')}")
+        found = next((row["id"] for row in (listed or {}).get("groups") or [] if row["name"] == name), None)
+        if found is None:
+            status, made = self.call("POST", "/v1/session-groups", {"name": name, "root": root})
+            if status != 201:
+                raise RuntimeError(f"the gateway did not make the session group: HTTP {status}")
+            found = made["id"]
+        return found
 
     def organize(self, root: str, name: str) -> str:
         """Make the one project and its group of workflow runs. Return the id of the group.
@@ -136,13 +169,7 @@ class Gateway:
         moves to the project directory. A project that has no session left goes.
         """
         self.call("POST", "/v1/projects/actions/ensure", {"root": root, "name": name})
-        _, listed = self.call("GET", f"/v1/session-groups?archived=include&root={quote(root, safe='')}")
-        group = next((row["id"] for row in (listed or {}).get("groups") or [] if row["name"] == GROUP), None)
-        if group is None:
-            status, made = self.call("POST", "/v1/session-groups", {"name": GROUP, "root": root})
-            if status != 201:
-                raise RuntimeError(f"the gateway did not make the session group: HTTP {status}")
-            group = made["id"]
+        group = self.group(root, GROUP)
         _, projects = self.call("GET", "/v1/projects")
         for project in (projects or {}).get("projects") or []:
             folder, parent = os.path.basename(str(project.get("workspace_root"))), os.path.dirname(str(project.get("workspace_root")))
@@ -166,8 +193,7 @@ class Gateway:
 
     def cancel(self, session: str) -> None:
         """Cancel the turn that runs in a session. The gateway cancels a turn only by its id."""
-        _, row = self.call("GET", f"/v1/sessions/{session}")
-        turn = (row or {}).get("current_turn_id")
+        turn = (self.soul(session) or {}).get("current_turn_id")
         if turn:
             self.call("POST", f"/v1/sessions/{session}/turns/{turn}/cancel", {})
 

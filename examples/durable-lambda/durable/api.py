@@ -11,6 +11,7 @@ and the Vis extension reach it through the broker. S3 holds all its data:
     runs/<id>/inputs/<key>.json  a file that a person gave to a waiting run
     attached/<session>/<name>    a copy of each file that a session attached
     tmp/<session>/<path>         the files that a session wrote, kept for 7 days
+    work/<name>/                 the copy of the work directory of a session (see `workspaces.py`)
     outbox/<id>.bundle           commits that wait for the repo function
 """
 
@@ -35,7 +36,9 @@ from typing import Any
 from blockether.vis.engine import GatewayError, Session, TransportError
 
 from durable import aws, sync, wire
-from durable.env import EFS, ENV, LIFETIME, MODELS, REPO_FUNCTION, log, private
+from durable.env import ENV, LIFETIME, MODELS, REPO_FUNCTION, log, private
+from durable.gateway import Gateway
+from durable.workspaces import FAILURES, Conflict, Workspaces, name_of
 
 NAME = re.compile(r"[a-z][a-z0-9_]{1,39}")
 SESSION = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
@@ -62,9 +65,9 @@ Answer = tuple[int, list[list[str]], bytes]
 class Refused(Exception):
     """A call that the API does not accept."""
 
-    def __init__(self, status: int, message: str) -> None:
+    def __init__(self, status: int, message: str, **detail: Any) -> None:
         super().__init__(message)
-        self.status = status
+        self.status, self.detail = status, detail
 
 
 def need(pattern: re.Pattern[str], value: Any, what: str) -> str:
@@ -140,13 +143,14 @@ def inputs(about: dict[str, Any], text: str) -> dict[str, Any]:
 class Runs:
     """The workflow runs. Only the worker that holds the lease writes them."""
 
-    def __init__(self, release: str, environment: Callable[[], dict[str, str]]) -> None:
-        self.release, self.environment = release, environment
+    def __init__(self, release: str, environment: Callable[[], dict[str, str]], workspaces: Workspaces) -> None:
+        self.release, self.environment, self.workspaces = release, environment, workspaces
         self.lock = threading.RLock()
         self.docs: dict[str, dict[str, Any]] = {}
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
-        # The worker sets this after the gateway starts: the session group of the runs.
+        # The worker sets these after the gateway starts: the session group of the runs, and True while a turn runs in a session.
         self.group = ""
+        self.busy: Callable[[str], bool] = lambda session: False
         raw, _ = aws.get("runs/index.json")
         self.index: list[dict[str, Any]] = json.loads(raw) if raw else []
 
@@ -173,8 +177,12 @@ class Runs:
         self.index = [line] + [old for old in self.index if old["id"] != doc["id"]]
         aws.put("runs/index.json", json.dumps(self.index[:300]).encode())
 
-    def create(self, workflow: str, source: str, about: dict[str, Any], given: dict[str, Any]) -> dict[str, Any]:
-        """Record a new run with a copy of its source, and start it when a place is free."""
+    def create(self, workflow: str, source: str, about: dict[str, Any], given: dict[str, Any], session: str | None = None, root: str | None = None) -> dict[str, Any]:
+        """Record a new run with a copy of its source, and start it when a place is free.
+
+        Without a session, the run makes its own session in its own directory. With a
+        session, the run works in that session and in its directory.
+        """
         known = {item["name"] for item in about["inputs"]}
         unknown = set(given) - known
         if unknown:
@@ -188,18 +196,20 @@ class Runs:
             "created": time.time(),
             "started": None,
             "finished": None,
-            "session_id": None,
+            "session_id": session,
             "result": None,
             "error": None,
             "starts": 0,
-            # Each run works in its own clone of a release, so two runs do not collide.
-            "root": None,
+            # A run without a session works in its own clone of a release, so two runs do not collide.
+            "root": root,
             "activities": [],
             "notes": [],
             # The session turn count before each request of an activity: `<seq>:<n>`.
             "asked": {},
         }
         with self.lock:
+            if session and any(line["session_id"] == session and line["status"] in OPEN for line in self.index):
+                raise Refused(409, "another run uses the session")
             aws.put(f"runs/{doc['id']}/workflow.py", source.encode())
             self.docs[doc["id"]] = doc
             self.write(doc)
@@ -213,19 +223,34 @@ class Runs:
                 if process.poll() is not None:
                     del self.processes[run_id]
                     doc = self.doc(run_id)
+                    self.workspaces.mark(doc["root"])
                     if doc["status"] in LIVE:
                         self.finish(doc, "failed", error=f"the run process stopped with exit code {process.returncode}")
             ready = [line["id"] for line in reversed(self.index) if line["status"] in LIVE and line["id"] not in self.processes]
-            for run_id in ready[: max(0, PARALLEL - len(self.processes))]:
+            for run_id in ready:
+                if len(self.processes) >= PARALLEL:
+                    break
                 doc = self.doc(run_id)
                 if doc["starts"] >= STARTS:
                     self.finish(doc, "failed", error=f"the run did not end in {RUN_LIMIT_S // 3600} hours of work ({STARTS} processes)")
                     continue
-                doc["starts"] += 1
+                # A run in the session of a person waits until the turn of that person ends.
+                if not doc["starts"] and doc["session_id"] and self.busy(doc["session_id"]):
+                    continue
                 env = {**self.environment(), "PYTHONPATH": ENV.get("PYTHONPATH", ""), "PYTHONUNBUFFERED": "1", "DURABLE_GROUP": self.group}
                 # A new run starts from the newest release, also when the worker is older.
                 release = sync.current() or self.release
-                doc["root"] = doc.get("root") or sync.clone(release, f"{release[:12]}-{run_id[:8]}", env)
+                try:
+                    doc["root"] = doc.get("root") or sync.clone(release, f"{release[:12]}-{run_id[:8]}", env)
+                    is_ready = self.workspaces.ensure(doc["root"])
+                except FAILURES as failure:
+                    log("no directory for the run", run_id, repr(failure))
+                    is_ready = False
+                if not is_ready:
+                    self.finish(doc, "failed", error="the work directory of the run is not there, and S3 has no copy of it")
+                    continue
+                doc["starts"] += 1
+                self.workspaces.mark(doc["root"])
                 self.write(doc)
                 self.processes[run_id] = subprocess.Popen([sys.executable, "-m", "durable.run", run_id], cwd=doc["root"], env=env)
                 log("run started", run_id, doc["workflow"], "start", doc["starts"])
@@ -233,6 +258,8 @@ class Runs:
     def finish(self, doc: dict[str, Any], status: str, **fields: Any) -> None:
         """End a run, and the activity that it left running or waiting."""
         doc.update(status=status, finished=time.time(), waiting=None, **fields)
+        if doc["root"]:
+            self.workspaces.mark(doc["root"])
         for activity in doc["activities"]:
             if activity["status"] in ("running", "waiting"):
                 activity.update(status="cancelled" if status == "cancelled" else "failed", finished=time.time())
@@ -252,6 +279,7 @@ class Runs:
             if kind == "started":
                 session = need(SESSION, event.get("session_id"), "the session id")
                 doc.update(status="running", session_id=session, started=doc["started"] or now)
+                self.workspaces.own(doc["root"], session)
             elif kind == "activity_started" and seq is not None and isinstance(event.get("name"), str):
                 name = event["name"][:80]
                 fresh = {"seq": seq, "name": name, "title": str(event.get("title") or name)[:200], "status": "running"}
@@ -324,6 +352,12 @@ class Runs:
     def live(self) -> int:
         return sum(1 for line in self.index if line["status"] in LIVE)
 
+    def roots(self) -> set[str]:
+        """Return the directory of each run that did not end."""
+        with self.lock:
+            roots = [self.doc(line["id"])["root"] for line in self.index if line["status"] in OPEN]
+        return {os.path.realpath(root) for root in roots if root}
+
     def stop(self) -> None:
         """Stop the run processes. The runs stay live, so the next worker starts them again."""
         with self.lock:
@@ -338,10 +372,14 @@ class Api:
     def __init__(self, project: str, release: str, environment: Callable[[], dict[str, str]]) -> None:
         self.project, self.release, self.environment = project, release, environment
         self.started = time.time()
-        self.runs = Runs(release, environment)
-        # The worker sets these after the gateway starts: cancel the turn of a session, and open a session with the SDK.
-        self.cancel_turn: Callable[[str], None] = lambda session: None
+        self.workspaces = Workspaces(environment)
+        self.runs = Runs(release, environment, self.workspaces)
+        # The worker sets these after the gateway starts: the gateway, the group of the sessions of a person, and open a session with the SDK.
+        self.engine: Gateway | None = None
+        self.people = ""
         self.session: Callable[[str], Session] | None = None
+        # The directory of each session that reported a change, and the time of the answer of the gateway.
+        self.homes: dict[str, tuple[float, str]] = {}
         # The copy that S3 has of each attached file: (session, name) -> its turn and version.
         self.copied: dict[tuple[str, str], dict[str, Any]] = {}
         routes: list[tuple[str, str, Callable[..., Any]]] = [
@@ -364,6 +402,8 @@ class Api:
             ("GET", r"tmp", self.temporary),
             ("GET", r"tmp/([\w-]+)/(.+)", self.temporary_file),
             ("POST", r"tmp", self.sync),
+            ("GET", r"sessions/([\w-]+)/workspace", self.workspace),
+            ("POST", r"sessions/([\w-]+)/resync", self.resync),
             ("POST", r"publish", self.publish),
         ]
         self.routes = [(method, re.compile(pattern), function) for method, pattern, function in routes]
@@ -388,7 +428,7 @@ class Api:
                     return answer if isinstance(answer, tuple) else (200, JSON, json.dumps(answer).encode())
             raise Refused(404, "no such path")
         except Refused as refusal:
-            return refusal.status, JSON, json.dumps({"error": str(refusal)}).encode()
+            return refusal.status, JSON, json.dumps({"error": str(refusal), **refusal.detail}).encode()
         except ValueError:
             return 400, JSON, b'{"error":"the body is not JSON"}'
 
@@ -455,7 +495,19 @@ class Api:
             given = inputs(about, given)
         if not isinstance(given, dict):
             raise Refused(400, "input must be an object or a text")
-        return self.runs.create(name, source, about, given)
+        session = payload.get("session")
+        if not session:
+            return self.runs.create(name, source, about, given)
+        root = self.home(session)
+        if os.path.dirname(os.path.realpath(root)) != os.path.realpath(sync.WORK):
+            raise Refused(400, "the session does not work in a directory of Durable Lambda")
+        return self.runs.create(name, source, about, given, session, root)
+
+    def places(self) -> list[tuple[str, str]]:
+        """Return the id and the title of each session that a run can work in: a session with a turn in a clone of the repository."""
+        rows = self.engine.sessions("") if self.engine else []
+        found = [row for row in rows if os.path.dirname(os.path.realpath((row.get("workspace") or {}).get("root") or "/")) == os.path.realpath(sync.WORK)]
+        return [(row["id"], f"{row.get('title') or 'Untitled session'} · {row['id'][:8]}") for row in found[:50]]
 
     def show(self, run_id: str, **_: Any) -> dict[str, Any]:
         doc = self.runs.copy(need(RUN, run_id, "the run id"))
@@ -465,8 +517,8 @@ class Api:
 
     def cancel(self, run_id: str, **_: Any) -> dict[str, Any]:
         doc = self.runs.cancel(need(RUN, run_id, "the run id"))
-        if doc["session_id"]:
-            self.cancel_turn(doc["session_id"])
+        if doc["session_id"] and self.engine:
+            self.engine.cancel(doc["session_id"])
         return doc
 
     def event(self, run_id: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
@@ -565,7 +617,124 @@ class Api:
             aws.put(f"tmp/{session}/{item['path']}", base64.b64decode(item.get("data") or ""))
         for path in removed:
             aws.delete(f"tmp/{session}/{path}")
+        # The session reports after each step that can change a file, so its work directory gets a new copy.
+        self.touch(session, is_fresh=False)
         return {"synced": len(files), "removed": len(removed)}
+
+    # -- the work directory of a session ---------------------------------------
+
+    def home(self, session: Any, is_fresh: bool = True) -> str:
+        """Return the work directory of a session, or refuse a session that the gateway does not have."""
+        need(SESSION, session, "the session id")
+        at, root = self.homes.get(session, (0.0, ""))
+        if is_fresh or time.time() - at > 60:
+            row = self.engine.soul(session) if self.engine else None
+            root = ((row or {}).get("workspace") or {}).get("root") or ""
+            self.homes[session] = (time.time(), root)
+        if not root:
+            raise Refused(404, "no such session")
+        return root
+
+    def touch(self, session: str, is_fresh: bool = True) -> None:
+        """Make the work directory of a session ready, and record that the session changes it."""
+        try:
+            root = self.home(session, is_fresh)
+            if not self.workspaces.ensure(root):
+                log("the session has no work directory", session, root)
+            self.workspaces.mark(root)
+        except (Refused, *FAILURES) as failure:
+            log("no look at the work directory", session, repr(failure))
+
+    def place(self, body: bytes) -> tuple[bytes, str | None]:
+        """Give a new session its own work directory. Return the body for the gateway, and the directory.
+
+        Each session of a person works in its own clone of the current release, so two
+        people do not change the same files. The session joins the group of these
+        sessions when the call names no group: the group keeps it in the one project.
+        """
+        try:
+            asked = json.loads(body) if body else {}
+        except ValueError:
+            return body, None
+        if not isinstance(asked, dict) or asked.get("workspace_id"):
+            return body, None
+        root = self.workspaces.create(sync.current() or self.release)
+        asked.update(root=root, group_id=asked.get("group_id") or self.people or None)
+        return json.dumps(asked).encode(), root
+
+    def placed(self, root: str, status: int, answer: bytes) -> None:
+        """Keep the directory that a new session got, or remove it when no session works in it.
+
+        A call with the key of an earlier call returns the earlier session, with its own directory.
+        """
+        try:
+            made = json.loads(answer) if status in (200, 201) else {}
+            session = made.get("id") if isinstance(made, dict) else None
+            if session and os.path.realpath(self.home(session)) == os.path.realpath(root):
+                return self.workspaces.own(root, session)
+        except (ValueError, Refused):
+            pass
+        self.workspaces.remove(name_of(root) or "")
+
+    def leaving(self, session: str) -> list[str]:
+        """Return the work directory of a session that a call deletes now."""
+        try:
+            return [self.home(session)]
+        except Refused:
+            return []
+
+    def reap(self, roots: list[str] | None) -> None:
+        """Remove the work directory and the S3 copy of each session that the gateway deleted.
+
+        `roots` has the directory of the one session of the call. Without it, the call
+        could delete many sessions: then each workspace whose session is gone goes. A
+        directory stays while another session or a run that did not end works in it.
+        """
+        if not self.engine:
+            return
+        used = self.engine.roots() | self.runs.roots()
+        if roots is None:
+            names = [name for name in self.workspaces.names() if (owner := self.workspaces.owner(name)) and self.engine.is_gone(owner)]
+        else:
+            names = [name for name in map(name_of, roots) if name]
+        for name in names:
+            if os.path.realpath(f"{sync.WORK}/{name}") not in used:
+                self.workspaces.remove(name)
+
+    def directory(self, session: str) -> str:
+        """Return the work directory of a session as a directory that exists."""
+        root = self.home(session)
+        try:
+            is_ready = self.workspaces.ensure(root) and os.path.isfile(f"{root}/.git/durable-base")
+        except FAILURES as failure:
+            log("no work directory", session, repr(failure))
+            is_ready = False
+        if not is_ready:
+            raise Refused(409, "the session has no work directory of Durable Lambda")
+        return root
+
+    def workspace(self, session: str, **_: Any) -> dict[str, Any]:
+        """Return the release of the work directory of a session, its commits and its changed files."""
+        return self.workspaces.status(self.directory(session))
+
+    def resync(self, session: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        """Put the work of a session on the current release of the repository.
+
+        A person cannot do this while a turn or a run changes the files. The tool of the
+        extension can: it is a step of that turn.
+        """
+        root = self.directory(session)
+        if not name_of(root):
+            raise Refused(400, "the project directory takes each release when a worker starts")
+        if not payload.get("is_own_turn") and ((self.engine and self.engine.busy(session)) or os.path.realpath(root) in self.runs.roots()):
+            raise Refused(409, "a turn or a run works in the session: try again when it ends")
+        try:
+            return self.workspaces.resync(root)
+        except Conflict as conflict:
+            raise Refused(409, "the work does not apply to the new release: the directory stays as it was", files=conflict.files) from None
+        except FAILURES as failure:
+            log("resync failed", session, repr(failure))
+            raise Refused(500, "Git could not put the work on the new release") from None
 
     # -- publishing ------------------------------------------------------------
 
@@ -579,8 +748,9 @@ class Api:
     def publish(self, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
         """Commit the work of a project directory and give it to the repo function."""
         root = os.path.realpath(str(payload.get("root") or self.project))
-        if os.path.dirname(root) != os.path.realpath(f"{EFS}/work") or not os.path.isfile(f"{root}/.git/durable-base"):
+        if os.path.dirname(root) != os.path.realpath(sync.WORK) or not os.path.isfile(f"{root}/.git/durable-base"):
             raise Refused(400, "the directory is not a project of Durable Lambda")
+        self.workspaces.mark(root)
         with open(f"{root}/.git/durable-base", encoding="utf-8") as file:
             base = file.read().strip()
         message = " ".join(str(payload.get("message") or "Changes from Durable Lambda").split())[:200]

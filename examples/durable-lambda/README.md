@@ -2,7 +2,8 @@
 
 This example runs Vis as a service on AWS Lambda. The Python runtime that Vis embeds
 is the custom runtime of each function. Amazon S3 is the database. A GitHub repository
-on Amazon EFS is the project of each session. The example has a web application with
+on Amazon EFS is the project. Each session works in its own clone of it, and S3 keeps a
+copy of that work. The example has a web application with
 four pages, a Vis extension and a set of workflows on the Vis SDK. The project is not
 a part of the example: it is a repository of its own, with its own deployment. The
 workflows here are for [MIDI Studio](https://github.com/Blockether/midi-studio), in
@@ -11,6 +12,7 @@ which each song is [music21](https://www.music21.org/) code.
 | You want to | Read |
 | --- | --- |
 | See the parts and the data flow | [Architecture](#architecture) |
+| Know where the work of a session is | [Each session has its own work directory](#each-session-has-its-own-work-directory) |
 | Call the stack from a script | [Addresses](#addresses) |
 | Write a workflow | [Workflows](#workflows) |
 | Make a song from a brief | [The song factory](#the-song-factory) |
@@ -27,7 +29,7 @@ The page `/play/architecture` of a deployed stack shows the same design with dia
 ```mermaid
 flowchart LR
   browser([Browser]) -->|HTTPS, password| front
-  github([GitHub<br>durable-lambda]) -->|webhook| front
+  github([GitHub<br>the project]) -->|webhook| front
   subgraph public [Functions outside the VPC]
     front[front<br>pages, relay, wake]
     llm[llm<br>provider key]
@@ -36,10 +38,9 @@ flowchart LR
   subgraph private [Network without internet]
     worker[worker<br>Vis gateway, sessions, runs]
     sync[sync<br>releases]
-    app[app<br>the web app of the project]
     efs[(EFS<br>releases, work)]
   end
-  s3[(S3<br>state, runs, files)]
+  s3[(S3<br>state, runs, files, work)]
   queue[[SQS]]
   front --> queue --> worker
   worker <--> s3
@@ -48,7 +49,6 @@ flowchart LR
   worker -->|bundle| repo <-->|SSH| github
   repo --> sync --> efs
   worker --> efs
-  front -->|invoke| app -->|read only| efs
 ```
 
 One container image holds all the code. The variable `VIS_ROLE` selects the function.
@@ -56,7 +56,7 @@ One container image holds all the code. The variable `VIS_ROLE` selects the func
 | Function | Network | Holds | Work |
 | --- | --- | --- | --- |
 | `front` | public address | the password, the webhook secret | Checks the password. Serves the pages and Vis web. Sends each call to the worker through SQS and streams the answer from S3. Starts a worker when work waits. |
-| `worker` | VPC, no internet | no secret | Runs the Vis gateway and the workflow runs. Saves the Vis home directory to S3. |
+| `worker` | VPC, no internet | no secret | Runs the Vis gateway and the workflow runs. Saves the Vis home directory and the work of each session to S3. |
 | `llm` | outside the VPC, internet access, no public address | the provider URL and key | Accepts `GET /models` and `POST /chat/completions`. Adds the key and streams the answer. |
 | `repo` | outside the VPC, internet access, no public address | the GitHub deploy key | Copies the `main` branch to S3. Pushes the commits of a session. |
 | `sync` | VPC, no internet | no secret | Puts a snapshot on EFS and makes it the current release. |
@@ -90,7 +90,9 @@ the standard library. It supports plain answers and streamed answers.
 | `runs/<run>/results/<n>.json` | The result of workflow activity `n` | permanent |
 | `runs/<run>/inputs/<key>.json` | A file that a person gave to a waiting run | permanent |
 | `attached/<session>/<name>` | A copy of the newest version of each file that a session attached | permanent |
-| `tmp/<session>/<path>` | The files that a session wrote in `/tmp` and in its project | 7 days |
+| `tmp/<session>/<path>` | The files that a session wrote in `/tmp` and in its work directory | 7 days |
+| `work/<name>/meta.json` | The newest copy of a work directory: its commits, its time and its session | until a person deletes the session |
+| `work/<name>/<commit>.bundle` | The Git work of that copy: the commits after the release, and one commit with each file that is not committed | until the next copy |
 | `relay/<call>/…` | The parts of one answer on the way to the browser | 1 day |
 | `outbox/<id>.bundle` | The commits that a session publishes | 1 day |
 | `repo/HEAD` | The commit of `main` at the last fetch | permanent |
@@ -117,12 +119,45 @@ the checkpoint that counts. You can delete each other object in `state/`.
 4. `sync` writes a new `CURRENT` file and renames it over the old one.
 
 Steps 3 and 4 each end with one rename. A reader sees the old release or the new
-release, and never a part of one. All sessions that a person starts work in one
-directory, `work/main`. A worker reads `CURRENT` at its start and brings the commits of
-that release into `work/main`: as a fast-forward, else as a merge with the work of the
-sessions. If Git cannot merge, the directory stays as it is and the next worker tries
-again. Each new workflow run reads `CURRENT` again and gets a clone of the newest
-release in `work/<commit>-<run>`. `sync` keeps the 5 newest releases.
+release, and never a part of one. `work/main` is the directory of the one Vis project.
+A worker reads `CURRENT` at its start and brings the commits of that release into
+`work/main`: as a fast-forward, else as a merge. If Git cannot merge, the directory
+stays as it is and the next worker tries again. Each new session and each new workflow
+run reads `CURRENT` again and gets a clone of the newest release. `sync` keeps the 5
+newest releases.
+
+### Each session has its own work directory
+
+Many persons can work at the same time. Each session that a person starts gets its own
+clone of the newest release, in `work/<id>` on EFS. Each workflow run that makes its
+own session gets `work/<commit>-<run>`. The work of one session does not change the
+files of another session.
+
+| Event | Result |
+| --- | --- |
+| A session starts | The worker makes a clone of the newest release and gives it to the session as its directory. |
+| A step of a session ends | The extension tells the worker. In at most 15 seconds, the worker copies the Git work of the directory to `work/<name>/` in S3. A worker also copies the work when it stops. |
+| The directory is gone | The next turn or run of the session makes it again from the copy in S3. The worker removes a directory that nothing changed for 14 days, and a new file system has no directory. |
+| `main` moved | The session keeps its release. The Sessions page shows that the directory is behind. **Resync** puts the work on the newest release. |
+| A person deletes the session | The worker removes the directory and the copy in S3. |
+
+The copy is a Git bundle. It holds each branch of the directory and one commit with
+each file that is not committed, also a new file. Git does not put an ignored file in
+it. S3 holds only the newest copy. The copy of the work of a workflow run is the same:
+it stays until a person deletes the session of the run.
+
+A resync is a Git rebase: the commits of the session go on the newest release, and the
+files that are not committed go on them again. When Git finds a conflict, the directory
+stays as it was and the answer names the files. Then change those files in the session
+and try again, or publish the work to a branch. A resync does not start while a turn or
+a run works in the session. The model can do it in its own turn with `durable.resync()`.
+
+A delete of a session group or of a project with its sessions removes the work of each
+deleted session. A fork of a session works in the directory of its source session, so
+the directory stays until the last of those sessions is deleted.
+
+A session that started before this version works in `work/main`. It has no copy in S3
+and no resync: `work/main` takes each release when a worker starts.
 
 ### A session publishes to GitHub
 
@@ -142,10 +177,11 @@ repository.
 ### Temporary work goes to S3
 
 The extension has a hook after each `python_execution`, `patch` and `shell` operation.
-The hook finds the files that changed in `/tmp` and in the project directory and sends
+The hook finds the files that changed in `/tmp` and in the work directory and sends
 them to `tmp/<session>/tmp/` and `tmp/<session>/project/`. The Files tab of a session
 shows them below the attached files. S3 removes them after 7 days. The hook copies only regular files. It does
-not follow a link.
+not follow a link. These copies are for the pages. The copy that brings a work directory
+back is in `work/`: see [Each session has its own work directory](#each-session-has-its-own-work-directory).
 
 ### A document is a Vis attachment
 
@@ -170,8 +206,8 @@ for each file. S3 holds only the newest version of a name.
 | Page | Content |
 | --- | --- |
 | `/` | Vis web, with the provider of the stack. The global apps button of its header opens the Workflows app. |
-| `/play` | The sessions and their Vis activities. Download a transcript. Fork from a turn or from an attached file. Publish the work. |
-| `/play/workflows` | The workflow editor with Python highlighting, the workflow activity dialog and the runs. A waiting run shows where to give its file. |
+| `/play` | The sessions and their Vis activities. Download a transcript. Fork from a turn or from an attached file. See the work directory of a session, put it on the newest release and publish the work. |
+| `/play/workflows` | The workflow editor with Python highlighting, the workflow activity dialog and the runs. A run starts in a new session or in a session that you select. A waiting run shows where to give its file. |
 | `/play/factory` | The song factory: the stations of the `song_factory` workflow as a line, a drop zone for the brief, the song sheet with its GitHub commit, and the earlier orders |
 | `/play/architecture` | The design with diagrams |
 
@@ -186,19 +222,21 @@ diff, with an undo for a file, for a step and for the session. The command `/rev
 not necessary. The record of the review is in the Vis home directory, so each
 checkpoint has it and a new worker shows the same review.
 
-### One project and the group Workflows
+### One project and two groups
 
 Vis web shows one project, with the name of the repository. Its directory is
-`work/main`, so a session and its review stay in the same project when the repository
-changes. The project has one session group, Workflows:
+`work/main`, so the project stays when the repository changes. The project has two
+session groups:
 
 | Session | Place in Vis web |
 | --- | --- |
-| A session that a person starts | The project |
+| A session that a person starts | The group Sessions of the project |
 | The session of a workflow run | The group Workflows of the project |
+| A session that started before this version | The project |
 
-The session of a run works in the directory of its run and is only listed in the
-group. The worker makes the project and the group at its start. To change the name of
+Each session works in its own directory and is only listed in its group. A session
+that a person starts in another group stays in that group. The worker makes the project
+and the groups at its start. To change the name of
 the project, use "Rename project" in the project menu of Vis web. The worker does not
 replace a changed name.
 
@@ -235,7 +273,7 @@ The Durable Lambda API has these addresses below `/play/api/`. A body and an ans
 | `PUT workflows/<name>` | `{source}` | Saves a workflow |
 | `DELETE workflows/<name>` | | Removes a workflow |
 | `GET runs` | | The 100 newest runs |
-| `POST runs` | `{workflow, input}` | Starts a run. `input` is an object of the inputs of the workflow |
+| `POST runs` | `{workflow, input, session}` | Starts a run. `input` is an object of the inputs of the workflow. `session` is optional: the id of the session that the run works in. Without it, the run makes its own session |
 | `GET runs/<id>` | | One run with its workflow activities, its source and its attached files |
 | `POST runs/<id>/cancel` | | Cancels a run and the turn of its session |
 | `GET runs/<id>/inputs/<key>` | | The file that a person gave to the run, or `null` |
@@ -244,10 +282,12 @@ The Durable Lambda API has these addresses below `/play/api/`. A body and an ans
 | `GET attached/<session>/<name>` | | One attached file as a download |
 | `GET tmp?session=<id>` | | The temporary files of a session |
 | `GET tmp/<session>/<path>` | | One temporary file as a download |
-| `POST publish` | `{root, message}` | Commits a project directory and pushes it to GitHub |
+| `GET sessions/<id>/workspace` | | The work directory of a session: `root`, `branch`, `base` (its release), `release` (the newest release), `is_behind`, `commits`, `changed` and `saved` (the time of the copy in S3) |
+| `POST sessions/<id>/resync` | | Puts the work of a session on the newest release. 409 with `files` when Git finds a conflict, and 409 while a turn or a run works in the session |
+| `POST publish` | `{root, message}` | Commits a work directory and pushes it to GitHub |
 | `POST runs/<id>/events` | `{type, …}` | For the run process: records what the run did |
 | `GET runs/<id>/results/<n>` | | For the run process: the recorded result of workflow activity `n` |
-| `POST tmp` | `{session, files, removed}` | For the hook of the extension: copies the files that a session wrote |
+| `POST tmp` | `{session, files, removed}` | For the hook of the extension: copies the files that a session wrote, and records that its work directory changed |
 
 ## Workflows
 
@@ -255,6 +295,17 @@ A workflow is one Python file on the Vis SDK. A workflow activity is a recorded 
 a function with `@activity`. One run is one Vis session. When a worker stops in the
 middle of a run, the next worker starts the run again and each completed workflow
 activity returns its recorded result.
+
+A run works in one of two sessions:
+
+| Session of the run | Use |
+| --- | --- |
+| A new session, which is the default | The run gets its own session in the group Workflows and its own clone of the newest release. The session and its work stay until a person deletes the session. |
+| A session that you select | The run sends its requests to that session and works in its directory, on the work that the session has. The run waits while the session has a turn. One run at a time works in a session. The `model` of the workflow does not change the model of the session. |
+
+Select the session in the run dialog of the Workflows page, in the Workflows app, with
+`session` in `POST runs`, or with `durable.run_workflow(name, input, session="current")`
+in a session.
 
 A worker stops 90 seconds before the Lambda time limit. It parks the turn that runs, and
 the gateway of the next worker continues that turn. The run records the number of session
@@ -369,8 +420,10 @@ commit on GitHub and the earlier orders. Without the page, start a run of
 | Call | Result |
 | --- | --- |
 | `durable.workflows()` | The workflows |
-| `durable.run_workflow(name, input)` | A new run. `input` is an object of the inputs, or a text for the first input |
+| `durable.run_workflow(name, input, session=None)` | A new run. `input` is an object of the inputs, or a text for the first input. `session` is a session id, or `"current"` for this session: then the run starts its work after this turn |
 | `durable.run_status(run_id)` | The state of a run, its workflow activities and its files |
+| `durable.workspace()` | The work directory of this session: its release, the newest release, its commits and its changed files |
+| `durable.resync()` | Puts the work of this session on the newest release |
 | `durable.publish(message)` | A push to GitHub |
 
 The extension has no tool for documents: see [A document is a Vis attachment](#a-document-is-a-vis-attachment).
@@ -388,7 +441,7 @@ tabs:
 
 | Tab | Content |
 | --- | --- |
-| Run | Select a workflow, give its input and start a run. Then the tab shows the status of the run and its workflow activities. |
+| Run | Select a workflow and its session, give the input and start a run. Then the tab shows the status of the run and its workflow activities. |
 | History | The number of runs in progress, completed and failed, and the last 30 runs with their status and their completed workflow activities. |
 
 The worker is an SDK program: it calls `GatewayClient.attach_app` with
@@ -462,6 +515,8 @@ Files:
 - The API copies an attached file to S3 when its size is at most 2 000 000 bytes and its name has the form of the line above. A larger file stays only in the session.
 - The hook copies a written file of at most 1 000 000 bytes. It does not copy `.git`, `__pycache__`, `node_modules`, `.cpcache`, `.venv`, `target`, `.pytest_cache`, `.ruff_cache`, `.clj-kondo` and `.lsp`. It reads at most 20 000 files of a directory.
 - A Git bundle for `repo` has at most 100 000 000 bytes. A commit message has at most 200 characters.
+- The copy of a work directory in S3 has at most 100 000 000 bytes. For larger work, S3 keeps the last copy that was small enough. The copy does not hold a file that Git ignores.
+- The lists of sessions show a session after its first turn. The run dialog of the Workflows page offers at most 100 sessions, and the Workflows app at most 50.
 - A model request has at most 5 000 000 bytes and asks for one answer.
 
 Time:
@@ -471,7 +526,7 @@ Time:
 - A worker without work stops after 300 seconds. A worker with work gives the work to a new worker after 810 seconds.
 - The cookie ends after 7 days. A new password is in effect after 5 minutes.
 - `sync` keeps the 5 newest releases on EFS.
-- The worker removes the directory of a workflow run that nothing changed for 14 days. Publish the work before that. The directory `work/main` stays.
+- The worker removes from EFS a work directory that nothing changed for 14 days. The copy in S3 stays, and the next turn of the session makes the directory again. The directory `work/main` stays.
 - CloudWatch keeps the log of each function for 14 days. [S3 is the database](#s3-is-the-database) gives the time for each S3 key.
 
 ## Security
@@ -490,7 +545,7 @@ Time:
 | A person without the password calls the stack | The `front` function compares the password in constant time and sets a signed, `HttpOnly`, `SameSite=Strict` cookie that ends after 7 days. A request that changes data must come from the same origin. A new password is in effect after 5 minutes. The static files are public. The pages, `/v1/` and `/play/api/` need the password or the cookie. |
 | A false webhook | `front` checks the `X-Hub-Signature-256` of GitHub. |
 | The credentials of the worker role leave the function | Each S3, SQS and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
-| A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `workflows/` and `tmp/`. |
+| A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `workflows/`, `tmp/` and `work/`. |
 | A stored answer or a stored file runs script in the browser | Each relayed answer has a `sandbox` content security policy, and `front` passes only a fixed list of answer headers. The API sends each attached file and each temporary file as plain text and as a download. |
 | A flood of requests makes a large bill | The functions have a concurrency limit: 50 for `front`, 5 for `worker`, 20 for `llm`, 1 for `repo` and 1 for `sync`. A call cannot ask for more output tokens than the limit of the model. |
 
@@ -509,8 +564,8 @@ sessions of the stack. For this reason:
 - one stack is for one team that shares its sessions. Give each tenant its own stack;
 - the provider key has no spending limit in this stack. Set a budget for the key at the provider.
 
-A session can also write in `work/` on EFS, which holds the project directory of the
-sessions and the directories of the runs. It cannot write a release.
+A session can also write in `work/` on EFS, which holds the project directory and the
+work directory of each session. It cannot write a release.
 
 ## Deploy
 
@@ -570,8 +625,8 @@ one, add it to the `Environment` of the function in `template.yaml`.
 
 To remove the stack:
 
-1. Delete the stack in CloudFormation. This also deletes the EFS file system with each project directory: publish the work first.
-2. Empty the bucket with all its versions, then delete it. The bucket stays after the stack.
+1. Delete the stack in CloudFormation. This also deletes the EFS file system with each work directory. Their copies stay in the bucket.
+2. Empty the bucket with all its versions, then delete it. The bucket stays after the stack. This deletes the copies of the work: publish the work first.
 3. Delete the ECR repository and the parameters `/<stack>/*`.
 4. Remove the webhook, the deploy key and the ruleset from the GitHub repository.
 
