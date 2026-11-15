@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Performance: with an open digest, the TUI renders the steps of a long turn on a pool of threads. The first frame of a turn with 111 steps takes 22 ms instead of 150-225 ms. A computer with fewer than three processors uses one thread, as before.
 - Performance: while a turn runs with an open digest, the TUI builds only the rows that changed. A frame takes 1.2-1.7 ms instead of 16 ms, and a frame with a new step takes 7-9 ms instead of 35-46 ms.
 - Performance: the TUI uses Lanterna 3.1.5-vis.61. A width measure of 14 799 transcript rows takes 14 ms instead of 97 ms.
+- Performance: after a change of the terminal width or a toggle of all digests, the TUI calculates the heights of a long session from the step output and does not copy it. In a session with 320 messages and 47 MB of output, that frame takes 30-80 ms instead of 205-390 ms.
 - TUI: the TUI uses Lanterna 3.1.5-vis.62. Lanterna owns the inline style marks of a line: their range, their painted cells and their carry across a wrap. The TUI has one namespace for the row markers and one for text with ANSI colours.
 
 ### Removed

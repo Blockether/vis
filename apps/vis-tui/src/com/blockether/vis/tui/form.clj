@@ -67,6 +67,11 @@
    blow the request."
   65536)
 
+(defn clip-marker
+  "The line that `clip-to-wire` adds below a cut body: `kept` of `total` chars."
+  [kept total hint]
+  (str "# ⋯ output clipped at " kept "/" total " chars" (when hint (str " — " hint))))
+
 (defn clip-to-wire
   "Head-clip one form BODY to `MAX_FORM_WIRE_CHARS`, announcing what it dropped —
    the ONE clip shared by every surface that body reaches: the model's tool
@@ -89,11 +94,18 @@
      (when (pos? n)
        (if (> n (long MAX_FORM_WIRE_CHARS))
          (let [head (util/truncate s MAX_FORM_WIRE_CHARS)]
-           (str head
-                "\n# ⋯ output clipped at " (count head)
-                "/" n
-                " chars" (when hint (str " — " hint))))
+           (str head "\n" (clip-marker (count head) n hint)))
          s)))))
+
+(defn display-markdown?
+  "True when `stdout` carries a bounded artifact fence (`vis-image`, `vis-doc`,
+   `vis-table`). Such output paints as Markdown; all other output paints as one
+   plain code block."
+  [stdout]
+  (let [stdout (str stdout)]
+    (or (str/includes? stdout "````vis-image")
+        (str/includes? stdout "````vis-doc")
+        (str/includes? stdout "````vis-table"))))
 
 (defn stdout-display
   "The human-channel DISPLAY for one executed form as `{:body}`. `:stdout` is
@@ -113,10 +125,7 @@
     (cond
       ;; These bounded artifact fences ride stdout as Markdown so channels can
       ;; paint them inline; wrapping one in another fence would escape it.
-      (or (str/includes? stdout "````vis-image")
-          (str/includes? stdout "````vis-doc")
-          (str/includes? stdout "````vis-table"))
-      {:body stdout}
+      (display-markdown? stdout) {:body stdout}
       ;; Plain output is not Markdown: fence it so CommonMark preserves newlines.
       (not (str/blank? stdout)) {:body (util/fenced (clip-to-wire stdout))}
       :else nil)))

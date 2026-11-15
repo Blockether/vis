@@ -50,13 +50,13 @@
    :warn-on-boxed` clean across this namespace per the repo's GraalVM
    ratchet."
   (:require [clojure.string :as str]
-            [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.form :as form]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.presentation :as ast])
   (:import [com.blockether.vis.render BoundedCache]
-           [java.util IdentityHashMap]
+           [java.util Collections IdentityHashMap Set]
            [java.util.concurrent.atomic AtomicLong]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -317,65 +317,98 @@
    `1.`) as its own block with blank chrome rows around it — a pasted
    diff (every line `+ …`) explodes ~5x that way, width-independently.
    Charge marker lines +5 so those pastes stay on the overshoot side.
-   Single indexed pass, no regex, no split allocation."
-  ^long [s ^long w]
+   Single indexed pass, no regex, no split allocation. `limit` reads only the
+   first `limit` chars of `s`."
+  (^long [s ^long w] (prose-rows-est s w Long/MAX_VALUE))
+  (^long [s ^long w ^long limit]
+   (let [^String s
+         (if (string? s) s (str (or s "")))
+
+         n
+         (Math/min (long (.length s)) limit)
+
+         w
+         (max 1 w)]
+
+     (loop [start
+            0
+
+            rows
+            0]
+
+       (if (>= start n)
+         rows
+         (let [e
+               (long (.indexOf s "\n" start))
+
+               end
+               (if (or (neg? e) (> e n)) n e)
+
+               len
+               (- end start)
+
+               ;; First non-space char within the first 4 columns — markdown
+               ;; treats deeper indents as code, not as a block marker.
+               j
+               (long (loop [k start]
+                       (if (and (< k end) (< (- k start) 4) (= \space (.charAt s k)))
+                         (recur (inc k))
+                         k)))
+
+               marker?
+               (and (< j end)
+                    (let [c (.charAt s j)]
+                      (or (and (case c
+                                 (\- \+ \* \> \#)
+                                 true
+
+                                 false)
+                               (or (= (inc j) end) (= \space (.charAt s (inc j)))))
+                          ;; ordered list: digits then `.` then space/eol
+                          (and (Character/isDigit c)
+                               (let [d (long (loop [k j]
+                                               (if (and (< k end) (Character/isDigit (.charAt s k)))
+                                                 (recur (inc k))
+                                                 k)))]
+                                 (and (< d end)
+                                      (= \. (.charAt s d))
+                                      (or (= (inc d) end) (= \space (.charAt s (inc d))))))))))
+
+               base
+               (max 1 (quot (+ len (dec w)) w))]
+
+           (recur (inc end) (+ rows base (if marker? 5 0)))))))))
+
+(defn- result-rows-est
+  "Upper-bound rows of the result body of one form at width `w`, read from its
+   `:stdout` alone. It mirrors `form/stdout-display` without building the body:
+   output with a display fence paints as Markdown, other output paints in one
+   code fence (2 rows), cut at `form/MAX_FORM_WIRE_CHARS` with a marker line. A cut
+   directly after a line break leaves one blank row above the marker.
+
+   The estimate runs for every form of every message without a measured height,
+   on the render thread. A built body copies the whole output of the session.
+   `fenced?` says that the output has a `vis-` fence (see [[fenced-stdouts]])."
+  ^long [stdout ^long w fenced?]
   (let [^String s
-        (if (string? s) s (str (or s "")))
+        (if (string? stdout) stdout (str (or stdout "")))
 
+        cap
+        (long form/MAX_FORM_WIRE_CHARS)
+
+        ;; The body drops trailing space.
         n
-        (.length s)
+        (long
+          (loop [i (.length s)]
+            (if (and (pos? i) (Character/isWhitespace (.charAt s (dec i)))) (recur (dec i)) i)))]
 
-        w
-        (max 1 w)]
-
-    (loop [start
-           0
-
-           rows
-           0]
-
-      (if (>= start n)
-        rows
-        (let [e
-              (.indexOf s "\n" start)
-
-              end
-              (if (neg? e) n e)
-
-              len
-              (- end start)
-
-              ;; First non-space char within the first 4 columns — markdown
-              ;; treats deeper indents as code, not as a block marker.
-              j
-              (long (loop [k start]
-                      (if (and (< k end) (< (- k start) 4) (= \space (.charAt s k)))
-                        (recur (inc k))
-                        k)))
-
-              marker?
-              (and (< j end)
-                   (let [c (.charAt s j)]
-                     (or (and (case c
-                                (\- \+ \* \> \#)
-                                true
-
-                                false)
-                              (or (= (inc j) end) (= \space (.charAt s (inc j)))))
-                         ;; ordered list: digits then `.` then space/eol
-                         (and (Character/isDigit c)
-                              (let [d (long (loop [k j]
-                                              (if (and (< k end) (Character/isDigit (.charAt s k)))
-                                                (recur (inc k))
-                                                k)))]
-                                (and (< d end)
-                                     (= \. (.charAt s d))
-                                     (or (= (inc d) end) (= \space (.charAt s (inc d))))))))))
-
-              base
-              (max 1 (quot (+ len (dec w)) w))]
-
-          (recur (inc end) (+ rows base (if marker? 5 0))))))))
+    (cond (zero? n) 0
+          (and fenced? (form/display-markdown? s)) (prose-rows-est s w n)
+          (> n cap) (+ 2
+                       (prose-rows-est s w cap)
+                       (if (= \newline (.charAt s (dec cap))) 1 0)
+                       (prose-rows-est (form/clip-marker cap n nil) w))
+          :else (+ 2 (prose-rows-est s w n)))))
 
 (defn- any-details-expanded?
   "True when this message has ANY disclosure expanded (or the global
@@ -406,6 +439,21 @@
   [message]
   (or (:traces message) (get-in message [:terminal-pending :trace])))
 
+(defn- fenced-stdouts
+  "The `:stdout` values of `trace` that carry a `vis-` display fence, as an identity
+   set. One scan of each output answers the three readers of the estimate: the
+   picture boxes, the shown files and the result body. A separate scan for each
+   reader reads the whole output of the session three times."
+  ^Set [trace]
+  (let [found (Collections/newSetFromMap (IdentityHashMap.))]
+    (doseq [it trace
+            f (:forms it)]
+
+      (let [out (:stdout f)]
+        (when (and (some? out) (or (not (string? out)) (str/includes? out "````vis-")))
+          (.add found out))))
+    found))
+
 (defn- image-rows-est
   "Rows the RESERVED picture boxes inside `message` add on top of its prose
    estimate, at `content-w` columns.
@@ -423,10 +471,11 @@
    accumulators boxed: a local fn is invoked through `IFn.invoke`, so its
    `^long` return hint buys nothing and `+` fell back to `Numbers.add` on
    `Object` - nine `:warn-on-boxed` warnings on a per-frame height path."
-  ^long [message ^long content-w]
+  ^long [message ^long content-w ^java.util.Set fenced]
   (let [form-strings
         (fn [f]
-          (list (:body (vis/result-card f)) (:comment f)))
+          ;; A result body with a picture fence is the `:stdout` itself.
+          (list (when (.contains fenced (:stdout f)) (:stdout f)) (:comment f)))
 
         trace-strings
         (fn [it]
@@ -498,11 +547,14 @@
          text
          (:text message)
 
+         fenced
+         (fenced-stdouts trace)
+
          ;; Pictures are laid out by the PAINTER, not by the markdown walker:
          ;; every `vis-image` fence reserves a cell box whose rows the prose
          ;; estimate cannot see. Charge them separately, at `content-w`.
          img-rows
-         (image-rows-est message content-w)
+         (image-rows-est message content-w fenced)
 
          ;; One row per finished run. Only a legacy row without an executing-form
          ;; anchor opens a separate rail and therefore needs one additional margin.
@@ -549,12 +601,12 @@
              cap
              (+ peek (long ast/reasoning-collapse-min-hidden))
 
-             section-rows
-             (fn ^long [s]
-               (let [full (prose-rows-est s fold-w)]
-                 (cond (zero? full) 0
-                       expanded? (+ full 3)
-                       :else (+ (min full cap) 3))))
+             ;; A result section: in full when open, else its peek. Both with 3 chrome rows.
+             capped-rows
+             (fn ^long [^long full]
+               (cond (zero? full) 0
+                     expanded? (+ full 3)
+                     :else (+ (min full cap) 3)))
 
              ;; Error band: pads + caret rows + the headline WRAPPED at fill-w — a long
              ;; provider/exception message paints multiple rows, a flat charge undershoots.
@@ -582,17 +634,23 @@
                      (:code f)
 
                      cm
-                     (:comment f)]
+                     (:comment f)
+
+                     out
+                     (:stdout f)
+
+                     fenced?
+                     (.contains fenced out)]
 
                  (+ (long (if (and (string? c) (not (str/blank? c)))
                             (+ (wrapped-rows-est c fold-w) 2)
                             0))
-                    (long (section-rows (:body (vis/result-card f))))
+                    (long (capped-rows (result-rows-est out fold-w fenced?)))
                     (long (if (and (string? cm) (not (str/blank? cm)))
                             (+ (wrapped-rows-est cm fold-w) 2)
                             0))
                     (long (error-rows (:error f)))
-                    (long (render/shown-file-rows (:stdout f) fold-w)))))
+                    (long (if fenced? (render/shown-file-rows out fold-w) 0)))))
 
              ;; A closed digest paints a subset of its open steps, plus its own row and gap.
              ;; Files stay visible, so their steps keep the full charge. Other steps keep
@@ -608,7 +666,9 @@
                        form-rows-of
                        (fn [{:keys [error stdout]}]
                          (+ (long (if (render/interrupted-error? error) 0 (error-rows error)))
-                            (long (render/shown-file-rows stdout fold-w)))))]
+                            (long (if (.contains fenced stdout)
+                                    (render/shown-file-rows stdout fold-w)
+                                    0)))))]
 
                  (+ (long (error-rows (:error it)))
                     (* 3 (+ (count (:recaps it)) (count (:provider-fallbacks it))))

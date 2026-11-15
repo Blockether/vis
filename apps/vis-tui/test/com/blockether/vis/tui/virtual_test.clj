@@ -15,6 +15,7 @@
       visible bubbles' `:top + :height` fits inside the viewport's
       forward extent, even when estimates differ from real heights."
   (:require [com.blockether.vis.tui.agent-team :as agent-team]
+            [com.blockether.vis.tui.form :as form]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.virtual :as virtual]
@@ -544,6 +545,64 @@
                       (expect (< (count visible) (count msgs)))
                       ;; format-answer-with-thinking was called only for visible
                       (expect (<= @calls (count visible)))))))))
+
+(defdescribe
+  result-rows-without-body-test
+  ;; A width change or an expand-all leaves every message without a measured
+  ;; height, so one frame estimates the whole session on the render thread. A
+  ;; built result body copies every `:stdout`: 320 messages with 47 MB of output
+  ;; made that frame take 200 to 390 ms.
+  (let [result-rows
+        @#'virtual/result-rows-est
+
+        prose-rows
+        @#'virtual/prose-rows-est
+
+        over-ceiling
+        (str/join "\n"
+                  (repeat (quot (* 2 (long form/MAX_FORM_WIRE_CHARS)) 40)
+                          (apply str (repeat 39 "x"))))
+
+        ;; Lines of 32 chars: the cut comes directly after a line break.
+        cut-after-break
+        (str/join "\n"
+                  (repeat (quot (* 2 (long form/MAX_FORM_WIRE_CHARS)) 32)
+                          (apply str (repeat 31 "y"))))
+
+        outputs
+        [nil "" "  \n" "3" "row one\nrow two\n\n" "- a list line\n# a heading line" over-ceiling
+         cut-after-break "````vis-image\n{\"path\":\"a.png\"}\n````\n"
+         "text\n````vis-table\n{}\n````\ntail" "````vis-other\nnot a display fence\n````"]]
+
+    (describe
+      "the estimate reads :stdout and builds no result body"
+      (it "builds no body for closed and for open details"
+          (let [m
+                (assoc-in (trace-assistant-msg 3 4 "ok") [:traces 0 :forms 0 :stdout] over-ceiling)
+
+                calls
+                (atom 0)
+
+                real
+                form/stdout-display]
+
+            (with-redefs [form/stdout-display (fn [f]
+                                                (swap! calls inc)
+                                                (real f))]
+              (estimated-height m bubble-w)
+              (estimated-height m bubble-w {:vis.channel-tui/expand-all-details? true} "s"))
+            (expect (zero? (long @calls)))))
+      (it "gives the rows of the body that the painter builds"
+          (doseq [out
+                  outputs
+
+                  w
+                  [20 80 200]]
+
+            (expect (= (prose-rows (:body (form/result-card {:stdout out})) w)
+                       (result-rows out w (and (string? out) (str/includes? out "````vis-"))))
+                    (str "w=" w
+                         " stdout=" (pr-str (subs (str out) 0 (min 40 (count (str out))))))))))))
 
 (defdescribe
   pre-warm-test
