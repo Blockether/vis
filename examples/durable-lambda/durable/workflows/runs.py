@@ -201,7 +201,9 @@ class Runs:
                 gate = {"seq": seq, "key": need(NAME, event.get("key"), "the gate key"), "title": str(event.get("title", ""))[:200], "about": str(event.get("about", ""))[:2000]}
                 # The pages show this file of the session next to the gate.
                 document = event.get("document")
-                doc.update(status="waiting", waiting={**gate, "document": need(FILE, document, "the document name") if document else None})
+                # The version and the size tell which document the person reads. The decision keeps them.
+                shown = {key: event.get(key) if type(event.get(key)) is int else None for key in ("version", "size")}
+                doc.update(status="waiting", waiting={**gate, "document": need(FILE, document, "the document name") if document else None, **shown})
                 if step:
                     step["status"] = "waiting"
                 # The process ends by itself now. Without it, the run uses no place.
@@ -230,12 +232,14 @@ class Runs:
         """Keep the decision of a person at the gate where a run waits, and put the run in the queue again.
 
         The next process of the run sends the decision to the session, so the transcript has it.
+        The decision keeps the document that the gate showed: the run applies it only to that document.
         """
         with self.lock:
             doc = self.doc(run_id)
             if doc["status"] != "waiting" or doc["waiting"]["key"] != key:
                 raise Refused(409, "the run does not wait at this gate")
-            doc.setdefault("decisions", {})[key] = {"approved": approved, "comment": comment, "at": time.time()}
+            shown = {name: doc["waiting"].get(name) for name in ("document", "version", "size")}
+            doc.setdefault("decisions", {})[key] = {"approved": approved, "comment": comment, "at": time.time(), **shown}
             doc.update(status="queued", waiting=None)
             for step in doc["activities"]:
                 if step["status"] == "waiting":  # the activity continues when a process takes the run

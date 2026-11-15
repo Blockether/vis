@@ -225,6 +225,12 @@ sequenceDiagram
 A later process of the run reads the decision in the transcript. A fork that ends
 before the gate does not have the decision turn, so the run sends the decision again.
 
+A decision is for the document that the person read: the gate keeps its name, its
+version and its size with the decision. When the run has another version of the
+document in its new process, the decision does not apply. The run writes a note and
+waits again with the new version. This occurs when an activity that made the document
+runs again, for example after a change of the run record between two deployments.
+
 A person decides in one of four places: the Workflows page, the Factory page, the
 Gates tab of the Workflows app in Vis web, or the API. A decision is approve or
 reject, with an optional comment. One key holds one decision. For a second decision, use a new

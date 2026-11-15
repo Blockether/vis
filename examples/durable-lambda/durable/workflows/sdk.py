@@ -161,10 +161,13 @@ class Recorded(TypedDict):
 
 
 class Made(TypedDict):
-    """The decision of a person at a gate."""
+    """The decision of a person at a gate, and the document that the gate showed: its name, its version and its size."""
 
     approved: bool
     comment: str
+    document: NotRequired[str | None]
+    version: NotRequired[int | None]
+    size: NotRequired[int | None]
 
 
 class Run(TypedDict):
@@ -680,12 +683,20 @@ class Context:
         When the person decides, Durable Lambda starts the run again. This call then
         sends the decision to the session as one turn, so the transcript has it, and
         returns the decision. The workflow selects what a rejection does.
+
+        A decision is for the document that the person read. When the run has another
+        version of the document now, the decision does not apply and the run waits again.
         """
         turn = self._recorded(lambda text: decided(text, key) is not None, TURN_S)
         made = decided(turn.get("request") or "", key) if turn else self._decisions.get(key)
+        shown = (document.name, document.version, document.size) if document else (None, None, None)
+        # The transcript does not have the decision yet: the run applies it only to the document that the gate showed.
+        if turn is None and made is not None and (made.get("document"), made.get("version"), made.get("size")) != shown:
+            self.note("The decision at this gate was for another version of its document. The run waits for a new decision.")
+            made = None
         if made is None:
             self._report()
-            self._event("waiting", seq=self._current, key=key, title=title, about=about, document=document.name if document else None)
+            self._event("waiting", seq=self._current, key=key, title=title, about=about, document=shown[0], version=shown[1], size=shown[2])
             raise Waiting(key)
         if turn is None:
             line = json.dumps({"key": key, "title": title, "approved": made["approved"], "comment": made["comment"]})
