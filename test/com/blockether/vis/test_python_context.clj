@@ -42,6 +42,7 @@
    the test fails while the code it covers is provably fine. Run a single
    namespace as `-M:test --namespace <ns>`, with no `--dir`."
   (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.python.env :as env-python]))
@@ -56,6 +57,26 @@
   ([bindings roots-fn network-opts] (new-context bindings roots-fn network-opts nil))
   ([bindings roots-fn network-opts stdin]
    (env-python/create-python-context bindings roots-fn network-opts stdin)))
+
+(defn cli-context
+  "The sandbox of `vis-agent python` with `options`, for a test that builds it in the test JVM.
+
+   The CLI makes the shared packages of its process the place where pip and child processes
+   install, and writes an environment there. The interpreter of the test JVM imports the
+   shared packages of the person, so here that place is a directory in `target`. A test of
+   the installs themselves starts the CLI in its own process, with its own packages."
+  [options]
+  (let [share
+        @(requiring-resolve 'com.blockether.vis.internal.main/share-python-cli-installs!)
+
+        packages
+        (.getCanonicalPath (io/file "target" "vis-python-cli-packages-test"))]
+
+    (with-redefs-fn {(requiring-resolve
+                       'com.blockether.vis.internal.main/share-python-cli-installs!)
+                     (fn [ctx _packages]
+                       (share ctx packages))}
+      #(@(requiring-resolve 'com.blockether.vis.internal.main/python-cli-context) options))))
 
 (defonce ^:private contexts (atom {}))
 

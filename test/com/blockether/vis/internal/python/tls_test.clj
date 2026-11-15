@@ -5,12 +5,12 @@
             [com.blockether.vis.contract.config :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as env]
-            [com.blockether.vis.internal.main]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis.internal.sandbox.tls-mitm :as tls]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.security KeyPair)
            (java.security.cert X509Certificate)
@@ -194,8 +194,8 @@
              (doseq [strict [false true nil]]
                (with-redefs [config/load-config-raw
                              (constantly (if (nil? strict) {} {"python" {"tls_strict" strict}}))]
-                 (let [ctx ((var-get #'com.blockether.vis.internal.main/python-cli-context)
-                             {:network? false :env {"VIS_PYTHON_TLS_STRICT" "false"}})]
+                 (let [ctx (tpc/cli-context {:network? false
+                                             :env {"VIS_PYTHON_TLS_STRICT" "false"}})]
                    (try (let [{:keys [stdout error]} (with-redefs
                                                        [config/original-stdout
                                                         (java.io.PrintStream.

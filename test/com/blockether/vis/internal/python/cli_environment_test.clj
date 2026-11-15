@@ -77,8 +77,12 @@
           (.redirectError errors)
           (.redirectOutput output))]
 
-    (doseq [key ["PYTHONPATH" "UV_PROJECT_ENVIRONMENT" "VIRTUAL_ENV" "VIS_PYTHON_PACKAGES"]]
+    (doseq [key ["PYTHONPATH" "UV_PROJECT_ENVIRONMENT" "VIRTUAL_ENV"]]
       (.remove (.environment builder) key))
+    ;; Without packages of its own, a test must not get the shared packages of the person.
+    (.put (.environment builder)
+          "VIS_PYTHON_PACKAGES"
+          (.getCanonicalPath (io/file dir "default-shared-packages")))
     (.putAll (.environment builder) environment)
     (let [process (.start builder)]
       (with-open [stdin (.getOutputStream process)]

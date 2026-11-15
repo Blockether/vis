@@ -14,7 +14,7 @@
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
-(def ^:private python-cli-context #'com.blockether.vis.internal.main/python-cli-context)
+(def ^:private python-cli-context tpc/cli-context)
 
 (def ^:private run-python-source! #'com.blockether.vis.internal.main/run-python-source!)
 
