@@ -15,7 +15,7 @@ const status = (name) => chip(name, `right ${TONE[name] || ""}`, OPEN.has(name) 
 const pythonName = (title) => title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^[^a-z]+|_+$/g, "");
 /** Return a part that opens when a person clicks its label. */
 const more = (label, ...body) => h("details", {}, h("summary", { class: "small muted", style: "cursor:pointer", text: label }), ...body);
-const notes = (rows) => (rows || []).map((note) => h("div", { class: "note small", text: note }));
+const notes = (rows) => (rows || []).map((note) => h("div", { class: "note small", text: note.text }));
 
 const TEMPLATE = (name, title) => `"""${title}."""
 

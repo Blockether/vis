@@ -294,8 +294,8 @@ The times of a call are from one computer in Europe.
 | --- | --- |
 | Image in ECR | 1.58 GB compressed, 3.64 GB on disk. The speech model is 0.49 GB of the compressed size |
 | Cold start of a function (`Init Duration`) | `front` 0.3 to 0.4 s, `worker` 0.6 to 1.2 s, `llm` 0.4 to 0.6 s, `repo` 0.4 s, `sync` 0.7 s. The first start after a new image: 1.4 s |
-| Worker start, from the invocation to a ready gateway | 1.9 s: state from S3 0.1 s, project 0.1 s, Vis gateway 1.7 s |
-| First answer when no worker runs | 3.9 s for `GET /healthz` through `front`, SQS, `worker` and S3 |
+| Worker start, from the invocation to a ready gateway | 1.9 to 2.1 s: state from S3 0.1 s, project 0.1 s, Vis gateway 1.7 to 1.9 s |
+| First answer when no worker runs | 3.9 to 4.1 s for `GET /healthz` through `front`, SQS, `worker` and S3 |
 | Answer when a worker runs | 0.3 s for the same call and for `GET /dashboard/api/status` |
 | Page `/dashboard` | 0.2 to 0.3 s. `front` serves a page without the worker |
 | Memory in use | `front` 86 MB, `llm` 81 MB, `repo` 104 MB, `sync` 69 MB. `worker` 634 MB with an idle gateway, 2953 MB with the speech model and two runs |
