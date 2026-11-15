@@ -2749,9 +2749,12 @@
 (defn- clip-terminal-images-to-band!
   "Re-place exactly the images that stay clear of a band starting at `band-top`;
    the rest leave the graphics layer. Delegates to `paint-terminal-images!`, so
-   the kept placements keep their uploads and the dropped ones are deleted."
+   the kept placements keep their uploads and the dropped ones are deleted.
+   The band holds the draw lock while it is open, so no frame follows this paint:
+   a picture that is not ready is prepared here."
   [band-top]
-  (paint-terminal-images! (images-above-band @last-image-regions band-top)))
+  (binding [*wait-for-pictures* true]
+    (paint-terminal-images! (images-above-band @last-image-regions band-top))))
 
 (defn- bubble-copy-hit
   [point regions]

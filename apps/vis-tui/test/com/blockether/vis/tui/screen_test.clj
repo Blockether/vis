@@ -3359,7 +3359,12 @@ therapy line 2"
                                   (.reset wire)
                                   (with-redefs [screen/modal-images (atom {:kept [] :own [region]})]
                                     (#'screen/paint-modal-images!))
-                                  (.toString wire "UTF-8"))]
+                                  (.toString wire "UTF-8"))
+                    paint-band (fn [band-top]
+                                 (.reset wire)
+                                 (with-redefs [screen/last-image-regions (atom [region])]
+                                   (#'screen/clip-terminal-images-to-band! band-top))
+                                 (.toString wire "UTF-8"))]
 
                 (with-redefs [screen/kitty-image-state
                               (atom {:transmits {} :order [] :placed #{} :next-id 1})
@@ -3375,6 +3380,7 @@ therapy line 2"
 
                   (check {:paint paint
                           :paint-modal paint-modal
+                          :paint-band paint-band
                           :threads threads
                           :asked asked
                           :dispatch dispatch}))))]
@@ -3426,6 +3432,13 @@ therapy line 2"
         (run {:data "AAAA" :w 100 :h 120}
              (fn [{:keys [paint-modal]}]
                (let [shown (paint-modal)]
+                 (expect (str/includes? shown "a=t"))
+                 (expect (str/includes? shown "a=p"))))))
+    ;; The C-x band holds the draw lock while it is open, so no frame follows its paint.
+    (it "uploads the picture above a band in the paint that opens the band"
+        (run {:data "AAAA" :w 100 :h 120}
+             (fn [{:keys [paint-band]}]
+               (let [shown (paint-band 20)]
                  (expect (str/includes? shown "a=t"))
                  (expect (str/includes? shown "a=p"))))))))
 
