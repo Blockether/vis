@@ -19,8 +19,9 @@ import time
 from typing import Any
 
 from durable import aws
-from durable.env import BUCKET, ENV, SYNC_FUNCTION, log, write_secret
-from durable.runtime import Context
+from durable.helpers import log, write_secret
+from durable.lambda_runtime import Context
+from durable.settings import BUCKET, ENV, SYNC_FUNCTION
 
 REPO = ENV.get("VIS_REPO", "")
 # Another address is for a test with a repository in a directory.

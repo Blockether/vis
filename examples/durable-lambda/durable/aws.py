@@ -11,7 +11,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
-from durable.env import BUCKET, LEASE
+from durable.settings import BUCKET, LEASE
 
 __all__ = ["BotoCoreError", "ClientError", "alive", "client", "delete", "get", "invoke", "keys", "lease", "metadata", "parameter", "put", "start"]
 

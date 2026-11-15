@@ -48,7 +48,8 @@ for name, value in SETTINGS.items():
     os.environ.setdefault(name, value)
 os.environ.setdefault("DURABLE_DEPLOY_KEY", "not used: GitHub is a directory")
 
-from durable import aws, front, llm, repo, runtime, sync, worker  # noqa: E402 - the settings come first
+from durable import aws, git, lambda_runtime, llm, worker, worktree  # noqa: E402 - the settings come first
+from durable.dashboard import front  # noqa: E402
 
 
 def refusal(code: str, operation: str) -> ClientError:
@@ -143,9 +144,9 @@ class Parameters:
         return {"Parameter": {"Value": os.environ[Name]}}
 
 
-def context(seconds: float = 900) -> runtime.Context:
+def context(seconds: float = 900) -> lambda_runtime.Context:
     """Return the context of an invocation that can work for some seconds."""
-    return runtime.Context(uuid.uuid4().hex, int((time.time() + seconds) * 1000), "local")
+    return lambda_runtime.Context(uuid.uuid4().hex, int((time.time() + seconds) * 1000), "local")
 
 
 class Functions:
@@ -157,7 +158,7 @@ class Functions:
         if FunctionName == "worker":
             self.wake.set()
             return {}
-        handler = {"repo": repo.handler, "sync": sync.handler}[FunctionName]
+        handler = {"repo": git.handler, "sync": worktree.handler}[FunctionName]
         try:
             return {"Payload": io.BytesIO(json.dumps(handler(json.loads(Payload), context())).encode())}
         except Exception as failure:  # as Lambda reports a failed function
@@ -237,7 +238,7 @@ class Page(BaseHTTPRequestHandler):
 def main() -> None:
     os.makedirs(ROOT, exist_ok=True)
     github(os.environ.get("DURABLE_SEED", ""))
-    print("first release:", repo.fetch(), flush=True)
+    print("first release:", git.fetch(), flush=True)
     port = int(os.environ.get("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Page)  # noqa: S104 - a container port
     server.daemon_threads = True

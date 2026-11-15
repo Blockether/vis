@@ -19,8 +19,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from durable import aws, wire
-from durable.api import Api
-from durable.env import LLM_FUNCTION, log
+from durable.app import Api
+from durable.helpers import log
+from durable.settings import LLM_FUNCTION
 
 
 def payloads(events: Any) -> Iterator[bytes]:

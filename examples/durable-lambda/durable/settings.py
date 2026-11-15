@@ -39,20 +39,7 @@ DUE_S = 120
 ANSWER_S = 55
 # A worker that stops without a release loses the lease after LEASE_TTL.
 LEASE, LEASE_TTL = "lease.json", 90
-
-
-def private(name: str) -> str:
-    """Return the path of a worker file, in a directory that only the worker user reads."""
-    os.makedirs(WORKER_DIR, mode=0o700, exist_ok=True)
-    return os.path.join(WORKER_DIR, name)
-
-
-def write_secret(path: str, text: str) -> None:
-    """Write a file that only the user of this function can read."""
-    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as file:
-        file.write(text)
-
-
-def log(*parts: object) -> None:
-    """Write one JSON line to the function log."""
-    print(json.dumps({"vis": ROLE, "msg": " ".join(map(str, parts))}), flush=True)
+# The time that one run can work. A worker handoff starts a new process, and one
+# process works for at most the lifetime of a worker.
+RUN_LIMIT_S = int(ENV.get("VIS_RUN_LIMIT_S", "28800"))
+STARTS = -(-RUN_LIMIT_S // LIFETIME)

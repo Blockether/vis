@@ -17,8 +17,9 @@ from typing import Any
 import blockether.vis.extension as vis
 from blockether.vis.engine import GatewayClient, GatewayError, TransportError
 
-from durable.api import OPEN, Api, Refused
-from durable.env import log
+from durable.app import Api
+from durable.domain import OPEN, Refused
+from durable.helpers import log
 
 TABS = (("run", "Run"), ("history", "History"))
 # The tone of a status. The names are the live tones of the Vis view contract.
@@ -67,7 +68,7 @@ class Workflows(threading.Thread):
                 vis.ui.button("new-run", "New run"),
             )
         flows = self.api.workflows()["workflows"]
-        sessions = [vis.ui.option(session, title) for session, title in self.api.places()]
+        sessions = [vis.ui.option(session, title) for session, title in self.api.sessions.places()]
         return vis.ui.column(
             "body",
             vis.ui.paragraph("about", "Select a workflow and give its input. A run works in its own new Vis session, or in a session that you select."),

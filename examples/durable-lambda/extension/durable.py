@@ -8,7 +8,7 @@ It gives every session of Durable Lambda three things:
 - The `durable` tools: list and start workflows, read a run with `run_status`, put the
   work directory on the newest release, and publish its commits to GitHub.
 - The `/workflows` command, which starts a workflow. The Workflows app of Vis is not here:
-  the worker owns it (`durable/apps.py`), because a global app belongs to no session.
+  the worker owns it (`durable/vis/liveapps/workflows.py`), because a global app belongs to no session.
 
 The extension has no AWS credentials in its environment (code of a session can read
 those of the worker process: see the README). It calls the Durable Lambda API of the worker on
@@ -45,7 +45,7 @@ def call(method, path, body=None, timeout=120):
     """Call the Durable Lambda API and return the bytes of the answer.
 
     The gateway loads this file alone, without the `durable` package of the worker.
-    Thus it cannot share this call with `durable/client.py`.
+    Thus it cannot share this call with `durable/workflows/client.py`.
     """
     data = None if body is None else json.dumps(body).encode()
     address = os.environ["DURABLE_BROKER"] + "/play/api/" + path

@@ -471,7 +471,7 @@ Resources:
       Architectures: [arm64]
       Role: !GetAtt WorkerRole.Arn
       MemorySize: 3008
-      # `VIS_LIFETIME_S` of `durable/env.py` has the same value. Change the two together.
+      # `VIS_LIFETIME_S` of `durable/settings.py` has the same value. Change the two together.
       Timeout: 900
       EphemeralStorage: {Size: 4096}
       # One worker holds the lease. The others are a handoff or a start that ends at once.

@@ -74,7 +74,7 @@ image:
 ENTRYPOINT ["/opt/vis/vis-agent-python/python/bin/python3", "-m", "durable"]
 ```
 
-[`durable/runtime.py`](durable/runtime.py) speaks the Lambda Runtime API with
+[`durable/lambda_runtime.py`](durable/lambda_runtime.py) speaks the Lambda Runtime API with
 the standard library. It supports plain answers and streamed answers.
 
 ### S3 is the database
@@ -197,7 +197,7 @@ read_attachment("SPEC.md")  # the bytes of the newest version
 Vis keeps each version of an attached file in the session, so the transcript shows the
 file and a checkpoint holds it. The pages read documents from S3. Thus the API copies
 each new attached file to `attached/<session>/<name>` when a page or a workflow lists
-the attached files of a session (`Api.mirror` in [`durable/api.py`](durable/api.py)).
+the attached files of a session (`Files.mirror` in [`durable/vis/files.py`](durable/vis/files.py)).
 The S3 object has the metadata `version` and `turn`, and the list gives the two values
 for each file. S3 holds only the newest version of a name.
 
@@ -432,7 +432,7 @@ it lists the workflows.
 ### The Workflows app
 
 The worker opens one global app of Vis with the name Workflows
-([`durable/apps.py`](durable/apps.py)). Vis web shows each global app behind the
+([`durable/vis/liveapps/workflows.py`](durable/vis/liveapps/workflows.py)). Vis web shows each global app behind the
 global apps button of its header, with or without an open session. The app has two
 tabs:
 
@@ -674,3 +674,27 @@ the stack gives the value to the functions as `VIS_MODELS`.
 | [`web/`](web) | The pages |
 | [`decide.py`](decide.py) | The decision script |
 | [`ruff.toml`](ruff.toml) | The format of the Python code: the rules of the repository, with lines of at most 200 characters |
+
+### The package `durable`
+
+Each module has one task. A function imports only the modules of its role.
+
+| Module | Task |
+| --- | --- |
+| [`handler.py`](durable/handler.py) | The handler of each role. `python -m durable` starts the runtime with the handler that `VIS_ROLE` selects |
+| [`lambda_runtime.py`](durable/lambda_runtime.py) | The Lambda Runtime API |
+| [`settings.py`](durable/settings.py) | The settings of the stack, from the environment |
+| [`helpers.py`](durable/helpers.py) | The log, private files and the filter of an archive |
+| [`domain.py`](durable/domain.py) | The rules of the API: the names, the limits, the statuses of a run and the refusals |
+| [`aws.py`](durable/aws.py) | Each call to S3, SQS, the Parameter Store and Lambda |
+| [`wire.py`](durable/wire.py) | The form of an answer that goes through S3 |
+| [`durable.py`](durable/durable.py) | The lease and the checkpoints of the Vis home |
+| [`git.py`](durable/git.py) | The `repo` function: the fetch from GitHub and the push to GitHub |
+| [`worktree.py`](durable/worktree.py) | The `sync` function and the directories on EFS: the releases, the work directories and their copy in S3 |
+| [`llm.py`](durable/llm.py) | The `llm` function |
+| [`worker.py`](durable/worker.py) | The `worker` function: the loop of the one live worker |
+| [`app.py`](durable/app.py) | The routes of the Durable Lambda API |
+| [`dashboard/`](durable/dashboard) | The `front` function: `front.py` has the pages and the webhook, `relay.py` sends a call to the worker, `web.py` has the request and the answer |
+| [`vis/`](durable/vis) | What the worker does with Vis: `gateway.py` runs the gateway, `relay.py` answers the calls of the queue, `broker.py` is the way out of the gateway, `sessions.py` gives each session its work directory, `files.py` copies the files of a session, `registry.py` registers the project, the groups and the apps, `liveapps/` has the Workflows app |
+| [`workflows/`](durable/workflows) | The workflows: `sdk.py` has `@workflow` and `@activity`, `source.py` reads a workflow file, `runs.py` keeps the runs, `process.py` is the process of one run, `client.py` calls the API from that process |
+| [`local.py`](durable/local.py) | All the functions in one process, without AWS |

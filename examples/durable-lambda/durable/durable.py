@@ -1,24 +1,69 @@
-"""Checkpoints: the Vis home directory as S3 objects.
+"""What makes the worker durable: the lease and the checkpoints.
 
-S3 is the database of record. A checkpoint is a tar file of the home directory with a
-consistent copy of each SQLite database. A checkpoint counts only after the lease
-names it, so a worker that lost the lease cannot overwrite newer state.
+The lease is one S3 object that names the one live worker and its last checkpoint.
+Every write is conditional on the ETag that this worker read. A second worker that
+starts by mistake loses the first conditional write and stops. This makes S3 a
+database with one writer.
+
+A checkpoint is the Vis home directory as S3 objects. S3 is the database of record. A
+checkpoint is a tar file of the home directory with a consistent copy of each SQLite
+database. A checkpoint counts only after the lease names it, so a worker that lost the
+lease cannot overwrite newer state.
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import shutil
 import sqlite3
 import tarfile
 import time
+import uuid
+from typing import Any
 
 from durable import aws
-from durable.env import HOME, log, private
-from durable.lease import Lease
-from durable.sync import safe
+from durable.helpers import log, private, safe
+from durable.settings import HOME, LEASE, LEASE_TTL
+
+
+class Lease:
+    """The lease of this worker. `data` is the last content that it wrote."""
+
+    def __init__(self, data: dict[str, Any], etag: str | None) -> None:
+        self.id = str(uuid.uuid4())
+        self.data, self.etag, self.saves = data, etag, 0
+
+    def write(self, **fields: Any) -> None:
+        """Write the lease with new fields. A lost lease raises ClientError."""
+        data = {**self.data, **fields, "owner": self.id}
+        condition = {"IfMatch": self.etag} if self.etag else {"IfNoneMatch": "*"}
+        self.etag = aws.put(LEASE, json.dumps(data).encode(), **condition)
+        self.data = data
+
+    def renew(self, **fields: Any) -> None:
+        """Keep the lease for LEASE_TTL more seconds."""
+        self.write(expires=time.time() + LEASE_TTL, **fields)
+
+    def release(self, **fields: Any) -> None:
+        """Give the lease up, so the next worker starts without a wait."""
+        self.write(expires=0, **fields)
+
+    @classmethod
+    def acquire(cls) -> Lease | None:
+        """Take the lease, or return None when another worker holds it."""
+        data, etag = aws.lease()
+        if aws.alive(data):
+            return None
+        held = cls({k: v for k, v in data.items() if k != "owner"}, etag)
+        try:
+            held.renew()
+        except aws.ClientError:
+            return None
+        return held
+
 
 # Caches and logs are not state. The next worker builds them again.
 # Vis extracts `.vis/native` and `.vis/python/vis-guest` from its binary at each start.

@@ -18,9 +18,10 @@ from collections.abc import Callable
 from typing import Any
 
 from durable import aws, wire
-from durable.api import Api
-from durable.env import QUEUE, log
-from durable.gateway import HOST, PORT, Gateway
+from durable.app import Api
+from durable.helpers import log
+from durable.settings import QUEUE
+from durable.vis.gateway import HOST, PORT, Gateway
 
 # An event stream collects its bytes for COLLECT_S, writes one S3 object, then waits PAUSE_S.
 COLLECT_S, PAUSE_S = 0.2, 0.15
@@ -119,18 +120,18 @@ class Relay:
         after: Callable[[int, bytes], Any] | None = None
         turn, one = TURN.fullmatch(path), ONE.fullmatch(path)
         if method == "POST" and CREATE.fullmatch(path):
-            body, made = self.api.place(body)
+            body, made = self.api.sessions.place(body)
             # The body has a new length: the connection counts it.
             headers = {name: value for name, value in headers.items() if name.lower() != "content-length"}
             if made:
-                after = lambda status, data: self.api.placed(made, status, data)  # noqa: E731
+                after = lambda status, data: self.api.sessions.placed(made, status, data)  # noqa: E731
         elif method == "POST" and turn:
-            self.api.touch(turn.group(1))
+            self.api.sessions.touch(turn.group(1))
         elif method == "DELETE" and one:
-            roots = self.api.leaving(one.group(1))
-            after = lambda status, data: status < 300 and self.api.reap(roots)  # noqa: E731
+            roots = self.api.sessions.leaving(one.group(1))
+            after = lambda status, data: status < 300 and self.api.sessions.reap(roots)  # noqa: E731
         elif method == "DELETE" and MANY.fullmatch(path):
-            after = lambda status, data: status < 300 and self.api.reap(None)  # noqa: E731
+            after = lambda status, data: status < 300 and self.api.sessions.reap(None)  # noqa: E731
         connection = http.client.HTTPConnection(HOST, PORT, timeout=max(5.0, call["deadline"] - time.time()))
         try:
             connection.request(call["method"], call["path"], body or None, headers)

@@ -17,17 +17,8 @@ import time
 from typing import Any
 from urllib.parse import quote
 
-from durable.env import (
-    EFS,
-    ENV,
-    HOME,
-    MODELS,
-    PRIVATE_TMP,
-    WORKER_DIR,
-    log,
-    private,
-    write_secret,
-)
+from durable.helpers import log, private, write_secret
+from durable.settings import EFS, ENV, HOME, MODELS, PRIVATE_TMP, WORKER_DIR
 
 BINARY = "/opt/vis/vis-agent-native"
 HOST, PORT, TOKEN_FILE = "127.0.0.1", 7890, f"{WORKER_DIR}/gateway.token"

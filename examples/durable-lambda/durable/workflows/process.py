@@ -1,4 +1,4 @@
-"""One workflow run: `python -m durable.run <run id>`.
+"""One workflow run: `python -m durable.workflows.process <run id>`.
 
 The worker starts this process next to the gateway. Its environment has no AWS
 credentials. It talks to the gateway with the Vis SDK and to the Durable Lambda API.
@@ -15,9 +15,9 @@ from typing import Any
 
 from blockether.vis.engine import GatewayClient
 
-from durable.client import Durable
-from durable.gateway import HOST, PORT, PROVIDER, TOKEN_FILE
-from durable.workflows import Context, Waiting, encode
+from durable.vis.gateway import HOST, PORT, PROVIDER, TOKEN_FILE
+from durable.workflows.client import Durable
+from durable.workflows.sdk import Context, Waiting, encode
 
 
 def load(name: str, source: str) -> Callable[..., Any]:

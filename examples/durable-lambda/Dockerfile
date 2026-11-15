@@ -1,6 +1,6 @@
 # Durable Lambda on AWS Lambda. One clean image for every function of the stack.
 # There is no AWS Lambda base image and no Lambda adapter: the embedded Python of Vis is
-# the Lambda custom runtime, and durable/runtime.py speaks the Lambda Runtime API.
+# the Lambda custom runtime, and durable/lambda_runtime.py speaks the Lambda Runtime API.
 # Build for linux/arm64.
 #
 # Each download has a hash. The base image has a digest. Each file that curl downloads

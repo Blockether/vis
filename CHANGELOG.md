@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Python SDK: session groups. `client.groups()` lists the groups, `client.group(name)` gets a group or makes it, and `client.create_group`, `client.update_group` and `client.delete_group` change them. `client.create_session(group=...)` makes a session in a group, and `Session.set_group` moves a session into a group or out of it. Each group is a typed `SessionGroup`.
 
 ### Changed
+- Examples: the `durable` package of `examples/durable-lambda/` has one module for each task. `settings.py`, `helpers.py` and `domain.py` have the shared rules, `git.py` and `worktree.py` have the repository, `app.py` has the routes, and the packages `dashboard/`, `vis/` and `workflows/` have the front function, the work with Vis and the workflows. The README lists each module.
 - Performance: with an open digest, the TUI renders the steps of a long turn on a pool of threads. The first frame of a turn with 111 steps takes 22 ms instead of 150-225 ms. A computer with fewer than three processors uses one thread, as before.
 - Performance: while a turn runs with an open digest, the TUI builds only the rows that changed. A frame takes 1.2-1.7 ms instead of 16 ms, and a frame with a new step takes 7-9 ms instead of 35-46 ms.
 - Performance: the TUI uses Lanterna 3.1.5-vis.61. A width measure of 14 799 transcript rows takes 14 ms instead of 97 ms.

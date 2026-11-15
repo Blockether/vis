@@ -17,8 +17,9 @@ from collections.abc import Iterator
 from typing import Any
 
 from durable import aws, wire
-from durable.env import ENV, MODELS, log
-from durable.runtime import Context, Stream
+from durable.helpers import log
+from durable.lambda_runtime import Context, Stream
+from durable.settings import ENV, MODELS
 
 # The calls that a chat model needs.
 ALLOWED = {("GET", "/models"), ("POST", "/chat/completions")}

@@ -40,7 +40,7 @@ from typing import Any, TypeVar
 from blockether.vis.engine import Attachment, GatewayError, Session, Turn, final_answer
 from pydantic import BaseModel
 
-from durable.client import Durable
+from durable.workflows.client import Durable
 
 Model = TypeVar("Model", bound=BaseModel)
 # The statuses of a turn that does not run any more.
