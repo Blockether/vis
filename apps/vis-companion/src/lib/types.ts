@@ -526,6 +526,8 @@ export interface Toggle {
   overridden_by?: SettingOverride;
   /** Present only when a wider scope decides this inherited row. */
   decided_in?: SettingDecidedIn;
+  /** Present only when no client can change this row. The gateway's words say why. */
+  lock_reason?: string;
   editor?: SettingEditor;
   /** Static data for the editor. A `presets` row carries its slots and built-in presets. */
   editor_options?: PresetsOptions;

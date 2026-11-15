@@ -50,6 +50,7 @@ examples use it.
 | Change one setting | `post_settings(body=...)` |
 | Change many settings at once | `patch_settings(body=...)` |
 | Read or save the machine name | `machine_name()`, `set_machine_name(name)` |
+| Read, save or lock the agent name | `agent_name()`, `set_agent_name(name, locked=...)` |
 | Reload extensions | `post_extensions_reload(body=...)` |
 
 </div>
@@ -257,6 +258,49 @@ The `inherit` action removes the saved name. `GET /healthz` reports the name in 
 
 When the environment variable `VIS_MACHINE_NAME` is set on the gateway, the name in effect is the
 name from that variable. See [Machine name](configuration.md#machine-name).
+
+## Keep one agent name
+
+<div data-variant="python">
+
+```python
+client.set_agent_name("Acme", locked=True)
+print(client.agent_name())
+client.set_agent_name("Acme", locked=False)
+```
+
+`locked=True` saves the name and locks it. The name is then the only name of the agent. No project
+changes it, and no client can rename the agent. `locked=False` saves the name and removes the lock.
+
+Without `locked`, the call is a rename, and the lock stays as it is. The gateway refuses the rename
+of a locked name with `GatewayError`, status 409. Each call returns the name in effect. The two
+calls use `get_setting` and `post_settings` with the setting `agent_name`.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
+  --data '{"scope": "global", "id": "agent_name", "action": "value", "value": "Acme", "is_locked": true}'
+vis_api "$VIS_GATEWAY_URL/v1/settings/agent_name?scope=global"
+vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
+  --data '{"scope": "global", "id": "agent_name", "action": "value", "value": "Acme", "is_locked": false}'
+```
+
+`"is_locked": true` saves the name and locks it. The name is then the only name of the agent. No
+project changes it, and no client can rename the agent. `"is_locked": false` saves the name and
+removes the lock.
+
+Without `is_locked`, the request is a rename, and the lock stays as it is. The gateway answers the
+rename of a locked name with 409 and the error type `setting-locked`. The row of a fixed name has
+`lock_reason`, a sentence that tells a person why the name cannot change.
+
+</div>
+
+When the environment variable `VIS_AGENT_NAME` is set on the gateway, the name in effect is the name
+from that variable. The gateway then refuses each change with 409. See
+[One fixed name](configuration.md#one-fixed-name).
 
 ## Reload extensions
 

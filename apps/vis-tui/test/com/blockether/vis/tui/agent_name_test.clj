@@ -121,7 +121,7 @@
 
 (defn settings-fixture
   "Production settings dialog; only the gateway boundary is an in-memory fixture."
-  [cols keys save-error]
+  [cols keys save-error & [lock-reason]]
   (let [saved
         (atom "Vis")
 
@@ -134,7 +134,9 @@
     (with-redefs [client/setting
                   (fn [id]
                     (expect (= "agent_name" id))
-                    {"id" id "type" "string" "value" @saved})
+                    (cond-> {"id" id "type" "string" "value" @saved}
+                      lock-reason
+                      (assoc "lock_reason" lock-reason)))
 
                   client/set-setting-value!
                   (fn [id value]
@@ -183,6 +185,21 @@
       (let [{:keys [capture saved]} (settings-fixture 40 [:enter \x :enter :esc] "Write failed")]
         (expect (nil? (:error capture)))
         (expect (= "Vis" saved)))))
+
+(defdescribe
+  locked-name-shows-its-reason-and-takes-no-edit
+  (it "locked name shows its reason and takes no edit"
+      (let [reason
+            "The operator of this gateway locked the agent name. You cannot change it here."
+
+            {:keys [capture saved requests errors]}
+            (settings-fixture 100 [:enter :esc] nil reason)]
+
+        (expect (nil? (:error capture)))
+        (expect (some #(str/includes? (cap/frame-text %) "Agent name (locked)") (:frames capture)))
+        (expect (= [reason] errors))
+        (expect (= "Vis" saved))
+        (expect (empty? requests)))))
 
 (defdescribe
   gateway-rename-and-reconnect-update-the-owning-tab

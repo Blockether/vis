@@ -1413,7 +1413,11 @@
           "minLength": 1,
           "maxLength": 80,
           "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
-          "description": "Coding-agent name shared by the JVM prompt and gateway clients. Defaults to Vis."
+          "description": "Coding-agent name shared by the JVM prompt and gateway clients. Defaults to Vis. The environment variable VIS_AGENT_NAME overrides it and locks it."
+        },
+        "agent_name_locked": {
+          "type": "boolean",
+          "description": "Only in the machine configuration. true makes the machine `agent_name` the only name of the agent: no project changes it and no client can rename the agent."
         },
         "machine_name": {
           "$ref": "#/$defs/machineName"

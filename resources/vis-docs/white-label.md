@@ -69,6 +69,9 @@ phone and the TUI keep the Vis look. An HTML transcript export also keeps the Vi
 The brand replaces the name only in the header and the page title. Other messages of the app still
 use the name Vis.
 
+The brand does not rename the coding agent. To give the agent one name that nobody can change, see
+[One fixed name](configuration.md#one-fixed-name).
+
 ## Icon links
 
 Each link has three keys, and all three are necessary:
@@ -163,4 +166,6 @@ build, and the message names the key.
 - [White label API](white-label-api.md) — read, set and remove the brand of a gateway from Python
   or with HTTP requests.
 - [Runtime distributions](distributions.md) — install the web app and serve your own build.
+- [Configuration](configuration.md#one-fixed-name) — give the coding agent one name that nobody can
+  change.
 - [Running a gateway](gateway-service.md) — run a shared gateway for your team.

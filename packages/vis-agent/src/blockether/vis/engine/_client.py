@@ -190,6 +190,16 @@ def _group(data: Any) -> SessionGroup:
         raise ProtocolError("invalid session group response") from None
 
 
+def _agent_name(row: Any) -> str:
+    """The name of an `agent_name` setting answer."""
+    if not isinstance(row, dict) or row.get("id") != "agent_name":
+        raise ProtocolError("invalid agent_name setting answer")
+    value = row.get("value")
+    if not isinstance(value, str) or not value.strip():
+        raise ProtocolError("invalid agent_name setting answer")
+    return value.strip()
+
+
 def _machine_name(row: Any) -> str | None:
     """The effective name of a `machine_name` setting answer. Blank is no name."""
     if not isinstance(row, dict) or row.get("id") != "machine_name":
@@ -728,6 +738,39 @@ class ExecutionLayer(ABC):
         """
         mode = "delete" if delete_sessions else "detach"
         return self.delete_session_group(_group_id(group), query={"sessions": mode})
+
+    def agent_name(self) -> str:
+        """Return the name that the gateway gives to the agent.
+
+        This is the name for a session without a project name. The environment
+        variable `VIS_AGENT_NAME` of the gateway and a locked name are the name
+        of the agent in each project.
+        """
+        return _agent_name(self.get_setting("agent_name", query={"scope": "global"}))
+
+    def set_agent_name(self, name: str, *, locked: bool | None = None) -> str:
+        """Save the agent name of the gateway and return the name in effect.
+
+        `locked=True` also locks the name: it is then the only name of the
+        agent, no project changes it and no client can rename the agent.
+        `locked=False` removes the lock. Without `locked`, the lock stays as it
+        is, and the gateway refuses the change of a locked name with
+        `GatewayError` (status 409). While `VIS_AGENT_NAME` is set on the
+        gateway, the gateway refuses each change in the same way.
+        """
+        if not isinstance(name, str):
+            raise TypeError("an agent name must be text")
+        if locked is not None and not isinstance(locked, bool):
+            raise TypeError("locked must be True, False or None")
+        body: dict[str, JSONValue] = {
+            "scope": "global",
+            "id": "agent_name",
+            "action": "value",
+            "value": name.strip(),
+        }
+        if locked is not None:
+            body["is_locked"] = locked
+        return _agent_name(self.post_settings(body=body))
 
     def machine_name(self) -> str | None:
         """Return the name of the gateway machine, or None when it has no name.

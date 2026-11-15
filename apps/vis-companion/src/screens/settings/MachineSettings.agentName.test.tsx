@@ -110,3 +110,14 @@ it('cancels a draft, rejects a blank name locally and retries a failed write', a
   );
   expect(save).toHaveBeenCalledTimes(2);
 });
+it('shows a locked name read-only, with the reason of the gateway', async () => {
+  const reason = 'The operator of this gateway locked the agent name. You cannot change it here.';
+  vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
+    revision: 'agent-name-2',
+    groups: [{ id: 'agent', title: 'Agent', toggles: [{ ...setting, value: 'Acme', lock_reason: reason }] }],
+  });
+  const field = await open();
+  expect(field).toHaveValue('Acme');
+  expect(field).toBeDisabled();
+  expect(screen.getByText('(locked)')).toHaveAttribute('title', reason);
+});

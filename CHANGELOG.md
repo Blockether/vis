@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Gateway: a machine can have a name. Set the environment variable `VIS_MACHINE_NAME` or the key `machine_name` in the global configuration, or change **Machine name** in Settings → General. The variable wins over the saved name. The gateway reports the name as `machine_name` in `GET /healthz`, `GET /readyz`, the admin status and the web launch grant.
 - Companion: a machine shows the name that its gateway reports, not the host of its address. A name that you give the machine with **Rename** on your device wins.
 - Python SDK: `machine_name()` and `set_machine_name(name)` read and save the machine name.
+- Gateway: the agent can have one fixed name. Set the environment variable `VIS_AGENT_NAME`, or lock the saved name with `agent_name_locked: true` in the global configuration. No project changes a fixed name. A settings write for `agent_name` takes `is_locked` to save the name with or without the lock. The gateway answers the rename of a fixed name with 409 and the error type `setting-locked`, and the setting row has `lock_reason`.
+- Python SDK: `agent_name()` reads the agent name, and `set_agent_name(name, locked=)` saves it, with or without the lock.
+- TUI, Companion: a fixed agent name shows as **(locked)** with the reason, and you cannot edit it.
 - Web app: a white label. A brand gives the web app a name, a logo, a link for the logo, icon links in the header and one theme. With a brand theme, Preferences shows no theme choice. See **White label** in the manual.
 - Gateway: `GET /v1/web/brand` answers the brand of the web app, and `PUT` and `DELETE` on the same route save and remove it. The gateway keeps the brand in `gateway/web-brand.json` in the Vis home.
 - Python SDK: `web_brand()`, `set_web_brand(name=, logo=, href=, links=, theme=)` and `clear_web_brand()` read, save and remove the brand of the web app.

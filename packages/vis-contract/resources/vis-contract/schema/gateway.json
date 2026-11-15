@@ -3846,6 +3846,10 @@
           "type": "boolean",
           "description": "A string row that accepts a blank value. A blank value removes the saved value."
         },
+        "lock_reason": {
+          "type": "string",
+          "description": "Present when a client cannot change this row. The text tells a person why. A client shows the row read-only."
+        },
         "inheritance": {
           "$ref": "toggle.json#/$defs/contribution/properties/inheritance"
         },
@@ -4089,6 +4093,10 @@
         },
         "value": {
           "$ref": "#/$defs/setting_value"
+        },
+        "is_locked": {
+          "type": "boolean",
+          "description": "Only for `agent_name`, with the value action. true saves the name and locks it: the gateway then answers 409 to a write without this key. false saves the name and removes the lock."
         }
       },
       "allOf": [

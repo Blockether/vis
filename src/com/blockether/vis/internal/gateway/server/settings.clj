@@ -189,19 +189,23 @@
            (throw e)))))
 
 (defn- agent-name-setting
+  "The agent name row. A locked name carries `:lock-reason`: clients show the row
+   read-only."
   []
-  {:id "agent_name"
-   :label "Agent name"
-   :description "Shared by all clients of this gateway. Overrides project names."
-   :type "string"
-   :value (config/agent-name)
-   :max-length 80
-   :editor "text"
-   :own-value (get (config/load-global-config-raw) "agent_name")
-   :is-override (contains? (config/load-global-config-raw) "agent_name")
-   :inherited-value (or (get (config/load-global-yaml-config-raw) "agent_name") "Vis")
-   :inherited-source "default"
-   :applies "next_turn"})
+  (cond-> {:id "agent_name"
+           :label "Agent name"
+           :description "Shared by all clients of this gateway. Overrides project names."
+           :type "string"
+           :value (config/agent-name)
+           :max-length 80
+           :editor "text"
+           :own-value (get (config/load-global-config-raw) "agent_name")
+           :is-override (contains? (config/load-global-config-raw) "agent_name")
+           :inherited-value (or (get (config/load-global-yaml-config-raw) "agent_name") "Vis")
+           :inherited-source "default"
+           :applies "next_turn"}
+    (config/agent-name-lock)
+    (assoc :lock-reason (:reason (config/agent-name-lock)))))
 
 (defn- machine-name-setting
   "The machine name row. The environment variable VIS_MACHINE_NAME has no scope
@@ -241,15 +245,27 @@
              (throw e))))))
 
 (defn- set-agent-name-setting
-  [action given]
-  (if (not= action "value")
-    (http/error-response 400 :invalid-setting-action "Agent name takes the value action.")
-    (try (state/set-agent-name! (:raw given))
-         (http/json-response (agent-name-setting))
-         (catch clojure.lang.ExceptionInfo e
-           (if (= :config/invalid-agent-name (:type (ex-data e)))
-             (http/error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
-             (throw e))))))
+  "Save the agent name. `:locked?` true also locks the name and false removes the
+   lock. A locked name answers 409 to a write without `:locked?`."
+  [action {:keys [raw locked?]}]
+  (cond (not= action "value")
+        (http/error-response 400 :invalid-setting-action "Agent name takes the value action.")
+        (not (or (nil? locked?) (boolean? locked?)))
+        (http/error-response 400
+                             :invalid-setting-value "is_locked must be true or false."
+                             :id "agent_name")
+        :else
+        (try (state/set-agent-name! raw locked?)
+             (http/json-response (agent-name-setting))
+             (catch clojure.lang.ExceptionInfo e
+               (case (:type (ex-data e))
+                 :config/invalid-agent-name
+                 (http/error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
+
+                 :config/agent-name-locked
+                 (http/error-response 409 :setting-locked (ex-message e) :id "agent_name")
+
+                 (throw e))))))
 
 (defn- extension-rows
   "Row id -> `[extension position]` for each extension loaded where `target` runs.
@@ -639,7 +655,8 @@
                   (http/json-response (first (filter #(= id (:id %)) (access-settings target)))))
               (= id "agent_name")
               (if (= "global" (:scope target))
-                (set-agent-name-setting action {:raw (get body "value")})
+                (set-agent-name-setting action
+                                        {:raw (get body "value") :locked? (get body "is_locked")})
                 (http/error-response 400 :invalid-setting-scope "Agent name is global"))
               (= id "machine_name")
               (if (= "global" (:scope target))

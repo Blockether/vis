@@ -4506,6 +4506,7 @@
                                     "General"
                                     [{:type :agent-name
                                       :label "Agent name"
+                                      :locked (get @agent-name-setting "lock_reason")
                                       :description
                                       (or
                                         (get @agent-name-setting "error")
@@ -4529,7 +4530,9 @@
            ;; One word says the state. F1 and Enter give the reason (user).
            (cond locked " (locked)"
                  inherited? " (inherited)")))
-    label))
+    (cond-> label
+      (and locked (= :agent-name type))
+      (str " (locked)"))))
 
 (defn- settings-option-value
   "The current value or short service status, separate from the setting's label."
@@ -5959,12 +5962,14 @@
     (let [region (host-band-region screen region)]
       (try (let [current (vis/setting "agent_name")]
              (reset! agent-name-setting current)
-             (when-let [value (mini-read! screen
-                                          g
-                                          region
-                                          "Agent name (all gateway clients):"
-                                          {:initial (get current "value")})]
-               (reset! agent-name-setting (vis/set-setting-value! "agent_name" value))))
+             (if-let [reason (get current "lock_reason")]
+               (mini-note! screen g region "Agent name is locked" reason)
+               (when-let [value (mini-read! screen
+                                            g
+                                            region
+                                            "Agent name (all gateway clients):"
+                                            {:initial (get current "value")})]
+                 (reset! agent-name-setting (vis/set-setting-value! "agent_name" value)))))
            (catch Exception e (mini-note! screen g region "Agent name not saved" (ex-message e)))))
 
     :registry-toggle

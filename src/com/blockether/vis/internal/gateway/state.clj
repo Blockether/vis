@@ -1775,12 +1775,16 @@
 
 (defn set-agent-name!
   "Save the gateway identity before notifying every open session. Reconnects read
-   the current identity from session metadata, not stale replayed rename events."
-  [value]
-  (let [agent-name (config/set-agent-name! value)]
-    (doseq [sid (other-session-ids nil)]
-      (append-event! sid "session.agent_name_updated" {:agent-name agent-name} {:store? false}))
-    agent-name))
+   the current identity from session metadata, not stale replayed rename events.
+   `locked?` true also locks the name and false removes the lock; an open settings
+   view then reads the row again."
+  ([value] (set-agent-name! value nil))
+  ([value locked?]
+   (let [agent-name (config/set-agent-name! value locked?)]
+     (doseq [sid (other-session-ids nil)]
+       (append-event! sid "session.agent_name_updated" {:agent-name agent-name} {:store? false}))
+     (when (some? locked?) (publish-settings-changed! {:id "agent_name"}))
+     agent-name)))
 
 (defn set-machine-name!
   "Save the machine name, then tell every client, so an open settings view and a

@@ -38,6 +38,8 @@ when you want settings shared across projects or checked into a repository.
   extensions use them too with [Python extension environment](#python-extension-environment).
 - **A gateway on a server shows in your apps as a long host name.** Give it a
   [machine name](#machine-name).
+- **You serve Vis under your own name, and nobody must rename the agent.** Give the agent
+  [one fixed name](#one-fixed-name).
 - **Your own program must read or change settings.** Read [Configuration API](configuration-api.md).
 
 Use [Project instructions](project-instructions.md) for rules about working in your
@@ -78,6 +80,42 @@ Programs read and save the name like any other setting, with the [Configuration
 API](configuration-api.md#change-one-setting). An invalid name returns 400 without changing the
 saved value. The settings list shows the name as a `string` row in the `general` group. Session details
 include the resolved `agent_name`, so reconnecting clients receive the current value.
+
+### One fixed name
+
+When you serve Vis under your own name, you can give the agent one name. No project changes that
+name, and no client can rename the agent. There are two ways to do this.
+
+**The environment variable.** Set `VIS_AGENT_NAME` before the gateway starts:
+
+```bash
+VIS_AGENT_NAME=Acme vis-agent gateway start --require-token
+```
+
+For a service, put `Environment=VIS_AGENT_NAME=Acme` in the service unit. The name from the variable
+wins over each saved name and each project name. While the variable is set, Vis refuses each change
+of the name. Vis ignores a value of the variable that breaks the rules for a name.
+
+**The lock.** Put these keys in your global `~/.vis/config.yml`:
+
+```yaml
+agent_name: Acme
+agent_name_locked: true
+```
+
+A program can save the same lock with the
+[Configuration API](configuration-api.md#keep-one-agent-name). The gateway then writes the two keys
+to its `~/.vis/state.yml`, and that file wins over `config.yml`. A locked name without `agent_name`
+is `Vis`. A project file cannot lock the name.
+
+To rename the agent again, remove the lock with the Configuration API, or set
+`agent_name_locked: false`.
+
+With a fixed name, Settings show the name with **(locked)** and the reason, and you cannot edit it.
+A program that saves a name without the lock key gets the answer 409.
+
+A session that leaves out the global configuration does not read the lock. The environment variable
+applies to each session.
 
 ## Machine name
 

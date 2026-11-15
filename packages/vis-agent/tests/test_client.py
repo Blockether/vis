@@ -1490,6 +1490,48 @@ def test_group_is_get_or_create_and_sessions_join_it():
             client.groups()
 
 
+def test_agent_name_is_saved_locked_and_unlocked():
+    held = {"name": "Vis", "locked": False}
+
+    def respond(method, path, body):
+        parts = urlsplit(path)
+        if method == "POST" and parts.path == "/v1/settings":
+            request = json.loads(body)
+            if held["locked"] and "is_locked" not in request:
+                return 409, {"error": {"type": "setting-locked", "message": "locked"}}
+            held["name"] = request["value"]
+            held["locked"] = request.get("is_locked", held["locked"])
+        elif parts.path != "/v1/settings/agent_name":
+            return compatible(method, path, body)
+        return 200, {"id": "agent_name", "type": "string", "value": held["name"]}
+
+    with endpoint(respond) as (url, calls):
+        client = GatewayClient(url)
+        assert client.agent_name() == "Vis"
+        assert parse_qs(urlsplit(calls[-1][1]).query) == {"scope": ["global"]}
+        assert client.set_agent_name("  Ada ") == "Ada"
+        assert json.loads(calls[-1][3]) == {
+            "scope": "global",
+            "id": "agent_name",
+            "action": "value",
+            "value": "Ada",
+        }
+        assert client.set_agent_name("Acme", locked=True) == "Acme"
+        assert json.loads(calls[-1][3])["is_locked"] is True
+        # A rename without the lock argument is the rename of a client: refused.
+        with pytest.raises(GatewayError) as error:
+            client.set_agent_name("Other")
+        assert (error.value.status, error.value.code) == (409, "setting-locked")
+        assert client.agent_name() == "Acme"
+        assert client.set_agent_name("Acme", locked=False) == "Acme"
+        assert json.loads(calls[-1][3])["is_locked"] is False
+        assert client.set_agent_name("Free") == "Free"
+        with pytest.raises(TypeError, match="must be text"):
+            client.set_agent_name(7)
+        with pytest.raises(TypeError, match="True, False or None"):
+            client.set_agent_name("Ada", locked="yes")
+
+
 @pytest.mark.parametrize("environment", [None, "lambda-eu"])
 def test_machine_name_reads_saves_and_removes_the_setting(environment):
     saved = {"name": None}

@@ -54,6 +54,8 @@
         (= id "agent_name")
         (do (when-not (= "global" (:scope target))
               (throw (ex-info "Agent name belongs to the machine" {:status 400 :id id})))
+            (when-let [{:keys [reason]} (config/agent-name-lock)]
+              (throw (ex-info reason {:status 409 :type :setting-locked :id id})))
             (when (and (= action "value") (not (validation/valid? {"agent_name" value})))
               (throw (ex-info "Enter a name of 1–80 characters without control characters"
                               {:status 400 :id id})))

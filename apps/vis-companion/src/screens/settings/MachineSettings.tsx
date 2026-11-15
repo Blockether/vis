@@ -472,6 +472,7 @@ export function scopeTitle(scope: SettingsScope): string {
  * changing it here would not change what that session uses.
  */
 export function lockNote(toggle: Toggle): string | null {
+  if (toggle.lock_reason) return toggle.lock_reason;
   if (toggle.decided_in) {
     return `Set in ${scopeTitle(toggle.decided_in.scope)} settings. You cannot change it per ${toggle.scope ?? 'scope'}.`;
   }

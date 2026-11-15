@@ -1646,23 +1646,59 @@
         (reset! config-raw-cache {:stamp stamp :value value})
         value))))
 
-(defn- configured-agent-name
-  [raw]
-  (let [value (get raw "agent_name")]
-    (if (and (util/non-blank-string? value)
+(defn- valid-agent-name
+  "`value` trimmed when it is an agent name, else nil."
+  [value]
+  (when (and (util/non-blank-string? value)
              (<= (count value) 80)
              (not (re-find #"[\x00-\x1f\x7f-\x9f]" value)))
-      (str/trim value)
-      "Vis")))
+    (str/trim value)))
+
+(defn- configured-agent-name [raw] (or (valid-agent-name (get raw "agent_name")) "Vis"))
+
+(defn- agent-name-lock-of
+  "The lock that the machine tiers `yaml` and `store` give. See `agent-name-lock`."
+  [yaml store]
+  (if-let [env (valid-agent-name (util/env-val "VIS_AGENT_NAME"))]
+    {:by :environment
+     :name env
+     :reason
+     "The environment variable VIS_AGENT_NAME sets the agent name. You cannot change it here."}
+    (let [machine (merge yaml store)]
+      (when (true? (get machine "agent_name_locked"))
+        {:by :config
+         :name (configured-agent-name machine)
+         :reason
+         "The operator of this gateway locked the agent name. You cannot change it here."}))))
+
+(defn agent-name-lock
+  "The lock on the agent name, or nil while a client can rename the agent. `:by`
+   is `:environment` when the environment variable VIS_AGENT_NAME sets the name,
+   or `:config` when `agent_name_locked` is true in the machine configuration:
+   state.yml, then the hand-written global YAML. `:name` is the one name of the
+   agent, which no project changes. `:reason` tells a person why the name cannot
+   change. An invalid value of the variable counts as not set."
+  []
+  (agent-name-lock-of (load-global-yaml-config-raw) (load-global-config-raw)))
 
 (defn agent-name
-  "Coding-agent identity, defaulting to Vis. The gateway setting in state.yml
-   overrides every project; otherwise merged YAML supplies the default. With a
-   workspace root, read that project rather than the gateway process cwd.
-   Invalid values from lenient loading fall back to Vis."
-  ([] (configured-agent-name (merge (load-config-raw) (load-global-config-raw))))
+  "Coding-agent identity, defaulting to Vis. A locked name is the only name (see
+   `agent-name-lock`). Without a lock, the gateway setting in state.yml overrides
+   every project; otherwise merged YAML supplies the default. With a workspace
+   root, read that project rather than the gateway process cwd. Invalid values
+   from lenient loading fall back to Vis."
+  ([]
+   (let [store (load-global-config-raw)]
+     (or (:name (agent-name-lock-of (load-global-yaml-config-raw) store))
+         (configured-agent-name (merge (load-config-raw) store)))))
   ([workspace-root]
-   (let [project
+   (let [yaml
+         (load-global-yaml-config-raw)
+
+         store
+         (load-global-config-raw)
+
+         project
          (when workspace-root
            (some read-yaml-config-map-lenient
                  (map #(str (io/file workspace-root %)) ["vis.yml" "vis.yaml"])))
@@ -1672,12 +1708,10 @@
                     (not= (.getCanonicalPath (io/file workspace-root ".vis"))
                           (.getCanonicalPath (io/file (config-dir)))))
            (some read-yaml-config-map-lenient
-                 (map #(str (io/file workspace-root ".vis" %)) ["config.yml" "config.yaml"])))
+                 (map #(str (io/file workspace-root ".vis" %)) ["config.yml" "config.yaml"])))]
 
-         raw
-         (merge (load-global-yaml-config-raw) project overlay (load-global-config-raw))]
-
-     (configured-agent-name raw))))
+     (or (:name (agent-name-lock-of yaml store))
+         (configured-agent-name (merge yaml project overlay store))))))
 
 (defn- machine-name-env
   "Value of the environment variable VIS_MACHINE_NAME, trimmed, or nil."
@@ -2352,14 +2386,33 @@
 
 (defn set-agent-name!
   "Persist the gateway-wide coding-agent name in state.yml, preserving other keys.
-   Reject invalid input before writing; return the normalized name."
-  [value]
-  (when-not (config-validation/valid? {"agent_name" value})
-    (throw (ex-info "Agent name must be 1–80 characters, with no control characters."
-                    {:type :config/invalid-agent-name})))
-  (let [value (str/trim value)]
-    (update-machine-config! #(assoc % "agent_name" value))
-    value))
+   Reject invalid input before writing; return the normalized name. `locked?` true
+   also locks the name and false removes the lock; nil keeps the lock as it is.
+   Refuse a change of a locked name that gives no `locked?`, and each change while
+   the environment variable VIS_AGENT_NAME sets the name."
+  ([value] (set-agent-name! value nil))
+  ([value locked?]
+   (when-not (config-validation/valid? {"agent_name" value})
+     (throw (ex-info "Agent name must be 1–80 characters, with no control characters."
+                     {:type :config/invalid-agent-name})))
+   (let [value
+         (str/trim value)
+
+         refused
+         (volatile! nil)]
+
+     ;; The store lock makes the lock check and the write one step.
+     (update-machine-config! (fn [store]
+                               (let [{:keys [by] :as lock}
+                                     (agent-name-lock-of (load-global-yaml-config-raw) store)]
+                                 (if (and lock (or (= :environment by) (nil? locked?)))
+                                   (do (vreset! refused lock) nil)
+                                   (cond-> (assoc store "agent_name" value)
+                                     (some? locked?)
+                                     (assoc "agent_name_locked" locked?))))))
+     (when-let [{:keys [reason]} @refused]
+       (throw (ex-info reason {:type :config/agent-name-locked})))
+     value)))
 
 (defn set-machine-name!
   "Persist the machine name in state.yml, preserving other keys. nil or a blank
