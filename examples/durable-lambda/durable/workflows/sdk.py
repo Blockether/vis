@@ -63,7 +63,7 @@ import time
 import typing
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, TypeVar
+from typing import Any, Concatenate, ParamSpec, TypeVar, overload
 
 from blockether.vis.engine import Attachment, GatewayError, Session, Turn, final_answer
 from pydantic import BaseModel, ValidationError
@@ -72,12 +72,19 @@ from durable.settings import CORRECTIONS, PROVIDER, TURN_S
 from durable.workflows.client import Durable
 
 Model = TypeVar("Model", bound=BaseModel)
+# The arguments of an activity after its context, and its result.
+Given = ParamSpec("Given")
+Result = TypeVar("Result")
+# A workflow function.
+Entry = TypeVar("Entry", bound=Callable[..., Any])
 # The statuses of a turn that does not run any more.
 ENDED = ("completed", "failed", "cancelled", "suspended", "error")
 # The fields of a task of `ctx.delegate`. They are the fields of a task of `council.run` in a session.
 TASK = ("task", "title", "role", "model", "provider", "iteration_budget", "files")
 # The start of the output line with which the session of a run shows the records of its subagents. A JSON list follows.
 DELEGATED = "DELEGATED "
+# The fields of a subagent record in that line. A session reads the last two to answer a subagent that asks.
+SHOWN = ("id", "status", "answer", "error", "question", "question_entry_id")
 # The start of the request that puts the decision of a person in the transcript. A JSON object follows on the same line.
 GATE = "The decision of a person at a gate of this workflow run: "
 
@@ -162,9 +169,7 @@ def route(llm: str | None, provider: str | None) -> dict[str, str]:
     return {"provider": provider or PROVIDER, "model": llm}
 
 
-def workflow(
-    title: str = "", description: str = "", model: str | None = None, *, activities: Sequence[Around] = (), requests: Sequence[Through] = ()
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def workflow(title: str = "", description: str = "", model: str | None = None, *, activities: Sequence[Around] = (), requests: Sequence[Through] = ()) -> Callable[[Entry], Entry]:
     """Mark the function that a run calls. `model` selects the model of the session.
 
     `activities` and `requests` are the middleware of the run. A middleware of
@@ -179,7 +184,7 @@ def workflow(
     Thus a middleware that changes the text must give the same text each time.
     """
 
-    def mark(function: Callable[..., Any]) -> Callable[..., Any]:
+    def mark(function: Entry) -> Entry:
         """Record the title, the description, the model and the middleware on the function."""
         about = {"title": title or function.__name__, "description": description, "model": model, "activities": tuple(activities), "requests": tuple(requests)}
         function.__workflow__ = about  # type: ignore[attr-defined]
@@ -188,19 +193,19 @@ def workflow(
     return mark
 
 
-def activity(title: str = "", retries: int = 0) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Make a function a step of a run. Its first argument is the context of the run.
+def activity(title: str = "", retries: int = 0) -> Callable[[Callable[Concatenate[Context, Given], Result]], Callable[Concatenate[Context, Given], Result]]:
+    """Make a function a step of a run. Its first argument is the context of the run. The step has the arguments and the result type of the function.
 
     No activity runs again by itself. With `retries`, a failed activity runs again at
     most that number of times. Each retry forks the session: the fork has the
     transcript before the activity, and the run continues in the fork.
     """
 
-    def wrap(function: Callable[..., Any]) -> Callable[..., Any]:
+    def wrap(function: Callable[Concatenate[Context, Given], Result]) -> Callable[Concatenate[Context, Given], Result]:
         """Return the function as a step of the run."""
 
         @functools.wraps(function)
-        def call(ctx: Context, *arguments: Any, **named: Any) -> Any:
+        def call(ctx: Context, *arguments: Given.args, **named: Given.kwargs) -> Result:
             """Run the step in the context of the run, which reports it."""
             return ctx._step(function, title or function.__name__, retries, arguments, named)
 
@@ -319,7 +324,8 @@ class Context:
         if self._retry and seq == self._failed:
             self._leave()
         try:
-            for left in range(retries, -1, -1):
+            left = max(retries, 0)
+            while True:
                 # The place in the transcript where the activity starts. A retry forks the session there.
                 at, kept = self._at, self._kept
                 try:
@@ -332,7 +338,7 @@ class Context:
                         self._event("activity_failed", seq=seq, error=error)
                         raise
                     self._event("note", seq=seq, text=f"The activity failed: {error}. It runs again in a fork of the session."[:2000])
-                    self._at, self._kept = at, kept
+                    left, self._at, self._kept = left - 1, at, kept
                     self._fork()
         finally:
             self._current = self.step = None
@@ -392,7 +398,13 @@ class Context:
             send = within(self, through, send)
         return send(Request(text, llm, provider, timeout))
 
-    def ask(self, request: str, model: type[Model] | None = None, *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> Any:
+    @overload
+    def ask(self, request: str, model: None = None, *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> str: ...
+
+    @overload
+    def ask(self, request: str, model: type[Model], *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> Model: ...
+
+    def ask(self, request: str, model: type[Model] | None = None, *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> str | Model:
         """Send a request to the session of the run.
 
         With a Pydantic model, return a validated instance: the session gets the JSON
@@ -437,17 +449,23 @@ class Context:
                 task["provider"] = PROVIDER
         if not given:
             return []
+        # A backtick in a task must not end the code block of the request.
+        listed = json.dumps(given).replace("`", "\\u0060")
         block = (
-            "import json\n"
-            f"records = await council.run(json.loads({json.dumps(given)!r}))\n"
-            'while any(record["status"] in ("queued", "running") for record in records):\n'
-            '    records = await council.wait(session_ids=[record["session_id"] for record in records])\n'
-            f'print({DELEGATED!r} + json.dumps([{{key: record.get(key) for key in ("id", "status", "answer", "error")}} for record in records]))'
+            "import json\n\n\n"
+            "async def settle(records):\n"
+            '    """Wait until each subagent ends or one of them asks. Print the records."""\n'
+            '    while any(record["status"] in ("queued", "running") for record in records) and not any(record["status"] in ("asking", "held") for record in records):\n'
+            '        records = await council.wait(session_ids=[record["session_id"] for record in records])\n'
+            f"    print({DELEGATED!r} + json.dumps([{{key: record.get(key) for key in {SHOWN!r}}} for record in records]))\n"
+            "    return records\n\n\n"
+            f"records = await settle(await council.run(json.loads({listed!r})))"
         )
+        again = 'records = await settle(await council.wait(session_ids=[record["session_id"] for record in records]))'
         how = (
             "Do not do the work of a task yourself. Run exactly this Python block one time, without a change:\n\n"
             f"```python\n{block}\n```\n\n"
-            "When a subagent has the status asking, answer its question from its task. Then run the block again from the line with `while`. "
+            f"When the printed line shows a subagent with the status asking, answer it from its task. Then run `{again}`. Do that until no subagent asks. "
             "Then answer with one short line."
         )
         request = f"Give each task of this Python block to its own subagent. {how}"
@@ -467,7 +485,10 @@ class Context:
 
     def _delegated(self, turn_id: str) -> list[dict[str, Any]] | None:
         """Return the records of the subagents that the tool output of a turn shows, in the order of their tasks. None: the turn started no subagent."""
-        steps = self.session.client.get_session_turn_trace(self.session.id, turn_id)["iterations"]
+        trace: Any = self.session.client.get_session_turn_trace(self.session.id, turn_id)
+        steps = trace.get("iterations") if isinstance(trace, dict) else None
+        if not isinstance(steps, list):  # without the trace, a second request can start each subagent again
+            raise ActivityError("the gateway gave no trace of the turn")
         shown = [line for step in steps for form in step.get("forms") or [] for line in (form.get("stdout") or "").splitlines() if line.startswith(DELEGATED)]
         if not shown:
             return None

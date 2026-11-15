@@ -147,7 +147,8 @@ A task of `ctx.delegate` is a text, or a dict with `task` and optional `title`, 
 The session starts the subagents in one turn, with a Python block that `ctx.delegate`
 gives. The answers come from the tool output of that turn, not from the text of the
 session. Thus the transcript has the delegation: a new process of the run and a fork
-start no second subagent. A subagent that does not complete fails the activity.
+start no second subagent. The session answers a subagent that asks a question. A
+subagent that does not complete fails the activity.
 
 ### Middleware
 
@@ -187,6 +188,7 @@ def song_factory(ctx, prompt: str = "A slow song about a night train"):
 | `activities=[...]` | Each activity as a `Step`: `seq`, `name`, `title`, `arguments` and `named` | `call()` runs the activity and returns its result |
 | `requests=[...]` | Each request of an activity as a `Request`: `text`, `llm`, `provider` and `timeout` | `send(request)` returns a `Reply`: the `text` of the answer and the `turn_id` |
 
+- The types are real for a type checker: an activity has the arguments and the result type of its function, and `ctx.ask(request, Model)` gives a `Model`.
 - The first middleware of a list is the outer one.
 - `ctx.step` is the activity that runs.
 - A middleware of `activities` can return another result, or a result for an activity that failed. With `retries`, each attempt goes through the middleware.
