@@ -300,27 +300,78 @@
   [^String s]
   (and (pos? (.length s)) (boolean (re-matches #"[\s\-\|\+]+" s)) (boolean (re-find #"[\-\+]" s))))
 
+(defn- trim-end-spaces
+  "`s` without the spaces at its end. The pattern can match only when the last char is a
+   space or a line terminator, so each other line comes back as is."
+  ^String [^String s]
+  (let [n (.length s)]
+    (if (zero? n)
+      s
+      (let [c (int (.charAt s (dec n)))]
+        (if (or (== c 0x20) (== c 0x0A) (== c 0x0D) (== c 0x85) (== c 0x2028) (== c 0x2029))
+          (str/replace s #" +$" "")
+          s)))))
+
 (defn- clean-copied-line
   [s]
-  (let [out (-> (or s "")
-                ;; Drop terminal styling/control sequences. Whole-bubble copy
-                ;; can carry actual ESC bytes; pasting those through Lanterna
-                ;; may turn them into the visible control-picture glyph U+241B,
-                ;; so strip both forms.
-                (str/replace
-                  #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)"
-                  "")
-                (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" "")
-                ;; Defensive: if an external paste path dropped ESC but left a
-                ;; bare SGR tail, do not put color fragments back into prompts.
-                (str/replace #"\[[0-9;:]*m" "")
-                (str/replace m/invisible-pattern "")
-                (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
-                ;; Translate :table box-drawing chrome to ASCII so a copied
-                ;; cell range pastes back as `| col | col |` rather than a
-                ;; soup of stray U+25xx bytes.
-                (translate-box-chars)
-                (str/replace #" +$" ""))]
+  (let [^String s
+        (or s "")
+
+        n
+        (.length s)
+
+        ;; One scan finds which of the removals below can match. A removal needs a char
+        ;; of its own, and most copied rows have none: they skip the regex engine.
+        flags
+        (long (loop [i
+                     0
+
+                     flags
+                     0]
+
+                (if (>= i n)
+                  flags
+                  (let [c (int (.charAt s i))]
+                    (recur (inc i)
+                           (long (cond (or (== c 0x1B) (== c 0x241B)) (bit-or flags 5)
+                                       (== c 0x5B) (bit-or flags 2)
+                                       (or (<= c 0x08) (and (>= c 0x0B) (<= c 0x1F)) (== c 0x7F))
+                                       (bit-or flags 4)
+                                       (and (>= c 0x2500) (<= c 0x257F)) (bit-or flags 8)
+                                       :else flags)))))))
+
+        out
+        (cond-> s
+          ;; Drop terminal styling/control sequences. Whole-bubble copy
+          ;; can carry actual ESC bytes; pasting those through Lanterna
+          ;; may turn them into the visible control-picture glyph U+241B,
+          ;; so strip both forms.
+          (bit-test flags 0)
+          (-> (str/replace
+                #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)"
+                "")
+              (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" ""))
+
+          ;; Defensive: if an external paste path dropped ESC but left a
+          ;; bare SGR tail, do not put color fragments back into prompts.
+          (bit-test flags 1)
+          (str/replace #"\[[0-9;:]*m" "")
+
+          true
+          (m/strip-invisible)
+
+          (bit-test flags 2)
+          (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
+
+          ;; Translate :table box-drawing chrome to ASCII so a copied
+          ;; cell range pastes back as `| col | col |` rather than a
+          ;; soup of stray U+25xx bytes.
+          (bit-test flags 3)
+          (translate-box-chars)
+
+          true
+          (trim-end-spaces))]
+
     ;; Drop pure-border rows entirely. A whole-bubble copy of a 3-row
     ;; table produces 7 rendered lines (top + th + sep + td + ... + bot);
     ;; collapsing the 3 border-only ones leaves the content rows aligned

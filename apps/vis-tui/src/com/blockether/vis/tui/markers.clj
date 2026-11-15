@@ -11,6 +11,7 @@
    codepoint range in another namespace."
   (:require [com.blockether.vis.tui.primitives :as p])
   (:import [com.googlecode.lanterna InlineSpans]
+           [java.util BitSet]
            [java.util.regex Pattern]))
 
 ;;; ── Block markers ───────────────────────────────────────────────────────────
@@ -184,6 +185,42 @@
    at each position. For text that leaves the painter, such as a copy."
   (Pattern/compile
     (str "[" block-marker-chars "\uFEFF" InlineSpans/BOLD_ON "-" InlineSpans/ERROR_OFF "]")))
+
+(def ^:private ^BitSet invisible-chars
+  "The chars that `invisible-pattern` matches, as a set for a char loop."
+  (let [bits (BitSet. 65536)]
+    (doseq [c (str block-marker-chars "\uFEFF")]
+      (.set bits (int c)))
+    (.set bits (int InlineSpans/BOLD_ON) (inc (int InlineSpans/ERROR_OFF)))
+    bits))
+
+(defn strip-invisible
+  "`s` without the chars that `invisible-pattern` matches. A string that has none comes
+   back as is. The pattern tests each marker in turn for each char of the text; this
+   reads one bit for each char."
+  ^String [^String s]
+  (let [^BitSet invisible
+        invisible-chars
+
+        n
+        (.length s)
+
+        hit
+        (long (loop [i 0]
+                (cond (>= i n) -1
+                      (.get invisible (int (.charAt s i))) i
+                      :else (recur (inc i)))))]
+
+    (if (neg? hit)
+      s
+      (let [sb (StringBuilder. n)]
+        (.append sb s 0 (int hit))
+        (loop [i (inc hit)]
+          (when (< i n)
+            (let [c (.charAt s i)]
+              (when-not (.get invisible (int c)) (.append sb c)))
+            (recur (inc i))))
+        (.toString sb)))))
 
 (defn plain-text
   "The text that a person reads in the painter line `line`: no SGR escape, no
