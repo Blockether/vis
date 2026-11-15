@@ -4281,6 +4281,86 @@
                      (expect (= (long (:rows img)) (count img-rows)))
                      (expect (every? #(= "/tmp/shot.png" (:path (:img (:meta %)))) img-rows))))))
 
+(defdescribe
+  large-result-layout-test
+  ;; A turn formats each open step again when one disclosure of the turn changes.
+  ;; A step with 1.4 MB of stdout laid out its RESULT body two times for each
+  ;; format, so each click in that turn stopped the TUI for 0.8 s.
+  (let [body
+        (str/join "\n\n"
+                  (map #(str "RESULT-ROW-" % " " (apply str (repeat 12 "output "))) (range 120)))
+
+        text-of
+        (fn [entries]
+          (str/join "\n" (entry-text entries)))
+
+        node
+        (fn [entries kind]
+          (some #(when (str/ends-with? (str (get-in % [:meta :node-id])) kind)
+                   (get-in % [:meta :node-id]))
+                entries))]
+
+    (it
+      "lays out a large result only when it shows, and one time"
+      (let [parses
+            (atom 0)
+
+            markdown->ast
+            vis/markdown->ast
+
+            entry
+            (iteration/canonicalize {:forms [{:code "work()" :success? true :stdout body}]})
+
+            paint
+            (fn [expansions]
+              (format-iteration-entry-entries
+                entry
+                80
+                1
+                {:session-id "s" :session-turn-id "t" :detail-expansions expansions}))]
+
+        (render/invalidate-cache!)
+        (with-redefs [vis/markdown->ast (fn [& args]
+                                          (when (str/includes? (str (first args)) "RESULT-ROW-119")
+                                            (swap! parses inc))
+                                          (apply markdown->ast args))]
+          (let [code-id (node (paint {}) ":code")
+                ;; Collapsed Code hides the result.
+                _ (expect (zero? @parses))
+                code-open (paint {["s" code-id] true})
+                result-id (node code-open ":result")]
+
+            (expect (some? result-id))
+            (expect (= 1 @parses))
+            (expect (not (str/includes? (text-of code-open) "RESULT-ROW-119")))
+            (let [opened (paint {["s" code-id] true ["s" result-id] true})]
+              (expect (= 1 @parses))
+              (expect (str/includes? (text-of opened) "RESULT-ROW-119"))
+              (render/invalidate-cache!)
+              (expect (= opened (paint {["s" code-id] true ["s" result-id] true}))))))))
+    (it "keeps the disclosure of a paste in a large result"
+        (let [paint
+              (fn [expansions]
+                (tool-card-entries
+                  {:body (str body
+                              "\n\n````vis-paste\n[Pasted #1: 1 line, 13B]\nPASTE-PAYLOAD\n````")}
+                  {:fill-w 76 :session-id "s" :detail-expansions expansions :node-id "n1"}))
+
+              closed
+              (paint {["s" "n1"] true})
+
+              paste-id
+              (some #(when (and (= :toggle-details (get-in % [:meta :kind]))
+                                (not= "n1" (get-in % [:meta :node-id])))
+                       (get-in % [:meta :node-id]))
+                    closed)]
+
+          (expect (some? paste-id))
+          (expect (str/includes? (text-of closed) "RESULT-ROW-119"))
+          (expect (not (str/includes? (text-of closed) "PASTE-PAYLOAD")))
+          (expect (str/includes? (text-of (paint {["s" "n1"] true ["s" paste-id] true}))
+                                 "PASTE-PAYLOAD"))))))
+
 (defdescribe image-box-survives-result-collapse-test
              ;; Every reserved image row LOOKS blank, so two passes used to eat the
              ;; box: the non-tool RESULT preview kept only the first `preview-n`
@@ -8968,8 +9048,19 @@ h = 8"
           (let [closed (render {})]
             (expect (some digest? closed))
             (expect (= [] @calls)))
-          (render (open-digests "s" "t"))
-          (expect (= #{:result-card :code-context} (set @calls))))))
+          ;; Collapsed Code hides the Result, so an open digest formats the failure only.
+          (let [open
+                (render (open-digests "s" "t"))
+
+                code-id
+                (some #(when (str/ends-with? (str (get-in % [:meta :node-id])) ":code")
+                         (get-in % [:meta :node-id]))
+                      open)]
+
+            (expect (some? code-id))
+            (expect (= #{:code-context} (set @calls)))
+            (render (open-digests {["s" code-id] true} "s" "t"))
+            (expect (= #{:result-card :code-context} (set @calls)))))))
     ;; Regression, user screenshot: an open digest showed Failed without the CODE that failed.
     ;; The NameError stopped the block before any tool call, so the step has no Activity.
     (it

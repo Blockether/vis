@@ -20,7 +20,7 @@
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.provider-error :as perr])
   (:import [com.blockether.vis.python PythonHighlighter]
-           [com.googlecode.lanterna InlineSpans TerminalPosition TerminalSize Symbols]
+           [com.googlecode.lanterna InlineSpans TerminalPosition TerminalSize Symbols UnicodeWidth]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [com.blockether.vis.render BoundedCache]
@@ -36,6 +36,14 @@
 (defonce ^:private ^com.blockether.vis.render.BoundedCache fmt-cache (BoundedCache. fmt-cache-cap))
 
 (defonce ^:private ^AtomicLong fmt-cache-gen (AtomicLong.))
+
+(def ^:private ^:const card-body-memo-min-chars
+  "The smallest RESULT body, in characters, whose rows `card-body` keeps."
+  4096)
+
+(defonce ^:private ^com.blockether.vis.render.BoundedCache card-body-cache (BoundedCache. 64))
+
+(defonce ^:private ^AtomicLong card-body-cache-gen (AtomicLong.))
 
 (defmacro with-cache
   "Generation-guarded double-checked read/compute/put on an access-order
@@ -96,7 +104,8 @@
   "Drop every cached projection. Call on settings changes that the
    key tuple doesn't capture, or from tests."
   []
-  (clear-cache! fmt-cache fmt-cache-gen))
+  (clear-cache! fmt-cache fmt-cache-gen)
+  (clear-cache! card-body-cache card-body-cache-gen))
 
 (defn cache-size
   "Current number of entries (handy for tests/diagnostics)."
@@ -6442,6 +6451,37 @@
         :line (str result-marker
                    (if (str/blank? stripped) stripped (str result-body-indent stripped)))))))
 
+(defn- card-body
+  "The laid out body of one RESULT card: `{:image? bool :rows rows-or-nil}`. `:rows` is nil
+   when the body has no row. A turn formats each open step again when one disclosure of
+   the turn changes, and the layout of a large stdout took most of that frame. So a body
+   of `card-body-memo-min-chars` or more keeps its rows by text, width and `node-id`. A
+   body with a paste, picture, table, document or transcript block depends on the
+   disclosure state, so its rows are never kept."
+  [body-text width {:keys [node-id] :as opts}]
+  (let [body
+        (fn [ast]
+          (let [entries (tag-copy-block-body (vec (paste-aware-ast->entries ast width opts))
+                                             node-id
+                                             body-text)]
+            ;; A `vis-image` output must NEVER start life collapsed: the whole point is
+            ;; to SEE the picture. Detect one in stdout so the op-card defaults to expanded
+            ;; (the image box itself is always allocated).
+            {:image? (boolean (some image-code-block? (nthrest ast 2)))
+             :rows (when (seq entries)
+                     (compact-tool-card-body-entries (mapv result-body-entry entries)))}))
+
+        k
+        [body-text width node-id (UnicodeWidth/getWidthMethod)]]
+
+    (if (< (count body-text) card-body-memo-min-chars)
+      (body (vis/markdown->ast body-text))
+      (or (locking card-body-cache (.get card-body-cache k))
+          (let [ast (vis/markdown->ast body-text)]
+            (if (some disclosure-code-block? (nthrest ast 2))
+              (body ast)
+              (with-cache card-body-cache card-body-cache-gen k (body ast))))))))
+
 (defn- tool-card-entries
   "Render one stdout card (`vis/result-card` descriptor) into TUI line entries.
    RESULT is the stable disclosure label; the Markdown body nests under it and is
@@ -6461,40 +6501,20 @@
         head-line
         (band-label "RESULT")
 
-        ast
-        (some-> body-text
-                vis/markdown->ast)
+        ;; Card bodies are PROSE — a folded receipt's gist paragraph, a tool's
+        ;; narrative — so overflow-wrapped lines sit flush to both margins
+        ;; (`:justify?`); paragraph-terminal and code lines stay ragged inside the walker.
+        {has-image? :image? body-entries :rows}
+        (when body-text
+          (card-body body-text
+                     (max 1 (- (long fill-w) (long result-body-indent-cols)))
+                     (assoc opts
+                       :mode :channel
+                       :justify? true)))]
 
-        ;; A `vis-image` output must NEVER start life collapsed: the whole point is
-        ;; to SEE the picture. Detect one in stdout so the op-card defaults to expanded
-        ;; (the image box itself is always allocated).
-        has-image?
-        (boolean (some (fn [n]
-                         (and (vector? n) (= :code (first n)) (= "vis-image" (:lang (second n)))))
-                       (some-> ast
-                               (nthrest 2))))
-
-        entries
-        (when ast
-          (tag-copy-block-body (vec (paste-aware-ast->entries
-                                      ast
-                                      (max 1 (- (long fill-w) (long result-body-indent-cols)))
-                                      ;; Card bodies are PROSE — a folded receipt's gist paragraph,
-                                      ;; a tool's narrative — so overflow-wrapped lines sit flush to
-                                      ;; both margins (`:justify?`); paragraph-terminal and code lines
-                                      ;; stay ragged inside the walker.
-                                      (assoc opts
-                                        :mode :channel
-                                        :justify? true)))
-                               node-id
-                               body-text))]
-
-    (if (and node-id (seq entries))
+    (if (and node-id body-entries)
       (let [expanded?
             (detail-expanded? detail-expansions session-id node-id has-image?)
-
-            body-entries
-            (compact-tool-card-body-entries (mapv result-body-entry entries))
 
             header
             (detail-summary-entries {:marker result-marker
@@ -6540,7 +6560,7 @@
             ;; under — e.g. a nil session-id). Never DROP that body: render it
             ;; inline, always-expanded, so the result still produces its output.
             body-rows
-            (when (seq entries) (compact-tool-card-body-entries (mapv result-body-entry entries)))]
+            body-entries]
 
         ;; Bodyless descriptors still get the result-band pad. Body cards keep the
         ;; same one-row disclosure separator as collapsible cards.
@@ -9206,6 +9226,11 @@
                                   (line-entry (str c-marker "")))
                             [(line-entry (str c-marker ""))]))))
 
+                ;; Result shows under expanded Code, or alone when there is no Code. Collapsed
+                ;; Code hides it, so the step derives no card and lays out no body.
+                result-shown?
+                (or code-expanded? (empty? c-lines))
+
                 ;; Pictures, tables and documents that the form printed show below the step,
                 ;; outside every disclosure, like the attachment rail in the companion. A
                 ;; canonical attachment row replaces the document fence.
@@ -9219,7 +9244,7 @@
                 ;; restored, and direct renderer inputs share the same view. Long output
                 ;; mirrors thinking and collapses only the surplus.
                 card
-                (when (and show-execution-details? (not digest-closed?))
+                (when (and show-execution-details? (not digest-closed?) result-shown?)
                   (vis/result-card (cond-> (update form :stdout strip-display-fences)
                                      (seq form-artifacts)
                                      (update :stdout strip-produced-artifact-transport))))
@@ -9260,92 +9285,26 @@
                                 (max 1 (dec (long fill-w)))))
                    :meta {:kind :result-headline}})
 
-                ;; Stdout renders as Markdown through the same IR pipeline as the answer, in
-                ;; `:channel` mode so prose has no answer-bg while headings, lists, and code
-                ;; bands still style. One block owns one stdout body.
+                ;; Stdout renders as Markdown in the RESULT card: `tool-card-entries` owns the
+                ;; one layout of the body. A result text always has its card, so no second
+                ;; layout of the same text runs here. RESULT is a nested fold, collapsed by
+                ;; default; the CODE head alone carries the duration.
                 result-lines
-                (cond result-text
-                      (let [entries
-                            (when result-text
-                              (tag-copy-block-body (vec (paste-aware-ast->entries
-                                                          (vis/markdown->ast result-text)
-                                                          fill-w
-                                                          {:mode :channel
-                                                           :session-id session-id
-                                                           :session-turn-id session-turn-id
-                                                           :detail-expansions detail-expansions
-                                                           :image-section :iteration}))
-                                                   result-node-id
-                                                   result-text))
-
-                            entries
-                            (vec entries)
-
-                            preview-n
-                            (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
-
-                            hidden
-                            (vec (drop preview-n entries))
-
-                            ;; Re-mark every body line into the RESULT zone (strip
-                            ;; its md/prose marker, prepend the result marker) so the
-                            ;; WHOLE op-card paints on one `result-bg` band — code AND
-                            ;; prose/eval output alike. Embedded ANSI (diff +/-)
-                            ;; survives via `ansi/paint-line!` in that paint branch.
-                            _->result
-                            (fn [e]
-                              (let [l
-                                    (str (:line e))
-
-                                    stripped
-                                    (m/unmarked l)]
-
-                                (assoc e :line (str result-marker stripped))))]
-
-                        (cond
-                          ;; RESULT is a nested fold, collapsed by default;
-                          ;; the CODE head alone carries the duration.
-                          card (mapv (fn [entry]
-                                       (if (and code-node-id
-                                                (seq c-lines)
-                                                (= :result-headline (get-in entry [:meta :kind])))
-                                         (update entry :line #(str (subs % 0 1) "  " (subs % 1)))
-                                         entry))
-                                     (tool-card-entries card
-                                                        {:fill-w fill-w
-                                                         :session-id session-id
-                                                         :detail-expansions detail-expansions
-                                                         :node-id result-node-id
-                                                         :duration-ms (when-not (and code-node-id
-                                                                                     (seq c-lines))
-                                                                        result-duration-ms)}))
-                          ;; Long stdout without an op card: keep the first rows visible and
-                          ;; collapse only the surplus behind the band's own name.
-                          (and result-node-id (seq hidden))
-                          (let [expanded?
-                                (detail-expanded? detail-expansions session-id result-node-id false)
-
-                                visible
-                                (vec (take preview-n entries))
-
-                                summary
-                                (detail-summary-entries {:marker result-marker
-                                                         :max-w fill-w
-                                                         ;; Collapsed used to read `+N more result lines` with no
-                                                         ;; name at all - the one band whose control never said what
-                                                         ;; it folds. It wears `RESULT` in both states now, exactly
-                                                         ;; like the code band.
-                                                         :summary (band-label "RESULT")
-                                                         :hidden-entries hidden
-                                                         :collapsed? (not expanded?)
-                                                         :session-id session-id
-                                                         :node-id result-node-id
-                                                         :duration-ms result-duration-ms})]
-
-                            (vec (concat visible summary (when expanded? hidden))))
-                          :else (cond-> entries
-                                  duration-stamp
-                                  (conj duration-stamp))))
+                (cond result-text (mapv (fn [entry]
+                                          (if (and code-node-id
+                                                   (seq c-lines)
+                                                   (= :result-headline
+                                                      (get-in entry [:meta :kind])))
+                                            (update entry :line #(str (subs % 0 1) "  " (subs % 1)))
+                                            entry))
+                                        (tool-card-entries
+                                          card
+                                          {:fill-w fill-w
+                                           :session-id session-id
+                                           :detail-expansions detail-expansions
+                                           :node-id result-node-id
+                                           :duration-ms (when-not (and code-node-id (seq c-lines))
+                                                          result-duration-ms)}))
                       ;; An output-free visible call retains its measured duration.
                       duration-stamp [duration-stamp])
 
@@ -9469,9 +9428,8 @@
                 inline-live-entries
                 (mapcat #((:inline-entries %) fill-w) (filter :inline-entries runs))
 
-                ;; Result shows under expanded Code, or alone when there is no Code.
                 shown-result-block
-                (when (or code-expanded? (empty? code-block)) result-block)
+                (when result-shown? result-block)
 
                 ;; A failure keeps its red band and any shown diagnostics between Code and
                 ;; the next band, which opens with its own top padding.
