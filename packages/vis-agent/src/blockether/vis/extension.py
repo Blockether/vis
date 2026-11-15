@@ -4897,6 +4897,15 @@ def _ui_slider(name, **spec):
     return _node("range", name, spec)
 
 
+def _ui_datetime(name, mode=None, **spec):
+    # A date, a time or both, answered as TEXT without a zone: `YYYY-MM-DD` for
+    # mode "date", `HH:MM` for "time" and `YYYY-MM-DDTHH:MM` for "datetime" (the
+    # default). `min`, `max` and `default` take the same form.
+    if mode is not None:
+        spec["mode"] = mode
+    return _node("datetime", name, spec)
+
+
 def _ui_otp(name, **spec):
     # A one-time code in digit boxes: min_length / max_length say how many
     # (6 by default, 12 at most), digits only, paste fills the boxes. A code is a
@@ -5651,6 +5660,55 @@ class Timeline(_Node):
         return _KeyedNode.remove(self, *item_ids)
 
 
+class Badge(_KeyedNode):
+    """A row of short labels, each with an optional tone."""
+
+    def set(self, badge_id, label, tone=None):
+        """Add or replace one badge by id."""
+        return self._op(
+            "append", badges=[_live_item(badge_id, {"label": label, "tone": tone})]
+        )
+
+
+class ListNode(_KeyedNode):
+    """A bulleted or numbered list of items."""
+
+    def set(self, item_id, text, detail=None, tone=None):
+        """Add or replace one item by id."""
+        return self._op(
+            "append",
+            items=[_live_item(item_id, {"text": text, "detail": detail, "tone": tone})],
+        )
+
+    def order(self, is_ordered=True):
+        """Number the items, or show them as bullets again."""
+        return self._op("set", is_ordered=bool(is_ordered))
+
+
+class Chart(_KeyedNode):
+    """Bars or lines of numbers, one series for each set of values."""
+
+    def set(self, series_id, label, values, tone=None):
+        """Add or replace one series by id. ``values`` are finite numbers."""
+        return self._op(
+            "append",
+            series=[
+                _live_item(
+                    series_id, {"label": label, "values": list(values), "tone": tone}
+                )
+            ],
+        )
+
+    def configure(self, kind=None, categories=None, label=None):
+        """Change the kind (``"bar"`` or ``"line"``), the category names or the label."""
+        return self._op(
+            "set",
+            kind=kind,
+            categories=None if categories is None else list(categories),
+            label=label,
+        )
+
+
 LogTone: TypeAlias = Literal["idle", "running", "ok", "warn", "error"]
 
 
@@ -5846,6 +5904,9 @@ _LIVE_NODES = {
     "stat": Stat,
     "steps": Steps,
     "timeline": Timeline,
+    "badge": Badge,
+    "list": ListNode,
+    "chart": Chart,
     "log": Log,
     "table": Table,
     "link": Link,
@@ -7972,6 +8033,44 @@ def _ui_timeline(node_id, lanes=None, **spec):
     return _live_node("timeline", node_id, dict(spec, lanes=lanes))
 
 
+def _ui_badge(node_id, badges=None, **spec):
+    """A row of short labels, each ``{'id': ..., 'label': ...}`` with an optional ``tone``.
+
+    Use it for the state or the kind of a thing: ``Stable``, ``Beta``, ``3 open``.
+    """
+    return _live_node("badge", node_id, dict(spec, badges=badges))
+
+
+def _ui_listing(node_id, items=None, *, is_ordered=False, **spec):
+    """A list of items, each ``{'id': ..., 'text': ...}`` with an optional ``detail`` and ``tone``.
+
+    ``is_ordered=True`` numbers the items. It is ``list`` on the wire; the builder is
+    ``listing`` so it never shadows the builtin.
+    """
+    return _live_node(
+        "list", node_id, dict(spec, items=items, is_ordered=bool(is_ordered))
+    )
+
+
+def _ui_chart(node_id, series=None, *, kind=None, categories=None, **spec):
+    """Numbers as bars or lines. ``kind`` is ``"bar"`` (the default) or ``"line"``.
+
+    Each series is ``{'id': ..., 'label': ..., 'values': [numbers]}`` with an optional
+    ``tone``. ``categories`` names the values of every series in order, such as the
+    days of a week. A terminal draws the same numbers with block characters.
+    """
+    return _live_node(
+        "chart",
+        node_id,
+        dict(
+            spec,
+            series=series,
+            kind=kind,
+            categories=None if categories is None else list(categories),
+        ),
+    )
+
+
 def _ui_output(node_id, **spec):
     """Durable output with an independent disclosure, collapsed by default.
 
@@ -8435,6 +8534,7 @@ class _UI:
     multiselect = staticmethod(_ui_multiselect)
     checkbox = staticmethod(_ui_checkbox)
     slider = staticmethod(_ui_slider)
+    datetime = staticmethod(_ui_datetime)
     otp = staticmethod(_ui_otp)
     option = staticmethod(_ui_option)
 
@@ -8462,6 +8562,9 @@ class _UI:
     stat = staticmethod(_ui_stat)
     steps = staticmethod(_ui_steps)
     timeline = staticmethod(_ui_timeline)
+    badge = staticmethod(_ui_badge)
+    listing = staticmethod(_ui_listing)
+    chart = staticmethod(_ui_chart)
     output = staticmethod(_ui_output)
     table = staticmethod(_ui_table)
     table_column = staticmethod(_ui_table_column)

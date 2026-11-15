@@ -43,7 +43,7 @@
         (expect (= 4 (count (filter #(= :spinner (:kind %)) rows))))
         (expect (str/includes? (str/join "\n" (map :text rows)) "# <button> is literal text"))
         (expect (lv/animating? [pane]))
-        (expect (= #{"refresh" "target" "token" "notes" "region" "tags" "notify" "risk" "pin"
+        (expect (= #{"refresh" "target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin"
                      "apply" "plan-small" "details" "table"}
                    (set (map :node-id (lv/controls [pane])))))
         (expect (not (lv/animating? [(lv/settled pane {:reason :completed})])))
@@ -51,6 +51,38 @@
         (let [markdown (materializer/->markdown view)]
           (expect (= markdown
                      (materializer/->markdown (:view (materializer/parse-markdown markdown)))))))))
+
+(defdescribe
+  badge-list-chart-rows-test
+  (it "paints badges, list items and chart values as rows a person can read"
+      (let [view
+            (fixture)
+
+            texts
+            (fn [pane node-id]
+              (mapv #(str/trimr (:text %))
+                    (filter #(and (= node-id (:node-id %)) (#{:badge :item :chart :axis} (:kind %)))
+                            (entries pane))))
+
+            pane
+            (lv/opened view)]
+
+        (expect (= ["✓ Stable   ! Beta   • Docs"] (texts pane "labels")))
+        (expect (= ["1. Pin the release — After the checks pass" "2. Deploy the playground"]
+                   (texts pane "todo")))
+        (let [bars (texts pane "load")]
+          (expect (= 6 (count bars)))
+          (expect (re-matches #"Mon  API  █+[▏▎▍▌▋▊▉]? +12" (first bars)))
+          (expect (re-matches #"     Web  █+[▏▎▍▌▋▊▉]? + 4" (second bars)))
+          ;; The longest bar belongs to the greatest value, 18.
+          (expect (= "Tue  API" (subs (apply max-key #(count (re-seq #"█" %)) bars) 0 8))))
+        (let [lines (texts (lv/patched pane
+                                       {:view-id (:id view)
+                                        :seq 1
+                                        :ops [{:op :set :node-id "load" :kind :line}]})
+                           "load")]
+          (expect (= ["API  ▅▅▅▅████▃▃▃▃  9" "Web  ▁▁▁▁▂▂▂▂▅▅▅▅  11" "     Mon      Wed"]
+                     lines))))))
 
 (defdescribe
   disclosures-retain-state-and-output-test
@@ -102,7 +134,7 @@
             edits
             (filter #(= :live-edit (:kind %)) (lv/controls [pane]))]
 
-        (expect (= ["target" "token" "notes" "region" "tags" "notify" "risk" "pin"]
+        (expect (= ["target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin"]
                    (mapv :node-id edits)))
         (expect (= "Region" (:label (first (filter #(= "region" (:node-id %)) edits)))))
         (expect (some #(and (= :field (:kind %)) (= "EU" (:text %))) rows))
@@ -112,7 +144,8 @@
                     "region" "eu"
                     "tags" ["api"]
                     "notify" true
-                    "risk" 3}
+                    "risk" 3
+                    "due" "2026-03-14"}
                    (lv/input-values pane)))
         (expect (lv/submit-button? pane "apply"))
         (expect (not (lv/submit-button? pane "refresh")))

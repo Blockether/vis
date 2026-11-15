@@ -81,6 +81,7 @@ describe('humanInputRequestFromWire', () => {
       'code:otp',
       'notify:plaintext',
       'notes:multiline',
+      'due:datetime',
       'group-4:group',
     ]);
     // A group is a BRANCH: it answers nothing, and the leaves under it are the
@@ -94,6 +95,7 @@ describe('humanInputRequestFromWire', () => {
       'code',
       'notify',
       'notes',
+      'due',
       'host',
       'port',
       'tls',
@@ -113,6 +115,30 @@ describe('humanInputRequestFromWire', () => {
       { value: 'prod', label: 'prod' },
       { value: 'stg', label: 'Staging' },
     ]);
+  });
+
+  it('reads the mode and the bounds of a datetime field in the form of the mode', () => {
+    expect(parsed().nodes.find((field) => field.id === 'due')).toMatchObject({
+      type: 'datetime',
+      mode: 'date',
+      earliest: '2026-01-01',
+      latest: '2026-12-31',
+    });
+    // A bound in another form is no bound, and an absent mode is the schema default.
+    const request = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      nodes: [{ id: 'at', type: 'datetime', min: '09:00', max: '2026-12-31T18:00' }],
+    });
+    expect(request?.nodes[0]).toEqual({
+      id: 'at',
+      name: 'at',
+      type: 'datetime',
+      label: 'at',
+      is_required: false,
+      mode: 'datetime',
+      latest: '2026-12-31T18:00',
+    });
   });
 
   it('labels a field by its id when the spec gave no label', () => {
@@ -222,6 +248,7 @@ describe('initialHumanInputValues', () => {
       code: '',
       notify: '',
       notes: '',
+      due: '2026-03-14',
       tags: [],
       host: '',
       port: '',

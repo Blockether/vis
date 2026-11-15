@@ -696,6 +696,16 @@ def test_the_extensions_own_validators_run_out_here_too(monkeypatch):
     )
 
 
+def test_a_datetime_answer_must_have_the_form_of_its_mode(monkeypatch):
+    monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
+    form = [vis.ui.datetime("at", "time", min="09:00", max="17:30")]
+    vis.outside.answer_with({"at": "10:15"})
+    assert vis.ask("When", form)["at"] == "10:15"
+    for refused in ("18:00", "2026-03-14", "9:5"):
+        vis.outside.answer_with({"at": refused})
+        assert vis.ask("When", form).reason == "cancelled"
+
+
 def test_a_required_field_left_empty_is_not_submitted(monkeypatch):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
     vis.outside.answer_with({"env": "", "token": "t"})
@@ -727,6 +737,9 @@ def test_ask_takes_a_well_formed_request_without_a_word(monkeypatch):
         [vis.ui.plaintext("env"), vis.ui.plaintext("env")],
         [vis.ui.otp("code", max_length=99)],
         [vis.ui.slider("canary", min=100, max=0)],
+        [vis.ui.datetime("at", "week")],
+        [vis.ui.datetime("at", "date", min="09:00")],
+        [vis.ui.datetime("at", "time", min="18:00", max="09:00")],
         [vis.ui.heading("nothing to answer")],
     ],
 )

@@ -214,6 +214,25 @@
         (expect (some #{"••"} texts))
         (expect (not-any? #{"hi"} texts)))))
 
+(defdescribe
+  datetime-field-test
+  (it "shows the form of the mode and submits the typed text"
+      (let [form
+            (hi/init-form
+              (canonical-input-view
+                {"title" "Plan"
+                 "nodes"
+                 [{"name" "due" "type" "datetime" "label" "Due" "mode" "date"}
+                  {"name" "at" "type" "datetime" "label" "At" "default" "09:30" "mode" "time"}]}))
+
+            placeholders
+            (into {} (map (juxt :field-id :placeholder)) (hi/form-rows form))]
+
+        (expect (= "YYYY-MM-DD" (get placeholders "due")))
+        (expect (= "HH:MM" (get placeholders "at")))
+        (expect (= {"due" "2026-03-14" "at" "09:30"}
+                   (hi/submit-values (feed form (map ch "2026-03-14"))))))))
+
 (defdescribe navigation-and-toggle-test
              (it "Tab/arrow keys walk the stops and wrap around"
                  (let [form (hi/init-form (request))]

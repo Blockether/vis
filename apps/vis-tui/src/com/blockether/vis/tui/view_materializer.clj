@@ -683,6 +683,32 @@
   (let [d (double n)]
     (if (== d (Math/rint d)) (str (long d)) (str d))))
 
+(defmethod node->markdown :badge
+  [{:keys [badges] :as node} _]
+  (marked-lines :badge
+                (keep not-empty
+                      [(data-line (select-keys node [:badges]))
+                       (str/join " · " (map #(str (tone-tag (:tone %)) (:label %)) badges))])))
+
+(defmethod node->markdown :list
+  [{:keys [items is-ordered] :as node} _]
+  (marked-lines :list
+                (cons (data-line (select-keys node [:is-ordered :items]))
+                      (map-indexed (fn [i {:keys [text detail tone]}]
+                                     (str (if is-ordered (str (inc (long i)) ". ") "- ")
+                                          (tone-tag tone)
+                                          text
+                                          (when detail (str " — " detail))))
+                                   items))))
+
+(defmethod node->markdown :chart
+  [{:keys [series] :as node} _]
+  (marked-lines :chart
+                (cons (data-line (select-keys node [:kind :categories :series]))
+                      (map (fn [{:keys [label values]}]
+                             (str label ": " (str/join ", " (map plain-number values))))
+                           series))))
+
 (defmethod node->markdown :scene
   [{:keys [width height objects] :as node} _]
   (marked-lines :scene
@@ -772,6 +798,7 @@
    :min "min"
    :max "max"
    :step "step"
+   :mode "mode"
    :min-length "min_length"
    :max-length "max_length"})
 
@@ -782,8 +809,13 @@
                      (keep (fn [[k wire-key]]
                              (when (contains? node k)
                                [wire-key
-                                (if (= :options k)
+                                (case k
+                                  :options
                                   (mapv #(select-keys % [:value :label]) (k node))
+
+                                  :mode
+                                  (name (k node))
+
                                   (k node))])))
                      input-domain-keys)]
     (when (seq domain) (str "Domain: " (wire/json-str domain)))))
@@ -1165,7 +1197,8 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image}
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
+          :badge :list :chart}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1338,6 +1371,27 @@
   [_ {:keys [at lines]}]
   (merge {:type :scene} (read-data at (nth lines 2 nil))))
 
+(defn- toned
+  "The items of a data line, each `:tone` a keyword again."
+  [items]
+  (mapv #(cond-> % (:tone %) (update :tone keyword)) items))
+
+(defmethod markdown->node :badge
+  [_ {:keys [at lines]}]
+  (update (merge {:type :badge :badges []} (read-data at (second lines))) :badges toned))
+
+(defmethod markdown->node :list
+  [_ {:keys [at lines]}]
+  (update (merge {:type :list :is-ordered false :items []} (read-data at (second lines)))
+          :items
+          toned))
+
+(defmethod markdown->node :chart
+  [_ {:keys [at lines]}]
+  (-> (merge {:type :chart :kind :bar :series []} (read-data at (second lines)))
+      (update :kind keyword)
+      (update :series toned)))
+
 (defmethod markdown->node :image
   [_ {:keys [at lines]}]
   (let [line (second lines)]
@@ -1397,14 +1451,20 @@
     (let [domain (try (wire/parse-json json) (catch Exception _ nil))]
       (when (map? domain)
         (into {}
-              (keep (fn [[k wire-key]]
-                      (when (contains? domain wire-key)
-                        [k
-                         (if (= :options k)
-                           (mapv (fn [option]
-                                   {:value (get option "value") :label (get option "label")})
-                                 (get domain wire-key))
-                           (get domain wire-key))])))
+              (keep
+                (fn [[k wire-key]]
+                  (when (contains? domain wire-key)
+                    [k
+                     (case k
+                       :options
+                       (mapv (fn [option]
+                               {:value (get option "value") :label (get option "label")})
+                             (get domain wire-key))
+
+                       :mode
+                       (get spec/datetime-mode-terms (get domain wire-key) (get domain wire-key))
+
+                       (get domain wire-key))])))
               input-domain-keys)))))
 
 (defn- markdown-input-value

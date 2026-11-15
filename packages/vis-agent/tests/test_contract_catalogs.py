@@ -109,6 +109,7 @@ def test_the_outside_host_and_the_sdk_share_one_input_derivation():
     assert _outside._FIELD_SCHEMAS == _contracts.input_branches()
     assert _contracts.input_types() == {
         "checkbox",
+        "datetime",
         "multiline",
         "multiselect",
         "otp",

@@ -166,6 +166,14 @@
         "the step is not positive or does not fit between min and max",
         "input"
       ],
+      "datetime_mode": [
+        "the text does not have the form of the mode",
+        "input"
+      ],
+      "datetime_order": [
+        "min is later than max",
+        "input"
+      ],
       "default_domain": [
         "the default is outside the domain of the input",
         "input"

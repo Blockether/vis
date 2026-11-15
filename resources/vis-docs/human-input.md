@@ -101,6 +101,7 @@ an alias for `name`.
 | `multiselect` | list of option values, in declared order | inclusive: any number, and empty is legal unless required |
 | `checkbox` | `true` or `false` | a required checkbox must be ticked |
 | `range` | number | `min` (0), `max` (100), `step` (1), and out-of-range values are refused |
+| `datetime` | string | `mode` is `date` (`YYYY-MM-DD`), `time` (`HH:MM`) or `datetime` (`YYYY-MM-DDTHH:MM`, the default), and `min` and `max` take the same form |
 | `otp` | secret handle | digits only, one box per digit, and `min_length`/`max_length` set the length (default 6, at most 12) |
 
 Common keys: `placeholder`, `default`, `is_required`, `min_length`,
@@ -171,7 +172,7 @@ answer = vis.ask("Deploy", [form], submit_label="Deploy")
 ```
 
 Builders: `plaintext`, `password`, `multiline`, `select`, `multiselect`,
-`checkbox`, `slider` (the `range` field, named to avoid the builtin), `otp`,
+`checkbox`, `slider` (the `range` field, named to avoid the builtin), `datetime`, `otp`,
 `option`, `row`, `column`, `group`, `heading` and `paragraph`. Keyword arguments are the
 field keys above.
 

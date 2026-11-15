@@ -9,6 +9,9 @@ component, its Python builder and where it works.
 - **You show work in a live view and want progress, counters or a log.** Read
   [State](#state).
 - **You want rows, links or cards that a person can select.** Read [Data](#data).
+- **You want short labels, a list of points or numbers as a chart.** Read [Badge](#badge),
+  [List](#list) and [Chart](#chart).
+- **You need a date or a time from a person.** Read [Datetime](#datetime).
 - **You want controls side by side, a folding section or a small form inside a view.** Read
   [Layout](#layout) and [Button](#button).
 
@@ -168,6 +171,52 @@ vis.ui.card("task-7", "T7 Fix the login timeout", text="In review", tone="warn",
          is_selectable=True)
 ```
 
+### Badge
+
+`vis.ui.badge(id, badges=[...])` shows a row of short labels, such as `Stable`, `Beta` or `3 open`.
+Each badge has `id`, `label` and an optional `tone`. A badge with a tone shows the mark of that
+tone before its label. A node holds 32 badges at most. Add or change one badge with
+`view[id].set(badge_id, label, tone="ok")`.
+
+```python
+vis.ui.badge("labels", badges=[{"id": "stable", "label": "Stable", "tone": "ok"},
+                               {"id": "beta", "label": "Beta", "tone": "warn"}])
+```
+
+### List
+
+`vis.ui.listing(id, items=[...])` shows a list of points. Each item has `id`, `text` and an optional
+`detail` and `tone`. `is_ordered=True` numbers the items. A node holds 200 items at most. Its type
+on the wire is `list`. The builder name keeps the Python built-in `list` free.
+
+Add or change one item with `view[id].set(item_id, text, detail=None, tone=None)`. Change the
+numbers with `view[id].order(True)`.
+
+```python
+vis.ui.listing("todo", is_ordered=True,
+               items=[{"id": "pin", "text": "Pin the release", "tone": "ok"},
+                      {"id": "deploy", "text": "Deploy the playground"}])
+```
+
+### Chart
+
+`vis.ui.chart(id, series=[...], kind="bar", categories=[...])` shows numbers as bars or as lines.
+Each series has `id`, `label`, `values` and an optional `tone`. `categories` names the values of
+every series in order, such as the days of a week. `kind` is `bar` (the default) or `line`.
+
+- A chart holds 8 series at most, and each series holds 64 values at most.
+- A bar chart always shows zero, so the length of a bar is in proportion to its value. A negative
+  value runs to the left of zero.
+- The terminal draws the same numbers with block characters. Each bar ends with its number.
+- Add or change one series with `view[id].set(series_id, label, values, tone=None)`. Change the
+  kind or the categories with `view[id].configure(kind="line")`.
+
+```python
+vis.ui.chart("load", categories=["Mon", "Tue", "Wed"],
+             series=[{"id": "api", "label": "API", "values": [12, 18, 9]},
+                     {"id": "web", "label": "Web", "values": [4, 7, 11]}])
+```
+
 ## Inputs
 
 Inputs take a value from a person. Each input has a `name`, a `label` and optional
@@ -184,6 +233,7 @@ holds each value under its `name`. In a live view, the input keeps its `value`.
 | `vis.ui.multiselect(name, options)` | `multiselect` | A list of option values |
 | `vis.ui.checkbox(name)` | `checkbox` | `True` or `False` |
 | `vis.ui.slider(name, min=0, max=100, step=1)` | `range` | A number |
+| `vis.ui.datetime(name, mode="datetime")` | `datetime` | Text for a date, a time or both |
 
 [Forms and user input](human-input.md#fields) gives the rules for each input.
 
@@ -228,6 +278,21 @@ be ticked.
 
 `vis.ui.slider(name, min=0, max=100, step=5)` takes a number on a track. Its type is `range`. The
 builder name keeps the Python built-in `range` free.
+
+### Datetime
+
+`vis.ui.datetime(name, mode="date", min="2026-01-01", max="2026-12-31")` takes a date, a time or
+both. The value is text without a time zone. `mode` sets its form:
+
+| `mode` | Form | Example |
+| --- | --- | --- |
+| `date` | `YYYY-MM-DD` | `2026-03-14` |
+| `time` | `HH:MM` | `09:30` |
+| `datetime`, the default | `YYYY-MM-DDTHH:MM` | `2026-03-14T09:30` |
+
+`min`, `max` and `default` have the form of the mode. Vis refuses text in another form and a value
+outside the bounds. The Companion app shows the date or time control of the device. The terminal
+takes typed text and shows the form as a hint.
 
 ## Actions
 

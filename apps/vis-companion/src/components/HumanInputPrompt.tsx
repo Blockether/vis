@@ -23,6 +23,7 @@ import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   applyInputViewEvent,
   clampHumanInputRange,
+  humanInputDatetimeMode,
   humanInputFormChange,
   humanInputFormRefused,
   humanInputFormStart,
@@ -33,6 +34,8 @@ import {
   originLabel,
   toggleHumanInputOption,
   HUMAN_INPUT_CHOICE_MARKS,
+  HUMAN_INPUT_DATETIME_FORMS,
+  type HumanInputDatetimeMode,
   type HumanInputField,
   type HumanInputForm,
   type HumanInputRequest,
@@ -454,6 +457,13 @@ function HumanInputFieldLabel({ field }: { field: HumanInputField }) {
 /** From this many choices on, a choice in a view folds into one line that opens a list. */
 const FOLDED_CHOICES = 6;
 
+/** The native control that asks for each mode of a `datetime` field. */
+const DATETIME_CONTROLS: Record<HumanInputDatetimeMode, 'date' | 'time' | 'datetime-local'> = {
+  date: 'date',
+  time: 'time',
+  datetime: 'datetime-local',
+};
+
 /**
  * A choice of two to four short words fits one strip of cells, also on a phone. A long
  * word needs a row of its own.
@@ -735,6 +745,31 @@ export function HumanInputFieldRow({
 
   const text = typeof value === 'string' ? value : '';
 
+  if (field.type === 'datetime') {
+    // The native control of the platform picks the date or the time. It writes
+    // the form of the mode, which is the form that the engine reads.
+    const mode = field.mode ?? humanInputDatetimeMode(undefined);
+    return (
+      <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
+        <Input
+          id={controlId}
+          type={DATETIME_CONTROLS[mode]}
+          className="sm:max-w-xs"
+          disabled={disabled}
+          value={text}
+          aria-describedby={describedBy}
+          aria-invalid={Boolean(error)}
+          aria-required={field.is_required}
+          {...(field.earliest ? { min: field.earliest } : {})}
+          {...(field.latest ? { max: field.latest } : {})}
+          onChange={(event) =>
+            onChange(field.id, event.target.value.slice(0, HUMAN_INPUT_DATETIME_FORMS[mode].length))
+          }
+        />
+      </FieldShell>
+    );
+  }
+
   if (field.type === 'otp') {
     return (
       <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
@@ -765,7 +800,7 @@ export function HumanInputFieldRow({
           aria-required={field.is_required}
           {...(field.max_length ? { maxLength: field.max_length } : {})}
           {...(field.placeholder ? { placeholder: field.placeholder } : {})}
-          className="block w-full resize-y border border-edge bg-input px-2.5 py-1.5 font-mono text-ui text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted sm:px-3"
+          className="block w-full resize-y border border-field-edge bg-input px-2.5 py-1.5 font-mono text-ui text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted sm:px-3"
           onChange={(event) => onChange(field.id, event.target.value)}
         />
       </FieldShell>

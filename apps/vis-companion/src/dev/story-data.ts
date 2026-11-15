@@ -920,6 +920,134 @@ export const STORY_LIVE_DASHBOARD: LiveView = (() => {
 })();
 
 /**
+ * THE DATA NODES AND THE DATE FIELD: badges, lists, a bar chart with a value below
+ * zero, a line chart of a month and one date field for each mode. The gallery reads
+ * a chart on it at a phone width and at a desk width.
+ */
+export const STORY_LIVE_CATALOG: LiveView = (() => {
+  const view = liveViewFromWire({
+    seq: 0,
+    id: 'catalog',
+    title: 'Release report',
+    description: 'What the last release changed',
+    extension: 'playground',
+    nodes: [
+      {
+        id: 'labels',
+        type: 'badge',
+        label: 'Labels',
+        badges: [
+          { id: 'stable', label: 'Stable', tone: 'ok' },
+          { id: 'canary', label: 'Canary', tone: 'running' },
+          { id: 'deprecated', label: 'Deprecated', tone: 'warn' },
+          { id: 'broken', label: 'Broken on arm64', tone: 'error' },
+          { id: 'docs', label: 'Docs' },
+          { id: 'breaking', label: 'Breaking change' },
+        ],
+      },
+      {
+        id: 'steps',
+        type: 'list',
+        label: 'Next steps',
+        is_ordered: true,
+        items: [
+          { id: 'pin', text: 'Pin the release', detail: 'After the checks pass', tone: 'ok' },
+          { id: 'deploy', text: 'Deploy the playground', tone: 'running' },
+          { id: 'notes', text: 'Write the release notes for the qualification run' },
+        ],
+      },
+      {
+        id: 'risks',
+        type: 'list',
+        label: 'Risks',
+        items: [
+          { id: 'quota', text: 'The quota ends this week', tone: 'warn' },
+          { id: 'arm', text: 'The arm64 build fails', detail: 'Issue 512', tone: 'error' },
+          { id: 'none', text: 'No open security reports' },
+        ],
+      },
+      {
+        id: 'totals',
+        type: 'stat',
+        label: 'Totals',
+        stats: [
+          { id: 'merged', label: 'Merged', value_text: '48' },
+          { id: 'open', label: 'Open', value_text: '7', tone: 'warn' },
+          { id: 'failed', label: 'Failed', value_text: '2', tone: 'error' },
+        ],
+      },
+      {
+        id: 'pipeline',
+        type: 'table',
+        label: 'Pipeline',
+        columns: [
+          { id: 'lead', label: 'Lead' },
+          { id: 'stage', label: 'Stage' },
+          { id: 'owner', label: 'Owner' },
+          { id: 'score', label: 'Score', align: 'right' },
+        ],
+        rows: [
+          { id: 'l1', cells: ['Northwind Traders', 'qualification', 'Ada', '72'], tone: 'running' },
+          { id: 'l2', cells: ['Contoso', 'negotiation', 'Grace', '91'], tone: 'ok' },
+          { id: 'l3', cells: ['Fabrikam', 'lost', 'Linus', '14'], tone: 'error' },
+        ],
+      },
+      {
+        id: 'delta',
+        type: 'chart',
+        label: 'Change of the response time (ms)',
+        categories: ['Gateway', 'Engine', 'Sandbox', 'Companion'],
+        series: [{ id: 'delta', label: 'Change', values: [-42, 18, -7.5, 3] }],
+      },
+      {
+        id: 'load',
+        type: 'chart',
+        label: 'Requests each day',
+        categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+        series: [
+          { id: 'api', label: 'API', tone: 'ok', values: [12, 18, 9, 22, 16] },
+          { id: 'web', label: 'Web', values: [4, 7, 11, 6, 9] },
+          { id: 'errors', label: 'Errors', tone: 'error', values: [1, 0, 3, 0, 1] },
+        ],
+      },
+      {
+        id: 'latency',
+        type: 'chart',
+        kind: 'line',
+        label: 'Response time of a month (ms)',
+        categories: Array.from({ length: 30 }, (_, day) => `${day + 1} Nov`),
+        series: [
+          {
+            id: 'p50',
+            label: 'p50',
+            values: Array.from({ length: 30 }, (_, day) => 120 + Math.round(30 * Math.sin(day / 3))),
+          },
+          {
+            id: 'p95',
+            label: 'p95',
+            tone: 'warn',
+            values: Array.from({ length: 30 }, (_, day) => 260 + Math.round(70 * Math.cos(day / 4))),
+          },
+        ],
+      },
+      {
+        id: 'when',
+        type: 'group',
+        direction: 'grid',
+        label: 'Next release',
+        children: [
+          { id: 'day', type: 'datetime', mode: 'date', label: 'Day', min: '2026-01-01', max: '2026-12-31', value: '2026-03-14' },
+          { id: 'hour', type: 'datetime', mode: 'time', label: 'Time', value: '09:30' },
+          { id: 'freeze', type: 'datetime', label: 'Freeze', description: 'No merge after this time', value: '2026-03-13T18:00' },
+        ],
+      },
+    ],
+  });
+  if (!view) throw new Error('STORY_LIVE_CATALOG must be a valid live view');
+  return view;
+})();
+
+/**
  * A FORM AS AN EXTENSION BUILDS IT: every kind of field in one view, with a short
  * choice, a long choice and a row of actions. The gallery measures the fields on it.
  */

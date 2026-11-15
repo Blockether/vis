@@ -689,6 +689,18 @@
                 [(tagged-json "thread"
                               (select-keys node [:anchor :messages :draft :is-resolved]))]))
 
+(defmethod node->markdown :badge
+  [node _]
+  (marked-lines :badge [(tagged-json "badge" (select-keys node [:badges]))]))
+
+(defmethod node->markdown :list
+  [node _]
+  (marked-lines :list [(tagged-json "list" (select-keys node [:is-ordered :items]))]))
+
+(defmethod node->markdown :chart
+  [node _]
+  (marked-lines :chart [(tagged-json "chart" (select-keys node [:kind :categories :series]))]))
+
 (defn- plain-number
   "A number as a person writes it: 48 rather than 48.0."
   [n]
@@ -743,6 +755,7 @@
    :min "min"
    :max "max"
    :step "step"
+   :mode "mode"
    :min-length "min_length"
    :max-length "max_length"})
 
@@ -753,8 +766,13 @@
                      (keep (fn [[k wire-key]]
                              (when (contains? node k)
                                [wire-key
-                                (if (= :options k)
+                                (case k
+                                  :options
                                   (mapv #(select-keys % [:value :label]) (k node))
+
+                                  :mode
+                                  (name (k node))
+
                                   (k node))])))
                      input-domain-keys)]
     (when (seq domain) (str "Domain: " (wire/json-str domain)))))
@@ -1243,7 +1261,8 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image}
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
+          :badge :list :chart}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1404,6 +1423,27 @@
   [_ {:keys [at lines]}]
   (merge {:type :scene} (tagged-value at "scene" (nth lines 2 nil))))
 
+(defn- toned
+  "The items of a tagged line, each `:tone` a keyword again."
+  [items]
+  (mapv #(cond-> % (:tone %) (update :tone keyword)) items))
+
+(defmethod markdown->node :badge
+  [_ {:keys [at lines]}]
+  (update (merge {:type :badge :badges []} (tagged-value at "badge" (second lines))) :badges toned))
+
+(defmethod markdown->node :list
+  [_ {:keys [at lines]}]
+  (update (merge {:type :list :is-ordered false :items []} (tagged-value at "list" (second lines)))
+          :items
+          toned))
+
+(defmethod markdown->node :chart
+  [_ {:keys [at lines]}]
+  (-> (merge {:type :chart :series []} (tagged-value at "chart" (second lines)))
+      (update :kind keyword)
+      (update :series toned)))
+
 (defmethod markdown->node :spinner
   [_ {:keys [lines]}]
   (let [text
@@ -1456,14 +1496,20 @@
     (let [domain (try (wire/parse-json json) (catch Exception _ nil))]
       (when (map? domain)
         (into {}
-              (keep (fn [[k wire-key]]
-                      (when (contains? domain wire-key)
-                        [k
-                         (if (= :options k)
-                           (mapv (fn [option]
-                                   {:value (get option "value") :label (get option "label")})
-                                 (get domain wire-key))
-                           (get domain wire-key))])))
+              (keep
+                (fn [[k wire-key]]
+                  (when (contains? domain wire-key)
+                    [k
+                     (case k
+                       :options
+                       (mapv (fn [option]
+                               {:value (get option "value") :label (get option "label")})
+                             (get domain wire-key))
+
+                       :mode
+                       (get spec/datetime-mode-terms (get domain wire-key) (get domain wire-key))
+
+                       (get domain wire-key))])))
               input-domain-keys)))))
 
 (defn- markdown-input-value

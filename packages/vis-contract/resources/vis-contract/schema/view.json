@@ -690,6 +690,78 @@
         "start"
       ]
     },
+    "badge_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One badge: a short label with an optional tone.",
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ]
+    },
+    "list_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One item of a list: its text, with an optional second line and tone.",
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "text": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "detail": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ]
+    },
+    "chart_series": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One series of a chart. Value N belongs to category N. A series can be shorter than the categories.",
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "values"
+      ]
+    },
     "link": {
       "type": "object",
       "additionalProperties": false,
@@ -1185,6 +1257,112 @@
             "id",
             "type",
             "lanes"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "badge"
+            },
+            "badges": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/badge_item"
+              },
+              "minItems": 0,
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "badges"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "list"
+            },
+            "is_ordered": {
+              "default": false,
+              "type": "boolean"
+            },
+            "items": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/list_item"
+              },
+              "minItems": 0,
+              "maxItems": 200
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "is_ordered",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "chart"
+            },
+            "kind": {
+              "default": "bar",
+              "$ref": "#/$defs/chart_kind"
+            },
+            "categories": {
+              "description": "The label of each position on the horizontal axis.",
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              },
+              "minItems": 0,
+              "maxItems": 64
+            },
+            "series": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/chart_series"
+              },
+              "minItems": 0,
+              "maxItems": 8
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "kind",
+            "series"
           ]
         },
         {
@@ -1920,6 +2098,67 @@
             "type",
             "label",
             "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "default": false,
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {
+              "$ref": "#/$defs/datetime_text"
+            },
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "mode": {
+              "default": "datetime",
+              "$ref": "#/$defs/datetime_mode"
+            },
+            "min": {
+              "$ref": "#/$defs/datetime_text"
+            },
+            "max": {
+              "$ref": "#/$defs/datetime_text"
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "datetime"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "mode"
           ]
         },
         {
@@ -2727,6 +2966,9 @@
           "stat": ["label", "stats"],
           "steps": ["label", "steps"],
           "timeline": ["label", "lanes"],
+          "badge": ["badges", "label"],
+          "list": ["is_ordered", "items", "label"],
+          "chart": ["categories", "kind", "label", "series"],
           "log": ["label"],
           "table": ["label", "selected_ids"],
           "link": ["label", "links"],
@@ -2742,6 +2984,7 @@
           "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
           "thread": ["label"],
           "checkbox": ["label"],
+          "datetime": ["label"],
           "multiline": ["label"],
           "multiselect": ["label"],
           "otp": ["label"],
@@ -2755,6 +2998,9 @@
           "stat": ["stats"],
           "steps": ["steps"],
           "timeline": ["lanes"],
+          "badge": ["badges"],
+          "list": ["items"],
+          "chart": ["series"],
           "table": ["rows", "groups"],
           "link": ["links"],
           "scene": ["objects", "meshes"]
@@ -2763,6 +3009,9 @@
           "stat": ["item_ids"],
           "steps": ["item_ids"],
           "timeline": ["item_ids"],
+          "badge": ["item_ids"],
+          "list": ["item_ids"],
+          "chart": ["item_ids"],
           "table": ["item_ids"],
           "link": ["item_ids"],
           "scene": ["item_ids"],
@@ -2773,6 +3022,9 @@
           "stat": [],
           "steps": [],
           "timeline": [],
+          "badge": [],
+          "list": [],
+          "chart": [],
           "table": [],
           "link": [],
           "scene": []
@@ -2782,6 +3034,7 @@
         },
         "set-value": {
           "checkbox": ["value"],
+          "datetime": ["value"],
           "multiline": ["value"],
           "multiselect": ["value"],
           "otp": ["value"],
@@ -2859,6 +3112,37 @@
               "items": {
                 "$ref": "#/$defs/lane"
               }
+            },
+            "badges": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/badge_item"
+              }
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/list_item"
+              }
+            },
+            "series": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/chart_series"
+              }
+            },
+            "kind": {
+              "$ref": "#/$defs/chart_kind"
+            },
+            "categories": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              },
+              "maxItems": 64
+            },
+            "is_ordered": {
+              "type": "boolean"
             },
             "selected_ids": {
               "type": "array",
@@ -2992,6 +3276,24 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/lane"
+              }
+            },
+            "badges": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/badge_item"
+              }
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/list_item"
+              }
+            },
+            "series": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/chart_series"
               }
             },
             "links": {
@@ -3533,6 +3835,38 @@
         "insertion",
         "newest-first"
       ]
+    },
+    "chart_kind": {
+      "type": "string",
+      "enum": [
+        "bar",
+        "line"
+      ]
+    },
+    "datetime_mode": {
+      "description": "What a datetime field asks for. The value is local time without a zone: `YYYY-MM-DD` for date, `HH:MM` for time and `YYYY-MM-DDTHH:MM` for datetime.",
+      "oneOf": [
+        {
+          "const": "date",
+          "x-vis-form": "YYYY-MM-DD",
+          "x-vis-pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$"
+        },
+        {
+          "const": "time",
+          "x-vis-form": "HH:MM",
+          "x-vis-pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+        },
+        {
+          "const": "datetime",
+          "x-vis-form": "YYYY-MM-DDTHH:MM",
+          "x-vis-pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d$"
+        }
+      ]
+    },
+    "datetime_text": {
+      "description": "A date, a time or both. A field takes only the form of its mode.",
+      "type": "string",
+      "pattern": "^(\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])|([01]\\d|2[0-3]):[0-5]\\d|\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d)$"
     },
     "link_target": {
       "type": "string",

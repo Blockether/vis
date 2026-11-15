@@ -116,6 +116,28 @@
                [(keyword key) (get-in fields ["range" "properties" key "default"])]))
         ["min" "max" "step"]))
 
+(def datetime-mode-terms
+  "Wire datetime mode to internal mode."
+  (keyword-map (map #(get % "const") (get (definition "datetime_mode") "oneOf"))))
+
+(def datetime-modes
+  "Internal datetime mode to the pattern of its text."
+  (into {}
+        (map (fn [variant]
+               [(keyword (get variant "const")) (re-pattern (get variant "x-vis-pattern"))]))
+        (get (definition "datetime_mode") "oneOf")))
+
+(def datetime-forms
+  "Internal datetime mode to the form of its text as a person reads it, such as `YYYY-MM-DD`."
+  (into {}
+        (map (fn [variant]
+               [(keyword (get variant "const")) (get variant "x-vis-form")]))
+        (get (definition "datetime_mode") "oneOf")))
+
+(def datetime-defaults
+  "Default mode of a datetime field."
+  {:mode (keyword (get-in fields ["datetime" "properties" "mode" "default"]))})
+
 (def secret-handle-prefix
   "Prefix of an opaque secret answer handle."
   (subs (get (definition "secret_handle") "pattern") 1))
@@ -198,6 +220,23 @@
 (def link-defaults
   "Live link collection bound."
   {:max-links (get-in live-nodes ["link" "properties" "links" "maxItems"])})
+
+(def chart-kinds "Wire chart kind to internal kind." (keyword-map (enum-values "chart_kind")))
+
+(def badge-defaults
+  "Live badge collection bound."
+  {:max-badges (get-in live-nodes ["badge" "properties" "badges" "maxItems"])})
+
+(def list-defaults
+  "Live list item bound."
+  {:max-items (get-in live-nodes ["list" "properties" "items" "maxItems"])})
+
+(def chart-defaults
+  "Default kind and bounds of a chart: its series, its categories and the values of one series."
+  {:kind (keyword (get-in live-nodes ["chart" "properties" "kind" "default"]))
+   :max-series (get-in live-nodes ["chart" "properties" "series" "maxItems"])
+   :max-categories (get-in live-nodes ["chart" "properties" "categories" "maxItems"])
+   :max-values (get-in (definition "chart_series") ["properties" "values" "maxItems"])})
 
 (def scene-defaults
   "Defaults and bounds of a scene node and of one scene object."
@@ -289,6 +328,9 @@
    :table {:key :rows :max (:max-rows table-defaults)}
    :link {:key :links :max (:max-links link-defaults)}
    :timeline {:key :lanes :max (:max-lanes lane-defaults)}
+   :badge {:key :badges :max (:max-badges badge-defaults)}
+   :list {:key :items :max (:max-items list-defaults)}
+   :chart {:key :series :max (:max-series chart-defaults)}
    :scene {:key :objects :max (:max-objects scene-defaults)}})
 
 ;; The live keys — closed in both directions, exactly like the form's
@@ -315,6 +357,12 @@
 (def live-lane-keys "Every key one timeline lane may carry." (schema-keys "lane"))
 
 (def live-link-keys "Every key one link may carry." (schema-keys "link"))
+
+(def live-badge-keys "Every key one badge may carry." (schema-keys "badge_item"))
+
+(def live-list-item-keys "Every key one list item may carry." (schema-keys "list_item"))
+
+(def live-chart-series-keys "Every key one chart series may carry." (schema-keys "chart_series"))
 
 (def live-scene-object-keys "Every key one scene object may carry." (schema-keys "scene_object"))
 
@@ -444,11 +492,15 @@
   "Every key a field answered on a track may carry."
   (property-keys (get fields "range")))
 
+(def datetime-keys
+  "Every key a field answered with a date, a time or both may carry."
+  (property-keys (get fields "datetime")))
+
 (def field-keys
   "Every key a field spec may be WRITTEN with: the union of the per-type sets,
    less what the engine derives. The parser accepts exactly this vocabulary in
    its snake_case spelling, so there is no second table of keys to keep in step."
-  (apply disj (into text-keys (concat choice-keys range-keys)) derived-keys))
+  (apply disj (into text-keys (concat choice-keys range-keys datetime-keys)) derived-keys))
 
 (def group-keys
   "Every key a layout group may carry. A node that holds no answer has no key
@@ -500,6 +552,31 @@
   [{:keys [min max step]}]
   (and (pos? (double step)) (<= (double step) (- (double max) (double min)))))
 
+(defn datetime-text?
+  "True when `value` is text in the form of datetime `mode`. A missing mode is the
+   default mode."
+  [mode value]
+  (and (string? value)
+       (some? (some-> (get datetime-modes (keyword (or mode (:mode datetime-defaults))))
+                      (re-matches value)))))
+
+(defn- formed-bounds?
+  [{:keys [mode] :as field}]
+  (every? #(or (nil? %) (datetime-text? mode %)) [(:min field) (:max field)]))
+
+(defn- ordered-bounds? [{lo :min hi :max}] (or (nil? lo) (nil? hi) (not (pos? (compare lo hi)))))
+
+(defn- dated-in-domain?
+  "True when `value` has the form of the field mode and is not outside `min` and `max`.
+   Text of one mode sorts in time order."
+  [{lo :min hi :max :keys [is-required mode]} value]
+  (cond (nil? value) (not is-required)
+        (not (string? value)) false
+        (str/blank? value) (not is-required)
+        :else (and (datetime-text? mode value)
+                   (or (nil? lo) (not (pos? (compare lo value))))
+                   (or (nil? hi) (not (pos? (compare value hi)))))))
+
 (defn- option-values [field] (set (map :value (:options field))))
 
 (defn- default-in-domain?
@@ -518,6 +595,7 @@
           (and (vector? default) (every? chosen default) (= (count default) (count (set default))))
           (= :checkbox type) (boolean? default)
           (= :range type) (and (number? default) (<= (double lo) (double default) (double hi)))
+          (= :datetime type) (and (non-blank-string? default) (dated-in-domain? field default))
           (= :otp type) (and (string? default)
                              (some? (re-matches #"\d+" default))
                              (<= (long min-length) (count default) (long max-length)))
@@ -541,6 +619,10 @@
         "range min must be below max")
       (when (and (= :range (:type field)) (not (positive-step? field)))
         "range step must be positive and fit its bounds")
+      (when (and (= :datetime (:type field)) (not (formed-bounds? field)))
+        "datetime min and max must have the form of the mode")
+      (when (and (= :datetime (:type field)) (not (ordered-bounds? field)))
+        "datetime min must not be after max")
       (when-not (default-in-domain? field) "default is outside the field domain")))
 
 (defn group-error
@@ -622,6 +704,9 @@
 
     :range
     (slid-in-domain? field value)
+
+    :datetime
+    (dated-in-domain? field value)
 
     :otp
     (secret-in-domain? field value)
@@ -1055,7 +1140,7 @@
 
 (defn- input-lines
   "The input rules of filled node `node`. A default or a value is held to the domain
-   only when the bounds of a range make a domain."
+   only when the bounds of a range or of a datetime make a domain."
   [node]
   (let [field
         (engine-field node)
@@ -1066,13 +1151,27 @@
         checked
         (cond-> field
           (= :range kind)
-          (->> (merge range-defaults)))
+          (->> (merge range-defaults))
+
+          (= :datetime kind)
+          (->> (merge datetime-defaults)))
 
         range-lines
-        (when (= :range kind)
+        (case kind
+          :range
           (if-not (ascending-bounds? checked)
             [(document/named-line "/min" "range_order")]
-            (when-not (positive-step? checked) [(document/named-line "/step" "range_step")])))]
+            (when-not (positive-step? checked) [(document/named-line "/step" "range_step")]))
+
+          :datetime
+          (or (seq (keep (fn [k]
+                           (when-not (or (nil? (get checked k))
+                                         (datetime-text? (:mode checked) (get checked k)))
+                             (document/named-line (str "/" (name k)) "datetime_mode")))
+                         [:min :max]))
+              (when-not (ordered-bounds? checked) [(document/named-line "/min" "datetime_order")]))
+
+          nil)]
 
     (concat (when (and (contains? secret-types kind) (some? (:value field)))
               [(document/named-line "/value" "secret_value")])
@@ -1172,8 +1271,8 @@
                          (line "/threads" "repeated_item_id")
                          vector))
 
-        ("stat" "steps")
-        (let [k (if (= "stat" kind) "stats" "steps")]
+        ("stat" "steps" "badge" "list" "chart")
+        (let [k (name (:key (get item-bounds (keyword kind))))]
           (some->> (when (sequential? (get node k))
                      (repeated (map #(when (map? %) (get % "id")) (get node k))))
                    (array-map "id")

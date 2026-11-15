@@ -797,6 +797,78 @@ def test_timeline_hosts_refuse_what_the_engine_refuses(monkeypatch, host_kind):
         assert "ends before it starts" in card["text"]
 
 
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_badge_list_and_chart_ops_upsert_by_id(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    nodes = [
+        vis.ui.badge("tags", [{"id": "a", "label": "Alpha", "tone": "ok"}]),
+        vis.ui.listing("todo", [{"id": "x", "text": "First"}]),
+        vis.ui.chart(
+            "load",
+            [{"id": "api", "label": "API", "values": [1, 2]}],
+            categories=["Mon", "Tue"],
+        ),
+    ]
+    with vis.live("New nodes", nodes, flush_ms=0) as view:
+        tags, todo, load = view["tags"], view["todo"], view["load"]
+        assert isinstance(tags, vis.Badge)
+        assert isinstance(todo, vis.ListNode)
+        assert isinstance(load, vis.Chart)
+
+        def state(node_id):
+            return next(n for n in view.state()["nodes"] if n["id"] == node_id)
+
+        assert state("todo")["is_ordered"] is False
+        assert state("load")["kind"] == "bar"
+        # An append upserts by id: a held badge keeps its place and is replaced whole.
+        tags.set("b", "Beta", tone="warn")
+        tags.set("a", "Alpha 2")
+        assert state("tags")["badges"] == [
+            {"id": "a", "label": "Alpha 2"},
+            {"id": "b", "label": "Beta", "tone": "warn"},
+        ]
+        todo.set("y", "Second", detail="Soon")
+        todo.order()
+        assert state("todo")["is_ordered"] is True
+        assert state("todo")["items"][1] == {
+            "id": "y",
+            "text": "Second",
+            "detail": "Soon",
+        }
+        load.set("web", "Web", [3, 4], tone="ok")
+        load.configure(kind="line")
+        assert state("load")["kind"] == "line"
+        assert [one["id"] for one in state("load")["series"]] == ["api", "web"]
+        load.remove("api")
+        assert [one["id"] for one in state("load")["series"]] == ["web"]
+        tags.clear()
+        assert state("tags")["badges"] == []
+        with pytest.raises(RuntimeError):
+            load.configure(kind="pie")
+            view.flush()
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_a_datetime_input_holds_a_value_to_its_mode_and_bounds(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    node = vis.ui.datetime("due", "date", min="2026-01-01", max="2026-12-31")
+    with vis.live("When", [node], flush_ms=0) as view:
+        due = view["due"]
+        assert view.state()["nodes"][0]["mode"] == "date"
+        due.set("2026-03-14")
+        assert due.value == "2026-03-14"
+        for late in ("2027-01-01", "09:30"):
+            with pytest.raises(RuntimeError, match="outside the domain"):
+                due.set(late)
+                view.flush()
+
+
 LOG_CASES = json.loads(
     (
         Path(__file__).parents[2]

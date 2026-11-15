@@ -202,6 +202,18 @@
           "value": 3
         },
         {
+          "id": "due",
+          "name": "due",
+          "type": "datetime",
+          "label": "Due",
+          "is_required": false,
+          "is_secret": false,
+          "mode": "date",
+          "min": "2026-01-01",
+          "max": "2026-12-31",
+          "value": "2026-03-14"
+        },
+        {
           "id": "pin",
           "name": "pin",
           "type": "otp",
@@ -338,6 +350,77 @@
           "tone": "running",
           "detail": "12 of 40",
           "start": 1767225620000
+        }
+      ]
+    },
+    {
+      "id": "labels",
+      "type": "badge",
+      "label": "Labels",
+      "badges": [
+        {
+          "id": "stable",
+          "label": "Stable",
+          "tone": "ok"
+        },
+        {
+          "id": "beta",
+          "label": "Beta",
+          "tone": "warn"
+        },
+        {
+          "id": "docs",
+          "label": "Docs"
+        }
+      ]
+    },
+    {
+      "id": "todo",
+      "type": "list",
+      "label": "Next steps",
+      "is_ordered": true,
+      "items": [
+        {
+          "id": "pin",
+          "text": "Pin the release",
+          "detail": "After the checks pass",
+          "tone": "ok"
+        },
+        {
+          "id": "deploy",
+          "text": "Deploy the playground"
+        }
+      ]
+    },
+    {
+      "id": "load",
+      "type": "chart",
+      "label": "Requests each day",
+      "kind": "bar",
+      "categories": [
+        "Mon",
+        "Tue",
+        "Wed"
+      ],
+      "series": [
+        {
+          "id": "api",
+          "label": "API",
+          "tone": "ok",
+          "values": [
+            12,
+            18,
+            9
+          ]
+        },
+        {
+          "id": "web",
+          "label": "Web",
+          "values": [
+            4,
+            7,
+            11
+          ]
         }
       ]
     },

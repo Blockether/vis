@@ -1,7 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
-import { STORY_LIVE_DASHBOARD, STORY_LIVE_FORM, STORY_LIVE_VIEW, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
+import {
+  STORY_LIVE_CATALOG,
+  STORY_LIVE_DASHBOARD,
+  STORY_LIVE_FORM,
+  STORY_LIVE_VIEW,
+  STORY_LIVE_PRIMITIVES,
+} from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
 
 /**
@@ -86,6 +92,15 @@ export const Dashboard: Story = {
     await expect(within(tabs).getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
     await userEvent.click(within(tabs).getByRole('button', { name: 'Run' }));
     await expect(args.onActivate).toHaveBeenCalledWith('tab-run');
+  },
+};
+
+/** Badges, lists, bar and line charts and a date field of each mode. */
+export const Catalog: Story = {
+  args: { view: STORY_LIVE_CATALOG, onChange: fn(), onInterrupt: undefined },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('img', { name: /^p50 120, / })).toBeVisible();
+    await expect(canvas.getByLabelText('Day')).toHaveAttribute('type', 'date');
   },
 };
 

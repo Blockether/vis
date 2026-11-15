@@ -199,6 +199,17 @@
                 "value": 3
               },
               {
+                "id": "due",
+                "name": "due",
+                "type": "datetime",
+                "label": "Due",
+                "is_required": false,
+                "mode": "date",
+                "min": "2026-01-01",
+                "max": "2026-12-31",
+                "value": "2026-03-14"
+              },
+              {
                 "id": "pin",
                 "name": "pin",
                 "type": "otp",
@@ -330,6 +341,77 @@
                 "tone": "running",
                 "detail": "12 of 40",
                 "start": 1767225620000
+              }
+            ]
+          },
+          {
+            "id": "labels",
+            "type": "badge",
+            "label": "Labels",
+            "badges": [
+              {
+                "id": "stable",
+                "label": "Stable",
+                "tone": "ok"
+              },
+              {
+                "id": "beta",
+                "label": "Beta",
+                "tone": "warn"
+              },
+              {
+                "id": "docs",
+                "label": "Docs"
+              }
+            ]
+          },
+          {
+            "id": "todo",
+            "type": "list",
+            "label": "Next steps",
+            "is_ordered": true,
+            "items": [
+              {
+                "id": "pin",
+                "text": "Pin the release",
+                "detail": "After the checks pass",
+                "tone": "ok"
+              },
+              {
+                "id": "deploy",
+                "text": "Deploy the playground"
+              }
+            ]
+          },
+          {
+            "id": "load",
+            "type": "chart",
+            "label": "Requests each day",
+            "kind": "bar",
+            "categories": [
+              "Mon",
+              "Tue",
+              "Wed"
+            ],
+            "series": [
+              {
+                "id": "api",
+                "label": "API",
+                "tone": "ok",
+                "values": [
+                  12,
+                  18,
+                  9
+                ]
+              },
+              {
+                "id": "web",
+                "label": "Web",
+                "values": [
+                  4,
+                  7,
+                  11
+                ]
               }
             ]
           },
@@ -2737,6 +2819,233 @@
         ],
         "text": [
           "node t /rows/0/cells/0 - expected string, got integer (type); /rows/0/cells/1 - expected string, got integer (type); /rows/0/cells/2 - expected string, got integer (type); /rows/1/cells/0 - expected string, got integer (type); /rows/1/cells/1 - expected string, got integer (type); and 13 more"
+        ]
+      }
+    },
+    {
+      "name": "two badges with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "bd",
+            "type": "badge",
+            "badges": [
+              {
+                "id": "x",
+                "label": "One"
+              },
+              {
+                "id": "x",
+                "label": "Two"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "bd"
+        ],
+        "text": [
+          "node bd /badges - two items have the id \"x\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "two list items with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "ls",
+            "type": "list",
+            "items": [
+              {
+                "id": "x",
+                "text": "One"
+              },
+              {
+                "id": "x",
+                "text": "Two"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "ls"
+        ],
+        "text": [
+          "node ls /items - two items have the id \"x\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "two chart series with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "ch",
+            "type": "chart",
+            "series": [
+              {
+                "id": "x",
+                "label": "One",
+                "values": [
+                  1
+                ]
+              },
+              {
+                "id": "x",
+                "label": "Two",
+                "values": [
+                  2
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "ch"
+        ],
+        "text": [
+          "node ch /series - two items have the id \"x\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "a datetime bound in the form of another mode is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "datetime",
+            "mode": "date",
+            "min": "09:00"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /min - the text does not have the form of the mode (input)"
+        ]
+      }
+    },
+    {
+      "name": "a datetime with min after max is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "datetime",
+            "mode": "time",
+            "min": "18:00",
+            "max": "09:00"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /min - min is later than max (input)"
+        ]
+      }
+    },
+    {
+      "name": "a datetime default before min is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "datetime",
+            "mode": "date",
+            "min": "2026-02-01",
+            "default": "2026-01-31"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /default - the default is outside the domain of the input (input)"
+        ]
+      }
+    },
+    {
+      "name": "a datetime value in the form of another mode is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "datetime",
+            "value": "2026-02-01"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /value - the value is outside the domain of the input (input)"
         ]
       }
     }
@@ -5874,6 +6183,281 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "name": "an appended badge comes after the badges before it",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "bd",
+            "type": "badge",
+            "badges": [
+              {
+                "id": "a",
+                "label": "Alpha",
+                "tone": "ok"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "bd",
+          "badges": [
+            {
+              "id": "b",
+              "label": "Beta",
+              "tone": "warn"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "badges",
+          1,
+          "label"
+        ],
+        "value": "Beta"
+      }
+    },
+    {
+      "name": "a set of list items replaces the items",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "ls",
+            "type": "list",
+            "items": [
+              {
+                "id": "a",
+                "text": "First"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "ls",
+          "items": [
+            {
+              "id": "z",
+              "text": "Last",
+              "detail": "Soon"
+            }
+          ],
+          "is_ordered": true
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0
+        ],
+        "value": {
+          "id": "ls",
+          "type": "list",
+          "is_ordered": true,
+          "items": [
+            {
+              "id": "z",
+              "text": "Last",
+              "detail": "Soon"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a set of the chart kind keeps the series",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "ch",
+            "type": "chart",
+            "series": [
+              {
+                "id": "a",
+                "label": "A",
+                "values": [
+                  1,
+                  2
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "ch",
+          "kind": "line",
+          "categories": [
+            "Mon",
+            "Tue"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0
+        ],
+        "value": {
+          "id": "ch",
+          "type": "chart",
+          "kind": "line",
+          "categories": [
+            "Mon",
+            "Tue"
+          ],
+          "series": [
+            {
+              "id": "a",
+              "label": "A",
+              "values": [
+                1,
+                2
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a remove op drops chart series by id",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "ch",
+            "type": "chart",
+            "series": [
+              {
+                "id": "a",
+                "label": "A",
+                "values": [
+                  1,
+                  2
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "node_id": "ch",
+          "item_ids": [
+            "a"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "series"
+        ],
+        "value": []
+      }
+    },
+    {
+      "name": "a clear drops every badge",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "bd",
+            "type": "badge",
+            "badges": [
+              {
+                "id": "a",
+                "label": "Alpha",
+                "tone": "ok"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "clear",
+          "node_id": "bd"
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "badges"
+        ],
+        "value": []
+      }
+    },
+    {
+      "name": "a set-value after the max of a datetime is refused with the node check",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "datetime",
+            "mode": "date",
+            "max": "2026-12-31"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set-value",
+          "node_id": "d",
+          "value": "2027-01-01"
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /value - the value is outside the domain of the input (input)"
+      }
+    },
+    {
+      "name": "a set-value in the form of the mode lands on a datetime",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "datetime",
+            "mode": "date",
+            "max": "2026-12-31"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set-value",
+          "node_id": "d",
+          "value": "2026-06-30"
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "value"
+        ],
+        "value": "2026-06-30"
       }
     }
   ]

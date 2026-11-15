@@ -367,6 +367,49 @@
                     (parse-double s)
                     (invalid-field! field-id (str label " must be a number"))))))
 
+(defn- normalize-datetime
+  "The mode of a datetime field and its bounds. A bound has the form of the mode,
+   and text of one mode sorts in time order."
+  [field-id field]
+  (let [raw
+        (:mode field)
+
+        mode
+        (cond (nil? raw) (:mode view-spec/datetime-defaults)
+              (or (keyword? raw) (string? raw)) (get view-spec/datetime-mode-terms
+                                                     (str/lower-case (name raw))))
+
+        _
+        (when-not mode
+          (invalid-field! field-id
+                          (str ":mode must be one of "
+                               (str/join ", " (sort (keys view-spec/datetime-mode-terms))))))
+
+        bound
+        (fn [k]
+          (when (some? (get field k))
+            (let [text (trimmed (get field k))]
+              (if (view-spec/datetime-text? mode text)
+                text
+                (invalid-field!
+                  field-id
+                  (str k " must have the form " (get view-spec/datetime-forms mode)))))))
+
+        lo
+        (bound :min)
+
+        hi
+        (bound :max)]
+
+    (when (and lo hi (pos? (compare lo hi)))
+      (invalid-field! field-id ":max must not be before :min"))
+    (cond-> {:mode mode}
+      lo
+      (assoc :min lo)
+
+      hi
+      (assoc :max hi))))
+
 (defn- normalize-range
   "The three numbers a slider needs. `:step` is the increment a surface nudges
    by, NOT a validation rule: the engine only refuses a value outside the
@@ -536,6 +579,9 @@
 
                (= :range field-type)
                (merge (normalize-range field-id field))
+
+               (= :datetime field-type)
+               (merge (normalize-datetime field-id field))
 
                (= :otp field-type)
                (merge (normalize-otp field-id field))
@@ -717,6 +763,9 @@
    :stats view-spec/live-stat-keys
    :steps view-spec/live-step-keys
    :lanes view-spec/live-lane-keys
+   :badges view-spec/live-badge-keys
+   :items view-spec/live-list-item-keys
+   :series view-spec/live-chart-series-keys
    :links view-spec/live-link-keys
    :groups view-spec/live-table-group-keys
    :objects view-spec/live-scene-object-keys
@@ -833,8 +882,8 @@
     {:vertices (triples vertices scene-number) :faces (triples faces schema-long)}))
 
 (defn- normalize-live-item
-  "One item of a keyed collection: a column, row, stat, step, lane, link, scene object
-   or mesh. A valid value takes its engine form, and a closed vocabulary is looked up.
+  "One item of a keyed collection: a column, row, stat, step, lane, badge, list item,
+   chart series, link, scene object or mesh. A valid value takes its engine form, and a closed vocabulary is looked up.
    An item that is no map or has no id, a key that the item does not take and a value
    of the wrong type stay as given, so the node check refuses them with the rule of the
    schema."
@@ -899,6 +948,19 @@
 
               (some? (:end item))
               (assoc :end (schema-long (:end item))))
+
+            :badges
+            {:id id :label label :tone tone}
+
+            :items
+            (cond-> {:id id :text (schema-text (:text item)) :tone tone}
+              (some? (:detail item))
+              (assoc :detail (schema-text (:detail item))))
+
+            ;; One line or one set of bars of a chart. Each value stays the number it
+            ;; is, and the node check refuses a value that is no finite number.
+            :series
+            {:id id :label label :tone tone :values (text-items (:values item))}
 
             :links
             (let [target (schema-text (:target item))]
@@ -1254,6 +1316,21 @@
 
                :timeline
                (assoc base :lanes (items :lanes))
+
+               :badge
+               (assoc base :badges (items :badges))
+
+               :list
+               (assoc base
+                 :is-ordered (schema-bool (:is-ordered node))
+                 :items (items :items))
+
+               :chart
+               (cond-> (assoc base
+                         :kind (schema-term view-spec/chart-kinds (:kind node))
+                         :series (items :series))
+                 (some? (:categories node))
+                 (assoc :categories (text-items (:categories node))))
 
                :log
                (cond-> (assoc base
@@ -1742,6 +1819,18 @@
             (normalize-live-items :steps value))
    :lanes (fn [_ value]
             (normalize-live-items :lanes value))
+   :badges (fn [_ value]
+             (normalize-live-items :badges value))
+   :items (fn [_ value]
+            (normalize-live-items :items value))
+   :series (fn [_ value]
+             (normalize-live-items :series value))
+   :kind (fn [_ value]
+           (schema-term view-spec/chart-kinds value))
+   :categories (fn [_ value]
+                 (text-items value))
+   :is-ordered (fn [_ value]
+                 (schema-bool value))
    :links (fn [_ value]
             (normalize-live-items :links value))
    :objects (fn [_ value]
@@ -1977,6 +2066,22 @@
           [:ok (long (Math/round (double n)))]
           :else [:ok (double n)])))
 
+(defn- coerce-datetime
+  "A date, a time or both, as text in the form of the field mode."
+  [{lo :min hi :max :keys [is-required mode]} value]
+  (let [text (cond (nil? value) ""
+                   (coll? value) ::invalid
+                   :else (str/trim (str value)))]
+    (cond (= ::invalid text) [:error "must be a date or a time"]
+          (str/blank? text) (if is-required [:error "is required"] [:ok nil])
+          (not (view-spec/datetime-text? mode text))
+          [:error
+           (str "must have the form "
+                (get view-spec/datetime-forms (or mode (:mode view-spec/datetime-defaults))))]
+          (and lo (pos? (compare lo text))) [:error (str "must not be before " lo)]
+          (and hi (pos? (compare text hi))) [:error (str "must not be after " hi)]
+          :else [:ok text])))
+
 (defn- coerce-otp
   "A one-time code is DIGITS, however the human pasted them. Spaces and dashes
    are how every provider prints a code (`123 456`, `123-456`), so they are
@@ -2012,6 +2117,7 @@
         (= :multiselect type) (coerce-multiselect field value)
         (= :checkbox type) (coerce-checkbox field value)
         (= :range type) (coerce-range field value)
+        (= :datetime type) (coerce-datetime field value)
         (= :otp type) (coerce-otp field value)
         :else [:error "unknown field type"]))
 
@@ -2210,8 +2316,10 @@
                 [view-spec/live-view-keys view-spec/live-node-keys view-spec/live-group-keys
                  view-spec/live-column-keys view-spec/live-table-group-keys view-spec/live-row-keys
                  view-spec/live-stat-keys view-spec/live-step-keys view-spec/live-lane-keys
-                 view-spec/live-link-keys view-spec/live-sorted-keys view-spec/live-patch-keys
-                 view-spec/live-op-keys view-spec/live-result-keys view-spec/live-picture-keys
+                 view-spec/live-badge-keys view-spec/live-list-item-keys
+                 view-spec/live-chart-series-keys view-spec/live-link-keys
+                 view-spec/live-sorted-keys view-spec/live-patch-keys view-spec/live-op-keys
+                 view-spec/live-result-keys view-spec/live-picture-keys
                  view-spec/live-elided-keys])))
 
 (def ^:private live-wire-terms
@@ -2228,6 +2336,8 @@
    :dir view-spec/live-sort-dirs
    :align view-spec/live-aligns
    :direction view-spec/group-directions
+   :kind view-spec/chart-kinds
+   :mode view-spec/datetime-mode-terms
    :target-kind view-spec/link-targets
    :placement view-spec/placements
    :reason view-spec/live-reasons

@@ -64,6 +64,59 @@ describe('the complete live vocabulary', () => {
     expect(nodes.find((n) => n.id === 'refresh')).toMatchObject({ clicks: 4, is_disabled: true });
   });
 
+  it('paints badges, list items and chart values, and moves them with their patches', () => {
+    let v = view();
+    const mounted = render(<LiveViewPanel view={v} />);
+    const bar = (id: string) =>
+      (document.querySelector(`[data-chart-bar="${id}"]`) as HTMLElement).style.width;
+    expect(
+      [...document.querySelectorAll('[data-badge]')].map((badge) => badge.textContent),
+    ).toEqual(['Stable, OK', 'Beta, Warning', 'Docs']);
+    expect(screen.getByText('Pin the release').closest('ol')).not.toBeNull();
+    expect(screen.getByText('After the checks pass')).toBeVisible();
+    // 18 is the greatest value, so its bar fills the scale and 9 fills half of it.
+    expect(bar('api:1')).toBe('100%');
+    expect(bar('api:2')).toBe('50%');
+    v = applyLivePatch(v, {
+      view_id: v.id,
+      patch: {
+        seq: 1,
+        ops: [
+          { op: 'append', node_id: 'labels', badges: [{ id: 'beta', label: 'RC', tone: 'ok' }] },
+          { op: 'remove', node_id: 'labels', item_ids: ['docs'] },
+          { op: 'set', node_id: 'todo', is_ordered: false },
+          { op: 'append', node_id: 'load', series: [{ id: 'api', label: 'API', values: [36, 18, 9] }] },
+          { op: 'remove', node_id: 'load', item_ids: ['web'] },
+        ],
+      },
+    });
+    mounted.rerender(<LiveViewPanel view={v} />);
+    expect(
+      [...document.querySelectorAll('[data-badge]')].map((badge) => badge.textContent),
+    ).toEqual(['Stable, OK', 'RC, OK']);
+    expect(screen.getByText('Pin the release').closest('ul')).not.toBeNull();
+    expect(bar('api:0')).toBe('100%');
+    expect(bar('api:1')).toBe('50%');
+    expect(document.querySelector('[data-chart-bar^="web"]')).toBeNull();
+    v = applyLivePatch(v, {
+      view_id: v.id,
+      patch: { seq: 2, ops: [{ op: 'set', node_id: 'load', kind: 'line' }] },
+    });
+    mounted.rerender(<LiveViewPanel view={v} />);
+    expect(screen.getByRole('img', { name: 'API 36, 18, 9' })).toBeVisible();
+    // A line runs from the greatest value at the top to the least at the bottom.
+    expect(document.querySelector('[data-chart-line="api"]')?.getAttribute('points')).toBe(
+      '0,4 50,65.33 100,96',
+    );
+  });
+
+  it('asks for a datetime with the native control of its mode and passes the bounds', () => {
+    render(<LiveViewPanel view={view()} />);
+    const due = screen.getByLabelText('Due') as HTMLInputElement;
+    expect(due.type).toBe('date');
+    expect([due.min, due.max, due.value]).toEqual(['2026-01-01', '2026-12-31', '2026-03-14']);
+  });
+
   it('keeps independent local folds through updates and parent folds, then resets for a receipt', () => {
     // Regression #189: collapsed logs must not reopen when patches arrive.
     let v = view();

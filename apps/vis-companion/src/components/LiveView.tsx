@@ -60,6 +60,8 @@ import {
 } from '../lib/view';
 import {
   applyLiveViewEvent,
+  chartFraction,
+  chartScale,
   LIVE_NOTE_CHARS,
   isLiveInputNode,
   isLiveSecretInput,
@@ -72,10 +74,15 @@ import {
   orderedRows,
   timelineGeometry,
   timelineStill,
+  type LiveBadgeNode,
   type LiveCardNode,
+  type LiveChartNode,
+  type LiveChartScale,
+  type LiveChartSeries,
   type LiveGroupNode,
   type LiveInputNode,
   type LiveLinkNode,
+  type LiveListNode,
   type LiveLogNode,
   type LiveLogPage,
   type LiveNode,
@@ -154,6 +161,9 @@ const EMPTY_LINE = {
   stat: 'nothing counted yet',
   steps: 'no steps yet',
   timeline: 'no lanes yet',
+  badge: 'no badges yet',
+  list: 'no items yet',
+  chart: 'no data yet',
   log: 'no output yet',
   table: 'no rows yet',
   link: 'no links',
@@ -354,7 +364,7 @@ function ProgressMeter({ value, label }: { value: number; label: string }) {
         preserveAspectRatio="none"
         className="block size-full"
       >
-        <rect width="1000" height="1" className="fill-edge-strong" />
+        <rect width="1000" height="1" className="meter-track fill-edge-strong" />
         <rect width={Math.round(clamped * 1000)} height="1" className="fill-accent" />
       </svg>
     </span>
@@ -435,9 +445,10 @@ function StatRow({ node }: { node: LiveStatNode }) {
     );
   }
   return (
-    // Each tile draws its whole frame and steps 1px over its neighbour, so an
-    // incomplete last row still closes: a frame on the grid would run on over the gap.
-    <dl className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,9rem),1fr))] pl-px pt-px font-mono">
+    // Each tile draws its whole frame and steps 1px over its neighbour. The tiles of a
+    // row share its whole width, so an incomplete last row leaves no empty cell (user
+    // report: three tiles on a phone stood as two and a hole).
+    <dl className="flex flex-wrap pl-px pt-px font-mono">
       {node.stats.map((stat) => {
         const isFigure = stat.value_text.length <= HERO_VALUE;
         return (
@@ -446,7 +457,7 @@ function StatRow({ node }: { node: LiveStatNode }) {
             data-stat-tile={stat.id}
             // An identifier takes a whole row: in one track it broke into four lines.
             className={`-ml-px -mt-px min-w-0 border border-edge-strong px-3 py-2.5 ${
-              stat.value_text.length > LONG_VALUE ? 'col-span-full' : ''
+              stat.value_text.length > LONG_VALUE ? 'flex-[1_1_100%]' : 'flex-[1_1_9rem]'
             }`}
           >
             <dt className="text-meta text-dialog-hint [overflow-wrap:anywhere]">
@@ -609,7 +620,7 @@ function TimelineRows({ node, isSettled }: { node: LiveTimelineNode; isSettled: 
                 )}
               </span>
               <span aria-hidden="true" className="relative flex h-[1lh] items-center">
-                <span className="relative h-2 w-full bg-edge">
+                <span className="meter-track relative h-2 w-full bg-edge">
                   <span
                     data-lane-bar={lane.id}
                     className={`absolute inset-y-0 ${BAR_INK[lane.tone]}`}
@@ -628,6 +639,285 @@ function TimelineRows({ node, isSettled }: { node: LiveTimelineNode; isSettled: 
           );
         })}
       </ol>
+    </div>
+  );
+}
+
+/** Short labels side by side (`badge`). The mark says the tone; only a failure colours its word. */
+function BadgeRow({ node }: { node: LiveBadgeNode }) {
+  if (node.badges.length === 0) return <Empty>{EMPTY_LINE.badge}</Empty>;
+  return (
+    <ul className="flex min-w-0 flex-wrap gap-1.5 font-mono text-meta">
+      {node.badges.map((badge) => (
+        <li
+          key={badge.id}
+          data-badge={badge.id}
+          className={`inline-flex min-w-0 items-start gap-1.5 border px-2 py-0.5 ${
+            badge.tone === 'error' ? 'border-err text-err' : 'border-edge-strong text-white'
+          }`}
+        >
+          {badge.tone !== 'idle' && <LineMark tone={badge.tone} />}
+          <span className="min-w-0 [overflow-wrap:anywhere]">
+            <InlineMarkdown>{badge.label}</InlineMarkdown>
+          </span>
+          {badge.tone !== 'idle' && <span className="sr-only">, {TONE_WORD[badge.tone]}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Items one below the other (`list`): bullets, or numbers when the list is ordered.
+ * The tone mark stands at the end of the row, so every text starts in one column.
+ */
+function ListRows({ node }: { node: LiveListNode }) {
+  if (node.items.length === 0) return <Empty>{EMPTY_LINE.list}</Empty>;
+  const Tag = node.is_ordered ? 'ol' : 'ul';
+  return (
+    <Tag className="min-w-0 space-y-1 font-mono text-body">
+      {node.items.map((item, index) => (
+        <li
+          key={item.id}
+          data-list-item={item.id}
+          className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-2.5"
+        >
+          <span aria-hidden="true" className="text-right tabular-nums text-dialog-hint">
+            {node.is_ordered ? `${index + 1}.` : '•'}
+          </span>
+          <span className="min-w-0">
+            <span className={`block [overflow-wrap:anywhere] ${rowInk(item.tone) || 'text-white'}`}>
+              <InlineMarkdown>{item.text}</InlineMarkdown>
+            </span>
+            {item.detail && (
+              <span className="mt-0.5 block text-meta text-dialog-hint [overflow-wrap:anywhere]">
+                <InlineMarkdown>{item.detail}</InlineMarkdown>
+              </span>
+            )}
+          </span>
+          {item.tone !== 'idle' && (
+            <span className="flex items-start">
+              <LineMark tone={item.tone} />
+              <span className="sr-only">{TONE_WORD[item.tone]}</span>
+            </span>
+          )}
+        </li>
+      ))}
+    </Tag>
+  );
+}
+
+/** A number of a chart as a person writes it: 48 rather than 48.0, at most two decimals. */
+function chartNumber(value: number): string {
+  return String(Math.round(value * 100) / 100);
+}
+
+/**
+ * The ink of a series. A tone gives its own colour. A series without a tone takes
+ * the ink of its place: the body ink first, so two series never share one while
+ * three inks last.
+ */
+const SERIES_FILL = ['bg-white', 'bg-accent-ink', 'bg-dialog-hint'] as const;
+const SERIES_STROKE = ['text-white', 'text-accent-ink', 'text-dialog-hint'] as const;
+/** The dash of each line, so a reader tells the lines apart without colour. */
+const SERIES_DASH = [undefined, '6 3', '2 3', '8 3 2 3'] as const;
+
+function seriesFill(series: LiveChartSeries, index: number): string {
+  return series.tone === 'idle' ? SERIES_FILL[index % SERIES_FILL.length] : BAR_INK[series.tone];
+}
+
+/**
+ * The pattern of a series of bars on a monochrome page (`index.css`), where each
+ * series has the same ink: solid, hatched, hollow.
+ */
+function seriesPattern(index: number): string {
+  return `chart-series-${index % SERIES_FILL.length}`;
+}
+
+function seriesStroke(series: LiveChartSeries, index: number): string {
+  return series.tone === 'idle' ? SERIES_STROKE[index % SERIES_STROKE.length] : MARK_INK[series.tone];
+}
+
+// The columns of a bar chart: the CATEGORY, then the BAR with its VALUE. The category
+// fits the longest name, but takes at most two fifths of the row.
+const CHART_ROW = 'grid min-w-0 grid-cols-[min(var(--chart-label),40%)_minmax(0,1fr)] gap-x-3';
+
+/**
+ * Bars on ONE scale that holds zero: the length of a bar is its value, and a
+ * negative value runs to the left of zero. Each bar shows its number.
+ */
+function BarChart({
+  node,
+  scale,
+  names,
+}: {
+  node: LiveChartNode;
+  scale: LiveChartScale;
+  names: string[];
+}) {
+  const zero = chartFraction(scale, 0);
+  const widest = Math.max(...names.map((name) => name.length));
+  const longest = Math.max(
+    ...node.series.flatMap((one) => one.values.map((value) => chartNumber(value).length)),
+  );
+  return (
+    <div
+      className="min-w-0 font-mono text-body"
+      style={{ '--chart-label': `${widest + 1}ch`, '--chart-value': `${longest}ch` } as CSSProperties}
+    >
+      <ol className="min-w-0 space-y-1">
+        {names.map((name, slot) => (
+          <li key={name + slot} className={CHART_ROW}>
+            <span className="min-w-0 text-white [overflow-wrap:anywhere]">{name}</span>
+            <span className="min-w-0">
+              {node.series.map((one, index) => {
+                const value = one.values[slot];
+                if (value === undefined) return null;
+                const at = chartFraction(scale, value);
+                return (
+                  <span
+                    key={one.id}
+                    className="grid h-[1lh] grid-cols-[minmax(0,1fr)_var(--chart-value)] items-center gap-x-3"
+                  >
+                    <span aria-hidden="true" className="meter-track relative h-2 bg-edge">
+                      <span
+                        data-chart-bar={`${one.id}:${slot}`}
+                        // A value that is not zero always shows: at least 2px of bar.
+                        className={`absolute inset-y-0 ${value === 0 ? '' : 'min-w-0.5'} ${seriesFill(one, index)} ${seriesPattern(index)}`}
+                        style={{
+                          left: `${Math.min(zero, at) * 100}%`,
+                          width: `${Math.abs(at - zero) * 100}%`,
+                        }}
+                      />
+                    </span>
+                    <span className="whitespace-nowrap text-right tabular-nums text-dialog-hint">
+                      {node.series.length > 1 && <span className="sr-only">{one.label} </span>}
+                      {chartNumber(value)}
+                    </span>
+                  </span>
+                );
+              })}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** The most category names a line chart writes under its axis; more leave only the ends. */
+const AXIS_NAMES = 7;
+
+/**
+ * Lines on ONE scale from the least to the greatest value. The numbers at the left
+ * are the ends of that scale, and the names under the axis are the categories.
+ */
+function LineChart({
+  node,
+  scale,
+  names,
+}: {
+  node: LiveChartNode;
+  scale: LiveChartScale;
+  names: string[];
+}) {
+  // A point keeps two decimals: finer than a pixel at any width of the panel.
+  const point = (value: number) => Math.round(value * 100) / 100;
+  const x = (at: number, count: number) => point(count > 1 ? (at / (count - 1)) * 100 : 50);
+  // The line keeps 4% of air above and below, so a stroke at an end stays whole.
+  const y = (value: number) => point(4 + (1 - chartFraction(scale, value)) * 92);
+  const shown =
+    names.length > AXIS_NAMES ? [names[0], names[names.length - 1]] : names.length > 1 ? names : [];
+  const summary = node.series
+    .map((one) => `${one.label} ${one.values.map(chartNumber).join(', ')}`)
+    .join('; ');
+  return (
+    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-2 font-mono text-meta text-dialog-hint">
+      <span aria-hidden="true" className="flex flex-col justify-between text-right tabular-nums">
+        <span>{chartNumber(scale.high)}</span>
+        <span>{chartNumber(scale.low)}</span>
+      </span>
+      <svg
+        role="img"
+        aria-label={summary}
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className="h-28 w-full min-w-0 border-b border-l border-edge-strong"
+      >
+        {node.series.map((one, index) => (
+          <polyline
+            key={one.id}
+            data-chart-line={one.id}
+            className={seriesStroke(one, index)}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeDasharray={SERIES_DASH[index % SERIES_DASH.length]}
+            vectorEffect="non-scaling-stroke"
+            points={
+              one.values.length === 1
+                ? `0,${y(one.values[0])} 100,${y(one.values[0])}`
+                : one.values.map((value, at) => `${x(at, scale.slots)},${y(value)}`).join(' ')
+            }
+          />
+        ))}
+      </svg>
+      {shown.length > 0 && (
+        <span aria-hidden="true" className="col-start-2 flex justify-between gap-2 pt-1">
+          {shown.map((name, at) => (
+            <span key={name + at} className="min-w-0 truncate">
+              {name}
+            </span>
+          ))}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Numbers as bars or lines (`chart`). A chart of more than one series names each
+ * series beside its ink, and a line also beside its dash.
+ */
+function ChartView({ node }: { node: LiveChartNode }) {
+  const scale = chartScale(node.kind, node.series);
+  if (scale.slots === 0) return <Empty>{EMPTY_LINE.chart}</Empty>;
+  const names = Array.from({ length: scale.slots }, (_, at) => node.categories?.[at] || String(at + 1));
+  const isLine = node.kind === 'line';
+  return (
+    <div className="min-w-0 space-y-2" data-chart-kind={node.kind}>
+      {(isLine || node.series.length > 1) && (
+        <ul className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 font-mono text-meta text-dialog-hint">
+          {node.series.map((one, index) => (
+            <li key={one.id} className="inline-flex min-w-0 items-center gap-1.5">
+              {isLine ? (
+                <svg aria-hidden="true" viewBox="0 0 16 2" className={`h-0.5 w-4 shrink-0 ${seriesStroke(one, index)}`}>
+                  <line
+                    x1="0"
+                    y1="1"
+                    x2="16"
+                    y2="1"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeDasharray={SERIES_DASH[index % SERIES_DASH.length]}
+                  />
+                </svg>
+              ) : (
+                <span aria-hidden="true" className={`size-2 shrink-0 ${seriesFill(one, index)} ${seriesPattern(index)}`} />
+              )}
+              <span className="min-w-0 text-white [overflow-wrap:anywhere]">{one.label}</span>
+              {isLine && one.values.length > 0 && (
+                <span className="tabular-nums">{chartNumber(one.values[one.values.length - 1])}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {isLine ? (
+        <LineChart node={node} scale={scale} names={names} />
+      ) : (
+        <BarChart node={node} scale={scale} names={names} />
+      )}
     </div>
   );
 }
@@ -1060,6 +1350,25 @@ function columnSteps(columns: LiveTableNode['columns'], rows: LiveRow[], hasStat
   return (hasState ? [...chars, STATE_CHARS] : chars).map(widthStep);
 }
 
+/**
+ * The longest word of each column after the name, in characters, and at most the
+ * width of the column's step. A cell breaks anywhere, so a squeezed table gave a
+ * column the width of its header and broke `qualification` in three (user report).
+ * The header holds this width, and the table scrolls sideways instead.
+ */
+function columnWords(columns: LiveTableNode['columns'], rows: LiveRow[], steps: number[]): number[] {
+  const longest = (text: string) =>
+    text.split(/\s+/).reduce((most, word) => Math.max(most, word.length), 0);
+  return columns
+    .slice(1)
+    .map((column, at) =>
+      Math.min(
+        4 * ((steps[at] ?? 0) + 1),
+        rows.reduce((most, row) => Math.max(most, longest(row.cells[at + 1] ?? '')), longest(column.label)),
+      ),
+    );
+}
+
 /** The wider of two measures, column by column; `was` itself when no column grew. */
 function widerSteps(was: number[], now: number[]): number[] {
   return now.some((step, at) => step > (was[at] ?? 0))
@@ -1394,9 +1703,13 @@ function TableRows({
   // `success`, and a column that shrank with it moved the whole table under the reader.
   const columnKey = [...node.columns.map((column) => column.id), hasState].join('\u0000');
   const measured = columnSteps(node.columns, rows, hasState);
-  const [widest, setWidest] = useState({ key: columnKey, steps: measured });
-  const steps = widest.key === columnKey ? widerSteps(widest.steps, measured) : measured;
-  if (widest.key !== columnKey || steps !== widest.steps) setWidest({ key: columnKey, steps });
+  const measuredWords = columnWords(node.columns, rows, measured);
+  const [widest, setWidest] = useState({ key: columnKey, steps: measured, words: measuredWords });
+  const isSameTable = widest.key === columnKey;
+  const steps = isSameTable ? widerSteps(widest.steps, measured) : measured;
+  const words = isSameTable ? widerSteps(widest.words, measuredWords) : measuredWords;
+  if (!isSameTable || steps !== widest.steps || words !== widest.words)
+    setWidest({ key: columnKey, steps, words });
   const chunks = chunked(visible, TABLE_CHUNK);
   useEffect(() => {
     if (shownChunks >= chunks.length) return;
@@ -1426,7 +1739,13 @@ function TableRows({
                   index > 0 ? 'border-l border-edge-strong' : ''
                 } ${column.align === 'right' ? 'text-right' : 'text-left'}`}
               >
-                <InlineMarkdown>{column.label}</InlineMarkdown>
+                {index > 0 ? (
+                  <span className="block" style={{ minWidth: `${words[index - 1] ?? 0}ch` }}>
+                    <InlineMarkdown>{column.label}</InlineMarkdown>
+                  </span>
+                ) : (
+                  <InlineMarkdown>{column.label}</InlineMarkdown>
+                )}
               </th>
             ))}
             {hasState && (
@@ -1926,6 +2245,9 @@ function NodeCell({
           {node.type === 'timeline' && (
             <TimelineRows node={node} isSettled={presentation.isSettled} />
           )}
+          {node.type === 'badge' && <BadgeRow node={node} />}
+          {node.type === 'list' && <ListRows node={node} />}
+          {node.type === 'chart' && <ChartView node={node} />}
           {node.type === 'log' && (
             <LogRows
               node={node}

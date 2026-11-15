@@ -7,6 +7,7 @@
  * submit returns field errors while the same View remains open.
  */
 
+import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import type { SseEvent } from './types';
 import {
   VIEW_CLOSE_EVENT,
@@ -26,6 +27,7 @@ export const HUMAN_INPUT_FIELD_TYPES = [
   'multiselect',
   'checkbox',
   'range',
+  'datetime',
   'otp',
 ] as const;
 
@@ -55,6 +57,44 @@ export const HUMAN_INPUT_NODE_TYPES = [
  */
 export const HUMAN_INPUT_RANGE_DEFAULTS = { min: 0, max: 100, step: 1 } as const;
 export const HUMAN_INPUT_OTP_DEFAULTS = { length: 6, ceiling: 12 } as const;
+
+export type HumanInputDatetimeMode = 'date' | 'time' | 'datetime';
+type DatetimeModeSchema = {
+  const: HumanInputDatetimeMode;
+  'x-vis-form': string;
+  'x-vis-pattern': string;
+};
+type DatetimeFieldSchema = {
+  properties: { type?: { const?: string }; mode?: { default: HumanInputDatetimeMode } };
+};
+const DATETIME_MODES = viewSchema.$defs.datetime_mode.oneOf as unknown as DatetimeModeSchema[];
+/** What a `datetime` field asks for (`datetime_mode` in view.json). CLOSED. */
+export const HUMAN_INPUT_DATETIME_MODES: readonly HumanInputDatetimeMode[] = DATETIME_MODES.map(
+  (mode) => mode.const,
+);
+/** The form of the text of each mode, as a person reads it: `YYYY-MM-DD`. */
+export const HUMAN_INPUT_DATETIME_FORMS = Object.fromEntries(
+  DATETIME_MODES.map((mode) => [mode.const, mode['x-vis-form']]),
+) as Record<HumanInputDatetimeMode, string>;
+const DATETIME_PATTERNS = Object.fromEntries(
+  DATETIME_MODES.map((mode) => [mode.const, new RegExp(mode['x-vis-pattern'])]),
+) as Record<HumanInputDatetimeMode, RegExp>;
+const DATETIME_DEFAULT_MODE =
+  (viewSchema.$defs.component.oneOf as unknown as DatetimeFieldSchema[]).find(
+    (branch) => branch.properties.type?.const === 'datetime',
+  )?.properties.mode?.default ?? 'datetime';
+
+/** Read the mode of a `datetime` field; an absent or unknown one is the schema default. */
+export function humanInputDatetimeMode(raw: unknown): HumanInputDatetimeMode {
+  return (HUMAN_INPUT_DATETIME_MODES as readonly unknown[]).includes(raw)
+    ? (raw as HumanInputDatetimeMode)
+    : DATETIME_DEFAULT_MODE;
+}
+
+/** True when `value` has the form of `mode`. */
+export function isHumanInputDatetimeText(mode: HumanInputDatetimeMode, value: unknown): boolean {
+  return typeof value === 'string' && DATETIME_PATTERNS[mode].test(value);
+}
 
 /**
  * The status glyph in front of a choice, from the one place the terminal keeps
@@ -99,6 +139,10 @@ export interface HumanInputField {
   min?: number;
   max?: number;
   step?: number;
+  /** `datetime` only — what it asks for, and the wire `min` and `max` in the form of the mode. */
+  mode?: HumanInputDatetimeMode;
+  earliest?: string;
+  latest?: string;
   default?: unknown;
   /** `group` only — how its children are laid out. */
   direction?: ViewGroupDirection;
@@ -224,6 +268,24 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
     typeof row.min_length === 'number' && row.min_length > 0 ? row.min_length : undefined;
   const maxLength =
     typeof row.max_length === 'number' && row.max_length > 0 ? row.max_length : undefined;
+  if (type === 'datetime') {
+    // A bound in another form is no bound: the engine refuses it, and the native
+    // control would ignore it.
+    const mode = humanInputDatetimeMode(row.mode);
+    return {
+      id,
+      name: id,
+      type,
+      label: text(row.label) || id,
+      is_required: row.is_required === true,
+      ...(description ? { description } : {}),
+      ...(placeholder ? { placeholder } : {}),
+      mode,
+      ...(isHumanInputDatetimeText(mode, row.min) ? { earliest: row.min as string } : {}),
+      ...(isHumanInputDatetimeText(mode, row.max) ? { latest: row.max as string } : {}),
+      ...(row.default === undefined ? {} : { default: row.default }),
+    };
+  }
   return {
     id,
     name: id,

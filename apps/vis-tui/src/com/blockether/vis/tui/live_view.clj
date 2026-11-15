@@ -86,6 +86,9 @@
   {:stat "nothing counted yet"
    :steps "no steps yet"
    :timeline "no lanes yet"
+   :badge "no badges yet"
+   :list "no items yet"
+   :chart "no data yet"
    :log "no output yet"
    :table "no rows yet"
    :link "no links"})
@@ -1130,6 +1133,302 @@
         (pos? (long behind))
         (conj (more-row id behind "step"))))
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
+
+(defmethod node-rows :badge
+  [{:keys [id badges]} {:keys [text-w fresh]}]
+  (if (seq badges)
+    ;; Badges pack left to right at their own width. A new row starts where the
+    ;; next badge does not fit, so no badge is cut while the band has room.
+    (let [width
+          (max 1 (long text-w))
+
+          chips
+          (mapv (fn [{:keys [label tone] :as badge}]
+                  (let [ink
+                        (tone-fg tone)
+
+                        styles
+                        (if (contains? fresh (:id badge)) [p/BOLD] [])]
+
+                    (runs-cut (into
+                                [{:text (str (get tone-glyph tone "•") " ") :fg ink :styles styles}]
+                                (run-segments (md-runs label) ink styles))
+                              width)))
+                badges)
+
+          lines
+          (reduce (fn [lines chip]
+                    (let [line (peek lines)]
+                      (cond (empty? line) (conj (pop lines) chip)
+                            (> (+ (runs-width line) 3 (runs-width chip)) width) (conj lines chip)
+                            :else (conj (pop lines) (into (conj line {:text "   "}) chip)))))
+                  [[]]
+                  chips)]
+
+      (mapv (fn [segments]
+              {:kind :badge :node-id id :segments segments :text (segment-line segments)})
+            lines))
+    [{:kind :empty :node-id id :text (empty-text :badge)}]))
+
+(defmethod node-rows :list
+  [{:keys [id items is-ordered]} {:keys [text-w fresh is-expanded]}]
+  (if (seq items)
+    (let [{:keys [shown behind]}
+          (windowed items is-expanded false)
+
+          ;; Every number takes the width of the last one, so the texts line up.
+          number-w
+          (count (str (count items)))]
+
+      (cond-> (vec
+                (map-indexed
+                  (fn [i {:keys [text detail tone] :as item}]
+                    (let [is-fresh
+                          (contains? fresh (:id item))
+
+                          ink
+                          (tone-fg tone)
+
+                          styles
+                          (if is-fresh [p/BOLD] [])
+
+                          mark
+                          (if is-ordered
+                            (str (p/pad-left (str (inc (long i))) number-w) ". ")
+                            (str (get tone-glyph tone "•") " "))
+
+                          segments
+                          (runs-cut (into
+                                      [{:text mark :fg (if tone ink t/dialog-hint) :styles styles}]
+                                      cat
+                                      [(run-segments (md-runs text) ink styles)
+                                       (when (seq (flat-text detail))
+                                         (into [{:text " — " :fg t/dialog-hint}]
+                                               (run-segments (md-runs detail) t/dialog-hint [])))])
+                                    (max 1 (long text-w)))]
+
+                      {:kind :item
+                       :node-id id
+                       :item-id (:id item)
+                       :tone tone
+                       :is-fresh is-fresh
+                       :segments segments
+                       :text (segment-line segments)}))
+                  shown))
+        (pos? (long behind))
+        (conj (more-row id behind "item"))))
+    [{:kind :empty :node-id id :text (empty-text :list)}]))
+
+(def ^:private bar-eighths
+  "The cells that end a bar: one to seven eighths of a column."
+  ["" "▏" "▎" "▍" "▌" "▋" "▊" "▉"])
+
+(def ^:private spark-levels
+  "The eight heights of one sparkline cell, lowest first."
+  [\▁ \▂ \▃ \▄ \▅ \▆ \▇ \█])
+
+(defn- chart-number
+  "`n` as a person writes it: 48 rather than 48.0, and at most two decimals."
+  [n]
+  (let [d (double n)]
+    (if (== d (Math/rint d)) (str (long d)) (str/replace (format "%.2f" d) #"0+$" ""))))
+
+(defn- bar-text
+  "A bar of `fraction` (0 to 1) of `w` columns, exact to one eighth of a column."
+  [fraction w]
+  (let [eighths (Math/round (* 8.0 (double w) (max 0.0 (min 1.0 (double fraction)))))]
+    (str (apply str (repeat (quot eighths 8) "█")) (nth bar-eighths (rem eighths 8)))))
+
+(defn- chart-label-width
+  "The width of a label column: the widest of `labels`, at most `limit` columns."
+  ^long [labels ^long limit]
+  (min limit (long (reduce max 0 (map #(p/display-width (str %)) labels)))))
+
+(defn- bar-rows
+  "A bar chart: one row for each value. The row names the category, then the
+   series when the chart has more than one, so the chart reads without colour."
+  [{:keys [id series categories]} text-w fresh]
+  (let [values
+        (mapcat :values series)
+
+        low
+        (min 0.0 (double (reduce min 0 values)))
+
+        span
+        (- (max 0.0 (double (reduce max 0 values))) low)
+
+        slots
+        (long (reduce max 0 (map #(count (:values %)) series)))
+
+        named
+        (mapv #(str (nth categories % (inc (long %)))) (range slots))
+
+        category-w
+        (chart-label-width named 14)
+
+        is-many
+        (< 1 (count series))
+
+        series-w
+        (if is-many (chart-label-width (map :label series) 12) 0)
+
+        value-w
+        (long (reduce max 1 (map #(count (chart-number %)) values)))
+
+        bar-w
+        (max 4 (- (long text-w) category-w (if is-many (+ 2 (long series-w)) 0) value-w 4))]
+
+    (vec
+      (for [slot
+            (range slots)
+
+            [n {:keys [label tone] :as one}]
+            (map-indexed vector series)
+
+            :let [value
+                  (nth (:values one) slot nil)]
+            :when value]
+
+        (let [ink
+              (tone-fg tone)
+
+              styles
+              (if (contains? fresh (:id one)) [p/BOLD] [])
+
+              bar
+              (bar-text (if (pos? span) (/ (- (double value) low) span) 0.0) bar-w)
+
+              segments
+              (runs-cut
+                (cond-> [{:text (str (p/pad-right (p/ellipsize
+                                                    (if (zero? (long n)) (nth named slot) "")
+                                                    category-w)
+                                                  category-w)
+                                     "  ")
+                          :fg t/dialog-hint}]
+                  is-many
+                  (conj {:text (str (p/pad-right (p/ellipsize (str label) series-w) series-w) "  ")
+                         :fg ink
+                         :styles styles})
+
+                  true
+                  (into [{:text (p/pad-right bar bar-w) :fg ink :styles styles}
+                         {:text (str "  " (p/pad-left (chart-number value) value-w))
+                          :fg t/dialog-fg
+                          :styles styles}]))
+                (max 1 (long text-w)))]
+
+          {:kind :chart
+           :node-id id
+           :item-id (:id one)
+           :tone tone
+           :segments segments
+           :text (segment-line segments)})))))
+
+(defn- line-rows
+  "A line chart: one sparkline for each series on one scale, the newest value at
+   the right. A value takes up to four columns while the band has room. A series
+   too long for the band keeps its newest values."
+  [{:keys [id series categories]} text-w fresh]
+  (let [values
+        (mapcat :values series)
+
+        low
+        (double (reduce min values))
+
+        span
+        (- (double (reduce max values)) low)
+
+        label-w
+        (chart-label-width (map :label series) 14)
+
+        value-w
+        (long (reduce max 1 (map #(count (chart-number %)) values)))
+
+        spark-w
+        (max 1 (- (long text-w) label-w value-w 4))
+
+        longest
+        (long (reduce max 1 (map #(count (:values %)) series)))
+
+        cell-w
+        (max 1 (min 4 (quot spark-w longest)))
+
+        pad
+        (apply str (repeat (+ 2 label-w) " "))
+
+        rows
+        (mapv
+          (fn [{:keys [label tone] :as one}]
+            (let [ink
+                  (tone-fg tone)
+
+                  styles
+                  (if (contains? fresh (:id one)) [p/BOLD] [])
+
+                  shown
+                  (vec (take-last spark-w (:values one)))
+
+                  spark
+                  (apply str
+                    (mapcat #(repeat cell-w
+                                     (nth spark-levels
+                                          (if (pos? span)
+                                            (min 7 (long (* 8.0 (/ (- (double %) low) span))))
+                                            3)))
+                            shown))
+
+                  segments
+                  (runs-cut [{:text (str (p/pad-right (p/ellipsize (str label) label-w) label-w)
+                                         "  ")
+                              :fg t/dialog-hint} {:text spark :fg ink :styles styles}
+                             {:text (str "  "
+                                         (some-> (peek shown)
+                                                 chart-number))
+                              :fg t/dialog-fg
+                              :styles styles}]
+                            (max 1 (long text-w)))]
+
+              {:kind :chart
+               :node-id id
+               :item-id (:id one)
+               :tone tone
+               :segments segments
+               :text (segment-line segments)}))
+          (filter #(seq (:values %)) series))
+
+        ;; The axis names the first and the last category that the lines show.
+        slots
+        (min spark-w longest)
+
+        ends
+        (when (and (seq categories)
+                   (< 1 slots)
+                   (= (count categories) (count (:values (first series)))))
+          (let [shown
+                (vec (take-last slots categories))
+
+                head
+                (str (first shown))
+
+                tail
+                (str (peek shown))
+
+                gap
+                (- (* cell-w slots) (p/display-width head) (p/display-width tail))]
+
+            (when (pos? gap) (str pad head (apply str (repeat gap " ")) tail))))]
+
+    (cond-> rows
+      ends
+      (conj (let [segments (runs-cut [{:text ends :fg t/dialog-hint}] (max 1 (long text-w)))]
+              {:kind :axis :node-id id :segments segments :text (segment-line segments)})))))
+
+(defmethod node-rows :chart
+  [{:keys [id series kind] :as node} {:keys [text-w fresh]}]
+  (if (seq (mapcat :values series))
+    (if (= :line kind) (line-rows node text-w fresh) (bar-rows node text-w fresh))
+    [{:kind :empty :node-id id :text (empty-text :chart)}]))
 
 (def ^:private axis-steps
   "The round steps of a timeline axis, in seconds — the Companion's `AXIS_STEPS`,

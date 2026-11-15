@@ -332,6 +332,9 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.ui.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.steps(id, steps=[…])` | a checklist | `.set(step_id, label, tone=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.timeline(id, lanes=[…])` | bars on one shared time axis | `.set(lane_id, label, start, end=, tone=, detail=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.badge(id, badges=[…])` | a row of short labels | `.set(badge_id, label, tone=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.listing(id, items=[…], is_ordered=False)` | a list of points, with bullets or numbers | `.set(item_id, text, detail=, tone=)`, `.order(is_ordered)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.chart(id, series=[…], kind="bar", categories=[…])` | numbers as bars or lines | `.set(series_id, label, values, tone=)`, `.configure(kind=, categories=, label=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
 | `vis.ui.table(id, columns=[vis.ui.table_column(…)], groups=[vis.ui.table_group(…)])` | rows keyed by id, optionally folded into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.replace(rows)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |

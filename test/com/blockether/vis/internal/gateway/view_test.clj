@@ -402,6 +402,14 @@
      :validate (fn [value]
                  (when (> (count value) 60) "keep it short"))}
     {:id "notes" :type "multiline" :label "Notes" :placeholder "Anything the on-call should know"}
+    {:id "due"
+     :type "datetime"
+     :label "Due"
+     :description "The last day this deploy may land"
+     :mode "date"
+     :min "2026-01-01"
+     :max "2026-12-31"
+     :default "2026-03-14"}
     {:type "group"
      :direction "row"
      :label "Server"

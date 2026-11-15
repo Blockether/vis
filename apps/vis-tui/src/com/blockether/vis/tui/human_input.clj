@@ -37,8 +37,15 @@
 (def ^:private text-types
   "Field types edited as free text — the engine's own set plus `:otp`: a code is
    typed, erased and walked exactly like a text field, it only LOOKS like a row
-   of boxes."
-  (conj hi-spec/text-types :otp))
+   of boxes. A `:datetime` is typed in the form of its mode."
+  (conj hi-spec/text-types :otp :datetime))
+
+(defn- field-placeholder
+  "The placeholder of `field`: its own, else the form that a `:datetime` mode takes."
+  [{:keys [type placeholder mode]}]
+  (or placeholder
+      (when (= :datetime type)
+        (get hi-spec/datetime-forms (or mode (:mode hi-spec/datetime-defaults))))))
 
 (defn- range-bounds
   "`{:lo :hi :st}` for a `:range` field. Named away from `min`/`max` on purpose:
@@ -871,7 +878,7 @@
                                            :is-focused (and focused? (= i line))
                                            :is-active-field focused?
                                            :placeholder (when (and (zero? i) (zero? (count shown)))
-                                                          (:placeholder field))})
+                                                          (field-placeholder field))})
                                         (str/split shown #"\n" -1))))
                     [{:kind :input
                       :field-id id
@@ -879,7 +886,7 @@
                       :cursor cursor
                       :is-focused focused?
                       :is-active-field focused?
-                      :placeholder (:placeholder field)}]))
+                      :placeholder (field-placeholder field)}]))
                 (= :range type) (let [bounds
                                       (range-bounds field)
 

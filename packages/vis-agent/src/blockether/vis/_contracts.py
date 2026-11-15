@@ -1088,8 +1088,57 @@ def _range_defaults() -> dict[str, Any]:
     return {key: properties[key]["default"] for key in ("min", "max", "step")}
 
 
+def datetime_modes() -> dict[str, dict[str, str]]:
+    """Each datetime mode with the `pattern` of its text and the `form` a person reads."""
+    return {
+        branch["const"]: {
+            "pattern": branch["x-vis-pattern"],
+            "form": branch["x-vis-form"],
+        }
+        for branch in definition("view", "datetime_mode")["oneOf"]
+    }
+
+
+def datetime_default_mode() -> str:
+    """The mode of a datetime input that declares none."""
+    properties = component_variant("datetime")[1]["properties"]  # type: ignore[index]
+    return properties["mode"]["default"]
+
+
+def is_datetime_text(mode: Any, value: Any) -> bool:
+    """True when `value` is text in the form of datetime `mode`."""
+    rule = datetime_modes().get(mode or datetime_default_mode())
+    return (
+        rule is not None
+        and isinstance(value, str)
+        and re.fullmatch(rule["pattern"], value, re.ASCII) is not None
+    )
+
+
+def datetime_complaint(node: dict[str, Any], value: str) -> str | None:
+    """What makes text `value` no answer of datetime input `node`, or None. Text of one
+    mode sorts in time order."""
+    mode = node.get("mode") or datetime_default_mode()
+    if not is_datetime_text(mode, value):
+        return f"must have the form {datetime_modes()[mode]['form']}"
+    low, high = node.get("min"), node.get("max")
+    if low is not None and value < low:
+        return f"must not be before {low}"
+    if high is not None and value > high:
+        return f"must not be after {high}"
+    return None
+
+
 def _in_domain(node: dict[str, Any], value: Any, *, is_default: bool) -> bool:
     kind = node.get("type")
+    if kind == "datetime":
+        if value is None:
+            return not is_default
+        if not isinstance(value, str):
+            return False
+        if not value.strip():
+            return not is_default
+        return datetime_complaint(node, value) is None
     _, text_kinds = _input_kinds()
     chosen = {
         option.get("value")
@@ -1170,8 +1219,18 @@ def _input_lines(node: dict[str, Any]) -> list[str]:
     if low is not None and high is not None and low > high:
         lines.append(named_line("/min_length", "length_order"))
     checked = {**_range_defaults(), **node} if kind == "range" else node
-    # A default or a value is held to the domain only when the range makes one.
+    # A default or a value is held to the domain only when the bounds make one.
     has_domain = True
+    if kind == "datetime":
+        checked = {"mode": datetime_default_mode(), **node}
+        low, high = checked.get("min"), checked.get("max")
+        for key, bound in (("min", low), ("max", high)):
+            if bound is not None and not is_datetime_text(checked["mode"], bound):
+                lines.append(named_line(f"/{key}", "datetime_mode"))
+                has_domain = False
+        if has_domain and low is not None and high is not None and low > high:
+            lines.append(named_line("/min", "datetime_order"))
+            has_domain = False
     if kind == "range":
         if not checked["min"] < checked["max"]:
             lines.append(named_line("/min", "range_order"))
@@ -1245,9 +1304,9 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
                 lines.append(named_line(f"/threads/{i}", "thread_anchor"))
         if (one := _repeated(_ids(node.get("threads")))) is not None:
             lines.append(named_line("/threads", "repeated_item_id", {"id": one}))
-    elif kind in ("stat", "steps"):
-        key = "stats" if kind == "stat" else "steps"
-        if (one := _repeated(_ids(node.get(key)))) is not None:
+    elif kind in ("stat", "steps", "badge", "list", "chart"):
+        key = live_collection(kind)
+        if key and (one := _repeated(_ids(node.get(key)))) is not None:
             lines.append(named_line(f"/{key}", "repeated_item_id", {"id": one}))
     elif kind == "timeline":
         lanes = node.get("lanes") or []

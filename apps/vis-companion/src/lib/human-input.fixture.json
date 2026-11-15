@@ -105,6 +105,18 @@
       "placeholder": "Anything the on-call should know"
     },
     {
+      "id": "due",
+      "name": "due",
+      "type": "datetime",
+      "label": "Due",
+      "is_required": false,
+      "description": "The last day this deploy may land",
+      "mode": "date",
+      "min": "2026-01-01",
+      "max": "2026-12-31",
+      "default": "2026-03-14"
+    },
+    {
       "id": "group-4",
       "type": "group",
       "direction": "row",

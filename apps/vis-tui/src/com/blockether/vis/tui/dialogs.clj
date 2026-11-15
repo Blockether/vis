@@ -15,6 +15,7 @@
             [com.blockether.vis.tui.presets :as presets]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [taoensso.telemere :as tel])
   (:import
@@ -10006,7 +10007,7 @@
 (defn live-input-value!
   "Ask the human for a new value of one view input `node`. Returns `{:value v}`, or nil
    when the human cancels or types a number outside the field's domain."
-  [screen {:keys [type label options value is-secret]}]
+  [screen {:keys [type label options value is-secret mode]}]
   (let [option-label (fn [o]
                        (or (:label o) (str (:value o))))]
     (case type
@@ -10034,6 +10035,16 @@
       (when-let [typed (text-input-dialog! screen label "Value" :initial (str value))]
         (when-let [n (parse-double (str/trim typed))]
           {:value (if (== (double n) (Math/rint (double n))) (long n) n)}))
+
+      ;; The prompt shows the form of the mode. The engine refuses any other text.
+      :datetime
+      (when-let [typed (text-input-dialog! screen
+                                           label
+                                           (get view-spec/datetime-forms
+                                                (or mode (:mode view-spec/datetime-defaults)))
+                                           :initial
+                                           (str (or value "")))]
+        {:value (str/trim typed)})
 
       (when-let [typed (text-input-dialog! screen
                                            label

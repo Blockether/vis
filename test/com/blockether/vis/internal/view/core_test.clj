@@ -879,6 +879,37 @@
       (expect (= {"pct" "must be between 0 and 10"} (:errors (hi/coerce-values fields {"pct" -1}))))
       (expect (= {"pct" "must be a number"} (:errors (hi/coerce-values fields {"pct" "loud"})))))))
 
+(defdescribe
+  datetime-field-test
+  (it "takes the default mode, and refuses an unknown mode and bounds that describe no span"
+      (expect (= :datetime (:mode (first (normalized-fields {:id "at" :type "datetime"})))))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {:id "at" :type "datetime" :mode "week"})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {:id "at" :type "datetime" :mode "date" :min "09:00"})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields
+                          {:id "at" :type "datetime" :mode "time" :min "18:00" :max "09:00"}))))
+  (it "answers with text in the form of the mode, and nothing for a blank optional field"
+      (let [fields (normalized-fields {:id "due" :type "datetime" :mode "date"})]
+        (expect (= "2026-03-14"
+                   (get-in (hi/coerce-values fields {"due" " 2026-03-14 "}) [:values "due"])))
+        (expect (nil? (get-in (hi/coerce-values fields {"due" ""}) [:values "due"])))
+        (expect (= {"due" "must have the form YYYY-MM-DD"}
+                   (:errors (hi/coerce-values fields {"due" "14.03.2026"}))))
+        (expect (= {"due" "must have the form YYYY-MM-DD"}
+                   (:errors (hi/coerce-values fields {"due" "2026-13-01"}))))))
+  (it "refuses a value outside the bounds and a blank required field"
+      (let [fields
+            (normalized-fields
+              {:id "at" :type "datetime" :mode "time" :min "09:00" :max "17:30" :is-required true})]
+        (expect (= "09:00" (get-in (hi/coerce-values fields {"at" "09:00"}) [:values "at"])))
+        (expect (= {"at" "must not be before 09:00"}
+                   (:errors (hi/coerce-values fields {"at" "08:59"}))))
+        (expect (= {"at" "must not be after 17:30"}
+                   (:errors (hi/coerce-values fields {"at" "17:31"}))))
+        (expect (= {"at" "is required"} (:errors (hi/coerce-values fields {})))))))
+
 (defn- otp-field
   "A normalized `:otp` field from the spec keys a caller would actually write."
   [& {:as spec}]

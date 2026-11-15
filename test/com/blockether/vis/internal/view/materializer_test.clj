@@ -1032,3 +1032,81 @@
         (expect (= md again))
         (expect (= {:type :timeline :lanes []}
                    (select-keys (first (:nodes (:view back))) [:type :lanes]))))))
+
+(defdescribe
+  badge-list-chart-markdown-test
+  (it "reads badges, list items and chart series back with their ids, tones and values"
+      (let [nodes
+            [{:id "bd"
+              :type :badge
+              :badges [{:id "a" :label "Alpha" :tone :ok} {:id "b" :label "Beta · next"}]}
+             {:id "ls"
+              :type :list
+              :is-ordered true
+              :items [{:id "x" :text "First" :detail "Soon — or later" :tone :warn}
+                      {:id "y" :text "Second"}]}
+             {:id "ch"
+              :type :chart
+              :kind :line
+              :categories ["Mon" "Tue"]
+              :series [{:id "api" :label "API" :tone :ok :values [1 2.5]}]}]
+
+            {:keys [md again back]}
+            (repainted (apply view nodes))]
+
+        (expect (= md again))
+        (expect (= (mapv #(dissoc % :id) nodes) (mapv #(dissoc % :id) (:nodes (:view back)))))))
+  (it "keeps an empty badge row, list and chart through the round trip"
+      (let [{:keys [md again back]} (repainted (view
+                                                 {:id "bd" :type :badge :badges []}
+                                                 {:id "ls" :type :list :is-ordered false :items []}
+                                                 {:id "ch" :type :chart :kind :bar :series []}))]
+        (expect (= md again))
+        (expect (= [{:type :badge :badges []} {:type :list :is-ordered false :items []}
+                    {:type :chart :kind :bar :series []}]
+                   (mapv #(dissoc % :id) (:nodes (:view back)))))))
+  (it
+    "appends chart series by id and holds the series bound of the contract"
+    (let [series
+          (fn [id & values]
+            {:id id :label (str "S " id) :values (vec values)})
+
+          v
+          (patched (view {:id "ch" :type :chart :kind :bar :series [(series "a" 1) (series "b" 2)]})
+                   {:op :append :node-id "ch" :series [(series "a" 9) (series "c" 3)]})
+
+          bound
+          (long (:max-series hs/chart-defaults))
+
+          full
+          (view {:id "ch"
+                 :type :chart
+                 :kind :bar
+                 :series (mapv #(series (str "s" %) %) (range bound))})]
+
+      (expect (= [(series "a" 9) (series "b" 2) (series "c" 3)] (:series (node v "ch"))))
+      (expect (str/includes?
+                (str (refusal #(patched full {:op :append :node-id "ch" :series [(series "x" 1)]})))
+                (str "the maximum is " bound " (maxItems)"))))))
+
+(defdescribe datetime-markdown-test
+             (it "prints the mode and the bounds in the domain line and reads the field back"
+                 (let [field
+                       {:id "due"
+                        :name "due"
+                        :type :datetime
+                        :label "Due"
+                        :is-required false
+                        :is-secret false
+                        :mode :date
+                        :min "2026-01-01"
+                        :max "2026-12-31"
+                        :value "2026-03-14"}
+
+                       {:keys [md again back]}
+                       (repainted (view field))]
+
+                   (expect (str/includes? md "Due: 2026-03-14"))
+                   (expect (= md again))
+                   (expect (= (dissoc field :id :name)
+                              (dissoc (first (:nodes (:view back))) :id :name))))))

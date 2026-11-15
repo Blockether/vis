@@ -44,6 +44,9 @@ export const LIVE_NODE_TYPES = [
   'stat',
   'steps',
   'timeline',
+  'badge',
+  'list',
+  'chart',
   'log',
   'table',
   'link',
@@ -237,6 +240,51 @@ export interface LiveLane {
 export interface LiveTimelineNode extends LiveNodeBase {
   type: 'timeline';
   lanes: LiveLane[];
+}
+
+export interface LiveBadge {
+  id: string;
+  label: string;
+  tone: LiveTone;
+}
+
+/** Short labels side by side, each with its own tone. */
+export interface LiveBadgeNode extends LiveNodeBase {
+  type: 'badge';
+  badges: LiveBadge[];
+}
+
+export interface LiveListItem {
+  id: string;
+  text: string;
+  tone: LiveTone;
+  detail?: string;
+}
+
+/** Items one below the other: bullets, or numbers when `is_ordered`. */
+export interface LiveListNode extends LiveNodeBase {
+  type: 'list';
+  is_ordered: boolean;
+  items: LiveListItem[];
+}
+
+/** How a chart draws its series (`view.json` `chart_kind`). CLOSED. */
+export const LIVE_CHART_KINDS = ['bar', 'line'] as const;
+export type LiveChartKind = (typeof LIVE_CHART_KINDS)[number];
+
+export interface LiveChartSeries {
+  id: string;
+  label: string;
+  tone: LiveTone;
+  values: number[];
+}
+
+/** Numbers as bars or lines: each series holds one value for each category. */
+export interface LiveChartNode extends LiveNodeBase {
+  type: 'chart';
+  kind: LiveChartKind;
+  categories?: string[];
+  series: LiveChartSeries[];
 }
 
 /** Output as it arrives. `lines` is what this panel holds of the `total_lines` recorded. */
@@ -494,6 +542,9 @@ export type LiveLeafNode =
   | LiveStatNode
   | LiveStepsNode
   | LiveTimelineNode
+  | LiveBadgeNode
+  | LiveListNode
+  | LiveChartNode
   | LiveLogNode
   | LiveTableNode
   | LiveLinkNode
@@ -773,6 +824,40 @@ function laneFromWire(raw: Record<string, unknown>): LiveLane | null {
     detail: optionalText(raw.detail),
     ...(end === undefined ? {} : { end }),
   };
+}
+
+function badgeFromWire(raw: Record<string, unknown>): LiveBadge | null {
+  const id = text(raw.id);
+  if (id === '') return null;
+  return { id, label: text(raw.label) || id, tone: tone(raw.tone) };
+}
+
+function listItemFromWire(raw: Record<string, unknown>): LiveListItem | null {
+  const id = text(raw.id);
+  if (id === '') return null;
+  return { id, text: text(raw.text), tone: tone(raw.tone), detail: optionalText(raw.detail) };
+}
+
+function chartKind(value: unknown): LiveChartKind {
+  return text(value) === 'line' ? 'line' : 'bar';
+}
+
+/** A value that is not a finite number has no place on the scale. */
+function chartSeriesFromWire(raw: Record<string, unknown>): LiveChartSeries | null {
+  const id = text(raw.id);
+  if (id === '') return null;
+  return {
+    id,
+    label: text(raw.label) || id,
+    tone: tone(raw.tone),
+    values: (Array.isArray(raw.values) ? raw.values : []).filter(
+      (value): value is number => typeof value === 'number' && Number.isFinite(value),
+    ),
+  };
+}
+
+function chartCategories(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.map((category) => text(category)) : undefined;
 }
 
 function columnFromWire(raw: Record<string, unknown>): LiveColumn | null {
@@ -1164,6 +1249,25 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
       return { ...base, type: 'steps', steps: keyed(node.steps, stepFromWire) };
     case 'timeline':
       return { ...base, type: 'timeline', lanes: keyed(node.lanes, laneFromWire) };
+    case 'badge':
+      return { ...base, type: 'badge', badges: keyed(node.badges, badgeFromWire) };
+    case 'list':
+      return {
+        ...base,
+        type: 'list',
+        is_ordered: node.is_ordered === true,
+        items: keyed(node.items, listItemFromWire),
+      };
+    case 'chart': {
+      const categories = chartCategories(node.categories);
+      return {
+        ...base,
+        type: 'chart',
+        kind: chartKind(node.kind),
+        ...(categories ? { categories } : {}),
+        series: keyed(node.series, chartSeriesFromWire),
+      };
+    }
     case 'log':
       return {
         ...base,
@@ -1386,6 +1490,33 @@ export interface LiveLaneBar {
   isRunning: boolean;
 }
 
+/** The value scale of a chart and how many categories its series fill. */
+export interface LiveChartScale {
+  low: number;
+  high: number;
+  slots: number;
+}
+
+/**
+ * One scale for every series of a chart. A bar chart always holds zero, so the
+ * length of a bar is its value. A line chart runs from its least to its greatest value.
+ */
+export function chartScale(kind: LiveChartKind, series: readonly LiveChartSeries[]): LiveChartScale {
+  const values = series.flatMap((one) => one.values);
+  const slots = series.reduce((most, one) => Math.max(most, one.values.length), 0);
+  if (values.length === 0) return { low: 0, high: 0, slots };
+  const least = Math.min(...values);
+  const greatest = Math.max(...values);
+  return kind === 'bar'
+    ? { low: Math.min(0, least), high: Math.max(0, greatest), slots }
+    : { low: least, high: greatest, slots };
+}
+
+/** Where `value` stands on `scale`, from 0 (low) to 1 (high). A flat scale stands in the middle. */
+export function chartFraction(scale: LiveChartScale, value: number): number {
+  return scale.high > scale.low ? (value - scale.low) / (scale.high - scale.low) : 0.5;
+}
+
 /** The bars of a timeline and the round marks of its axis, all on one scale. */
 export interface LiveTimelineGeometry {
   /** The length of the axis in ms: the earliest start to the latest end, or to now. */
@@ -1464,7 +1595,18 @@ function withoutIds<T extends { id: string }>(existing: T[], ids: unknown): T[] 
 /** The key an `append` fills for this node type (`live/appendable-key`). */
 function appendKey(
   node: LiveNode,
-): 'lines' | 'rows' | 'stats' | 'steps' | 'lanes' | 'links' | 'objects' | null {
+):
+  | 'lines'
+  | 'rows'
+  | 'stats'
+  | 'steps'
+  | 'lanes'
+  | 'badges'
+  | 'items'
+  | 'series'
+  | 'links'
+  | 'objects'
+  | null {
   switch (node.type) {
     case 'log':
       return 'lines';
@@ -1476,6 +1618,12 @@ function appendKey(
       return 'steps';
     case 'timeline':
       return 'lanes';
+    case 'badge':
+      return 'badges';
+    case 'list':
+      return 'items';
+    case 'chart':
+      return 'series';
     case 'link':
       return 'links';
     case 'scene':
@@ -1531,6 +1679,27 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         ...node,
         label: 'label' in op ? optionalText(op.label) : node.label,
         lanes: 'lanes' in op ? keyed(op.lanes, laneFromWire) : node.lanes,
+      };
+    case 'badge':
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        badges: 'badges' in op ? keyed(op.badges, badgeFromWire) : node.badges,
+      };
+    case 'list':
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        is_ordered: 'is_ordered' in op ? op.is_ordered === true : node.is_ordered,
+        items: 'items' in op ? keyed(op.items, listItemFromWire) : node.items,
+      };
+    case 'chart':
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        kind: 'kind' in op ? chartKind(op.kind) : node.kind,
+        categories: 'categories' in op ? chartCategories(op.categories) : node.categories,
+        series: 'series' in op ? keyed(op.series, chartSeriesFromWire) : node.series,
       };
     case 'table':
       return {
@@ -1625,6 +1794,12 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
         ...node,
         lanes: upsert(node.lanes, keyed(op.lanes, laneFromWire)),
       };
+    case 'badge':
+      return { ...node, badges: upsert(node.badges, keyed(op.badges, badgeFromWire)) };
+    case 'list':
+      return { ...node, items: upsert(node.items, keyed(op.items, listItemFromWire)) };
+    case 'chart':
+      return { ...node, series: upsert(node.series, keyed(op.series, chartSeriesFromWire)) };
     case 'link':
       return {
         ...node,
@@ -1659,6 +1834,12 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return { ...node, steps: withoutIds(node.steps, op.item_ids) };
     case 'timeline':
       return { ...node, lanes: withoutIds(node.lanes, op.item_ids) };
+    case 'badge':
+      return { ...node, badges: withoutIds(node.badges, op.item_ids) };
+    case 'list':
+      return { ...node, items: withoutIds(node.items, op.item_ids) };
+    case 'chart':
+      return { ...node, series: withoutIds(node.series, op.item_ids) };
     case 'link':
       return { ...node, links: withoutIds(node.links, op.item_ids) };
     case 'diff':
@@ -1687,6 +1868,12 @@ function applyClear(node: LiveLeafNode): LiveNode {
       return { ...node, steps: [] };
     case 'timeline':
       return { ...node, lanes: [] };
+    case 'badge':
+      return { ...node, badges: [] };
+    case 'list':
+      return { ...node, items: [] };
+    case 'chart':
+      return { ...node, series: [] };
     case 'link':
       return { ...node, links: [] };
     case 'scene':

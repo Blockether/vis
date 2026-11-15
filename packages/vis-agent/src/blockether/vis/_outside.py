@@ -1161,6 +1161,10 @@ def _prompt(node, kind):
             return node.get("default")
         number = float(typed)
         return int(number) if float(number).is_integer() else number
+    if kind == "datetime":
+        mode = node.get("mode") or _contracts.datetime_default_mode()
+        form = _contracts.datetime_modes()[mode]["form"]
+        return input(f"{label} [{form}]: ").strip() or node.get("default")
     if kind == "multiline":
         print(f"{label} (end with a lone '.'):", file=sys.stderr)
         lines = []
@@ -1186,6 +1190,14 @@ def _validate(node, value, values, counts, run):
     if value is None or value == "":
         # A blank value is never validated: that is is_required's only job.
         return None
+    if node.get("type") == "datetime":
+        complaint = (
+            _contracts.datetime_complaint(node, value)
+            if isinstance(value, str)
+            else "must be a date or a time"
+        )
+        if complaint:
+            return complaint
     for index in range(int(counts.get(name, 0))):
         verdict = json.loads(run(name, index, json.dumps(value), json.dumps(values)))
         if verdict is False:
@@ -1335,6 +1347,21 @@ def _check_node(node, seen):
             return f"{name!r} has min {low} and max {high}: a track needs room"
         if step <= 0:
             return f"{name!r} has step {step}: a track advances"
+    if kind == "datetime":
+        modes = _contracts.datetime_modes()
+        mode = node.get("mode") or _contracts.datetime_default_mode()
+        if mode not in modes:
+            return "{!r} has mode {!r} — one of {}".format(
+                name, mode, ", ".join(sorted(modes))
+            )
+        low, high = node.get("min"), node.get("max")
+        for key, bound in (("min", low), ("max", high)):
+            if bound is not None and not _contracts.is_datetime_text(mode, bound):
+                return "{!r} has {} {!r}: it must have the form {}".format(
+                    name, key, bound, modes[mode]["form"]
+                )
+        if low is not None and high is not None and low > high:
+            return f"{name!r} has min {low} after max {high}"
     return None
 
 
