@@ -1,10 +1,11 @@
 """The workflow runs: their records in S3 and their processes.
 
 runs/index.json              one line for each run
-runs/<id>/run.json           the run and its activities
+runs/<id>/run.json           the run, its activities and the decisions of a person at its gates
 runs/<id>/workflow.py        the source that the run uses, also after an edit
-runs/<id>/results/<n>.json   the result of activity n, for a new start of the run
-runs/<id>/gates/<key>.json   the decision of a person at a gate
+
+The transcript of the session of a run is the record of its work: a new process of a
+run reads the answers there (see `sdk.py`). The run in S3 is what the pages show.
 """
 
 from __future__ import annotations
@@ -92,8 +93,13 @@ class Runs:
             "root": root,
             "activities": [],
             "notes": [],
-            # The session turn count before each request of an activity: `<seq>:<n>`.
-            "asked": {},
+            # The number of turns that the session had before the run. The transcript of the run starts there.
+            "base": None,
+            # The decision of a person at each gate, by the key of the gate. The run process sends it to the session.
+            "decisions": {},
+            # True while a retry waits for its fork, and the sessions that the run left with a fork.
+            "retry": False,
+            "sessions": [],
         }
         with self.lock:
             if session and any(line["session_id"] == session and line["status"] in OPEN for line in self.index):
@@ -146,7 +152,7 @@ class Runs:
 
     def finish(self, doc: dict[str, Any], status: str, **fields: Any) -> None:
         """End a run, and the activity that it left running or waiting."""
-        doc.update(status=status, finished=time.time(), waiting=None, **fields)
+        doc.update(status=status, finished=time.time(), waiting=None, retry=False, **fields)
         if doc["root"]:
             self.workspaces.mark(doc["root"])
         for activity in doc["activities"]:
@@ -168,7 +174,13 @@ class Runs:
             if kind == "started":
                 session = need(SESSION, event.get("session_id"), "the session id")
                 doc.update(status="running", session_id=session, started=doc["started"] or now)
+                if doc.get("base") is None and type(event.get("base")) is int:
+                    doc["base"] = event["base"]
                 self.workspaces.own(doc["root"], session)
+            elif kind == "forked":  # a retry continues in a fork of the session
+                session = need(SESSION, event.get("session_id"), "the session id")
+                doc.setdefault("sessions", []).append(doc["session_id"])
+                doc.update(session_id=session, retry=False)
             elif kind == "activity_started" and seq is not None and isinstance(event.get("name"), str):
                 name = event["name"][:80]
                 fresh = {"seq": seq, "name": name, "title": str(event.get("title") or name)[:200], "status": "running"}
@@ -177,15 +189,14 @@ class Runs:
                     fresh.update(started=step["started"], files=step["files"], notes=step["notes"])
                 doc["activities"] = [s for s in doc["activities"] if s["seq"] != seq] + [fresh]
             elif kind == "activity_completed" and step:
-                record = {"name": event.get("name"), "result": event.get("result")}
-                aws.put(f"runs/{run_id}/results/{seq}.json", json.dumps(record).encode())
-                step.update(status="completed", finished=now, result=record["result"])
+                step.update(status="completed", finished=now, result=event.get("result"))
             elif kind == "activity_failed" and step:
                 step.update(status="failed", finished=now, error=event.get("error"))
-            elif kind == "asked" and type(event.get("turns")) is int:
-                doc.setdefault("asked", {})[str(event.get("key"))[:40]] = event["turns"]
             elif kind == "note":
-                (step["notes"] if step else doc["notes"]).append({"at": now, "text": str(event.get("text", ""))[:2000]})
+                notes, line = step["notes"] if step else doc["notes"], str(event.get("text", ""))[:2000]
+                # A new process of the run makes each note of its completed work again.
+                if all(note["text"] != line for note in notes):
+                    notes.append({"at": now, "text": line})
             elif kind == "waiting":
                 gate = {"seq": seq, "key": need(NAME, event.get("key"), "the gate key"), "title": str(event.get("title", ""))[:200], "about": str(event.get("about", ""))[:2000]}
                 # The pages show this file of the session next to the gate.
@@ -216,16 +227,35 @@ class Runs:
                 self.write(doc)
 
     def decide(self, run_id: str, key: str, approved: bool, comment: str) -> dict[str, Any]:
-        """Store the decision of a person at the gate where a run waits, and put the run in the queue again."""
+        """Keep the decision of a person at the gate where a run waits, and put the run in the queue again.
+
+        The next process of the run sends the decision to the session, so the transcript has it.
+        """
         with self.lock:
             doc = self.doc(run_id)
             if doc["status"] != "waiting" or doc["waiting"]["key"] != key:
                 raise Refused(409, "the run does not wait at this gate")
-            aws.put(f"runs/{run_id}/gates/{key}.json", json.dumps({"approved": approved, "comment": comment, "at": time.time()}).encode())
+            doc.setdefault("decisions", {})[key] = {"approved": approved, "comment": comment, "at": time.time()}
             doc.update(status="queued", waiting=None)
             for step in doc["activities"]:
                 if step["status"] == "waiting":  # the activity continues when a process takes the run
                     step["status"] = "running"
+            self.write(doc)
+            self.fill()
+            return doc
+
+    def retry(self, run_id: str) -> dict[str, Any]:
+        """Put a failed run in the queue again.
+
+        Its next process forks the session: the fork has the transcript before the
+        failed activity, and the run continues there. The session of the failed run
+        stays as it is.
+        """
+        with self.lock:
+            doc = self.doc(run_id)
+            if doc["status"] != "failed":
+                raise Refused(409, f"the run is {doc['status']}")
+            doc.update(status="queued", finished=None, error=None, trace=None, retry=True, starts=0)
             self.write(doc)
             self.fill()
             return doc

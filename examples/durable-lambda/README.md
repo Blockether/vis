@@ -67,10 +67,17 @@ Lambda base image.
 ## Workflows
 
 A workflow is one Python file. The function with `@workflow` is its entry, and each
-step is a function with `@activity`. Durable Lambda records the result of each
-completed activity in S3. A new process starts the function again and each recorded
-activity returns its result at once. Thus decide only from the input and from the
-results of activities.
+step is a function with `@activity`. The transcript of the session is the record of a
+run: each request of an activity is one turn, and a decision at a gate is one turn too.
+A new process starts the function again, and a request that the transcript has returns
+the answer of its turn at once. Thus decide only from the input and from the answers of
+the session. The Python code of an activity runs again in each new process.
+
+No work runs again by itself. A person can retry a failed run with the button Retry in
+a fork, and a workflow can retry an activity with `@activity(retries=2)`. A retry forks
+the session: the fork has the transcript before the failed activity, and the run
+continues in the fork. The session of the failed attempt stays as it is. The files of
+the work directory do not go back.
 
 ```python
 from pydantic import BaseModel
@@ -108,11 +115,11 @@ def song_factory(ctx, prompt: str = "A slow song about a night train"):
 | Call | Result |
 | --- | --- |
 | `@workflow(title=, description=, model=)` | The entry of the file. Its parameters are the inputs of a run |
-| `@activity(title=)` | A step with a recorded result |
+| `@activity(title=, retries=0)` | A step of a run. With `retries`, a failed step runs again in a fork of the session |
 | `ctx.ask(request, Model)` | A validated Pydantic object from the session |
 | `ctx.ask(request)` | The answer as text |
 | `ctx.document(name, request)` | The session writes a file and attaches it. Returns a `Document` |
-| `ctx.gate(key, title, about="", document=None)` | Stops the run until a person decides. Returns a `Decision` with `approved` and `comment` |
+| `ctx.gate(key, title, about="", document=None)` | Stops the run until a person decides. Sends the decision to the session as one turn. Returns a `Decision` with `approved` and `comment` |
 | `ctx.note(text)` | A line in the record of the run |
 
 ### A gate
@@ -126,16 +133,21 @@ sequenceDiagram
   participant A as API
   participant S as S3
   participant R as Run process
+  participant V as Vis session
   R->>A: event waiting with the gate key
   A->>S: the run has the status waiting
   Note over R: the process ends
   P->>A: POST runs/ID/gates/KEY, approved and comment
-  A->>S: the decision
+  A->>S: the decision in the run
   A->>R: a new process starts
-  Note over R: each recorded activity returns at once
-  R->>A: GET runs/ID/gates/KEY
-  A-->>R: Decision
+  R->>V: read the transcript
+  Note over R: each request of the transcript returns at once
+  R->>V: the decision as one turn
+  Note over R: ctx.gate returns the Decision
 ```
+
+A later process of the run reads the decision in the transcript. A fork that ends
+before the gate does not have the decision turn, so the run sends the decision again.
 
 A person decides in one of four places: the Workflows page, the Factory page, the
 Gates tab of the Workflows app in Vis web, or the API. A decision is approve or

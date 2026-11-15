@@ -174,6 +174,8 @@ RUN_LIMIT_S = int(ENV.get("VIS_RUN_LIMIT_S", "28800"))
 STARTS = -(-RUN_LIMIT_S // LIFETIME)
 # The time that one turn of a run can take, and one call of the Durable Lambda API.
 TURN_S, API_S = 900, 120
+# The correction requests that a session gets for an answer that does not fit its model.
+CORRECTIONS = 2
 # The runs that the index keeps, that the API lists and that the Workflows app lists.
 RUNS_KEPT, RUNS_LISTED, APP_RUNS = 300, 100, 30
 # The seconds between two looks of the Workflows app at the runs.

@@ -424,6 +424,9 @@ export const decided = (made) => h("div", { class: "row wrap" }, chip(made.appro
 /** Stop a run. */
 export const cancelRun = (id) => play(`runs/${id}/cancel`, { method: "POST", body: {} });
 
+/** Start a failed run again. It continues in a fork of its session, before the failed activity. */
+export const retryRun = (id) => play(`runs/${id}/retry`, { method: "POST", body: {} });
+
 /** Return one small bar for each activity of a run of a list. */
 export const stepBars = (run) => h("span", { class: "steps" }, (run.activities.length ? run.activities : [["", "queued"]]).map(([title, status]) => h("i", { class: status, title })));
 

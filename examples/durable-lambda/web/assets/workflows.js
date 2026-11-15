@@ -1,6 +1,6 @@
 // The workflows page: write a workflow in Python, add activities, run it and watch the run.
 /* global CodeMirror */
-import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, decided, dialog, empty, field, filePath, fileRow, fill, gate, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, span, stepBars, structured, toast, turnsOf, value, versionOf, vis, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, decided, dialog, empty, field, filePath, fileRow, fill, gate, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, retryRun, span, stepBars, structured, toast, turnsOf, value, versionOf, vis, waiting } from "/play/assets/common.js";
 
 const studio = document.querySelector("#studio");
 const list = document.querySelector("#list");
@@ -419,6 +419,7 @@ function drawRun() {
       doc.session_id && h("a", { class: "btn small", href: `/play#${doc.session_id}` }, h("span", { text: "Session and transcript" })),
       doc.session_id && h("a", { class: "btn small", href: `/#/s/${doc.session_id}` }, h("span", { text: "Open in Vis" })),
       busy && button("Cancel", { class: "small danger", onclick: press(cancel) }, "stop"),
+      doc.status === "failed" && button("Retry in a fork", { class: "small", onclick: press(() => retryRun(doc.id).then(refreshRun)) }, "fork"),
     ),
   );
   const steps = [...doc.activities].sort((a, b) => a.seq - b.seq);

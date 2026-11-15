@@ -1,6 +1,6 @@
 // The factory page: the workflow `song_factory` as a production line.
 // An order is one run. A prompt goes in. A person approves the song sheet and then the song. The song goes to GitHub as code.
-import { OPEN, TONE, ago, bar, button, cancelRun, chip, decided, download, empty, filePath, fileRow, fill, gate, github, guard, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, versionOf, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, ago, bar, button, cancelRun, chip, decided, download, empty, filePath, fileRow, fill, gate, github, guard, h, icon, item, loading, markdown, play, press, read, retryRun, size, span, stepBars, structured, versionOf, waiting } from "/play/assets/common.js";
 
 const WORKFLOW = "song_factory";
 // The glyph of each station, by the name of its workflow activity.
@@ -166,6 +166,7 @@ function draw() {
     h("span", { class: "grow" }),
     doc.session_id && h("a", { class: "btn small", href: `/play#${doc.session_id}` }, icon("open"), h("span", { text: "Open the session" })),
     OPEN.has(doc.status) && button("Cancel", { class: "small", onclick: press(() => cancelRun(doc.id).then(refresh)) }, "stop"),
+    doc.status === "failed" && button("Retry in a fork", { class: "small", onclick: press(() => retryRun(doc.id).then(refresh)) }, "fork"),
   );
   const done = shipped?.url && h("div", { class: "shipped" }, icon("check"), h("span", {}, "Shipped. The song ", h("code", { text: shipped.song }), " is in the repository at ", github(shipped.url, shipped.commit || "the commit"), "."));
   const cards = stations(doc).map((station) => card(doc, station));

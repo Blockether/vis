@@ -13,7 +13,7 @@ import types
 from collections.abc import Callable
 from typing import Any
 
-from blockether.vis.engine import GatewayClient
+from blockether.vis.engine import GatewayClient, Session
 
 from durable.settings import GATEWAY_URL, PROVIDER, RUN_GROUP, TOKEN_FILE
 from durable.workflows.client import Durable
@@ -35,8 +35,8 @@ def load(name: str, source: str) -> Callable[..., Any]:
 def main(run_id: str) -> int:
     """Work on one run until it ends or waits for a person. Return the exit code of the process.
 
-    The API has each result, so a new process of the same run continues after the
-    last completed activity.
+    The transcript of the session has each request of the run, so a new process of
+    the same run continues after the last completed turn.
     """
     api = Durable()
     run = api.call("GET", f"runs/{run_id}")
@@ -44,18 +44,23 @@ def main(run_id: str) -> int:
         function = load(run["workflow"], run["source"])
         with open(TOKEN_FILE, encoding="utf-8") as file:
             client = GatewayClient(GATEWAY_URL, token=file.read().strip())
-        if run.get("session_id"):  # an earlier process of this run made the session
-            session = client.session(run["session_id"])
-        else:
-            # The run works in its own directory. Its session is in the group of the runs, in the one project.
+
+        def fresh() -> Session:
+            """Make a session for the run. The run works in its own directory. Its session is in the group of the runs, in the one project."""
             options = client.session_options(os.getcwd())
             if RUN_GROUP:
                 options["group_id"] = RUN_GROUP
             model = function.__workflow__["model"]
             session = client.create_session(provider=PROVIDER if model else None, model=model, **options)
             session.update(title=f"{run['title']} · run {run_id[:8]}")
-        api.event(run_id, "started", session_id=session.id)
-        result = function(Context(run, session, api), **run["input"])
+            return session
+
+        # An earlier process of this run made the session, or a person selected it.
+        session = client.session(run["session_id"]) if run.get("session_id") else fresh()
+        if run.get("base") is None:  # the turns that the session had before the run are not the transcript of the run
+            run["base"] = len(session.turns())
+        api.event(run_id, "started", session_id=session.id, base=run["base"])
+        result = function(Context(run, session, api, fresh), **run["input"])
         api.event(run_id, "completed", result=encode(result))
         return 0
     except Waiting:  # the API has the event: this process ends and a new one continues the run

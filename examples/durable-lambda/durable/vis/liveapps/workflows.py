@@ -158,7 +158,7 @@ class Workflows(threading.Thread):
             detail += f" {str(run['error'])[:200]}"
         steps = [(f"step-{at}", step["title"], TONES.get(step["status"], "idle")) for at, step in enumerate(run["activities"])]
         # The status node names the tone, so the text names only the workflow.
-        return {"state": (run["title"], TONES[run["status"]], detail), "steps": steps}
+        return {"state": (run["title"], TONES[run["status"]], detail), "steps": steps, "retry": run["status"] == "failed"}
 
     # -- paint --------------------------------------------------------------------
 
@@ -195,6 +195,12 @@ class Workflows(threading.Thread):
                     app["activities"].clear()
                     for step, label, step_tone in picture["steps"]:
                         app["activities"].set(step, label, tone=step_tone)
+            # Only a failed run has the button that starts it again in a fork of its session.
+            if bool(picture.get("retry")) != bool(self.shown.get("retry")):
+                if picture.get("retry"):
+                    app.add(vis.ui.button("retry-run", "Retry in a fork"), after="activities")
+                else:
+                    app.drop("retry-run")
             if "gate" in picture and picture["gate"] != self.shown.get("gate"):
                 if self.shown.get("gate"):
                     app.drop("gate")
@@ -205,7 +211,7 @@ class Workflows(threading.Thread):
     # -- the actions of a person ---------------------------------------------------
 
     def handle(self, app: Any, event: Any) -> None:
-        """Do one action of a person: change the tab, start a run, decide at a gate or show the form again."""
+        """Do one action of a person: change the tab, start a run, decide at a gate, retry a failed run or show the form again."""
         if event.type == "activate" and event.node_id in {f"tab-{name}" for name, _ in TABS}:
             self.show(app, event.node_id.removeprefix("tab-"))
         elif event.type == "submit" and event.node_id == "start-run":
@@ -225,6 +231,11 @@ class Workflows(threading.Thread):
                 self.problem = ""
             except Refused as refusal:
                 self.problem = f"The decision did not go in: {refusal}."
+        elif event.type == "activate" and event.node_id == "retry-run" and self.followed:
+            try:
+                self.api.retry(self.followed)
+            except Refused:  # the run is not failed any more: the next paint shows its status
+                pass
         elif event.type == "activate" and event.node_id == "new-run":
             self.followed = None
             self.show(app, "run")

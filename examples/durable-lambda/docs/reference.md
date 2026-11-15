@@ -23,10 +23,8 @@ the standard library. It supports plain answers and streamed answers.
 | `state/<worker>/<n>.tar.gz` | A checkpoint of the Vis home directory: sessions, transcripts, attached files, settings | the last one; a checkpoint of a failed worker stays |
 | `workflows/<name>.py` | The source of a workflow | permanent |
 | `runs/index.json` | One line for each of the 300 newest runs | permanent |
-| `runs/<run>/run.json` | The record of a run and of its workflow activities | permanent |
+| `runs/<run>/run.json` | What the pages show of a run: its workflow activities, the decisions at its gates (`approved`, `comment` and the time) and the sessions that it left with a fork. The record of the work is the transcript of the session | permanent |
 | `runs/<run>/workflow.py` | The source that the run uses, also after an edit of the workflow | permanent |
-| `runs/<run>/results/<n>.json` | The result of workflow activity `n` | permanent |
-| `runs/<run>/gates/<key>.json` | The decision of a person at a gate: `approved`, `comment` and the time | permanent |
 | `attached/<session>/<name>` | A copy of the newest version of each file that a session attached | permanent |
 | `tmp/<session>/<path>` | The files that a session wrote in `/tmp` and in its work directory | 7 days |
 | `work/<name>/meta.json` | The newest copy of a work directory: its commits, its time and its session | until a person deletes the session |
@@ -191,7 +189,7 @@ The Durable Lambda API has these addresses below `/play/api/`. A body and an ans
 | `POST runs` | `{workflow, input, session}` | Starts a run. `input` is an object of the inputs of the workflow. `session` is optional: the id of the session that the run works in. Without it, the run makes its own session |
 | `GET runs/<id>` | | One run with its workflow activities, its source and its attached files |
 | `POST runs/<id>/cancel` | | Cancels a run and the turn of its session |
-| `GET runs/<id>/gates/<key>` | | The decision of a person at the gate, or `null` |
+| `POST runs/<id>/retry` | | Starts a failed run again. The run forks its session before the failed activity and continues in the fork. 409 when the run is not failed |
 | `POST runs/<id>/gates/<key>` | `{approved, comment}` | Decides at the gate of a waiting run and starts the run again. `approved` is true or false. 409 when the run does not wait at this gate |
 | `GET attached?session=<id>` | | The attached files of a session, each with `name`, `size`, `at`, `turn` and `version` |
 | `GET attached/<session>/<name>` | | One attached file as a download |
@@ -201,7 +199,6 @@ The Durable Lambda API has these addresses below `/play/api/`. A body and an ans
 | `POST sessions/<id>/resync` | | Puts the work of a session on the newest release. 409 with `files` when Git finds a conflict, and 409 while a turn or a run works in the session |
 | `POST publish` | `{root, message}` | Commits a work directory and pushes it to GitHub |
 | `POST runs/<id>/events` | `{type, …}` | For the run process: records what the run did |
-| `GET runs/<id>/results/<n>` | | For the run process: the recorded result of workflow activity `n` |
 | `POST tmp` | `{session, files, removed}` | For the hook of the extension: copies the files that a session wrote, and records that its work directory changed |
 
 ## The extension
@@ -232,7 +229,7 @@ tabs:
 
 | Tab | Content |
 | --- | --- |
-| Run | Select a workflow and its session, give the input and start a run. Then the tab shows the status of the run and its workflow activities. For a waiting run, it names the Gates tab. |
+| Run | Select a workflow and its session, give the input and start a run. Then the tab shows the status of the run and its workflow activities. For a waiting run, it names the Gates tab. A failed run has the button Retry in a fork. |
 | Gates | The oldest run that waits at a gate: the text of the gate, its document, a field for the comment, and the buttons Approve and Reject. |
 | History | The number of runs in progress, completed and failed, and the last 30 runs with their status and their completed workflow activities. |
 

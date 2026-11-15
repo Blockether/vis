@@ -55,9 +55,8 @@ class Api:
             ("POST", r"runs", self.run),
             ("GET", r"runs/(\w+)", self.show),
             ("POST", r"runs/(\w+)/cancel", self.cancel),
+            ("POST", r"runs/(\w+)/retry", self.retry),
             ("POST", r"runs/(\w+)/events", self.event),
-            ("GET", r"runs/(\w+)/results/(\d+)", self.result),
-            ("GET", r"runs/(\w+)/gates/(\w+)", self.decision),
             ("POST", r"runs/(\w+)/gates/(\w+)", self.decide),
             ("GET", r"attached", self.files.attached),
             ("GET", r"attached/([\w-]+)/(.+)", self.files.attached_file),
@@ -165,20 +164,14 @@ class Api:
             self.sessions.cancel(doc["session_id"])
         return doc
 
+    def retry(self, run_id: str, **_: Any) -> dict[str, Any]:
+        """Start a failed run again. It continues in a fork of its session."""
+        return self.runs.retry(need(RUN, run_id, "the run id"))
+
     def event(self, run_id: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
         """Record what a run process reports."""
         self.runs.event(need(RUN, run_id, "the run id"), payload)
         return {"recorded": True}
-
-    def result(self, run_id: str, seq: str, **_: Any) -> Any:
-        """Return the recorded result of an activity, or null."""
-        raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/results/{int(seq)}.json")
-        return json.loads(raw) if raw else None
-
-    def decision(self, run_id: str, key: str, **_: Any) -> Any:
-        """Return the decision of a person at a gate of a run, or null."""
-        raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/gates/{need(NAME, key, 'the gate key')}.json")
-        return json.loads(raw) if raw else None
 
     def decide(self, run_id: str, key: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
         """Take the decision of a person at the gate where a run waits."""
