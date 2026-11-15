@@ -13,6 +13,24 @@ export type ArtifactShareOptions = {
   retainCacheFile?: boolean;
 };
 
+/** How long the kept file of a native hand-off stays for its receiver. */
+const SHARED_KEEP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Remove the folders of native hand-offs that are older than `SHARED_KEEP_MS`. A kept file
+ * has no later owner, so the next hand-off removes it. The name of a folder is its time.
+ */
+async function removeOldShared(now: number): Promise<void> {
+  const { files } = await Filesystem.readdir({ path: 'shared', directory: Directory.Cache });
+  await Promise.all(
+    files
+      .filter(({ name }) => /^\d+$/.test(name) && now - Number(name) > SHARED_KEEP_MS)
+      .map(({ name }) =>
+        Filesystem.rmdir({ path: `shared/${name}`, directory: Directory.Cache, recursive: true }),
+      ),
+  );
+}
+
 /** A filename safe to place below the app's cache directory, extension preserved. */
 export function sharedFilename(name: string): string {
   const safe = (name || 'artifact')
@@ -68,8 +86,11 @@ export async function shareArtifact(
 
   try {
     if (Capacitor.isNativePlatform()) {
+      const now = Date.now();
+      // The cache has no folder before the first hand-off, and a failed removal can wait.
+      void removeOldShared(now).catch(() => undefined);
       // A folder for each hand-off, so the receiver gets the file under its real name.
-      nativeFolder = `shared/${Date.now()}`;
+      nativeFolder = `shared/${now}`;
       const nativePath = `${nativeFolder}/${filename}`;
       const dataUrl = await blobAsDataUrl(blob);
       await Filesystem.writeFile({

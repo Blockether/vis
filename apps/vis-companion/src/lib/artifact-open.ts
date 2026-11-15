@@ -45,16 +45,22 @@ export function archiveOpenVerb(): 'Show in Finder' | 'Show in folder' | 'Save' 
 export type KeptFileWords = { noun: string; dialogTitle: string };
 
 /**
+ * What happened to one kept file. `text` says it, and it is '' when the person closed the
+ * sheet. `path` is where the desktop host saved the file; no other host knows a path.
+ */
+export type KeptFile = { text: string; path?: string };
+
+/**
  * Keep one file on this host. The desktop host saves it in Downloads/Vis Artifacts and shows it
  * in Finder, Explorer or the Linux file manager. A phone offers the share sheet, which holds
- * Save to Files. A browser downloads it. The answer is '' when the person closed the sheet.
+ * Save to Files. A browser downloads it.
  */
 export async function keepFile(
   blob: Blob,
   name: string,
   mediaType: string,
   { noun, dialogTitle }: KeptFileWords,
-): Promise<string> {
+): Promise<KeptFile> {
   const filename = sharedFilename(name);
   const invoke = desktopInvoke();
   if (invoke) {
@@ -62,23 +68,42 @@ export async function keepFile(
       filename,
       data: Array.from(new Uint8Array(await blob.arrayBuffer())),
     })) as { revealed: boolean; path: string };
-    return result.revealed
-      ? `${noun} saved to ${result.path}.`
-      : `${noun} saved to ${result.path}. Open that folder to find it.`;
+    return {
+      text: result.revealed
+        ? `${noun} saved to ${result.path}.`
+        : `${noun} saved to ${result.path}. Open that folder to find it.`,
+      path: result.path,
+    };
   }
   if (Capacitor.isNativePlatform()) {
-    return shareArtifact(blob, filename, mediaType || blob.type, {
-      title: name,
-      dialogTitle,
-      noun,
-      retainCacheFile: true,
-    });
+    return {
+      text: await shareArtifact(blob, filename, mediaType || blob.type, {
+        title: name,
+        dialogTitle,
+        noun,
+        retainCacheFile: true,
+      }),
+    };
   }
-  return downloadArtifact(blob, filename, noun);
+  return { text: downloadArtifact(blob, filename, noun) };
+}
+
+/**
+ * Show a file that the desktop host kept, in Finder, Explorer or the Linux file manager.
+ * False when the host is not the desktop app, the file is gone or no file manager answers.
+ */
+export async function revealKeptFile(path: string): Promise<boolean> {
+  const invoke = desktopInvoke();
+  if (!invoke) return false;
+  try {
+    return (await invoke('reveal_kept_artifact', { path })) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Keep the original archive as a file; see `keepFile` for what each host does. */
 export async function keepArchive(blob: Blob, name: string, mediaType = ''): Promise<string> {
   if (!isArchiveMedia(mediaType || blob.type, name)) throw new Error('Not an archive.');
-  return keepFile(blob, name, mediaType, { noun: 'Archive', dialogTitle: 'Save archive' });
+  return (await keepFile(blob, name, mediaType, { noun: 'Archive', dialogTitle: 'Save archive' })).text;
 }

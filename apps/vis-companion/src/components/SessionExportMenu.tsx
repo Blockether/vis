@@ -87,8 +87,8 @@ export function useSessionExport(notices: Notices): {
     // The pending toast stays until the result replaces it.
     push({ id, kind: 'neutral', title, text: `Exporting ${session.title.trim() || 'the session'}…`, durationMs: 120_000 });
     try {
-      const message = await exportSession(client, session, format);
-      if (message) push({ id, kind: 'ok', title, text: message, durationMs: 8_000 });
+      const kept = await exportSession(client, session, format);
+      if (kept.text) push({ id, kind: 'ok', title, text: kept.text, path: kept.path, durationMs: 8_000 });
       else dismiss(id);
     } catch (cause) {
       push({ id, kind: 'err', title, text: exportFailure(cause, format) });

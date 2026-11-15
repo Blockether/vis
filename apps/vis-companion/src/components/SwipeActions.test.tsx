@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { SwipeActions } from './SwipeActions';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
+import { IconButton } from './ui';
 
 // Touch keeps its swipe gesture; desktop actions live behind one vertical-dot trigger.
 
@@ -234,6 +235,86 @@ describe('the slide', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'first' }));
     expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  // Regression, verifier report on iOS: a touch outside an open row left its drawer open,
+  // with Delete under the thumb. The touch shuts the drawer and goes nowhere.
+  it('shuts on a press outside the row, and that press goes nowhere', () => {
+    const onOpen = vi.fn();
+    const onElsewhere = vi.fn();
+    render(
+      <>
+        {row('first')}
+        {row('second', onOpen)}
+        <button type="button" onClick={onElsewhere}>
+          Elsewhere
+        </button>
+      </>,
+    );
+    drag(track(0), WIDTH);
+    later();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Elsewhere' }));
+    expect(offset(0)).toBe('');
+    expect(onElsewhere).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Elsewhere' }));
+    expect(onElsewhere).toHaveBeenCalledOnce();
+
+    drag(track(0), WIDTH);
+    later();
+    fireEvent.click(screen.getByRole('button', { name: 'second' }));
+    expect(offset(0)).toBe('');
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  // Regression, verifier report on Android: with a row open, one tap on `Search sessions`
+  // in the header shut the row and also opened the search. Such a button reads its press
+  // on the lift of the finger, before the click, and iOS can send no click at all.
+  it('shuts on a tap on a button that acts on the lift, and that button does not act', () => {
+    const onSearch = vi.fn();
+    render(
+      <>
+        {row('first')}
+        <IconButton label="Search sessions" onClick={onSearch}>
+          <StarIcon />
+        </IconButton>
+      </>,
+    );
+    const search = screen.getByRole('button', { name: 'Search sessions' });
+    const finger = { pointerId: 2, pointerType: 'touch', isPrimary: true, button: 0 };
+    const tap = () => {
+      fireEvent.pointerDown(search, finger);
+      fireEvent.pointerUp(search, finger);
+    };
+    drag(track(0), WIDTH);
+    later();
+
+    tap();
+    expect(offset(0)).toBe('');
+    expect(onSearch).not.toHaveBeenCalled();
+    // The click of that tap comes when the row is shut already.
+    fireEvent.click(search);
+    expect(onSearch).not.toHaveBeenCalled();
+
+    later();
+    tap();
+    fireEvent.click(search);
+    expect(onSearch).toHaveBeenCalledOnce();
+  });
+
+  // A menu or a dialog stands over the page in its own layer and answers its own presses.
+  it('stays open on a press in a layer over the page', () => {
+    render(row('first'));
+    drag(track(), WIDTH);
+    later();
+    const layer = document.body.appendChild(document.createElement('div'));
+    const onLayer = vi.fn();
+    layer.addEventListener('click', onLayer);
+
+    fireEvent.click(layer);
+    expect(offset()).toBe(`-${WIDTH}px`);
+    expect(onLayer).toHaveBeenCalledOnce();
+    layer.remove();
   });
 
   // Regression, user report about the star on iOS ("first I don't see the star

@@ -98,7 +98,13 @@ export function pakeArgs({ distDir, version, target, icon = ICON, dev = false })
 export const RFD_DEPENDENCY = 'rfd = { version = "0.15", default-features = false, features = ["gtk3"] }';
 
 /** Vis's own commands in `native/desktop/artifact.rs`. */
-export const ARTIFACT_COMMANDS = ['open_xlsx', 'reveal_artifact', 'save_artifact_as', 'open_remote_artifact'];
+export const ARTIFACT_COMMANDS = [
+  'open_xlsx',
+  'reveal_artifact',
+  'reveal_kept_artifact',
+  'save_artifact_as',
+  'open_remote_artifact',
+];
 
 /** The Pake line that creates the main window. */
 export const WINDOW_SETUP =
@@ -109,6 +115,15 @@ export const WEB_CONTENT_RELOAD = 'web_content::reload_after_web_content_exit(&w
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** True when the tools directory has the pinned Pake from an earlier build. */
+function hasPake(pakeDir) {
+  try {
+    return JSON.parse(readFileSync(join(pakeDir, 'package.json'), 'utf8')).version === PAKE_VERSION;
+  } catch {
+    return false;
+  }
+}
+
 /** Install a private Pake template with Vis's native file commands and window hooks. */
 export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = false }) {
   if (windowsSigning) {
@@ -118,22 +133,26 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
       }
     }
   }
-  const install = spawnSync(
-    npmCli ? process.execPath : 'npm',
-    [
-      ...(npmCli ? [npmCli] : []),
-      'install',
-      '--prefix',
-      toolsDir,
-      '--no-save',
-      '--package-lock=false',
-      `pake-cli@${PAKE_VERSION}`,
-    ],
-    { stdio: 'inherit', env },
-  );
-  if (install.error) throw install.error;
-  if (install.status !== 0) throw new Error('Failed to install desktop build tools');
   const pakeDir = join(toolsDir, 'node_modules', 'pake-cli');
+  // Pake installs its own packages inside its directory at the first build, and npm
+  // cannot install over them. A kept directory with the pinned Pake needs no install.
+  if (!hasPake(pakeDir)) {
+    const install = spawnSync(
+      npmCli ? process.execPath : 'npm',
+      [
+        ...(npmCli ? [npmCli] : []),
+        'install',
+        '--prefix',
+        toolsDir,
+        '--no-save',
+        '--package-lock=false',
+        `pake-cli@${PAKE_VERSION}`,
+      ],
+      { stdio: 'inherit', env },
+    );
+    if (install.error) throw install.error;
+    if (install.status !== 0) throw new Error('Failed to install desktop build tools');
+  }
   const sourceDir = join(pakeDir, 'src-tauri', 'src');
   const libPath = join(sourceDir, 'lib.rs');
   let lib = readFileSync(libPath, 'utf8');

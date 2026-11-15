@@ -1,4 +1,4 @@
-import { keepFile } from './artifact-open';
+import { keepFile, type KeptFile } from './artifact-open';
 import { GatewayError, type GatewayClient } from './gateway';
 
 /**
@@ -51,14 +51,14 @@ async function exportBytes(client: GatewayClient, sid: string, format: SessionEx
 }
 
 /**
- * Export `session` and keep the file on this host. The answer says what happened, and it is ''
- * when the person closed the share sheet.
+ * Export `session` and keep the file on this host. The answer says what happened, and its
+ * text is '' when the person closed the share sheet.
  */
 export async function exportSession(
   client: GatewayClient,
   session: ExportedSession,
   format: SessionExportFormat,
-): Promise<string> {
+): Promise<KeptFile> {
   const { mediaType, noun, title } = SESSION_EXPORT_FORMATS.find((row) => row.id === format)!;
   const blob = await exportBytes(client, session.id, format);
   return keepFile(blob, sessionExportFilename(session, format), mediaType, {

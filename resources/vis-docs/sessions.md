@@ -366,8 +366,9 @@ To export a session:
   session switcher and press **Ctrl+X**, or press **e** on its row in **Projects**.
 - **Desktop or phone app:** open the session's actions in the session list and choose
   **Export**, then the format. The desktop app saves the file in a new folder in
-  **Vis Artifacts** in your downloads folder and shows it in the file manager. The phone
-  app opens the share sheet. In a browser, the file goes to your downloads.
+  **Vis Artifacts** in your downloads folder and shows it in the file manager. Its notice
+  shows the path of the file. Click the path to show the file again. The phone app opens
+  the share sheet. In a browser, the file goes to your downloads.
 
 Vis does not remove private data from an export. Read an export before you share
 it. To remove private details, follow [Reporting a

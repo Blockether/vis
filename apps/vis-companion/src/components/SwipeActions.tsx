@@ -250,6 +250,29 @@ function RowActionMenu({
   );
 }
 
+/** The layer of the page that holds `node`: the child of `body` above it. */
+function pageOf(node: Element): Element {
+  let layer = node;
+  while (layer.parentElement && layer.parentElement !== document.body) layer = layer.parentElement;
+  return layer;
+}
+
+/**
+ * The click of a tap comes after its lift, when the open row is shut and listens no more.
+ * That click goes nowhere too. A later click is a new press.
+ */
+function swallowClickOfLift(page: Element) {
+  const liftAt = performance.now();
+  const onClick = (event: MouseEvent) => {
+    window.removeEventListener('click', onClick, true);
+    if (performance.now() - liftAt > SLIDE_CLICK_MS) return;
+    if (!(event.target instanceof Node) || !page.contains(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  window.addEventListener('click', onClick, true);
+}
+
 /**
  * A ROW IS NEVER A NATIVE SCROLLER. The finger slides it, and the list keeps the only scroll.
  *
@@ -340,8 +363,9 @@ export function SwipeActions({
   );
 
   // An open drawer is a modal-ish state: Escape closes it, scrolling the list
-  // away from it closes it, and opening another row closes it — otherwise a
-  // forgotten row keeps a delete button armed under the user's thumb.
+  // away from it closes it, a press outside it closes it, and opening another row
+  // closes it — otherwise a forgotten row keeps a delete button armed under the
+  // user's thumb.
   useEffect(() => {
     if (!open) return;
     if (openDrawer !== close) openDrawer?.();
@@ -360,12 +384,40 @@ export function SwipeActions({
       if (!track) return;
       if (scroller instanceof Node && scroller.contains(track)) close();
     };
+    // A press outside the open row only shuts it, as a press on the row does: it goes
+    // nowhere. A menu or a dialog stands in its own layer and answers its own presses.
+    const pageOfPress = (event: Event) => {
+      const track = trackRef.current;
+      const target = event.target;
+      if (!track || !(target instanceof Node) || track.contains(target)) return null;
+      const page = pageOf(track);
+      return page.contains(target) ? page : null;
+    };
+    const onOutsideClick = (event: MouseEvent) => {
+      if (!pageOfPress(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    // A button can read its press on the lift of the finger, before the click, and iOS
+    // can send no click at all. A prevented lift is no press for such a button.
+    const onOutsideLift = (event: Event) => {
+      const page = pageOfPress(event);
+      if (!page) return;
+      event.preventDefault();
+      swallowClickOfLift(page);
+      close();
+    };
     window.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('click', onOutsideClick, true);
+    window.addEventListener('pointerup', onOutsideLift, true);
     return () => {
       if (openDrawer === close) openDrawer = null;
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('click', onOutsideClick, true);
+      window.removeEventListener('pointerup', onOutsideLift, true);
     };
   }, [open, close]);
 

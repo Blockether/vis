@@ -9,6 +9,7 @@ import {
   packageDesktop,
   prepareDesktopHost,
   ARTIFACT_COMMANDS,
+  PAKE_VERSION,
   RFD_DEPENDENCY,
   WEB_CONTENT_RELOAD,
   WINDOW_SETUP,
@@ -116,10 +117,10 @@ describe('desktop package', () => {
     const [libPath, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
     expect(libPath).toBe(join('/tools', 'node_modules', 'pake-cli', 'src-tauri', 'src', 'lib.rs'));
     expect(lib).toContain(
-      'mod artifact;\nuse artifact::{open_xlsx, reveal_artifact, save_artifact_as, open_remote_artifact};',
+      'mod artifact;\nuse artifact::{open_xlsx, reveal_artifact, reveal_kept_artifact, save_artifact_as, open_remote_artifact};',
     );
     expect(lib).toContain(
-      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,\n            save_artifact_as,\n            open_remote_artifact,download_file,',
+      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,\n            reveal_kept_artifact,\n            save_artifact_as,\n            open_remote_artifact,download_file,',
     );
     const [, cargo] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('Cargo.toml'));
     expect(cargo).toContain(`[dependencies]\n${RFD_DEPENDENCY}\nserde = "1"`);
@@ -131,6 +132,7 @@ describe('desktop package', () => {
     expect(command).toContain('.open_path(');
     expect(command).toContain('pub async fn reveal_artifact(');
     expect(command).toContain('.reveal_item_in_dir(&path)');
+    expect(command).toContain('pub async fn reveal_kept_artifact(');
     expect(command).toContain('pub async fn save_artifact_as(');
     expect(command).toContain('pub async fn open_remote_artifact(');
     expect(
@@ -329,6 +331,32 @@ describe('desktop release platforms', () => {
     );
     expect(spawnSync).not.toHaveBeenCalled();
     expect(renameSync).not.toHaveBeenCalled();
+  });
+
+  // Regression: the second local `npm run package:desktop` failed with "Failed to install
+  // desktop build tools". Pake installs its own packages inside its directory, and npm
+  // cannot install over them. A kept tools directory with the pinned Pake needs no install.
+  it('does not install the build tools again when the kept tools directory has them', () => {
+    const fresh = readFileSync.getMockImplementation();
+    let version = PAKE_VERSION;
+    readFileSync.mockImplementation((path, ...rest) =>
+      String(path).endsWith(join('pake-cli', 'package.json'))
+        ? JSON.stringify({ version })
+        : fresh(path, ...rest),
+    );
+    try {
+      const cli = prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+      expect(cli).toBe(join('/tools', 'node_modules', 'pake-cli', 'dist', 'cli.js'));
+      expect(spawnSync).not.toHaveBeenCalled();
+      expect(writeFileSync.mock.calls.some(([path]) => String(path).endsWith('artifact.rs'))).toBe(true);
+
+      version = '3.0.0';
+      prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+      expect(spawnSync).toHaveBeenCalledOnce();
+      expect(spawnSync.mock.calls[0][1]).toContain(`pake-cli@${PAKE_VERSION}`);
+    } finally {
+      readFileSync.mockImplementation(fresh);
+    }
   });
 
   it('stops before packaging when desktop tool installation fails', () => {

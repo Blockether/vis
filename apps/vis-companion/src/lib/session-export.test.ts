@@ -53,7 +53,7 @@ describe('a session export on each host', () => {
     const path = '/home/ada/Downloads/Vis Artifacts/1/fix-the-stalled-stream-123e4567.vissnap';
     const invoke = vi.fn(async () => ({ revealed: true, path }));
     vi.stubGlobal('__TAURI__', { core: { invoke } });
-    expect(await exportSession(gateway(), session, 'vissnap')).toBe(`Snapshot saved to ${path}.`);
+    expect(await exportSession(gateway(), session, 'vissnap')).toEqual({ text: `Snapshot saved to ${path}.`, path });
     expect(invoke).toHaveBeenCalledExactlyOnceWith('reveal_artifact', {
       filename: 'fix-the-stalled-stream-123e4567.vissnap',
       data: Array.from(bytes),
@@ -62,7 +62,7 @@ describe('a session export on each host', () => {
 
   it.each(['iOS', 'Android'])('opens the %s share sheet with the Markdown file', async () => {
     native.value = true;
-    expect(await exportSession(gateway(), session, 'md')).toBe('Markdown file shared.');
+    expect(await exportSession(gateway(), session, 'md')).toEqual({ text: 'Markdown file shared.' });
     expect(writeFile.mock.calls[0]).toEqual([
       expect.objectContaining({
         path: expect.stringMatching(/^shared\/\d+\/fix-the-stalled-stream-123e4567\.md$/),
@@ -77,13 +77,13 @@ describe('a session export on each host', () => {
   it('says nothing when the person closes the share sheet', async () => {
     native.value = true;
     share.mockRejectedValue(new Error('Share canceled'));
-    expect(await exportSession(gateway(), session, 'html')).toBe('');
+    expect(await exportSession(gateway(), session, 'html')).toEqual({ text: '' });
   });
 
   it('downloads the HTML page in a browser', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:export');
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    expect(await exportSession(gateway(), session, 'html')).toBe('HTML page downloaded.');
+    expect(await exportSession(gateway(), session, 'html')).toEqual({ text: 'HTML page downloaded.' });
     expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe(
       'fix-the-stalled-stream-123e4567.html',
     );

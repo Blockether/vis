@@ -523,6 +523,22 @@ describe('ProjectGroup groups', () => {
     expect(actions.rename).not.toHaveBeenCalled();
   });
 
+  // Regression, verifier report: Escape closed the row menu and the header menu, but not
+  // the menu of a project, of its groups or of its sessions.
+  it.each([
+    { dots: `Actions for ${STORY_NEWER_PROJECT.name}`, label: STORY_NEWER_PROJECT.name },
+    { dots: `Actions for sessions in ${ROOT}`, label: `Sessions in ${ROOT}` },
+    { dots: `Actions for groups in ${ROOT}`, label: `Groups in ${ROOT}` },
+    { dots: 'Actions for Wallet work', label: `Groups in ${ROOT}` },
+  ])('closes the menu of "$dots" with Escape', async ({ dots, label }) => {
+    const { user } = mount();
+    await band('Wallet work');
+    await user.click(screen.getByRole('button', { name: dots }));
+    expect(sheet(label)).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: label })).toBeNull();
+  });
+
   // Regression: the wider folder panel reused the menu's position and crossed the right edge.
   it.each([
     { width: 390, source: 'button', left: 12 },

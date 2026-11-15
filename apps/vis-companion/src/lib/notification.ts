@@ -14,6 +14,11 @@ export interface SessionNotice {
   source?: string;
   /** How long it stays, when the extension chose it. */
   durationMs?: number;
+  /**
+   * A file on this computer that `text` names by this path. A press on the path shows the
+   * file in the file manager. Only the desktop app sets it.
+   */
+  path?: string;
 }
 
 const KINDS: Record<string, SessionNotice['kind']> = {

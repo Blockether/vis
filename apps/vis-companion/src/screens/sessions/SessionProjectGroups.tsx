@@ -1598,6 +1598,20 @@ export const ProjectGroup = memo(function ProjectGroup({
     setFailure(null);
     setMenu((held) => (held ? { ...held, step } : held));
   };
+  // ESCAPE BELONGS TO THE OPEN MENU. The key closes the menu before a listener under it
+  // reads it, such as the one that clears the selected rows. A running action keeps its menu.
+  const isMenuOpen = menu !== null;
+  useEffect(() => {
+    if (!isMenuOpen || isBusy) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMenu(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [isMenuOpen, isBusy]);
   // A refused action stays in its sheet. A name collision and a busy member are
   // different 409s: archiving the whole shelf must explain why it stayed put.
   const attempt = async (act: () => Promise<unknown>, next: MenuStep | 'close') => {

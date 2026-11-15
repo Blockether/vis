@@ -111,6 +111,26 @@ pub async fn reveal_artifact(
     })
 }
 
+/// A file that Vis kept below `Downloads/Vis Artifacts`. The page sends back a path that
+/// this host gave it, and the host shows no file outside that folder.
+fn kept_file(downloads: &Path, path: &str) -> Result<PathBuf, String> {
+    let root = fs::canonicalize(downloads.join("Vis Artifacts")).map_err(|e| e.to_string())?;
+    let file = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    if !file.starts_with(&root) || !file.is_file() {
+        return Err("Expected a file in Vis Artifacts".into());
+    }
+    Ok(PathBuf::from(path))
+}
+
+/// Show a kept file again in Finder, Explorer or the Linux file manager, when the
+/// person presses its path in a notice. False when no file manager answers.
+#[tauri::command]
+pub async fn reveal_kept_artifact(app: tauri::AppHandle, path: String) -> Result<bool, String> {
+    let downloads = app.path().download_dir().map_err(|e| e.to_string())?;
+    let file = kept_file(&downloads, &path)?;
+    Ok(app.opener().reveal_item_in_dir(&file).is_ok())
+}
+
 /// Write the answer of `url` as `filename` in a new folder below `Downloads/Vis Artifacts`,
 /// one part at a time. The file of a reference attachment can be hundreds of megabytes
 /// (#451), so its bytes never go through the page. The name is the real name only after
@@ -326,6 +346,30 @@ mod tests {
         assert_eq!(path.file_name().unwrap(), "bundle 2.zip");
         assert!(path.starts_with(downloads.0.join("Vis Artifacts")));
         assert_eq!(fs::read(path).unwrap(), data);
+    }
+
+    #[test]
+    fn shows_only_a_kept_file_below_vis_artifacts() {
+        let downloads = Downloads::new();
+        let kept = stage_artifact(&downloads.0, "session.md", b"text").unwrap();
+        assert_eq!(
+            kept_file(&downloads.0, &kept.to_string_lossy()).unwrap(),
+            kept
+        );
+        let outside = downloads.0.join("secret.txt");
+        fs::write(&outside, b"secret").unwrap();
+        let folder = kept.parent().unwrap().to_path_buf();
+        for path in [
+            outside,
+            folder.join("..").join("..").join("secret.txt"),
+            folder.clone(),
+            folder.join("missing.md"),
+        ] {
+            assert!(
+                kept_file(&downloads.0, &path.to_string_lossy()).is_err(),
+                "{path:?}"
+            );
+        }
     }
 
     #[test]
