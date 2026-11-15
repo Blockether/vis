@@ -142,9 +142,10 @@ def review(ctx) -> list[str]:
     ])
 ```
 
-A task of `ctx.delegate` is a text, or a dict with `task` and optional `title`, `role`
-(`research`, `implement` or `verify`), `model`, `provider`, `iteration_budget` and
-`files`. A subagent has the context of the session and works in the same directory.
+A task of `ctx.delegate` is a text, or a `Task`: a typed dict with `task` and optional
+`title`, `role` (`research`, `implement` or `verify`), `model`, `provider`,
+`iteration_budget` and `files`. A type checker refuses another field or another role.
+A subagent has the context of the session and works in the same directory.
 The session starts the subagents in one turn, with a Python block that `ctx.delegate`
 gives. The answers come from the tool output of that turn, not from the text of the
 session. Thus the transcript has the delegation: a new process of the run and a fork
@@ -189,10 +190,11 @@ def song_factory(ctx, prompt: str = "A slow song about a night train"):
 | `activities=[...]` | Each activity as a `Step`: `seq`, `name`, `title`, `arguments` and `named` | `call()` runs the activity and returns its result |
 | `requests=[...]` | Each request of an activity as a `Request`: `text`, `llm`, `provider` and `timeout` | `send(request)` returns a `Reply`: the `text` of the answer and the `turn_id` |
 
-- The types are real for a type checker: an activity has the arguments and the result type of its function, and `ctx.ask(request, Model)` gives a `Model`.
+- The types are real for a type checker: an activity has the arguments and the result type of its function, and `ctx.ask(request, Model)` gives a `Model`. No type of the SDK is `Any`.
+- `arguments` and `named` of a `Step` hold `object` values, because one middleware gets each activity. Use `isinstance` before you use a value.
 - The first middleware of a list is the outer one.
 - `ctx.step` is the activity that runs.
-- A middleware of `activities` can return another result, or a result for an activity that failed. With `retries`, each attempt goes through the middleware.
+- A middleware of `activities` returns the result type of the activity: `call: Callable[[], T]` and `-> T`. It can return another result of that type, or a result for an activity that failed. A type checker cannot know the type of a result that the middleware makes itself, so give it with `typing.cast`. With `retries`, each attempt goes through the middleware.
 - A middleware of `requests` can change the request with `dataclasses.replace`, and it can send more than one request. The decision of a gate does not go through it.
 - A middleware runs again in each new process of the run, as the code of an activity does. The transcript knows a request by the text that the last middleware sends. Thus a middleware that changes the text must give the same text each time.
 

@@ -60,12 +60,11 @@ from __future__ import annotations
 import functools
 import json
 import time
-import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, Concatenate, ParamSpec, TypeVar, overload
+from typing import Concatenate, Literal, NotRequired, ParamSpec, Protocol, TypedDict, TypeVar, cast, overload
 
-from blockether.vis.engine import Attachment, GatewayError, Session, Turn, final_answer
+from blockether.vis.engine import Attachment, GatewayError, JSONValue, Session, Turn, final_answer
 from pydantic import BaseModel, ValidationError
 
 from durable.settings import CORRECTIONS, PROVIDER, TURN_S
@@ -75,12 +74,10 @@ Model = TypeVar("Model", bound=BaseModel)
 # The arguments of an activity after its context, and its result.
 Given = ParamSpec("Given")
 Result = TypeVar("Result")
-# A workflow function.
-Entry = TypeVar("Entry", bound=Callable[..., Any])
+# A workflow function. Its first argument is the context of the run.
+Entry = TypeVar("Entry", bound="Callable[Concatenate[Context, ...], object]")
 # The statuses of a turn that does not run any more.
 ENDED = ("completed", "failed", "cancelled", "suspended", "error")
-# The fields of a task of `ctx.delegate`. They are the fields of a task of `council.run` in a session.
-TASK = ("task", "title", "role", "model", "provider", "iteration_budget", "files")
 # The start of the output line with which the session of a run shows the records of its subagents. A JSON list follows.
 DELEGATED = "DELEGATED "
 # The fields of a subagent record in that line. A session reads the last two to answer a subagent that asks.
@@ -88,7 +85,7 @@ SHOWN = ("id", "status", "answer", "error", "question", "question_entry_id")
 # The start of the request that puts the decision of a person in the transcript. A JSON object follows on the same line.
 GATE = "The decision of a person at a gate of this workflow run: "
 
-__all__ = ["ActivityError", "Around", "Context", "Decision", "Document", "Reply", "Request", "Send", "Step", "Through", "Waiting", "activity", "workflow"]
+__all__ = ["ActivityError", "Around", "Context", "Decision", "Document", "Files", "Reply", "Request", "Role", "Send", "Step", "Task", "Through", "Waiting", "activity", "workflow"]
 
 
 class ActivityError(RuntimeError):
@@ -118,6 +115,98 @@ class Decision:
     comment: str = ""
 
 
+# What a subagent does. The gateway refuses another role.
+Role = Literal["research", "implement", "verify"]
+
+
+class Files(TypedDict, total=False):
+    """The file rules of a subagent: the paths or globs that it can write, can only read and cannot use."""
+
+    write: list[str]
+    read_only: list[str]
+    deny: list[str]
+
+
+class Task(TypedDict):
+    """One task of `ctx.delegate`. Its fields are the fields of a task of `council.run` in a session."""
+
+    task: str
+    title: NotRequired[str]
+    role: NotRequired[Role]
+    model: NotRequired[str]
+    provider: NotRequired[str]
+    iteration_budget: NotRequired[int]
+    files: NotRequired[Files]
+
+
+# The names of the fields of a task. The text of the task is the first one.
+TASK = tuple(Task.__annotations__)
+
+
+class Subagent(TypedDict):
+    """The record of a subagent, as the session of a run prints it."""
+
+    id: str
+    status: str
+    answer: str | None
+    error: object
+
+
+class Recorded(TypedDict):
+    """An activity of a run, as the run shows it."""
+
+    seq: int
+    name: str
+    status: str
+
+
+class Made(TypedDict):
+    """The decision of a person at a gate."""
+
+    approved: bool
+    comment: str
+
+
+class Run(TypedDict):
+    """The record of a run that the API gives to its process."""
+
+    id: str
+    workflow: str
+    source: str
+    title: str
+    input: dict[str, JSONValue]
+    session_id: NotRequired[str | None]
+    base: NotRequired[int | None]
+    activities: NotRequired[list[Recorded]]
+    decisions: NotRequired[dict[str, Made]]
+    retry: NotRequired[bool]
+
+
+class TurnRow(TypedDict):
+    """A turn of a session, as the Vis SDK gives it."""
+
+    turn_id: str
+    status: str
+    request: NotRequired[str | None]
+    content: NotRequired[list[dict[str, JSONValue]]]
+
+
+class Started(TypedDict):
+    """The start of an activity, as the run process reports it."""
+
+    seq: int
+    name: str
+    title: str
+
+
+class Encoded(TypedDict):
+    """A result of an activity or of a run, in a form that JSON can hold."""
+
+    kind: Literal["model", "document", "decision", "json"]
+    value: JSONValue
+    type: NotRequired[str]
+
+
 @dataclass(frozen=True)
 class Step:
     """One activity of a run, as its middleware gets it: its number in the run, its function name, its title and its arguments."""
@@ -125,8 +214,8 @@ class Step:
     seq: int
     name: str
     title: str
-    arguments: tuple[Any, ...] = ()
-    named: dict[str, Any] = field(default_factory=dict)
+    arguments: tuple[object, ...] = ()
+    named: Mapping[str, object] = field(default_factory=dict[str, object])
 
 
 @dataclass(frozen=True)
@@ -149,15 +238,78 @@ class Reply:
 
 # The next function of a request middleware: it sends the request and returns the answer of its turn.
 Send = Callable[[Request], Reply]
-# A middleware around each activity: `(ctx, step, call)`. `call()` runs the activity and returns its result.
-Around = Callable[["Context", Step, Callable[[], Any]], Any]
 # A middleware around each request: `(ctx, request, send)`.
 Through = Callable[["Context", Request, Send], Reply]
+
+
+class Around(Protocol):
+    """A middleware around each activity: `(ctx, step, call)`.
+
+    `call()` runs the activity and returns its result. The middleware returns a result
+    of the same type, so an activity keeps its result type in each middleware.
+    """
+
+    def __call__(self, ctx: Context, step: Step, call: Callable[[], Result], /) -> Result:
+        """Run the activity with `call()` and return its result."""
+        ...
+
+
+@dataclass(frozen=True)
+class Marks:
+    """What `@workflow` says about a workflow function."""
+
+    title: str
+    description: str
+    model: str | None
+    activities: tuple[Around, ...]
+    requests: tuple[Through, ...]
+
+
+def marked(function: object) -> Marks | None:
+    """Return what `@workflow` says about a function, or None for a function without `@workflow`."""
+    found = getattr(function, "__workflow__", None)
+    return found if isinstance(found, Marks) else None
 
 
 def within(ctx: Context, through: Through, send: Send) -> Send:
     """Return `send` in the request middleware `through`."""
     return lambda request: through(ctx, request, send)
+
+
+def inside(ctx: Context, around: Around, step: Step, call: Callable[[], Result]) -> Callable[[], Result]:
+    """Return `call` in the activity middleware `around`."""
+    return lambda: around(ctx, step, call)
+
+
+def entries(value: object) -> dict[str, object] | None:
+    """Return a JSON object as a dict with text keys, or None for another value."""
+    return cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+
+def printed(trace: JSONValue) -> list[str] | None:
+    """Return each line that the tools of a turn printed, from the trace of the turn. None: the gateway gave no trace."""
+    steps = trace.get("iterations") if isinstance(trace, dict) else None
+    if not isinstance(steps, list):
+        return None
+    lines: list[str] = []
+    for step in steps:
+        forms = step.get("forms") if isinstance(step, dict) else None
+        for form in forms if isinstance(forms, list) else []:
+            output = form.get("stdout") if isinstance(form, dict) else None
+            if isinstance(output, str):
+                lines += output.splitlines()
+    return lines
+
+
+def is_task(task: Mapping[str, object]) -> bool:
+    """Tell if a dict has the text of a task and only the fields of a task. A workflow file can give a dict that no type checker saw."""
+    return isinstance(task.get("task"), str) and not set(task) - set(TASK)
+
+
+def subagent(item: dict[str, object]) -> Subagent:
+    """Return the record of a subagent from one object of the line that the session printed."""
+    answer = item.get("answer")
+    return Subagent(id=str(item.get("id")), status=str(item.get("status")), answer=answer if isinstance(answer, str) else None, error=item.get("error"))
 
 
 def route(llm: str | None, provider: str | None) -> dict[str, str]:
@@ -186,8 +338,7 @@ def workflow(title: str = "", description: str = "", model: str | None = None, *
 
     def mark(function: Entry) -> Entry:
         """Record the title, the description, the model and the middleware on the function."""
-        about = {"title": title or function.__name__, "description": description, "model": model, "activities": tuple(activities), "requests": tuple(requests)}
-        function.__workflow__ = about  # type: ignore[attr-defined]
+        function.__workflow__ = Marks(title or function.__name__, description, model, tuple(activities), tuple(requests))  # type: ignore[attr-defined]
         return function
 
     return mark
@@ -207,14 +358,14 @@ def activity(title: str = "", retries: int = 0) -> Callable[[Callable[Concatenat
         @functools.wraps(function)
         def call(ctx: Context, *arguments: Given.args, **named: Given.kwargs) -> Result:
             """Run the step in the context of the run, which reports it."""
-            return ctx._step(function, title or function.__name__, retries, arguments, named)
+            return ctx._step(function, title or function.__name__, retries, *arguments, **named)
 
         return call
 
     return wrap
 
 
-def encode(value: Any) -> dict[str, Any]:
+def encode(value: object) -> Encoded:
     """Make a result that JSON can hold."""
     if isinstance(value, BaseModel):
         return {"kind": "model", "type": type(value).__name__, "value": value.model_dump(mode="json")}
@@ -223,39 +374,27 @@ def encode(value: Any) -> dict[str, Any]:
     if isinstance(value, Decision):
         return {"kind": "decision", "value": asdict(value)}
     if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
-        return {"kind": "json", "value": value}
+        return {"kind": "json", "value": cast("JSONValue", value)}
     return {"kind": "json", "value": str(value)}
 
 
-def decode(recorded: dict[str, Any], function: Callable[..., Any]) -> Any:
-    """Build the result of an activity again from its record."""
-    value = recorded["value"]
-    if recorded["kind"] == "document":
-        return Document(**value)
-    if recorded["kind"] == "decision":
-        return Decision(**value)
-    if recorded["kind"] == "model":
-        returns = typing.get_type_hints(function).get("return")
-        if isinstance(returns, type) and issubclass(returns, BaseModel):
-            return returns.model_validate(value)
-    return value
-
-
-def decided(request: str, key: str) -> dict[str, Any] | None:
+def decided(request: str, key: str) -> Made | None:
     """Return the decision that a request of the transcript holds, when it is the decision at the gate `key`."""
     if not request.startswith(GATE):
         return None
     try:
-        made = json.loads(request[len(GATE) :].partition("\n")[0])
+        made = entries(json.loads(request[len(GATE) :].partition("\n")[0]))
     except ValueError:
         return None
-    return made if isinstance(made, dict) and made.get("key") == key else None
+    if made is None or made.get("key") != key:
+        return None
+    return Made(approved=bool(made.get("approved")), comment=str(made.get("comment") or ""))
 
 
 class Context:
     """The run that a workflow function works in."""
 
-    def __init__(self, run: dict[str, Any], session: Session, api: Durable, fresh: Callable[[], Session] | None = None, activities: Sequence[Around] = (), requests: Sequence[Through] = ()) -> None:
+    def __init__(self, run: Run, session: Session, api: Durable, fresh: Callable[[], Session] | None = None, activities: Sequence[Around] = (), requests: Sequence[Through] = ()) -> None:
         """Keep the run, its Vis session and the client of the Durable Lambda API.
 
         `fresh` makes a new session for the run. `activities` and `requests` are the middleware of the workflow.
@@ -265,23 +404,26 @@ class Context:
         self.step: Step | None = None
         self._around, self._through = tuple(activities), tuple(requests)
         # The number of the next activity, the activity that runs, and its start that the API does not have yet.
-        self._api, self._fresh, self._next, self._current, self._start = api, fresh, 0, None, None
+        self._api, self._fresh, self._next = api, fresh, 0
+        self._current: int | None = None
+        self._start: Started | None = None
         # The transcript of the run: the turns of its session after the turns of a person, and the place of the next request.
-        turns, base = session.turns(), run.get("base") or 0
+        turns: list[TurnRow] = session.turns()
+        base = run.get("base") or 0
         self._turns, self._at = turns[base:], 0
         # The last turn that a fork of the session keeps.
-        self._kept = turns[base - 1]["turn_id"] if base else None
+        self._kept: str | None = turns[base - 1]["turn_id"] if base else None
         steps = run.get("activities") or []
         # The activities that the run shows as completed, and the decisions that the transcript does not have yet.
         self._done = {step["seq"]: step["name"] for step in steps if step["status"] == "completed"}
-        self._decisions: dict[str, Any] = dict(run.get("decisions") or {})
+        self._decisions: dict[str, Made] = dict(run.get("decisions") or {})
         # A retried run forks its session where its first failed activity starts.
         self._retry = bool(run.get("retry"))
         self._failed = min((step["seq"] for step in steps if step["status"] == "failed"), default=None)
 
-    def _event(self, kind: str, **fields: Any) -> Any:
+    def _event(self, kind: str, **fields: object) -> None:
         """Report to the API what this run process did."""
-        return self._api.event(self.run_id, kind, **fields)
+        self._api.event(self.run_id, kind, **fields)
 
     def _report(self) -> None:
         """Tell the API one time that the activity works."""
@@ -306,11 +448,11 @@ class Context:
         else:
             return
         # A fork gives each turn a new id.
-        turns = self.session.turns()
+        turns: list[TurnRow] = self.session.turns()
         self._kept = turns[-1]["turn_id"] if turns else None
         self._event("forked", session_id=self.session.id)
 
-    def _step(self, function: Callable[..., Any], title: str, retries: int, arguments: tuple[Any, ...], named: dict[str, Any]) -> Any:
+    def _step(self, function: Callable[Concatenate[Context, Given], Result], title: str, retries: int, /, *arguments: Given.args, **named: Given.kwargs) -> Result:
         """Run an activity. The transcript answers the requests that an earlier process of the run made."""
         if self._current is not None:  # an activity in an activity is a plain call
             return function(self, *arguments, **named)
@@ -318,9 +460,9 @@ class Context:
         self._current, self._start = seq, {"seq": seq, "name": function.__name__, "title": title}
         self.step = Step(seq, function.__name__, title, arguments, named)
         # The activity in the middleware of the workflow. The first middleware is the outer one.
-        call: Callable[[], Any] = functools.partial(function, self, *arguments, **named)
+        call: Callable[[], Result] = functools.partial(function, self, *arguments, **named)
         for around in reversed(self._around):
-            call = functools.partial(around, self, self.step, call)
+            call = inside(self, around, self.step, call)
         if self._retry and seq == self._failed:
             self._leave()
         try:
@@ -349,7 +491,7 @@ class Context:
         self._event("activity_completed", seq=seq, name=function.__name__, result=encode(result))
         return result
 
-    def _recorded(self, is_it: Callable[[str], bool], timeout: float) -> dict[str, Any] | None:
+    def _recorded(self, is_it: Callable[[str], bool], timeout: float) -> TurnRow | None:
         """Return the completed turn that the transcript has for the next request, or None.
 
         A worker stops before the Lambda time limit and parks the running turn. The gateway
@@ -367,12 +509,13 @@ class Context:
                 return turn
         return None
 
-    def _end(self, turn_id: str, timeout: float) -> dict[str, Any]:
+    def _end(self, turn_id: str, timeout: float) -> TurnRow:
         """Wait for a turn that an earlier process of the run started, and return its end."""
         end = time.monotonic() + timeout
         while True:
             try:
-                return Turn(self.session, turn_id).wait(timeout=max(end - time.monotonic(), 1))
+                ended: TurnRow = Turn(self.session, turn_id).wait(timeout=max(end - time.monotonic(), 1))
+                return ended
             except GatewayError as failure:  # the new gateway did not take the turn yet
                 if failure.code != "turn-not-found" or time.monotonic() > end:
                     raise
@@ -385,11 +528,11 @@ class Context:
         if turn is None:
             self._leave()
             self._report()
-            turn = self.session.send(request.text, **using).wait(timeout=request.timeout)
-            if turn.get("status") != "completed":
-                raise ActivityError(f"the turn ended with the status {turn.get('status')!r}")
-            self._kept = turn["turn_id"]
-        return Reply(final_answer(turn) or "", turn["turn_id"])
+            sent: TurnRow = self.session.send(request.text, **using).wait(timeout=request.timeout)
+            if sent["status"] != "completed":
+                raise ActivityError(f"the turn ended with the status {sent['status']!r}")
+            turn, self._kept = sent, sent["turn_id"]
+        return Reply(final_answer(dict(turn)) or "", turn["turn_id"])
 
     def _request(self, text: str, timeout: float, llm: str | None = None, provider: str | None = None) -> Reply:
         """Send a request of an activity through the middleware of the workflow. The first middleware is the outer one."""
@@ -427,13 +570,13 @@ class Context:
                 request = f"Your answer is not valid:\n{problems}\n\nKeep the completed work. {form}"
         raise ActivityError(f"the session gave no valid {model.__name__}")
 
-    def delegate(self, tasks: list[str | dict[str, Any]], *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> list[str]:
+    def delegate(self, tasks: Sequence[str | Task], *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> list[str]:
         """Give each task to its own subagent of the session. Return the answer of each subagent, in the order of the tasks.
 
-        A task is a text, or a dict with `task` and optional `title`, `role` (research,
-        implement or verify), `model`, `provider`, `iteration_budget` and `files`. A
-        subagent has the context of the session and works in the same directory. With
-        `model`, a subagent uses that language model.
+        A task is a text, or a `Task`: a dict with `task` and optional `title`, `role`
+        (research, implement or verify), `model`, `provider`, `iteration_budget` and
+        `files`. A subagent has the context of the session and works in the same
+        directory. With `model`, a subagent uses that language model.
 
         The session starts the subagents in one turn with a Python block that this call
         gives. The answers come from the tool output of that turn, not from the text of
@@ -441,10 +584,12 @@ class Context:
         start no second subagent. A subagent that does not complete fails the activity.
         `llm` and `provider` select the model of that turn, as in `ask`.
         """
-        given = [{"task": task} if isinstance(task, str) else dict(task) for task in tasks]
+        given = [Task(task=task) if isinstance(task, str) else task.copy() for task in tasks]
         for task in given:
-            if not isinstance(task.get("task"), str) or set(task) - set(TASK):
+            if not is_task(task):
                 raise ValueError(f"a task is a text, or a dict with `task` and these optional fields: {', '.join(TASK[1:])}")
+            if task.get("provider") and not task.get("model"):
+                raise ValueError("give `model` with `provider` in a task")
             if task.get("model") and not task.get("provider"):
                 task["provider"] = PROVIDER
         if not given:
@@ -479,25 +624,29 @@ class Context:
         if len(records) != len(given):
             raise ActivityError(f"the session started {len(records)} subagents for {len(given)} tasks")
         for record in records:
-            if record.get("status") != "completed":
-                raise ActivityError(f"the subagent {record.get('id')} ended with the status {record.get('status')!r}: {record.get('error')}")
-        return [record.get("answer") or "" for record in records]
+            if record["status"] != "completed":
+                raise ActivityError(f"the subagent {record['id']} ended with the status {record['status']!r}: {record['error']}")
+        return [record["answer"] or "" for record in records]
 
-    def _delegated(self, turn_id: str) -> list[dict[str, Any]] | None:
+    def _delegated(self, turn_id: str) -> list[Subagent] | None:
         """Return the records of the subagents that the tool output of a turn shows, in the order of their tasks. None: the turn started no subagent."""
-        trace: Any = self.session.client.get_session_turn_trace(self.session.id, turn_id)
-        steps = trace.get("iterations") if isinstance(trace, dict) else None
-        if not isinstance(steps, list):  # without the trace, a second request can start each subagent again
+        lines = printed(self.session.client.get_session_turn_trace(self.session.id, turn_id))
+        if lines is None:  # without the trace, a second request can start each subagent again
             raise ActivityError("the gateway gave no trace of the turn")
-        shown = [line for step in steps for form in step.get("forms") or [] for line in (form.get("stdout") or "").splitlines() if line.startswith(DELEGATED)]
+        shown = [line for line in lines if line.startswith(DELEGATED)]
         if not shown:
             return None
         try:
-            records = json.loads(shown[-1][len(DELEGATED) :])
+            found: object = json.loads(shown[-1][len(DELEGATED) :])
         except ValueError:
-            raise ActivityError("the tool output of the session does not have the complete answers of the subagents") from None
+            found = None
+        # The line is complete when it is a JSON list of objects.
+        items = [entries(item) for item in cast("list[object]", found)] if isinstance(found, list) else [None]
+        records = [subagent(item) for item in items if item is not None]
+        if len(records) != len(items):
+            raise ActivityError("the tool output of the session does not have the complete answers of the subagents")
         # The session gives each subagent the next id: a1, a2 and onward.
-        return sorted(records, key=lambda record: int("".join(filter(str.isdigit, str(record.get("id")))) or 0))
+        return sorted(records, key=lambda record: int("".join(filter(str.isdigit, record["id"])) or 0))
 
     def document(self, name: str, request: str, *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> Document:
         """Let the session write a document and attach it.
@@ -533,7 +682,7 @@ class Context:
         returns the decision. The workflow selects what a rejection does.
         """
         turn = self._recorded(lambda text: decided(text, key) is not None, TURN_S)
-        made = decided(turn["request"], key) if turn else self._decisions.get(key)
+        made = decided(turn.get("request") or "", key) if turn else self._decisions.get(key)
         if made is None:
             self._report()
             self._event("waiting", seq=self._current, key=key, title=title, about=about, document=document.name if document else None)
@@ -542,11 +691,11 @@ class Context:
             line = json.dumps({"key": key, "title": title, "approved": made["approved"], "comment": made["comment"]})
             # The decision is not a request of an activity: it does not go through the middleware.
             self._send(Request(f"{GATE}{line}\n\nAnswer with one short line. Do no other work."))
-        return Decision(key, bool(made["approved"]), str(made["comment"]))
+        return Decision(key, made["approved"], made["comment"])
 
     def note(self, text: str) -> None:
         """Add a line to the log of the run."""
         # The run has the activity that it shows as completed: a new process reports it again only for new work.
-        if not (self._start and self._done.get(self._current) == self._start["name"]):
+        if not (self._start and self._done.get(self._start["seq"]) == self._start["name"]):
             self._report()
         self._event("note", text=str(text)[:2000], seq=self._current)

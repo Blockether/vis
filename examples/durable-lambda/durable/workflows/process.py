@@ -11,22 +11,21 @@ import sys
 import traceback
 import types
 from collections.abc import Callable
-from typing import Any
 
 from blockether.vis.engine import GatewayClient, Session
 
 from durable.settings import GATEWAY_URL, PROVIDER, RUN_GROUP, TOKEN_FILE
 from durable.workflows.client import Durable
-from durable.workflows.sdk import Context, Waiting, encode
+from durable.workflows.sdk import Context, Marks, Run, Waiting, encode, marked
 
 
-def load(name: str, source: str) -> Callable[..., Any]:
-    """Run the source of a workflow and return its `@workflow` function."""
+def load(name: str, source: str) -> tuple[Callable[..., object], Marks]:
+    """Run the source of a workflow. Return its `@workflow` function and what `@workflow` says about it."""
     module = types.ModuleType(f"workflow_{name}")
     module.__file__ = f"{name}.py"
     sys.modules[module.__name__] = module
     exec(compile(source, module.__file__, "exec"), module.__dict__)  # noqa: S102 - the source is the workflow
-    found = [value for value in vars(module).values() if callable(value) and hasattr(value, "__workflow__")]
+    found = [(value, about) for value in vars(module).values() if callable(value) and (about := marked(value))]
     if len(found) != 1:
         raise ValueError("a workflow file needs exactly one function with @workflow")
     return found[0]
@@ -39,9 +38,9 @@ def main(run_id: str) -> int:
     the same run continues after the last completed turn.
     """
     api = Durable()
-    run = api.call("GET", f"runs/{run_id}")
+    run: Run = api.call("GET", f"runs/{run_id}")
     try:
-        function = load(run["workflow"], run["source"])
+        function, about = load(run["workflow"], run["source"])
         with open(TOKEN_FILE, encoding="utf-8") as file:
             client = GatewayClient(GATEWAY_URL, token=file.read().strip())
 
@@ -50,18 +49,18 @@ def main(run_id: str) -> int:
             options = client.session_options(os.getcwd())
             if RUN_GROUP:
                 options["group_id"] = RUN_GROUP
-            model = function.__workflow__["model"]
-            session = client.create_session(provider=PROVIDER if model else None, model=model, **options)
+            session = client.create_session(provider=PROVIDER if about.model else None, model=about.model, **options)
             session.update(title=f"{run['title']} · run {run_id[:8]}")
             return session
 
         # An earlier process of this run made the session, or a person selected it.
-        session = client.session(run["session_id"]) if run.get("session_id") else fresh()
-        if run.get("base") is None:  # the turns that the session had before the run are not the transcript of the run
-            run["base"] = len(session.turns())
-        api.event(run_id, "started", session_id=session.id, base=run["base"])
-        about = function.__workflow__
-        result = function(Context(run, session, api, fresh, about["activities"], about["requests"]), **run["input"])
+        known = run.get("session_id")
+        session = client.session(known) if known else fresh()
+        base = run.get("base")
+        if base is None:  # the turns that the session had before the run are not the transcript of the run
+            base = run["base"] = len(session.turns())
+        api.event(run_id, "started", session_id=session.id, base=base)
+        result = function(Context(run, session, api, fresh, about.activities, about.requests), **run["input"])
         api.event(run_id, "completed", result=encode(result))
         return 0
     except Waiting:  # the API has the event: this process ends and a new one continues the run
