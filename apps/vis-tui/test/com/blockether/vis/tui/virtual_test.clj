@@ -2377,6 +2377,40 @@
             (expect (<= 300 (long first-walked)))
             (expect (<= (long next-walked) 4) (str next-walked " rows anchored again"))
             (expect (= (:row-anchors first-frame) (:row-anchors next-frame)))))
+      ;; Each row of an output holds the whole output text in its metadata. A settings
+      ;; change builds the rows again from an equal text, and a compare by value read
+      ;; that text for each row: 12 s for one frame of a 1.4 MB output.
+      (it "compares the text of a rebuilt output one time, not for each row"
+          (let [compares
+                (atom 0)
+
+                text
+                (fn []
+                  (reify
+                    Object
+                      (equals [_ _] (swap! compares inc) true)
+                      (hashCode [_] 7)))
+
+                rows
+                (fn [text]
+                  (mapv (fn [i]
+                          (when (pos? (long (mod (long i) 10)))
+                            {:kind :copy-block-body :text text :even? (even? (long i))}))
+                        (range 500)))
+
+                lines
+                (mapv str (range 500))
+
+                shared-rows
+                @#'virtual/shared-rows]
+
+            (expect (= 500 (shared-rows (rows (text)) lines (rows (text)) lines)))
+            (expect (<= (long @compares) 2) (str @compares " compares of the output text"))
+            (expect (= 200
+                       (shared-rows (assoc-in (rows (text)) [200 :even?] :changed)
+                                    lines
+                                    (rows (text))
+                                    lines)))))
       (it "anchors a stable bubble once while it scrolls"
           (let [_
                 (frame settled false 0 0)

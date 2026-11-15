@@ -1236,16 +1236,41 @@
         same-meta?
         (identical? line-meta old-meta)]
 
-    (loop [i 0]
-      (if (and (< i n)
-               (or same-meta?
-                   (let [a (nth line-meta i)
-                         b (nth old-meta i)]
+    ;; Each row of a copyable block holds the whole text of the block in its metadata. A
+    ;; compare by value reads that text again for each row: seconds for a large output that
+    ;; was built again. So `text-a` and `text-b` keep the texts of the row before, which
+    ;; were equal, and a row with the same two text objects compares only its other keys.
+    (loop [i
+           0
 
-                     (or (identical? a b) (= a b))))
-               (= (get text-lines i) (get old-lines i)))
-        (recur (unchecked-inc i))
-        i))))
+           text-a
+           nil
+
+           text-b
+           nil]
+
+      (let [a
+            (when (< i n) (nth line-meta i))
+
+            b
+            (when (< i n) (nth old-meta i))]
+
+        (if (and (< i n)
+                 (= (get text-lines i) (get old-lines i))
+                 (or same-meta?
+                     (identical? a b)
+                     (if (and (some? text-a)
+                              (map? a)
+                              (map? b)
+                              (identical? text-a (:text a))
+                              (identical? text-b (:text b)))
+                       (= (dissoc a :text) (dissoc b :text))
+                       (= a b))))
+          ;; The rows are equal, so two texts here are an equal pair. A row without a text
+          ;; keeps the last pair.
+          (let [pair? (and (map? a) (map? b) (some? (:text a)) (some? (:text b)))]
+            (recur (unchecked-inc i) (if pair? (:text a) text-a) (if pair? (:text b) text-b)))
+          i)))))
 
 (defn- plain-lines
   "The plain text of `projected`, one string for each line."
