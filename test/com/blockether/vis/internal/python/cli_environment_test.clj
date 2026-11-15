@@ -620,7 +620,16 @@
                             [(:exit result) (:stdout result)])
                          (:output result)))
                (let [tool (shell/sh (str (io/file shared "bin" "shared-base-tool")) "direct")]
-                 (expect (= [5 "script ['direct']\n"] [(:exit tool) (:out tool)]) (:err tool))))
+                 (expect (= [5 "script ['direct']\n"] [(:exit tool) (:out tool)]) (:err tool)))
+               ;; Regression #481: the pip of a child process also removes a shared package.
+               (let [result (run-cli dir
+                                     environment
+                                     ["--shared" "-c"
+                                      (str "import subprocess, sys\n"
+                                           "sys.exit(subprocess.call([sys.executable, '-m', 'pip',"
+                                           " 'uninstall', '-y', 'shared-base']))")])]
+                 (expect (= 0 (:exit result)) (:output result))
+                 (expect (not (.exists (io/file shared "shared_base.py"))) (:output result))))
              (finally (let [result (pip! "uninstall" "-y" "shared-base")]
                         (expect (= 0 (:exit result)) (:output result)))))
         (expect (not (.exists (io/file shared "shared_base.py"))))

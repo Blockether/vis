@@ -2367,10 +2367,13 @@
 (defn- share-python-cli-installs!
   "Make shared `packages` the place where this interpreter and its child processes install
    and import packages. `sys.executable` of the runtime starts a CPython that knows only the
-   runtime. This writes a small environment in `packages`/.python: a link to that CPython, and
-   a site module that adds `packages` and the install paths at each start. `sys.executable`
-   becomes that link. When `packages` is read-only and has no such environment,
-   `sys.executable` stays as it is."
+   runtime. This makes `packages` an environment: `pyvenv.cfg`, a link to that CPython in
+   `.python`, and a site module that adds `packages` and the install paths at each start.
+   `sys.executable` becomes that link. CPython reads the `pyvenv.cfg` of the directory above
+   its link, so its prefix is `packages` and its pip replaces and removes the packages there:
+   pip changes no package outside its prefix. The link is not in `bin`, where the console
+   scripts are: that directory can be on PATH. When `packages` is read-only and has no such
+   environment, `sys.executable` stays as it is."
   [ctx packages]
   (pyrt/exec!
     ctx
@@ -2378,9 +2381,8 @@
       python-cli-shared-scheme-src
       "def __vis_share_python__(packages, module):\n"
       "    import os, sys, sysconfig\n"
-      "    home = os.path.join(packages, '.python')\n"
-      "    site = sysconfig.get_path('purelib', vars={'base': home, 'platbase': home})\n"
-      "    python = os.path.join(home, 'bin', 'python3')\n"
+      "    site = sysconfig.get_path('purelib', vars={'base': packages, 'platbase': packages})\n"
+      "    python = os.path.join(packages, '.python', 'python3')\n"
       "    def current(path, link):\n"
       "        try:\n"
       "            if link:\n"
@@ -2403,7 +2405,7 @@
       "                file.write(value)\n"
       "        os.replace(scratch, path)\n"
       "    try:\n"
-      "        put(os.path.join(home, 'pyvenv.cfg'),\n"
+      "        put(os.path.join(packages, 'pyvenv.cfg'),\n"
       "            f'home = {os.path.dirname(sys._base_executable)}\\n'\n"
       "            'include-system-site-packages = true\\n')\n"
       "        put(os.path.join(site, '_vis_shared_packages.py'), module)\n"

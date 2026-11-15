@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion: the Send bar of the Review app shows only when there is a saved draft, a send in progress or a receipt, and it has the same padding as the diff. Before, an empty Send button stayed at the left edge of the panel.
 - Gateway: a session in a group lists in the project of that group. Before, the session list, the project overview and the event of a new session used the directory of the session, so the session showed in a different project than its group.
 - Review: the Review app keeps its scope (range, file, full files, Git scope) and the results of the last checks and of the last AI review after a restart of Vis. It writes them to a state file next to its journal. Before, a restart showed the default scope and no results.
+- Python CLI: with shared packages, the pip of a child process replaces and removes a package. Before, `pip uninstall` in a child process of `vis-agent python --shared` removed nothing, and an install of a different version left the files of the two versions. Vis now makes the shared packages directory itself the environment of that child process: it adds `pyvenv.cfg` and `lib` there, and `sys.executable` is `.python/python3`. A console script that pip installed there before this change starts the old environment: install its package again. (#481)
 
 ## [v0.5.18] - 2026-11-14
 
