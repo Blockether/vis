@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const native = vi.hoisted(() => ({ value: true }));
 const writeFile = vi.hoisted(() => vi.fn(async () => undefined));
 const getUri = vi.hoisted(() => vi.fn(async () => ({ uri: 'file:///cache/shared/report.pdf' })));
-const deleteFile = vi.hoisted(() => vi.fn(async () => undefined));
+const rmdir = vi.hoisted(() => vi.fn(async () => undefined));
 const share = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock('@capacitor/core', () => ({
@@ -12,7 +12,7 @@ vi.mock('@capacitor/core', () => ({
 }));
 vi.mock('@capacitor/filesystem', () => ({
   Directory: { Cache: 'CACHE' },
-  Filesystem: { writeFile, getUri, deleteFile },
+  Filesystem: { writeFile, getUri, rmdir },
 }));
 vi.mock('@capacitor/share', () => ({ Share: { share } }));
 
@@ -23,7 +23,7 @@ describe('artifact sharing', () => {
     native.value = true;
     writeFile.mockClear();
     getUri.mockClear();
-    deleteFile.mockClear();
+    rmdir.mockClear();
     share.mockClear();
   });
 
@@ -37,7 +37,7 @@ describe('artifact sharing', () => {
     expect(result).toBe('Artifact shared.');
     expect(writeFile).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: expect.stringMatching(/^shared\/\d+-Q3-report\.pdf$/),
+        path: expect.stringMatching(/^shared\/\d+\/Q3-report\.pdf$/),
         directory: 'CACHE',
         recursive: true,
       }),
@@ -47,7 +47,11 @@ describe('artifact sharing', () => {
       files: ['file:///cache/shared/report.pdf'],
       dialogTitle: 'Share artifact',
     });
-    expect(deleteFile).toHaveBeenCalledWith(expect.objectContaining({ directory: 'CACHE' }));
+    expect(rmdir).toHaveBeenCalledWith({
+      path: expect.stringMatching(/^shared\/\d+$/),
+      directory: 'CACHE',
+      recursive: true,
+    });
   });
 
   it('uses the browser file share contract when it is available', async () => {

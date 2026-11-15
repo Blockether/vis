@@ -109,6 +109,52 @@
                   (expect (nil? (kind-at (+ 2 (:col card)) (+ 2 (:row card)))))
                   (expect (nil? (kind-at (:col card) pager-row))))))
   (describe
+    "links"
+    ;; User request: the notice of an export names the file, and a click on that name
+    ;; opens its folder. So a link in a notice takes a click, and the rest does not.
+    (it
+      "makes each line of a wrapped file link a click region with the file as target"
+      (let [shown
+            "~/Downloads/Vis Artifacts/release-plan-for-the-acme-widgets-rollout-0f3f2a1e.html"
+
+            file
+            (str "/Users/ada/" (subs shown 2))
+
+            card
+            (toasts/layout (page shown :title "Exported as HTML" :links [{:text shown :path file}])
+                           {:left 2 :top 3 :cols 44 :rows 20})
+
+            links
+            (filter #(= :toast-link (:kind %)) (toasts/click-regions card))
+
+            first-row
+            (+ (:row card) 4)
+
+            cells
+            (fn [{r :row c :col w :width}]
+              (subs (nth (:lines card) (- r first-row))
+                    (- c (:col card) 2)
+                    (- (+ c w) (:col card) 2)))]
+
+        (expect (< 1 (count links)))
+        (expect (= (count (:lines card)) (count links)))
+        (expect (every? #(= {:path file} (:target %)) links))
+        ;; A wrap drops only the space between two lines.
+        (expect (= (str/replace shown " " "") (str/replace (apply str (map cells links)) " " "")))))
+    (it "makes a bare URL a link, and leaves the words around it to the transcript"
+        (let [card
+              (toasts/layout (page "Read https://example.com/notes first")
+                             {:left 0 :top 0 :cols 80 :rows 20})
+
+              [link & more]
+              (filter #(= :toast-link (:kind %)) (toasts/click-regions card))]
+
+          (expect (empty? more))
+          (expect (= {:url "https://example.com/notes"} (:target link)))
+          (expect (= [(+ (:row card) 2) (+ (:col card) 2 (count "Read "))
+                      (count "https://example.com/notes")]
+                     [(:row link) (:col link) (:width link)])))))
+  (describe
     "placement"
     ;; User request: a global notice stands in the top-left corner of the whole
     ;; window, and a session notice in the top-left corner of the transcript. Both

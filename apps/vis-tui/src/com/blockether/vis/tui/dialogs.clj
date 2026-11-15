@@ -9163,7 +9163,7 @@
                   hint-row
                   inner-w
                   [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"] ["C-s" "star"]
-                   ["C-d" "delete"] ["C-b" "project"]
+                   ["C-d" "delete"] ["C-x" "export"] ["C-b" "project"]
                    [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
                    [(keymap/chord \a)
                     (if (= :only (:archived @search-scope)) "hide archived" "show archived")]
@@ -9266,6 +9266,12 @@
                          (= (lower-key-character key) \d))
                     (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                       {:action :delete :id id}
+                      (recur))
+                    (and (input/ctrl-modifier? key)
+                         (= KeyType/Character (key-type key))
+                         (= (lower-key-character key) \x))
+                    (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                      {:action :export :id id}
                       (recur))
                     (and (input/ctrl-modifier? key)
                          (= KeyType/Character (key-type key))
@@ -9521,6 +9527,11 @@
     :group "Session"
     :label "Session Metrics"
     :description "Show the token use and budgets of this session"}
+   {:id :export-session
+    :group "Session"
+    :label "Export Session…"
+    :description "Save this session as HTML, Markdown or a snapshot"
+    :show-when :has-turns}
    {:id :archive-session
     :group "Session"
     :label "Archive Session"

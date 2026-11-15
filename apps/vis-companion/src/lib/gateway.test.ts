@@ -2056,6 +2056,48 @@ it('encodes literal log search and retains bounded match offsets', async () => {
   expect(url.searchParams.get('limit')).toBe('200');
 });
 
+it('reads the HTML page, the Markdown file and the snapshot of a session as files, with header authentication', async () => {
+  const fetches = vi
+    .fn()
+    .mockResolvedValueOnce(new Response('<html></html>', { status: 200 }))
+    .mockResolvedValueOnce(new Response('# Turn 1', { status: 200 }))
+    .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 255]), { status: 200 }));
+  vi.stubGlobal('fetch', fetches);
+  const { GatewayClient } = await import('./gateway');
+  const client = new GatewayClient({ ...conn, token: 'fixture-token' });
+  expect(await (await client.transcriptHtml('session/one')).text()).toBe('<html></html>');
+  expect(await (await client.transcriptMarkdown('session/one')).text()).toBe('# Turn 1');
+  expect(new Uint8Array(await (await client.sessionSnapshot('session/one')).arrayBuffer())).toEqual(
+    new Uint8Array([1, 2, 255]),
+  );
+  expect(fetches.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+    '/v1/sessions/session%2Fone/transcript.html',
+    '/v1/sessions/session%2Fone/transcript.md',
+    '/v1/sessions/session%2Fone/snapshot',
+  ]);
+  for (const [, init] of fetches.mock.calls)
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer fixture-token');
+});
+
+it('gives the reason of a refused session export, and names a network failure', async () => {
+  const refusal = { error: { type: 'session/snapshot-too-large', message: 'The session snapshot exceeds the size limit' } };
+  const fetches = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(refusal), { status: 413 }))
+    .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  vi.stubGlobal('fetch', fetches);
+  const { GatewayClient } = await import('./gateway');
+  const client = new GatewayClient(conn);
+  await expect(client.sessionSnapshot('s1')).rejects.toMatchObject({
+    status: 413,
+    message: 'The session snapshot exceeds the size limit',
+  });
+  await expect(client.transcriptHtml('s1')).rejects.toMatchObject({
+    status: 0,
+    message: 'network error: Failed to fetch',
+  });
+});
+
 // #212: paging remains authenticated and does not replace the form's source identity.
 it('reads and validates a durable Activity page and exports with header authentication', async () => {
   const { activityHistoryPage } = await import('../dev/activity-history');

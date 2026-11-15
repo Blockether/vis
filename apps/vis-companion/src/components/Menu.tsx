@@ -16,10 +16,11 @@
  * BEFORE it has ever been measured, so the number and the class it paints itself
  * at have to travel together.
  */
-import type { CSSProperties, ReactNode } from 'react';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { EDGE_MARGIN, type MenuPosition } from '../lib/anchored-menu';
+import { useBackLayer } from '../lib/edge-back';
 import { useKeyboardInset } from '../lib/viewport';
 import { ChevronIcon } from './icons';
 import { CloseButton } from './ui';
@@ -84,6 +85,11 @@ export function AnchoredPanel({
   // Keep it beside its trigger while there is room for a field and an action;
   // only a trigger too close to the keys needs its panel lifted above them.
   const keyboardInset = useKeyboardInset();
+  // The phone's back closes the open panel before the screen under it.
+  useBackLayer(onDismiss);
+  // A touch opens the panel on pointer-up, and the click of that same touch then lands on
+  // this new scrim. Only a press that began on the scrim dismisses.
+  const dismissOnClick = useRef(false);
   const place = at ?? { left: EDGE_MARGIN, top: EDGE_MARGIN };
   const keyboardEdge = window.innerHeight - keyboardInset - EDGE_MARGIN;
   const top = keyboardInset > 0 && place.top !== undefined && keyboardEdge - place.top < MIN_KEYBOARD_ROOM
@@ -96,7 +102,13 @@ export function AnchoredPanel({
     <div
       className="fixed inset-0 z-50"
       role="presentation"
-      onClick={onDismiss}
+      onPointerDown={(event) => {
+        dismissOnClick.current = event.target === event.currentTarget;
+      }}
+      onClick={() => {
+        if (dismissOnClick.current) onDismiss();
+        dismissOnClick.current = false;
+      }}
     >
       <div
         role={role}

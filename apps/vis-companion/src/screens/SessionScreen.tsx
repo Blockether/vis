@@ -62,7 +62,7 @@ import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
-import { Banner, ComposerButton, IconButton, LoadMore, Spinner, Toast } from '../components/ui';
+import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
@@ -126,16 +126,11 @@ import {
   queuedTurnFromWire,
   type QueueDelta,
 } from '../lib/gateway';
-import {
-  NO_NOTICES,
-  dismissNotice as dropNotice,
-  noticeOf,
-  pushNotice,
-  settleNotices,
-  shownPage,
-  turnNoticePage,
-  type NoticePages,
-} from '../lib/notification';
+import { noticeOf } from '../lib/notification';
+import { useNotices } from '../lib/use-notices';
+import type { AnchorBox } from '../lib/anchored-menu';
+import { NoticeToast } from '../components/NoticeToast';
+import { useSessionExport } from '../components/SessionExportMenu';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
@@ -571,10 +566,6 @@ const FALLBACK_SLASHES: SlashCommand[] = [
   { name: '/sessions', doc: 'Return to the session list.' },
   { name: '/rename', doc: "Rename this session's title." },
   {
-    name: '/export',
-    doc: 'Export this session transcript to Markdown or HTML.',
-  },
-  {
     name: '/cd',
     doc: "Show or change the session's filesystem root (the directory Vis works in).",
   },
@@ -943,34 +934,21 @@ export function SessionScreen({
   // being written under the new session's key.
   const draftMessageReadyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  // The `vis.notify` toasts of this session as pages, newest first. One page shows, and
-  // only its clock runs; `at` is the time of the last change, so a render reads one clock.
-  const [notices, setNotices] = useState<{ pages: NoticePages; at: number }>({ pages: NO_NOTICES, at: 0 });
-  const changeNotices = useCallback((change: (pages: NoticePages, now: number) => NoticePages) => {
-    setNotices(({ pages }) => {
-      const now = Date.now();
-      return { pages: change(pages, now), at: now };
-    });
-  }, []);
-  const dismissNotice = useCallback((id: string) => changeNotices((pages, now) => dropNotice(pages, id, now)), [changeNotices]);
-  const turnNotice = useCallback((delta: number) => changeNotices((pages, now) => turnNoticePage(pages, delta, now)), [changeNotices]);
+  // The toasts of this session: the `vis.notify` notices and the result of an export.
+  const notices = useNotices();
+  const { push: pushNotice, clear: clearNotices } = notices;
   useEffect(() => {
     const stop = subscriptions.subscribeSession(sid, (event) => {
       const next = noticeOf(event);
-      if (next) changeNotices((pages, now) => pushNotice(pages, next, now));
+      if (next) pushNotice(next);
     });
     return () => {
       stop();
-      setNotices({ pages: NO_NOTICES, at: 0 });
+      clearNotices();
     };
-  }, [subscriptions, sid, changeNotices]);
-  const noticePage = shownPage(notices.pages, notices.at);
-  const noticeLeftMs = noticePage?.remainingMs;
-  useEffect(() => {
-    if (noticeLeftMs === undefined) return;
-    const timer = window.setTimeout(() => changeNotices(settleNotices), noticeLeftMs + 20);
-    return () => window.clearTimeout(timer);
-  }, [noticeLeftMs, notices.at, changeNotices]);
+  }, [subscriptions, sid, pushNotice, clearNotices]);
+  const sessionExport = useSessionExport(notices);
+  const surfaceRef = useRef<HTMLElement>(null);
   // The session's provider/model pick. Seeded from the client's snapshot so the
   // header chip names the model on the FIRST frame instead of reading "model"
   // until the gateway answers, then written through by authoritative events and picks.
@@ -5813,9 +5791,20 @@ export function SessionScreen({
     goal: session?.goal,
     agentPath: isSubagent && session?.agent ? agentPath(sid, session.agent, team.agents, title) : undefined,
   };
+  // The export formats hang under `anchor`: the header menu gives its own control. The key and
+  // the palette use the header, or the top of the pane in Zen mode, which has no header.
+  const askExport = (anchor?: AnchorBox) => {
+    const surface = surfaceRef.current?.getBoundingClientRect();
+    const header = surfaceRef.current?.querySelector('[data-session-header]')?.getBoundingClientRect();
+    const top = surface && { top: surface.top, bottom: surface.top, right: surface.right };
+    sessionExport.open(client, { id: sid, title: session?.title?.trim() ?? '' }, anchor ?? header ?? top ?? null);
+  };
+  // A session without turns has nothing to export.
+  const canExport = turns.length > 0;
   const headerCommands: SessionHeaderCommands = {
     back: onBack,
     openParent: (parentId) => onOpenSession(parentId),
+    exportSession: canExport ? askExport : undefined,
     settings: () => setSettingsOpen(true),
     zen: () => setZenMode(true),
     toggleArtifacts: () => {
@@ -5845,6 +5834,7 @@ export function SessionScreen({
     'toggle-voice-recording': voiceSupported && (() => void toggleVoice()),
     'toggle-voice-conversation': voiceSupported && (() => void switchVoiceMode()),
     'session-settings': () => setSettingsOpen(true),
+    'export-session': canExport && (() => askExport()),
     'agent-parent': !!parentId && (() => onOpenSession(parentId)),
   });
 
@@ -5859,6 +5849,7 @@ export function SessionScreen({
           // stands in here, so it covers the pane and never the desk beside it. The pane
           // has no entry fade: every switch remounts it, and a fade from blank is a flicker.
           data-session-surface
+          ref={surfaceRef}
           // A hover note, such as the task of an agent, stays in this pane below its header.
           data-hover-note-bounds
           className={`relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${zen ? 'zen-surface' : 'bg-ink'}`}
@@ -5868,6 +5859,7 @@ export function SessionScreen({
            is answered. Its overlay stands in THIS pane, so a waiting question
            never covers the desk beside it — the TUI shows the same form. */}
           <HumanInputPrompt client={client} subscriptions={subscriptions} sid={sid} />
+          {sessionExport.menu}
           {settingsOpen && (
             <ScopedSettingsDialog client={client} target={{ ...settingsTarget, label: headerModel.title }} onClose={() => setSettingsOpen(false)} />
           )}
@@ -5932,24 +5924,9 @@ export function SessionScreen({
             {/* Toasts float over the top-left corner of the transcript rectangle, outside
             the scroller, so they stay put while the transcript scrolls and never cover the
             sidebar. */}
-            {noticePage && (
+            {notices.page && (
               <div className="pointer-events-none absolute top-3 left-3 z-20 flex w-[calc(100%-1.5rem)] max-w-sm flex-col">
-                <Toast
-                  key={noticePage.notice.id}
-                  kind={noticePage.notice.kind}
-                  title={noticePage.notice.title}
-                  source={noticePage.notice.source}
-                  onDismiss={() => dismissNotice(noticePage.notice.id)}
-                  page={{
-                    index: noticePage.index,
-                    total: noticePage.total,
-                    onPrevious: () => turnNotice(-1),
-                    onNext: () => turnNotice(1),
-                  }}
-                  countdown={{ durationMs: noticePage.durationMs, remainingMs: noticePage.remainingMs }}
-                >
-                  {noticePage.notice.text}
-                </Toast>
+                <NoticeToast notices={notices} />
               </div>
             )}
             {/* The gallery belongs to this session but not to this transcript rectangle:

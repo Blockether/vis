@@ -5120,6 +5120,40 @@ export class GatewayClient {
     return blob;
   }
 
+  /**
+   * One whole export file as a Blob. An export has no deadline: a long session takes the time
+   * that it needs. A refusal carries the words of the gateway.
+   */
+  private async exportBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.base}${path}`, { headers: this.headers(), signal });
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      throw new GatewayError(0, `network error: ${errorOfDiagnostic(cause)}`);
+    }
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => undefined);
+      throw new GatewayError(response.status, errorText(body, response.status), body);
+    }
+    return response.blob();
+  }
+
+  /** The session as one HTML page that opens in a browser without a gateway. */
+  transcriptHtml(sid: string, signal?: AbortSignal): Promise<Blob> {
+    return this.exportBlob(`/v1/sessions/${encodeURIComponent(sid)}/transcript.html`, signal);
+  }
+
+  /** The session as one Markdown file. */
+  transcriptMarkdown(sid: string, signal?: AbortSignal): Promise<Blob> {
+    return this.exportBlob(`/v1/sessions/${encodeURIComponent(sid)}/transcript.md`, signal);
+  }
+
+  /** The `.vissnap` bytes of the session, which Vis imports as a new session. */
+  sessionSnapshot(sid: string, signal?: AbortSignal): Promise<Blob> {
+    return this.exportBlob(`/v1/sessions/${encodeURIComponent(sid)}/snapshot`, signal);
+  }
+
   /** How much of `sid`'s transcript we hold, and how much older history exists. */
   transcriptWindow(sid: string): TranscriptWindow {
     return (

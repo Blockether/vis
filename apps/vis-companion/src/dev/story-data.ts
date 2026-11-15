@@ -1405,7 +1405,6 @@ export const STORY_FILE_SUGGESTIONS: FileSuggestion[] = [
 export const STORY_SLASH_COMMANDS: SlashCommand[] = [
   { name: '/help', doc: 'Show the available slash commands.' },
   { name: '/rename', doc: 'Rename this session title.' },
-  { name: '/export', doc: 'Export this session transcript to Markdown or HTML.' },
 ];
 
 /** The paired fleet: reachable, unavailable, and long enough to exercise truncation. */

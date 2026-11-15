@@ -222,8 +222,10 @@ function finePointer() {
  * press and the click, and the app renders before the click lands.
  */
 function pressInWebKit(target: HTMLElement) {
+  fireEvent.pointerDown(target);
   fireEvent.mouseDown(target);
   act(() => (document.activeElement as HTMLElement | null)?.blur());
+  fireEvent.pointerUp(target);
   fireEvent.mouseUp(target);
   fireEvent.click(target);
 }

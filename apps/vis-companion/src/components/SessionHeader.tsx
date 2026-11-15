@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
 import type { AgentPath, AgentStep } from './AgentCrumb';
-import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
+import { menuPosition, type AnchorBox, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
 import { markSessionId } from '../lib/session-id';
@@ -15,6 +15,7 @@ import {
   ClipIcon,
   CopyIcon,
   DotsIcon,
+  DownloadIcon,
   LivePanelIcon,
   SettingsIcon,
   ZenIcon,
@@ -95,6 +96,8 @@ export type SessionHeaderModel = Readonly<{
 export type SessionHeaderCommands = Readonly<{
   back: () => void;
   toggleArtifacts: () => void;
+  /** Show the export formats under `anchor`. Absent for a session without turns. */
+  exportSession?: (anchor: AnchorBox) => void;
   settings?: () => void;
   /** Hide the chrome and keep only the transcript. */
   zen?: () => void;
@@ -227,6 +230,7 @@ export function SessionHeader({
        background extending behind it. iPad has no island; browsers keep their
        visible status-bar inset. */
     <header
+      data-session-header
       className={`group/parent z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : 'mouse:pt-0'}`}
     >
       {/* A subagent session has one way back, to its parent, so a phone shows no way to the list.
@@ -354,6 +358,19 @@ export function SessionHeader({
               void copySessionId();
             }}
           />
+          {commands.exportSession && (
+            <MenuItem
+              title="Export"
+              icon={<DownloadIcon className="size-3.5" />}
+              isNavigation
+              onSelect={() => {
+                // The formats hang from the same control as this menu, which stays on screen.
+                const anchor = kebab.current?.getBoundingClientRect();
+                closeMenu();
+                if (anchor) commands.exportSession?.(anchor);
+              }}
+            />
+          )}
           {commands.zen && (
             <MenuItem
               title="Zen mode"

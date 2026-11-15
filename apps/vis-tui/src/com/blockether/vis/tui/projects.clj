@@ -1563,6 +1563,7 @@
         true
         (into [(menu-item :copy-session-id "Copy session id" :copy-session-id)
                (menu-item :details "Show session details" :details)
+               (menu-item :export-session "Export session…" :export)
                (menu-item :toggle-session
                           (if (contains? selected sid) "Deselect session" "Select session")
                           :select)

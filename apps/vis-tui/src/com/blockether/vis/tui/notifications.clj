@@ -9,7 +9,8 @@
 
      (notify! text)
      (notify! text :level :info|:success|:warn|:error
-                   :ttl-ms <long>|nil :title <string> :id <string> :source <string>)
+                   :ttl-ms <long>|nil :title <string> :id <string> :source <string>
+                   :links [{:text <string> :path <string>} …])
      (notifications)              ;; vec of currently-active entries
      (dismiss! id)                ;; force-clear by id
      (clear-expired!)             ;; prune; called on every read
@@ -22,6 +23,7 @@
       :level       :info | :success | :warn | :error
       :title       <string> | nil     ;; one bold toast line
       :source      <string> | nil     ;; the extension that sent it
+      :links       [{:text :path}]    ;; parts of the text that open a place on a click
       :session-id  <string> | nil     ;; nil = global, else only that session shows it
       :created-at  <epoch-ms>
       :ttl-ms      <long> | nil       ;; nil = sticky / manual dismiss
@@ -324,10 +326,13 @@
      :id          the entry identity. A push with an active id replaces it.
      :source      the extension that sent the notification.
      :session-id  the only session that shows it. Without it, every session shows it.
+     :links       parts of the text that a click opens: each is `{:text :path}`, where
+                  `:text` is a part of `text` and `:path` is a local file to show in the
+                  file manager. A bare URL in `text` is a link without this option.
 
    The notification is appended to the in-memory vec and every
    registered watcher is fired with the new full vec."
-  [text & {:keys [level title source session-id] :or {level :info} :as opts}]
+  [text & {:keys [level title source session-id links] :or {level :info} :as opts}]
   (when-not (string? text)
     (throw (ex-info "notify! text must be a String" {:type :vis/notify-bad-text :text text})))
   (when-not (VALID_LEVELS level)
@@ -352,6 +357,9 @@
 
           (not-empty source)
           (assoc :source source)
+
+          (seq links)
+          (assoc :links (vec links))
 
           (not-empty (some-> session-id
                              str))

@@ -474,6 +474,41 @@
              (expect (= first-page second-page))))
         (expect (= [nil "W/\"a\""] (mapv second @sent))))))
 
+(defdescribe
+  session-export-test
+  ;; The export menu saves what this call gives. A refusal must come back as its
+  ;; message, or the TUI would save the JSON error body as the export file.
+  (it "reads each format from its route and throws the gateway's message on a refusal"
+      (let [asked
+            (atom [])
+
+            answer
+            (atom {:status 200 :body (.getBytes "page" "UTF-8")})]
+
+        (with-redefs-fn {#'client/target! (fn []
+                                            {})
+                         #'client/ensure-client! (fn [_]
+                                                   nil)
+                         #'client/gw-send! (fn [_ verb path opts]
+                                             (swap! asked conj [verb path (:as opts)])
+                                             @answer)}
+          #(do (expect (= "page" (String. (client/session-export "s1" :html) "UTF-8")))
+               (client/session-export "s1" :md)
+               (client/session-export "s1" :snapshot)
+               (expect (= [["GET" "/v1/sessions/s1/transcript.html" :bytes]
+                           ["GET" "/v1/sessions/s1/transcript.md" :bytes]
+                           ["GET" "/v1/sessions/s1/snapshot" :bytes]]
+                          @asked))
+               (reset! answer
+                 {:status 503
+                  :body
+                  (.getBytes
+                    "{\"error\":{\"code\":\"web_app_missing\",\"message\":\"No web bundle.\"}}"
+                    "UTF-8")})
+               (expect (= "No web bundle."
+                          (try (client/session-export "s1" :html)
+                               (catch clojure.lang.ExceptionInfo e (ex-message e))))))))))
+
 (defdescribe router-refresh-failure-keeps-data-and-backs-off
              (it "router refresh failure keeps data and backs off"
                  (let [rows [{"id" "test-provider" "default_model" "old-model"}]]

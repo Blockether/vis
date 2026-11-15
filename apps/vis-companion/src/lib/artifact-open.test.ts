@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const native = vi.hoisted(() => ({ value: false }));
 const writeFile = vi.hoisted(() => vi.fn(async () => undefined));
 const getUri = vi.hoisted(() => vi.fn(async () => ({ uri: 'file:///cache/report.xlsx' })));
-const deleteFile = vi.hoisted(() => vi.fn(async () => undefined));
+const rmdir = vi.hoisted(() => vi.fn(async () => undefined));
 const share = vi.hoisted(() => vi.fn(async () => ({})));
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => native.value } }));
 vi.mock('@capacitor/filesystem', () => ({
   Directory: { Cache: 'CACHE' },
-  Filesystem: { writeFile, getUri, deleteFile },
+  Filesystem: { writeFile, getUri, rmdir },
 }));
 vi.mock('@capacitor/share', () => ({ Share: { share } }));
 
@@ -96,7 +96,7 @@ describe('spreadsheet file hand-off', () => {
     expect(await openSpreadsheet(workbook(), 'Q3 report.xlsx', XLSX_MEDIA)).toBe('Workbook shared.');
     expect(writeFile).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: expect.stringMatching(/^shared\/\d+-Q3-report\.xlsx$/),
+        path: expect.stringMatching(/^shared\/\d+\/Q3-report\.xlsx$/),
         directory: 'CACHE',
         data: 'UEsDBAD/',
       }),
@@ -107,14 +107,14 @@ describe('spreadsheet file hand-off', () => {
       dialogTitle: 'Open workbook in an app',
     });
     // A receiving app may read the shared URI after the chooser has returned.
-    expect(deleteFile).not.toHaveBeenCalled();
+    expect(rmdir).not.toHaveBeenCalled();
   });
 
   it('treats a dismissed native app chooser as cancellation', async () => {
     native.value = true;
     share.mockRejectedValueOnce(new Error('Share canceled'));
     expect(await openSpreadsheet(workbook(), 'report.xlsx')).toBe('');
-    expect(deleteFile).toHaveBeenCalledOnce();
+    expect(rmdir).toHaveBeenCalledOnce();
   });
 
   it('downloads in a browser even when Web Share is available', async () => {
@@ -151,7 +151,7 @@ describe('spreadsheet file hand-off', () => {
     native.value = true;
     share.mockRejectedValueOnce(new Error('App hand-off failed'));
     await expect(openSpreadsheet(workbook(), 'report.xlsx')).rejects.toThrow('App hand-off failed');
-    expect(deleteFile).toHaveBeenCalledOnce();
+    expect(rmdir).toHaveBeenCalledOnce();
   });
 });
 

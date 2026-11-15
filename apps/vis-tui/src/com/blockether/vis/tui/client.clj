@@ -1019,36 +1019,6 @@
                 (str "/v1/sessions/" (enc sid)
                      "/transcript" (when (seq qs) (str "?" (str/join "&" qs)))))))
 
-(defn transcript-md
-  "The gateway's Markdown export of `sid` (`transcript-export/md`): each turn as the
-   Compact mode of the session screen shows it. Returns the string, or nil on a non-2xx."
-  [sid]
-  (let [entry
-        (target!)
-
-        _
-        (ensure-client! entry)
-
-        response
-        (gw-send! entry "GET" (str "/v1/sessions/" (enc sid) "/transcript.md") {:as :string})]
-
-    (when (< (long (:status response)) 400) (:body response))))
-
-(defn transcript-html
-  "The standalone HTML export of `sid`: the web app's own transcript page with the
-   session in it, rendered by the gateway. Returns the string, or nil on a non-2xx."
-  [sid]
-  (let [entry
-        (target!)
-
-        _
-        (ensure-client! entry)
-
-        response
-        (gw-send! entry "GET" (str "/v1/sessions/" (enc sid) "/transcript.html") {:as :string})]
-
-    (when (< (long (:status response)) 400) (:body response))))
-
 (defn turn-trace
   "Canonical wire iterations of ONE persisted turn (nil when the id is
    unknown to the daemon)."
@@ -2026,6 +1996,36 @@
                       {:http-status (:status response) :body body})))
     body))
 
+(def ^:private session-export-timeout-ms
+  "A whole session arrives as ONE body. The page-sized read timeout would stop the
+   export of a long session before its end."
+  120000)
+
+(def ^:private session-export-routes
+  "The gateway route of each export format, after `/v1/sessions/<sid>`."
+  {:html "/transcript.html" :md "/transcript.md" :snapshot "/snapshot"})
+
+(defn session-export
+  "The bytes of session `sid` in the export format `fmt`: `:html` is the standalone
+   page, `:md` is the Markdown digest and `:snapshot` is the `.vissnap` file. Throws
+   `ex-info` with the gateway's message on a non-2xx, so the caller can say why no
+   file came."
+  ^bytes [sid fmt]
+  (let [entry
+        (target!)
+
+        _
+        (ensure-client! entry)
+
+        response
+        (gw-send! entry
+                  "GET"
+                  (str "/v1/sessions/" (enc sid) (session-export-routes fmt))
+                  {:as :bytes :timeout-ms session-export-timeout-ms})]
+
+    (when-not (< (long (:status response)) 400) (parsed-response! response))
+    (:body response)))
+
 (defn- speech-query
   [engine-id voice-id]
   (let [parts (cond-> []
@@ -2767,8 +2767,6 @@
 (def gateway-transcribe-audio! transcribe-audio!)
 
 (def gateway-transcript transcript)
-
-(def gateway-transcript-md transcript-md)
 
 (def gateway-transcript-page transcript-page)
 

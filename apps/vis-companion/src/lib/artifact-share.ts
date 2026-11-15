@@ -63,12 +63,14 @@ export async function shareArtifact(
   const title = options.title ?? name;
   const dialogTitle = options.dialogTitle ?? 'Share artifact';
   const noun = options.noun ?? 'Artifact';
-  let nativePath: string | null = null;
+  let nativeFolder: string | null = null;
   let nativeShared = false;
 
   try {
     if (Capacitor.isNativePlatform()) {
-      nativePath = `shared/${Date.now()}-${filename}`;
+      // A folder for each hand-off, so the receiver gets the file under its real name.
+      nativeFolder = `shared/${Date.now()}`;
+      const nativePath = `${nativeFolder}/${filename}`;
       const dataUrl = await blobAsDataUrl(blob);
       await Filesystem.writeFile({
         path: nativePath,
@@ -100,10 +102,11 @@ export async function shareArtifact(
     if (sheetDismissed(cause)) return '';
     throw cause;
   } finally {
-    if (nativePath && !(nativeShared && options.retainCacheFile)) {
-      void Filesystem.deleteFile({
-        path: nativePath,
+    if (nativeFolder && !(nativeShared && options.retainCacheFile)) {
+      void Filesystem.rmdir({
+        path: nativeFolder,
         directory: Directory.Cache,
+        recursive: true,
       }).catch(() => undefined);
     }
   }

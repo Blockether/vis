@@ -184,6 +184,7 @@ The switcher also has these keys:
 | Ctrl+F | Fork the selected session |
 | Ctrl+S | Star or unstar the selected session |
 | Ctrl+D | Delete the selected session after you confirm |
+| Ctrl+X | Export the selected session to a file |
 | Esc | Close the switcher |
 
 To browse by project, press **Ctrl+X b w** to open **Projects**. It lists saved
@@ -349,15 +350,36 @@ separate copy, fork in the terminal or an app.
 ## Export a session
 
 Export a saved session to share a conversation, review its tool calls or keep a
-readable transcript. Use a session id from `vis-agent sessions list`:
+readable transcript. You can export a session once it has a turn. An export is one
+file in one of these formats:
 
-```bash
-vis-agent sessions export <SESSION-ID> [--md | --html PATH | --snapshot PATH]
-```
+- **HTML** is a self-contained page that opens in a browser.
+- **Markdown** is the text of each turn, including tool calls.
+- **Snapshot** is a `.vissnap` file that Vis imports as a new session. To use it, read
+  [Move a session to another computer](#move-a-session-to-another-computer).
+
+To export a session:
+
+- **Terminal:** press **Ctrl+X s e**, then choose the format. Vis saves the file in
+  **Vis Artifacts** in your downloads folder and shows a notice with the file name.
+  Click the file name to open its folder. To export another session, select it in the
+  session switcher and press **Ctrl+X**, or press **e** on its row in **Projects**.
+- **Desktop or phone app:** open the session's actions in the session list and choose
+  **Export**, then the format. The desktop app saves the file in a new folder in
+  **Vis Artifacts** in your downloads folder and shows it in the file manager. The phone
+  app opens the share sheet. In a browser, the file goes to your downloads.
 
 Vis does not remove private data from an export. Read an export before you share
 it. To remove private details, follow [Reporting a
 bug](reporting-bugs.md#sharing-a-transcript).
+
+### Export from the command line
+
+Use a session id from `vis-agent sessions list`:
+
+```bash
+vis-agent sessions export <SESSION-ID> [--md | --html PATH | --snapshot PATH]
+```
 
 ### Markdown
 

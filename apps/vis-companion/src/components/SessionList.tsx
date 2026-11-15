@@ -24,6 +24,7 @@ import { SwipeActions, type SwipeAction } from './SwipeActions';
 import {
   ArchiveIcon,
   CopyIcon,
+  DownloadIcon,
   FolderPlusIcon,
   ForkIcon,
   PencilIcon,
@@ -137,6 +138,8 @@ export type SessionRowCommands = {
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   /** Copy the entire conversation and open the fork; absent in standalone rows. */
   fork?: (session: Session, conn: GatewayConn) => Promise<void>;
+  /** Show the export formats of this session under `anchor`; absent in standalone rows. */
+  exportSession?: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
   /** Ask to delete the session, or the whole selection `ids` with its measured row `heights`. */
   requestDelete: (
     session: Session,
@@ -705,6 +708,17 @@ export const SessionRow = memo(function SessionRow({
                           label: forkBusy ? 'Forking...' : 'Fork',
                           icon: <ForkIcon className="size-4" />,
                           onSelect: () => void forkSession(),
+                        },
+                      ]
+                    : []),
+                  // A session without turns has nothing to export.
+                  ...(commands.exportSession && session.turn_count > 0
+                    ? [
+                        {
+                          key: 'export',
+                          label: 'Export',
+                          icon: <DownloadIcon className="size-4" />,
+                          onSelect: (anchor: HTMLElement) => commands.exportSession?.(session, conn, anchor),
                         },
                       ]
                     : []),

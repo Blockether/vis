@@ -41,12 +41,20 @@ export function archiveOpenVerb(): 'Show in Finder' | 'Show in folder' | 'Save' 
   return Capacitor.isNativePlatform() ? 'Save' : 'Download';
 }
 
+/** The words of one kept file: its noun in a message and the title of the phone sheet. */
+export type KeptFileWords = { noun: string; dialogTitle: string };
+
 /**
- * Keep the original archive as a file. The desktop host saves it in Downloads/Vis Artifacts and
- * shows it in Finder, Explorer or the Linux file manager. A phone offers the save sheet.
+ * Keep one file on this host. The desktop host saves it in Downloads/Vis Artifacts and shows it
+ * in Finder, Explorer or the Linux file manager. A phone offers the share sheet, which holds
+ * Save to Files. A browser downloads it. The answer is '' when the person closed the sheet.
  */
-export async function keepArchive(blob: Blob, name: string, mediaType = ''): Promise<string> {
-  if (!isArchiveMedia(mediaType || blob.type, name)) throw new Error('Not an archive.');
+export async function keepFile(
+  blob: Blob,
+  name: string,
+  mediaType: string,
+  { noun, dialogTitle }: KeptFileWords,
+): Promise<string> {
   const filename = sharedFilename(name);
   const invoke = desktopInvoke();
   if (invoke) {
@@ -55,16 +63,22 @@ export async function keepArchive(blob: Blob, name: string, mediaType = ''): Pro
       data: Array.from(new Uint8Array(await blob.arrayBuffer())),
     })) as { revealed: boolean; path: string };
     return result.revealed
-      ? `Archive saved to ${result.path}.`
-      : `Archive saved to ${result.path}. Open that folder to find it.`;
+      ? `${noun} saved to ${result.path}.`
+      : `${noun} saved to ${result.path}. Open that folder to find it.`;
   }
   if (Capacitor.isNativePlatform()) {
     return shareArtifact(blob, filename, mediaType || blob.type, {
       title: name,
-      dialogTitle: 'Save archive',
-      noun: 'Archive',
+      dialogTitle,
+      noun,
       retainCacheFile: true,
     });
   }
-  return downloadArtifact(blob, filename, 'Archive');
+  return downloadArtifact(blob, filename, noun);
+}
+
+/** Keep the original archive as a file; see `keepFile` for what each host does. */
+export async function keepArchive(blob: Blob, name: string, mediaType = ''): Promise<string> {
+  if (!isArchiveMedia(mediaType || blob.type, name)) throw new Error('Not an archive.');
+  return keepFile(blob, name, mediaType, { noun: 'Archive', dialogTitle: 'Save archive' });
 }

@@ -322,7 +322,9 @@
              ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
              [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
              [(keymap/label-for :session-metrics)
-              "Session metrics — context health, totals and cache"]]}
+              "Session metrics — context health, totals and cache"]
+             [(keymap/label-for :export-session)
+              "Export session — a file as HTML, Markdown or a snapshot"]]}
      {:title "Subagents"
       :rows [[(keymap/label-for :toggle-agent-dock) "Show or hide the agent table of the dock"]
              [(str (keymap/group-chord :agents) " 1-9") "Open the subagent with that number"]

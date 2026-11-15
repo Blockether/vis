@@ -52,6 +52,7 @@ describe('desktop row action menu', () => {
     expect(buttons[0]).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
     expect(buttons.at(-1)).toHaveFocus();
+    fireEvent.pointerDown(menu.parentElement!);
     fireEvent.click(menu.parentElement!);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     fireEvent.click(trigger);

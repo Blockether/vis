@@ -684,6 +684,38 @@
              (expect (= [[:saveable-slashes ["/python-echo"]] [:bump-render-version]] @events)))
            (finally (reset! registry-slash-commands-cache previous))))))
 
+;; User request: a session export has a key and a menu, and no slash command. Typed
+;; slash text offers the palette commands, so `/e` showed `/export-session`.
+(defdescribe export-has-no-typed-slash-test
+             (it "keeps the export out of the typed slash commands"
+                 (let [old-db @state/app-db]
+                   (try (reset! state/app-db {:messages [{:role :user}]})
+                        (with-redefs-fn {#'screen/registry-slash-commands (constantly [])
+                                         #'screen/template-slash-commands (constantly [])}
+                          #(let [ids (set (map :id ((deref #'screen/menu-commands) nil)))]
+                             (expect (contains? ids :fork-session)) (expect (not
+                                                                              (contains?
+                                                                                ids
+                                                                                :export-session)))))
+                        (finally (reset! state/app-db old-db))))))
+
+;; Verifier finding: in a session without turns the band and the palette hid the
+;; export, but the key still opened the menu and wrote a file with zero turns.
+(defdescribe export-needs-a-turn-test
+             (it "tells the person that a session without turns has nothing to export"
+                 (let [calls (atom [])]
+                   (with-redefs [vis/gateway-soul (fn [sid]
+                                                    {"id" sid "turn_count" 0})
+                                 dlg/select-dialog! (fn [& _]
+                                                      (swap! calls conj :menu)
+                                                      nil)
+                                 vis/notify! (fn [text & _]
+                                               (swap! calls conj text)
+                                               nil)]
+
+                     ((deref #'screen/export-session!) nil "s1")
+                     (expect (= ["No turns to export yet"] @calls))))))
+
 (defdescribe channel-status-error-routing-test
              (it "routes error status events to the notification lane only"
                  (let [events
@@ -3502,8 +3534,9 @@ therapy line 2"
                                       (keymap/prefix-spec db (:id %)))
                                    keymap/prefix-groups))]
             (let [top ((deref #'screen/band-top-row) db spec)]
-              (expect (> (long top) 10) (:title spec))
-              (expect (seq (above [(region 3 4)] top)) (:title spec))))))))
+              ;; The whole picture of rows 3 to 6 stays above the band.
+              (expect (> (long top) 7) (:title spec))
+              (expect (= [(region 3 4)] (above [(region 3 4)] top)) (:title spec))))))))
 
 ;; Regression: a modal hid every transcript picture, also a thumbnail far away from the
 ;; modal box. A modal now hides only the pictures that it covers.

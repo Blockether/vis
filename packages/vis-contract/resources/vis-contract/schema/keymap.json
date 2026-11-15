@@ -137,6 +137,14 @@
           "x-vis-group": "session"
         },
         {
+          "const": "export-session",
+          "title": "export session",
+          "description": "Export as HTML, Markdown or a snapshot",
+          "x-vis-key": "e",
+          "x-vis-group": "session",
+          "x-vis-show-when": "has-turns"
+        },
+        {
           "const": "group-new",
           "title": "new group",
           "description": "Create a group in this session's project",

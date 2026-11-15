@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Banner, LoadMore, overlayLayer } from '../components/ui';
+import { NoticeToast } from '../components/NoticeToast';
+import { useSessionExport } from '../components/SessionExportMenu';
+import { useNotices } from '../lib/use-notices';
 import {
   MachineGap,
   MachineProjectsButton,
@@ -1816,6 +1819,15 @@ export function SessionsScreen({
     // The delete is confirmed in the row, so it needs the list on screen.
     'delete-session': isVisible && !!openSession && !!row && (() => startDelete(row, openSession.conn)),
   });
+  // The export of a row: the three formats under the row action, then a toast with the result.
+  const notices = useNotices();
+  const sessionExport = useSessionExport(notices);
+  const openExport = sessionExport.open;
+  const exportRow = useCallback(
+    (session: Session, conn: GatewayConn, anchor: HTMLElement) =>
+      openExport(clientFor(conn), { id: session.id, title: session.title ?? '' }, anchor.getBoundingClientRect()),
+    [openExport],
+  );
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       open: onOpen,
@@ -1823,11 +1835,12 @@ export function SessionsScreen({
       warm: warmTranscript,
       rename: renameSession,
       fork: forkSession,
+      exportSession: exportRow,
       archive: archiveSession,
       requestDelete: startDelete,
       toggleStar,
     }),
-    [onOpen, noteOpenedRead, renameSession, forkSession, archiveSession, startDelete, toggleStar],
+    [onOpen, noteOpenedRead, renameSession, forkSession, exportRow, archiveSession, startDelete, toggleStar],
   );
   const rowActions = useMemo<SessionListActions>(
     () => ({
@@ -2297,6 +2310,18 @@ export function SessionsScreen({
             place, one band height above the top, landed back on the glass under the app bar
             for the length of every stroke. */}
         {createPortal(<PullToSearchHint phase={pullPhase} ref={hintRef} />, overlayLayer().host)}
+        {sessionExport.menu}
+        {/* The export toast hangs in the overlay layer too, so it shows above the session
+            search, whose rows have the same export action. */}
+        {notices.page &&
+          createPortal(
+            <div
+              className={`pointer-events-none ${overlayLayer().position} top-[calc(0.75rem+env(safe-area-inset-top))] left-3 z-[60] flex w-[calc(100%-1.5rem)] max-w-sm flex-col`}
+            >
+              <NoticeToast notices={notices} />
+            </div>,
+            overlayLayer().host,
+          )}
         {/* A create that failed has no button left to speak from once the order's own
             popover is gone, so the word lands on the paper the list is about to fill. */}
         {createError && (

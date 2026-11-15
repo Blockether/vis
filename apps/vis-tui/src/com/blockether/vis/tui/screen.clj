@@ -36,6 +36,7 @@
     [com.blockether.vis.tui.render :as render]
     [com.blockether.vis.tui.scroll :as scroll]
     [com.blockether.vis.tui.selection :as selection]
+    [com.blockether.vis.tui.session-export :as session-export]
     [com.blockether.vis.tui.state :as state]
     [com.blockether.vis.tui.terminal-image :as timg]
     [com.blockether.vis.tui.transient :as tr]
@@ -1571,6 +1572,11 @@
            :label "Back to Parent Session"
            :description "Open the session that started this subagent"})))
 
+(def ^:private palette-only-commands
+  "The palette commands that typed slash text does not offer. User request: a session
+   export has a key and a menu, and no slash command."
+  #{:export-session})
+
 (defn- menu-commands
   "Command universe for typed slash suggestion/exact-match handling.
 
@@ -1580,9 +1586,10 @@
    `command-palette-extra-commands` and remains minimal."
   [_screen]
   (let [base
-        (vec (concat (dlg/palette-commands-for
-                       {:has-turns? (boolean (seq (:messages @state/app-db)))
-                        :thinking-summary? (state/thinking-summary-configurable? @state/app-db)})
+        (vec (concat (remove #(contains? palette-only-commands (:id %))
+                       (dlg/palette-commands-for
+                         {:has-turns? (boolean (seq (:messages @state/app-db)))
+                          :thinking-summary? (state/thinking-summary-configurable? @state/app-db)}))
                      (registry-slash-commands)))
 
         ;; A registered slash shadows a same-named template (engine
@@ -3593,6 +3600,17 @@
      (with-dialog-lock #(open-settings-modal! screen "Providers"))
      (open-click-target! ref))))
 
+(defn- open-toast-link!
+  "Open the link `target` of a toast on a worker. A `:path` is a local file: show it in
+   the host file manager. A `:url` goes to the OS opener."
+  [{:keys [path url] :as target}]
+  (vis/worker-future
+    "vis-tui-open-toast-link"
+    #(try (report-open-result! (if path (opener/reveal-local! path) (opener/open! url)))
+          (catch Throwable e
+            (tel/log! {:level :warn :id ::open-toast-link :data {:target target} :error e}
+                      "could not open the link of a notification")))))
+
 (defn- inspect-attachment!
   "Open a staged item in the OS viewer without requiring it to be under cwd. An
    archive is shown in the file manager instead, where the person can unpack it."
@@ -5426,7 +5444,7 @@
               (let [row (long (:row (:bounds r)))]
                 ;; The toasts register their clicks again below; an old card region would stay.
                 (when (and (or (< row messages-top) (>= row messages-bottom))
-                           (not (#{:toast-dismiss :toast-next} (:kind r))))
+                           (not (#{:toast-dismiss :toast-next :toast-link} (:kind r))))
                   (.register interactions/hit-map r))))
             (header/draw-header! g db header-top cols)
             (paint-search-bar! g cols text-top db)
@@ -5700,7 +5718,7 @@
       (let [row (long (:row (:bounds r)))]
         ;; The toasts register their clicks again below; an old card region would stay.
         (when (and (or (< row messages-top) (>= row messages-bottom))
-                   (not (#{:toast-dismiss :toast-next} (:kind r))))
+                   (not (#{:toast-dismiss :toast-next :toast-link} (:kind r))))
           (.register interactions/hit-map r))))
     (paint-toasts! screen g cols text-top messages-bottom)
     ;; Recompute both the count and click region on every scroll-only frame.
@@ -6714,19 +6732,6 @@
                                                                 session-column-offset}))]
           (state/dispatch [:set-reasoning-choice id title (:value choice)])))
       (state/dispatch [:reasoning-unconfigurable]))))
-
-(defn- export-dialog-md
-  "Markdown document for the bare `/export` viewer, fetched from the GATEWAY's Markdown
-   export (`transcript-export/md`) — the SAME output every surface (CLI, `/export`
-   file) produces — instead of re-rendering the
-   conversation client-side. Falls back to a placeholder when the session has no
-   persisted transcript yet (e.g. a brand-new chat)."
-  []
-  (or (try (some-> (current-session-id)
-                   vis/gateway-transcript-md
-                   not-empty)
-           (catch Throwable _ nil))
-      "# Dialog\n\n_No transcript yet — send a message first._\n"))
 
 (defn- workspace-sessions
   []
@@ -8105,6 +8110,59 @@
                              :level :success
                              :ttl-ms copy-success-ttl-ms)))))))))
 
+(def ^:private export-notice-ttl-ms
+  "How long the notice of an export stays: the person reads the path and can click it."
+  10000)
+
+(defn- export-session!
+  "Export the session `sid` to a file. The person chooses the format. Then a worker
+   reads the export from the gateway and writes it into the saved-artifacts folder.
+   The notice shows the folder and the file name as links that show the file in the
+   file manager. A session without turns has nothing to export."
+  [screen sid]
+  (when sid
+    (let [soul (try (vis/gateway-soul (str sid)) (catch Throwable _ nil))]
+      (if (some-> (get soul "turn_count")
+                  long
+                  zero?)
+        (vis/notify! "No turns to export yet" :level :warn :ttl-ms copy-success-ttl-ms)
+        (when-let [{:keys [id label ext]} (with-dialog-lock
+                                            #(dlg/select-dialog!
+                                               screen
+                                               "Export session as…"
+                                               (mapv (fn [fmt]
+                                                       (assoc fmt :hint (str (:key fmt))))
+                                                     session-export/formats)
+                                               {:height :content :enter-label "export"}))]
+          (vis/worker-future "tui-session-export"
+                             (fn []
+                               (try
+                                 (let [file (session-export/write!
+                                              (artifact-inspector/saved-artifacts-dir)
+                                              (session-export/file-name (get soul "title") sid ext)
+                                              (vis/session-export (str sid) id))
+                                       folder (vis-paths/abbreviate-home (.getParent file))]
+
+                                   ;; The folder and the file name each get a line, so the
+                                   ;; wrap does not cut the name in the middle of a word.
+                                   (vis/notify! (str folder "\n" (.getName file))
+                                                :title (str "Exported as " label)
+                                                :level :success
+                                                :ttl-ms export-notice-ttl-ms
+                                                :links (mapv (fn [part]
+                                                               {:text part :path (.getPath file)})
+                                                             [folder (.getName file)])))
+                                 (catch Throwable e
+                                   (tel/log! {:level :warn
+                                              :id ::session-export
+                                              :data {:session-id (str sid) :format id}
+                                              :error e}
+                                             "could not export the session")
+                                   (vis/notify! (str "Could not export the session: "
+                                                     (or (ex-message e) (.getSimpleName (class e))))
+                                                :level :error
+                                                :ttl-ms status-error-ttl-ms))))))))))
+
 (defn- show-session-details!
   "Read the selected saved row's metrics/health without switching or hydrating its view."
   [screen sid session]
@@ -8268,6 +8326,9 @@
 
       :details
       (show-session-details! screen sid session)
+
+      :export-session
+      (export-session! screen sid)
 
       :copy-session-id
       (when sid (copy-session-id! sid))
@@ -9323,6 +9384,9 @@
             :toast-next
             (vis/page-notifications! (:text hit) 1)
 
+            :toast-link
+            (open-toast-link! (:target hit))
+
             :search-case
             (state/dispatch [:search-toggle-case])
 
@@ -9497,6 +9561,9 @@
 
           :toast-next
           (vis/page-notifications! (:text hit) 1)
+
+          :toast-link
+          (open-toast-link! (:target hit))
 
           :toggle-tasks
           (state/dispatch [:toggle-tasks])
@@ -10005,43 +10072,32 @@
       ;; Here Enter only runs an exact slash command
       ;; already present in the input, or submits a
       ;; normal message.
-      (do
-        (cond
-          ;; Bare `/export`: open the conversation in a
-          ;; scrollable Markdown viewer (opencode-style)
-          ;; instead of writing a file. `/export <path>`
-          ;; still writes to disk via the engine slash.
-          (= "/export"
-             (some-> (input/input->text state)
-                     str/trim))
-          (do (when-not (:dialog-open? @state/app-db)
-                (with-dialog-lock
-                  #(dlg/markdown-viewer-dialog! screen "Transcript" (export-dialog-md))))
+      (do (cond
+            ;; A slash that requires an argument typed with
+            ;; none: pop a text-input for it, then run the
+            ;; slash with the value. Cancel (Esc) just clears
+            ;; the editor.
+            (prompt-arg-slash-for-input state)
+            (let [{:keys [slash-text prompt]} (prompt-arg-slash-for-input state)]
+              (when-not (:dialog-open? @state/app-db)
+                (when-let [val (with-dialog-lock
+                                 #(dlg/text-input-dialog! screen slash-text prompt))]
+                  (when-not (str/blank? val)
+                    (state/dispatch [:send-message (str slash-text " " (str/trim val))]))))
               (state/dispatch [:reset-input]))
-          ;; A slash that requires an argument typed with
-          ;; none: pop a text-input for it, then run the
-          ;; slash with the value. Cancel (Esc) just clears
-          ;; the editor.
-          (prompt-arg-slash-for-input state)
-          (let [{:keys [slash-text prompt]} (prompt-arg-slash-for-input state)]
-            (when-not (:dialog-open? @state/app-db)
-              (when-let [val (with-dialog-lock #(dlg/text-input-dialog! screen slash-text prompt))]
-                (when-not (str/blank? val)
-                  (state/dispatch [:send-message (str slash-text " " (str/trim val))]))))
-            (state/dispatch [:reset-input]))
-          ;; UI-intent slash (for example /workspace → navigator): realize the intent
-          ;; in the channel instead of dispatching to the
-          ;; engine. Typed nested slashes never match
-          ;; `exact-command`, so this resolves them by full
-          ;; path against the engine registry.
-          (navigator-slash-for-input state) (do (when-not (:dialog-open? @state/app-db)
-                                                  (show-sessions!))
-                                                (state/dispatch [:reset-input]))
-          (slash-command-for-input screen state) (let [cmd (slash-command-for-input screen state)]
-                                                   (run-command! cmd (:slash/args cmd))
-                                                   (state/dispatch [:reset-input]))
-          :else (submit-input! @state/app-db state))
-        ::recur)
+            ;; UI-intent slash (for example /workspace → navigator): realize the intent
+            ;; in the channel instead of dispatching to the
+            ;; engine. Typed nested slashes never match
+            ;; `exact-command`, so this resolves them by full
+            ;; path against the engine registry.
+            (navigator-slash-for-input state) (do (when-not (:dialog-open? @state/app-db)
+                                                    (show-sessions!))
+                                                  (state/dispatch [:reset-input]))
+            (slash-command-for-input screen state) (let [cmd (slash-command-for-input screen state)]
+                                                     (run-command! cmd (:slash/args cmd))
+                                                     (state/dispatch [:reset-input]))
+            :else (submit-input! @state/app-db state))
+          ::recur)
 
       :cancel
       (cond (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) ::recur)
@@ -10213,6 +10269,9 @@
 
                     :fork-at-turn
                     (switch-session! {:action :fork-at-turn})
+
+                    :export-session
+                    (export-session! screen (current-session-id))
 
                     :toggle-agent-dock
                     (toggle-agent-dock!)
@@ -10566,6 +10625,10 @@
 
         :fork-at-turn
         (do (switch-session! {:action :fork-at-turn}) ::recur)
+
+        ;; C-x s e — choose a format, then write this session to a file.
+        :export-session
+        (do (export-session! screen (current-session-id)) ::recur)
 
         ;; C-x b a — show or hide the agent table of the dock.
         :toggle-agent-dock
@@ -11510,6 +11573,8 @@
                      ;; inside its project. Pick an existing group, make a new
                      ;; one, or leave the session ungrouped.
                      (= :group (:action choice)) (move-session-to-group! screen (:id choice))
+                     ;; Ctrl+X in the navigator → export the row's session to a file.
+                     (= :export (:action choice)) (export-session! screen (:id choice))
                      ;; Ctrl+B in the navigator → move a session into a
                      ;; persistent Project. Pick an existing one,
                      ;; make a new one, or remove it from its project.

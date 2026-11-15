@@ -1698,8 +1698,8 @@
         (expect (contains? with-turns :fork-at-turn))
         ;; nil ctx = the conservative turnless case
         (expect (= fresh (ids-for nil)))
-        ;; gating touches ONLY the fork verbs
-        (expect (= #{:fork-session :fork-at-turn} (set (remove fresh with-turns))))
+        ;; gating touches ONLY the fork and export verbs
+        (expect (= #{:fork-session :fork-at-turn :export-session} (set (remove fresh with-turns))))
         (expect (contains? fresh :new-session))))
   (it "offers Thinking Summary only where the model can show or omit it"
       ;; Only Claude adaptive thinking has the setting; other models get no entry.

@@ -52,6 +52,24 @@ describe('SessionHeader', () => {
     await waitFor(() => expect(rows[1]).toHaveTextContent('copied'));
   });
 
+  it('offers Export in the menu, and a press asks for the formats under the menu control', () => {
+    const exportSession = vi.fn();
+    render(
+      <SessionHeader
+        model={{ ...model, artifacts: { count: 0, isOpen: false } }}
+        commands={{ back: vi.fn(), toggleArtifacts: vi.fn(), exportSession }}
+      />,
+    );
+    const kebab = screen.getByRole('button', { name: 'Session actions' });
+    fireEvent.click(kebab);
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Session actions' })).getByRole('button', { name: /^Export/ }),
+    );
+    expect(exportSession).toHaveBeenCalledExactlyOnceWith(kebab.getBoundingClientRect());
+    // The formats replace this menu.
+    expect(screen.queryByRole('dialog', { name: 'Session actions' })).toBeNull();
+  });
+
   // User report: the session apps must be in the three-dots menu by name, not in a dialog.
   it('lists each session app by name in the menu, and a press opens or closes it', () => {
     const onPick = vi.fn();

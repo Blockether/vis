@@ -20,9 +20,13 @@
    The countdown is a thick bar on the bottom border, as long as the time left.
    A sticky notice has a plain bottom border.
 
+   A link in the text is underlined in the link color, and a click opens it. A link is
+   a bare URL of the text, or a part of the text that the notice names in `:links`.
+
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
   (:require [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.presentation :as presentation]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]))
 
@@ -42,18 +46,100 @@
   "Columns that the close mark keeps free on the heading row: a space and `✕`."
   2)
 
+(defn- wrapped
+  "`text` wrapped to `width` columns, without its empty lines."
+  [text width]
+  (into [] (remove empty?) (p/word-wrap text width)))
+
 (defn- text-lines
-  "`text` wrapped to `width` columns, at most `limit` lines. A cut ends with `…`."
-  [text width limit]
-  (let [limit
-        (long limit)
-
-        lines
-        (into [] (remove empty?) (p/word-wrap text width))]
-
+  "The first `limit` lines of the `wrapped` `lines`. A cut ends with `…`."
+  [lines width limit]
+  (let [limit (long limit)]
     (if (> (count lines) limit)
       (conj (subvec lines 0 (dec limit)) (p/ellipsize (str (nth lines (dec limit)) " …") width))
       lines)))
+
+(defn- link-spans
+  "The links of the notice `entry` over its text, each `{:start :end :target}`, in text
+   order. An item `{:text :path}` of `:links` is a link at the first place of its text,
+   with the target `{:path path}`. A bare URL is a link with the target `{:url url}`. A
+   part of the text is in one link at most, and a named link wins."
+  [{:keys [text links]}]
+  (let [^String text
+        (str text)
+
+        named
+        (keep (fn [{part :text path :path}]
+                (let [at (long (if (seq part) (.indexOf text (str part)) -1))]
+                  (when (and path (>= at 0))
+                    {:start at :end (+ at (count part)) :target {:path (str path)}})))
+              links)
+
+        urls
+        (map (fn [{:keys [start end url]}]
+               {:start start :end end :target {:url url}})
+             (presentation/url-spans text))]
+
+    (->> (concat named urls)
+         (reduce (fn [out {:keys [start end] :as span}]
+                   (if (some #(and (< (long start) (long (:end %)))
+                                   (< (long (:start %)) (long end)))
+                             out)
+                     out
+                     (conj out span)))
+                 [])
+         (sort-by :start))))
+
+(defn- line-starts
+  "The offset in `text` of each line of the `wrapped` `lines`, or nil for a line that
+   the text does not hold. A wrap drops only the space between two lines, so each line
+   starts at or after the end of the line before."
+  [^String text lines]
+  (loop [from
+         0
+
+         lines
+         (seq lines)
+
+         out
+         []]
+
+    (if-let [^String line (first lines)]
+      (let [at (.indexOf text line (int from))]
+        (recur (if (neg? at) from (+ at (count line)))
+               (next lines)
+               (conj out (when-not (neg? at) at))))
+      out)))
+
+(defn- link-segments
+  "The parts of the link `spans` on the `shown` lines of a card, each
+   `{:line :col :width :target}`. `:line` is the index of the text line, and `:col`
+   counts columns from the start of that line. A link that the wrap splits has one part
+   on each of its lines. `raw` holds the `wrapped` lines of `text`."
+  [text raw shown spans]
+  (vec
+    (for [[i ^String line start]
+          (map vector (range) raw (line-starts (str text) raw))
+
+          :when (and start (< (long i) (count shown)))
+          {:keys [target] s :start e :end}
+          spans
+
+          :let [a
+                (max (long s) (long start))
+
+                b
+                (min (long e) (+ (long start) (count line)))]
+          :when (< a b)
+          :let [col
+                (long (p/display-width (subs line 0 (- a (long start)))))
+
+                width
+                (min (long (p/display-width (subs line (- a (long start)) (- b (long start)))))
+                     (- (long (p/display-width (nth shown i))) col))]
+          :when (pos? width)]
+
+      {:line i :col col :width width :target target})))
 
 (defn- heading
   "The first-row text of a card: its title and its source, or nil."
@@ -69,8 +155,9 @@
 (defn layout
   "The card of `page`, a `notifications/pager` value, at `left`,`top` of an area of
    `cols` x `rows`, or nil when no card fits. The card is
-   `{:id :level :heading :title :lines :pager :fraction :col :row :width :height}`.
-   `:fraction` is the part of the time that is left, nil for a sticky notice."
+   `{:id :level :heading :title :lines :links :pager :fraction :col :row :width :height}`.
+   `:fraction` is the part of the time that is left, nil for a sticky notice. `:links`
+   holds the `link-segments` of the text."
   [{:keys [entry index total remaining-ms]} {:keys [left top cols rows]}]
   (let [max-cols
         (min (long max-card-cols) (long cols))
@@ -99,8 +186,11 @@
             text-side
             (long side-cols)
 
+            raw
+            (wrapped (:text entry) (- max-cols text-side))
+
             lines
-            (text-lines (:text entry) (- max-cols text-side) (min (long max-text-lines) line-room))
+            (text-lines raw (- max-cols text-side) (min (long max-text-lines) line-room))
 
             head-cols
             (if head (+ (long side-cols) (long close-cols) (long (p/display-width head))) 0)
@@ -116,6 +206,7 @@
          :title (:title entry)
          :heading head
          :lines lines
+         :links (link-segments (:text entry) raw lines (link-spans entry))
          :pager pages
          :fraction fraction
          :col (long left)
@@ -184,17 +275,26 @@
 (defn- rule [^long n ^String ch] (apply str (repeat (max 0 n) ch)))
 
 (defn- region!
-  "Register one click region of the card on `row`."
-  [row col width kind id]
+  "Register one click region of the card on `row`. A link region carries its `target`."
+  [row col width kind id target]
   (when (pos? (long width))
     (.register interactions/hit-map
-               {:bounds {:row row :col col :width width} :kind kind :text id :enabled? true})))
+               (cond-> {:bounds {:row row :col col :width width} :kind kind :text id :enabled? true}
+                 target
+                 (assoc :target target)))))
+
+(defn- first-text-row
+  "The screen row of the first text line of `card`."
+  ^long [{:keys [row heading]}]
+  (+ (long row) 2 (if heading 2 0)))
 
 (defn click-regions
   "The click regions of `card` from `layout`, each `{:row :col :width :kind}`.
-   The close mark is `:toast-dismiss`, and the page counter is `:toast-next`. A
-   click on the rest of the card goes to the transcript under it, so a card never takes a click or a drag from the text that it covers."
-  [{:keys [pager col row width height]}]
+   The close mark is `:toast-dismiss`, and the page counter is `:toast-next`. Each
+   part of a link is `:toast-link` with its `:target`. A click on the rest of the card
+   goes to the transcript under it, so a card never takes a click or a drag from the
+   text that it covers."
+  [{:keys [pager links col row width height] :as card}]
   (let [right
         (+ (long col) (long width) -1)
 
@@ -209,7 +309,16 @@
 
     (cond-> [{:row (inc (long row)) :col (- right 3) :width 3 :kind :toast-dismiss}]
       pager
-      (conj {:row pager-row :col pager-col :width pager-cols :kind :toast-next}))))
+      (conj {:row pager-row :col pager-col :width pager-cols :kind :toast-next})
+
+      (seq links)
+      (into (map (fn [{:keys [line target] link-col :col link-width :width}]
+                   {:row (+ (first-text-row card) (long line))
+                    :col (+ (long col) 2 (long link-col))
+                    :width link-width
+                    :kind :toast-link
+                    :target target}))
+            links))))
 
 (defn paint!
   "Draw `card` from `layout`; nil draws nothing. With `register?`, register the
@@ -217,7 +326,7 @@
    notification id as `:text`."
   ([g card register?] (paint! g card register? 0))
   ([g card register? shift]
-   (when-let [{:keys [id level heading title lines pager fraction col row width height]} card]
+   (when-let [{:keys [id level heading title lines links pager fraction col row width height]} card]
      (let [col (long col)
            row (long row)
            width (long width)
@@ -228,7 +337,7 @@
            first-row (inc row)
            ;; One empty row under the top border.
            head-row (inc first-row)
-           text-row (if heading (+ head-row 2) head-row)
+           text-row (first-text-row card)
            pager-cols (long (if pager (p/display-width pager) 0))
            ;; The counter stands on the row over the bottom border.
            pager-row (dec bottom)
@@ -274,9 +383,18 @@
        (p/set-colors! g t/dialog-fg bg)
        (doseq [[i line] (map-indexed vector lines)]
          (p/put-str! g (+ col 2) (+ text-row (long i)) line))
+       ;; Links: the same glyphs, underlined in the link color.
+       (let [link-fg (t/legible-ink t/link-chrome-fg bg)]
+         (doseq [{:keys [line] link-col :col link-width :width} links
+                 c (range (long link-width))]
+
+           (p/underline-cell! g
+                              (+ col 2 (long link-col) (long c))
+                              (+ text-row (long line))
+                              link-fg)))
        ;; Page counter in the bottom-right corner.
        (when pager (p/set-colors! g muted bg) (p/put-str! g pager-col pager-row pager))
        (p/clear-styles! g)
        (when register?
-         (doseq [{:keys [row col width kind]} (click-regions card)]
-           (region! row (+ (long col) (long shift)) width kind id)))))))
+         (doseq [{:keys [row col width kind target]} (click-regions card)]
+           (region! row (+ (long col) (long shift)) width kind id target)))))))

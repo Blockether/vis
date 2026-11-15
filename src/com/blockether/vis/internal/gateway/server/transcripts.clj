@@ -64,7 +64,7 @@
 
 (defn- transcript-md-handler
   "Render a session as the Markdown export (`transcript-export/md`): each turn as the Compact
-   mode of the session screen shows it. Every surface (CLI, `/export`, TUI viewer) exports
+   mode of the session screen shows it. Every surface (CLI, TUI, Companion) exports
    through it, so a channel can show it without its own transcript renderer."
   [request]
   (if-let [body (some-> (http/path-sid request)
@@ -75,7 +75,7 @@
 (defn- transcript-html-handler
   "Render a session as the standalone HTML export: the Companion's own transcript
    page with the session's rows in it (`transcript-export/html`). Every surface (CLI,
-   `/export`, SDK) exports through it. A gateway without the web app answers 503."
+   TUI, Companion, SDK) exports through it. A gateway without the web app answers 503."
   [request]
   (if-let [sid (http/path-sid request)]
     (try (if-let [html (transcript-export/html sid)]

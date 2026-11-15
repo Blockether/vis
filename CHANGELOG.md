@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- TUI: **Ctrl+X s e** exports the open session. A menu asks for the format: HTML, Markdown or a snapshot. Vis saves the file in **Vis Artifacts** in your downloads folder. In the session switcher, **Ctrl+X** exports the selected session, and in **Projects**, **e** exports the session of a row.
+- TUI: a notification can have links. The export notification shows the folder and the file name, and a click on one opens the folder in the file manager.
+- Companion: the actions of a session in the session list, and the menu of the session header, have **Export** with three formats: HTML, Markdown and Snapshot (`.vissnap`). The web app downloads the file, the desktop app saves it in **Vis Artifacts** and shows it in the file manager, and the phone app opens the share sheet. **Ctrl+X s e** and the command palette open the same menu.
 - Examples: in `examples/durable-lambda/`, each session works in its own clone of the repository, and S3 keeps a copy of that work. A new worker or a new file system gets the work back. A session can put its work on the newest release (resync), a workflow run can work in a session that a person selects, and a delete of a session removes its work.
 - Apps: choose one of 32 icons with `vis.ui.app(..., icon="review")`. The app menu and header show the icon in Companion and a text mark in the terminal. Review uses its own code review icon. Reopen an app by key to change its icon without replacing its state.
 - Components: four new components for forms and live views. `vis.ui.badge` shows a row of short labels, `vis.ui.listing` shows a list with bullets or numbers, `vis.ui.chart` shows numbers as bars or lines, and `vis.ui.datetime` takes a date, a time or both as text in the form of its `mode`. The terminal and the Companion app draw each of them.
@@ -26,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the TUI uses Lanterna 3.1.5-vis.62. Lanterna owns the inline style marks of a line: their range, their painted cells and their carry across a wrap. The TUI has one namespace for the row markers and one for text with ANSI colours.
 
 ### Removed
+- Sessions: the `/export` slash command is gone. Use **Ctrl+X s e** in the TUI, **Export** in the Companion session actions, or `vis-agent sessions export`.
 - Examples: `examples/durable-lambda/` has no password and no sign-in page. Each person who has the address of the stack can use it. The parameter `/<stack>/password`, `POST /login` and `POST /logout` are gone.
 - Examples: the `examples/live-apps/` and `examples/aws-lambda/` directories are gone. `examples/durable-lambda/` is the example that runs Vis on AWS Lambda.
 - Drafts: Vis has no draft workspaces. The tools `draft_create`, `draft_status`, `draft_diff`, `draft_sync`, `draft_approve` and `draft_discard`, the setting `draft_backend`, the `draft` key of a `workspace.filesystem` entry and the two manual pages are gone. A session always works in its own directory, as it did with the default `draft_backend: off`.
@@ -35,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Drafts: Vis ignores a `draft` key that an older version stored in the machine settings, in the project settings of `.vis/config.yml` or in the settings of a group or a session. The next save of those settings removes the key. In a `vis.yml` or `~/.vis/config.yml` that a person writes, Vis reports the key by name and does not apply the access settings of that file. Remove the key there.
 
 ### Fixed
+- Companion: on Android, the Back button closes an open menu and does not leave the app. A tap that opens a menu of the session header or of a project does not close it at once.
+- Companion: a file that the phone app shares keeps its file name. Before, the name started with a number.
 - TUI: a line with red error text keeps its last characters when it fills its column. Before, the TUI cut two characters, or one character and an ellipsis.
 - TUI: red error text that wraps is red on each row. Before, only the first row was red.
 - TUI: a padded line with bold, code, link or error text has its full width. Before, it was short by one column for each style mark.
