@@ -12,9 +12,18 @@ export interface GatewayConn {
   url: string;
   /** Bearer token; required for any non-loopback / --require-token gateway. */
   token?: string;
-  /** Human label shown in the connection list. */
-  /** Human label shown in the connection list. */
+  /**
+   * Label of this machine on this device. Pairing sets it to the host of the
+   * address; a person can type another one. Only a typed label wins over `name`:
+   * see `machineLabel` in `lib/fleet.ts`.
+   */
   label?: string;
+  /**
+   * Machine name that the gateway reports (`machine_name` of `/healthz`). Its
+   * operator sets it with the `machine_name` setting or `VIS_MACHINE_NAME`.
+   * Absent when the gateway has no name.
+   */
+  name?: string;
   /**
    * Stable, opaque gateway instance id reported by `/healthz`. Captured on
    * connect and used to build clean shareable links (`#/s/<sid>?gw=<id>`)
@@ -502,6 +511,8 @@ export interface Toggle {
   choice_labels?: Record<string, string>;
   inheritance?: 'override' | 'restrict';
   max_length?: number;
+  /** A string row that accepts a blank value. A blank value removes the saved value. */
+  is_optional?: boolean;
   multiline?: boolean;
   scopes?: SettingsScope[];
   scope?: SettingsScope;
@@ -978,6 +989,8 @@ export interface GatewayHealth {
   status?: string;
   id?: string;
   protocol?: GatewayProtocol;
+  /** Name that the operator gave this machine. Absent without a name. */
+  machine_name?: string | null;
 }
 
 /**

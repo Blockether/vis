@@ -14,6 +14,8 @@ requests, select **HTTP** at the top of the page.
   settings](#change-many-settings) in one batch with a revision check.
 - **You must know which value applies to a session, and why.** [Read settings](#read-settings) with
   a context session.
+- **A deployment script must give its gateway a name that people know.** [Name the
+  machine](#name-the-machine).
 - **You edited an extension and the gateway must load the new code.** [Reload
   extensions](#reload-extensions).
 
@@ -47,6 +49,7 @@ examples use it.
 | Read one setting | `get_setting(id, query=...)` |
 | Change one setting | `post_settings(body=...)` |
 | Change many settings at once | `patch_settings(body=...)` |
+| Read or save the machine name | `machine_name()`, `set_machine_name(name)` |
 | Reload extensions | `post_extensions_reload(body=...)` |
 
 </div>
@@ -219,6 +222,41 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/js
 A batch has 1 to 256 changes for one target. Each change has a unique `id` and the action `value` or
 `inherit`. Vis applies the whole batch or none of it. Optional `channel` and `context_session_id`
 work as in a read. The answer is the full catalog with its new `revision`.
+
+## Name the machine
+
+<div data-variant="python">
+
+```python
+client.set_machine_name("Studio Mac")
+print(client.machine_name())
+client.set_machine_name(None)
+```
+
+`machine_name()` returns the name in effect, or `None` when the machine has no name.
+`set_machine_name(None)` removes the saved name. Each call returns the name in effect after the
+change. The two calls use `get_setting` and `post_settings` with the setting `machine_name`.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
+  --data '{"scope": "global", "id": "machine_name", "action": "value", "value": "Studio Mac"}'
+vis_api "$VIS_GATEWAY_URL/v1/settings/machine_name?scope=global"
+vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
+  --data '{"scope": "global", "id": "machine_name", "action": "inherit"}'
+```
+
+The `value` of the answer is the name in effect, or an empty string when the machine has no name.
+The `inherit` action removes the saved name. `GET /healthz` reports the name in effect as
+`machine_name`, without a token. The field is absent when the machine has no name.
+
+</div>
+
+When the environment variable `VIS_MACHINE_NAME` is set on the gateway, the name in effect is the
+name from that variable. See [Machine name](configuration.md#machine-name).
 
 ## Reload extensions
 

@@ -190,6 +190,16 @@ def _group(data: Any) -> SessionGroup:
         raise ProtocolError("invalid session group response") from None
 
 
+def _machine_name(row: Any) -> str | None:
+    """The effective name of a `machine_name` setting answer. Blank is no name."""
+    if not isinstance(row, dict) or row.get("id") != "machine_name":
+        raise ProtocolError("invalid machine_name setting answer")
+    value = row.get("value")
+    if value is not None and not isinstance(value, str):
+        raise ProtocolError("invalid machine_name setting answer")
+    return (value or "").strip() or None
+
+
 def _field(data: Any, name: str, kind: type) -> Any:
     """Validate a consumed field without reflecting a potentially sensitive body."""
     value = data.get(name) if isinstance(data, dict) else None
@@ -663,6 +673,34 @@ class ExecutionLayer(ABC):
         """
         mode = "delete" if delete_sessions else "detach"
         return self.delete_session_group(_group_id(group), query={"sessions": mode})
+
+    def machine_name(self) -> str | None:
+        """Return the name of the gateway machine, or None when it has no name.
+
+        Clients show this name for the machine in place of the host of its URL.
+        The environment variable `VIS_MACHINE_NAME` of the gateway wins over the
+        saved name.
+        """
+        return _machine_name(
+            self.get_setting("machine_name", query={"scope": "global"})
+        )
+
+    def set_machine_name(self, name: str | None) -> str | None:
+        """Save the name of the gateway machine and return the name in effect.
+
+        None or a blank name removes the saved name. The gateway refuses a name
+        that is too long or has control characters with `GatewayError`. When
+        `VIS_MACHINE_NAME` is set on the gateway, the answer is still the name
+        from that variable: the saved name applies when the variable is not set.
+        """
+        if name is not None and not isinstance(name, str):
+            raise TypeError("a machine name must be text or None")
+        body: dict[str, JSONValue] = {"scope": "global", "id": "machine_name"}
+        if name is None or not name.strip():
+            body["action"] = "inherit"
+        else:
+            body.update(action="value", value=name.strip())
+        return _machine_name(self.post_settings(body=body))
 
     def restore_session(
         self,

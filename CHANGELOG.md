@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Gateway: a machine can have a name. Set the environment variable `VIS_MACHINE_NAME` or the key `machine_name` in the global configuration, or change **Machine name** in Settings → General. The variable wins over the saved name. The gateway reports the name as `machine_name` in `GET /healthz`, `GET /readyz`, the admin status and the web launch grant.
+- Companion: a machine shows the name that its gateway reports, not the host of its address. A name that you give the machine with **Rename** on your device wins.
+- Python SDK: `machine_name()` and `set_machine_name(name)` read and save the machine name.
 - TUI: **Ctrl+X s e** exports the open session. A menu asks for the format: HTML, Markdown or a snapshot. Vis saves the file in **Vis Artifacts** in your downloads folder. In the session switcher, **Ctrl+X** exports the selected session, and in **Projects**, **e** exports the session of a row.
 - TUI: a notification can have links. The export notification shows the folder and the file name, and a click on one opens the folder in the file manager.
 - Companion: in the desktop app, the path in the export notification is a link. A click on it shows the file in the file manager again.

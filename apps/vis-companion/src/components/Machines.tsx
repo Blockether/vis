@@ -21,6 +21,7 @@ import {
   normalizeGatewayUrl,
   reachOf,
 } from '../lib/endpoints';
+import { machineLabel, typedLabel } from '../lib/fleet';
 import { onWake } from '../lib/wake';
 import { hasHardwarePointer } from '../lib/pointer';
 import { warm } from '../lib/warm';
@@ -466,7 +467,7 @@ function AddressMenu({
   onSelect: (url: string, pinned: boolean) => void;
 }) {
   const reach = useAddressReach(conn);
-  const name = conn.label ?? hostOf(conn.url);
+  const name = machineLabel(conn);
   const urls = addressesOf(conn);
   return (
     <Menu label={`Addresses on ${name}`} at={at} onDismiss={onDismiss}>
@@ -579,19 +580,22 @@ export function MachineRows({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [renaming, forgetting, binding]);
 
+  // The field holds only a label that a person typed on this device. The host
+  // that pairing saved as the label is not one, so the field starts empty.
   function startRename(conn: GatewayConn) {
-    setDraft(conn.label ?? '');
+    setDraft(typedLabel(conn) ?? '');
     setRenaming(conn.url);
   }
 
-  // An unnamed machine wears its host, so an EMPTY field means "no name of its
-  // own" — never the host typed back in as a label. Leaving commits, as it does
-  // in every other name this app edits in place: a phone keyboard is dismissed
-  // far more often than Enter is pressed.
+  // An unnamed machine wears the name that its gateway reports, else its host,
+  // so an EMPTY field means "no label of its own" — never that name typed back
+  // in as a label. Leaving commits, as it does in every other name this app
+  // edits in place: a phone keyboard is dismissed far more often than Enter is
+  // pressed.
   function commitRename(conn: GatewayConn) {
     setRenaming(null);
     const next = draft.trim() || undefined;
-    if (next !== (conn.label ?? undefined)) void onRename?.(conn, next);
+    if (next !== typedLabel(conn)) void onRename?.(conn, next);
   }
 
   /** Hang this machine's addresses under the cell the press came from. */
@@ -627,7 +631,7 @@ export function MachineRows({
     <div className="divide-y divide-dialog-edge">
       {conns.map((conn, index) => {
         const hv = healthView(health[conn.url]);
-        const name = conn.label ?? hostOf(conn.url);
+        const name = machineLabel(conn);
 
         if (renaming === conn.url)
           return (
@@ -636,7 +640,7 @@ export function MachineRows({
                 autoFocus
                 value={draft}
                 aria-label={`Rename ${name}`}
-                placeholder={hostOf(conn.url)}
+                placeholder={conn.name?.trim() || hostOf(conn.url)}
                 autoCapitalize="none"
                 autoCorrect="off"
                 onChange={(event) => setDraft(event.target.value)}

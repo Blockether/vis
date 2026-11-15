@@ -1679,6 +1679,42 @@
 
      (configured-agent-name raw))))
 
+(defn- machine-name-env
+  "Value of the environment variable VIS_MACHINE_NAME, trimmed, or nil."
+  []
+  (util/env-val "VIS_MACHINE_NAME"))
+
+(defn- valid-machine-name
+  "`value` trimmed when the contract accepts it as a machine name, else nil."
+  [value]
+  (when (and (string? value) (config-validation/machine-name? value)) (str/trim value)))
+
+(defn machine-name-state
+  "The machine name and where it comes from. `:name` is the effective name or nil.
+   `:source` is `:environment` (VIS_MACHINE_NAME), `:config` (`machine_name` of
+   the machine configuration) or nil. `:saved` is the configured name, also while
+   the environment overrides it. Only the machine tier counts: state.yml, then the
+   hand-written global YAML. A blank or invalid value counts as not set."
+  []
+  (let [saved
+        (valid-machine-name (get (merge (load-global-yaml-config-raw) (load-global-config-raw))
+                                 "machine_name"))
+
+        env
+        (valid-machine-name (machine-name-env))]
+
+    {:name (or env saved)
+     :source (cond env :environment
+                   saved :config)
+     :saved saved}))
+
+(defn machine-name
+  "Name of this machine that the gateway reports to its clients, or nil. The
+   environment variable VIS_MACHINE_NAME wins over `machine_name` of the machine
+   configuration."
+  []
+  (:name (machine-name-state)))
+
 (defn config-problems
   "Model-readable, per-top-level-key reasons the currently merged live config
    fails the contract (`config-validation/explain-problems` over `load-config-raw`),
@@ -2324,6 +2360,22 @@
   (let [value (str/trim value)]
     (update-machine-config! #(assoc % "agent_name" value))
     value))
+
+(defn set-machine-name!
+  "Persist the machine name in state.yml, preserving other keys. nil or a blank
+   value removes the saved name. Reject invalid input before writing; return the
+   saved name or nil. The environment variable VIS_MACHINE_NAME still wins."
+  [value]
+  (if (or (nil? value) (and (string? value) (str/blank? value)))
+    (do (update-machine-config! #(dissoc % "machine_name")) nil)
+    (let [name (valid-machine-name value)]
+      (when-not name
+        (throw (ex-info (str "Machine name must be 1–"
+                             config-validation/machine-name-max-length
+                             " characters, with no control characters.")
+                        {:type :config/invalid-machine-name})))
+      (update-machine-config! #(assoc % "machine_name" name))
+      name)))
 
 (defn save-toggles!
   "Persist a `{id value}` feature-toggle snapshot into the MACHINE store, folding

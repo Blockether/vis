@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
@@ -201,6 +202,43 @@
    :inherited-value (or (get (config/load-global-yaml-config-raw) "agent_name") "Vis")
    :inherited-source "default"
    :applies "next_turn"})
+
+(defn- machine-name-setting
+  "The machine name row. The environment variable VIS_MACHINE_NAME has no scope
+   lock to show, so the description says when it sets the name."
+  []
+  (let [{:keys [name source saved]} (config/machine-name-state)]
+    {:id "machine_name"
+     :label "Machine name"
+     :description
+     (if (= :environment source)
+       (str "The environment variable VIS_MACHINE_NAME sets this name now. "
+            "A name that you save here applies when the variable is not set.")
+       "Clients show this name for this machine. Without a name, they show the host of its address.")
+     :type "string"
+     :value (or name "")
+     :max-length config-validation/machine-name-max-length
+     :editor "text"
+     :is-optional true
+     :own-value saved
+     :is-override (some? saved)
+     :inherited-value ""
+     :inherited-source "default"
+     :applies "immediate"}))
+
+(defn- set-machine-name-setting
+  "Save the machine name. The inherit action or a blank value removes the saved name."
+  [action given]
+  (if-not (#{"value" "inherit"} action)
+    (http/error-response 400
+                         :invalid-setting-action
+                         "Machine name takes the value action or the inherit action.")
+    (try (state/set-machine-name! (when (= action "value") (:raw given)))
+         (http/json-response (machine-name-setting))
+         (catch clojure.lang.ExceptionInfo e
+           (if (= :config/invalid-machine-name (:type (ex-data e)))
+             (http/error-response 400 :invalid-setting-value (ex-message e) :id "machine_name")
+             (throw e))))))
 
 (defn- set-agent-name-setting
   [action given]
@@ -423,7 +461,9 @@
                        ;; Below global, no provider accounts show, so the response rows of the
                        ;; providers section stand in General, before the experimental switches.
                        :general
-                       (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
+                       (concat (when-not local?
+                                 [(assoc (agent-name-setting) :scopes ["global"])
+                                  (assoc (machine-name-setting) :scopes ["global"])])
                                (mapcat rows
                                        (cond->> groups
                                          local?
@@ -564,6 +604,8 @@
                                                                          (access-settings target))))
           (and (= id "agent_name") (= "global" (:scope target))) (http/json-response
                                                                    (agent-name-setting))
+          (and (= id "machine_name") (= "global" (:scope target))) (http/json-response
+                                                                     (machine-name-setting))
           (and spec
                (some #{(:scope target)} (:scopes spec))
                (or (not (#{:skills :mcp} (:group spec))) (resources id)))
@@ -599,6 +641,10 @@
               (if (= "global" (:scope target))
                 (set-agent-name-setting action {:raw (get body "value")})
                 (http/error-response 400 :invalid-setting-scope "Agent name is global"))
+              (= id "machine_name")
+              (if (= "global" (:scope target))
+                (set-machine-name-setting action {:raw (get body "value")})
+                (http/error-response 400 :invalid-setting-scope "Machine name is global"))
               :else
               (http/json-response
                 (toggle-json

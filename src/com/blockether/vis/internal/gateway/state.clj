@@ -1782,6 +1782,14 @@
       (append-event! sid "session.agent_name_updated" {:agent-name agent-name} {:store? false}))
     agent-name))
 
+(defn set-machine-name!
+  "Save the machine name, then tell every client, so an open settings view and a
+   machine list read it again. nil or a blank value removes the saved name."
+  [value]
+  (let [machine-name (config/set-machine-name! value)]
+    (publish-settings-changed! {:id "machine_name"})
+    machine-name))
+
 (defn session-workspace-info
   "Canonical wire workspace metadata for channel footers and directory pickers:
    `{id root agent_name label git}`. Resolves the latest session workspace; nil

@@ -13,7 +13,14 @@ import {
 import type { GatewayConn, SettingsTarget } from './lib/types';
 import { OpenMachineSettings, OpenScopedSettings } from './lib/open-settings';
 import { type Compat, compatFromHealth, shouldRereadCompat } from './lib/compat';
-import { GatewayClient, ROUTER_TTL_MS, onGatewayIncompatible } from './lib/gateway';
+import {
+  GatewayClient,
+  ROUTER_TTL_MS,
+  normalizeBase,
+  onGatewayIncompatible,
+  onSettingChange,
+  onSettingsChanged,
+} from './lib/gateway';
 import {
   forgetOpenSession,
   getPrimaryConnection,
@@ -42,6 +49,7 @@ import {
 } from './lib/endpoints';
 import { desktopInvoke } from './lib/desktop';
 import { isIosNativeApp } from './lib/host';
+import { identityPatch } from './lib/fleet';
 import { machineOutage } from './lib/fleet-outage';
 import { onAway, onWake, onWakeThrottled } from './lib/wake';
 import {
@@ -1305,35 +1313,42 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     };
   }, [conns, primary?.url]);
 
-  // Backfill each paired gateway's stable id (from /healthz) so a shareable link
-  // can name its gateway by id instead of leaking the gateway URL. Cheap: it
-  // only probes a connection that has no id captured yet, then converges.
+  // Each paired gateway reports its stable id and its machine name in `/healthz`.
+  // The id lets a shareable link name its gateway without the gateway URL. The
+  // name is what the machine list shows when no label was typed on this device.
+  // Read both when the paired machines change, when the app wakes and when a
+  // setting changes on one of them, and save only what differs.
+  const [identityNonce, setIdentityNonce] = useState(0);
+  const pairedBases = conns.map((c) => normalizeBase(c.url)).join('\n');
   useEffect(() => {
-    const missing = conns.filter((c) => !c.id);
-    if (missing.length === 0) return;
+    const read = () => setIdentityNonce((n) => n + 1);
+    const stops = pairedBases
+      .split('\n')
+      .filter(Boolean)
+      .flatMap((base) => [onSettingChange(base, read), onSettingsChanged(base, read)]);
+    stops.push(onWake(read));
+    return () => stops.forEach((stop) => stop());
+  }, [pairedBases]);
+  useEffect(() => {
     let cancelled = false;
     const ctrl = new AbortController();
     void (async () => {
-      let changed = false;
-      for (const conn of missing) {
-        const id = await new GatewayClient(conn).identify(ctrl.signal).catch(() => null);
-        if (id) {
-          await updateConnection(conn.url, { id });
-          changed = true;
-        }
-      }
-      if (changed && !cancelled) {
-        const next = await loadConnections();
-        if (cancelled) return;
-        setConns(next);
-        setActive(await getPrimaryConnection());
-      }
+      const paired = await loadConnections();
+      const patches = await Promise.all(
+        paired.map(async (conn) =>
+          identityPatch(conn, await new GatewayClient(conn).health(ctrl.signal).catch(() => null)),
+        ),
+      );
+      if (cancelled || patches.every((patch) => !patch)) return;
+      for (const [index, patch] of patches.entries())
+        if (patch) await updateConnection(paired[index]!.url, patch);
+      if (!cancelled) await refresh();
     })();
     return () => {
       cancelled = true;
       ctrl.abort();
     };
-  }, [conns]);
+  }, [pairedKey, identityNonce, refresh]);
 
   // Restore the bounded, per-gateway watch list. One multiplexed SSE stream
   // keeps every visited session live even while another view is open.

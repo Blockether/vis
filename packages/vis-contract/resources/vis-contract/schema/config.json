@@ -1414,9 +1414,19 @@
           "maxLength": 80,
           "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
           "description": "Coding-agent name shared by the JVM prompt and gateway clients. Defaults to Vis."
+        },
+        "machine_name": {
+          "$ref": "#/$defs/machineName"
         }
       },
       "additionalProperties": false
+    },
+    "machineName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+      "description": "Name of this machine that the gateway reports to its clients. The environment variable VIS_MACHINE_NAME overrides it. Without a name, a client shows the host of the gateway address."
     }
   },
   "$ref": "#/$defs/config"

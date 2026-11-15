@@ -1485,7 +1485,8 @@ export function mergeQueueBacklog(
   };
 }
 
-function normalizeBase(url: string): string {
+/** The base address that listeners and snapshots of one gateway are keyed by. */
+export function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
 }
 function errorOfDiagnostic(cause: unknown): string {

@@ -1,6 +1,6 @@
 import { hostOf } from './endpoints';
 import { homeifyPath } from './path';
-import type { GatewayConn, GatewayOverview, Session } from './types';
+import type { GatewayConn, GatewayHealth, GatewayOverview, Session } from './types';
 
 /**
  * Fleet rows belong to one paired machine; projects with the same path on different
@@ -77,9 +77,43 @@ export function sessionRowKey(conn: GatewayConn, sid: string): string {
   return `${machineKey(conn)}\u0000${sid}`;
 }
 
-/** What the chip and the machine header say. */
+/**
+ * The label that a person typed for this machine on this device, or undefined.
+ * Pairing saves the host of the address as the label, and an address switch
+ * moves that label to the new host: a label equal to a host of this machine is
+ * automatic, not typed.
+ */
+export function typedLabel(conn: GatewayConn): string | undefined {
+  const label = conn.label?.trim();
+  if (!label) return undefined;
+  const isHost = [conn.url, ...(conn.alts ?? [])].some((url) => hostOf(url) === label);
+  return isHost ? undefined : label;
+}
+
+/**
+ * What the chip and the machine header say: the label typed on this device,
+ * else the name that the gateway reports, else the host of the address.
+ */
 export function machineLabel(conn: GatewayConn): string {
-  return conn.label?.trim() || hostOf(conn.url);
+  return typedLabel(conn) ?? (conn.name?.trim() || conn.label?.trim() || hostOf(conn.url));
+}
+
+/**
+ * What a `/healthz` answer changes in the saved machine `conn`: its stable id,
+ * when none is saved, and the machine name that the gateway reports. Null when
+ * nothing changes. A gateway that reports no name removes a saved name.
+ */
+export function identityPatch(
+  conn: GatewayConn,
+  health: GatewayHealth | null | undefined,
+): Partial<Pick<GatewayConn, 'id' | 'name'>> | null {
+  if (!health) return null;
+  const patch: Partial<Pick<GatewayConn, 'id' | 'name'>> = {};
+  if (!conn.id && typeof health.id === 'string' && health.id) patch.id = health.id;
+  const name =
+    typeof health.machine_name === 'string' ? health.machine_name.trim() || undefined : undefined;
+  if (name !== conn.name) patch.name = name;
+  return 'id' in patch || 'name' in patch ? patch : null;
 }
 
 /**

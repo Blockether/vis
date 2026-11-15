@@ -1,4 +1,5 @@
 import type { Compat } from '../lib/compat';
+import { machineLabel } from '../lib/fleet';
 import type { GatewayConn } from '../lib/types';
 import { BandLabel, Button } from '../components/ui';
 
@@ -42,7 +43,7 @@ export function IncompatibleScreen({ compat, conn }: Props) {
         <h1 className="text-display font-black text-white">{compat.title}</h1>
         <p className="mt-2 text-body text-footer-strong">{compat.summary}</p>
         <p className="mt-3 truncate font-mono text-chip text-footer-muted">
-          {conn.label ?? conn.url}
+          {machineLabel(conn)}
         </p>
       </header>
 

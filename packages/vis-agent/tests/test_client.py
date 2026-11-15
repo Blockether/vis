@@ -1457,3 +1457,43 @@ def test_group_is_get_or_create_and_sessions_join_it():
         assert client.session("S1").set_group("G1")["group_id"] == "G1"
         with pytest.raises(ValueError, match="root or project_id"):
             client.groups()
+
+
+@pytest.mark.parametrize("environment", [None, "lambda-eu"])
+def test_machine_name_reads_saves_and_removes_the_setting(environment):
+    saved = {"name": None}
+
+    def respond(method, path, body):
+        parts = urlsplit(path)
+        if method == "POST" and parts.path == "/v1/settings":
+            request = json.loads(body)
+            saved["name"] = request.get("value")
+        elif parts.path != "/v1/settings/machine_name":
+            return compatible(method, path, body)
+        return 200, {
+            "id": "machine_name",
+            "type": "string",
+            "value": environment or saved["name"] or "",
+        }
+
+    with endpoint(respond) as (url, calls):
+        client = GatewayClient(url)
+        assert client.machine_name() == environment
+        assert parse_qs(urlsplit(calls[-1][1]).query) == {"scope": ["global"]}
+        # The environment of the gateway wins: the answer is the name in effect.
+        assert client.set_machine_name("  Studio Mac ") == (environment or "Studio Mac")
+        assert json.loads(calls[-1][3]) == {
+            "scope": "global",
+            "id": "machine_name",
+            "action": "value",
+            "value": "Studio Mac",
+        }
+        assert client.machine_name() == (environment or "Studio Mac")
+        assert client.set_machine_name(" ") == environment
+        assert json.loads(calls[-1][3]) == {
+            "scope": "global",
+            "id": "machine_name",
+            "action": "inherit",
+        }
+        with pytest.raises(TypeError, match="text or None"):
+            client.set_machine_name(7)

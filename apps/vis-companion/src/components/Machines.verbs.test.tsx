@@ -105,6 +105,31 @@ describe('a machine keeps its verbs under its own row', () => {
     expect(onRename).toHaveBeenLastCalledWith(laptop, undefined);
   });
 
+  // A gateway on AWS Lambda showed as its long address host. The row now shows
+  // the name that the gateway reports, and that name is not a label of this device.
+  it('shows the reported name, and offers it only as the placeholder of the label', async () => {
+    const user = userEvent.setup();
+    const onRename = vi.fn();
+    const lambda: GatewayConn = {
+      url: 'https://us3yvah.lambda-url.eu-central-1.on.aws',
+      label: 'us3yvah.lambda-url.eu-central-1.on.aws',
+      name: 'Studio',
+    };
+    fleet({ conns: [tower, lambda], onRename });
+
+    await user.click(stripOf('Studio').getByRole('button', { name: 'Rename' }));
+    const field = screen.getByRole('textbox', { name: 'Rename Studio' });
+    expect(field).toHaveValue('');
+    expect(field).toHaveAttribute('placeholder', 'Studio');
+    await user.tab();
+    expect(onRename).not.toHaveBeenCalled();
+
+    await user.click(stripOf('Studio').getByRole('button', { name: 'Rename' }));
+    await user.type(screen.getByRole('textbox', { name: 'Rename Studio' }), 'my lambda');
+    await user.tab();
+    expect(onRename).toHaveBeenCalledExactlyOnceWith(lambda, 'my lambda');
+  });
+
   it('asks before it forgets, in the row the verb was pressed in', async () => {
     const user = userEvent.setup();
     const onForget = vi.fn();

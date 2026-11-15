@@ -11,8 +11,7 @@
  * the same two lines a phone gets: the answer's own words, or the question that parked the run.
  */
 import { desktopInvoke } from './desktop';
-import { hostOf } from './endpoints';
-import type { FleetMachine } from './fleet';
+import { machineLabel, type FleetMachine } from './fleet';
 import { GatewayClient } from './gateway';
 import type { PushPermission } from './push';
 import { getGatewayNotify } from './storage';
@@ -172,7 +171,7 @@ export async function notifyDesktopFleet(machines: FleetMachine[]): Promise<void
       }
       const current = new Map<string, SessionMark>();
       next.set(url, current);
-      const label = machine.conn.label?.trim() || hostOf(url);
+      const label = machineLabel(machine.conn);
       const wanted = before !== undefined && (await getGatewayNotify(url));
       if (wanted) watched.add(url);
       for (const session of sessions) {

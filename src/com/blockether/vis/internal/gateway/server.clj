@@ -383,27 +383,33 @@
         {:keys [gateway-client-leases gateway-sse-clients gateway-client-registrations-total
                 gateway-client-releases-total gateway-client-replacements-total
                 gateway-client-leases-reaped-total]}
-        (gateway-client-metrics)]
+        (gateway-client-metrics)
 
-    {:status (if @instance/server-state "running" "stopped")
-     :id (instance/gateway-instance-id db host port)
-     :protocol (protocol/handshake)
-     :pid (discovery/current-pid)
-     :host host
-     :port port
-     :db (when db (str (discovery/db-target db)))
-     :require_token (boolean require-token?)
-     :managed (boolean managed?)
-     :clients (+ (long gateway-client-leases) (long gateway-sse-clients))
-     :client_leases gateway-client-leases
-     :sse_clients gateway-sse-clients
-     :client_registrations_total gateway-client-registrations-total
-     :client_releases_total gateway-client-releases-total
-     :client_replacements_total gateway-client-replacements-total
-     :client_leases_reaped_total gateway-client-leases-reaped-total
-     :running_turns (running-turn-count)
-     ;; The speech models in memory, their sizes and the limit (#448).
-     :speech_models (speech-residency/status)}))
+        machine-name
+        (config/machine-name)]
+
+    (cond-> {:status (if @instance/server-state "running" "stopped")
+             :id (instance/gateway-instance-id db host port)
+             :protocol (protocol/handshake)
+             :pid (discovery/current-pid)
+             :host host
+             :port port
+             :db (when db (str (discovery/db-target db)))
+             :require_token (boolean require-token?)
+             :managed (boolean managed?)
+             :clients (+ (long gateway-client-leases) (long gateway-sse-clients))
+             :client_leases gateway-client-leases
+             :sse_clients gateway-sse-clients
+             :client_registrations_total gateway-client-registrations-total
+             :client_releases_total gateway-client-releases-total
+             :client_replacements_total gateway-client-replacements-total
+             :client_leases_reaped_total gateway-client-leases-reaped-total
+             :running_turns (running-turn-count)
+             ;; The speech models in memory, their sizes and the limit (#448).
+             :speech_models (speech-residency/status)}
+      ;; A gateway without a name omits the key, so an old client sees no change.
+      machine-name
+      (assoc :machine_name machine-name))))
 
 (declare stop!)
 

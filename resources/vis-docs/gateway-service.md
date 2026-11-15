@@ -267,6 +267,9 @@ pairing link from the service uses the same address. A service unit starts witho
 profile. So a `VIS_GATEWAY_ADVERTISE` that you export in a login shell never reaches it. See
 [gateway pairing address](configuration.md#gateway-pairing-address).
 
+A server address can be long, and apps show it as the name of the machine. To show a short name,
+set `VIS_MACHINE_NAME` in the service unit, or save a [machine name](configuration.md#machine-name).
+
 Keep the complete native bundle together. Its launcher sets up the embedded
 Python runtime. Copying only `vis-agent-native` can leave a process that starts but
 cannot run Python tools. A custom launcher must preserve the bundle layout and

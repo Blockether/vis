@@ -73,7 +73,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "health"
         }
       },
       "path": "/healthz"
@@ -103,7 +104,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "health"
         }
       },
       "path": "/readyz"
@@ -2030,6 +2032,39 @@
         },
         "require_token": {
           "type": "boolean"
+        },
+        "machine_name": {
+          "$ref": "config.json#/$defs/machineName"
+        }
+      }
+    },
+    "health": {
+      "description": "The answer of /healthz and /readyz: the stable id of the gateway, its protocol and the machine name that its operator set. A gateway without a name omits machine_name. The answer also carries process counters that have no contract.",
+      "type": "object",
+      "required": [
+        "status",
+        "id",
+        "protocol"
+      ],
+      "properties": {
+        "status": {
+          "const": "ok"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocol": {
+          "$ref": "#/$defs/handshake"
+        },
+        "machine_name": {
+          "$ref": "config.json#/$defs/machineName"
+        },
+        "require_token": {
+          "type": "boolean"
+        },
+        "secret_match": {
+          "type": "boolean"
         }
       }
     },
@@ -3691,6 +3726,10 @@
         "max_length": {
           "type": "integer",
           "minimum": 1
+        },
+        "is_optional": {
+          "type": "boolean",
+          "description": "A string row that accepts a blank value. A blank value removes the saved value."
         },
         "inheritance": {
           "$ref": "toggle.json#/$defs/contribution/properties/inheritance"

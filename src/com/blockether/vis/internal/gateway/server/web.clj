@@ -20,6 +20,7 @@
    gateway id and token. The long-lived token never enters a URL."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.util :as util])
@@ -214,18 +215,25 @@
               not-empty))))
 
 (defn- redeem-handler
-  "Exchange a launch code for the gateway id and token. The route is open: the
-   code is the credential, and it works once."
+  "Exchange a launch code for the gateway id, the token and the machine name when
+   the gateway has one. The route is open: the code is the credential, and it
+   works once."
   [request]
   (let [{:keys [token require-token?]}
         @instance/server-state
 
         code
-        (launch-code request)]
+        (launch-code request)
+
+        machine-name
+        (config/machine-name)]
 
     (if (and code (redeem-launch! code))
-      (assoc-in (http/json-response
-                  {:gateway-id (gateway-id) :token token :require-token (boolean require-token?)})
+      (assoc-in (http/json-response (cond-> {:gateway-id (gateway-id)
+                                             :token token
+                                             :require-token (boolean require-token?)}
+                                      machine-name
+                                      (assoc :machine-name machine-name)))
         [:headers "Cache-Control"]
         "no-store")
       (http/error-response

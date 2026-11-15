@@ -30,6 +30,8 @@ export interface WebLaunchGrant {
   gatewayId: string;
   token: string;
   requireToken: boolean;
+  /** Machine name that the gateway reports. Absent without a name. */
+  machineName?: string;
 }
 
 /** A launch that cannot connect this browser. The message is for the reader. */
@@ -88,7 +90,13 @@ export async function redeemWebLaunch(
     throw new WebLaunchError(
       `The gateway at ${origin} is not the one that \`vis-agent web\` started. Nothing was saved.`,
     );
-  return { gatewayId, token, requireToken: body?.require_token === true };
+  const machineName = typeof body?.machine_name === 'string' ? body.machine_name.trim() : '';
+  return {
+    gatewayId,
+    token,
+    requireToken: body?.require_token === true,
+    ...(machineName ? { machineName } : {}),
+  };
 }
 
 /** How a grant changes the saved machines. */
@@ -105,8 +113,13 @@ export type WebLaunchPlan =
    */
   | { kind: 'replace'; stale: string; then: WebLaunchPlan };
 
+/** The id, the token and the reported machine name. No name removes a saved one. */
 function credentials(grant: WebLaunchGrant): Partial<GatewayConn> {
-  return { id: grant.gatewayId, ...(grant.token ? { token: grant.token } : {}) };
+  return {
+    id: grant.gatewayId,
+    name: grant.machineName,
+    ...(grant.token ? { token: grant.token } : {}),
+  };
 }
 
 /**

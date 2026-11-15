@@ -36,6 +36,10 @@
   "Session title modes."
   (set (get-in @schema ["$defs" "titling" "properties" "mode" "enum"])))
 
+(def machine-name-max-length
+  "Greatest length of a machine name."
+  (get-in @schema ["$defs" "machineName" "maxLength"]))
+
 (defn config-valid?
   "True when the raw string-keyed configuration satisfies the contract schema."
   [config]

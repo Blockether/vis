@@ -3,6 +3,7 @@ import {
   groupByWorkDir,
   fleetError,
   fleetRead,
+  identityPatch,
   machineCounts,
   machineKey,
   machineLabel,
@@ -26,6 +27,7 @@ import {
   servedUnread,
   stoppedReadSinceCounted,
   timeLabel,
+  typedLabel,
   machineLastActivity,
   shortAge,
   type FleetMachine,
@@ -83,6 +85,57 @@ describe('machineLabel', () => {
     expect(machineLabel(studio)).toBe('studio');
     expect(machineLabel(tower)).toBe('tower.local:7890');
     expect(machineLabel({ url: 'http://tower.local:7890', label: '   ' })).toBe('tower.local:7890');
+  });
+
+  // A gateway on AWS Lambda showed as its long function URL host on every device.
+  it('shows the name that the gateway reports instead of the host', () => {
+    const lambda = 'https://us3yvah.lambda-url.eu-central-1.on.aws';
+    const host = 'us3yvah.lambda-url.eu-central-1.on.aws';
+    expect(machineLabel({ url: lambda, name: 'Studio' })).toBe('Studio');
+    // Pairing saves the host as the label. That label is automatic, so the name wins.
+    expect(machineLabel({ url: lambda, label: host, name: 'Studio' })).toBe('Studio');
+    // After an address switch, the label can be the host of another address of the machine.
+    expect(
+      machineLabel({ url: 'http://10.0.0.5:7890', alts: [lambda], label: host, name: 'Studio' }),
+    ).toBe('Studio');
+    expect(machineLabel({ url: lambda, label: host, name: '  ' })).toBe(host);
+  });
+
+  it('keeps a label typed on this device over the reported name', () => {
+    const conn = { url: 'http://tower.local:7890', label: 'my tower', name: 'Studio' };
+    expect(machineLabel(conn)).toBe('my tower');
+    expect(typedLabel(conn)).toBe('my tower');
+    expect(typedLabel({ url: 'http://tower.local:7890', label: 'tower.local:7890' })).toBeUndefined();
+    expect(typedLabel({ url: 'http://tower.local:7890' })).toBeUndefined();
+  });
+});
+
+describe('identityPatch', () => {
+  const conn: GatewayConn = { url: 'http://tower.local:7890', id: 'abc' };
+
+  it('saves the reported machine name and a missing id', () => {
+    expect(identityPatch(conn, { status: 'ok', id: 'abc', machine_name: 'Studio' })).toEqual({
+      name: 'Studio',
+    });
+    expect(identityPatch({ url: conn.url }, { id: 'abc', machine_name: 'Studio' })).toEqual({
+      id: 'abc',
+      name: 'Studio',
+    });
+  });
+
+  it('changes nothing when the answer matches, or when the gateway did not answer', () => {
+    expect(identityPatch({ ...conn, name: 'Studio' }, { id: 'abc', machine_name: 'Studio' })).toBeNull();
+    // A gateway that predates the machine name sends no field.
+    expect(identityPatch(conn, { status: 'ok', id: 'abc' })).toBeNull();
+    expect(identityPatch({ ...conn, name: 'Studio' }, null)).toBeNull();
+    // A saved id never changes here: another gateway at this address is a pairing matter.
+    expect(identityPatch(conn, { id: 'other' })).toBeNull();
+  });
+
+  it('removes a saved name when the gateway reports none', () => {
+    const named = { ...conn, name: 'Studio' };
+    expect(identityPatch(named, { status: 'ok', id: 'abc' })).toEqual({ name: undefined });
+    expect(identityPatch(named, { id: 'abc', machine_name: null })).toEqual({ name: undefined });
   });
 });
 

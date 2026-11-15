@@ -109,13 +109,15 @@ export function StringSetting({
   const saved = typeof toggle.value === 'string' ? toggle.value : '';
   const [draft, setDraft] = useState(saved);
   const changed = draft !== saved;
+  // A row that accepts a blank value saves it: that removes the saved value.
+  const canSave = Boolean(toggle.is_optional) || Boolean(draft.trim());
   const multiline = toggle.multiline || toggle.editor === 'multiline';
   const actions = (changed || busy) && (
     <div className={`flex min-w-0 flex-wrap items-center gap-2 ${multiline ? '' : 'col-span-2 justify-end'}`}>
       <Button
         type="submit"
         density="panel"
-        disabled={busy || !draft.trim()}
+        disabled={busy || !canSave}
         aria-busy={busy}
       >
         {busy ? 'Saving…' : 'Save'}
@@ -141,7 +143,7 @@ export function StringSetting({
         : 'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-4'}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!busy && !disabled && changed && draft.trim()) {
+        if (!busy && !disabled && changed && canSave) {
           void onSave(draft).then((saved) => {
             if (saved) setDraft(draft.trim());
           });
@@ -166,7 +168,7 @@ export function StringSetting({
           value={draft}
           maxLength={toggle.max_length}
           disabled={busy || disabled}
-          required
+          required={!toggle.is_optional}
           onChange={(event) => setDraft(event.target.value)}
         />
       </div>}

@@ -32,6 +32,7 @@ function gateway({
   code = 'one-time-code',
   token = 'gateway-token',
   requireToken = true,
+  machineName = undefined as string | undefined,
 } = {}) {
   let used = false;
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -42,9 +43,15 @@ function gateway({
     if (!url.endsWith('/v1/web/launches/redeem') || body.code !== code || used)
       return new Response(JSON.stringify({ error: { type: 'launch_not_found' } }), { status: 404 });
     used = true;
-    return new Response(JSON.stringify({ gateway_id: id, token, require_token: requireToken }), {
-      status: 200,
-    });
+    return new Response(
+      JSON.stringify({
+        gateway_id: id,
+        token,
+        require_token: requireToken,
+        ...(machineName ? { machine_name: machineName } : {}),
+      }),
+      { status: 200 },
+    );
   }) as unknown as typeof fetch;
   return { fetchImpl, calls };
 }
@@ -82,6 +89,15 @@ describe('connecting a launched browser', () => {
     // The code travels in a POST body, never in a URL.
     expect(calls.map((call) => call.url)).toEqual([`${LOCAL}/v1/web/launches/redeem`]);
     expect(calls[0]!.init?.method).toBe('POST');
+  });
+
+  it('saves the machine name that the gateway reports, and removes it when the name is gone', async () => {
+    const conn = await connectWebLaunch(LOCAL, launch(), gateway({ machineName: 'Studio' }).fetchImpl);
+    expect(conn).toMatchObject({ url: LOCAL, label: 'localhost:7890', name: 'Studio' });
+    expect(saved()[0]!.name).toBe('Studio');
+    await connectWebLaunch(LOCAL, launch(), gateway().fetchImpl);
+    expect(saved()).toHaveLength(1);
+    expect(saved()[0]!.name).toBeUndefined();
   });
 
   it('works once: a reused or expired address saves nothing', async () => {

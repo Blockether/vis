@@ -29,6 +29,13 @@
 
 (def workspace-os-values contract-config/workspace-os-values)
 
+(def machine-name-max-length contract-config/machine-name-max-length)
+
+(defn machine-name?
+  "Whether `value` is a machine name that the contract accepts."
+  [value]
+  (boolean (contract-config/definition-valid? "machineName" value)))
+
 (defn normalize-api-style
   "Normalize a declared provider API style to the keyword used by the router."
   [value]

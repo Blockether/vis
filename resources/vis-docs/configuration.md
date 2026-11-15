@@ -36,6 +36,8 @@ when you want settings shared across projects or checked into a repository.
   [Python package index](#python-package-index).
 - **Your project installs its Python dependencies only into shared packages.** Let its
   extensions use them too with [Python extension environment](#python-extension-environment).
+- **A gateway on a server shows in your apps as a long host name.** Give it a
+  [machine name](#machine-name).
 - **Your own program must read or change settings.** Read [Configuration API](configuration-api.md).
 
 Use [Project instructions](project-instructions.md) for rules about working in your
@@ -76,6 +78,33 @@ Programs read and save the name like any other setting, with the [Configuration
 API](configuration-api.md#change-one-setting). An invalid name returns 400 without changing the
 saved value. The settings list shows the name as a `string` row in the `general` group. Session details
 include the resolved `agent_name`, so reconnecting clients receive the current value.
+
+## Machine name
+
+A client shows each gateway as one machine. Without a name, the client shows the host of the gateway
+address, which can be long for a server. Give the gateway a name, and each client shows that name:
+
+```yaml
+machine_name: Studio Mac
+```
+
+Put the key in your global `~/.vis/config.yml`. A project file does not change the name. You can
+also change it in **Settings → General → Machine name** in the TUI, or **Settings → your gateway →
+General** in Companion. Saving in Settings writes to the gateway's `~/.vis/state.yml`, and that
+value wins over `config.yml`. Save an empty name to remove it.
+
+For a gateway that a service or a container starts, set the environment variable
+`VIS_MACHINE_NAME`. The variable wins over the saved name. Settings then show the name from the
+variable. A name that you save there applies when the variable is not set.
+
+A name can have up to 64 characters. It cannot be blank or contain control characters. Vis removes
+spaces at the start and end. Vis ignores a `VIS_MACHINE_NAME` value that breaks these rules.
+
+A change in Settings shows in connected Companion apps immediately. In Companion, a name that you
+give a machine with **Rename** on your device wins over the gateway name. To show the gateway name
+again, choose **Rename** and clear the field.
+
+Programs read and save the name with the [Configuration API](configuration-api.md#name-the-machine).
 
 ## Configuration files
 
@@ -853,8 +882,8 @@ Run `/reload` after editing.
 
 Settings for one machine have six sections:
 
-- **General**: the agent name, Council with Subagents, apps, sounds, voice, notifications and
-  experimental features.
+- **General**: the agent name, the machine name, Council with Subagents, apps, sounds, voice,
+  notifications and experimental features.
 - **Providers**: provider accounts and options for model requests, such as automatic fallback.
 - **Permissions**: files, network, process access and sandbox tools.
 - **Tools**: MCP servers and extensions.

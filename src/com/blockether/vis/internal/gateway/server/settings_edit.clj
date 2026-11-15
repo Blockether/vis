@@ -31,13 +31,14 @@
 (defn revision
   "Content revision includes ancestors and explicit values, not volatile service state."
   [db target]
-  (util/sha256-hex (util/content-str (walk/postwalk #(if (map? %) (into (sorted-map) %) %)
-                                                    {:target target
-                                                     :toggles (mapv digest-secrets
-                                                                    (scoped/settings db target))
-                                                     :access (policy/settings db target)
-                                                     :agent (when (= "global" (:scope target))
-                                                              (config/agent-name))}))))
+  (util/sha256-hex (util/content-str
+                     (walk/postwalk #(if (map? %) (into (sorted-map) %) %)
+                                    {:target target
+                                     :toggles (mapv digest-secrets (scoped/settings db target))
+                                     :access (policy/settings db target)
+                                     :agent (when (= "global" (:scope target)) (config/agent-name))
+                                     :machine (when (= "global" (:scope target))
+                                                (:saved (config/machine-name-state)))}))))
 
 (defn- prepare-edit
   [target {:strs [id action value]}]
@@ -57,6 +58,16 @@
               (throw (ex-info "Enter a name of 1–80 characters without control characters"
                               {:status 400 :id id})))
             {:id id :section [] :name id :value (when (= action "value") (str/trim value))})
+        (= id "machine_name")
+        (let [blank? (or (not= action "value") (and (string? value) (str/blank? value)))]
+          (when-not (= "global" (:scope target))
+            (throw (ex-info "Machine name belongs to the machine" {:status 400 :id id})))
+          (when-not (or blank? (validation/machine-name? value))
+            (throw (ex-info (str "Enter a name of 1–"
+                                 validation/machine-name-max-length
+                                 " characters without control characters")
+                            {:status 400 :id id})))
+          {:id id :section [] :name id :value (when-not blank? (str/trim value))})
         :else (let [spec
                     (toggles/target-toggle-spec (:root target) id)
 
