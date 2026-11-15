@@ -152,9 +152,13 @@ class Gateway:
             for session in self.sessions(f"project_id={project['id']}"):
                 if is_run:
                     status, _ = self.call("PUT", f"/v1/sessions/{session['id']}/group", {"group_id": group})
+                    is_moved = status == 200
                 else:
-                    status, _ = self.call("PATCH", f"/v1/sessions/{session['id']}/workspace/root", {"path": root})
-                if status != 200:
+                    # The gateway answers 200 also when it did not move the session, so read the answer.
+                    status, moved = self.call("PATCH", f"/v1/sessions/{session['id']}/workspace/root", {"path": root})
+                    is_moved = status == 200 and ((moved or {}).get("workspace") or {}).get("root") == root
+                if not is_moved:
+                    # The project stays, so the next worker tries again.
                     log("session stays in its earlier project", session["id"], status)
             if not self.sessions(f"project_id={project['id']}"):
                 self.call("DELETE", f"/v1/projects/{project['id']}")
