@@ -28,7 +28,7 @@ The page `/play/architecture` of a deployed stack shows the same design with dia
 
 ```mermaid
 flowchart LR
-  browser([Browser]) -->|HTTPS, password| front
+  browser([Browser]) -->|HTTPS| front
   github([GitHub<br>the project]) -->|webhook| front
   subgraph public [Functions outside the VPC]
     front[front<br>pages, relay, wake]
@@ -55,7 +55,7 @@ One container image holds all the code. The variable `VIS_ROLE` selects the func
 
 | Function | Network | Holds | Work |
 | --- | --- | --- | --- |
-| `front` | public address | the password, the webhook secret | Checks the password. Serves the pages and Vis web. Sends each call to the worker through SQS and streams the answer from S3. Starts a worker when work waits. |
+| `front` | public address | the webhook secret | Serves the pages and Vis web. Sends each call to the worker through SQS and streams the answer from S3. Starts a worker when work waits. |
 | `worker` | VPC, no internet | no secret | Runs the Vis gateway and the workflow runs. Saves the Vis home directory and the work of each session to S3. |
 | `llm` | outside the VPC, internet access, no public address | the provider URL and key | Accepts `GET /models` and `POST /chat/completions`. Adds the key and streams the answer. |
 | `repo` | outside the VPC, internet access, no public address | the GitHub deploy key | Copies the `main` branch to S3. Pushes the commits of a session. |
@@ -247,20 +247,17 @@ and removes each project that has no session left.
 ## Addresses
 
 The address of the stack is the Function URL of `front`: the output `Url` of the stack.
-The pages, `/v1/` and `/play/api/` need the password. Send it as the header
-`Authorization: Bearer <password>`, or sign in on a page to get the cookie. A browser
-call that changes data must come from a page of the stack.
+The stack has no sign-in: each person who has the address can use each page and each
+call. Only the webhook checks its caller.
 
-| Address | Password | Result |
-| --- | --- | --- |
-| `POST /login` | the form field `password` | Sets the cookie for 7 days and opens `/play` |
-| `POST /logout` | no | Removes the cookie |
-| `POST /hooks/github` | no; the signature of GitHub | Starts a fetch of `main` |
-| `GET /play/assets/*`, `GET /play/vendor/*` | no | The scripts, the styles, the editor and the fonts of the pages |
-| `GET /<file>` | no | The static files of Vis web |
-| `GET /`, `/play`, `/play/workflows`, `/play/factory`, `/play/architecture` | yes; without it, the sign-in page | The pages |
-| `/v1/*` | yes | The Vis gateway: sessions, turns, events, attached files |
-| `/play/api/*` | yes | The Durable Lambda API of the worker |
+| Address | Result |
+| --- | --- |
+| `POST /hooks/github` | Starts a fetch of `main`. Needs the signature of GitHub |
+| `GET /play/assets/*`, `GET /play/vendor/*` | The scripts, the styles, the editor and the fonts of the pages |
+| `GET /<file>` | The static files of Vis web |
+| `GET /`, `/play`, `/play/workflows`, `/play/factory`, `/play/architecture` | The pages |
+| `/v1/*` | The Vis gateway: sessions, turns, events, attached files |
+| `/play/api/*` | The Durable Lambda API of the worker |
 
 The Durable Lambda API has these addresses below `/play/api/`. A body and an answer are JSON.
 
@@ -383,7 +380,7 @@ Workflows page and the Factory page show where to give the file. A script can gi
 
 ```sh
 jq -n --rawfile content brief.md '{name: "brief.md", content: $content}' |
-  curl -H "Authorization: Bearer $DURABLE_PASSWORD" --data-binary @- \
+  curl --data-binary @- \
     "$DURABLE_URL/play/api/runs/<run>/inputs/brief"
 ```
 
@@ -457,7 +454,7 @@ turn, of some turns or of the last turn.
 ```python
 from blockether.vis.engine import GatewayClient
 
-with GatewayClient(url, token=password) as client:
+with GatewayClient(url) as client:
     session = client.session(session_id)
     session.attachments()  # the whole conversation, oldest turn first
     session.attachments(-1)  # the last turn; 0 is the first turn
@@ -485,7 +482,7 @@ the reply to the vendor, and the script reads the files of the last turn with
 `session.attachments(-1)`.
 
 ```sh
-DURABLE_URL=https://<id>.lambda-url.<region>.on.aws DURABLE_PASSWORD=... \
+DURABLE_URL=https://<id>.lambda-url.<region>.on.aws \
   uv run --with vis-agent==0.5.18 python decide.py
 ```
 
@@ -524,7 +521,6 @@ Time:
 - The `front` function waits 55 seconds for the first part of an answer. Then it answers 504.
 - An event stream ends after 870 seconds. The client connects again.
 - A worker without work stops after 300 seconds. A worker with work gives the work to a new worker after 810 seconds.
-- The cookie ends after 7 days. A new password is in effect after 5 minutes.
 - `sync` keeps the 5 newest releases on EFS.
 - The worker removes from EFS a work directory that nothing changed for 14 days. The copy in S3 stays, and the next turn of the session makes the directory again. The directory `work/main` stays.
 - CloudWatch keeps the log of each function for 14 days. [S3 is the database](#s3-is-the-database) gives the time for each S3 key.
@@ -542,7 +538,7 @@ Time:
 | A session makes GitHub run its code | `repo` refuses a push that changes `.github`. GitHub Actions is off for the repository. Do not turn on GitHub Actions in this repository: a workflow on `main` runs the code that a session wrote. |
 | A session changes the release of the next worker | `sync` owns `releases/` and `CURRENT`. The worker has another user id on EFS and cannot write there. EFS permits a mount only to the roles of `worker` and `sync`, each through its own access point. The worker role cannot write `repo/` in the bucket. |
 | A bad download gets into the image | Each download has a hash. The base image has a digest. Each file that `curl` downloads has a SHA-256, each Python package has a hash and each extension has a Git commit. The digest sets the Amazon Linux release, and `dnf` reads only the repository of that release. [`requirements/rpm.lock`](requirements/rpm.lock) has the header SHA-256 of each installed RPM, and the build stops when one differs. The image has no Java and no Maven library. |
-| A person without the password calls the stack | The `front` function compares the password in constant time and sets a signed, `HttpOnly`, `SameSite=Strict` cookie that ends after 7 days. A request that changes data must come from the same origin. A new password is in effect after 5 minutes. The static files are public. The pages, `/v1/` and `/play/api/` need the password or the cookie. |
+| A person that you do not know calls the stack | Nothing stops this person: the stack has no sign-in. Each person who has the address can start sessions and runs, use the provider key through `llm` and publish commits to the repository. Give the address only to people that you trust. For a stack that other people can find, put a sign-in before `front`. |
 | A false webhook | `front` checks the `X-Hub-Signature-256` of GitHub. |
 | The credentials of the worker role leave the function | Each S3, SQS and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
 | A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `workflows/`, `tmp/` and `work/`. |
@@ -587,10 +583,10 @@ The script is safe to run again. It does these steps:
 
 1. Checks that the repository has a `main` branch, and stops when it does not. Turns off GitHub Actions for the repository. Adds the ruleset "main is append-only": on a private repository, the ruleset needs a paid GitHub plan.
 2. Builds the image and pushes it to Amazon ECR. ECR keeps the 5 newest images.
-3. Stores the secrets in the Parameter Store. It makes the password, the webhook secret and the deploy key. GitHub gets the public half of the deploy key, with write access.
+3. Stores the secrets in the Parameter Store. It makes the webhook secret and the deploy key. GitHub gets the public half of the deploy key, with write access.
 4. Deploys [`template.yaml`](template.yaml).
 5. Adds the webhook to the repository.
-6. Starts the first fetch. Starts the worker one time and sends one request to the stack: Lambda loads a new image at the first start, and that start is slow. Then it prints the address of the stack and the command that reads the password.
+6. Starts the first fetch. Starts the worker one time and sends one request to the stack: Lambda loads a new image at the first start, and that start is slow. Then it prints the address of the stack.
 
 | Variable | Default | Use |
 | --- | --- | --- |
@@ -602,11 +598,10 @@ The script is safe to run again. It does these steps:
 | `AWS_REGION` | `eu-central-1` | The region |
 | `ENGINE` | `docker` | `docker` or `podman`. The stack of this example was made with `podman` |
 
-The script keeps each secret that exists. To change the provider URL, the provider key
-or the password, write the parameter `/<stack>/llm-url`, `/<stack>/llm-key` or
-`/<stack>/password` with `aws ssm put-parameter --overwrite`. The `llm` function reads
-its parameters when a new instance starts. The `front` function reads the password
-again after 5 minutes.
+The script keeps each secret that exists. To change the provider URL or the provider
+key, write the parameter `/<stack>/llm-url` or `/<stack>/llm-key` with
+`aws ssm put-parameter --overwrite`. The `llm` function reads its parameters when a new
+instance starts.
 
 The stack reserves 77 concurrent executions for its functions. AWS keeps 100 for the
 other functions of the account, so the Lambda concurrency limit of the account must be
@@ -648,7 +643,7 @@ Start it in the image, then open http://localhost:8080:
 ```sh
 docker build --platform linux/arm64 -t durable-lambda .
 docker run --rm -p 8080:8080 --entrypoint /opt/vis/vis-agent-python/python/bin/python3 \
-  -e DURABLE_PASSWORD=local -e DURABLE_LLM_URL=https://<provider>/v1 -e DURABLE_LLM_KEY=... \
+  -e DURABLE_LLM_URL=https://<provider>/v1 -e DURABLE_LLM_KEY=... \
   -e VIS_MODELS='[{"name":"<model>","context":<tokens>,"output_limit":<tokens>}]' \
   durable-lambda -m durable.local
 ```

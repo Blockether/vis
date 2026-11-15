@@ -57,12 +57,11 @@ class HttpStream(Stream):
 
     status: int = 200
     headers: dict[str, str] = field(default_factory=dict)
-    cookies: list[str] = field(default_factory=list)
     content_type = HTTP_INTEGRATION
 
     def parts(self) -> Iterable[bytes]:
         """Yield the status and the headers in the form of Lambda, then the body."""
-        head = {"statusCode": self.status, "headers": self.headers, "cookies": self.cookies}
+        head = {"statusCode": self.status, "headers": self.headers}
         yield json.dumps(head).encode() + PRELUDE_END
         yield from super().parts()
 

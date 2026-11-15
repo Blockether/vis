@@ -243,11 +243,6 @@ figure { margin: 0; }
 .hero { display: grid; gap: 14px; padding: 8px 0 4px; } .hero .eyebrow { font: 600 11px var(--mono); color: var(--warn); letter-spacing: .08em; text-transform: uppercase; }
 .note { border-left: 3px solid var(--amber-deep); background: var(--cream-light); padding: 12px 16px; }
 
-/* -- login ------------------------------------------------------------------------------ */
-.login { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--page); }
-.login form { width: min(380px, 100%); padding: 24px; display: grid; gap: 14px; border-color: var(--ink); box-shadow: 4px 4px 0 var(--amber); }
-.login .error { color: var(--bad); font-size: 11px; min-height: 1.2em; font-weight: 500; }
-
 /* -- small screens ---------------------------------------------------------------------- */
 @media (max-width: 1100px) { .studio { grid-template-columns: 220px minmax(0, 1fr); } .studio .runs { display: none; } .studio.show-runs .runs { display: flex; position: fixed; inset: var(--bar) 0 0 auto; width: min(420px, 100vw); z-index: 20; } }
 @media (min-width: 1101px) { .only-narrow { display: none !important; } }

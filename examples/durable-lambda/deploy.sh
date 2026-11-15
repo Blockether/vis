@@ -57,7 +57,6 @@ fi
 digest=$(aws ecr describe-images --repository-name "$STACK" --image-ids imageTag="$tag" --query 'imageDetails[0].imageDigest' --output text)
 
 echo "3/6 secrets"
-exists password || openssl rand -base64 24 | tr -d '\n' | store password
 exists webhook-secret || openssl rand -hex 32 | tr -d '\n' | store webhook-secret
 exists llm-url || printf %s "${DURABLE_LLM_URL:?set DURABLE_LLM_URL}" | store llm-url
 exists llm-key || printf %s "${DURABLE_LLM_KEY:?set DURABLE_LLM_KEY}" | store llm-key
@@ -99,4 +98,3 @@ aws lambda invoke --function-name "$STACK-worker" --invocation-type Event --cli-
   --payload '{"kind":"wake"}' /dev/null >/dev/null
 curl --silent --output /dev/null --max-time 30 "$url" || true
 echo "Durable Lambda: $url"
-echo "Password:   aws ssm get-parameter --name /$STACK/password --with-decryption --query Parameter.Value --output text"

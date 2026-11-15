@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the TUI uses Lanterna 3.1.5-vis.62. Lanterna owns the inline style marks of a line: their range, their painted cells and their carry across a wrap. The TUI has one namespace for the row markers and one for text with ANSI colours.
 
 ### Removed
+- Examples: `examples/durable-lambda/` has no password and no sign-in page. Each person who has the address of the stack can use it. The parameter `/<stack>/password`, `POST /login` and `POST /logout` are gone.
 - Examples: the `examples/live-apps/` and `examples/aws-lambda/` directories are gone. `examples/durable-lambda/` is the example that runs Vis on AWS Lambda.
 - Drafts: Vis has no draft workspaces. The tools `draft_create`, `draft_status`, `draft_diff`, `draft_sync`, `draft_approve` and `draft_discard`, the setting `draft_backend`, the `draft` key of a `workspace.filesystem` entry and the two manual pages are gone. A session always works in its own directory, as it did with the default `draft_backend: off`.
 - Drafts: Vis does not ship the Rift library and makes no Git worktree for a session. The operation names `draft/create`, `draft/sync`, `draft/approve`, `draft/discard` and `git/commit` are gone, so a hook on one of them matches no operation.

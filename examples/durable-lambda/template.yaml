@@ -280,7 +280,7 @@ Resources:
       Name: !Ref AWS::StackName
 
   # ---------------------------------------------------------------- front
-  # The public address. It holds the password check, the pages and the relay.
+  # The public address. It holds the pages and the relay. It has no sign-in.
   FrontLog:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-front", RetentionInDays: 14}
@@ -300,9 +300,7 @@ Resources:
               - {Effect: Allow, Action: [logs:CreateLogStream, logs:PutLogEvents], Resource: !Sub "${FrontLog.Arn}:*"}
               - Effect: Allow
                 Action: ssm:GetParameter
-                Resource:
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/password"
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/webhook-secret"
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/webhook-secret"
               - {Effect: Allow, Action: sqs:SendMessage, Resource: !GetAtt Queue.Arn}
               - {Effect: Allow, Action: s3:GetObject, Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/relay/*"]}
               - {Effect: Allow, Action: s3:PutObject, Resource: !Sub "${Bucket.Arn}/relay/*"}
@@ -336,7 +334,6 @@ Resources:
           VIS_QUEUE_URL: !Ref Queue
           VIS_WORKER_FUNCTION: !Sub "${AWS::StackName}-worker"
           VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
-          VIS_TOKEN_PARAMETER: !Sub "/${AWS::StackName}/password"
           VIS_WEBHOOK_PARAMETER: !Sub "/${AWS::StackName}/webhook-secret"
 
   FrontUrl:

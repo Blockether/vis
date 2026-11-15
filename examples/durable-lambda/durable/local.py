@@ -5,8 +5,7 @@ sync function run as they are. Only the AWS services have a replacement: S3 is a
 directory, the queue is a list, a parameter is an environment variable and an
 invocation is a function call. GitHub is a bare repository in a directory.
 
-Set `DURABLE_PASSWORD`, `DURABLE_LLM_URL` and `DURABLE_LLM_KEY`. Then open
-http://localhost:8080. Use this only for development: nothing here isolates the key.
+Set `DURABLE_LLM_URL` and `DURABLE_LLM_KEY`. Then open http://localhost:8080. Use this only for development: nothing here isolates the key.
 """
 
 from __future__ import annotations
@@ -39,7 +38,6 @@ SETTINGS = {
     "VIS_EFS": f"{ROOT}/efs",
     "VIS_REPO": "local/project",
     "VIS_REPO_URL": f"{ROOT}/github.git",
-    "VIS_TOKEN_PARAMETER": "DURABLE_PASSWORD",
     "VIS_LLM_URL_PARAMETER": "DURABLE_LLM_URL",
     "VIS_LLM_KEY_PARAMETER": "DURABLE_LLM_KEY",
     "VIS_DEPLOY_KEY_PARAMETER": "DURABLE_DEPLOY_KEY",
@@ -212,7 +210,6 @@ class Page(BaseHTTPRequestHandler):
             "rawPath": path,
             "rawQueryString": query,
             "headers": {"x-forwarded-proto": "http", **{name.lower(): value for name, value in self.headers.items()}},
-            "cookies": [part.strip() for part in (self.headers.get("cookie") or "").split(";") if part.strip()],
             "body": base64.b64encode(body).decode(),
             "isBase64Encoded": True,
         }
@@ -220,8 +217,6 @@ class Page(BaseHTTPRequestHandler):
         self.send_response(answer.status)
         for name, value in answer.headers.items():
             self.send_header(name, value)
-        for cookie in answer.cookies:
-            self.send_header("set-cookie", cookie)
         if answer.status in (204, 304) or self.command == "HEAD":  # these answers have no body
             self.end_headers()
             return

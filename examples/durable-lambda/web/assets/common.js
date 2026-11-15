@@ -18,7 +18,6 @@ const ICONS = {
   trash: "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13",
   save: "M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z M8 3v5h7 M8 21v-7h8v7",
   list: "M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01",
-  exit: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9",
   stop: "M6 6h12v12H6Z",
   spark: "M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z",
 };
@@ -72,10 +71,6 @@ async function call(path, { method = "GET", body, raw = false } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: "same-origin",
   });
-  if (answer.status === 401) {
-    location.assign("/play");
-    throw new Error("Sign in first.");
-  }
   if (raw && answer.ok) return answer;
   const text = await answer.text();
   let data = null;
@@ -463,9 +458,8 @@ export function bar() {
     h("nav", { class: "nav", "aria-label": "Pages" }, links.map(([href, text]) => h("a", { href, text, "aria-current": href === location.pathname.replace(/\/$/, "") ? "page" : null }))),
     h("span", { class: "grow" }),
     release,
-    // A phone shows only the icons of the two buttons, and only the commit of the release.
+    // A phone shows only the icon of the button, and only the commit of the release.
     h("a", { class: "btn dark small", href: "/", title: "The Vis web app, on the same gateway", "aria-label": "Open Vis" }, icon("open"), h("span", { class: "only-wide", text: "Open Vis" })),
-    h("form", { method: "post", action: "/logout" }, h("button", { class: "btn quiet small", type: "submit", title: "Sign out", "aria-label": "Sign out" }, icon("exit"), h("span", { class: "only-wide", text: "Sign out" }))),
   );
   const refresh = async () => {
     try {

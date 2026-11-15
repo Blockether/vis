@@ -9,7 +9,7 @@ model, then applies the payment policy and selects the next step:
     reject    the session attaches the reply to the vendor, and the script lists the files of that turn
 
 Usage:
-    DURABLE_URL=https://<id>.lambda-url.<region>.on.aws DURABLE_PASSWORD=... python decide.py
+    DURABLE_URL=https://<id>.lambda-url.<region>.on.aws python decide.py
 """
 
 from __future__ import annotations
@@ -89,15 +89,14 @@ def handle(session: Session, invoice: str) -> dict[str, object]:
 
 
 def main() -> int:
-    url, password = os.environ["DURABLE_URL"].rstrip("/"), os.environ["DURABLE_PASSWORD"]
+    url = os.environ["DURABLE_URL"].rstrip("/")
 
     def play(path: str) -> Any:
         """Read one resource of the Durable Lambda API."""
-        request = urllib.request.Request(f"{url}/play/api/{path}", headers={"authorization": f"Bearer {password}"})
-        with urllib.request.urlopen(request, timeout=120) as answer:
+        with urllib.request.urlopen(f"{url}/play/api/{path}", timeout=120) as answer:
             return json.load(answer)
 
-    with GatewayClient(url, token=password, timeout=120) as client:
+    with GatewayClient(url, timeout=120) as client:
         # The project is a directory of the gateway machine: the clone of the current release.
         options = client.session_options(play("status")["project"])
         for number, invoice in enumerate(INVOICES, 1):

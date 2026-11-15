@@ -1,7 +1,8 @@
 """The front function: the only public entry of the stack.
 
-It answers the Function URL. It checks the password, serves the Vis web app and the
-Durable Lambda pages, and relays every API call to the live worker. A call goes to SQS and
+It answers the Function URL. It serves the Vis web app and the Durable Lambda pages,
+and relays every API call to the live worker. It has no sign-in: each caller of the
+address can use the stack. A call goes to SQS and
 its answer comes back as S3 objects (see `wire.py`). It also takes the webhook of
 GitHub and the tick of the schedule. The front function has no network path to the
 worker or the file system, and no permission to read the provider key.
@@ -11,12 +12,10 @@ from __future__ import annotations
 
 import base64
 import hmac
-import http.cookies
 import json
 import mimetypes
 import os
 import time
-import urllib.parse
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -39,9 +38,8 @@ from durable.runtime import Context, HttpStream
 VIS_WEB, PLAY_WEB, VENDOR = ENV.get("VIS_WEB_DIR", "/opt/vis-web"), "/opt/durable/web", "/opt/durable/vendor"
 # The pages of Durable Lambda, by path.
 PAGES = {"/play": "sessions.html", "/play/workflows": "workflows.html", "/play/factory": "factory.html", "/play/architecture": "architecture.html"}
-# The directories that a browser reads without the password, by path prefix.
+# The directories of static files, by path prefix.
 PUBLIC = {"/play/assets/": f"{PLAY_WEB}/assets", "/play/vendor/": VENDOR}
-SAFE = {"GET", "HEAD", "OPTIONS"}
 SECURITY = {
     "strict-transport-security": "max-age=63072000",
     "x-content-type-options": "nosniff",
@@ -69,35 +67,8 @@ RELAY_POLICY = "sandbox allow-downloads; default-src 'none'; style-src 'unsafe-i
 # The headers of a worker answer that the browser gets. The worker runs the code of a
 # session, so it cannot set a cookie, a redirect or a header that changes the browser rules.
 RELAYED = {"content-type", "content-encoding", "content-disposition", "content-range", "accept-ranges", "cache-control", "etag", "last-modified", "retry-after", "x-vis-client-lease-unknown"}
-# The life of the cookie, and the time after which the function reads the password again.
-SESSION_S, SECRET_S = 604800, 300
-# The password and the webhook secret that this function read, and the time of the last worker start.
+# The webhook secret that this function read, and the time of the last worker start.
 _state: dict[str, Any] = {"woke": 0.0}
-
-
-def password() -> str:
-    """Return the password. Read it again after 5 minutes, so a new password takes effect."""
-    if time.time() - _state.get("read", 0.0) > SECRET_S:
-        try:
-            _state["token"] = aws.parameter(ENV["VIS_TOKEN_PARAMETER"])
-        except (aws.ClientError, aws.BotoCoreError):
-            if "token" not in _state:
-                raise
-            log("the password read failed: the earlier password stays in effect")
-        _state["read"] = time.time()
-    return _state["token"]
-
-
-def cookie(expires: int) -> str:
-    """Return a cookie value: its end time and a signature. The cookie never holds the password."""
-    signature = hmac.new(password().encode(), f"vis-web.{expires}".encode(), "sha256").hexdigest()
-    return f"{expires}.{signature}"
-
-
-def signed(value: str) -> bool:
-    """True for a cookie of /login that has not ended."""
-    expires = value.partition(".")[0]
-    return expires.isdigit() and len(expires) <= 12 and int(expires) > time.time() and hmac.compare_digest(value.encode(), cookie(int(expires)).encode())
 
 
 @dataclass
@@ -108,20 +79,17 @@ class Request:
     path: str
     query: str
     headers: dict[str, str]
-    cookies: dict[str, str]
     body: bytes
 
     @classmethod
     def of(cls, event: dict[str, Any]) -> Request:
         body = event.get("body") or ""
         raw = base64.b64decode(body) if event.get("isBase64Encoded") else body.encode()
-        jar = http.cookies.SimpleCookie("; ".join(event.get("cookies") or []))
         return cls(
             method=event["requestContext"]["http"]["method"].upper(),
             path=event.get("rawPath") or "/",
             query=event.get("rawQueryString") or "",
             headers={k.lower(): v for k, v in (event.get("headers") or {}).items()},
-            cookies={name: morsel.value for name, morsel in jar.items()},
             body=raw,
         )
 
@@ -139,42 +107,6 @@ def answer(status: int, body: bytes | str, ctype: str = "application/json", **he
 
 def error(status: int, message: str) -> HttpStream:
     return answer(status, json.dumps({"error": message}), **{"cache-control": "no-store"})
-
-
-def authed(request: Request) -> bool:
-    """True for the bearer token, or for the cookie that /login sets."""
-    bearer = request.headers.get("authorization", "")
-    return hmac.compare_digest(bearer.encode(), b"Bearer " + password().encode()) or signed(request.cookies.get("vis", ""))
-
-
-def same_origin(request: Request) -> bool:
-    """A browser call that changes state must come from a page of this site."""
-    # A page cannot set Sec-Fetch-Site. With `Referrer-Policy: no-referrer`, a form POST has `Origin: null`.
-    site = request.headers.get("sec-fetch-site")
-    if site is not None:
-        return site in ("same-origin", "none")
-    origin = request.headers.get("origin")
-    return origin is None or urllib.parse.urlsplit(origin).netloc == request.headers.get("host")
-
-
-def login_page(message: str = "", status: int = 200) -> HttpStream:
-    with open(os.path.join(PLAY_WEB, "login.html"), encoding="utf-8") as file:
-        page = file.read().replace("<!--error-->", message)
-    return answer(status, page, "text/html; charset=utf-8", **{"content-security-policy": PAGE_POLICY, "cache-control": "no-store"})
-
-
-def redirect(location: str, value: str, age: int) -> HttpStream:
-    """Send the browser to a page and set the cookie. An age of 0 removes the cookie."""
-    reply = answer(303, b"", "text/plain", location=location)
-    reply.cookies = [f"vis={value}; Path=/; Max-Age={age}; HttpOnly; Secure; SameSite=Strict"]
-    return reply
-
-
-def login(request: Request) -> HttpStream:
-    given = urllib.parse.parse_qs(request.body.decode(errors="replace")).get("password", [""])[0]
-    if not same_origin(request) or not hmac.compare_digest(given.encode(), password().encode()):
-        return login_page("Wrong password.", 401)
-    return redirect("/play", cookie(int(time.time()) + SESSION_S), SESSION_S)
 
 
 def pushed(request: Request) -> HttpStream:
@@ -209,33 +141,20 @@ def static(root: str, relative: str, **headers: str) -> HttpStream | None:
 
 
 def route(request: Request, context: Context) -> HttpStream:
-    """Answer a call of the Function URL. The files, the sign-in and the signed webhook need no password."""
+    """Answer a call of the Function URL. Only the webhook checks its caller."""
     path = request.path.rstrip("/") or "/"
-    if path == "/login" and request.method == "POST":
-        return login(request)
-    if path == "/logout" and request.method == "POST":
-        return redirect("/", "", 0) if same_origin(request) else error(403, "this call must come from Durable Lambda")
     if path == "/hooks/github" and request.method == "POST":
         return pushed(request)
-    known = authed(request)
     if request.method in ("GET", "HEAD"):
         for prefix, root in PUBLIC.items():
             if path.startswith(prefix):
                 return static(root, path[len(prefix) :]) or error(404, "no such file")
-        if path in PAGES or path == "/":
-            if not known:
-                return login_page()
-            if path in PAGES:
-                return static(PLAY_WEB, PAGES[path], **{"content-security-policy": PAGE_POLICY}) or error(404, "no such page")
-        # The files of the web app are public release assets. Only the API needs the password.
+        if path in PAGES:
+            return static(PLAY_WEB, PAGES[path], **{"content-security-policy": PAGE_POLICY}) or error(404, "no such page")
         if not path.startswith(("/v1/", "/play/")):
             found = static(VIS_WEB, "index.html" if path == "/" else path.lstrip("/"), **{"content-security-policy": WEB_POLICY})
             if found:
                 return found
-    if not known:
-        return error(401, "sign in first")
-    if request.method not in SAFE and not same_origin(request):
-        return error(403, "this call must come from Durable Lambda")
     return relay(request, context)
 
 
@@ -281,7 +200,7 @@ def relay(request: Request, context: Context) -> HttpStream:
         "deadline": deadline,
         # After this time no client waits for the answer, so the worker drops the call.
         "answer_by": time.time() + ANSWER_S,
-        # The worker adds its own gateway token. The password stays in this function.
+        # The worker adds its own gateway token: a token of the caller never reaches the gateway.
         "headers": {k: v for k, v in request.headers.items() if k not in wire.HOP | {"cookie", "authorization"} and not k.startswith("x-amz")},
     }
     if len(request.body) > 150_000:
