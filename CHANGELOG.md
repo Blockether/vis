@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Drafts: Vis ignores a `draft` key that an older version stored in the machine settings, in the project settings of `.vis/config.yml` or in the settings of a group or a session. The next save of those settings removes the key. In a `vis.yml` or `~/.vis/config.yml` that a person writes, Vis reports the key by name and does not apply the access settings of that file. Remove the key there.
 
 ### Fixed
+- Companion: a long review opens without a stop of the page. A diff mounts the lines of a file only when the file comes near the visible area, and it removes them when the file goes far away. Before, a review of 19,000 lines in 165 files mounted all lines at the same time, and the page did not respond for more than a second. Find in diff and the file tree show a file that is not mounted yet.
+- Companion: a tab of an app shows that it is selected immediately after a press. Before, the tab changed only when the answer of the app owner came, thus the tabs of an app with a slow owner or a slow connection looked slow. If the owner does not change the selection in 3 seconds, the tab of the owner shows again.
 - grep: the gateway no longer stops when a program makes a file shorter while Vis has it in the search index. Before, the next search read past the new end of the file, the system ended the gateway with a bus error and each open session lost its connection. `com.blockether/fff` is at 0.12.20.
 - Companion: on Android, the Back button closes an open menu and does not leave the app. A tap that opens a menu of the session header or of a project does not close it at once.
 - Companion: a file that the phone app shares keeps its file name. Before, the name started with a number.

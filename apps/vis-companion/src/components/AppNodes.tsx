@@ -832,6 +832,87 @@ function ContextBand({ label, title, reach }: { label: string; title: string; re
   );
 }
 
+/** The lines that a diff mounts at once. The files after them mount only near the viewport. */
+const DIFF_EAGER_LINES = 600;
+/** How far outside its scroller a file mounts, so that a scroll meets rows and not a gap. */
+const DIFF_NEAR_MARGIN = 1200;
+const DIFF_ROW_HEIGHT = 20;
+const DIFF_HUNK_HEIGHT = 28;
+const DIFF_FILE_HEADER_HEIGHT = 40;
+
+/** The height of a file whose rows are not mounted, before the browser measured it. */
+function estimatedFileHeight(file: AppDiffFile): number {
+  const lines = file.hunks.reduce((count, hunk) => count + hunk.lines.length, 0);
+  return DIFF_FILE_HEADER_HEIGHT + lines * DIFF_ROW_HEIGHT + file.hunks.length * DIFF_HUNK_HEIGHT;
+}
+
+/** The files after the eager lines of a diff. A short diff has none. */
+function lazyFilePaths(files: readonly AppDiffFile[]): ReadonlySet<string> {
+  const paths = new Set<string>();
+  let lines = 0;
+  for (const file of files) {
+    if (lines >= DIFF_EAGER_LINES) paths.add(file.path);
+    lines += file.hunks.reduce((count, hunk) => count + hunk.lines.length, 0);
+  }
+  return paths;
+}
+
+function scrollerOf(el: Element | undefined): Element | null {
+  for (let parent = el?.parentElement ?? null; parent; parent = parent.parentElement) {
+    const overflow = getComputedStyle(parent).overflowY;
+    if (overflow === 'auto' || overflow === 'scroll') return parent;
+  }
+  return null;
+}
+
+interface NearFiles {
+  near: ReadonlySet<string>;
+  /** The measured height of a file that left, so that the scroll length stays. */
+  heights: ReadonlyMap<string, number>;
+}
+
+/**
+ * A long diff mounts the rows of a file only near the viewport. All rows at once
+ * block the page: 19,000 lines are 139,000 elements.
+ * An engine that cannot observe mounts every file.
+ */
+function useNearFiles(files: readonly AppDiffFile[], sections: { current: Map<string, HTMLElement> }) {
+  const lazy = useMemo(() => lazyFilePaths(files), [files]);
+  const [seen, setSeen] = useState<NearFiles>(() => ({ near: new Set(), heights: new Map() }));
+  const canObserve = typeof IntersectionObserver !== 'undefined';
+  useEffect(() => {
+    if (!canObserve || lazy.size === 0) return;
+    const paths = new Map<Element, string>();
+    for (const [path, el] of sections.current) if (lazy.has(path)) paths.set(el, path);
+    const observer = new IntersectionObserver(
+      (entries) =>
+        setSeen((held) => {
+          const near = new Set(held.near);
+          const heights = new Map(held.heights);
+          let isChanged = false;
+          for (const entry of entries) {
+            const path = paths.get(entry.target);
+            if (path === undefined || entry.isIntersecting === near.has(path)) continue;
+            isChanged = true;
+            if (entry.isIntersecting) near.add(path);
+            else {
+              near.delete(path);
+              heights.set(path, entry.boundingClientRect.height);
+            }
+          }
+          return isChanged ? { near, heights } : held;
+        }),
+      { root: scrollerOf(paths.keys().next().value), rootMargin: `${DIFF_NEAR_MARGIN}px 0px` },
+    );
+    for (const el of paths.keys()) observer.observe(el);
+    return () => observer.disconnect();
+  }, [canObserve, lazy, sections]);
+  return {
+    isMounted: (path: string) => !canObserve || !lazy.has(path) || seen.near.has(path),
+    heights: seen.heights,
+  };
+}
+
 /** Unified and split diffs share anchored comments, file controls and one scroller per file. */
 export function DiffNodeView({
   node,
@@ -875,6 +956,10 @@ export function DiffNodeView({
       });
   });
   const { searchAnchor, currentResult } = search;
+  const nearFiles = useNearFiles(files, refs);
+  // The open editor and the current match stay mounted wherever the scroll is.
+  const hasRows = (path: string) =>
+    nearFiles.isMounted(path) || opened?.path === path || currentResult?.line.anchor.path === path;
   const byAnchor = useMemo(() => {
     const map = new Map<string, LiveThread[]>();
     for (const thread of node.threads) {
@@ -1005,12 +1090,16 @@ export function DiffNodeView({
               style={
                 {
                   '--diff-number-width': `${numberWidth(digits.get(file.path) ?? 1)}px`,
+                  minHeight:
+                    folded.has(file.path) || hasRows(file.path)
+                      ? undefined
+                      : (nearFiles.heights.get(file.path) ?? estimatedFileHeight(file)),
                 } as CSSProperties
               }
               aria-label={file.path}
             >
               <FileHeader file={file} isOpen={!folded.has(file.path)} onToggle={() => toggle(file.path)} />
-              {!folded.has(file.path) && file.hunks.length > 0 && (
+              {!folded.has(file.path) && file.hunks.length > 0 && hasRows(file.path) && (
                 <div className="diff-file-scroll" data-diff-scroll>
                   {file.hunks.map((hunk, at) => (
                     <HunkView

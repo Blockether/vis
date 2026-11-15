@@ -2015,6 +2015,7 @@ function ActionButton({
   isSettled,
   shortcut,
   isTab = false,
+  isSelected,
 }: {
   node: Extract<LiveNode, { type: 'button' }>;
   onActivate?: NodePresentation['onActivate'];
@@ -2022,6 +2023,8 @@ function ActionButton({
   shortcut?: LiveShortcut;
   /** The button stands in a strip of choices (`ChoiceStrip`), so it wears the tab face. */
   isTab?: boolean;
+  /** The choice that the strip shows, when it is not yet the choice of the owner. */
+  isSelected?: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const activate = async () => {
@@ -2038,7 +2041,7 @@ function ActionButton({
   if (node.is_selected !== undefined) {
     return (
       <Chip
-        isOn={node.is_selected}
+        isOn={isSelected ?? node.is_selected}
         className={isTab ? TAB_FACE : ''}
         data-node-id={node.id}
         aria-label={shortcut ? node.label : undefined}
@@ -2066,6 +2069,59 @@ function ActionButton({
       {node.label}
       <NodeKey shortcut={shortcut} />
     </Button>
+  );
+}
+
+/** How long a pressed tab keeps its face when the owner took the press and changed nothing. */
+const TAB_HOLD_MS = 3000;
+
+/**
+ * A strip of tabs. The pressed tab holds at once: the answer of the owner comes over
+ * the network, and a tab that waits for it reads as a slow app. The choice of the
+ * owner replaces the pressed one when it changes, or when the owner stays silent.
+ */
+function ChoiceStrip({ node, presentation }: { node: LiveGroupNode; presentation: NodePresentation }) {
+  const tabs = node.children.filter((child) => child.type === 'button');
+  const owned = tabs.find((tab) => tab.is_selected)?.id ?? null;
+  const [pressed, setPressed] = useState<{ id: string; from: string | null } | null>(null);
+  if (pressed && pressed.from !== owned) setPressed(null);
+  const shown = pressed && pressed.from === owned ? pressed.id : owned;
+  const hold = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(hold.current), []);
+  const { onActivate } = presentation;
+  const press = onActivate
+    ? async (id: string) => {
+        window.clearTimeout(hold.current);
+        setPressed({ id, from: owned });
+        try {
+          await onActivate(id);
+        } finally {
+          hold.current = window.setTimeout(
+            () => setPressed((held) => (held?.id === id ? null : held)),
+            TAB_HOLD_MS,
+          );
+        }
+      }
+    : undefined;
+  return (
+    <div
+      role="group"
+      aria-label={node.label ?? 'Views'}
+      data-view-layout="tabs"
+      className="flex min-w-0 flex-wrap gap-x-1 border-b border-edge-strong"
+    >
+      {tabs.map((tab) => (
+        <ActionButton
+          key={tab.id}
+          node={tab}
+          isTab
+          isSelected={tab.id === shown}
+          isSettled={presentation.isSettled}
+          onActivate={press}
+          shortcut={presentation.keys?.get(tab.id)}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -2136,26 +2192,7 @@ function NodeCell({
           className={`min-w-0 ${isDisclosure && node.type !== 'log' ? 'pl-5' : ''}`}
         >
           {node.type === 'group' && isChoiceStrip(node) && (
-            <div
-              role="group"
-              aria-label={node.label ?? 'Views'}
-              data-view-layout="tabs"
-              className="flex min-w-0 flex-wrap gap-x-1 border-b border-edge-strong"
-            >
-              {node.children.map(
-                (child) =>
-                  child.type === 'button' && (
-                    <ActionButton
-                      key={child.id}
-                      node={child}
-                      isTab
-                      isSettled={presentation.isSettled}
-                      onActivate={presentation.onActivate}
-                      shortcut={presentation.keys?.get(child.id)}
-                    />
-                  ),
-              )}
-            </div>
+            <ChoiceStrip node={node} presentation={presentation} />
           )}
           {node.type === 'group' && !isChoiceStrip(node) && (
             <ViewLayout direction={node.direction} maxColumns={node.max_columns}>

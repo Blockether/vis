@@ -405,3 +405,69 @@ it('opens search results in folded files and returns focus when search closes', 
     Element.prototype.scrollIntoView = scroll;
   }
 });
+
+/** A diff whose first file fills the eager lines, so `far.txt` waits for the viewport. */
+function longDiff(): LiveDiffNode {
+  const lines = Array.from({ length: 600 }, (_, at) => `+line ${at}`).join('\n');
+  return {
+    ...DIFF,
+    threads: [],
+    patch: `diff --git a/near.txt b/near.txt\n--- a/near.txt\n+++ b/near.txt\n@@ -0,0 +1,600 @@\n${lines}\ndiff --git a/far.txt b/far.txt\n--- a/far.txt\n+++ b/far.txt\n@@ -1 +1 @@\n-distant\n+remote`,
+  };
+}
+
+/** The observer of the diff, driven by the test: jsdom has no layout. */
+function stubViewport() {
+  let notify!: IntersectionObserverCallback;
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(callback: IntersectionObserverCallback) {
+        notify = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  return (target: Element, isIntersecting: boolean, height = 0) =>
+    act(() =>
+      notify(
+        [{ target, isIntersecting, boundingClientRect: { height } } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      ),
+    );
+}
+
+// Report: a review of 19,000 lines took seconds to open. It mounted every row at once.
+describe('a long diff', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('mounts the rows of a far file only near the viewport and keeps its height after', () => {
+    const show = stubViewport();
+    render(<DiffNodeView node={longDiff()} />);
+    const far = screen.getByRole('region', { name: 'far.txt' });
+    expect(screen.getByText('line 0')).toBeInTheDocument();
+    expect(far.querySelector('[data-diff-scroll]')).toBeNull();
+    expect(far.style.minHeight).not.toBe('');
+    show(far, true);
+    expect(far.querySelector('[data-diff-scroll]')).toHaveTextContent('remote');
+    expect(far.style.minHeight).toBe('');
+    show(far, false, 321);
+    expect(far.querySelector('[data-diff-scroll]')).toBeNull();
+    expect(far.style.minHeight).toBe('321px');
+  });
+
+  it('mounts the far file of a search match', () => {
+    stubViewport();
+    const scroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      const { container } = render(<DiffNodeView node={longDiff()} />);
+      fireEvent.keyDown(container.querySelector('.app-diff')!, { key: 'f', ctrlKey: true });
+      fireEvent.change(screen.getByRole('textbox', { name: 'Find in diff' }), { target: { value: 'remote' } });
+      expect(container.querySelector('[data-search-current]')).toHaveTextContent('remote');
+    } finally {
+      Element.prototype.scrollIntoView = scroll;
+    }
+  });
+});

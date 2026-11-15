@@ -874,3 +874,59 @@ describe('live horizontal dividers', () => {
     expect(view.nodes).toEqual([{ id: 'second', type: 'divider' }]);
   });
 });
+
+// Report: a tab changed its face only when the owner answered, so a strip of tabs read as slow.
+describe('a strip of tabs', () => {
+  afterEach(() => vi.useRealTimers());
+
+  const strip = (selected: string): LiveView => ({
+    ...opened(),
+    nodes: [
+      {
+        id: 'tabs',
+        type: 'group',
+        direction: 'row',
+        children: ['one', 'two'].map((id) => ({
+          id,
+          type: 'button',
+          label: id,
+          action: 'activate',
+          variant: 'secondary',
+          is_disabled: false,
+          is_selected: id === selected,
+          clicks: 0,
+        })),
+      },
+    ],
+  });
+  const held = () =>
+    ['one', 'two'].filter(
+      (name) => screen.getByRole('button', { name }).getAttribute('aria-pressed') === 'true',
+    );
+
+  it('shows the pressed tab at once, then the choice of the owner', () => {
+    const onActivate = vi.fn(() => new Promise<void>(() => {}));
+    const { rerender } = render(<LiveViewPanel view={strip('one')} onActivate={onActivate} />);
+    fireEvent.click(screen.getByRole('button', { name: 'two' }));
+    expect(onActivate).toHaveBeenCalledWith('two');
+    expect(held()).toEqual(['two']);
+    rerender(<LiveViewPanel view={strip('two')} onActivate={onActivate} />);
+    expect(held()).toEqual(['two']);
+    // Another client moves the owner back: the old press holds nothing.
+    rerender(<LiveViewPanel view={strip('one')} onActivate={onActivate} />);
+    expect(held()).toEqual(['one']);
+  });
+
+  it('returns to the choice of the owner when the owner changes nothing', async () => {
+    vi.useFakeTimers();
+    render(<LiveViewPanel view={strip('one')} onActivate={async () => {}} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'two' }));
+    });
+    expect(held()).toEqual(['two']);
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(held()).toEqual(['one']);
+  });
+});
