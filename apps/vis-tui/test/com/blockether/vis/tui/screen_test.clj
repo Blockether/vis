@@ -20,7 +20,7 @@
             [com.blockether.vis.tui.notifications :as notifications]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
-            [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.scroll :as scroll]
@@ -1627,8 +1627,8 @@ therapy line 2"
                    {:visible [{:top 0
                                :height 3
                                :projected {:role :assistant
-                                           :prewrapped-lines [(str p/MARKER_CODE "(+ 1 2)")
-                                                              (str p/MARKER_ANSWER_TXT "done")]}}]}
+                                           :prewrapped-lines [(str m/MARKER_CODE "(+ 1 2)")
+                                                              (str m/MARKER_ANSWER_TXT "done")]}}]}
                    4
                    6
                    20))))
@@ -1741,8 +1741,8 @@ therapy line 2"
                                                 :projected
                                                 {:role :assistant
                                                  :prewrapped-lines
-                                                 ["(done (v/p \"hi\"))" (str p/MARKER_ANSWER_SEP "")
-                                                  (str p/MARKER_ANSWER_TXT "hi there")]}}]}
+                                                 ["(done (v/p \"hi\"))" (str m/MARKER_ANSWER_SEP "")
+                                                  (str m/MARKER_ANSWER_TXT "hi there")]}}]}
                                     0
                                     6
                                     40)
@@ -1776,10 +1776,10 @@ therapy line 2"
       ;; by the indent width — otherwise result-row copy keeps stray leading spaces and
       ;; the highlighted cells drift 2 columns left of the text the user sees.
       (let [result-line
-            (str p/MARKER_RESULT "  the result body text")
+            (str m/MARKER_RESULT "  the result body text")
 
             plain-line
-            (str p/MARKER_RESULT "no-indent result")
+            (str m/MARKER_RESULT "no-indent result")
 
             message
             {:role :assistant :prewrapped-lines [plain-line result-line]}
@@ -1821,7 +1821,7 @@ therapy line 2"
            :status :failed
            :content
            [{"id" "e1" "type" "error" "code" "turn_failed" "message" "provider stream stalled"}]
-           :prewrapped-lines [(str p/MARKER_ANSWER_TXT "turn_failed provider stream stalled")]}
+           :prewrapped-lines [(str m/MARKER_ANSWER_TXT "turn_failed provider stream stalled")]}
 
           layout-of
           (fn [msg]

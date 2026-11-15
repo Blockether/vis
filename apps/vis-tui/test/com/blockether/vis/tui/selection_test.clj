@@ -57,7 +57,9 @@
                             (selection/clean-copied-text
                               (str "\u001B[32m(def\u001B[0m x 1)\uE000   \r\n"
                                    "\u241B]52;c;AAAA\u0007plain \u241B[31mok\u241B[0m\uE111  \n"
-                                   "[31mred[0m bare  "))))))
+                                   "[31mred[0m bare  ")))))
+             (it "drops the sentinels of an error span from a copy"
+                 (expect (= "boom" (selection/clean-copied-text "\uE11Aboom\uE11B")))))
 
 (defdescribe
   selectable-ranges-test

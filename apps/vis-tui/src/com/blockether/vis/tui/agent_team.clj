@@ -11,6 +11,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.presentation :as presentation]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t])
   (:import [com.googlecode.lanterna.graphics TextGraphics]
@@ -937,7 +938,7 @@
    before and after the table."
   [{:keys [rows]} width]
   (let [marker
-        p/MARKER_ACTIVITY
+        m/MARKER_ACTIVITY
 
         columns
         (table-columns rows width)
@@ -965,10 +966,11 @@
     0))
 
 (defn- gap-line?
-  "True for a terminal-bg blank row: empty, or the iteration pad marker (U+206C) alone."
+  "True for a terminal-bg blank row: empty, or the iteration pad marker alone."
   [line]
   (let [line (str line)]
-    (or (= "" line) (and (str/starts-with? line "\u206C") (str/blank? (subs line 1))))))
+    (or (= "" line)
+        (and (str/starts-with? line m/MARKER_ITERATION_PAD) (str/blank? (subs line 1))))))
 
 (defn with-card-lines
   "Put the team block of `projected` (an assistant message with `:agent-team-card`) into its

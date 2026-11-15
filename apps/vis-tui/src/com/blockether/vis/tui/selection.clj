@@ -4,7 +4,8 @@
    This is not native terminal selection. When mouse reporting is enabled the
    terminal sends drag/release events to Vis, so Vis tracks the visible cells,
    highlights the selected range, and copies that range on release."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.markers :as m]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -313,7 +314,7 @@
                 ;; Defensive: if an external paste path dropped ESC but left a
                 ;; bare SGR tail, do not put color fragments back into prompts.
                 (str/replace #"\[[0-9;:]*m" "")
-                (str/replace #"[\u200B-\u200D\u2060-\u206F\uFEFF\uE000-\uE02C\uE110-\uE119]" "")
+                (str/replace m/invisible-pattern "")
                 (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
                 ;; Translate :table box-drawing chrome to ASCII so a copied
                 ;; cell range pastes back as `| col | col |` rather than a

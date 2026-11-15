@@ -29,6 +29,8 @@
     [com.blockether.vis.tui.keymap :as keymap]
     [com.blockether.vis.tui.mcp :as mcp]
     [com.blockether.vis.tui.provider :as provider]
+    [com.blockether.vis.tui.markers :as m]
+    [com.blockether.vis.tui.ansi :as ansi]
     [com.blockether.vis.tui.primitives :as p]
     [com.blockether.vis.tui.projects :as projects]
     [com.blockether.vis.tui.render :as render]
@@ -1804,8 +1806,8 @@
   2)
 
 (def ^:private assistant-code-text-inset-markers
-  #{p/MARKER_CODE p/MARKER_CODE_OK p/MARKER_CODE_ERR p/MARKER_RESULT p/MARKER_ERR_RESULT
-    p/MARKER_MD_CODE p/MARKER_TH_MD_CODE})
+  #{m/MARKER_CODE m/MARKER_CODE_OK m/MARKER_CODE_ERR m/MARKER_RESULT m/MARKER_ERR_RESULT
+    m/MARKER_MD_CODE m/MARKER_TH_MD_CODE})
 
 (def ^:private selection-output-indent "  ")
 
@@ -1820,7 +1822,7 @@
    `MARKER_STDOUT/STDERR` markers were retired when tool output moved to the
    unified `MARKER_RESULT` model; emptying this set silently broke result-row
    copy alignment."
-  #{p/MARKER_RESULT p/MARKER_ERR_RESULT})
+  #{m/MARKER_RESULT m/MARKER_ERR_RESULT})
 
 (defn- assistant-code-text-row?
   [line]
@@ -1859,9 +1861,9 @@
    Mouse-selection copy operates on rendered screen cells, so clipping these
    rows before extraction keeps copied transcript text free of role banners,
    answer dividers, padding bands, iteration labels, and provider/model footers."
-  #{p/MARKER_ITERATION_HDR p/MARKER_SEP p/MARKER_ANSWER_SEP p/MARKER_ANSWER_HDR p/MARKER_ANSWER_PAD
-    p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD p/MARKER_ITERATION_PAD
-    p/MARKER_QUEUE_HDR p/MARKER_USER_INPUT_HDR})
+  #{m/MARKER_ITERATION_HDR m/MARKER_SEP m/MARKER_ANSWER_SEP m/MARKER_ANSWER_HDR m/MARKER_ANSWER_PAD
+    m/MARKER_CODE_PAD m/MARKER_CODE_OK_PAD m/MARKER_CODE_ERR_PAD m/MARKER_ITERATION_PAD
+    m/MARKER_QUEUE_HDR m/MARKER_USER_INPUT_HDR})
 
 (defn- copyable-transcript-line?
   [line]
@@ -3979,7 +3981,7 @@
 (defn- text-art-width
   "Display columns of one text art `line`, without its colour codes."
   ^long [line]
-  (p/display-width (str/replace line #"\u001b\[[0-9;]*m" "")))
+  (p/display-width (p/strip-sgr line)))
 
 (defn- zen-margin-art
   "The Zen margin text art of a `cols` x `rows` screen as `{:col :row :lines}` in screen
@@ -4013,12 +4015,7 @@
         (doseq [{:keys [col row lines]} arts
                 [i line] (map-indexed vector lines)]
 
-          (render/paint-ansi-line! g
-                                   col
-                                   (+ (long row) (long i))
-                                   line
-                                   t/dialog-hint
-                                   t/terminal-bg))))))
+          (ansi/paint-line! g col (+ (long row) (long i)) line t/dialog-hint t/terminal-bg))))))
 
 (defn- frame-image-regions
   "The pictures of one frame in screen columns: the transcript `placements` that show in

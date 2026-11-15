@@ -13,6 +13,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.presentation :as ir]
@@ -239,8 +240,8 @@
                        ms
                        (markers out)]
 
-                   (expect (= [p/MARKER_MD_TABLE_SEP p/MARKER_MD_TABLE_HEAD p/MARKER_MD_TABLE_SEP
-                               p/MARKER_MD_TABLE_ROW p/MARKER_MD_TABLE_SEP]
+                   (expect (= [m/MARKER_MD_TABLE_SEP m/MARKER_MD_TABLE_HEAD m/MARKER_MD_TABLE_SEP
+                               m/MARKER_MD_TABLE_ROW m/MARKER_MD_TABLE_SEP]
                               ms))))
              (it "uses thinking table markers in thinking mode"
                  (let [out
@@ -251,9 +252,9 @@
                        ms
                        (markers out)]
 
-                   (expect (= p/MARKER_TH_MD_TABLE_HEAD (second ms)))
-                   (expect (= p/MARKER_TH_MD_TABLE_SEP (first ms)))
-                   (expect (= p/MARKER_TH_MD_TABLE_ROW (nth ms 3))))))
+                   (expect (= m/MARKER_TH_MD_TABLE_HEAD (second ms)))
+                   (expect (= m/MARKER_TH_MD_TABLE_SEP (first ms)))
+                   (expect (= m/MARKER_TH_MD_TABLE_ROW (nth ms 3))))))
 
 (defdescribe
   table-wrap-test
@@ -551,9 +552,9 @@
                        ms
                        (markers out)]
 
-                   (expect (some #(= p/MARKER_MD_H1 %) ms))
-                   (expect (some #(= p/MARKER_MD_H2 %) ms))
-                   (expect (some #(= p/MARKER_MD_H3 %) ms))))
+                   (expect (some #(= m/MARKER_MD_H1 %) ms))
+                   (expect (some #(= m/MARKER_MD_H2 %) ms))
+                   (expect (some #(= m/MARKER_MD_H3 %) ms))))
              (it "wraps :strong runs in INLINE_BOLD_ON/OFF sentinel pair"
                  (let [out
                        (layout/ast->sentinel-strings [:ast [:p "hi " [:strong "bold"] " rest"]] 80)
@@ -561,7 +562,7 @@
                        body
                        (str/join "" (bodies out))]
 
-                   (expect (str/includes? body (str p/INLINE_BOLD_ON "bold" p/INLINE_BOLD_OFF)))))
+                   (expect (str/includes? body (str m/INLINE_BOLD_ON "bold" m/INLINE_BOLD_OFF)))))
              (it "wraps :c (inline code) in INLINE_CODE_ON/OFF sentinel pair"
                  (let [out
                        (layout/ast->sentinel-strings [:ast [:p "use " [:c "send!"] " here"]] 80)
@@ -569,7 +570,7 @@
                        body
                        (str/join "" (bodies out))]
 
-                   (expect (str/includes? body (str p/INLINE_CODE_ON "send!" p/INLINE_CODE_OFF))))))
+                   (expect (str/includes? body (str m/INLINE_CODE_ON "send!" m/INLINE_CODE_OFF))))))
 
 ;; Retired disclosure tags stay out of answer rendering
 

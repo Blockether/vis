@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.footer :as footer]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.client :as vis]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -13,15 +14,11 @@
   false)
 
 (defn- sentinel-char?
-  "True when `c` is a footer-unsafe sentinel codepoint: either a
-   block-marker (Unicode invisible-format range \\u2061-\\u206F, or
-   the markdown PUA range \\uE000-\\uE0FF) or an inline-span
-   sentinel (\\uE110-\\uE119). `draw-spans!` writes characters
-   verbatim into terminal cells, so any of these would leak as a
-   stray blank column."
+  "True when `c` is a block marker or an inline-span sentinel. `draw-spans!`
+   writes characters verbatim into terminal cells, so each of these would leak
+   as a stray blank column."
   [^Character c]
-  (let [n (int c)]
-    (or (<= 0x2061 n 0x206F) (<= 0xE000 n 0xE0FF) (p/inline-sentinel? (str c)))))
+  (boolean (re-matches m/invisible-pattern (str c))))
 
 (defdescribe
   footer-edge-alignment-test

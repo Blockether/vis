@@ -35,6 +35,7 @@
      :max-lines       int    ; hard cap (default unlimited)"
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.mermaid :as mermaid]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.presentation :as ir])
   (:import [com.blockether.vis.clojure ClojureHighlighter]
@@ -747,7 +748,7 @@
 
         ;; A `diff` fence (patch / write / format evidence) is colored by
         ;; wrapping each row in ANSI SGR: the `md-code` paint branch runs the row
-        ;; through `paint-ansi-line!`, which translates the codes to Lanterna fg
+        ;; through `ansi/paint-line!`, which translates the codes to Lanterna fg
         ;; (32→green add, 91→red del, 36→cyan hunk, 90→dim file header) — the SAME
         ;; mechanism that carries zprint syntax color on Clojure fences, so no
         ;; painter change is needed. Context rows stay base fg.
@@ -1752,7 +1753,7 @@
 ;;
 ;; The pre-IR bubble painter consumes vectors of strings, where each
 ;; string starts with a block marker (`MARKER_MD_H1` / `MARKER_MD_BULLET`
-;; / etc., see `primitives.clj`) and embeds inline span sentinels
+;; / etc., see `markers.clj`) and embeds inline span sentinels
 ;; (`INLINE_BOLD_ON/OFF`, `INLINE_CODE_ON/OFF`, ...). This adapter
 ;; emits exactly that surface from canonical IR walker output, so
 ;; assistant-answer rendering can switch off the markdown→parse→wrap
@@ -1763,45 +1764,45 @@
 ;; stays bivalent.
 
 (def ^:private answer-marker-set
-  {:h1 p/MARKER_MD_H1
-   :h2 p/MARKER_MD_H2
-   :h3 p/MARKER_MD_H3
-   :code p/MARKER_MD_CODE
-   :bullet p/MARKER_MD_BULLET
-   :quote p/MARKER_MD_QUOTE
-   :table p/MARKER_MD_TABLE_ROW
-   :table-head p/MARKER_MD_TABLE_HEAD
-   :table-sep p/MARKER_MD_TABLE_SEP
-   :table-row p/MARKER_MD_TABLE_ROW
-   :plain p/MARKER_ANSWER_TXT})
+  {:h1 m/MARKER_MD_H1
+   :h2 m/MARKER_MD_H2
+   :h3 m/MARKER_MD_H3
+   :code m/MARKER_MD_CODE
+   :bullet m/MARKER_MD_BULLET
+   :quote m/MARKER_MD_QUOTE
+   :table m/MARKER_MD_TABLE_ROW
+   :table-head m/MARKER_MD_TABLE_HEAD
+   :table-sep m/MARKER_MD_TABLE_SEP
+   :table-row m/MARKER_MD_TABLE_ROW
+   :plain m/MARKER_ANSWER_TXT})
 
 (def ^:private thinking-marker-set
-  {:h1 p/MARKER_TH_MD_H1
-   :h2 p/MARKER_TH_MD_H2
-   :h3 p/MARKER_TH_MD_H3
-   :code p/MARKER_TH_MD_CODE
-   :bullet p/MARKER_TH_MD_BULLET
-   :quote p/MARKER_TH_MD_QUOTE
-   :table p/MARKER_TH_MD_TABLE_ROW
-   :table-head p/MARKER_TH_MD_TABLE_HEAD
-   :table-sep p/MARKER_TH_MD_TABLE_SEP
-   :table-row p/MARKER_TH_MD_TABLE_ROW
-   :plain p/MARKER_THINKING})
+  {:h1 m/MARKER_TH_MD_H1
+   :h2 m/MARKER_TH_MD_H2
+   :h3 m/MARKER_TH_MD_H3
+   :code m/MARKER_TH_MD_CODE
+   :bullet m/MARKER_TH_MD_BULLET
+   :quote m/MARKER_TH_MD_QUOTE
+   :table m/MARKER_TH_MD_TABLE_ROW
+   :table-head m/MARKER_TH_MD_TABLE_HEAD
+   :table-sep m/MARKER_TH_MD_TABLE_SEP
+   :table-row m/MARKER_TH_MD_TABLE_ROW
+   :plain m/MARKER_THINKING})
 
 (def ^:private channel-marker-set
   ;; Channel/tool IR renders in place inside the surrounding bubble.
   ;; Structural IR (headings, code, lists, tables) keeps explicit row
   ;; styling; plain paragraphs get no hidden answer/result background.
-  {:h1 p/MARKER_MD_H1
-   :h2 p/MARKER_MD_H2
-   :h3 p/MARKER_MD_H3
-   :code p/MARKER_MD_CODE
-   :bullet p/MARKER_MD_BULLET
-   :quote p/MARKER_MD_QUOTE
-   :table p/MARKER_MD_TABLE_ROW
-   :table-head p/MARKER_MD_TABLE_HEAD
-   :table-sep p/MARKER_MD_TABLE_SEP
-   :table-row p/MARKER_MD_TABLE_ROW
+  {:h1 m/MARKER_MD_H1
+   :h2 m/MARKER_MD_H2
+   :h3 m/MARKER_MD_H3
+   :code m/MARKER_MD_CODE
+   :bullet m/MARKER_MD_BULLET
+   :quote m/MARKER_MD_QUOTE
+   :table m/MARKER_MD_TABLE_ROW
+   :table-head m/MARKER_MD_TABLE_HEAD
+   :table-sep m/MARKER_MD_TABLE_SEP
+   :table-row m/MARKER_MD_TABLE_ROW
    :plain ""})
 
 (defn- marker-set-for
@@ -1892,15 +1893,15 @@
 
     (if (or code? ital? bold? link?)
       (let [sb (StringBuilder.)]
-        (when link? (.append sb ^String p/INLINE_LINK_ON))
-        (when bold? (.append sb ^String p/INLINE_BOLD_ON))
-        (when ital? (.append sb ^String p/INLINE_ITALIC_ON))
-        (when code? (.append sb ^String p/INLINE_CODE_ON))
+        (when link? (.append sb ^String m/INLINE_LINK_ON))
+        (when bold? (.append sb ^String m/INLINE_BOLD_ON))
+        (when ital? (.append sb ^String m/INLINE_ITALIC_ON))
+        (when code? (.append sb ^String m/INLINE_CODE_ON))
         (.append sb text)
-        (when code? (.append sb ^String p/INLINE_CODE_OFF))
-        (when ital? (.append sb ^String p/INLINE_ITALIC_OFF))
-        (when bold? (.append sb ^String p/INLINE_BOLD_OFF))
-        (when link? (.append sb ^String p/INLINE_LINK_OFF))
+        (when code? (.append sb ^String m/INLINE_CODE_OFF))
+        (when ital? (.append sb ^String m/INLINE_ITALIC_OFF))
+        (when bold? (.append sb ^String m/INLINE_BOLD_OFF))
+        (when link? (.append sb ^String m/INLINE_LINK_OFF))
         (.toString sb))
       text)))
 

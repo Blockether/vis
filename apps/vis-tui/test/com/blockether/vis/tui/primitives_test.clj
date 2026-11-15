@@ -5,6 +5,7 @@
    implementation. They are the ratchet against re-introducing
    char-count math for terminal-rendered strings."
   (:require [clojure.string :as str]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -100,16 +101,16 @@
 
                        line
                        (str "Searched — 0 hit(s), truncated-by "
-                            p/INLINE_CODE_ON
+                            m/INLINE_CODE_ON
                             "end-of-results"
-                            p/INLINE_CODE_OFF
+                            m/INLINE_CODE_OFF
                             ".")]
 
                    (p/put-str! graphics 0 0 line)
                    (let [painted (apply str @captured)]
                      (expect (= "Searched — 0 hit(s), truncated-by end-of-results." painted))
-                     (expect (not (str/includes? painted p/INLINE_CODE_ON)))
-                     (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
+                     (expect (not (str/includes? painted m/INLINE_CODE_ON)))
+                     (expect (not (str/includes? painted m/INLINE_CODE_OFF)))))))
 
 (defn- painted-cells
   "Cells of row 0 after `paint!` draws on a fresh 24x2 screen."
@@ -250,6 +251,22 @@
                        (it "Over-wide input is truncated to width"
                            (expect (= 4 (p/display-width (p/pad-right CJK 4))))
                            (expect (= "日本" (p/pad-right CJK 4))))))
+
+(defdescribe inline-span-width-test
+             (describe "an inline span has no columns, also the error span"
+                       (it "a line that fits is not cut"
+                           (doseq [[on off] [[m/INLINE_BOLD_ON m/INLINE_BOLD_OFF]
+                                             [m/INLINE_ERR_ON m/INLINE_ERR_OFF]]]
+                             (let [line (str on "abcdef" off)]
+                               (expect (= 6 (p/display-width line)))
+                               (expect (= line (p/truncate-cols line 6)))
+                               (expect (= line (p/ellipsize line 6)))
+                               (expect (= (count line) (p/col-prefix-end line 6))))))
+                       (it "a pad fills to the painted width"
+                           (let [line (str m/INLINE_ERR_ON "abcdef" m/INLINE_ERR_OFF)]
+                             (expect (= (str line "  ") (p/pad-right line 8)))
+                             (expect (= (str "  " line) (p/pad-left line 8)))
+                             (expect (= (str " " line " ") (p/center-text line 8)))))))
 
 (defdescribe pad-left-test
              (describe "pad-left mirrors pad-right"

@@ -4,6 +4,7 @@
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.tui.ansi :as ansi]
             [com.blockether.vis.tui.app-surfaces :as app-surfaces]
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
@@ -11,6 +12,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.keymap :as keymap]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.table :as table]
@@ -18,7 +20,7 @@
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.provider-error :as perr])
   (:import [com.blockether.vis.python PythonHighlighter]
-           [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
+           [com.googlecode.lanterna InlineSpans TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [com.blockether.vis.render BoundedCache]
@@ -154,104 +156,6 @@
   (if (<= n 0) "" (String. (char-array n ch))))
 
 ;;; ── Text wrapping ───────────────────────────────────────────────────────────
-(defn- structural-line-marker?
-  "True for invisible first-column markers consumed by `draw-chat-bubble!`.
-   These markers select a row background/style. When wrapping a long marked
-   row, every continuation must keep the same marker; otherwise only the first
-   visual row paints the code/result/thinking background and the rest
-   falls through as plain assistant text."
-  [^Character ch]
-  (boolean (or (#{\u200B \u200C \u200D \uFEFF} ch)
-               (<= (int \u2060) (int ch) (int \u206F))
-               (<= (int \uE001) (int ch) (int \uE02D)))))
-
-(defn- split-structural-line-marker
-  [^String line]
-  (when (and (string? line) (pos? (count line)))
-    (let [ch (.charAt line 0)]
-      (when (structural-line-marker? ch) [(subs line 0 1) (subs line 1)]))))
-
-(def ^:private inline-style-order [:bold :italic :strike :code :link])
-
-(def ^:private inline-style->sentinels
-  {:bold [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF]
-   :italic [p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF]
-   :strike [p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF]
-   :code [p/INLINE_CODE_ON p/INLINE_CODE_OFF]
-   :link [p/INLINE_LINK_ON p/INLINE_LINK_OFF]})
-
-(def ^:private inline-sentinel->transition
-  {p/INLINE_BOLD_ON [:on :bold]
-   p/INLINE_BOLD_OFF [:off :bold]
-   p/INLINE_ITALIC_ON [:on :italic]
-   p/INLINE_ITALIC_OFF [:off :italic]
-   p/INLINE_STRIKE_ON [:on :strike]
-   p/INLINE_STRIKE_OFF [:off :strike]
-   p/INLINE_CODE_ON [:on :code]
-   p/INLINE_CODE_OFF [:off :code]
-   p/INLINE_LINK_ON [:on :link]
-   p/INLINE_LINK_OFF [:off :link]})
-
-(defn- inline-state-after
-  [active ^String line]
-  (loop [idx
-         0
-
-         active
-         (vec active)]
-
-    (if (>= idx (.length line))
-      active
-      (let [token (subs line idx (inc idx))]
-        (if-let [[op style] (inline-sentinel->transition token)]
-          (recur (inc idx)
-                 (case op
-                   :on
-                   (if (some #{style} active) active (conj active style))
-
-                   :off
-                   (vec (remove #{style} active))))
-          (recur (inc idx) active))))))
-
-(defn- active-inline-prefix
-  [active]
-  (let [active-set (set active)]
-    (apply str
-      (keep (fn [style]
-              (when (active-set style) (first (inline-style->sentinels style))))
-            inline-style-order))))
-
-(defn- active-inline-suffix
-  [active]
-  (let [active-set (set active)]
-    (apply str
-      (keep (fn [style]
-              (when (active-set style) (second (inline-style->sentinels style))))
-            (reverse inline-style-order)))))
-
-(defn- rebalance-inline-sentinel-wraps
-  "When a markdown inline span crosses a visual wrap boundary, repeat its
-   zero-width sentinels on each physical row. Otherwise a long inline code span
-   starts with code styling on row 1, then every continuation paints as plain
-   prose until the final row's CODE_OFF. Added sentinels are zero-width, so
-   wrapping width is unchanged."
-  [lines]
-  (loop [remaining
-         (seq lines)
-
-         active
-         []
-
-         out
-         []]
-
-    (if-let [line (first remaining)]
-      (let [active' (inline-state-after active line)
-            line' (str (active-inline-prefix active) line (active-inline-suffix active'))]
-
-        (recur (next remaining) active' (conj out line')))
-      out)))
-
 (defn- wrap-unmarked-line-chunks
   [^String line ^long max-width]
   (if (<= (p/display-width line) max-width)
@@ -300,26 +204,17 @@
 (defn- wrap-unmarked-line
   [^String line ^long max-width]
   (let [lines (wrap-unmarked-line-chunks line max-width)]
-    (if (> (count lines) 1) (rebalance-inline-sentinel-wraps lines) lines)))
+    ;; A span that crosses a wrap must open and close on each row, or only its first
+    ;; row has the style.
+    (if (> (count lines) 1) (vec (InlineSpans/carry lines)) lines)))
 
 (defn- wrap-line-preserving-marker
   [line max-width]
-  (if-let [[marker body] (split-structural-line-marker line)]
+  (if-let [[marker body] (m/split-block-marker line)]
     (if (<= (p/display-width line) (long max-width))
       [line]
       (mapv #(str marker %) (wrap-unmarked-line body max-width)))
     (wrap-unmarked-line line max-width)))
-
-(defn- truncate-ansi-cols
-  "ANSI-SGR-aware column clip: preserves `\u001b[..m` escapes as zero-width and
-   never lets a raw ESC (0x1b) reach Lanterna's grapheme splitter (which throws on
-   it, blanking the TUI before first paint). Zprint emits ANSI-colored Clojure
-   code, so trace rows carry SGR escapes. Delegates to the lanterna fork's
-   `TerminalTextUtils/ansiTruncateColumns` (>= 3.1.5-vis.29) — the CHOP sibling of
-   `p/ansi-fold-cols`/`p/ansi-slice-cols`; a malformed/non-SGR escape renders as a
-   single middle dot."
-  ^String [s ^long max-cols]
-  (p/ansi-truncate-cols s max-cols))
 
 (defn- clip-line-preserving-marker
   "Clip a formatted chat-bubble row to `max-width` display columns.
@@ -330,14 +225,14 @@
    preserve them and clip only the visible body."
   [line max-width]
   (let [max-width (max 0 (long max-width))]
-    (if-let [[marker body] (split-structural-line-marker line)]
-      (str marker (truncate-ansi-cols body max-width))
-      (truncate-ansi-cols (str line) max-width))))
+    (if-let [[marker body] (m/split-block-marker line)]
+      (str marker (p/ansi-truncate-cols body max-width))
+      (p/ansi-truncate-cols (str line) max-width))))
 
 (defn- full-band-marker?
   [line]
   (let [marker (when (and (string? line) (pos? (count line))) (subs line 0 1))]
-    (contains? #{p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD} marker)))
+    (contains? #{m/MARKER_CODE_PAD m/MARKER_CODE_OK_PAD m/MARKER_CODE_ERR_PAD} marker)))
 
 (def ^:private ^:const clipped-line-memo-cap 65536)
 
@@ -530,8 +425,7 @@
          bar
          (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
 
-     (.setForegroundColor g t/border-fg)
-     (.setBackgroundColor g t/terminal-bg)
+     (p/set-colors! g t/border-fg t/terminal-bg)
      (if sides?
        (do
          ;; Top: ┌── top-hint ──┐
@@ -550,8 +444,7 @@
                         Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
          ;; Sides: │ ... │
          (doseq [row (range (inc (long box-top)) box-bottom)]
-           (.setForegroundColor g t/border-fg)
-           (.setBackgroundColor g t/terminal-bg)
+           (p/set-colors! g t/border-fg t/terminal-bg)
            (.setCharacter g 0 (int row) Symbols/SINGLE_LINE_VERTICAL)
            (.setCharacter g (int (dec (long cols))) (int row) Symbols/SINGLE_LINE_VERTICAL)))
        ;; Sideless variant: full-width top and bottom rules, with no corner or
@@ -580,8 +473,7 @@
         rows
         (- (long box-bottom) (long box-top) 1)]
 
-    (.setForegroundColor g t/box-fg)
-    (.setBackgroundColor g t/box-bg)
+    (p/set-colors! g t/box-fg t/box-bg)
     (.fillRectangle g (TerminalPosition. 0 text-top) (TerminalSize. inner-w rows) \space)))
 
 ;;; ── Input box ──────────────────────────────────────────────────────────────
@@ -817,13 +709,11 @@
             pill
             (if (= bang-pfx "!&") " shell & " " shell ")]
 
-        (.setForegroundColor g t/code-border-fg)
-        (.setBackgroundColor g t/terminal-bg)
+        (p/set-colors! g t/code-border-fg t/terminal-bg)
         (p/put-str! g pad box-top (embed-in-bar bar pill))
         (p/put-str! g pad box-bottom bar)))
     (when more-hint
-      (.setForegroundColor g t/border-fg)
-      (.setBackgroundColor g t/terminal-bg)
+      (p/set-colors! g t/border-fg t/terminal-bg)
       (.putString g
                   (int (+ (long INPUT_BORDER_HORIZONTAL_PAD) 2))
                   (int box-top)
@@ -832,8 +722,7 @@
                                    (max 0 (- cols (* 2 (long INPUT_BORDER_HORIZONTAL_PAD)) 4)))))
     (fill-box-interior! g box-top box-bottom cols)
     ;; Text
-    (.setForegroundColor g t/box-fg)
-    (.setBackgroundColor g t/box-bg)
+    (p/set-colors! g t/box-fg t/box-bg)
     (dotimes [i text-rows]
       (let [vi (+ v-scroll i)]
         (when (< vi (count visual-lines))
@@ -843,15 +732,15 @@
     ;; Staged payloads are chips, not ordinary prose. Split tokens retain their
     ;; surface across soft wraps without changing editor geometry or cursor motion.
     (p/set-colors! g t/dialog-fg t/input-field-bg)
-    (.enableModifiers g (into-array com.googlecode.lanterna.SGR [com.googlecode.lanterna.SGR/BOLD]))
-    (doseq [{:keys [row col text]}
-            (input-token-segments (:lines input) text-w)
+    (p/styled
+      g
+      [p/BOLD]
+      (doseq [{:keys [row col text]}
+              (input-token-segments (:lines input) text-w)
 
-            :when (<= v-scroll (long row) (dec (+ v-scroll text-rows)))]
+              :when (<= v-scroll (long row) (dec (+ v-scroll text-rows)))]
 
-      (p/put-str! g (+ input-pad-x (long col)) (+ text-top (- (long row) v-scroll)) text))
-    (.disableModifiers g
-                       (into-array com.googlecode.lanterna.SGR [com.googlecode.lanterna.SGR/BOLD]))
+        (p/put-str! g (+ input-pad-x (long col)) (+ text-top (- (long row) v-scroll)) text)))
     ;; Marker: tint JUST the leading `!`/`!&` in the typed text (only when the
     ;; first row is actually on-screen, i.e. not scrolled off the top). Pairs
     ;; with the shell-accent frame drawn above.
@@ -862,8 +751,7 @@
             lead
             (- (count line0) (count (str/triml line0)))]
 
-        (.setForegroundColor g t/code-border-fg)
-        (.setBackgroundColor g t/box-bg)
+        (p/set-colors! g t/code-border-fg t/box-bg)
         (.putString g (int (+ input-pad-x lead)) (int text-top) ^String bang-pfx)))
     ;; Cursor position (visual coords)
     [(+ input-pad-x (long cursor-vcol)) (+ text-top (- (long cursor-vrow) v-scroll))]))
@@ -1272,8 +1160,7 @@
 (defn fill-background!
   "Fill entire screen with the terminal background color."
   [^TextGraphics g cols rows]
-  (.setBackgroundColor g t/terminal-bg)
-  (.setForegroundColor g t/text-fg)
+  (p/set-colors! g t/text-fg t/terminal-bg)
   (.fillRectangle g (TerminalPosition. 0 0) (TerminalSize. cols rows) \space))
 
 (defn draw-dialog!
@@ -1322,15 +1209,14 @@
          h-bar
          (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
 
-     (.setBackgroundColor g t/dialog-shadow)
+     (p/set-bg! g t/dialog-shadow)
      (.fillRectangle g
                      (TerminalPosition. (+ (long box-left) 2) (inc (long box-top)))
                      (TerminalSize. box-w box-h)
                      \space)
-     (.setBackgroundColor g t/dialog-bg)
+     (p/set-bg! g t/dialog-bg)
      (.fillRectangle g (TerminalPosition. box-left box-top) (TerminalSize. box-w box-h) \space)
-     (.setForegroundColor g t/dialog-border)
-     (.setBackgroundColor g t/dialog-bg)
+     (p/set-colors! g t/dialog-border t/dialog-bg)
      (.setCharacter g (int box-left) (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
      (.setCharacter g (int box-right) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
      (.setCharacter g (int box-left) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
@@ -1340,11 +1226,11 @@
      (doseq [r (range (inc (long box-top)) box-bottom)]
        (.setCharacter g (int box-left) (int r) Symbols/SINGLE_LINE_VERTICAL)
        (.setCharacter g (int box-right) (int r) Symbols/SINGLE_LINE_VERTICAL))
-     (.setForegroundColor g t/dialog-title-bg)
+     (p/set-fg! g t/dialog-title-bg)
      (let [title-x (+ (long box-left) (quot (- (long box-w) (count title)) 2))]
        (.putString g (int title-x) (int (inc (long box-top))) ^String title))
      ;; Body (wrapped)
-     (.setForegroundColor g t/dialog-fg)
+     (p/set-fg! g t/dialog-fg)
      (doseq [[i line] (map-indexed vector text-lines)]
        (.putString g
                    (int (+ (long box-left) 3))
@@ -1353,23 +1239,23 @@
 
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 ;; Line markers live in primitives - aliases for local readability.
-(def ^:private thinking-marker p/MARKER_THINKING)
+(def ^:private thinking-marker m/MARKER_THINKING)
 
-(def ^:private code-marker p/MARKER_CODE)
+(def ^:private code-marker m/MARKER_CODE)
 
-(def ^:private result-marker p/MARKER_RESULT)
+(def ^:private result-marker m/MARKER_RESULT)
 
-(def ^:private sep-marker p/MARKER_SEP)
+(def ^:private sep-marker m/MARKER_SEP)
 
-(def ^:private code-ok-marker p/MARKER_CODE_OK)
+(def ^:private code-ok-marker m/MARKER_CODE_OK)
 
-(def ^:private code-err-marker p/MARKER_CODE_ERR)
+(def ^:private code-err-marker m/MARKER_CODE_ERR)
 
-(def ^:private err-result-marker p/MARKER_ERR_RESULT)
+(def ^:private err-result-marker m/MARKER_ERR_RESULT)
 
-(def ^:private iteration-hdr-marker p/MARKER_ITERATION_HDR)
+(def ^:private iteration-hdr-marker m/MARKER_ITERATION_HDR)
 
-(def ^:private recap-marker p/MARKER_RECAP)
+(def ^:private recap-marker m/MARKER_RECAP)
 
 (def ^:private recap-kinds
   "Known recap badge tokens. Drives both the per-row meta tag and
@@ -1383,67 +1269,67 @@
    the recap row builders."
   #{"TITLE" "TASK" "SPEC" "FACT" "RECAP" "CONSULT"})
 
-(def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
+(def ^:private answer-sep-marker m/MARKER_ANSWER_SEP)
 
-(def ^:private code-pad-marker p/MARKER_CODE_PAD)
+(def ^:private code-pad-marker m/MARKER_CODE_PAD)
 
-(def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
+(def ^:private code-ok-pad-marker m/MARKER_CODE_OK_PAD)
 
-(def ^:private code-err-pad-marker p/MARKER_CODE_ERR_PAD)
+(def ^:private code-err-pad-marker m/MARKER_CODE_ERR_PAD)
 
-(def ^:private iteration-pad-marker p/MARKER_ITERATION_PAD)
+(def ^:private iteration-pad-marker m/MARKER_ITERATION_PAD)
 
-(def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
+(def ^:private answer-hdr-marker m/MARKER_ANSWER_HDR)
 
-(def ^:private answer-txt-marker p/MARKER_ANSWER_TXT)
+(def ^:private answer-txt-marker m/MARKER_ANSWER_TXT)
 
-(def ^:private answer-pad-marker p/MARKER_ANSWER_PAD)
+(def ^:private answer-pad-marker m/MARKER_ANSWER_PAD)
 
-(def ^:private hint-marker p/MARKER_HINT)
+(def ^:private hint-marker m/MARKER_HINT)
 
-(def ^:private queue-hdr-marker p/MARKER_QUEUE_HDR)
+(def ^:private queue-hdr-marker m/MARKER_QUEUE_HDR)
 
-(def ^:private queue-item-marker p/MARKER_QUEUE_ITEM)
+(def ^:private queue-item-marker m/MARKER_QUEUE_ITEM)
 
-(def ^:private queue-border-marker p/MARKER_QUEUE_BORDER)
+(def ^:private queue-border-marker m/MARKER_QUEUE_BORDER)
 
 ;; Columns between the queue's edge and its text, on each side, so the rows line up
 ;; with the header text on its band.
 (def ^:private queue-inset 1)
 
-(def ^:private step-digest-marker p/MARKER_STEP_DIGEST)
+(def ^:private step-digest-marker m/MARKER_STEP_DIGEST)
 
-(def ^:private attachment-card-marker p/MARKER_ATTACHMENT_CARD)
+(def ^:private attachment-card-marker m/MARKER_ATTACHMENT_CARD)
 
-(def ^:private user-input-marker p/MARKER_USER_INPUT)
+(def ^:private user-input-marker m/MARKER_USER_INPUT)
 
-(def ^:private user-input-hdr-marker p/MARKER_USER_INPUT_HDR)
+(def ^:private user-input-hdr-marker m/MARKER_USER_INPUT_HDR)
 
-(def ^:private activity-marker p/MARKER_ACTIVITY)
+(def ^:private activity-marker m/MARKER_ACTIVITY)
 
-(def ^:private md-h1-marker p/MARKER_MD_H1)
+(def ^:private md-h1-marker m/MARKER_MD_H1)
 
-(def ^:private md-h2-marker p/MARKER_MD_H2)
+(def ^:private md-h2-marker m/MARKER_MD_H2)
 
-(def ^:private md-h3-marker p/MARKER_MD_H3)
+(def ^:private md-h3-marker m/MARKER_MD_H3)
 
-(def ^:private md-bold-marker p/MARKER_MD_BOLD)
+(def ^:private md-bold-marker m/MARKER_MD_BOLD)
 
-(def ^:private md-code-marker p/MARKER_MD_CODE)
+(def ^:private md-code-marker m/MARKER_MD_CODE)
 
-(def ^:private md-bullet-marker p/MARKER_MD_BULLET)
+(def ^:private md-bullet-marker m/MARKER_MD_BULLET)
 
-(def ^:private md-table-head-marker p/MARKER_MD_TABLE_HEAD)
+(def ^:private md-table-head-marker m/MARKER_MD_TABLE_HEAD)
 
-(def ^:private md-table-sep-marker p/MARKER_MD_TABLE_SEP)
+(def ^:private md-table-sep-marker m/MARKER_MD_TABLE_SEP)
 
-(def ^:private md-table-row-marker p/MARKER_MD_TABLE_ROW)
+(def ^:private md-table-row-marker m/MARKER_MD_TABLE_ROW)
 
-(def ^:private md-quote-marker p/MARKER_MD_QUOTE)
+(def ^:private md-quote-marker m/MARKER_MD_QUOTE)
 
-(def ^:private md-hr-marker p/MARKER_MD_HR)
+(def ^:private md-hr-marker m/MARKER_MD_HR)
 
-(def ^:private md-summary-marker p/MARKER_MD_SUMMARY)
+(def ^:private md-summary-marker m/MARKER_MD_SUMMARY)
 
 (def ^:private tool-output-indent "Visible left margin for result rows under a tool call." "  ")
 
@@ -1465,148 +1351,31 @@
 
 (def ^:private output-indentable-markers #{code-err-pad-marker})
 
-(def ^:private th-md-h1-marker p/MARKER_TH_MD_H1)
+(def ^:private th-md-h1-marker m/MARKER_TH_MD_H1)
 
-(def ^:private th-md-h2-marker p/MARKER_TH_MD_H2)
+(def ^:private th-md-h2-marker m/MARKER_TH_MD_H2)
 
-(def ^:private th-md-h3-marker p/MARKER_TH_MD_H3)
+(def ^:private th-md-h3-marker m/MARKER_TH_MD_H3)
 
-(def ^:private th-md-bold-marker p/MARKER_TH_MD_BOLD)
+(def ^:private th-md-bold-marker m/MARKER_TH_MD_BOLD)
 
-(def ^:private th-md-code-marker p/MARKER_TH_MD_CODE)
+(def ^:private th-md-code-marker m/MARKER_TH_MD_CODE)
 
-(def ^:private th-md-bullet-marker p/MARKER_TH_MD_BULLET)
+(def ^:private th-md-bullet-marker m/MARKER_TH_MD_BULLET)
 
-(def ^:private th-md-table-head-marker p/MARKER_TH_MD_TABLE_HEAD)
+(def ^:private th-md-table-head-marker m/MARKER_TH_MD_TABLE_HEAD)
 
-(def ^:private th-md-table-sep-marker p/MARKER_TH_MD_TABLE_SEP)
+(def ^:private th-md-table-sep-marker m/MARKER_TH_MD_TABLE_SEP)
 
-(def ^:private th-md-table-row-marker p/MARKER_TH_MD_TABLE_ROW)
+(def ^:private th-md-table-row-marker m/MARKER_TH_MD_TABLE_ROW)
 
-(def ^:private th-md-quote-marker p/MARKER_TH_MD_QUOTE)
+(def ^:private th-md-quote-marker m/MARKER_TH_MD_QUOTE)
 
-(def ^:private th-md-hr-marker p/MARKER_TH_MD_HR)
+(def ^:private th-md-hr-marker m/MARKER_TH_MD_HR)
 
-(def ^:private th-md-summary-marker p/MARKER_TH_MD_SUMMARY)
+(def ^:private th-md-summary-marker m/MARKER_TH_MD_SUMMARY)
 
 (def ^:private turn-stamp-pattern #"\bt\d+/i\d+/(?:b|f)\d+\b")
-
-(defn- ansi-code->fg
-  [code current-fg base-fg]
-  ;; `(long code)` is what keeps this a constant-time tableswitch: the tests are
-  ;; int literals, so a boxed expression makes the compiler fall back to a linear
-  ;; scan ("case has int tests, but tested expression is not primitive"). Codes
-  ;; come from `parse-ansi-codes`, which only ever yields non-nil Longs.
-  (case (long code)
-    7
-    t/result-highlight-fg
-
-    0
-    base-fg
-
-    30
-    t/code-block-fg
-
-    31
-    t/code-syntax-string-fg
-
-    32
-    t/code-success-fg
-
-    33
-    t/warning-fg
-
-    34
-    t/code-syntax-number-fg
-
-    35
-    t/code-syntax-special-fg
-
-    36
-    t/code-syntax-keyword-fg
-
-    37
-    t/text-fg
-
-    90
-    t/code-syntax-comment-fg
-
-    91
-    t/code-error-fg
-
-    92
-    t/code-success-fg
-
-    current-fg))
-
-(defn- parse-ansi-codes
-  [s]
-  (into []
-        (keep (fn [part]
-                (try (Long/parseLong part) (catch NumberFormatException _ nil))))
-        (str/split (or s "") #";")))
-
-(defn- ansi-codes->fg
-  [codes current-fg base-fg]
-  ;; An empty SGR (`ESC[m`, canonically ESC[0m) is a full reset — git's own
-  ;; `%C(reset)` emits exactly that, so treat no codes as "back to base".
-  (if (empty? codes)
-    base-fg
-    (reduce (fn [fg code]
-              (if (= 0 code) base-fg (ansi-code->fg code fg base-fg)))
-            current-fg
-            codes)))
-
-(defn paint-ansi-line!
-  "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
-   ANSI foreground codes are translated to Lanterna foreground colors;
-   `bg` is always controlled by Vis so success/running/error code
-   zones keep their own background.
-
-   Tool render-fns now return Markdown for result bodies. That Markdown
-   may contain Vis inline-style sentinels (U+E110..U+E117) for spans.
-   These sentinels are paint directives, not glyphs; consume them here
-   before they hit Lanterna's raw putString path."
-  ([^TextGraphics g x y ^String line base-fg bg]
-   (paint-ansi-line! g x y line base-fg bg t/code-block-fg t/code-block-bg))
-  ([^TextGraphics g x y ^String line base-fg bg code-fg code-bg]
-   (letfn [(sentinel-chunk? [^String chunk]
-             (boolean (some #(str/index-of chunk ^String %)
-                            [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF p/INLINE_ITALIC_ON
-                             p/INLINE_ITALIC_OFF p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF
-                             p/INLINE_CODE_ON p/INLINE_CODE_OFF])))
-           (paint-chunk! [col ^String chunk fg]
-             (p/set-colors! g fg bg)
-             (if (sentinel-chunk? chunk)
-               (p/paint-styled-line! g (+ (long x) (long col)) y chunk fg bg code-fg code-bg)
-               (p/put-str! g (+ (long x) (long col)) y chunk)))]
-     (loop [i
-            0
-
-            col
-            0
-
-            fg
-            base-fg]
-
-       (if (>= (long i) (.length line))
-         g
-         (let [esc-idx (str/index-of line "\u001b[" i)]
-           (if (or (nil? esc-idx) (< (long i) (long esc-idx)))
-             (let [end (or esc-idx (.length line))
-                   chunk (subs line i end)]
-
-               (paint-chunk! col chunk fg)
-               (recur (long end) (+ (long col) (p/display-width chunk)) fg))
-             (let [m-idx (str/index-of line "m" (+ (long esc-idx) 2))]
-               (if (nil? m-idx)
-                 (let [chunk (subs line esc-idx)]
-                   (paint-chunk! col chunk fg)
-                   g)
-                 (let [codes (parse-ansi-codes (subs line (+ (long esc-idx) 2) m-idx))
-                       fg* (ansi-codes->fg codes fg base-fg)]
-
-                   (recur (inc (long m-idx)) col fg*)))))))))))
 
 (defn- paint-turn-stamp!
   "Overdraw canonical tN/iN/bN stamps in muted italic. Used by footer
@@ -1622,7 +1391,7 @@
   "Paint optional code-pad payloads. Blank pad rows only fill bg;
    payload rows can also show turn/block stamps in muted italic."
   [^TextGraphics g x y raw base-fg bg]
-  (when (seq raw) (paint-ansi-line! g x y raw base-fg bg) (paint-turn-stamp! g x y raw bg)))
+  (when (seq raw) (ansi/paint-line! g x y raw base-fg bg) (paint-turn-stamp! g x y raw bg)))
 
 (defn- warning-message? [text] (and (string? text) (str/starts-with? text "Warning:")))
 
@@ -2998,7 +2767,7 @@
 
         (p/set-colors! g row-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
-        (paint-ansi-line! g x y raw row-fg row-bg)
+        (ansi/paint-line! g x y raw row-fg row-bg)
         ;; The code band hosts the `▸ PYTHON +N more` accordion
         ;; HEADER (same rule as the THINKING band above). Register
         ;; its toggle region or the row paints as a control that
@@ -3024,7 +2793,7 @@
 
         (p/set-colors! g row-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
-        (paint-ansi-line! g x y raw row-fg row-bg)
+        (ansi/paint-line! g x y raw row-fg row-bg)
         (register-toggle-region! meta viewport-top y x iw))
       ;; ── Code (running, no status yet) - neutral bg ──
       (str/starts-with? line code-marker)
@@ -3044,7 +2813,7 @@
 
         (p/set-colors! g row-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
-        (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
+        (ansi/paint-line! g x y (subs line 1) row-fg row-bg)
         (draw-band-copy! g meta x y iw right-inset viewport-top)
         (register-toggle-region! meta viewport-top y x iw))
       ;; ── Result (success) - neutral Code paper ──
@@ -3068,7 +2837,7 @@
         (p/fill-rect! g fbx y fill-iw 1)
         ;; Inline code (paths, search needles, moved targets) gets its
         ;; own high-contrast chip instead of dissolving into the headline.
-        (paint-ansi-line! g x y (subs line 1) res-fg row-bg t/result-path-fg t/result-path-bg)
+        (ansi/paint-line! g x y (subs line 1) res-fg row-bg t/result-path-fg t/result-path-bg)
         (paint-turn-stamp! g x y (subs line 1) row-bg)
         (when (= :toggle-details (:kind meta))
           (let [click-width (long (or (:click-width meta) iw))]
@@ -3083,7 +2852,7 @@
       (let [row-bg t/code-err-bg]
         (p/set-colors! g t/code-error-result-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
-        (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg row-bg)
+        (ansi/paint-line! g x y (subs line 1) t/code-error-result-fg row-bg)
         (paint-turn-stamp! g x y (subs line 1) row-bg)
         (when (= :toggle-details (:kind meta))
           (let [abs-row (+ (long viewport-top) (long y))
@@ -3389,7 +3158,7 @@
 
         (p/set-colors! g cfg cbg)
         (p/fill-rect! g (+ (long fbx) nlx) y band-w 1)
-        (paint-ansi-line! g
+        (ansi/paint-line! g
                           (+ (long x) (long code-block-h-pad) nlx)
                           y
                           (subs line (min (count line) (+ 1 nlx)))
@@ -3583,7 +3352,7 @@
           (p/fill-rect! g fbx y fill-iw 1)
           (p/styled g
                     [p/ITALIC]
-                    (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
+                    (ansi/paint-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
       (str/starts-with? line th-md-bullet-marker)
       (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
           (p/fill-rect! g fbx y fill-iw 1)
@@ -4884,10 +4653,10 @@
    (which adds a marker only WHEN `s` overflows), `suffix` is ALWAYS appended —
    use this for \"there's more\" markers such as \" …\".
 
-   Truncation is ANSI-aware via `truncate-ansi-cols`: a collapsed thinking-band
+   Truncation is ANSI-aware via `p/ansi-truncate-cols`: a collapsed thinking-band
    peek row can be a syntax-highlighted code line carrying `\\u001b[..m` SGR
    runs, and `p/truncate-cols` would strip the ESC bytes (leaving literal
-   `[36m`/`[0m` text and dropping the colours). `truncate-ansi-cols` keeps SGR
+   `[36m`/`[0m` text and dropping the colours). `p/ansi-truncate-cols` keeps SGR
    zero-width, so the row keeps its colour and the visible body still fits."
   ^{:tag String} [s suffix max-w]
   (let [mw
@@ -4896,7 +4665,7 @@
         room
         (max 0 (- mw (p/display-width suffix)))]
 
-    (str (truncate-ansi-cols (str/trimr (str s)) room) suffix)))
+    (str (p/ansi-truncate-cols (str/trimr (str s)) room) suffix)))
 
 (defn- ellipsize-cols
   ^{:tag String} [s max-w]
@@ -5192,7 +4961,7 @@
    sentinels measure ZERO columns in `p/display-width`, so bolding a label
    costs its row no width and never shifts the id badge on the right edge."
   ^String [^String label]
-  (str p/INLINE_BOLD_ON label p/INLINE_BOLD_OFF))
+  (str m/INLINE_BOLD_ON label m/INLINE_BOLD_OFF))
 
 (defn- detail-summary-entries
   [{:keys [marker max-w summary collapsed? session-id node-id] :as detail-ctx}]
@@ -5254,23 +5023,6 @@
               (if meta e (assoc e :meta body-meta)))
             entries))))
 
-(defn- marker-prefix?
-  "True when the first char of `line` is a block paint marker the
-   renderer prepends (zero-width format codepoints or PUA marker band
-   U+E000..U+E0FF). Inline style sentinels start at U+E110, so badge
-   labels beginning with bold/code sentinels stay intact."
-  ^Boolean [^String line]
-  (and (string? line)
-       (pos? (count line))
-       (let [c
-             (.charAt line 0)
-
-             i
-             (int c)]
-
-         (or (= (int Character/FORMAT) (int (Character/getType c)))
-             (and (>= i 0xE000) (<= i 0xE0FF))))))
-
 (def ^:private chrome-meta-kinds
   ;; Row kinds that paint display-only chrome (`▾ SUMMARY [Turn: ...]`).
   ;; Skipped when reconstructing the user-facing body text so nested
@@ -5290,10 +5042,7 @@
        (remove (fn [{:keys [meta]}]
                  (contains? chrome-meta-kinds (:kind meta))))
        (map (fn [{:keys [line]}]
-              (cond (not (string? line)) ""
-                    (zero? (count line)) ""
-                    (marker-prefix? line) (subs line 1)
-                    :else line)))
+              (if (string? line) (m/unmarked line) "")))
        (str/join "\n")
        str/trim))
 
@@ -5443,7 +5192,7 @@
                           (:line row)
 
                           [_ rest]
-                          (split-structural-line-marker line)]
+                          (m/split-block-marker line)]
 
                       (str/blank? (or rest line))))]
 
@@ -5469,57 +5218,6 @@
                 body))
             [{:line (str thinking-marker "") :meta nil}]))))))
 
-(defn- strip-paint-markers-line
-  "Return user-visible text for a prewrapped internal painter line.
-   The TUI painter consumes these markers from `:lines`; `:text` is
-   used by copy/debug/projection paths and must never expose PUA or
-   bidi-control glyphs to the user."
-  [line]
-  (let [^String raw
-        (str (or line ""))
-
-        ;; Most rows have no SGR sequence and no inline paint sentinel. One scan
-        ;; finds that, and such a row needs no regex and no copy: this runs for
-        ;; each projected line.
-        plain?
-        (let [n (.length raw)]
-          (loop [i 0]
-            (or (>= i n)
-                (let [c (int (.charAt raw i))]
-                  (and (not= c 0x1B) (not (<= 0xE110 c 0xE2FF)) (recur (unchecked-inc i)))))))
-
-        ;; Strip ANSI SGR sequences (diff fences carry `\u001b[..m` colour codes
-        ;; the painter translates) so copied / projected text is clean.
-        s
-        (if plain? raw (str/replace raw #"\u001b\[[0-9;]*m" ""))
-
-        s
-        (if (and (pos? (count s))
-                 (let [c (.charAt ^String s 0)]
-                   (or (= (int Character/FORMAT) (int (Character/getType c)))
-                       (and (>= (int c) 0xE000) (<= (int c) 0xE0FF)))))
-          (subs s 1)
-          s)]
-
-    (if plain?
-      s
-      ;; Drop the inline paint sentinels (PUA E110..E2FF) in ONE StringBuilder
-      ;; pass instead of a lazy char seq + apply-str — this runs per projected
-      ;; line and showed up as a render/restore hotspot.
-      (let [^String s
-            s
-
-            n
-            (.length s)
-
-            sb
-            (StringBuilder. n)]
-
-        (dotimes [i n]
-          (let [c (.charAt s i)]
-            (when-not (<= 0xE110 (int c) 0xE2FF) (.append sb c))))
-        (.toString sb)))))
-
 (defn- entries->payload
   [entries]
   (let [lines
@@ -5528,7 +5226,7 @@
         line-meta
         (mapv :meta entries)]
 
-    {:lines lines :line-meta line-meta :text (str/join "\n" (map strip-paint-markers-line lines))}))
+    {:lines lines :line-meta line-meta :text (str/join "\n" (map m/plain-text lines))}))
 
 (defn- paste-code-block?
   "True for a `vis-paste` code node — the collapsed-transcript shape
@@ -6660,9 +6358,9 @@
         (str (:line entry))
 
         body
-        (or (second (split-structural-line-marker line)) line)]
+        (m/unmarked line)]
 
-    (str/starts-with? (str/replace body #"^\s+" "") p/INLINE_BOLD_ON)))
+    (str/starts-with? (str/replace body #"^\s+" "") m/INLINE_BOLD_ON)))
 
 (defn- compact-tool-card-body-entries
   "Reflow a native op-card body (REPL/GIT/SHELL sections) for the TUI. The shared
@@ -6681,7 +6379,7 @@
         ;; carry `:kind :image`/`:image-pad` meta — they PRE-ALLOCATE the picture's
         ;; cell box and must survive, or the box collapses and the image overpaints
         ;; the rows below it. Treat only genuine (meta-less) blank rows as padding.
-        #(and (str/blank? (strip-paint-markers-line (:line %)))
+        #(and (str/blank? (m/plain-text (:line %)))
               (not (#{:image :image-pad} (:kind (:meta %))))
               ;; Attachment card rows (frame, padding, gallery gap) are layout too.
               (not (:card-part (:meta %))))
@@ -6690,7 +6388,7 @@
         (or (first (filter blank? entries)) {:line (str result-marker "") :meta nil})
 
         divider?
-        #(boolean (re-matches #"\s*[─-]{3,}\s*" (strip-paint-markers-line (:line %))))
+        #(boolean (re-matches #"\s*[─-]{3,}\s*" (m/plain-text (:line %))))
 
         structural?
         #(or (nil? %) (section-label-entry? %) (divider? %))
@@ -6738,7 +6436,7 @@
           (str (:line e))
 
           stripped
-          (or (second (split-structural-line-marker l)) l)]
+          (m/unmarked l)]
 
       (assoc e
         :line (str result-marker
@@ -8764,7 +8462,7 @@
 
                  verdict
                  (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
-                   (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
+                   (str m/INLINE_ERR_ON verdict m/INLINE_ERR_OFF)
                    verdict)
 
                  parts
@@ -8975,9 +8673,9 @@
                            spans))
               text (reduce (fn [^String text {:keys [from to]}]
                              (str (subs text 0 from)
-                                  p/INLINE_LINK_ON
+                                  m/INLINE_LINK_ON
                                   (subs text from to)
-                                  p/INLINE_LINK_OFF
+                                  m/INLINE_LINK_OFF
                                   (subs text to)))
                            line
                            (reverse hits))]
@@ -9469,7 +9167,7 @@
                         ;; keeps its own red row under the code (`inline-error-message-lines`).
                         header
                         (str (if error
-                               (str p/INLINE_ERR_ON (band-label "CODE") p/INLINE_ERR_OFF)
+                               (str m/INLINE_ERR_ON (band-label "CODE") m/INLINE_ERR_OFF)
                                (band-label "CODE"))
                              (when-not code-expanded? (str "  +" (count code-rows) " more"))
                              " "
@@ -9593,14 +9291,14 @@
                             ;; its md/prose marker, prepend the result marker) so the
                             ;; WHOLE op-card paints on one `result-bg` band — code AND
                             ;; prose/eval output alike. Embedded ANSI (diff +/-)
-                            ;; survives via `paint-ansi-line!` in that paint branch.
+                            ;; survives via `ansi/paint-line!` in that paint branch.
                             _->result
                             (fn [e]
                               (let [l
                                     (str (:line e))
 
                                     stripped
-                                    (or (second (split-structural-line-marker l)) l)]
+                                    (m/unmarked l)]
 
                                 (assoc e :line (str result-marker stripped))))]
 
@@ -9999,7 +9697,7 @@
                     (conj (str "next in " (vis/format-duration delay-ms))))]
 
         (when (seq parts)
-          (str p/INLINE_ERR_ON "  \u2014 " (str/join " \u00b7 " parts) p/INLINE_ERR_OFF))))))
+          (str m/INLINE_ERR_ON "  \u2014 " (str/join " \u00b7 " parts) m/INLINE_ERR_OFF))))))
 
 (defn- wait-clock
   "`25s` or `3m 5s`: whole seconds, because the wait clocks move once a second."
@@ -10216,7 +9914,7 @@
        wrapping a thinking section; band edges, NOT gaps. The test
        suite pins their presence; reading them as gaps collapses the
        band to a single line.
-     - code/tool/status PUA pads — (`\uE000`..`\uE0FF`). Paint a
+     - code/tool/status pads — each other marker is its own family. Paint a
        colored band-edge row at the top/bottom of a code block or
        tool result; the row itself is glyph-less but the bg color
        reads as \"top/bottom of the bubble\".
@@ -10239,22 +9937,19 @@
   (let [family
         (fn [{:keys [^String line]}]
           (cond (or (nil? line) (zero? (count line))) :gap
-                :else (let [n0 (int (.charAt line 0))]
-                        (cond
+                :else (let [marker (subs line 0 1)]
+                        (condp = marker
                           ;; Pure terminal-bg / outer-margin family.
-                          (= n0 0x206C) ; MARKER_ITERATION_PAD
-                          :gap
+                          m/MARKER_ITERATION_PAD :gap
                           ;; Thinking pad — NEVER coalesce; flushes via the
                           ;; explicit branch below.
-                          (= n0 0x200B) :thinking
+                          m/MARKER_THINKING :thinking
                           ;; Answer-pad band edge.
-                          (= n0 0x206F) :answer-pad
-                          ;; Code/tool/status PUA band edges — distinct per
-                          ;; codepoint so an OK pad never coalesces with an
-                          ;; ERR pad even when both happen to be blank.
-                          (<= 0xE000 n0 0xE0FF) [:pua n0]
-                          ;; Other invisible format chars.
-                          :else [:other n0]))))
+                          m/MARKER_ANSWER_PAD :answer-pad
+                          ;; Each other first char is its own family, so an OK
+                          ;; pad never coalesces with an ERR pad even when both
+                          ;; happen to be blank.
+                          marker))))
 
         ;; Blank after the first char, which can be a marker. No substring: this
         ;; runs for each row of the bubble.
@@ -11317,10 +11012,10 @@
 
                    ;; A new step keeps the rows of the steps before it.
                    prefix-text
-                   (grown-mapv grown-plain nil (map strip-paint-markers-line) prefix-lines)
+                   (grown-mapv grown-plain nil (map m/plain-text) prefix-lines)
 
                    queued-text
-                   (mapv (comp strip-paint-markers-line :line) queued)]
+                   (mapv (comp m/plain-text :line) queued)]
 
                {:prefix-lines prefix-lines
                 :prefix-text prefix-text
@@ -11335,11 +11030,11 @@
                                (into (map :meta) queued))})))
 
          spinner-text
-         (strip-paint-markers-line spinner-line)]
+         (m/plain-text spinner-line)]
 
      ;; Splice the fresh spinner row between the cached prefix and queue. This
      ;; mirrors `entries->payload` exactly: `:text` is the newline-join of the
-     ;; per-line `strip-paint-markers-line` outputs (`:text-lines`), in the same
+     ;; per-line `m/plain-text` outputs (`:text-lines`), in the same
      ;; order as `:lines`. The body holds the join of each cached part, and
      ;; `String.concat` copies the text one time, so a tick does not join every
      ;; row again.
@@ -11465,7 +11160,7 @@
         ;; plain text and looked like a normal answer in the wrong color.
         cancel-rows
         (mapv (fn [line]
-                (line-entry (str p/INLINE_ITALIC_ON line p/INLINE_ITALIC_OFF)))
+                (line-entry (str m/INLINE_ITALIC_ON line m/INLINE_ITALIC_OFF)))
               (wrap-text cancel-text (max 1 (- (long fill-w) 2))))
 
         ;; Answer layout shape mirrors code blocks:
@@ -11630,7 +11325,7 @@
           (:card-part (:meta entry))
           (str/starts-with? (str (:line entry)) md-code-marker))
     false
-    (let [visible (strip-paint-markers-line (:line entry))]
+    (let [visible (m/plain-text (:line entry))]
       (or (str/blank? visible) (boolean (re-matches #"^\s*│\s*$" visible))))))
 
 (defn- trim-user-prompt-margin-entries

@@ -10,8 +10,7 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.format :as fmt])
-  (:import [com.googlecode.lanterna SGR]
-           [com.googlecode.lanterna.graphics TextGraphics]))
+  (:import [com.googlecode.lanterna.graphics TextGraphics]))
 
 (defn rail-height
   "Rows reserved by `draw!`: one item row each and two borders, without a shadow."
@@ -130,9 +129,7 @@
               bg (if focused-row? t/header-active-tab-bg t/dialog-bg)]
 
           (p/set-colors! g (if focused-row? t/header-active-tab-fg t/dialog-fg) bg)
-          (when focused-row? (.enableModifiers g (into-array SGR [SGR/BOLD])))
-          (p/put-str! g content-left row padded)
-          (when focused-row? (.disableModifiers g (into-array SGR [SGR/BOLD])))
+          (p/styled g (if focused-row? [p/BOLD] []) (p/put-str! g content-left row padded))
           (when cap?
             (components/action-button! g
                                        (+ content-left body-w)

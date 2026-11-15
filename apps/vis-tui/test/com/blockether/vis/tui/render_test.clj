@@ -1,9 +1,11 @@
 (ns com.blockether.vis.tui.render-test
-  (:require [com.blockether.vis.tui.client :as vis]
+  (:require [com.blockether.vis.tui.ansi :as ansi]
+            [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.progress :as progress]
             [com.blockether.vis.tui.render :as render]
@@ -1488,7 +1490,7 @@
                                   :vis.channel-tui/expand-all-details? true}))]
 
       (expect (not (str/includes? shut "PYTHON +")))
-      (expect (str/includes? shut (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
+      (expect (str/includes? shut (str m/INLINE_ERR_ON m/INLINE_BOLD_ON "CODE")))
       (expect (not (str/includes? shut "x = 1/0")))
       (expect (not (str/includes? shut "PYCODEMARKER")))
       (expect (not (str/includes? shut "ZeroDivisionError")))
@@ -1857,7 +1859,7 @@
             (first (filter #(str/includes? (str %) "kaboom") lines))]
 
         (expect (some? err-line) (str "got: " lines))
-        (expect (str/starts-with? (str err-line) p/MARKER_ERR_RESULT))
+        (expect (str/starts-with? (str err-line) m/MARKER_ERR_RESULT))
         (expect (str/ends-with? (str/trimr (strip-sentinels (body-of err-line))) "2.3s"))))
   (it "never stamps a second copy when a card head already wears the figure"
       (let [txt (str/join "\n"
@@ -2012,7 +2014,7 @@
       (expect (str/includes? body "invalid syntax"))
       ;; The message rides the ERROR marker: a code band is status-neutral, so this
       ;; row is what makes a failed call read as failed.
-      (expect (= p/MARKER_ERR_RESULT (marker-of error-line)))))
+      (expect (= m/MARKER_ERR_RESULT (marker-of error-line)))))
   (it
     "renders a form eval error message exactly once"
     (let [code
@@ -2678,7 +2680,7 @@
   progress-body-cache-test
   ;; The 80ms live tick used to re-walk the WHOLE bubble every frame
   ;; (trace-render-entries + coalesce-bubble-blanks + per-line
-  ;; strip-paint-markers-line for `:text`) even when only the spinner clock
+  ;; `m/plain-text` for `:text`) even when only the spinner clock
   ;; advanced. `progress->lines-data` now memoizes that content body and
   ;; splices only the animated spinner row in per tick. These tests pin both
   ;; halves: a spinner-only tick must NOT recompute the body, and the spliced
@@ -2890,7 +2892,7 @@
                      :received-ms received})
           (expect (str/includes? (spinner (get-timeline) received)
                                  "Vis is waiting for claude-x (iter 1)"))
-          (expect (not (str/includes? (spinner (get-timeline) received) p/INLINE_ERR_ON)))
+          (expect (not (str/includes? (spinner (get-timeline) received) m/INLINE_ERR_ON)))
           (on-chunk {:phase :reasoning :iteration 1 :thinking "Now I see."})
           (expect (not (str/includes? (spinner (get-timeline) received) "waiting for")))))))
 
@@ -3078,7 +3080,7 @@
       (it "BOLD inside a wrapping ITALIC stacks to bold-italic"
           (reset! captured [])
           (reset! active #{com.googlecode.lanterna.SGR/ITALIC})
-          (let [line (str "plain " p/INLINE_BOLD_ON "loud" p/INLINE_BOLD_OFF " tail")]
+          (let [line (str "plain " m/INLINE_BOLD_ON "loud" m/INLINE_BOLD_OFF " tail")]
             (p/paint-styled-line! graphics
                                   0
                                   0
@@ -3112,7 +3114,7 @@
           (p/paint-styled-line! graphics
                                 0
                                 0
-                                (str p/INLINE_BOLD_ON "x" p/INLINE_BOLD_OFF)
+                                (str m/INLINE_BOLD_ON "x" m/INLINE_BOLD_OFF)
                                 (com.googlecode.lanterna.TextColor$RGB. 0 0 0)
                                 (com.googlecode.lanterna.TextColor$RGB. 255 255 255)
                                 (com.googlecode.lanterna.TextColor$RGB. 50 50 50)
@@ -3124,7 +3126,7 @@
           (p/paint-styled-line! graphics
                                 0
                                 0
-                                (str "open " p/INLINE_BOLD_ON "never closes")
+                                (str "open " m/INLINE_BOLD_ON "never closes")
                                 (com.googlecode.lanterna.TextColor$RGB. 0 0 0)
                                 (com.googlecode.lanterna.TextColor$RGB. 255 255 255)
                                 (com.googlecode.lanterna.TextColor$RGB. 50 50 50)
@@ -3140,7 +3142,7 @@
              (it
                "consumes inline code sentinels instead of painting PUA glyphs"
                (let [paint-ansi-line!
-                     @#'render/paint-ansi-line!
+                     ansi/paint-line!
 
                      captured
                      (atom [])
@@ -3175,12 +3177,12 @@
                           this)))
 
                      line
-                     (str "Searched " p/INLINE_CODE_ON
-                          "[\"extensions\"]" p/INLINE_CODE_OFF
-                          " with " p/INLINE_CODE_ON
-                          "{:any [\"circling\"]}" p/INLINE_CODE_OFF
-                          ". Use " p/INLINE_CODE_ON
-                          "v/preview" p/INLINE_CODE_OFF)
+                     (str "Searched " m/INLINE_CODE_ON
+                          "[\"extensions\"]" m/INLINE_CODE_OFF
+                          " with " m/INLINE_CODE_ON
+                          "{:any [\"circling\"]}" m/INLINE_CODE_OFF
+                          ". Use " m/INLINE_CODE_ON
+                          "v/preview" m/INLINE_CODE_OFF)
 
                      visible
                      "Searched [\"extensions\"] with {:any [\"circling\"]}. Use v/preview"]
@@ -3188,8 +3190,8 @@
                  (paint-ansi-line! graphics 0 0 line t/code-result-fg t/code-ok-bg)
                  (let [painted (apply str (map first @captured))]
                    (expect (= visible painted))
-                   (expect (not (str/includes? painted p/INLINE_CODE_ON)))
-                   (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
+                   (expect (not (str/includes? painted m/INLINE_CODE_ON)))
+                   (expect (not (str/includes? painted m/INLINE_CODE_OFF)))))))
 
 (defdescribe
   code-pad-payload-paint-test
@@ -3232,7 +3234,7 @@
                this)))
 
           footer
-          (str p/MARKER_CODE_OK_PAD " t24/i1/b1 ")]
+          (str m/MARKER_CODE_OK_PAD " t24/i1/b1 ")]
 
       (render/draw-chat-bubble! graphics
                                 {:role :assistant :timestamp nil :prewrapped-lines [footer]}
@@ -3291,11 +3293,11 @@
                        (putString ([_col _row text] (swap! captured conj (put-text text)) this)))
 
                      line
-                     (str p/MARKER_ANSWER_TXT
+                     (str m/MARKER_ANSWER_TXT
                           "Use "
-                          p/INLINE_CODE_ON
+                          m/INLINE_CODE_ON
                           "/command"
-                          p/INLINE_CODE_OFF
+                          m/INLINE_CODE_OFF
                           " (or pick from slash suggestions).")]
 
                  (render/draw-chat-bubble!
@@ -3306,8 +3308,8 @@
                    80)
                  (let [painted (apply str @captured)]
                    (expect (str/includes? painted "/command"))
-                   (expect (not (str/includes? painted p/INLINE_CODE_ON)))
-                   (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
+                   (expect (not (str/includes? painted m/INLINE_CODE_ON)))
+                   (expect (not (str/includes? painted m/INLINE_CODE_OFF)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Loose-bullet coalesce - multi-paragraph list items render as one bullet
@@ -3571,7 +3573,7 @@
                        visible
                        (str/join "\n" (map strip-sentinels lines))]
 
-                   (expect (not-any? #(= p/MARKER_MD_SUMMARY (marker-of %)) lines))
+                   (expect (not-any? #(= m/MARKER_MD_SUMMARY (marker-of %)) lines))
                    (expect (str/includes? visible "Planalphabeta")))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
@@ -3735,19 +3737,19 @@
             (apply str (repeat 80 "x"))
 
             marked
-            (str p/MARKER_CODE_OK (apply str (repeat 80 "y")))
+            (str m/MARKER_CODE_OK (apply str (repeat 80 "y")))
 
             clipped
             (clip-lines-preserving-markers [plain marked] 17)]
 
         (expect (= 2 (count clipped)))
         (expect (= (subs plain 0 17) (first clipped)))
-        (expect (= p/MARKER_CODE_OK (marker-of (second clipped))))
+        (expect (= m/MARKER_CODE_OK (marker-of (second clipped))))
         (expect (<= (p/display-width (first clipped)) 17))
         (expect (<= (p/display-width (body-of (second clipped))) 17))))
   (it "clips ANSI-colored Clojure formatter rows without handing ESC to Lanterna"
       (let [ansi-line
-            (str p/MARKER_CODE_OK
+            (str m/MARKER_CODE_OK
                  "\u001b[32m(\u001b[0m\u001b[34mdef\u001b[0m "
                  "\u001b[30mrequest-classification\u001b[0m "
                  "\u001b[35m:evidence-bearing-code-change\u001b[0m")
@@ -3755,7 +3757,7 @@
             clipped
             (first (clip-lines-preserving-markers [ansi-line] 12))]
 
-        (expect (= p/MARKER_CODE_OK (marker-of clipped)))
+        (expect (= m/MARKER_CODE_OK (marker-of clipped)))
         (expect (str/includes? clipped "\u001b[32m"))
         (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12))))
   (it "truncate-with-suffix keeps ANSI colour on a highlighted thinking peek row"
@@ -3777,7 +3779,7 @@
   (it "reuses clipped prewrapped rows while scrolling huge trace bubbles"
       (render/invalidate-cache!)
       (let [huge-line
-            (str p/MARKER_CODE_OK (apply str (repeat 4000 "x")))
+            (str m/MARKER_CODE_OK (apply str (repeat 4000 "x")))
 
             message
             {:role :assistant :timestamp nil :prewrapped-lines (vec (repeat 1000 huge-line))}
@@ -4464,27 +4466,35 @@
         (expect (not= ::hung r) "wide glyph at width 1 must not loop forever")
         (expect (= "🚀🚀🚀" (apply str r)) "no content lost"))))
 
-(defdescribe wrap-text-sentinel-rebalance-test
-             (it "re-opens and re-closes inline style sentinels on every wrapped line"
-                 (let [s
-                       (str "aaa " p/INLINE_BOLD_ON "bold words here" p/INLINE_BOLD_OFF " tail")
+(defdescribe
+  wrap-text-sentinel-rebalance-test
+  (it "re-opens and re-closes inline style sentinels on every wrapped line"
+      (let [s
+            (str "aaa " m/INLINE_BOLD_ON "bold words here" m/INLINE_BOLD_OFF " tail")
 
-                       lines
-                       (render/wrap-text* s 8)
+            lines
+            (render/wrap-text* s 8)
 
-                       visible
-                       (fn [l]
-                         (apply str (remove #(p/inline-sentinel? (str %)) l)))]
+            visible
+            (fn [l]
+              (m/strip-inline-spans l))]
 
-                   ;; content survives the wrap
-                   (expect (= (visible s) (str/join " " (map (comp str/trim visible) lines))))
-                   ;; a raw lanterna wordWrap would leave BOLD_ON on one line and
-                   ;; BOLD_OFF lines later; the painter resets style per line, so
-                   ;; every line must carry balanced toggles
-                   (doseq [l lines]
-                     (expect (= (str/includes? l p/INLINE_BOLD_ON)
-                                (str/includes? l p/INLINE_BOLD_OFF))
-                             (str "unbalanced sentinels on line " (pr-str l)))))))
+        ;; content survives the wrap
+        (expect (= (visible s) (str/join " " (map (comp str/trim visible) lines))))
+        ;; a raw lanterna wordWrap would leave BOLD_ON on one line and
+        ;; BOLD_OFF lines later; the painter resets style per line, so
+        ;; every line must carry balanced toggles
+        (doseq [l lines]
+          (expect (= (str/includes? l m/INLINE_BOLD_ON) (str/includes? l m/INLINE_BOLD_OFF))
+                  (str "unbalanced sentinels on line " (pr-str l))))))
+  (it "keeps the error colour on each row of a wrapped error span"
+      (let [lines (render/wrap-text*
+                    (str m/INLINE_ERR_ON "boom went the long failing step" m/INLINE_ERR_OFF)
+                    8)]
+        (expect (< 2 (count lines)))
+        (doseq [l lines]
+          (expect (and (str/starts-with? l m/INLINE_ERR_ON) (str/ends-with? l m/INLINE_ERR_OFF))
+                  (str "error span not carried on line " (pr-str l)))))))
 
 (defdescribe
   grouped-result-disclosure-test
@@ -5177,7 +5187,7 @@ h = 8"
           (expect (= ["/tmp/tall-1.png" "/tmp/tall-2.png"]
                      (mapv #(get-in % [:meta :img :path]) (picture-rows entries))))
           (expect (= 1 (count (filter #(= :top (get-in % [:meta :card-part])) card-rows))))
-          (expect (every? #(str/starts-with? (:line %) p/MARKER_ATTACHMENT_CARD) card-rows))))
+          (expect (every? #(str/starts-with? (:line %) m/MARKER_ATTACHMENT_CARD) card-rows))))
     (it "keeps the other output in RESULT and paints the picture once"
         (let [entries
               (render-step entry
@@ -6652,8 +6662,8 @@ h = 8"
             (str/index-of (nth lines header-row) "ACTIVITY")]
 
         (expect (nil? (:error captured)))
-        (expect (= p/MARKER_ACTIVITY (:line (get entries (dec header-index)))))
-        (expect (not= p/MARKER_ACTIVITY (:line (get entries (- header-index 2)))))
+        (expect (= m/MARKER_ACTIVITY (:line (get entries (dec header-index)))))
+        (expect (not= m/MARKER_ACTIVITY (:line (get entries (- header-index 2)))))
         (expect (str/blank? (nth lines (dec header-row))))
         (expect (= (get-in grid [header-row header-col :bg])
                    (get-in grid [(dec header-row) header-col :bg])))))))
@@ -6868,7 +6878,7 @@ h = 8"
                       (get-in entry [:meta :copy-text])
                       (update-in [:meta :copy-text] force)))
                   (filter (fn [entry]
-                            (str/starts-with? (:line entry) p/MARKER_ACTIVITY))
+                            (str/starts-with? (:line entry) m/MARKER_ACTIVITY))
                           %))]
 
         (expect (str/includes? (text-of shown) "PRIVATE_SOURCE"))
@@ -6876,7 +6886,7 @@ h = 8"
         (when (= :failed outcome) (expect (str/includes? (text-of shown) "PRIVATE_DIAGNOSTIC")))
         (expect (not (re-find #"PRIVATE_SOURCE|PRIVATE_RESULT|PRIVATE_DIAGNOSTIC|CODE|RESULT|Failed"
                               (text-of hidden))))
-        (expect (= p/MARKER_ACTIVITY (:line (first (activity-entries hidden)))))
+        (expect (= m/MARKER_ACTIVITY (:line (first (activity-entries hidden)))))
         (expect (= (activity-entries shown) (rest (activity-entries hidden)))))))
   (it "hides raw output and diagnostics even when the form has no source"
       (let [entry
@@ -7425,7 +7435,7 @@ h = 8"
                         (when (str/includes? text needle)
                           (cond-> (+ (long (:activity-content-col meta))
                                      (long (str/index-of text needle)))
-                            (str/starts-with? line p/MARKER_MD_CODE)
+                            (str/starts-with? line m/MARKER_MD_CODE)
                             (+ (long @#'render/code-block-h-pad))))))
                     entries))]
 
@@ -7785,7 +7795,7 @@ h = 8"
                                       ["Empty details" false]]]
               (let [index (first (keep-indexed #(when (str/includes? (:line %2) heading) %1)
                                                entries))]
-                (expect (= blank? (= p/MARKER_ACTIVITY (:line (get entries (dec index)))))))))))))
+                (expect (= blank? (= m/MARKER_ACTIVITY (:line (get entries (dec index)))))))))))))
   (it "does not offer an inert chevron for a summary-only presentation"
       (let [entry (nth (#'render/activity-detail-entries
                         {:node-id "summary"
@@ -8076,7 +8086,7 @@ h = 8"
         (expect (= 1 (count owned)))
         (expect (not-any? #(str/includes? (:line %) "Click or") (concat owned unmatched)))
         (expect (every? #(and (get-in % [:meta :trace-inset?])
-                              (str/starts-with? (:line %) p/MARKER_ACTIVITY))
+                              (str/starts-with? (:line %) m/MARKER_ACTIVITY))
                         owned))
         (expect (= 1 (count unmatched)))
         (expect (every? #(get-in % [:meta :live-button?]) (concat owned unmatched)))))))
@@ -9387,19 +9397,19 @@ h = 8"
         ;; User report: the header said `step K`; it counts iterations, so it says `iter K`.
         ;; User report: `You` sat on its own row below `Queued`; it now leads the header row.
         hdr
-        (str p/MARKER_USER_INPUT_HDR "You · Queued · sent now · iter 2")]
+        (str m/MARKER_USER_INPUT_HDR "You · Queued · sent now · iter 2")]
 
     (it "opens with one You · Queued header row, then the words in queue order"
         (let [hdr-at (.indexOf ^java.util.List lines hdr)]
           (expect (<= 0 hdr-at))
-          (expect (= (str p/MARKER_USER_INPUT "") (nth lines (inc hdr-at)))))
+          (expect (= (str m/MARKER_USER_INPUT "") (nth lines (inc hdr-at)))))
         ;; The display copy (chips, not paths) is what the reader sees. One padding row
         ;; opens and closes the bubble, and one separates two messages.
-        (expect (= [(str p/MARKER_USER_INPUT "") (str p/MARKER_USER_INPUT "ship it")
-                    (str p/MARKER_USER_INPUT "") (str p/MARKER_USER_INPUT "🖼 shot.png look")
-                    (str p/MARKER_USER_INPUT "")]
+        (expect (= [(str m/MARKER_USER_INPUT "") (str m/MARKER_USER_INPUT "ship it")
+                    (str m/MARKER_USER_INPUT "") (str m/MARKER_USER_INPUT "🖼 shot.png look")
+                    (str m/MARKER_USER_INPUT "")]
                    (with-redefs [t/user-bubble-bg (com.googlecode.lanterna.TextColor$RGB. 1 2 3)]
-                     (filterv #(str/starts-with? % p/MARKER_USER_INPUT)
+                     (filterv #(str/starts-with? % m/MARKER_USER_INPUT)
                        (format-iteration-entry entry 60 2))))))
     (it "invalidates the live render cache when the messages land"
         (let [fingerprint @#'render/iteration-fingerprint]
@@ -9427,7 +9437,7 @@ h = 8"
 
         band-lines
         (fn [entries]
-          (into [] (comp (map :line) (filter #(str/starts-with? % p/MARKER_USER_INPUT))) entries))
+          (into [] (comp (map :line) (filter #(str/starts-with? % m/MARKER_USER_INPUT))) entries))
 
         folded
         (entries-of {})
@@ -9438,14 +9448,14 @@ h = 8"
     (it "hides the fence and shows the paste as one folded summary row"
         (expect (not-any? #(str/includes? % "````") (band-lines folded)))
         (expect (not-any? #(str/includes? % "vis-paste") (band-lines folded)))
-        (expect (= (str p/MARKER_USER_INPUT "▸ [Pasted #1: 1 line, 19B]") (:line toggle)))
+        (expect (= (str m/MARKER_USER_INPUT "▸ [Pasted #1: 1 line, 19B]") (:line toggle)))
         (expect (true? (get-in toggle [:meta :collapsed?])))
         (expect (not-any? #(str/includes? % "The SDK is missing.") (band-lines folded)))
         (expect (some #(str/includes? % "PIN THE SDK!") (band-lines folded))))
     (it "opens the paste body when its summary row is toggled"
         (let [opened (band-lines (entries-of {["s1" (get-in toggle [:meta :node-id])] true}))]
-          (expect (some #{(str p/MARKER_USER_INPUT "▾ [Pasted #1: 1 line, 19B]")} opened))
-          (expect (some #{(str p/MARKER_USER_INPUT "  The SDK is missing.")} opened))))
+          (expect (some #{(str m/MARKER_USER_INPUT "▾ [Pasted #1: 1 line, 19B]")} opened))
+          (expect (some #{(str m/MARKER_USER_INPUT "  The SDK is missing.")} opened))))
     (it "registers the summary row as the click target of the fold"
         (.reset interactions/hit-map)
         (.beginFrame interactions/hit-map)

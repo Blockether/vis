@@ -268,7 +268,7 @@
 
 ;; Segment rows
 
-(defn plain "`s` without ANSI SGR codes." [s] (str/replace (str s) #"\u001b\[[0-9;]*m" ""))
+(defn plain "`s` without ANSI SGR codes." [s] (p/strip-sgr s))
 
 (defn row-width "Display columns of an ANSI row." ^long [row] (width (plain row)))
 

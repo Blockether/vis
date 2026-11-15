@@ -13,7 +13,8 @@
             [clojure.string :as str]
             [com.blockether.imaging :as img]
             [com.blockether.vis.tui.attachments :as attach]
-            [com.blockether.vis.tui.format :as fmt])
+            [com.blockether.vis.tui.format :as fmt]
+            [com.blockether.vis.tui.primitives :as p])
   (:import [com.googlecode.lanterna.terminal.image TerminalImage TerminalImage$Protocol]
            [java.util Base64]))
 
@@ -604,7 +605,7 @@
                              str/trimr))))
 
             blank?
-            #(str/blank? (str/replace % #"\u001b\[[0-9;]*m" ""))
+            #(str/blank? (p/strip-sgr %))
 
             lines
             (->> lines

@@ -17,8 +17,8 @@
    internals (box-drawing strings we authored, single-glyph keystroke
    labels, etc.) where the answer is identical and the call is a hot path."
   (:import [com.blockether.vis.render BoundedCache]
-           [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TerminalTextUtils
-            TextCharacter TextColor]
+           [com.googlecode.lanterna InlineSpans SGR TerminalPosition TerminalSize Symbols
+            TerminalTextUtils TextCharacter TextColor]
            [com.googlecode.lanterna.graphics AbstractTextGraphics TextGraphics]
            [com.googlecode.lanterna.gui2 DefaultTextGUIGraphics]))
 
@@ -380,48 +380,6 @@
 
 ;;; ── Display-width (terminal columns, not Java chars) ──────────────────────
 ;;
-;; Inline span sentinels are a SECOND PUA range (\uE110...\uE117);
-;; see the `INLINE_*` constants further down in this file. The
-;; range bounds + the `inline-sentinel?` predicate are inlined here
-;; so display-width and friends can reference them without a forward
-;; declare; the canonical name lives with the marker constants block.
-
-(def INLINE_BOLD_ON "\uE110")
-
-(def INLINE_BOLD_OFF "\uE111")
-
-(def INLINE_ITALIC_ON "\uE112")
-
-(def INLINE_ITALIC_OFF "\uE113")
-
-(def INLINE_STRIKE_ON "\uE114")
-
-(def INLINE_STRIKE_OFF "\uE115")
-
-(def INLINE_CODE_ON "\uE116")
-
-(def INLINE_CODE_OFF "\uE117")
-
-(def INLINE_LINK_ON "\uE118")
-
-(def INLINE_LINK_OFF "\uE119")
-
-(def INLINE_ERR_ON "\uE11A")
-
-(def INLINE_ERR_OFF "\uE11B")
-
-(def ^:private ^:const INLINE_SENTINEL_LO 0xE110)
-
-(def ^:private ^:const INLINE_SENTINEL_HI 0xE11B)
-
-(defn inline-sentinel?
-  "True when `g` (a single grapheme String) is one of the eight inline
-   span sentinels above. Cheap range check, no map lookup."
-  [^String g]
-  (and (= 1 (.length g))
-       (let [c (int (.charAt g 0))]
-         (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
-
 ;; Per-terminal glyph width (VS-16 emoji narrow on Apple Terminal.app, wide
 ;; elsewhere) lives in the lanterna fork's `TextCharacter.isDoubleWidth`
 ;; (auto-detected from TERM_PROGRAM). Everything here defers to it, so
@@ -431,8 +389,8 @@
   "Number of terminal columns `s` will occupy when painted by lanterna.
 
    Delegates to the lanterna fork's `TerminalTextUtils/displayColumns`
-   (>= 3.1.5-vis.24): grapheme clusters honoured, CJK + emoji counted as
-   two columns, ASCII as one, inline-span sentinels (\\uE110..\\uE119) as
+   (>= 3.1.5-vis.62): grapheme clusters honoured, CJK + emoji counted as
+   two columns, ASCII as one, inline-span sentinels (`InlineSpans`) as
    zero, C0 control bytes sanitized to `/` first. This measures by the
    exact same rule `AbstractTextGraphics.putString` paints by, so what we
    measure always matches what the renderer emits.
@@ -446,11 +404,7 @@
   (if (nil? s)
     0
     (let [^String s (str s)]
-      (TerminalTextUtils/displayColumns
-        (if (or (>= (.indexOf s (int 0xE11A)) 0) (>= (.indexOf s (int 0xE11B)) 0))
-          (let [^String stripped (.replace s ^String INLINE_ERR_ON "")]
-            (.replace stripped ^String INLINE_ERR_OFF ""))
-          s)))))
+      (TerminalTextUtils/displayColumns s))))
 
 (def ^:const tab-width
   "Columns the lanterna fork's `putString` advances a hard TAB to. The fork
@@ -608,77 +562,13 @@
   ^String [s ^long max-cols]
   (TerminalTextUtils/ansiTruncateColumns (str (or s "")) (int max-cols)))
 
+(defn strip-sgr
+  "`s` without its ANSI SGR escapes (`\u001b[..m`). A string that has none comes
+   back as is. nil yields \"\"."
+  ^String [s]
+  (TerminalTextUtils/stripSgr (str (or s ""))))
+
 ;;; ── Inline-styled line painter ─────────────────────────────────────────────
-
-(defn- build-styled-cells
-  "Resolve a sentinel-carrying `line` into ONE fully-styled `TextCharacter[]`.
-   Inline sentinels toggle SGR/code state but occupy no columns, so the
-   concatenated per-run `fromString` cells are EXACTLY what the per-run
-   `putString` walk paints (proven byte-identical). `inherited` is the SGR set
-   active on `g` at entry; inline toggles stack on top of it. Built once per
-   unique styled line, then cached by `blit-styled-line!`."
-  ^"[Lcom.googlecode.lanterna.TextCharacter;"
-  [^String line ^TextColor base-fg ^TextColor base-bg ^TextColor code-fg ^TextColor code-bg
-   ^TextColor err-fg ^java.util.EnumSet inherited]
-  (let [len
-        (.length line)
-
-        inline
-        (java.util.EnumSet/noneOf SGR)
-
-        code?
-        (boolean-array 1 false)
-
-        err?
-        (boolean-array 1 false)
-
-        ^java.util.ArrayList out
-        (java.util.ArrayList. len)
-
-        emit!
-        (fn [^String seg]
-          (when (pos? (.length seg))
-            (let [^"[Lcom.googlecode.lanterna.TextCharacter;" arr
-                  (if (aget code? 0)
-                    (TextCharacter/fromString seg code-fg code-bg ^java.util.EnumSet no-mods)
-                    (let [^java.util.EnumSet eff (java.util.EnumSet/copyOf inherited)]
-                      (.addAll eff inline)
-                      (TextCharacter/fromString seg (if (aget err? 0) err-fg base-fg) base-bg eff)))
-
-                  n
-                  (alength arr)]
-
-              (loop [i 0]
-                (when (< i n) (.add out (aget arr i)) (recur (inc i)))))))]
-
-    (loop [i
-           0
-
-           run-start
-           0]
-
-      (if (>= i len)
-        (emit! (subs line run-start i))
-        (let [c (int (.charAt line i))]
-          (if (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI)))
-            (let [gs (subs line i (inc i))]
-              (emit! (subs line run-start i))
-              (cond (= gs INLINE_BOLD_ON) (.add inline SGR/BOLD)
-                    (= gs INLINE_BOLD_OFF) (.remove inline SGR/BOLD)
-                    (= gs INLINE_ITALIC_ON) (.add inline SGR/ITALIC)
-                    (= gs INLINE_ITALIC_OFF) (.remove inline SGR/ITALIC)
-                    (= gs INLINE_STRIKE_ON) (.add inline SGR/CROSSED_OUT)
-                    (= gs INLINE_STRIKE_OFF) (.remove inline SGR/CROSSED_OUT)
-                    (= gs INLINE_CODE_ON) (aset code? 0 true)
-                    (= gs INLINE_CODE_OFF) (aset code? 0 false)
-                    (= gs INLINE_LINK_ON) (.add inline SGR/UNDERLINE)
-                    (= gs INLINE_LINK_OFF) (.remove inline SGR/UNDERLINE)
-                    (= gs INLINE_ERR_ON) (aset err? 0 true)
-                    (= gs INLINE_ERR_OFF) (aset err? 0 false))
-              (recur (inc i) (inc i)))
-            (recur (inc i) run-start)))))
-    (.toArray out
-              ^"[Lcom.googlecode.lanterna.TextCharacter;" (make-array TextCharacter (.size out)))))
 
 (defn blit-styled-line!
   "Paint a sentinel-carrying `line` at (x,y), caching its fully-resolved
@@ -703,7 +593,7 @@
 
     (if cached
       (.putString g (int x) (int y) cached)
-      (let [arr (build-styled-cells line base-fg base-bg code-fg code-bg err-fg inherited)]
+      (let [arr (InlineSpans/cells line base-fg base-bg code-fg code-bg err-fg inherited)]
         (.put ^BoundedCache line-cell-cache
               (if iempty?
                 k
@@ -716,8 +606,8 @@
 (defn paint-styled-line!
   "Paint a single line at (x, y) honouring inline span sentinels.
 
-   The line may contain interleaved text and `INLINE_*_ON`/`OFF`
-   sentinels (range \\uE110..\\uE11B). Sentinels themselves are NEVER
+   The line may contain interleaved text and inline-span sentinels
+   (`InlineSpans`; the `INLINE_*` names are in the markers namespace). Sentinels themselves are NEVER
    painted; they toggle the SGR style (BOLD/ITALIC/CROSSED-OUT/UNDERLINE),
    the fg/bg colors (CODE), or the foreground to `err-fg` (ERR) for the
    spans that follow.
@@ -734,33 +624,20 @@
   ([^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
    (paint-styled-line! g x y line base-fg base-bg code-fg code-bg base-fg))
   ([^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg err-fg]
-   (let [len
-         (.length line)
-
-         has-sentinel?
-         (loop [i 0]
-           (if (>= i len)
-             false
-             (let [c (int (.charAt line i))]
-               (if (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI)))
-                 true
-                 (recur (inc i))))))]
-
-     (.setForegroundColor g base-fg)
-     (.setBackgroundColor g base-bg)
-     (cond (zero? len) nil
-           (not has-sentinel?)
-           (blit-line! g (int x) (int y) line base-fg base-bg (.getActiveModifiers g))
-           :else (blit-styled-line! g
-                                    (int x)
-                                    (int y)
-                                    line
-                                    base-fg
-                                    base-bg
-                                    code-fg
-                                    code-bg
-                                    err-fg
-                                    (.getActiveModifiers g))))))
+   (set-colors! g base-fg base-bg)
+   (cond (zero? (.length line)) nil
+         (not (InlineSpans/contains line))
+         (blit-line! g (int x) (int y) line base-fg base-bg (.getActiveModifiers g))
+         :else (blit-styled-line! g
+                                  (int x)
+                                  (int y)
+                                  line
+                                  base-fg
+                                  base-bg
+                                  code-fg
+                                  code-bg
+                                  err-fg
+                                  (.getActiveModifiers g)))))
 
 ;;; ── Flex layout (pure string functions, column-aware) ─────────────────────
 
@@ -981,119 +858,3 @@
   "Create a TerminalPosition for cursor placement."
   [col row]
   (TerminalPosition. (int col) (int row)))
-
-;;; ── Bubble line markers ────────────────────────────────────────────────────────────
-;;
-;; Zero-width invisible prefixes on bubble text lines.
-;; The bubble renderer checks these to apply per-line styles
-;; (italic for thinking, dim for code, bold for headers, etc.)
-;; without visible noise.
-
-(def MARKER_THINKING "\u200B")  ;; zero-width space       -> italic, dim (reasoning)
-
-(def MARKER_CODE "\u200C")  ;; zero-width non-joiner  -> code style
-
-(def MARKER_RESULT "\u200D")  ;; zero-width joiner      -> result/return value (success)
-
-(def MARKER_SEP "\u2060")  ;; word-joiner            -> separator line
-
-(def MARKER_CODE_OK "\u2061")  ;; function application   -> code with success status
-
-(def MARKER_CODE_ERR "\u2062")  ;; invisible times        -> code with error status
-
-(def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    -> error result line
-
-(def MARKER_ITERATION_HDR "\u2066")  ;; LRI                    -> iteration header with bg
-
-(def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    -> answer separator (trace->answer break)
-
-(def MARKER_CODE_PAD "\u206A")  ;; ISS                    -> running/neutral code block padding line
-
-(def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   -> error code block padding line
-
-(def MARKER_CODE_OK_PAD "\uE000") ;; PUA                    -> successful code block padding line
-
-(def MARKER_RECAP "\uE00E") ;; PUA                    -> iteration recap line (header-bg, bold+italic)
-
-(def MARKER_ITERATION_PAD "\u206C")  ;; IAFS                   -> iteration zone padding (margin between blocks)
-
-(def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   -> final answer header
-
-(def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   -> answer text line (with answer bg)
-
-(def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   -> answer padding line
-;; Markdown markers (PUA \uE000+) - guaranteed unique, never collide
-;; with the iteration/answer markers above. Two parallel sets:
-;;   - MARKER_MD_*    -> answer-zone markdown (answer-bg)
-;;   - MARKER_TH_MD_* -> thinking-zone markdown (iteration-header-bg, italic)
-(def MARKER_MD_H1 "\uE001") ;; markdown heading 1 (answer)
-
-(def MARKER_MD_H2 "\uE002") ;; markdown heading 2 (answer)
-
-(def MARKER_MD_H3 "\uE003") ;; markdown heading 3 (answer)
-
-(def MARKER_MD_BOLD "\uE004") ;; markdown bold line (answer)
-
-(def MARKER_MD_CODE "\uE005") ;; markdown fenced code (answer)
-
-(def MARKER_MD_BULLET "\uE006") ;; markdown bullet list item (answer)
-
-(def MARKER_MD_TABLE_HEAD "\uE007") ;; markdown table header row (answer)
-
-(def MARKER_MD_TABLE_SEP "\uE008") ;; markdown table border / separator (answer)
-
-(def MARKER_MD_TABLE_ROW "\uE009") ;; markdown table data row (answer)
-
-(def MARKER_MD_QUOTE "\uE00A") ;; markdown blockquote (answer)
-
-(def MARKER_MD_HR "\uE00B") ;; markdown horizontal rule (answer)
-
-(def MARKER_MD_SUMMARY "\uE00C") ;; markdown <summary> disclosure label (answer)
-
-(def MARKER_HINT "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
-
-(def MARKER_QUEUE_HDR "\uE011") ;; "Messages Queue" section header -> bold accent fg on regular bg, leading bar glyph (NOT the gray band)
-
-(def MARKER_QUEUE_ITEM "\uE012") ;; queued message row -> ordinal in accent gutter on regular bg, preview text on the gray queue band
-
-(def MARKER_QUEUE_BORDER "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
-
-(def MARKER_STEP_DIGEST "\uE014") ;; digest of the steps after a progress note, on transcript paper
-
-(def MARKER_USER_INPUT "\uE016") ;; queued message delivered into the running turn (`→ Send now`) -> the user's words on the user bubble paper, like a normal user message
-
-(def MARKER_USER_INPUT_HDR "\uE017") ;; `You · Queued · …` header row of a delivered message -> bold user role "You", bold accent "Queued", then the delivery meta in the hint color
-
-(def MARKER_ACTIVITY "\uE015") ;; compact Activity timeline surface
-
-(def MARKER_ATTACHMENT_CARD "\uE018") ;; attachment card row -> bordered card paper with file rows, Open buttons and an optional fold title in the top border
-
-(def MARKER_TH_MD_H1 "\uE021") ;; markdown heading 1 (thinking)
-
-(def MARKER_TH_MD_H2 "\uE022") ;; markdown heading 2 (thinking)
-
-(def MARKER_TH_MD_H3 "\uE023") ;; markdown heading 3 (thinking)
-
-(def MARKER_TH_MD_BOLD "\uE024") ;; markdown bold line (thinking)
-
-(def MARKER_TH_MD_CODE "\uE025") ;; markdown fenced code (thinking)
-
-(def MARKER_TH_MD_BULLET "\uE026") ;; markdown bullet list item (thinking)
-
-(def MARKER_TH_MD_TABLE_HEAD "\uE027") ;; markdown table header row (thinking)
-
-(def MARKER_TH_MD_TABLE_SEP "\uE028") ;; markdown table border (thinking)
-
-(def MARKER_TH_MD_TABLE_ROW "\uE029") ;; markdown table data row (thinking)
-
-(def MARKER_TH_MD_QUOTE "\uE02A") ;; markdown blockquote (thinking)
-
-(def MARKER_TH_MD_HR "\uE02B") ;; markdown horizontal rule (thinking)
-
-(def MARKER_TH_MD_SUMMARY "\uE02C") ;; markdown <summary> disclosure label (thinking)
-
-;; Inline span sentinels (\uE110...\uE117) live in their own section
-;; near the top of this file because both the width math
-;; (`display-width` etc.) AND the painter (`paint-styled-line!`)
-;; need them; defining them here would force a forward declare.
-;; Search UP for `INLINE_BOLD_ON`.

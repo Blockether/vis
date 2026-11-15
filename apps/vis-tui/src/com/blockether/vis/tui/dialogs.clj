@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.keymap :as keymap]
+            [com.blockether.vis.tui.ansi :as ansi]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.markdown-layout :as layout]
@@ -2726,7 +2727,7 @@
    Unlike `text-view-dialog!` (a centered modal box) this owns the entire screen:
    a title strip on the top row, the log body filling every row beneath it, and a
    hint strip on the bottom row. Lines that already carry ANSI (colored tool
-   output) are painted through `render/paint-ansi-line!` — the same path that
+   output) are painted through `ansi/paint-line!` — the same path that
    carries color on the transcript's code fences.
 
    Keys: ↑/↓ line, PgUp/PgDn page, Home/End jump, mouse-wheel scroll, `r` refresh
@@ -2829,7 +2830,7 @@
                   y (+ body-top i)]
 
               (when (< (long idx) (long total))
-                (render/paint-ansi-line! g 0 y (nth painted idx) t/code-block-fg t/code-block-bg))))
+                (ansi/paint-line! g 0 y (nth painted idx) t/code-block-fg t/code-block-bg))))
           ;; Scrollbar last (over the rightmost column) so a wide line can't hide it.
           (ScrollBar/draw g
                           Direction/VERTICAL
@@ -8248,15 +8249,6 @@
            reverse
            vec))))
 
-(def ^:private sgr-pattern
-  "One ANSI SGR escape, such as the token colors of a highlighted code fence."
-  #"\u001b\[[0-9;]*m")
-
-(defn- sgr-free
-  "`s` without its ANSI SGR escapes: the text that a reader sees."
-  ^String [s]
-  (str/replace (str s) sgr-pattern ""))
-
 (defn- navigator-run-segments
   "Split the IR `runs` of one line into `navigator-highlight-segments`. Each segment
    is `{:text :style :match?}` and keeps the Markdown style of its run. A colored
@@ -8269,7 +8261,7 @@
                               (str text)
 
                               plain
-                              (sgr-free text)
+                              (p/strip-sgr text)
 
                               segments
                               (navigator-highlight-segments plain query)]
@@ -8526,14 +8518,14 @@
           ;; directives, as in the transcript, and never glyphs.
           paint!
           (if (str/includes? text "\u001b[")
-            #(render/paint-ansi-line! g x row text fg t/dialog-bg)
+            #(ansi/paint-line! g x row text fg t/dialog-bg)
             #(p/put-str! g x row text))]
 
       (cond (and bold? italic?) (p/styled g [p/BOLD p/ITALIC] (paint!))
             bold? (p/styled g [p/BOLD] (paint!))
             italic? (p/styled g [p/ITALIC] (paint!))
             :else (paint!))
-      (+ (long x) (p/display-width (sgr-free text))))))
+      (+ (long x) (p/display-width (p/strip-sgr text))))))
 
 (defn- draw-navigator-segments!
   "Paint `navigator-run-segments` from `x`, clipped to `width` columns. A matched
@@ -8557,7 +8549,7 @@
             (p/ansi-truncate-cols (str text) remaining)
 
             segment-w
-            (long (p/display-width (sgr-free text)))]
+            (long (p/display-width (p/strip-sgr text)))]
 
         (if match?
           (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)

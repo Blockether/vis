@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.presentation :as presentation]
+            [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.virtual :as virtual]
@@ -168,7 +169,7 @@
         (expect (= ["Context: run npm test." "" "Goals:" "" "1. First goal" "2. Second goal" ""
                     "Done: tests pass."]
                    (mapv (comp str/trimr visible) rows)))
-        (expect (str/includes? (first rows) (str p/INLINE_CODE_ON "npm test" p/INLINE_CODE_OFF))))))
+        (expect (str/includes? (first rows) (str m/INLINE_CODE_ON "npm test" m/INLINE_CODE_OFF))))))
 
 (defdescribe council-markdown-splits-only-lines-that-leave-a-block
              ;; User report 2026-10-31, Council thread #8805: authored lines must read as separate blocks.
