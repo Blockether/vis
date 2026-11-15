@@ -1116,41 +1116,23 @@
         (:node-id meta) [:node (:node-id meta) (:kind meta)]
         :else (when-not (str/blank? text) [:text role text])))
 
-(defn- message-anchors*
-  "Line anchors of one projection, rows relative to it:
-   `{:rows [[row key] ...] :by-key {key row}}` in row order."
-  [projected]
-  (let [turn
-        (turn-identity projected)
+(def ^:private no-anchors {:seen {} :rows [] :by-key {}})
 
-        role
-        (:role projected)
-
-        ;; Plain transcript lines may have no disclosure metadata. They still
-        ;; need an identity when an append invalidates positional offsets (#248).
-        text-lines
-        (str/split (or (:text projected) "") #"\n" -1)
-
-        line-meta
-        (vec (:line-meta projected))
-
-        n
-        (long (count line-meta))]
-
-    ;; Transients: this walk runs again on each frame of the live bubble.
-    (loop [i
-           0
-
-           seen
-           (transient {})
-
-           rows
-           (transient [])
-
-           by-key
-           (transient {})]
+(defn- anchor-walk
+  "Anchors of the rows `from` and later, added to the walk state `anchors` of the rows
+   before `from`: `{:rows [[row key] ...] :by-key {key row} :seen {base-key count}}`, with
+   `:rows` in row order."
+  [turn role line-meta text-lines from {:keys [seen rows by-key]}]
+  (let [n (long (count line-meta))]
+    ;; Transients: a cold walk covers every row of a large bubble.
+    (loop [i (long from)
+           seen (transient seen)
+           rows (transient rows)
+           by-key (transient by-key)]
 
       (if (< i n)
+        ;; Plain transcript lines may have no disclosure metadata. They still
+        ;; need an identity when an append invalidates positional offsets (#248).
         (if-let [identity (line-identity (nth line-meta i) (get text-lines i) role)]
           (let [key (into [turn] identity)
                 occurrence (long (get seen key 0))
@@ -1161,7 +1143,65 @@
                    (conj! rows [i anchor])
                    (assoc! by-key anchor i)))
           (recur (unchecked-inc i) seen rows by-key))
-        {:rows (persistent! rows) :by-key (persistent! by-key)}))))
+        {:seen (persistent! seen) :rows (persistent! rows) :by-key (persistent! by-key)}))))
+
+(defn- anchors-before
+  "Walk state of the first `n` rows, cut from the walk state `anchors` of more rows."
+  [{:keys [seen rows by-key]} ^long n]
+  (loop [seen
+         (transient seen)
+
+         rows
+         rows
+
+         by-key
+         (transient by-key)]
+
+    (let [[row anchor] (peek rows)]
+      (if (and row (>= (long row) n))
+        ;; The occurrence of an anchor is the count of its key in the rows before it.
+        (recur (if (zero? (long (peek anchor)))
+                 (dissoc! seen (pop anchor))
+                 (assoc! seen (pop anchor) (peek anchor)))
+               (pop rows)
+               (dissoc! by-key anchor))
+        {:seen (persistent! seen) :rows rows :by-key (persistent! by-key)}))))
+
+(defn- shared-rows
+  "Count of the leading rows that have the same metadata and text in both projections."
+  ^long [line-meta text-lines old-meta old-lines]
+  (let [n
+        (long (min (count line-meta) (count old-meta)))
+
+        same-meta?
+        (identical? line-meta old-meta)]
+
+    (loop [i 0]
+      (if (and (< i n)
+               (or same-meta?
+                   (let [a (nth line-meta i)
+                         b (nth old-meta i)]
+
+                     (or (identical? a b) (= a b))))
+               (= (get text-lines i) (get old-lines i)))
+        (recur (unchecked-inc i))
+        i))))
+
+(defn- plain-lines
+  "The plain text of `projected`, one string for each line."
+  [projected]
+  (or (:text-lines projected) (str/split (or (:text projected) "") #"\n" -1)))
+
+(defn- message-anchors*
+  "Line anchors of one projection, rows relative to it; see `anchor-walk`."
+  ([projected] (message-anchors* projected (plain-lines projected)))
+  ([projected text-lines]
+   (anchor-walk (turn-identity projected)
+                (:role projected)
+                (vec (:line-meta projected))
+                text-lines
+                0
+                no-anchors)))
 
 ;; Identity memo for `message-anchors*`. Layout re-anchors every visible line on
 ;; every frame, which walked the whole text and metadata of a large Activity bubble
@@ -1170,8 +1210,16 @@
 ;; from; any change recomputes. Cleared on overflow, like the other identity memos.
 (defonce ^:private ^IdentityHashMap message-anchors-memo (IdentityHashMap. 256))
 
+(defonce ^:private grown-anchors
+  ;; The last walk: {:turn :role :line-meta :text-lines :anchors}. The live bubble has
+  ;; new text on each frame, so the identity memo misses it. Its rows before the status
+  ;; row stay the same, so the next walk starts at the first row that changed. Only
+  ;; the render thread lays out, so one cell is enough.
+  (atom nil))
+
 (defn- message-anchors
-  "Memoized `message-anchors*`."
+  "Memoized `message-anchors*`. A projection that grew from the last walk of its turn
+   walks only its rows after the last shared row."
   [projected]
   (if-let [line-meta (:line-meta projected)]
     (let [text (:text projected)
@@ -1185,13 +1233,30 @@
                (= role (nth cached 1))
                (= turn (nth cached 2)))
         (nth cached 3)
-        (let [anchors (message-anchors* projected)]
+        (let [meta-rows (if (vector? line-meta) line-meta (vec line-meta))
+              text-lines (plain-lines projected)
+              grown @grown-anchors
+              shared (if (and grown (= turn (:turn grown)) (= role (:role grown)))
+                       (shared-rows meta-rows text-lines (:line-meta grown) (:text-lines grown))
+                       0)
+              ;; A cut costs the old rows after `shared`, so it must be the smaller part.
+              anchors (if (> (* 2 shared) (count (:line-meta grown)))
+                        (anchor-walk turn
+                                     role
+                                     meta-rows
+                                     text-lines
+                                     shared
+                                     (anchors-before (:anchors grown) shared))
+                        (message-anchors* projected text-lines))]
+
+          (reset! grown-anchors
+            {:turn turn :role role :line-meta meta-rows :text-lines text-lines :anchors anchors})
           (locking message-anchors-memo
             (when (> (long (.size ^IdentityHashMap message-anchors-memo)) 512)
               (.clear ^IdentityHashMap message-anchors-memo))
             (.put ^IdentityHashMap message-anchors-memo line-meta [text role turn anchors]))
           anchors)))
-    {:rows [] :by-key {}}))
+    no-anchors))
 
 (defn- row-anchors
   "Line anchors of each visible projection with its first document row."
@@ -1558,39 +1623,40 @@
 
                 pm
                 (if loading-bubble?
-                  (let [{:keys [text lines line-meta]} (render/progress->lines-data
-                                                         progress
-                                                         bubble-w
-                                                         settings
-                                                         (assoc progress-extra
-                                                           :session-id session-id
-                                                           ;; Live progress bubble must use the
-                                                           ;; same turn key the completed answer
-                                                           ;; will use a moment later; otherwise
-                                                           ;; the REASONING / <details> toggle
-                                                           ;; node-ids change at the live -> done
-                                                           ;; flip and the user's expansion state
-                                                           ;; resets to its default. See
-                                                           ;; `turn-identity` for the precedence.
-                                                           :session-turn-id (turn-identity m)
-                                                           ;; Command turns (`!`/`!&` shell,
-                                                           ;; registered slash) run LOCALLY with no
-                                                           ;; provider call, so the zero-iteration
-                                                           ;; spinner must not claim "Vis is calling
-                                                           ;; the provider" before the activity chunk
-                                                           ;; lands.
-                                                           :command-label (:command-phase-label m)
-                                                           ;; Run receipts filed on this
-                                                           ;; placeholder (Activity rows,
-                                                           ;; settled extension runs) must
-                                                           ;; paint in the LIVE bubble too;
-                                                           ;; without them nothing showed
-                                                           ;; until the turn settled.
-                                                           :runs (:runs m)
-                                                           :detail-expansions detail-expansions))]
+                  (let [{:keys [text text-lines lines line-meta]}
+                        (render/progress->lines-data progress
+                                                     bubble-w
+                                                     settings
+                                                     (assoc progress-extra
+                                                       :session-id session-id
+                                                       ;; Live progress bubble must use the
+                                                       ;; same turn key the completed answer
+                                                       ;; will use a moment later; otherwise
+                                                       ;; the REASONING / <details> toggle
+                                                       ;; node-ids change at the live -> done
+                                                       ;; flip and the user's expansion state
+                                                       ;; resets to its default. See
+                                                       ;; `turn-identity` for the precedence.
+                                                       :session-turn-id (turn-identity m)
+                                                       ;; Command turns (`!`/`!&` shell,
+                                                       ;; registered slash) run LOCALLY with no
+                                                       ;; provider call, so the zero-iteration
+                                                       ;; spinner must not claim "Vis is calling
+                                                       ;; the provider" before the activity chunk
+                                                       ;; lands.
+                                                       :command-label (:command-phase-label m)
+                                                       ;; Run receipts filed on this
+                                                       ;; placeholder (Activity rows,
+                                                       ;; settled extension runs) must
+                                                       ;; paint in the LIVE bubble too;
+                                                       ;; without them nothing showed
+                                                       ;; until the turn settled.
+                                                       :runs (:runs m)
+                                                       :detail-expansions detail-expansions))]
                     ;; The team card of this turn refreshes under the live progress too.
                     (agent-team/with-card-lines (assoc m
                                                   :text text
+                                                  :text-lines text-lines
                                                   :prewrapped-lines lines
                                                   :line-meta line-meta)
                                                 bubble-w))

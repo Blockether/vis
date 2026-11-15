@@ -2303,6 +2303,21 @@
             (expect (< 300 (long first-clips)))
             (expect (<= (long next-clips) 2) (str next-clips " rows clipped again"))
             (expect (= (:total-h first-frame) (:total-h next-frame)))))
+      ;; The live bubble has new text on each frame (its status row), so the anchor
+      ;; memo missed and each frame walked every row: 12 ms of a 16 ms frame at 14k rows.
+      (it "anchors only the changed rows of the live bubble on the next frame"
+          (let [_
+                (reset! @#'virtual/grown-anchors nil)
+
+                [first-walked first-frame]
+                (counted #'virtual/line-identity #(frame messages true 2000 0))
+
+                [next-walked next-frame]
+                (counted #'virtual/line-identity #(frame messages true 2090 0))]
+
+            (expect (<= 300 (long first-walked)))
+            (expect (<= (long next-walked) 4) (str next-walked " rows anchored again"))
+            (expect (= (:row-anchors first-frame) (:row-anchors next-frame)))))
       (it "anchors a stable bubble once while it scrolls"
           (let [_
                 (frame settled false 0 0)

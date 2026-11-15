@@ -2247,19 +2247,36 @@
               activity)))
         db))))
 
+(defn- set-detail-baseline
+  "Set the bulk disclosure baseline and wipe the per-node overrides. The baseline
+   is part of the render key of each bubble, so the whole transcript is cold after
+   it changes: each bubble the reader scrolled to rendered in that frame, and its
+   real height moved the scrollbar thumb. Warm the transcript in the background,
+   as a settings change and a width change do. No published layout (no frame yet)
+   skips the warm."
+  [db baseline]
+  (let [db (-> (park-scroll-for-toggle db)
+               (assoc :detail-expansions {:vis.channel-tui/baseline baseline}))]
+    (when-let [cols (:cols (:layout db))]
+      (virtual/rewarm! (:messages db)
+                       (max 1 (- (long cols) (long render/MESSAGE_SIDE_PAD)))
+                       (or (:settings db) {})
+                       {:session-id (get-in db [:session :id])
+                        :detail-expansions (:detail-expansions db)
+                        :on-warm #(dispatch [:bump-render-version])}))
+    db))
+
 (reg-event-db :collapse-all-details
               ;; C-x [ — collapse EVERY disclosure. Wipe per-node overrides and set the
               ;; bulk baseline; `render/detail-expanded?` reads `:baseline` when a node has
               ;; no explicit override, so a later click can still expand one item.
               (fn [db _]
-                (-> (park-scroll-for-toggle db)
-                    (assoc :detail-expansions {:vis.channel-tui/baseline :collapse}))))
+                (set-detail-baseline db :collapse)))
 
 (reg-event-db :expand-all-details
               ;; C-x ] — expand EVERY disclosure (per-node overrides wiped, baseline set).
               (fn [db _]
-                (-> (park-scroll-for-toggle db)
-                    (assoc :detail-expansions {:vis.channel-tui/baseline :expand}))))
+                (set-detail-baseline db :expand)))
 
 (reg-event-db :toggle-all-details
               ;; C-x TAB / C-x S-TAB — Emacs global fold cycle (org `<backtab>`): if the
@@ -2269,9 +2286,7 @@
               (fn [db _]
                 (let [expanded? (= :expand
                                    (get-in db [:detail-expansions :vis.channel-tui/baseline]))]
-                  (-> (park-scroll-for-toggle db)
-                      (assoc :detail-expansions {:vis.channel-tui/baseline
-                                                 (if expanded? :collapse :expand)})))))
+                  (set-detail-baseline db (if expanded? :collapse :expand)))))
 
 (reg-event-db :set-detail-labels
               ;; C-x t — vim-style jump labels. `on?` true turns the overlay ON

@@ -7016,3 +7016,39 @@
                    (state/dispatch [:select-tab-index 1])
                    (expect (= {:session-id "B" :view-id "review-B"}
                               (get-in @state/app-db [:live-panel :app]))))))
+
+;; All disclosures opened at once left each bubble out of view on a height estimate
+;; (20151 rows for a transcript of 8655). The reader then scrolled into bubbles that
+;; rendered in that frame, and each real height moved the scrollbar thumb.
+(defdescribe
+  bulk-disclosure-warm-test
+  (it "measures the whole transcript after all disclosures open"
+      (let [expand
+            (:fn (get @@#'state/event-registry :expand-all-details))
+
+            messages
+            (mapv (fn [i]
+                    (let [text (apply str "answer" (repeat i " and more"))]
+                      {:role (if (even? i) :user :assistant)
+                       :content [{"id" (str "block-" i) "type" "prose" "markdown" text}]
+                       :text text
+                       :timestamp #inst "2026-04-30T00:00:00"}))
+                  (range 6))
+
+            db
+            {:messages messages :settings {} :session {:id "bulk-warm"} :layout {:cols 80}}]
+
+        (virtual/stop-rewarm!)
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (with-redefs [state/dispatch (fn [_]
+                                       nil)]
+          (let [db' (expand db [:expand-all-details])
+                deadline (+ (System/currentTimeMillis) 5000)]
+
+            (while (and (< (virtual/height-cache-size) (count messages))
+                        (< (System/currentTimeMillis) deadline))
+              (Thread/sleep 5))
+            (expect (= {:vis.channel-tui/baseline :expand} (:detail-expansions db')))
+            (expect (= (count messages) (virtual/height-cache-size)))
+            (virtual/stop-rewarm!))))))

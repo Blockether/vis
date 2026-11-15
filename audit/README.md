@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-11-14.
+> Generated 2026-11-15.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -195,7 +195,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.60` | LGPL-3.0 | 673 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.61` | LGPL-3.0 | 673 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
 ### `vis-contract` module
@@ -225,7 +225,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 Dependencies use several licenses, listed above. Vis first-party code uses
 Apache-2.0. Review dependency terms for the intended distribution method — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.60`) uses LGPL-3.0.** Review source, notice and relinking
+> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.61`) uses LGPL-3.0.** Review source, notice and relinking
 > obligations before distribution, particularly for static native-image builds.
 > Keeping an optional dependency separate may affect those obligations (§4.3).
 

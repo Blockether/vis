@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion: the menu of the session header lists each session app by its name. A press opens the app, and a press on the open app closes it. Before, a grid button opened a dialog with the apps. The command `session-apps` and its key open that menu.
 - Python SDK: session groups. `client.groups()` lists the groups, `client.group(name)` gets a group or makes it, and `client.create_group`, `client.update_group` and `client.delete_group` change them. `client.create_session(group=...)` makes a session in a group, and `Session.set_group` moves a session into a group or out of it. Each group is a typed `SessionGroup`.
 
+### Changed
+- Performance: with an open digest, the TUI renders the steps of a long turn on a pool of threads. The first frame of a turn with 111 steps takes 22 ms instead of 150-225 ms. A computer with fewer than three processors uses one thread, as before.
+- Performance: while a turn runs with an open digest, the TUI builds only the rows that changed. A frame takes 1.2-1.7 ms instead of 16 ms, and a frame with a new step takes 7-9 ms instead of 35-46 ms.
+- Performance: the TUI uses Lanterna 3.1.5-vis.61. A width measure of 14 799 transcript rows takes 14 ms instead of 97 ms.
+
 ### Removed
 - Drafts: Vis has no draft workspaces. The tools `draft_create`, `draft_status`, `draft_diff`, `draft_sync`, `draft_approve` and `draft_discard`, the setting `draft_backend`, the `draft` key of a `workspace.filesystem` entry and the two manual pages are gone. A session always works in its own directory, as it did with the default `draft_backend: off`.
 - Drafts: Vis does not ship the Rift library and makes no Git worktree for a session. The operation names `draft/create`, `draft/sync`, `draft/approve`, `draft/discard` and `git/commit` are gone, so a hook on one of them matches no operation.
@@ -23,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Terminal: signed bars share a zero marker. Long list details wrap. Narrow charts keep their values visible.
+- TUI: after the commands that open or close all details, the TUI measures the turns again in its idle time, and the scrollbar shows the correct length. Before, the length stayed an estimate (20 151 rows for 8 655 in one session), and the thumb jumped during the scroll.
 - Companion: on a phone, a narrow table column is as wide as its longest word and the table scrolls to the side. Before, a word such as "qualification" broke in the middle.
 - Companion: counters fill each row. Before, three counters on a phone left one empty cell.
 - Companion: the header of a session app has the height of the session header, so its close button is level with the header icons. Before, the button was 4 px higher.

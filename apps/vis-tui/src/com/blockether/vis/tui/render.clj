@@ -23,6 +23,8 @@
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [com.blockether.vis.render BoundedCache]
            [java.util IdentityHashMap]
+           [java.util.concurrent Callable ExecutionException ExecutorService Executors Future
+            ThreadFactory]
            [java.util.concurrent.atomic AtomicLong]))
 
 ;;; Render caches
@@ -82,6 +84,11 @@
   ;; Pre-warming and rendering share this cache. Keep lookup and insertion locked,
   ;; but compute misses outside the lock so expensive formatting cannot stall paint.
   (with-cache fmt-cache fmt-cache-gen k (compute-fn)))
+
+(defn- cached?
+  "True when the format cache holds `k`."
+  [k]
+  (locking fmt-cache (some? (.get ^BoundedCache fmt-cache k))))
 
 (defn invalidate-cache!
   "Drop every cached projection. Call on settings changes that the
@@ -355,6 +362,42 @@
           (.put ^IdentityHashMap clipped-line-memo line [content-w full-w clipped]))
         clipped))))
 
+(defn- shared-lines
+  "Count of the leading rows of `rows` that are equal to the rows of `old`."
+  ^long [rows old]
+  (let [n (long (min (count rows) (count old)))]
+    (loop [i 0]
+      (if (and (< i n) (= (nth rows i) (nth old i))) (recur (unchecked-inc i)) i))))
+
+(defn- grown-mapv
+  "`(into [] xform rows)` for an `xform` that gives one result for each row and depends
+   only on the row and `params`. `cell` holds the last call: {:rows :out :params}. The
+   live progress bubble adds rows after the same leading rows on each frame, so the
+   leading rows that are equal to the rows of the last call keep their results. One
+   frame then does not transform every row again, and the results share structure."
+  [cell params xform rows]
+  (let [{:keys [out] :as grown}
+        @cell
+
+        shared
+        (if (and (vector? rows) grown (= params (:params grown)))
+          (shared-lines rows (:rows grown))
+          0)
+
+        ;; A cut pops the old results after `shared`, so it must be the smaller part.
+        result
+        (if (> (* 2 shared) (count out))
+          (into (loop [kept out]
+                  (if (> (count kept) shared) (recur (pop kept)) kept))
+                xform
+                (subvec rows shared))
+          (into [] xform rows))]
+
+    (when (vector? rows) (reset! cell {:rows rows :out result :params params}))
+    result))
+
+(defonce ^:private grown-clip (atom nil))
+
 (defn- clipped-lines
   "Memoized clipping for prewrapped painter lines. Large trace bubbles can
    carry hundreds of rows plus occasional huge raw tool-output rows; scrolling
@@ -368,9 +411,11 @@
         (long full-w)]
 
     (cached* [::clipped-lines (System/identityHashCode raw-lines) content-w full-w]
-             #(mapv (fn [line]
-                      (clipped-line line content-w full-w))
-                    raw-lines))))
+             #(grown-mapv grown-clip
+                          [content-w full-w]
+                          (map (fn [line]
+                                 (clipped-line line content-w full-w)))
+                          raw-lines))))
 
 (defn wrap-text*
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
@@ -4683,14 +4728,17 @@
    produce a stale render frame, not a crash, and would self-heal
    on the next chunk that bumps the length."
   [s]
-  (when s
-    (let [^String s
-          (str s)
+  (cond (nil? s) nil
+        ;; A merged step run carries its thinking as a vector of strings. Printing
+        ;; the whole vector to take 320 chars of it costs more than the render.
+        (sequential? s) (mapv text-fingerprint s)
+        :else (let [^String s
+                    (str s)
 
-          n
-          (.length s)]
+                    n
+                    (.length s)]
 
-      [n (subs s 0 (min 64 n)) (subs s (max 0 (- n 256)))])))
+                [n (subs s 0 (min 64 n)) (subs s (max 0 (- n 256)))])))
 
 (defn- visible-iteration-entry
   "Filter `:forms` down to visibly-running/completed entries. When
@@ -5427,13 +5475,23 @@
    used by copy/debug/projection paths and must never expose PUA or
    bidi-control glyphs to the user."
   [line]
-  (let [s
+  (let [^String raw
         (str (or line ""))
+
+        ;; Most rows have no SGR sequence and no inline paint sentinel. One scan
+        ;; finds that, and such a row needs no regex and no copy: this runs for
+        ;; each projected line.
+        plain?
+        (let [n (.length raw)]
+          (loop [i 0]
+            (or (>= i n)
+                (let [c (int (.charAt raw i))]
+                  (and (not= c 0x1B) (not (<= 0xE110 c 0xE2FF)) (recur (unchecked-inc i)))))))
 
         ;; Strip ANSI SGR sequences (diff fences carry `\u001b[..m` colour codes
         ;; the painter translates) so copied / projected text is clean.
         s
-        (str/replace s #"\u001b\[[0-9;]*m" "")
+        (if plain? raw (str/replace raw #"\u001b\[[0-9;]*m" ""))
 
         s
         (if (and (pos? (count s))
@@ -5441,24 +5499,26 @@
                    (or (= (int Character/FORMAT) (int (Character/getType c)))
                        (and (>= (int c) 0xE000) (<= (int c) 0xE0FF)))))
           (subs s 1)
-          s)
+          s)]
 
-        ;; Drop the inline paint sentinels (PUA E110..E2FF) in ONE StringBuilder
-        ;; pass instead of a lazy char seq + apply-str — this runs per projected
-        ;; line and showed up as a render/restore hotspot.
-        ^String s
-        s
+    (if plain?
+      s
+      ;; Drop the inline paint sentinels (PUA E110..E2FF) in ONE StringBuilder
+      ;; pass instead of a lazy char seq + apply-str — this runs per projected
+      ;; line and showed up as a render/restore hotspot.
+      (let [^String s
+            s
 
-        n
-        (.length s)
+            n
+            (.length s)
 
-        sb
-        (StringBuilder. n)]
+            sb
+            (StringBuilder. n)]
 
-    (dotimes [i n]
-      (let [c (.charAt s i)]
-        (when-not (<= 0xE110 (int c) 0xE2FF) (.append sb c))))
-    (.toString sb)))
+        (dotimes [i n]
+          (let [c (.charAt s i)]
+            (when-not (<= 0xE110 (int c) 0xE2FF) (.append sb c))))
+        (.toString sb)))))
 
 (defn- entries->payload
   [entries]
@@ -10196,42 +10256,53 @@
                           ;; Other invisible format chars.
                           :else [:other n0]))))
 
+        ;; Blank after the first char, which can be a marker. No substring: this
+        ;; runs for each row of the bubble.
         blank?
-        (fn [{:keys [^String line]}]
-          (let [body (if (and (string? line) (pos? (count line))) (subs line 1) (str line))]
-            (str/blank? body)))]
+        (fn [{:keys [line]}]
+          (if (string? line)
+            (let [^String s
+                  line
 
-    (loop [out
-           (transient [])
+                  n
+                  (.length s)]
 
-           prev-family
-           nil
+              (loop [i 1]
+                (or (>= i n)
+                    (and (Character/isWhitespace (.charAt s i)) (recur (unchecked-inc i))))))
+            (str/blank? (str line))))
 
-           xs
-           (seq entries)]
+        prev-family
+        (volatile! nil)]
 
-      (if (nil? xs)
-        (persistent! out)
-        (let [e (first xs)]
-          (cond ;; Reserved inline-image rows LOOK blank, but each one is a
-                ;; ROW OF THE PICTURE's cell box. Coalescing them folds a
-                ;; 40-row box down to one row while `:img` still claims 40,
-                ;; so the paint layer crops to the top 1/40th — the sliver.
-                ;; Emit verbatim; reset family so the row after the box is
-                ;; still treated as a fresh blank.
-            ;; Live rows likewise paint their own content, including the controls footer.
-            (#{:image :image-pad :activity-live-entry} (:kind (:meta e)))
-            (recur (conj! out e) nil (next xs))
-            (and (blank? e) (= :thinking (family e)))
-            ;; Thinking band: emit verbatim, reset family so a
-            ;; following gap row still counts as a fresh blank.
-            (recur (conj! out e) :thinking (next xs))
-            (blank? e) (let [f (family e)]
-                         (if (= f prev-family)
-                           ;; Same-family duplicate — drop.
-                           (recur out prev-family (next xs))
-                           (recur (conj! out e) f (next xs))))
-            :else (recur (conj! out e) nil (next xs))))))))
+    ;; `reduce` over the vector: this runs for each row of the bubble on each
+    ;; frame of a live turn.
+    (persistent!
+      (reduce (fn [out e]
+                (let [kind (:kind (:meta e))]
+                  (cond ;; Reserved inline-image rows LOOK blank, but each one is a
+                        ;; ROW OF THE PICTURE's cell box. Coalescing them folds a
+                        ;; 40-row box down to one row while `:img` still claims 40,
+                        ;; so the paint layer crops to the top 1/40th — the sliver.
+                        ;; Emit verbatim; reset family so the row after the box is
+                        ;; still treated as a fresh blank.
+                    ;; Live rows likewise paint their own content, including the controls footer.
+                    (or (identical? :image kind)
+                        (identical? :image-pad kind)
+                        (identical? :activity-live-entry kind))
+                    (do (vreset! prev-family nil) (conj! out e))
+                    (blank? e) (let [f (family e)]
+                                 (cond
+                                   ;; Thinking band: emit verbatim, reset family so a
+                                   ;; following gap row still counts as a fresh blank.
+                                   (= :thinking f) (do (vreset! prev-family :thinking)
+                                                       (conj! out e))
+                                   ;; Same-family duplicate — drop.
+                                   (= f @prev-family) out
+                                   :else (do (vreset! prev-family f) (conj! out e))))
+                    :else (do (vreset! prev-family nil) (conj! out e)))))
+              (transient [])
+              entries))))
 
 (defn- mergeable-iteration-forms
   "Forms of an iteration that may join a merged run, else nil. Unsummarized, only a
@@ -10615,6 +10686,101 @@
             (recur out pending (next remaining))))
         (flush-thinking out pending)))))
 
+(def ^:private ^:const parallel-steps-min
+  "Cold steps of one bubble below this count render on the calling thread."
+  8)
+
+(defonce ^:private step-pool
+  ;; Workers that render the steps of one bubble. A `delay`: `native-image`
+  ;; initializes this namespace at build time, and no thread can start there.
+  ;; nil on a machine with fewer than 3 processors, where a pool gains nothing.
+  (delay (let [workers
+               (min 8 (dec (.availableProcessors (Runtime/getRuntime))))
+
+               ids
+               (AtomicLong.)]
+
+           (when (>= workers 2)
+             (Executors/newFixedThreadPool
+               workers
+               (reify
+                 ThreadFactory
+                   (newThread [_ task]
+                     (doto (Thread. task (str "vis-tui-step-render-" (.incrementAndGet ids)))
+                       (.setDaemon true)))))))))
+
+(defonce ^:private ^ThreadLocal step-worker?
+  ;; Set on a pool worker. A step that renders a nested trace must not wait for
+  ;; the pool that runs it.
+  (ThreadLocal.))
+
+(defn- await-step
+  "Result of a pool task. An interrupt does not end the wait, because a caller
+   that catches it would cache half a bubble: the wait completes, then the
+   thread gets its interrupt flag back. The pre-warm worker reads that flag
+   between bubbles."
+  [^Future future]
+  (loop [interrupted? false]
+    (let [result (try (.get future) (catch InterruptedException _ ::interrupted))]
+      (if (identical? ::interrupted result)
+        (recur true)
+        (do (when interrupted? (.interrupt (Thread/currentThread))) result)))))
+
+(defn- render-step-plans
+  "Entries of each plan, in plan order. A plan is `{:k cache-key-or-nil :render! thunk
+   :cheap? bool}`: with `:k` the entries go through the format cache. A big bubble
+   with many cold steps (a turn that opens with its digest open, or all digests
+   toggled at once) took most of a frame budget several times over on one thread.
+   So `parallel-steps-min` or more cold steps render on `step-pool`, and the
+   calling thread only joins the results."
+  [plans]
+  (let [run
+        (fn [{:keys [k render!]}]
+          (if k (cached* k render!) (render!)))
+
+        ^ExecutorService pool
+        (when-not (.get step-worker?) @step-pool)
+
+        cold
+        (when pool
+          (into []
+                (keep-indexed (fn [i {:keys [k cheap?]}]
+                                (when-not (or cheap? (and k (cached? k))) i)))
+                plans))]
+
+    (if (< (count cold) parallel-steps-min)
+      (mapv run plans)
+      (let [tasks
+            (mapv (fn [i]
+                    (let [plan
+                          (nth plans i)
+
+                          work
+                          (bound-fn* #(doall (run plan)))]
+
+                      (fn []
+                        (.set step-worker? true)
+                        (try (work) (finally (.remove step-worker?))))))
+                  cold)
+
+            futures
+            (mapv #(.submit pool ^Callable %) tasks)
+
+            done
+            (try (into {}
+                       (map (fn [i future]
+                              [i (await-step future)])
+                            cold
+                            futures))
+                 (catch ExecutionException e (throw (or (.getCause e) e))))]
+
+        (into []
+              (map-indexed (fn [i plan]
+                             (if-let [found (find done i)]
+                               (val found)
+                               (run plan))))
+              plans)))))
+
 (defn- trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed
    assistant bubbles. Live progress and final/cancel rendering must call this
@@ -10654,10 +10820,12 @@
         visible-iterations
         grouped-iterations
 
-        iter-entry-fn
+        ;; A plan for `render-step-plans`. Only the live bubble caches each step:
+        ;; its steps stay while the turn grows.
+        iter-plan
         (fn [[idx entry]]
           (if-let [digest (::digest entry)]
-            (step-digest-entries digest content-w session-id)
+            {:cheap? true :render! #(step-digest-entries digest content-w session-id)}
             (let [visible (visible-iteration-entry entry show-silent?)
                   stripped (if show-thinking? visible (dissoc visible :thinking))
                   digest-closed? (boolean (::digest-closed? entry))
@@ -10693,7 +10861,12 @@
                               :live-preview? live?}
                   render! #(format-iteration-entry-entries stripped content-w iter-num inner-opts)]
 
-              (if live? (cached* k render!) (render!)))))]
+              {:k (when live? k) :render! render!})))
+
+        iter-entry-fn
+        (fn [pair]
+          (let [{:keys [k render!]} (iter-plan pair)]
+            (if k (cached* k render!) (render!))))]
 
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
       ;; The code blocks render flat — no TURN wrapper. Summarized steps fold under
@@ -10714,7 +10887,7 @@
                                                false))]
         (coalesce-bubble-blanks (if (and show-thinking? (not (get settings :show-python-code true)))
                                   (render-adjacent-thinking-entries groups iter-entry-fn)
-                                  (mapcat iter-entry-fn groups)))))))
+                                  (into [] cat (render-step-plans (mapv iter-plan groups)))))))))
 
 (defn- queued-preview
   "One clipped line describing a queued submission.
@@ -10949,6 +11122,8 @@
   [{:keys [line]}]
   (or (str/blank? line) (= iteration-pad-marker line)))
 
+(defonce ^:private grown-plain (atom nil))
+
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
 
@@ -11135,29 +11310,52 @@
                    (vec (coalesce-bubble-blanks prefix-entries))
 
                    queued
-                   (vec (coalesce-bubble-blanks queued-entries))]
+                   (vec (coalesce-bubble-blanks queued-entries))
 
-               {:prefix-lines (mapv :line prefix)
-                :prefix-meta (mapv :meta prefix)
-                :prefix-text (mapv (comp strip-paint-markers-line :line) prefix)
+                   prefix-lines
+                   (mapv :line prefix)
+
+                   ;; A new step keeps the rows of the steps before it.
+                   prefix-text
+                   (grown-mapv grown-plain nil (map strip-paint-markers-line) prefix-lines)
+
+                   queued-text
+                   (mapv (comp strip-paint-markers-line :line) queued)]
+
+               {:prefix-lines prefix-lines
+                :prefix-text prefix-text
+                :prefix-joined (str/join "\n" prefix-text)
                 :queued-lines (mapv :line queued)
-                :queued-meta (mapv :meta queued)
-                :queued-text (mapv (comp strip-paint-markers-line :line) queued)})))]
+                :queued-text queued-text
+                :queued-joined (str/join "\n" queued-text)
+                ;; The spinner row has no metadata, so one vector serves every tick
+                ;; and layout memos that key on its identity keep their entry.
+                :line-meta (-> (mapv :meta prefix)
+                               (conj nil)
+                               (into (map :meta) queued))})))
+
+         spinner-text
+         (strip-paint-markers-line spinner-line)]
 
      ;; Splice the fresh spinner row between the cached prefix and queue. This
      ;; mirrors `entries->payload` exactly: `:text` is the newline-join of the
-     ;; per-line `strip-paint-markers-line` outputs, in the same order as
-     ;; `:lines`.
+     ;; per-line `strip-paint-markers-line` outputs (`:text-lines`), in the same
+     ;; order as `:lines`. The body holds the join of each cached part, and
+     ;; `String.concat` copies the text one time, so a tick does not join every
+     ;; row again.
      {:lines (-> (:prefix-lines body)
                  (conj spinner-line)
                  (into (:queued-lines body)))
-      :line-meta (-> (:prefix-meta body)
-                     (conj nil)
-                     (into (:queued-meta body)))
-      :text (str/join "\n"
-                      (-> (:prefix-text body)
-                          (conj (strip-paint-markers-line spinner-line))
-                          (into (:queued-text body))))})))
+      :line-meta (:line-meta body)
+      :text-lines (-> (:prefix-text body)
+                      (conj spinner-text)
+                      (into (:queued-text body)))
+      :text (let [tail (if (seq (:queued-text body))
+                         (str spinner-text "\n" (:queued-joined body))
+                         spinner-text)]
+              (if (seq (:prefix-text body))
+                (.concat ^String (:prefix-joined body) (.concat "\n" ^String tail))
+                tail))})))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble."

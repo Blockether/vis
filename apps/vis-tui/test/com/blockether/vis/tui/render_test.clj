@@ -9494,3 +9494,60 @@ h = 8"
                    (expect (nil? (:error capture)))
                    (expect (some? rule))
                    (expect (<= 30 (count (re-find #"─+" rule)))))))
+
+;; A bubble with many cold steps renders them on the step pool: a turn of 111 steps
+;; with its digest open took 92 ms on one thread. The rows must be the rows of one
+;; thread, in step order.
+(defdescribe
+  step-pool-render-test
+  (it
+    "renders many cold steps on the pool with the rows of one thread"
+    (let [trace
+          (mapv (fn [i]
+                  {:thinking (str "reason-" i)
+                   :forms [{:code (str "(+ " i " 1)")
+                            :stdout (str "out-" i)
+                            :duration-ms 10
+                            :success? true}]})
+                (range 24))
+
+          threads
+          (atom [])
+
+          real
+          @#'render/format-iteration-entry-entries
+
+          rows
+          (fn []
+            (reset! threads [])
+            (with-redefs-fn {#'render/format-iteration-entry-entries
+                             (fn [& args]
+                               (swap! threads conj (.getName (Thread/currentThread)))
+                               (apply real args))}
+              #(:lines (render/format-answer-with-thinking-data*
+                         "done"
+                         trace
+                         100
+                         {:show-thinking true :show-iterations true :summarize-steps false}
+                         nil
+                         false
+                         {:session-id "pool" :session-turn-id "turn"}))))
+
+          ^ThreadLocal worker?
+          @#'render/step-worker?
+
+          pooled
+          (rows)
+
+          pooled-threads
+          @threads
+
+          alone
+          (do (.set worker? true) (try (rows) (finally (.remove worker?))))]
+
+      (expect (<= 8 (count pooled-threads)) "the trace must have enough steps for the pool")
+      (expect (= 1 (count (distinct @threads))))
+      ;; A machine with fewer than 3 processors has no pool.
+      (when @@#'render/step-pool
+        (expect (every? #(str/starts-with? % "vis-tui-step-render-") pooled-threads)))
+      (expect (= alone pooled)))))
