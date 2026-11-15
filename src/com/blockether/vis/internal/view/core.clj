@@ -1703,6 +1703,12 @@
           (when-not app? (invalid-live-view! "only an app (placement attachment) takes :surfaces"))
           (:surfaces view))
 
+        icon
+        (when (contains? view :icon)
+          (when-not app? (invalid-live-view! "only an app (placement attachment) takes :icon"))
+          (or (get app/icons (:icon view))
+              (invalid-live-view! (str ":icon must be one of " (str/join ", " (sort app/icons))))))
+
         agent-note
         (when (contains? view :agent-note)
           (some-> (app/agent-note-error {:placement placement} (:agent-note view))
@@ -1746,6 +1752,9 @@
 
           (some? surfaces)
           (assoc :surfaces surfaces)
+
+          icon
+          (assoc :icon icon)
 
           global?
           (assoc :scope "global")
@@ -2874,24 +2883,36 @@
           (live-entry (:view-id newest))))))
 
 (defn- adopt-app!
-  "Give the open app that `record` names by key to the current owner. Answers its
-   picture, or nil when no open app holds that key. The app keeps its state; the
-   owner patches it to change it."
+  "Give the open app to its current owner. Keep its state and update a declared icon."
   [record]
   (when-let [entry (adoptable-app record)]
-    (let [[before after]
-          (swap-vals! pending
-                      #(cond-> % (contains? % (:id entry)) (update (:id entry) merge (owner-hold))))
-          adopted (get after (:id entry))]
+    (let [cell (:view entry)]
+      (locking cell
+        (when (identical? cell (:view (get @pending (:id entry))))
+          (let [icon (:icon record)
+                changed? (and icon (not= icon (:icon @cell)))
+                _ (when changed?
+                    (let [view (-> @cell
+                                   (assoc :icon icon)
+                                   (update :seq inc))
+                          bytes (sink/compact! (:file entry) view @(:node-seqs entry))]
 
-      ;; The surfaces learn that a disconnected app has its owner again.
-      (when (and adopted
-                 (some-> (get before (:id entry))
-                         app-stale?))
-        (publish! (:channel-ids adopted)
-                  (lifecycle-event :view/open adopted {:view (app-picture adopted)})))
-      (some-> adopted
-              app-picture))))
+                      (reset! cell view)
+                      (reset! (:compacted-bytes entry) bytes)))
+                [before after]
+                (swap-vals!
+                  pending
+                  #(cond-> % (contains? % (:id entry)) (update (:id entry) merge (owner-hold))))
+                adopted (get after (:id entry))]
+
+            (when (and adopted
+                       (or changed?
+                           (some-> (get before (:id entry))
+                                   app-stale?)))
+              (publish! (:channel-ids adopted)
+                        (lifecycle-event :view/open adopted {:view (app-picture adopted)})))
+            (some-> adopted
+                    app-picture)))))))
 
 (defn- file-app!
   "List new app `view` in its session and file its attachment row in the block

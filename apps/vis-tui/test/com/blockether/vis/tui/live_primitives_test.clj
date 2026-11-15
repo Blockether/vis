@@ -84,6 +84,85 @@
           (expect (= ["API  ▅▅▅▅████▃▃▃▃  9" "Web  ▁▁▁▁▂▂▂▂▅▅▅▅  11" "     Mon      Wed"]
                      lines))))))
 
+(defdescribe chart-zero-baseline-test
+             (it "draws signed bars from zero and leaves zero empty"
+                 (let [node
+                       {:id "signed"
+                        :type :chart
+                        :kind :bar
+                        :categories ["Loss" "Zero" "Gain"]
+                        :series [{:id "delta" :label "Delta" :values [-10 0 10]}]}
+
+                       rows
+                       (#'lv/node-rows node {:text-w 40})
+
+                       [loss zero gain]
+                       (map :text rows)]
+
+                   (expect (str/includes? loss "█"))
+                   (expect (not (str/includes? zero "█")))
+                   (expect (str/includes? gain "█"))
+                   (expect (every? #(str/includes? % "│") [loss zero gain]))
+                   (when (every? #(str/includes? % "│") [loss zero gain])
+                     (expect (< (str/index-of loss "█") (str/index-of loss "│")))
+                     (expect (< (str/index-of gain "│") (str/index-of gain "█")))))))
+
+(defdescribe narrow-chart-values-test
+             (it "keeps values and series names when label columns cannot fit"
+                 (let [node
+                       {:id "narrow"
+                        :type :chart
+                        :kind :bar
+                        :categories ["Qualification" "Production"]
+                        :series [{:id "api" :label "Long API service" :values [1234 5678]}
+                                 {:id "web" :label "Long Web service" :values [120 200]}]}
+
+                       rows
+                       (#'lv/node-rows node {:text-w 26})
+
+                       text
+                       (str/join " " (map :text rows))]
+
+                   (doseq [value ["1234" "5678" "120" "200" "Long API service" "Long Web service"]]
+                     (expect (str/includes? text value)))
+                   (expect (every? #(<= (p/display-width (:text %)) 26) rows))))
+             (it "keeps the latest line values in a narrow terminal"
+                 (let [node
+                       {:id "line"
+                        :type :chart
+                        :kind :line
+                        :series [{:id "api" :label "API" :values [12 18 9]}
+                                 {:id "web" :label "Web" :values [4 7 11]}]}
+
+                       rows
+                       (#'lv/node-rows node {:text-w 8})
+
+                       text
+                       (str/join " " (map :text rows))]
+
+                   (expect (str/includes? text "9"))
+                   (expect (str/includes? text "11"))
+                   (expect (every? #(<= (p/display-width (:text %)) 8) rows)))))
+
+(defdescribe list-details-wrap-test
+             (it "keeps numbered text and details across narrow rows"
+                 (let [node
+                       (first (filter #(= "todo" (:id %)) (:nodes (fixture))))
+
+                       rows
+                       (#'lv/node-rows node {:text-w 26})
+
+                       text
+                       (-> (str/join " " (map :text rows))
+                           (str/replace #"\s+" " "))]
+
+                   (expect (str/includes? text "Pin the release"))
+                   (expect (str/includes? text "After the checks pass"))
+                   (expect (str/includes? text "Deploy the playground"))
+                   (expect (= 1 (count (filter #(str/starts-with? (:text %) "1. ") rows))))
+                   (expect (= 1 (count (filter #(str/starts-with? (:text %) "2. ") rows))))
+                   (expect (every? #(<= (p/display-width (:text %)) 26) rows)))))
+
 (defdescribe
   disclosures-retain-state-and-output-test
   (it "disclosures retain state and output"

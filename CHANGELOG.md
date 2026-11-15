@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Apps: choose one of 32 icons with `vis.ui.app(..., icon="review")`. The app menu and header show the icon in Companion and a text mark in the terminal. Review uses its own code review icon. Reopen an app by key to change its icon without replacing its state.
 - Components: four new components for forms and live views. `vis.ui.badge` shows a row of short labels, `vis.ui.listing` shows a list with bullets or numbers, `vis.ui.chart` shows numbers as bars or lines, and `vis.ui.datetime` takes a date, a time or both as text in the form of its `mode`. The terminal and the Companion app draw each of them.
 - Companion: `npm run storybook:contrast` takes `CONTRAST_THEMES` (a list of themes to check) and `CONTRAST_REPORT` (a file for all failures as JSON).
 - Companion: the menu of the session header lists each session app by its name. A press opens the app, and a press on the open app closes it. Before, a grid button opened a dialog with the apps. The command `session-apps` and its key open that menu.
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Drafts: Vis ignores a `draft` key that an older version stored in the machine settings, in the project settings of `.vis/config.yml` or in the settings of a group or a session. The next save of those settings removes the key. In a `vis.yml` or `~/.vis/config.yml` that a person writes, Vis reports the key by name and does not apply the access settings of that file. Remove the key there.
 
 ### Fixed
+- Terminal: signed bars share a zero marker. Long list details wrap. Narrow charts keep their values visible.
 - Companion: on a phone, a narrow table column is as wide as its longest word and the table scrolls to the side. Before, a word such as "qualification" broke in the middle.
 - Companion: counters fill each row. Before, three counters on a phone left one empty cell.
 - Companion: the header of a session app has the height of the session header, so its close button is level with the header icons. Before, the button was 4 px higher.

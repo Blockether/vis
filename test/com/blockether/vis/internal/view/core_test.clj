@@ -4300,3 +4300,69 @@
               (expect (true? (:is-accepted (hi/action! view-id
                                                        {:action :activate :node-id "go"})))))
             (finally (hi/close-live! view-id))))))))
+
+(defdescribe
+  app-icon-close-race-test
+  (it "does not restore a closed app when its icon changes during adoption"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                id
+                (get (sdk-door! sid "demo" (keyed-app sid)) "view_id")
+
+                lookup
+                @#'hi/adoptable-app
+
+                replacement
+                (atom nil)]
+
+            (try
+              (with-redefs-fn {#'hi/adoptable-app (fn [record]
+                                                    (let [entry (lookup record)]
+                                                      (hi/close-live! (:id entry))
+                                                      entry))}
+                #(reset! replacement
+                   (get (sdk-door! sid "demo" (assoc-in (keyed-app sid) ["view" "icon"] "review"))
+                        "view_id")))
+              (expect (not= id @replacement))
+              (swap! (var-get #'hi/closed-apps) dissoc id)
+              (expect (true? (:is-closed (hi/app-view sid id))))
+              (finally (hi/close-live! id) (when @replacement (hi/close-live! @replacement)))))))))
+
+(defdescribe
+  app-icon-test
+  (it "keeps a declared icon and refuses unknown icons and icons on inline views"
+      (let [spec {:title "Review"
+                  :placement "attachment"
+                  :nodes [{:id "text" :type "paragraph" :text "Ready"}]}]
+        (expect (= "review" (:icon (hi/normalize-live-view (assoc spec :icon "review")))))
+        (expect (some? (live-refusal #(hi/normalize-live-view (assoc spec :icon "typo")))))
+        (expect (some? (live-refusal #(hi/normalize-live-view (assoc spec
+                                                                :placement "inline"
+                                                                :icon "review")))))))
+  (it "adopts an icon without replacing app state, and restores it from the record"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                opened
+                (sdk-door! sid "demo" (keyed-app sid))
+
+                id
+                (get opened "view_id")
+
+                declaration
+                (assoc-in (keyed-app sid) ["view" "icon"] "review")]
+
+            (try (let [adopted (sdk-door! sid "demo" declaration)]
+                   (expect (= id (get adopted "view_id")))
+                   (expect (= "review" (get-in adopted ["view" "icon"])))
+                   (expect (= (get-in opened ["view" "nodes"]) (get-in adopted ["view" "nodes"])))
+                   (expect (= (get-in adopted ["view" "seq"])
+                              (get-in (sdk-door! sid "demo" declaration) ["view" "seq"]))))
+                 (restart-app! id)
+                 (expect (= "review" (:icon (hi/app-view sid id))))
+                 (finally (hi/close-live! id))))))))

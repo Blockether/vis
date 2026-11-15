@@ -9,7 +9,7 @@ import { markSessionId } from '../lib/session-id';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
 import {
   AlertIcon,
-  AppsIcon,
+  AppIcon,
   CheckIcon,
   ChevronIcon,
   ClipIcon,
@@ -137,7 +137,7 @@ export function SessionHeader({
   panel?: { isOpen: boolean; onToggle: () => void };
   /** The apps of this session. The session menu has one row with the name of each app. */
   apps?: {
-    items: readonly { id: string; title: string }[];
+    items: readonly { id: string; title: string; icon?: import('../lib/view').AppIconName }[];
     /** The app that is open now. A press on its row closes it. */
     openId: string | null;
     onPick: (id: string) => void;
@@ -312,7 +312,7 @@ export function SessionHeader({
                 title={app.title}
                 meta={app.id === apps.reviewId ? '⌘/Ctrl+D' : undefined}
                 badge={isOpen ? 'open' : undefined}
-                icon={<AppsIcon className="size-3.5" />}
+                icon={<AppIcon name={app.icon} className="size-3.5" />}
                 onSelect={() => {
                   closeMenu();
                   if (isOpen) apps.onClose();

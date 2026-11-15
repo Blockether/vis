@@ -14,13 +14,14 @@ import {
   VIEW_SHORTCUT_LABEL_MAX,
   VIEW_SHORTCUT_NAMED_KEYS,
   VIEW_SHORTCUTS_MAX,
+  appIconName,
   viewButtonVariant,
   viewCommandIcon,
   viewGroupDirection,
   viewKind,
   viewMaxColumns,
 } from './view';
-import type { ViewAnchor, ViewButtonVariant, ViewCommandIcon } from './view';
+import type { AppIconName, ViewAnchor, ViewButtonVariant, ViewCommandIcon } from './view';
 import { axisLabel, axisMarks } from './time-axis';
 import { appSurfacesFromWire, type AppSurfaces } from './app-surfaces';
 import {
@@ -630,6 +631,8 @@ export interface LiveView {
   surfaces?: AppSurfaces;
   /** The id prefix of this app's own settings. */
   settings_key?: string;
+  /** The app icon from the shared catalog. */
+  icon?: AppIconName;
   /** The newest debug log entries of an app, oldest first. */
   log?: readonly LiveLogEntry[];
 }
@@ -1448,6 +1451,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(view.is_stale === true ? { is_disconnected: true } : {}),
     ...(Array.isArray(view.shortcuts) ? { shortcuts: liveShortcutsFromWire(view.shortcuts) } : {}),
     ...(view.surfaces === undefined ? {} : { surfaces: appSurfacesFromWire(view.surfaces) }),
+    ...(view.icon === undefined ? {} : { icon: appIconName(view.icon) }),
     ...(typeof view.settings_key === 'string' ? { settings_key: view.settings_key } : {}),
     ...(Array.isArray(view.log) ? { log: keyed(view.log, logEntryFromWire) } : {}),
   };

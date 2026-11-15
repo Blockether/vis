@@ -39,6 +39,16 @@
    :log-message (get-in (definition "log_entry") ["properties" "message" "maxLength"])
    :log-detail (get-in (definition "log_entry") ["properties" "detail" "maxLength"])})
 
+(def icons "The icon names an app can declare." (set (get (definition "app_icon") "enum")))
+
+(def default-icon "The icon of an app that declares none." (get (definition "app_icon") "default"))
+
+(defn icon-mark
+  "A font-independent terminal mark for the icon of app view."
+  [view]
+  (let [marks (get (definition "app_icon") "x-vis-terminal")]
+    (get marks (:icon view) (get marks default-icon))))
+
 ;; Surfaces: where an app shows
 
 (def ^:private surfaces-rule (definition "app_surfaces"))

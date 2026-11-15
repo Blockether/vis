@@ -189,6 +189,7 @@ class ReviewApp:
                 *nodes,
                 description="What changed, the checks and undo.",
                 key=self.key,
+                icon="review",
                 shortcuts=self._shortcuts(),
                 surfaces={"inline": False, "session": "sidebar"},
             )

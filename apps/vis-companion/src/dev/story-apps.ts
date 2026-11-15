@@ -24,6 +24,7 @@ export type WireApp = {
   /** Where the app shows, as the engine sends it after the settings. */
   surfaces?: { inline: boolean; session: 'sidebar' | 'chat' | 'off' };
   key?: string;
+  icon?: import('../lib/view').AppIconName;
   scope?: 'global';
   /** The saved picture of an app whose owner is not connected. */
   is_stale?: boolean;

@@ -52,7 +52,7 @@ export const Phone: Story = {
 
 function ReviewSlot({ slot }: { slot: 'sidebar' | 'sheet' }) {
   const [host] = useState(
-    () => new StoryAppHost(REVIEW_APP, { key: 'review', surfaces: { inline: false, session: 'sidebar' } }),
+    () => new StoryAppHost(REVIEW_APP, { key: 'review', icon: 'review', surfaces: { inline: false, session: 'sidebar' } }),
   );
   const view = liveViewFromWire({ ...host.view, placement: 'attachment' });
   if (!view) throw new Error('the review app must parse');

@@ -38,8 +38,8 @@ import { ActionStatus, type AppNodeActions } from './AppNodes';
 import { ReviewMemoryContext, useReviewScroll, useVisitState } from '../lib/review-memory';
 import { LiveViewPanel, RunDialog } from './LiveView';
 import { AppLogButton, AppLogPanel } from './AppLog';
-import { ChevronIcon, FullScreenIcon } from './icons';
-import { BandButton, BandLabel, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, PaneHeader, closeWith } from './ui';
+import { AppIcon, ChevronIcon, FullScreenIcon } from './icons';
+import { BandButton, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, PaneHeader, closeWith } from './ui';
 
 /** The open apps of the session, with their surfaces, for the rows of the transcript. */
 export const SessionAppViewsContext = createContext<readonly LiveViewModel[]>([]);
@@ -573,7 +573,7 @@ export function AppSurface({
           <PaneHeader
             title={title}
             subtitle={subtitle}
-            leading={backButton}
+            leading={<>{backButton}<AppIcon name={view?.icon} className="mx-1 size-4 shrink-0" /></>}
             actions={bandActions}
             {...closeWith(backLabel ? undefined : onClose, leave)}
           />
@@ -582,7 +582,7 @@ export function AppSurface({
             title={title}
             isTitleTruncated
             subtitle={subtitle}
-            leading={backButton}
+            leading={<>{backButton}<AppIcon name={view?.icon} className="mx-1 size-4 shrink-0" /></>}
             actions={bandActions}
             {...closeWith(backLabel ? undefined : onClose, leave)}
           />
@@ -608,6 +608,7 @@ export function AppSurface({
   return (
     <RunDialog
       title={title}
+      leading={<AppIcon name={view?.icon} className="size-4 shrink-0" />}
       subtitle={subtitle}
       footer={footer}
       closeLabel={closeLabel}
@@ -664,12 +665,12 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
   if (!viewId) return null;
   const row = embedded ? (
     <ExecutionAction onClick={open} aria-label={`Open app ${name}`}>
-      <BandLabel>APP</BandLabel>
+      <AppIcon name={known?.icon} className="size-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{name}</span>
     </ExecutionAction>
   ) : (
     <ListRow onClick={open} title={name} aria-label={`Open app ${name}`} className={APP_ROW_FOCUS}>
-      <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">APP</span>
+      <AppIcon name={known?.icon} className="size-4 shrink-0 text-accent-ink" />
       <span className="min-w-0 flex-1 truncate font-mono text-ui text-muted">{name}</span>
     </ListRow>
   );
@@ -717,7 +718,7 @@ export function AppListRow({
 }) {
   return (
     <ListRow onClick={() => onOpen(view)} title={view.title} aria-label={`Open app ${view.title}`} className={APP_ROW_FOCUS}>
-      <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">APP</span>
+      <AppIcon name={view.icon} className="size-4 shrink-0 text-accent-ink" />
       <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">{view.title}</span>
       <span className="shrink-0 font-mono text-meta text-footer-muted">{stateWord(view)}</span>
     </ListRow>

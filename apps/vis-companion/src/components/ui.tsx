@@ -3443,6 +3443,7 @@ export function DialogFrame({
   subtitle,
   isTitleHidden = false,
   actions,
+  leading,
   children,
   footer,
   onClose,
@@ -3463,6 +3464,7 @@ export function DialogFrame({
    * apart.
    */
   actions?: ReactNode;
+  leading?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   onClose?: () => void;
@@ -3489,6 +3491,7 @@ export function DialogFrame({
           out — five surfaces used to hand a screen reader the same two words. */}
       <DialogHeader
         title={title}
+        leading={leading}
         subtitle={subtitle}
         isTitleHidden={isTitleHidden}
         actions={actions}

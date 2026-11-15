@@ -389,3 +389,15 @@ def test_a_failed_callback_at_the_extension_door_logs_an_error_and_goes_on(
     assert "Traceback" in entry["detail"]
     validate("view", "log_entry", entry)
     app.close()
+
+
+def test_app_icon_survives_open_and_rejects_an_unknown_name(host):
+    from blockether.vis import _contracts
+
+    for icon in _contracts.definition("view", "app_icon")["enum"]:
+        declaration = vis.ui.app("Tool", vis.ui.thread("notes"), icon=icon)
+        validate("view", "app_icon", declaration["icon"])
+        app = vis.attach(declaration)
+        assert app.state()["icon"] == icon
+    with pytest.raises(ValueError, match="icon must be one of"):
+        vis.ui.app("Tool", vis.ui.thread("notes"), icon="not-an-icon")

@@ -34,6 +34,14 @@ export function viewButtonVariant(raw: unknown): ViewButtonVariant {
     : ((BUTTON_VARIANT?.default ?? 'secondary') as ViewButtonVariant);
 }
 
+export type AppIconName = keyof typeof viewSchema.$defs.app_icon['x-vis-terminal'];
+export const APP_ICONS = viewSchema.$defs.app_icon.enum as readonly AppIconName[];
+export function appIconName(raw: unknown): AppIconName {
+  return (APP_ICONS as readonly unknown[]).includes(raw)
+    ? (raw as AppIconName)
+    : (viewSchema.$defs.app_icon.default as AppIconName);
+}
+
 export type ViewCommandIcon = 'refresh' | 'more';
 /** The pictures of diff toolbar commands (`command_icon` in view.json). CLOSED. */
 export const VIEW_COMMAND_ICONS = viewSchema.$defs.command_icon.enum as readonly ViewCommandIcon[];

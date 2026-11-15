@@ -124,7 +124,7 @@
    its state."
   [views status-label]
   (mapv (fn [view]
-          {:label (or (not-empty (str (:title view))) "App")
+          {:label (str (app/icon-mark view) "  " (or (not-empty (str (:title view))) "App"))
            :description (if (:picker-global? view)
                           "Opens over the terminal"
                           (str "Opens in the " (target-label (session-target view))))

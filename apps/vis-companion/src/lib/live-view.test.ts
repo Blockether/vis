@@ -981,3 +981,18 @@ describe('a timeline', () => {
     expect(timelineGeometry([], T0)).toEqual({ total: 0, isRunning: false, bars: [], marks: [] });
   });
 });
+
+
+it('keeps each declared app icon through a snapshot and a node patch', () => {
+  for (const icon of viewSchema.$defs.app_icon.enum) {
+    const view = liveViewFromWire({ ...canonical.live, placement: 'attachment', icon });
+    expect(view?.icon).toBe(icon);
+    if (!view) throw new Error('the app must be readable');
+    expect(applyLivePatch(view, {
+      type: VIEW_PATCH_EVENT, kind: 'live', view_id: view.id,
+      first_seq: 1, patch: canonical.patch,
+    }).icon).toBe(icon);
+  }
+  expect(liveViewFromWire({ ...canonical.live, icon: 'future-icon' })?.icon)
+    .toBe(viewSchema.$defs.app_icon.default);
+});

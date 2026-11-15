@@ -8297,6 +8297,7 @@ def _ui_app(
     description=None,
     key=None,
     shortcuts=None,
+    icon=None,
     surfaces=None,
     scope=None,
     is_persistent=None,
@@ -8307,6 +8308,7 @@ def _ui_app(
     The nodes are the same components as in `vis.live`, plus `diff` and `thread`.
     `key` makes the app adoptable: its owner can open the same key again later.
     `shortcuts` is a list of `vis.ui.shortcut(...)` values, at most 32.
+    `icon` selects an app icon, such as `review`, `chart`, `music` or `terminal`.
     `surfaces` sets where the app shows by default, for example
     `{"inline": False, "session": "chat"}`. `inline` shows it in the chat turn
     that opened it. `session` is `sidebar`, `chat` or `off` for the session apps
@@ -8325,6 +8327,13 @@ def _ui_app(
         request["key"] = str(key)
     if shortcuts is not None:
         request["shortcuts"] = _shortcut_list(shortcuts)
+    if icon is not None:
+        from blockether.vis import _contracts
+
+        icons = _contracts.definition("view", "app_icon")["enum"]
+        if icon not in icons:
+            raise ValueError("icon must be one of " + ", ".join(icons))
+        request["icon"] = icon
     if surfaces is not None:
         request["surfaces"] = _app_surfaces(surfaces)
     request.update(_app_scope(scope, is_persistent, key))

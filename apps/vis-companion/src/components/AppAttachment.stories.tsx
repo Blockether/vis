@@ -3,6 +3,7 @@ import { expect, fn, within } from 'storybook/test';
 
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { AppListRow } from './AppAttachment';
+import { APP_ICONS } from '../lib/view';
 
 /** One app of the session list in each state that a card shows. */
 function app(id: string, title: string, over: Record<string, unknown> = {}): LiveView {
@@ -19,9 +20,9 @@ function app(id: string, title: string, over: Record<string, unknown> = {}): Liv
 }
 
 const APPS = [
-  app('app-live', 'Code review'),
-  app('app-stale', 'Release form', { is_stale: true }),
-  app('app-closed', 'Deploy monitor', { is_closed: true }),
+  app('app-live', 'Code review', { icon: 'review' }),
+  app('app-stale', 'Release form', { is_stale: true, icon: 'checklist' }),
+  app('app-closed', 'Deploy monitor', { is_closed: true, icon: 'rocket' }),
 ];
 
 const meta = {
@@ -54,4 +55,17 @@ export const AllStates: Story = {
     canvas.getByRole('button', { name: 'Open app Deploy monitor' }).click();
     await expect(args.onOpen).toHaveBeenCalledWith(APPS[2]);
   },
+};
+
+/** Every app icon at the size used in the app list. */
+export const IconCatalog: Story = {
+  render: (args) => (
+    <ul aria-label="App icon catalog" className="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-4">
+      {APP_ICONS.map((icon) => (
+        <li key={icon}>
+          <AppListRow view={app(`icon-${icon}`, icon, { icon })} onOpen={args.onOpen} />
+        </li>
+      ))}
+    </ul>
+  ),
 };

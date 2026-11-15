@@ -5,6 +5,28 @@
  * shared circular family. Terminal choice marks and the text spinner remain text.
  */
 import {
+  FileDiff,
+  CodeXml,
+  SquareTerminal,
+  GitCommitHorizontal,
+  GitBranch,
+  ListChecks,
+  PanelsTopLeft,
+  Activity,
+  Clock,
+  Mail,
+  Users,
+  Database,
+  Cloud,
+  Server,
+  Shield,
+  LockKeyhole,
+  KeyRound,
+  Wrench,
+  Rocket,
+  FlaskConical,
+  Music,
+  BookOpen,
   AlignLeft,
   File,
   FileCode2,
@@ -84,6 +106,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import { appIconName, type AppIconName } from '../lib/view';
 
 /** One class list from parts, so an absent one leaves no hole behind. */
 const classes = (...parts: (string | false | undefined)[]) =>
@@ -645,4 +668,44 @@ export function ReviewFileIcon({ path, className }: { path: string; className?: 
 /** The previous path points to the new path after a rename. */
 export function RenameArrowIcon({ className }: { className?: string }) {
   return <Mark icon={ArrowRight} className={className} />;
+}
+
+/** Pictures for app declarations; names and defaults come from the contract. */
+const APP_MARKS: Record<AppIconName, LucideIcon> = {
+  app: LayoutGrid,
+  review: FileDiff,
+  code: CodeXml,
+  terminal: SquareTerminal,
+  files: Folder,
+  search: Search,
+  git: GitCommitHorizontal,
+  branch: GitBranch,
+  checklist: ListChecks,
+  chart: ChartNoAxesColumn,
+  dashboard: PanelsTopLeft,
+  activity: Activity,
+  calendar: CalendarDays,
+  clock: Clock,
+  mail: Mail,
+  chat: MessageSquareMore,
+  users: Users,
+  globe: Globe,
+  database: Database,
+  cloud: Cloud,
+  server: Server,
+  shield: Shield,
+  lock: LockKeyhole,
+  key: KeyRound,
+  settings: Settings,
+  tools: Wrench,
+  rocket: Rocket,
+  flask: FlaskConical,
+  music: Music,
+  image: Image,
+  book: BookOpen,
+  lightning: Zap,
+};
+
+export function AppIcon({ name, className }: { name?: AppIconName; className?: string }) {
+  return <Mark icon={APP_MARKS[appIconName(name)]} className={className} />;
 }

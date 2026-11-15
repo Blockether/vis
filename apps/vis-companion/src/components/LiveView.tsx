@@ -2737,6 +2737,7 @@ export function RunDialog({
   closeLabel,
   within = 'session',
   actions,
+  leading,
   onClose,
   children,
 }: {
@@ -2751,6 +2752,7 @@ export function RunDialog({
   within?: 'app' | 'session';
   /** `BandButton` cells in the band, before the way out. */
   actions?: ReactNode;
+  leading?: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -2769,6 +2771,7 @@ export function RunDialog({
     <Modal within={within} onDismiss={onClose}>
       <DialogFrame
         title={title}
+        leading={leading}
         subtitle={subtitle}
         actions={actions}
         footer={footer}

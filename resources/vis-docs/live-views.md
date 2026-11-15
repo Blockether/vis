@@ -831,7 +831,19 @@ app = vis.attach(vis.ui.app(
 ))
 ```
 
-- `vis.ui.app(title, *nodes, description=None, key=None)` declares an app. Its nodes are the
+Give an app an `icon`, such as `icon="review"`, to distinguish it in the app menu and header.
+The Companion app draws a picture. The terminal uses a short text mark, with no special font.
+An app without an icon uses `app`. Reopen an app by its key with another icon to change it without
+replacing its state.
+
+The icon names are:
+
+- `app`, `review`, `code`, `terminal`, `files`, `search`, `git`, `branch`.
+- `checklist`, `chart`, `dashboard`, `activity`, `calendar`, `clock`, `mail`, `chat`.
+- `users`, `globe`, `database`, `cloud`, `server`, `shield`, `lock`, `key`.
+- `settings`, `tools`, `rocket`, `flask`, `music`, `image`, `book`, `lightning`.
+
+- `vis.ui.app(title, *nodes, description=None, key=None, icon=None)` declares an app. Its nodes are the
   [components](components.md) of a live view, plus `vis.ui.diff` and `vis.ui.thread`.
 - `vis.ui.diff(node_id, patch)` shows a unified diff. People comment on one line of it.
   `old_revision` and `new_revision` name the compared versions.

@@ -1581,7 +1581,7 @@
   "The app's name and its ONE lifecycle word (#430). The state counter is the
    gateway's, not the human's; Save reports its own state in the status line."
   [view]
-  (str (or (not-empty (str (:title view))) "App")
+  (str (app/icon-mark view) "  " (or (not-empty (str (:title view))) "App")
        "  ·  "
        (get model/status-label (model/status view))))
 

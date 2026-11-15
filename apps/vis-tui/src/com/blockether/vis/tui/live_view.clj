@@ -1176,12 +1176,11 @@
     (let [{:keys [shown behind]}
           (windowed items is-expanded false)
 
-          ;; Every number takes the width of the last one, so the texts line up.
           number-w
           (count (str (count items)))]
 
       (cond-> (vec
-                (map-indexed
+                (mapcat
                   (fn [i {:keys [text detail tone] :as item}]
                     (let [is-fresh
                           (contains? fresh (:id item))
@@ -1197,23 +1196,40 @@
                             (str (p/pad-left (str (inc (long i))) number-w) ". ")
                             (str (get tone-glyph tone "•") " "))
 
-                          segments
-                          (runs-cut (into
-                                      [{:text mark :fg (if tone ink t/dialog-hint) :styles styles}]
-                                      cat
-                                      [(run-segments (md-runs text) ink styles)
-                                       (when (seq (flat-text detail))
-                                         (into [{:text " — " :fg t/dialog-hint}]
-                                               (run-segments (md-runs detail) t/dialog-hint [])))])
-                                    (max 1 (long text-w)))]
+                          indent
+                          (apply str (repeat (p/display-width mark) " "))
 
-                      {:kind :item
-                       :node-id id
-                       :item-id (:id item)
-                       :tone tone
-                       :is-fresh is-fresh
-                       :segments segments
-                       :text (segment-line segments)}))
+                          body-w
+                          (max 1 (- (long text-w) (p/display-width mark)))
+
+                          body
+                          (into (run-segments (md-runs text) ink styles)
+                                (when (seq (flat-text detail))
+                                  (into [{:text " — " :fg t/dialog-hint}]
+                                        (run-segments (md-runs detail) t/dialog-hint []))))
+
+                          lines
+                          (if (<= (runs-width body) body-w)
+                            [body]
+                            (into (mapv #(run-segments % ink styles) (md-lines text body-w))
+                                  (map #(run-segments % t/dialog-hint [])
+                                       (md-lines detail body-w))))]
+
+                      (map-indexed (fn [line segments]
+                                     (let [segments (into [{:text
+                                                            (if (zero? (long line)) mark indent)
+                                                            :fg (if tone ink t/dialog-hint)
+                                                            :styles styles}]
+                                                          segments)]
+                                       {:kind :item
+                                        :node-id id
+                                        :item-id (:id item)
+                                        :tone tone
+                                        :is-fresh is-fresh
+                                        :segments segments
+                                        :text (segment-line segments)}))
+                                   lines)))
+                  (range)
                   shown))
         (pos? (long behind))
         (conj (more-row id behind "item"))))
@@ -1244,9 +1260,45 @@
   ^long [labels ^long limit]
   (min limit (long (reduce max 0 (map #(p/display-width (str %)) labels)))))
 
+(defn- chart-label-rows
+  "Put a chart label above its data when the columns cannot fit."
+  [id item-id label text-w]
+  (mapv (fn [runs]
+          (let [segments (run-segments runs t/dialog-hint [])]
+            {:kind :chart
+             :node-id id
+             :item-id item-id
+             :segments segments
+             :text (segment-line segments)}))
+        (md-lines label text-w)))
+
+(defn- signed-bar-text
+  "Draw a bar on either side of a shared zero mark. Zero has no fill."
+  [value low high width]
+  (let [space
+        (max 0 (dec (long width)))
+
+        left
+        (long (Math/round (* space (/ (- (double low)) (- (double high) (double low))))))
+
+        right
+        (- space left)
+
+        cells
+        (long (Math/round
+                (if (neg? (double value))
+                  (* left (/ (double value) (double low)))
+                  (if (pos? (double high)) (* right (/ (double value) (double high))) 0.0))))
+
+        bar
+        (apply str (repeat cells "█"))]
+
+    (str (p/pad-left (if (neg? (double value)) bar "") left)
+         "│"
+         (p/pad-right (if (pos? (double value)) bar "") right))))
+
 (defn- bar-rows
-  "A bar chart: one row for each value. The row names the category, then the
-   series when the chart has more than one, so the chart reads without colour."
+  "Draw bars from zero. Put labels above data when the columns cannot fit."
   [{:keys [id series categories]} text-w fresh]
   (let [values
         (mapcat :values series)
@@ -1254,8 +1306,11 @@
         low
         (min 0.0 (double (reduce min 0 values)))
 
+        high
+        (max 0.0 (double (reduce max 0 values)))
+
         span
-        (- (max 0.0 (double (reduce max 0 values))) low)
+        (- high low)
 
         slots
         (long (reduce max 0 (map #(count (:values %)) series)))
@@ -1275,55 +1330,76 @@
         value-w
         (long (reduce max 1 (map #(count (chart-number %)) values)))
 
+        label-w
+        (+ category-w 2 (if is-many (+ 2 (long series-w)) 0))
+
+        stacked?
+        (> (+ label-w value-w 6) (long text-w))
+
         bar-w
-        (max 4 (- (long text-w) category-w (if is-many (+ 2 (long series-w)) 0) value-w 4))]
+        (max 1 (- (long text-w) (if stacked? 0 label-w) value-w 2))]
 
     (vec
-      (for [slot
-            (range slots)
+      (mapcat
+        (fn [[slot n {:keys [label tone] :as one} value]]
+          (let [ink
+                (tone-fg tone)
 
-            [n {:keys [label tone] :as one}]
-            (map-indexed vector series)
+                styles
+                (if (contains? fresh (:id one)) [p/BOLD] [])
 
-            :let [value
-                  (nth (:values one) slot nil)]
-            :when value]
+                bar
+                (if (neg? low)
+                  (signed-bar-text value low high bar-w)
+                  (bar-text (if (pos? span) (/ (double value) span) 0.0) bar-w))
 
-        (let [ink
-              (tone-fg tone)
-
-              styles
-              (if (contains? fresh (:id one)) [p/BOLD] [])
-
-              bar
-              (bar-text (if (pos? span) (/ (- (double value) low) span) 0.0) bar-w)
-
-              segments
-              (runs-cut
-                (cond-> [{:text (str (p/pad-right (p/ellipsize
-                                                    (if (zero? (long n)) (nth named slot) "")
+                prefix
+                (when-not stacked?
+                  (cond-> [{:text (str (p/pad-right (p/ellipsize
+                                                      (if (zero? (long n)) (nth named slot) "")
+                                                      category-w)
                                                     category-w)
-                                                  category-w)
-                                     "  ")
-                          :fg t/dialog-hint}]
-                  is-many
-                  (conj {:text (str (p/pad-right (p/ellipsize (str label) series-w) series-w) "  ")
-                         :fg ink
-                         :styles styles})
+                                       "  ")
+                            :fg t/dialog-hint}]
+                    is-many
+                    (conj {:text (str (p/pad-right (p/ellipsize (str label) series-w) series-w)
+                                      "  ")
+                           :fg ink
+                           :styles styles})))
 
-                  true
-                  (into [{:text (p/pad-right bar bar-w) :fg ink :styles styles}
-                         {:text (str "  " (p/pad-left (chart-number value) value-w))
-                          :fg t/dialog-fg
-                          :styles styles}]))
-                (max 1 (long text-w)))]
+                segments
+                (into (vec prefix)
+                      [{:text (p/pad-right bar bar-w) :fg ink :styles styles}
+                       {:text (str "  " (p/pad-left (chart-number value) value-w))
+                        :fg t/dialog-fg
+                        :styles styles}])
 
-          {:kind :chart
-           :node-id id
-           :item-id (:id one)
-           :tone tone
-           :segments segments
-           :text (segment-line segments)})))))
+                row
+                {:kind :chart
+                 :node-id id
+                 :item-id (:id one)
+                 :tone tone
+                 :segments segments
+                 :text (segment-line segments)}]
+
+            (conj (if stacked?
+                    (chart-label-rows id
+                                      (:id one)
+                                      (str (nth named slot) (when is-many (str " · " label)))
+                                      text-w)
+                    [])
+                  row)))
+        (for [slot
+              (range slots)
+
+              [n one]
+              (map-indexed vector series)
+
+              :let [value
+                    (nth (:values one) slot nil)]
+              :when value]
+
+          [slot n one value])))))
 
 (defn- line-rows
   "A line chart: one sparkline for each series on one scale, the newest value at
@@ -1345,8 +1421,11 @@
         value-w
         (long (reduce max 1 (map #(count (chart-number %)) values)))
 
+        stacked?
+        (> (+ label-w value-w 5) (long text-w))
+
         spark-w
-        (max 1 (- (long text-w) label-w value-w 4))
+        (max 1 (- (long text-w) (if stacked? 0 (+ label-w 2)) value-w 2))
 
         longest
         (long (reduce max 1 (map #(count (:values %)) series)))
@@ -1355,47 +1434,51 @@
         (max 1 (min 4 (quot spark-w longest)))
 
         pad
-        (apply str (repeat (+ 2 label-w) " "))
+        (apply str (repeat (if stacked? 0 (+ 2 label-w)) " "))
 
         rows
-        (mapv
-          (fn [{:keys [label tone] :as one}]
-            (let [ink
-                  (tone-fg tone)
+        (vec
+          (mapcat
+            (fn [{:keys [label tone] :as one}]
+              (let [ink
+                    (tone-fg tone)
 
-                  styles
-                  (if (contains? fresh (:id one)) [p/BOLD] [])
+                    styles
+                    (if (contains? fresh (:id one)) [p/BOLD] [])
 
-                  shown
-                  (vec (take-last spark-w (:values one)))
+                    shown
+                    (vec (take-last spark-w (:values one)))
 
-                  spark
-                  (apply str
-                    (mapcat #(repeat cell-w
-                                     (nth spark-levels
-                                          (if (pos? span)
-                                            (min 7 (long (* 8.0 (/ (- (double %) low) span))))
-                                            3)))
-                            shown))
+                    spark
+                    (apply str
+                      (mapcat #(repeat cell-w
+                                       (nth spark-levels
+                                            (if (pos? span)
+                                              (min 7 (long (* 8.0 (/ (- (double %) low) span))))
+                                              3)))
+                              shown))
 
-                  segments
-                  (runs-cut [{:text (str (p/pad-right (p/ellipsize (str label) label-w) label-w)
+                    segments
+                    (into (if stacked?
+                            []
+                            [{:text (str (p/pad-right (p/ellipsize (str label) label-w) label-w)
                                          "  ")
-                              :fg t/dialog-hint} {:text spark :fg ink :styles styles}
-                             {:text (str "  "
-                                         (some-> (peek shown)
-                                                 chart-number))
-                              :fg t/dialog-fg
-                              :styles styles}]
-                            (max 1 (long text-w)))]
+                              :fg t/dialog-hint}])
+                          [{:text spark :fg ink :styles styles}
+                           {:text (str "  "
+                                       (some-> (peek shown)
+                                               chart-number))
+                            :fg t/dialog-fg
+                            :styles styles}])]
 
-              {:kind :chart
-               :node-id id
-               :item-id (:id one)
-               :tone tone
-               :segments segments
-               :text (segment-line segments)}))
-          (filter #(seq (:values %)) series))
+                (conj (if stacked? (chart-label-rows id (:id one) label text-w) [])
+                      {:kind :chart
+                       :node-id id
+                       :item-id (:id one)
+                       :tone tone
+                       :segments segments
+                       :text (segment-line segments)})))
+            (filter #(seq (:values %)) series)))
 
         ;; The axis names the first and the last category that the lines show.
         slots
