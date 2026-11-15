@@ -688,7 +688,7 @@ Each module has one task. A function imports only the modules of its role.
 | [`domain.py`](durable/domain.py) | The rules of the API: the names, the limits, the statuses of a run and the refusals |
 | [`aws.py`](durable/aws.py) | Each call to S3, SQS, the Parameter Store and Lambda |
 | [`wire.py`](durable/wire.py) | The form of an answer that goes through S3 |
-| [`durable.py`](durable/durable.py) | The lease and the checkpoints of the Vis home |
+| [`core.py`](durable/core.py) | The lease and the checkpoints of the Vis home |
 | [`git.py`](durable/git.py) | The `repo` function: the fetch from GitHub and the push to GitHub |
 | [`worktree.py`](durable/worktree.py) | The `sync` function and the directories on EFS: the releases, the work directories and their copy in S3 |
 | [`llm.py`](durable/llm.py) | The `llm` function |

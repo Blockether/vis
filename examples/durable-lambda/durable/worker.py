@@ -15,7 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from durable import aws, durable
+from durable import aws, core
 from durable.app import Api
 from durable.helpers import log
 from durable.lambda_runtime import Context
@@ -28,9 +28,9 @@ from durable.vis.relay import Relay
 RENEW_S, SAVE_S = 30, 15
 
 
-def work(held: durable.Lease, context: Context) -> dict[str, Any]:
+def work(held: core.Lease, context: Context) -> dict[str, Any]:
     started = time.time()
-    durable.restore(held.data.get("state"))
+    core.restore(held.data.get("state"))
     restored = time.time()
     root, release = registry.project()
     cloned = time.time()
@@ -44,7 +44,7 @@ def work(held: durable.Lease, context: Context) -> dict[str, Any]:
     relay = Relay(engine, api)
     pool = ThreadPoolExecutor(max_workers=64)
     queue = aws.client("sqs")
-    saved, renewed, checked = durable.fingerprint(), 0.0, time.time()
+    saved, renewed, checked = core.fingerprint(), 0.0, time.time()
     # One thread at a time copies the changed work directories to S3.
     copying = pool.submit(int)
     running, due, reason = 0, None, "idle"
@@ -65,9 +65,9 @@ def work(held: durable.Lease, context: Context) -> dict[str, Any]:
                 running, due, renewed = engine.running(), engine.next_due(), now
                 held.renew(running=running, parked=0, runs=api.runs.live(), next_due=due)
             if now - checked > SAVE_S:
-                checked, current = now, durable.fingerprint()
+                checked, current = now, core.fingerprint()
                 if current != saved:
-                    durable.save(held)
+                    core.save(held)
                     saved = current
                 if copying.done():
                     copying = pool.submit(api.workspaces.save)
@@ -93,7 +93,7 @@ def work(held: durable.Lease, context: Context) -> dict[str, Any]:
     broker.stop()
     # The gateway and the runs stopped, so each work directory has its last files.
     api.workspaces.save(is_last=True)
-    durable.save(held)
+    core.save(held)
     runs = api.runs.live()
     held.release(running=0, parked=parked, runs=runs, next_due=due)
     log("worker stops:", reason, "parked", parked, "runs", runs)
@@ -104,7 +104,7 @@ def work(held: durable.Lease, context: Context) -> dict[str, Any]:
 
 def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
     """Work as the one live worker, or return at once when another worker lives."""
-    held = durable.Lease.acquire()
+    held = core.Lease.acquire()
     if held is None:
         return {"worker": "another worker holds the lease"}
     try:
