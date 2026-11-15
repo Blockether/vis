@@ -10,22 +10,32 @@ and each recorded activity returns its result at once. So write the function lik
 Temporal workflow: decide only from its input and from the results of activities.
 
 A document of a run is a native Vis attachment: the session calls `attach`, and the
-activity reads the files of that turn with `Session.attachments` of the SDK. A run can
-also wait for a file from a person with `ctx.receive`. A waiting run has no process.
+activity reads the files of that turn with `Session.attachments` of the SDK.
 
-    class Verdict(BaseModel):
-        decision: Literal["compose", "clarify"]
-        reason: str
+A gate stops a run until a person decides: `ctx.gate` returns the decision, approve or
+reject, with the comment of the person. A waiting run has no process.
 
-    @activity(title="Analysis of the brief")
-    def analyse(ctx, brief: str) -> Verdict:
-        return ctx.ask(f"Analyse this music brief: {brief}", Verdict)
+    class Work(BaseModel):
+        song: str
+        tests_passed: bool
 
-    @workflow(title="Brief to arrangement")
-    def brief_to_arrangement(ctx, brief: str = "A calm piece ..."):
-        verdict = analyse(ctx, brief)
-        if verdict.decision == "compose":
-            return arrangement(ctx, brief)
+    @activity(title="Write the song sheet")
+    def specify(ctx, prompt: str) -> Document:
+        return ctx.document("SONG.md", f"Write the song sheet for: {prompt}")
+
+    @activity(title="Approve the song sheet")
+    def approve(ctx, sheet: Document) -> Decision:
+        return ctx.gate("sheet", "Approve the song sheet", document=sheet)
+
+    @activity(title="Record the song")
+    def record(ctx) -> Work:
+        return ctx.ask("Record the song of SONG.md as code and run the tests.", Work)
+
+    @workflow(title="Song factory")
+    def song_factory(ctx, prompt: str = "A slow song about a night train"):
+        sheet = specify(ctx, prompt)
+        if approve(ctx, sheet).approved:
+            return record(ctx)
 """
 
 from __future__ import annotations
@@ -34,7 +44,7 @@ import functools
 import time
 import typing
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, TypeVar
 
 from blockether.vis.engine import Attachment, GatewayError, Session, Turn, final_answer
@@ -47,7 +57,7 @@ Model = TypeVar("Model", bound=BaseModel)
 # The statuses of a turn that does not run any more.
 ENDED = ("completed", "failed", "cancelled", "suspended", "error")
 
-__all__ = ["ActivityError", "Context", "Document", "Upload", "Waiting", "activity", "workflow"]
+__all__ = ["ActivityError", "Context", "Decision", "Document", "Waiting", "activity", "workflow"]
 
 
 class ActivityError(RuntimeError):
@@ -69,13 +79,12 @@ class Document:
 
 
 @dataclass(frozen=True)
-class Upload:
-    """A file that a person gave to a run. The record of the activity keeps only its name and size."""
+class Decision:
+    """What a person decided at a gate: approve or reject, with a comment."""
 
     key: str
-    name: str
-    size: int
-    text: str = field(repr=False)
+    approved: bool
+    comment: str = ""
 
 
 def workflow(title: str = "", description: str = "", model: str | None = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -111,20 +120,20 @@ def encode(value: Any) -> dict[str, Any]:
         return {"kind": "model", "type": type(value).__name__, "value": value.model_dump(mode="json")}
     if isinstance(value, Document):
         return {"kind": "document", "value": asdict(value)}
-    if isinstance(value, Upload):
-        return {"kind": "upload", "value": {"key": value.key, "name": value.name, "size": value.size}}
+    if isinstance(value, Decision):
+        return {"kind": "decision", "value": asdict(value)}
     if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
         return {"kind": "json", "value": value}
     return {"kind": "json", "value": str(value)}
 
 
-def decode(recorded: dict[str, Any], function: Callable[..., Any], upload: Callable[[str], Upload | None]) -> Any:
-    """Build the result of an activity again from its record. `upload` reads a file that a person gave."""
+def decode(recorded: dict[str, Any], function: Callable[..., Any]) -> Any:
+    """Build the result of an activity again from its record."""
     value = recorded["value"]
     if recorded["kind"] == "document":
         return Document(**value)
-    if recorded["kind"] == "upload":
-        return upload(value["key"])
+    if recorded["kind"] == "decision":
+        return Decision(**value)
     if recorded["kind"] == "model":
         returns = typing.get_type_hints(function).get("return")
         if isinstance(returns, type) and issubclass(returns, BaseModel):
@@ -154,7 +163,7 @@ class Context:
         seq, self._next = self._next, self._next + 1
         recorded = self._api.call("GET", f"runs/{self.run_id}/results/{seq}")
         if recorded and recorded["name"] == function.__name__:
-            return decode(recorded["result"], function, self._upload)
+            return decode(recorded["result"], function)
         self._event("activity_started", seq=seq, name=function.__name__, title=title)
         self._current, self._turns = seq, 0
         try:
@@ -238,23 +247,21 @@ class Context:
         files = [file for file in self.session.attachments(turn["turn_id"]) if file.filename == name]
         return max(files, key=lambda file: file.version, default=None)
 
-    def receive(self, key: str, title: str, *, accept: str = "") -> Upload:
-        """Wait for a file from a person. `accept` names the file types for the page, such as `.md,.txt`.
+    def gate(self, key: str, title: str, *, about: str = "", document: Document | None = None) -> Decision:
+        """Wait for the decision of a person: approve or reject, with a comment.
+
+        `title` names the gate. `about` tells the person what to check, and `document`
+        is the file to read first. Use each key one time in a run.
 
         The run process ends while the run waits, so a waiting run holds no worker.
-        When the person gives the file, Durable Lambda starts the run again and this
-        call returns the file.
+        When the person decides, Durable Lambda starts the run again and this call
+        returns the decision. The workflow selects what a rejection does.
         """
-        found = self._upload(key)
-        if found is None:
-            self._event("waiting", seq=self._current, key=key, title=title, accept=accept)
+        made = self._api.call("GET", f"runs/{self.run_id}/gates/{key}")
+        if made is None:
+            self._event("waiting", seq=self._current, key=key, title=title, about=about, document=document.name if document else None)
             raise Waiting(key)
-        return found
-
-    def _upload(self, key: str) -> Upload | None:
-        """Return the file that a person gave for a key, or None."""
-        given = self._api.call("GET", f"runs/{self.run_id}/inputs/{key}")
-        return Upload(key, given["name"], given["size"], given["content"]) if given else None
+        return Decision(key, made["approved"], made["comment"])
 
     def note(self, text: str) -> None:
         """Add a line to the log of the run."""

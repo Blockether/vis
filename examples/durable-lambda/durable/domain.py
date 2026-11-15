@@ -9,14 +9,14 @@ import re
 from typing import Any
 
 # The form of each name that becomes a part of an S3 key: the name of a workflow or
-# of an input, the id of a session, the id of a run and the name of a file.
+# of a gate, the id of a session, the id of a run and the name of a file.
 NAME = re.compile(r"[a-z][a-z0-9_]{1,39}")
 SESSION = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 RUN = re.compile(r"[0-9a-f]{32}")
 FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,79}")
 # The statuses of a run that has, or waits for, a process.
 LIVE = ("queued", "running")
-# A waiting run has no process: it needs a file from a person.
+# A waiting run has no process: it waits at a gate for the decision of a person.
 OPEN = (*LIVE, "waiting")
 # An answer of the API: the status, the headers and the body.
 Answer = tuple[int, list[list[str]], bytes]

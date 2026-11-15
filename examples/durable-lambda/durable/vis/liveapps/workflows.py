@@ -1,7 +1,8 @@
 """The Workflows app: a global app of Vis that the worker owns.
 
 Vis shows a global app behind the global apps button of its header, in each session
-and without one. The app has two tabs. `Run` starts a workflow and follows the run.
+and without one. The app has three tabs. `Run` starts a workflow and follows the run.
+`Gates` shows the run that waits for the decision of a person and takes the decision.
 `History` lists the last runs.
 
 One thread owns the app. It reads the actions of a person and it paints the app, so
@@ -23,13 +24,15 @@ from durable.domain import OPEN, Refused
 from durable.helpers import log
 from durable.settings import APP_RUNS, LOOK_S
 
-TABS = (("run", "Run"), ("history", "History"))
+TABS = (("run", "Run"), ("gates", "Gates"), ("history", "History"))
 # The tone of a status. The names are the live tones of the Vis view contract.
 TONES = {"queued": "idle", "running": "running", "waiting": "warn", "completed": "ok", "failed": "error", "cancelled": "warn"}
 # The counters of the History tab: an id, a label, the statuses that it counts and its tone.
 COUNTS = (("open", "In progress", OPEN, "running"), ("completed", "Completed", ("completed",), "ok"), ("failed", "Failed", ("failed",), "error"))
 # The value of the session field for a run that makes its own session.
 NEW = "new"
+# What the Gates tab says when no run waits.
+NO_GATE = ("No run waits", "idle", "A run that waits for the decision of a person shows here.")
 
 
 def tabs(tab: str) -> dict[str, Any]:
@@ -56,6 +59,8 @@ class Workflows(threading.Thread):
         # The picture that the app shows now, and whether the open tab has the status node.
         self.shown: dict[str, Any] = {}
         self.has_status = False
+        # The reason why the API did not take the last decision at a gate.
+        self.problem = ""
 
     # -- the content of each tab ------------------------------------------------
 
@@ -88,6 +93,29 @@ class Workflows(threading.Thread):
             ),
         )
 
+    def gates_tab(self) -> dict[str, Any]:
+        """Return the place of the gate. `paint` puts the gate of the oldest waiting run below the status."""
+        text, tone, detail = NO_GATE
+        return vis.ui.column("body", vis.ui.status("state", text, tone=tone, detail=detail))
+
+    def gate_form(self, gate: tuple[str, str, str, str | None, str | None]) -> dict[str, Any]:
+        """Return the form of a gate: what to check, its document, a comment and the two decisions."""
+        _, _, about, document, session = gate
+        nodes = [vis.ui.paragraph("gate-about", about)] if about else []
+        if document and session:
+            try:
+                body = self.api.files.attached_file(session, document)[2]
+                nodes.append(vis.ui.disclosure("gate-document", document, vis.ui.code("gate-text", body.decode(errors="replace")[:20000], language="markdown"), default_expanded=True))
+            except Refused:  # S3 has no copy of the file: the session of the run has it
+                nodes.append(vis.ui.paragraph("gate-document", f"Read {document} in the session of the run."))
+        return vis.ui.group(
+            "gate",
+            *nodes,
+            vis.ui.multiline("comment", label="Comment", description="For a rejection: the change that you want."),
+            vis.ui.button("gate-approve", "Approve", action="submit", variant="primary"),
+            vis.ui.button("gate-reject", "Reject", action="submit"),
+        )
+
     def history_tab(self) -> dict[str, Any]:
         # Three columns: a phone shows them without a break in a word.
         """Return the counters and the table of the last runs, without their data."""
@@ -108,6 +136,16 @@ class Workflows(threading.Thread):
                 for line in lines[:APP_RUNS]
             ]
             return {"counts": counts, "rows": rows}
+        if self.tab == "gates":
+            waiting = [line["id"] for line in self.api.runs.index if line["status"] == "waiting"]
+            # The oldest waiting run comes first. The index has the newest run first.
+            run = self.api.runs.copy(waiting[-1]) if waiting else {}
+            gate = run.get("waiting")
+            if not gate:
+                return {"state": NO_GATE, "steps": [], "gate": None}
+            more = f" {len(waiting) - 1} more wait." if len(waiting) > 1 else ""
+            detail = f"Run {run['id'][:8]} of {run['title']}.{more} {self.problem}".rstrip()
+            return {"state": (gate["title"], "warn", detail), "steps": [], "gate": (run["id"], gate["key"], gate["about"], gate["document"], run["session_id"])}
         if self.refusal:
             return {"state": ("The run did not start", "error", self.refusal), "steps": []}
         if not self.followed:
@@ -115,8 +153,7 @@ class Workflows(threading.Thread):
         run = self.api.runs.copy(self.followed)
         detail = f"Run {run['id'][:8]}. Activities completed: {done([[step['title'], step['status']] for step in run['activities']])}."
         if run["status"] == "waiting":
-            # The Workflows page of Durable Lambda takes the file.
-            detail += f" It waits for a file: {run['waiting']['title']}. Give it on the Workflows page."
+            detail += f" It waits for a decision: {run['waiting']['title']}. Decide on the Gates tab."
         if run["status"] == "failed" and run.get("error"):
             detail += f" {str(run['error'])[:200]}"
         steps = [(f"step-{at}", step["title"], TONES.get(step["status"], "idle")) for at, step in enumerate(run["activities"])]
@@ -127,8 +164,9 @@ class Workflows(threading.Thread):
 
     def show(self, app: Any, tab: str) -> None:
         """Change the open tab: put the row of tabs and the content of `tab` in the app."""
-        self.tab, self.shown, self.has_status = tab, {}, tab == "run" and bool(self.followed)
-        body = self.history_tab() if tab == "history" else self.run_tab()
+        self.tab, self.shown, self.problem = tab, {}, ""
+        self.has_status = tab == "gates" or (tab == "run" and bool(self.followed))
+        body = {"history": self.history_tab, "gates": self.gates_tab, "run": self.run_tab}[tab]()
         with app.batch():
             for node in ("tabs", "body"):
                 app.drop(node)
@@ -157,12 +195,17 @@ class Workflows(threading.Thread):
                     app["activities"].clear()
                     for step, label, step_tone in picture["steps"]:
                         app["activities"].set(step, label, tone=step_tone)
+            if "gate" in picture and picture["gate"] != self.shown.get("gate"):
+                if self.shown.get("gate"):
+                    app.drop("gate")
+                if picture["gate"]:
+                    app.add(self.gate_form(picture["gate"]), after="state")
         self.shown = picture
 
     # -- the actions of a person ---------------------------------------------------
 
     def handle(self, app: Any, event: Any) -> None:
-        """Do one action of a person: change the tab, start a run or show the form again."""
+        """Do one action of a person: change the tab, start a run, decide at a gate or show the form again."""
         if event.type == "activate" and event.node_id in {f"tab-{name}" for name, _ in TABS}:
             self.show(app, event.node_id.removeprefix("tab-"))
         elif event.type == "submit" and event.node_id == "start-run":
@@ -175,6 +218,13 @@ class Workflows(threading.Thread):
                 self.followed, self.refusal = None, str(refusal)
             else:
                 self.show(app, "run")
+        elif event.type == "submit" and event.node_id in ("gate-approve", "gate-reject") and self.shown.get("gate"):
+            run, key = self.shown["gate"][:2]
+            try:
+                self.api.decide(run, key, payload={"approved": event.node_id == "gate-approve", "comment": (event.values or {}).get("comment") or ""})
+                self.problem = ""
+            except Refused as refusal:
+                self.problem = f"The decision did not go in: {refusal}."
         elif event.type == "activate" and event.node_id == "new-run":
             self.followed = None
             self.show(app, "run")
@@ -185,7 +235,7 @@ class Workflows(threading.Thread):
             "Workflows",
             tabs(self.tab),
             self.run_tab(),
-            description="Start a workflow of Durable Lambda and see the runs.",
+            description="Start a workflow of Durable Lambda, decide at its gates and see the runs.",
             key="workflows",
             scope="global",
             # The worker opens the app at each start, so a gateway restart can drop it.

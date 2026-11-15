@@ -4,7 +4,7 @@ runs/index.json              one line for each run
 runs/<id>/run.json           the run and its activities
 runs/<id>/workflow.py        the source that the run uses, also after an edit
 runs/<id>/results/<n>.json   the result of activity n, for a new start of the run
-runs/<id>/inputs/<key>.json  a file that a person gave to a waiting run
+runs/<id>/gates/<key>.json   the decision of a person at a gate
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from durable import aws, worktree
-from durable.domain import LIVE, NAME, OPEN, SESSION, Refused, need
+from durable.domain import FILE, LIVE, NAME, OPEN, SESSION, Refused, need
 from durable.helpers import log
 from durable.settings import ENV, PARALLEL, RUN_LIMIT_S, RUNS_KEPT, STARTS, STEPS
 from durable.worktree import FAILURES, Workspaces
@@ -187,8 +187,10 @@ class Runs:
             elif kind == "note":
                 (step["notes"] if step else doc["notes"]).append({"at": now, "text": str(event.get("text", ""))[:2000]})
             elif kind == "waiting":
-                asked = {"seq": seq, "key": need(NAME, event.get("key"), "the input key")}
-                doc.update(status="waiting", waiting={**asked, "title": str(event.get("title", ""))[:200], "accept": str(event.get("accept", ""))[:100]})
+                gate = {"seq": seq, "key": need(NAME, event.get("key"), "the gate key"), "title": str(event.get("title", ""))[:200], "about": str(event.get("about", ""))[:2000]}
+                # The pages show this file of the session next to the gate.
+                document = event.get("document")
+                doc.update(status="waiting", waiting={**gate, "document": need(FILE, document, "the document name") if document else None})
                 if step:
                     step["status"] = "waiting"
                 # The process ends by itself now. Without it, the run uses no place.
@@ -213,13 +215,13 @@ class Runs:
                 step["files"].append(name)
                 self.write(doc)
 
-    def give(self, run_id: str, key: str, name: str, content: str) -> dict[str, Any]:
-        """Store the file that a waiting run asked for, and put the run in the queue again."""
+    def decide(self, run_id: str, key: str, approved: bool, comment: str) -> dict[str, Any]:
+        """Store the decision of a person at the gate where a run waits, and put the run in the queue again."""
         with self.lock:
             doc = self.doc(run_id)
             if doc["status"] != "waiting" or doc["waiting"]["key"] != key:
-                raise Refused(409, "the run does not wait for this input")
-            aws.put(f"runs/{run_id}/inputs/{key}.json", json.dumps({"name": name, "content": content}).encode())
+                raise Refused(409, "the run does not wait at this gate")
+            aws.put(f"runs/{run_id}/gates/{key}.json", json.dumps({"approved": approved, "comment": comment, "at": time.time()}).encode())
             doc.update(status="queued", waiting=None)
             for step in doc["activities"]:
                 if step["status"] == "waiting":  # the activity continues when a process takes the run

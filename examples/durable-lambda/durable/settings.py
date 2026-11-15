@@ -183,8 +183,9 @@ PLACES = 50
 
 # -- the files and the sessions ------------------------------------------------------
 
-# The largest source of a workflow, the largest file that a person gives to a run
-# and the largest attached file that S3 gets, in bytes.
-WORKFLOW_LIMIT, INPUT_LIMIT, ATTACHED_LIMIT = 200_000, 300_000, 2_000_000
+# The largest source of a workflow and the largest attached file that S3 gets, in bytes.
+WORKFLOW_LIMIT, ATTACHED_LIMIT = 200_000, 2_000_000
+# The largest comment of a person at a gate, in characters.
+COMMENT_LIMIT = 4_000
 # The worker keeps the directory of a session for HOME_S before it asks the gateway again.
 HOME_S = 60

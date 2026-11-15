@@ -315,9 +315,7 @@ figure { margin: 0; }
 .product { overflow: hidden; } .product-head { padding: 12px 16px; flex-wrap: wrap; }
 .product-body { max-height: 68vh; overflow: auto; padding: 18px 20px; background: var(--input); border-top: 1px solid var(--line); }
 .start { display: grid; gap: 14px; padding: 18px; max-width: 640px; }
-.drop { display: grid; justify-items: center; gap: 8px; padding: 24px 16px; text-align: center; border: 1px dashed var(--warn-line); background: var(--input); transition: background .15s; }
-.drop.over { background: var(--amber-soft); }
-.gauge { height: 8px; background: var(--line); overflow: hidden; } .gauge i { display: block; height: 100%; background: var(--amber-deep); } .gauge.good i { background: var(--good); }
+.gate { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--amber-deep); background: var(--input); } .gate p { margin: 0; }
 @media (max-width: 1100px) { .bench { grid-template-columns: 1fr; } }
 @media (max-width: 820px) {
   .factory { display: block; height: auto; padding-bottom: 70px; }

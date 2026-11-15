@@ -23,8 +23,8 @@ from collections.abc import Callable
 from typing import Any
 
 from durable import aws, wire
-from durable.domain import FILE, NAME, RUN, Answer, Refused, need
-from durable.settings import INPUT_LIMIT, MODELS, REPO, RUNS_LISTED, WORK
+from durable.domain import NAME, RUN, Answer, Refused, need
+from durable.settings import COMMENT_LIMIT, MODELS, REPO, RUNS_LISTED, WORK
 from durable.vis.files import Files
 from durable.vis.sessions import Sessions
 from durable.workflows import source
@@ -57,8 +57,8 @@ class Api:
             ("POST", r"runs/(\w+)/cancel", self.cancel),
             ("POST", r"runs/(\w+)/events", self.event),
             ("GET", r"runs/(\w+)/results/(\d+)", self.result),
-            ("GET", r"runs/(\w+)/inputs/(\w+)", self.given),
-            ("POST", r"runs/(\w+)/inputs/(\w+)", self.give),
+            ("GET", r"runs/(\w+)/gates/(\w+)", self.decision),
+            ("POST", r"runs/(\w+)/gates/(\w+)", self.decide),
             ("GET", r"attached", self.files.attached),
             ("GET", r"attached/([\w-]+)/(.+)", self.files.attached_file),
             ("GET", r"tmp", self.files.temporary),
@@ -175,22 +175,19 @@ class Api:
         raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/results/{int(seq)}.json")
         return json.loads(raw) if raw else None
 
-    def given(self, run_id: str, key: str, **_: Any) -> Any:
-        """Return the file that a person gave to a run, or null."""
-        raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/inputs/{need(NAME, key, 'the input key')}.json")
-        if raw is None:
-            return None
-        record = json.loads(raw)
-        return {**record, "size": len(record["content"].encode())}
+    def decision(self, run_id: str, key: str, **_: Any) -> Any:
+        """Return the decision of a person at a gate of a run, or null."""
+        raw, _ = aws.get(f"runs/{need(RUN, run_id, 'the run id')}/gates/{need(NAME, key, 'the gate key')}.json")
+        return json.loads(raw) if raw else None
 
-    def give(self, run_id: str, key: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
-        """Take the file that a waiting run asked for."""
-        name, content = need(FILE, payload.get("name"), "the file name"), payload.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise Refused(400, "the file is empty or is not text")
-        if len(content.encode()) > INPUT_LIMIT:
-            raise Refused(413, "the file is too large")
-        return self.runs.give(need(RUN, run_id, "the run id"), need(NAME, key, "the input key"), name, content)
+    def decide(self, run_id: str, key: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+        """Take the decision of a person at the gate where a run waits."""
+        approved, comment = payload.get("approved"), payload.get("comment", "")
+        if type(approved) is not bool or not isinstance(comment, str):
+            raise Refused(400, "approved must be true or false, and comment must be a text")
+        if len(comment) > COMMENT_LIMIT:
+            raise Refused(413, "the comment is too long")
+        return self.runs.decide(need(RUN, run_id, "the run id"), need(NAME, key, "the gate key"), approved, comment.strip())
 
     # -- publishing ------------------------------------------------------------
 

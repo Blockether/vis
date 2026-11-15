@@ -85,7 +85,7 @@
     <li>A workflow is one Python file. <code>@workflow</code> marks the entry and <code>@activity</code> marks each step.</li>
     <li><code>ctx.ask(request, Model)</code> calls <code>session.run(response_model=Model)</code> of the Vis SDK. The result is a validated Pydantic object, and the workflow branches on it.</li>
     <li><code>ctx.document(name, request)</code> makes the session write a document and attach it with the native <code>attach</code> verb. The SDK reads the files of that turn with <code>session.attachments(turn_id)</code>. The file is in the transcript, in S3 and in the run.</li>
-    <li><code>ctx.receive(key, title)</code> waits for a file from a person. The run gets the status <code>waiting</code> and its process ends, so a waiting run holds no worker. The Factory page shows such a run as a production line.</li>
+    <li><code>ctx.gate(key, title)</code> waits for the decision of a person: approve or reject, with a comment. The run gets the status <code>waiting</code> and its process ends, so a waiting run holds no worker. The Factory page shows such a run as a production line.</li>
     <li>A worker stops before the Lambda time limit and parks the turn that runs. The gateway of the next worker continues that turn. The new run process waits for it and sends no second request.</li>
     <li>The same workflows run from the Vis web app: the command <code>/workflows</code> of the Durable Lambda extension opens a panel.</li>
   </ul>

@@ -1,19 +1,19 @@
 // The factory page: the workflow `song_factory` as a production line.
-// An order is one run. A brief goes in at the first station. SONG.md comes out, and the song goes to GitHub as code.
-import { OPEN, TONE, ago, bar, button, cancelRun, chip, download, drop, empty, filePath, fileRow, fill, giveFile, github, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, textOf, versionOf, waiting } from "/play/assets/common.js";
+// An order is one run. A prompt goes in. A person approves the song sheet and then the song. The song goes to GitHub as code.
+import { OPEN, TONE, ago, bar, button, cancelRun, chip, decided, download, empty, filePath, fileRow, fill, gate, github, h, icon, item, loading, markdown, play, press, read, size, span, stepBars, structured, versionOf, waiting } from "/play/assets/common.js";
 
 const WORKFLOW = "song_factory";
 // The glyph of each station, by the name of its workflow activity.
-const GLYPHS = { intake: "upload", arrange: "pencil", inspect: "eye", rework: "fork", record: "globe" };
-const WORDS = { idle: "Idle", skipped: "Not needed", running: "At work", waiting: "Waits for a file", completed: "Done", failed: "Failed", cancelled: "Stopped" };
+const GLYPHS = { specify: "pencil", approve_sheet: "eye", rework: "fork", record: "play", approve_song: "eye", ship: "globe" };
+const WORDS = { idle: "Idle", skipped: "Not needed", running: "At work", waiting: "Waits for a decision", completed: "Done", failed: "Failed", cancelled: "Stopped" };
 
 const orders = document.getElementById("orders");
 const floor = document.getElementById("floor");
 // The fragment goes into request paths: accept only a run id.
 const orderId = () => /^#([0-9a-f]{32})$/.exec(location.hash)?.[1] || null;
-// flow: the workflow. runs: its runs. id, doc: the open order. file: a brief that waits for the first station of its new order.
+// flow: the workflow. runs: its runs. id, doc: the open order.
 // spec: the text of the shown document, with the key of its version. drawn: the data of the last draw.
-const state = { flow: null, runs: [], id: orderId(), doc: null, file: null, spec: { key: "", text: null }, drawn: "" };
+const state = { flow: null, runs: [], id: orderId(), doc: null, spec: { key: "", text: null }, drawn: "" };
 
 /** Return the stations of an order: each workflow activity with the state of its step. */
 function stations(doc) {
@@ -24,18 +24,10 @@ function stations(doc) {
   return found.map((station, index) => ({ ...station, status: station.step?.status || (index < last ? "skipped" : "idle") }));
 }
 
-/** Give a file to the station that waits for it. The run then starts again. */
-async function give(doc, given) {
-  await giveFile(doc, given);
-  await refresh();
-}
-
-/** Make a new order. Its first station gets the file as soon as it waits. */
-async function order(file, title) {
-  const given = await textOf(file);
-  const run = await play("runs", { method: "POST", body: { workflow: WORKFLOW, input: title ? { title } : {} } });
-  state.file = { id: run.id, given };
-  select(run.id);
+/** Make a new order from a prompt. Without a prompt, the workflow uses its own. */
+async function order(prompt) {
+  const run = await play("runs", { method: "POST", body: { workflow: WORKFLOW, input: prompt ? { prompt } : {} } });
+  await select(run.id);
 }
 
 function select(id) {
@@ -70,25 +62,22 @@ function line(doc) {
   );
 }
 
-/** Return a bar for a score from 0 to 100. */
-const gauge = (score) => h("div", { class: `gauge ${score >= 80 ? "good" : ""}`, role: "img", "aria-label": `Score ${score} of 100` }, h("i", { style: `width:${Math.max(0, Math.min(100, score))}%` }));
-
-/** Return the card of a station that has something to show: a wait, work, an error or a result. */
+/** Return the card of a station that has something to show: a gate, work, an error or a result. */
 function card(doc, { title, status, step }) {
   const result = step?.result;
   const body =
     status === "waiting"
-      ? drop(doc.waiting.title, doc.waiting.accept, async (file) => give(doc, await textOf(file)))
+      ? gate(doc, refresh)
       : status === "running"
         ? waiting("The session works at this station.")
         : status === "failed"
           ? h("p", { class: "small bad-text", text: step.error || "The station failed." })
-          : result?.kind === "upload"
-            ? fileRow(result.value.name, result.value.size)
+          : result?.kind === "decision"
+            ? decided(result.value)
             : result?.kind === "document"
               ? fileRow(result.value.name, result.value.size, versionOf(result.value))
               : result?.kind === "model"
-                ? [typeof result.value.score === "number" && gauge(result.value.score), structured(result.value), result.value.url && h("p", { class: "small" }, github(result.value.url, "Open the commit on GitHub"))]
+                ? [structured(result.value), result.value.url && h("p", { class: "small" }, github(result.value.url, "Open the commit on GitHub"))]
                 : result && structured(result.value);
   if (!body) return null;
   return h("section", { class: `card bench-card ${status}` }, h("div", { class: "row" }, h("h3", { text: title }), chip(WORDS[status], TONE[status], status === "running")), body, (step.notes || []).map((note) => h("p", { class: "small muted", text: note.text })));
@@ -120,11 +109,11 @@ function product(doc) {
 
 /** Return the floor without an order: what the factory does, and the zone that starts an order. */
 function welcome() {
-  const name = h("input", { class: "input", value: state.flow.inputs[0]?.default || "", "aria-label": "Song title" });
+  const prompt = h("textarea", { class: "input", rows: 4, "aria-label": "Prompt", text: state.flow.inputs[0]?.default || "" });
   return [
-    h("div", { class: "hero" }, h("span", { class: "eyebrow", text: "Song factory" }), h("h1", { text: "A brief goes in. A checked song comes out." }), h("p", { class: "muted", text: state.flow.description })),
+    h("div", { class: "hero" }, h("span", { class: "eyebrow", text: "Song factory" }), h("h1", { text: "A prompt goes in. You approve the song sheet and the song." }), h("p", { class: "muted", text: state.flow.description })),
     line(null),
-    h("section", { class: "card start" }, h("label", { class: "field" }, h("span", { text: "Song title" }), name), drop("Give the brief of the song", ".md,.txt", (file) => order(file, name.value.trim()))),
+    h("section", { class: "card start" }, h("label", { class: "field" }, h("span", { text: "The song that you want" }), prompt), button("Start the order", { class: "primary", onclick: press(() => order(prompt.value.trim())) }, "play")),
   ];
 }
 
@@ -139,13 +128,13 @@ function draw() {
   const head = h(
     "div",
     { class: "order-head" },
-    h("div", {}, h("span", { class: "eyebrow", text: `Order ${doc.id.slice(0, 8)} · ${ago(doc.created * 1000)}` }), h("h1", { text: doc.input.title || state.flow.inputs[0]?.default || doc.title })),
+    h("div", {}, h("span", { class: "eyebrow", text: `Order ${doc.id.slice(0, 8)} · ${ago(doc.created * 1000)}` }), h("h1", { class: "clip", text: shipped?.song || doc.input.prompt || state.flow.inputs[0]?.default || doc.title })),
     chip(doc.status, TONE[doc.status], doc.status === "running"),
     h("span", { class: "grow" }),
     doc.session_id && h("a", { class: "btn small", href: `/play#${doc.session_id}` }, icon("open"), h("span", { text: "Open the session" })),
     OPEN.has(doc.status) && button("Cancel", { class: "small", onclick: press(() => cancelRun(doc.id).then(refresh)) }, "stop"),
   );
-  const done = shipped?.url && h("div", { class: "shipped" }, icon("check"), h("span", {}, "Shipped. ", h("code", { text: (shipped.files || []).join(", ") }), " is in the repository at ", github(shipped.url, shipped.commit || "the commit"), "."));
+  const done = shipped?.url && h("div", { class: "shipped" }, icon("check"), h("span", {}, "Shipped. The song ", h("code", { text: shipped.song }), " is in the repository at ", github(shipped.url, shipped.commit || "the commit"), "."));
   const cards = stations(doc).map((station) => card(doc, station));
   fill(floor, head, done, doc.error && h("div", { class: "problem", text: doc.error }), line(doc), h("div", { class: "bench" }, product(doc), h("div", { class: "bench-cards" }, cards)));
 }
@@ -160,7 +149,7 @@ function drawOrders() {
       h("span", { class: "small muted", text: ago(run.created * 1000) }),
     ),
   );
-  fill(orders, rows.length ? rows : empty("No orders", "Give a brief to start the first order."));
+  fill(orders, rows.length ? rows : empty("No orders", "Write a prompt to start the first order."));
 }
 
 /** Read the orders and the open order, then draw what changed. */
@@ -171,11 +160,6 @@ async function refresh() {
     const doc = await play(`runs/${state.id}`);
     if (doc.id !== state.id) return;
     state.doc = doc;
-    if (state.file?.id === doc.id && doc.status === "waiting") {
-      const { given } = state.file;
-      state.file = null;
-      return give(doc, given);
-    }
   }
   draw();
 }

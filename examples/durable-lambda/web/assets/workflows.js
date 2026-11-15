@@ -1,6 +1,6 @@
 // The workflows page: write a workflow in Python, add activities, run it and watch the run.
 /* global CodeMirror */
-import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, dialog, drop, empty, field, filePath, fileRow, fill, giveFile, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, span, stepBars, structured, textOf, toast, turnsOf, value, versionOf, vis, waiting } from "/play/assets/common.js";
+import { OPEN, TONE, activities, activity, ago, bar, button, cancelRun, chip, clock, decided, dialog, empty, field, filePath, fileRow, fill, gate, guard, h, icon, item, loading, padded, play, plural, press, preview, redraw, span, stepBars, structured, toast, turnsOf, value, versionOf, vis, waiting } from "/play/assets/common.js";
 
 const studio = document.querySelector("#studio");
 const list = document.querySelector("#list");
@@ -26,14 +26,14 @@ from pydantic import BaseModel, Field
 from durable.workflows import activity, workflow
 
 
-class Decision(BaseModel):
+class Verdict(BaseModel):
     decision: Literal["go", "stop"] = Field(description="go: the request is clear and useful. stop: it is not")
     reason: str
 
 
 @activity(title="Decide")
-def decide(ctx, request: str) -> Decision:
-    return ctx.ask(f"Read this request and decide. Do not write code.\\n\\n{request}", Decision)
+def decide(ctx, request: str) -> Verdict:
+    return ctx.ask(f"Read this request and decide. Do not write code.\\n\\n{request}", Verdict)
 
 
 @activity(title="Write the report")
@@ -350,8 +350,8 @@ async function refreshRun() {
   // When the transcript does not load, the page keeps the turns that it has.
   const turns = doc.session_id ? await turnsOf(doc.session_id).catch(() => state.turns) : state.turns;
   if (state.run !== id) return;
-  // A run that still waits did not change. A new draw would drop the file that a person chooses.
-  if (doc.status === "waiting" && state.doc?.id === id && state.doc.status === "waiting") return;
+  // A run that still waits at the same gate did not change. A new draw would drop the comment that a person writes.
+  if (doc.status === "waiting" && state.doc?.id === id && state.doc.waiting?.key === doc.waiting.key) return;
   state.doc = doc;
   state.turns = turns;
   drawRun();
@@ -372,12 +372,6 @@ function attachedRow(session, file) {
   return row;
 }
 
-/** Return the action that gives a file to a waiting run. The file starts the run again. */
-const giver = (doc) => async (file) => {
-  await giveFile(doc, await textOf(file));
-  await refreshRun();
-};
-
 function stepCard(step, doc) {
   const from = step.started * 1000;
   const to = (step.finished || Date.now() / 1000) * 1000;
@@ -385,7 +379,7 @@ function stepCard(step, doc) {
   const rows = state.turns.filter((turn) => turn.created_at >= from - 500 && turn.created_at <= to).flatMap(activities);
   const result = step.result;
   const kind = result?.kind;
-  const mark = step.status === "completed" ? icon("check") : step.status === "failed" ? icon("x") : step.status === "running" ? h("i", { class: "spin" }) : step.status === "waiting" ? icon("upload") : String(step.seq + 1);
+  const mark = step.status === "completed" ? icon("check") : step.status === "failed" ? icon("x") : step.status === "running" ? h("i", { class: "spin" }) : step.status === "waiting" ? icon("eye") : String(step.seq + 1);
   return h(
     "div",
     { class: `step ${step.status}` },
@@ -396,9 +390,9 @@ function stepCard(step, doc) {
       h("div", { class: "row wrap" }, h("b", { text: step.title }), h("span", { class: "small muted", text: span(to - from) }), kind === "model" && chip(result.type, "violet")),
       step.error && h("div", { class: "problem", style: "border:0", text: step.error }),
       (kind === "model" || kind === "json") && padded(structured(result.value)),
-      step.status === "waiting" && drop(doc.waiting.title, doc.waiting.accept, giver(doc)),
+      step.status === "waiting" && gate(doc, refreshRun),
       kind === "document" && attachedRow(doc.session_id, result.value),
-      kind === "upload" && padded(fileRow(result.value.name, result.value.size)),
+      kind === "decision" && padded(decided(result.value)),
       notes(step.notes),
       rows.length > 0 && more(plural(rows.length, "Vis activity", "Vis activities"), h("div", { class: "acts", style: "margin-top:6px" }, rows.map(activity))),
     ),
@@ -433,8 +427,8 @@ function drawRun() {
       runsBody,
       Object.keys(doc.input || {}).length > 0 && more("Input", h("div", { class: "block pad", style: "margin-top:6px" }, value(doc.input))),
       steps.length ? h("div", { class: "timeline" }, steps.map((step) => stepCard(step, doc))) : busy && !doc.waiting && waiting(doc.status === "queued" ? "The run waits for a free place…" : "The run starts its Vis session…"),
-      // A workflow can wait for a file outside an activity. Then no step shows the place for the file.
-      doc.waiting && !steps.some((step) => step.status === "waiting") && drop(doc.waiting.title, doc.waiting.accept, giver(doc)),
+      // A workflow can have a gate outside an activity. Then no step shows the gate.
+      doc.waiting && !steps.some((step) => step.status === "waiting") && gate(doc, refreshRun),
       notes(doc.notes),
       // A failed step shows its error itself.
       doc.error && !steps.some((step) => step.error === doc.error) && h("div", { class: "problem", style: "border:0;white-space:pre-wrap", text: doc.error }),

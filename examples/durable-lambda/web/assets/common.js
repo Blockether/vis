@@ -382,39 +382,6 @@ export const read = async (path) => (await call(path, { raw: true })).text();
 /** Return a link to GitHub. Another address shows as text, because a model can write the address. */
 export const github = (url, text) => (String(url).startsWith("https://github.com/") ? outside(url, text) : h("span", { text }));
 
-// The largest file that the API takes for a waiting run.
-const INPUT_LIMIT = 300000;
-
-/** Return the file of the browser as the name and the text that the API takes. */
-export async function textOf(file) {
-  if (file.size > INPUT_LIMIT) throw new Error(`The file is larger than ${INPUT_LIMIT / 1000} kB.`);
-  const content = await file.text();
-  if (!content.trim()) throw new Error("The file is empty.");
-  const name = file.name.replace(/[^A-Za-z0-9._ -]/g, "_").replace(/^[^A-Za-z0-9]+/, "").slice(0, 80);
-  return { name: name || "README.md", content };
-}
-
-/** Return a zone that takes one file, by a drop or by the file dialog. */
-export function drop(title, accept, take) {
-  const input = h("input", { type: "file", accept: accept || null, hidden: true, "aria-label": title });
-  const choose = button("Choose a file", { class: "primary small", onclick: () => input.click() }, "upload");
-  const about = `Drop the file here.${accept ? ` Types: ${accept.replaceAll(",", ", ")}.` : ""} At most ${INPUT_LIMIT / 1000} kB.`;
-  const zone = h("div", { class: "drop" }, h("b", { text: title }), h("span", { class: "small muted", text: about }), choose, input);
-  const send = (file) => file && guard(choose, () => take(file));
-  input.addEventListener("change", () => send(input.files[0]));
-  zone.addEventListener("dragover", (event) => {
-    event.preventDefault();
-    zone.classList.add("over");
-  });
-  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
-  zone.addEventListener("drop", (event) => {
-    event.preventDefault();
-    zone.classList.remove("over");
-    send(event.dataTransfer.files[0]);
-  });
-  return zone;
-}
-
 /** Return one row of a file: its name, an optional label and its size. */
 export const fileRow = (name, bytes, label) => h("div", { class: "row" }, icon("file"), h("span", { class: "mono small clip", text: name }), label && chip(label, "amber"), bytes !== undefined && h("span", { class: "small muted right", text: size(bytes) }));
 
@@ -425,8 +392,34 @@ export const OPEN = new Set(["queued", "running", "waiting"]);
 // The colour of the chip of a run or of an activity, by status. The other statuses have no colour.
 export const TONE = { completed: "good", failed: "bad", running: "amber", waiting: "amber" };
 
-/** Give a file to the run that waits for it. `given` comes from `textOf`. The run then starts again. */
-export const giveFile = (run, given) => play(`runs/${run.id}/inputs/${run.waiting.key}`, { method: "POST", body: given });
+// The longest comment that the API takes at a gate.
+const COMMENT_LIMIT = 4000;
+
+/** Send the decision of a person to the gate where a run waits. The run then starts again. */
+export const decideGate = (run, approved, comment) => play(`runs/${run.id}/gates/${run.waiting.key}`, { method: "POST", body: { approved, comment } });
+
+/** Return the gate where a run waits: what to check, its document, a comment and the two decisions. `after` runs when the API has the decision. */
+export function gate(run, after) {
+  const { title, about, document: name } = run.waiting;
+  const comment = h("textarea", { class: "input", rows: 3, maxlength: COMMENT_LIMIT, placeholder: "A comment. For a rejection: the change that you want.", "aria-label": "Comment" });
+  const decide = (approved) =>
+    press(async () => {
+      await decideGate(run, approved, comment.value.trim());
+      await after();
+    });
+  return h(
+    "div",
+    { class: "gate" },
+    h("b", { text: title }),
+    about && h("p", { class: "small muted", text: about }),
+    name && run.session_id && h("div", { class: "row" }, fileRow(name), button("Read", { class: "small right", onclick: press(() => preview(filePath(run.session_id, name), name)) }, "eye")),
+    comment,
+    h("div", { class: "row" }, button("Approve", { class: "primary small", onclick: decide(true) }, "check"), button("Reject", { class: "small danger", onclick: decide(false) }, "x")),
+  );
+}
+
+/** Return the decision of a person at a gate: approved or rejected, and the comment. */
+export const decided = (made) => h("div", { class: "row wrap" }, chip(made.approved ? "Approved" : "Rejected", made.approved ? "good" : "bad"), made.comment && h("span", { class: "small", text: made.comment }));
 
 /** Stop a run. */
 export const cancelRun = (id) => play(`runs/${id}/cancel`, { method: "POST", body: {} });
