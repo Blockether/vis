@@ -48,10 +48,14 @@ def test_a_view_record_takes_each_field_that_its_schema_allows():
     from blockether.vis import views
 
     # An app with an icon made `LiveView` refuse its view event, and `Turn.wait` failed.
-    records = [value for value in vars(views).values() if getattr(value, "_definition", None)]
+    records = [
+        value for value in vars(views).values() if getattr(value, "_definition", None)
+    ]
     assert records
     for record in records:
-        allowed = _contracts.definition("view", record._definition).get("properties", {})
+        allowed = _contracts.definition("view", record._definition).get(
+            "properties", {}
+        )
         assert set(allowed) <= {field.name for field in fields(record)}, record.__name__
 
 
