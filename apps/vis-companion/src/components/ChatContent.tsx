@@ -3799,7 +3799,7 @@ function SpeechWaveform({
                 width={WAVE_BAR}
                 height={height}
                 rx={1}
-                className={index < played ? 'fill-accent' : 'fill-edge'}
+                className={index < played ? 'fill-accent' : 'meter-rest fill-edge'}
               />
             );
           })}

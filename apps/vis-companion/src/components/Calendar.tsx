@@ -346,7 +346,7 @@ function TimeSegment({
         // A full segment, or a digit that no second digit can follow, moves on.
         if (digits.length === 2 || Number(digits) * 10 > max) nextRef?.current?.focus();
       }}
-      className="h-8 w-9 rounded-none border border-edge bg-input text-center font-mono text-body tabular-nums text-white transition-[border-color,box-shadow] duration-150 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted motion-reduce:transition-none mouse:h-7 mouse:text-ui"
+      className="h-8 w-9 rounded-none border border-field-edge bg-input text-center font-mono text-body tabular-nums text-white transition-[border-color,box-shadow] duration-150 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted motion-reduce:transition-none mouse:h-7 mouse:text-ui"
     />
   );
 }
@@ -493,7 +493,7 @@ export function DateTimeField({
           setToday(fixedToday ?? localDay(Date.now()));
           setOpen(true);
         }}
-        className="relative flex h-8 w-full min-w-0 items-center gap-2 rounded-none border border-edge bg-input px-2.5 text-left font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent sm:px-3 mouse:h-7 mouse:after:content-none"
+        className="relative flex h-8 w-full min-w-0 items-center gap-2 rounded-none border border-field-edge bg-input px-2.5 text-left font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent sm:px-3 mouse:h-7 mouse:after:content-none"
       >
         <CalendarIcon className="size-3.5 shrink-0 text-dialog-hint" />
         <span className={`min-w-0 flex-1 truncate ${day ? '' : 'text-dialog-hint'}`}>

@@ -2264,7 +2264,7 @@ export const Input = forwardRef<
     >
       <input
         ref={ref}
-        className={`block h-8 w-full rounded-none border border-edge bg-input py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none mouse:h-7 ${icon ? 'pl-8 sm:pl-9' : 'pl-2.5 sm:pl-3'} ${action ? 'pr-10 mouse:pr-8 [&::-webkit-search-cancel-button]:hidden' : 'pr-2.5 sm:pr-3'} ${masked}`}
+        className={`block h-8 w-full rounded-none border border-field-edge bg-input py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none mouse:h-7 ${icon ? 'pl-8 sm:pl-9' : 'pl-2.5 sm:pl-3'} ${action ? 'pr-10 mouse:pr-8 [&::-webkit-search-cancel-button]:hidden' : 'pr-2.5 sm:pr-3'} ${masked}`}
         {...props}
       />
       {icon && (
@@ -2690,7 +2690,7 @@ export const Select = forwardRef<
           event.preventDefault();
           setOpen(true);
         }}
-        className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 sm:px-3 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
+        className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-field-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 sm:px-3 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
       >
         <span className="min-w-0 truncate text-left">{label}</span>
         <ChevronIcon open className={`size-3 shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
@@ -3304,7 +3304,9 @@ export function PaneHeader({
   closeLabel?: string;
 }) {
   return (
-    <header role="presentation" className="pane-header flex h-11 shrink-0 items-center gap-1 px-2 text-fg">
+    // The height of the session header beside it, so the way out stands on the line of
+    // the header's icons (user report: the close button stood 4px higher).
+    <header role="presentation" className="pane-header flex h-13 shrink-0 items-center gap-1 px-2 text-fg">
       {leading}
       <h2 className="pane-header-title flex h-6 min-w-0 shrink items-center rounded-lg bg-hover px-2 text-[12px] leading-4 font-medium">
         <span className="truncate">{title}</span>

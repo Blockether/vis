@@ -44,6 +44,7 @@
   --dim: #625d57;
   --err: #bf2020;
   --fg: #262626;
+  --field-edge: #8c857a;
   --footer-error: #bf2020;
   --footer-fg: #3f3f3f;
   --footer-muted: #625d57;
@@ -128,6 +129,7 @@
   --dim: #9ca3af;
   --err: #f87171;
   --fg: #f3f4f6;
+  --field-edge: #61656d;
   --footer-error: #f87171;
   --footer-fg: #d1d5db;
   --footer-muted: #9ca3af;
@@ -137,7 +139,7 @@
   --hover: #1a1c22;
   --input-field-bg: #0c0e12;
   --iteration-header-bg: #161820;
-  --iteration-header-fg: #787878;
+  --iteration-header-fg: #848892;
   --line: #20232a;
   --line2: #30333b;
   --link-arrow-fg: #9ca3af;
@@ -214,6 +216,7 @@
   --err-edge: #ffffff;
   --err-surface: #000000;
   --fg: #ffffff;
+  --field-edge: #ffffff;
   --footer-error: #ffffff;
   --footer-fg: #ffffff;
   --footer-muted: #ffffff;
@@ -304,6 +307,7 @@
   --err-edge: #000000;
   --err-surface: #ffffff;
   --fg: #000000;
+  --field-edge: #000000;
   --footer-error: #000000;
   --footer-fg: #000000;
   --footer-muted: #000000;
@@ -392,6 +396,7 @@
   --dim: #9eabb1;
   --err: #ef8886;
   --fg: #cfd6d6;
+  --field-edge: #6b7e84;
   --footer-error: #ef8886;
   --footer-fg: #9eabb1;
   --footer-muted: #8f9da2;
@@ -476,6 +481,7 @@
   --dim: #575f5f;
   --err: #b12826;
   --fg: #3e4c51;
+  --field-edge: #788688;
   --footer-error: #b12826;
   --footer-fg: #4c5f66;
   --footer-muted: #575f5f;
@@ -560,6 +566,7 @@
   --dim: #2d4f9d;
   --err: #91303f;
   --fg: #243b73;
+  --field-edge: #2d4f9d;
   --footer-error: #91303f;
   --footer-fg: #243b73;
   --footer-muted: #2d4f9d;
@@ -644,6 +651,7 @@
   --dim: #a9b1d6;
   --err: #ff757f;
   --fg: #c8d3f5;
+  --field-edge: #737aa2;
   --footer-error: #ff757f;
   --footer-fg: #c8d3f5;
   --footer-muted: #a9b1d6;
@@ -728,6 +736,7 @@
   --dim: #a9b1d6;
   --err: #f7768e;
   --fg: #c0caf5;
+  --field-edge: #737aa2;
   --footer-error: #f7768e;
   --footer-fg: #c0caf5;
   --footer-muted: #a9b1d6;
@@ -812,6 +821,7 @@
   --dim: #a9b1d6;
   --err: #f7768e;
   --fg: #c0caf5;
+  --field-edge: #737aa2;
   --footer-error: #f7768e;
   --footer-fg: #c0caf5;
   --footer-muted: #a9b1d6;
@@ -896,6 +906,7 @@
   --dim: #a0a0a0;
   --err: #f87474;
   --fg: #e2e8f0;
+  --field-edge: #64748b;
   --footer-error: #f87474;
   --footer-fg: #cbd5e1;
   --footer-muted: #94a3b8;
@@ -980,6 +991,7 @@
   --dim: #616161;
   --err: #c12c2c;
   --fg: #1e1e1e;
+  --field-edge: #505050;
   --footer-error: #c12c2c;
   --footer-fg: #3c3c3c;
   --footer-muted: #6d6d6d;

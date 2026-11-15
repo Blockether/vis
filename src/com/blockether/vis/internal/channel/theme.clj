@@ -287,7 +287,8 @@
    :link-chrome-url-fg [125 211 252]
    :link-chrome-hover-bg [30 41 59]
    :link-chrome-hover-fg [191 219 254]
-   :link-chrome-blocked-fg [100 116 139]
+   ;; 5.21:1 on the ground and 4.61:1 on a panel. [100 116 139] measured 4.06:1.
+   :link-chrome-blocked-fg [116 134 161]
    :footer-fg [203 213 225]
    :footer-fg-muted [148 163 184]
    :footer-fg-strong [241 245 249]
@@ -443,7 +444,8 @@
      :code-result-fg [243 244 246]
      :code-error-result-fg [252 165 165]
      :code-border-fg [70 74 84]
-     :iteration-header-fg [120 120 120]
+     ;; 4.99:1 on its band. The former [120 120 120] measured 4.01:1 for 10px text.
+     :iteration-header-fg [132 136 146]
      :iteration-header-bg [22 24 32]
      :answer-sep-fg [70 74 84]
      :answer-sep-bg [15 17 23]
@@ -462,7 +464,8 @@
      :link-chrome-url-fg [130 200 220]
      :link-chrome-hover-bg [30 40 50]
      :link-chrome-hover-fg [140 230 250]
-     :link-chrome-blocked-fg [70 74 84]
+     ;; A blocked link is still text to read: 5.32:1. The border ink measured 2.13:1.
+     :link-chrome-blocked-fg [132 136 146]
      :footer-fg [209 213 219]
      :footer-fg-muted [156 163 175]
      :footer-fg-strong [243 244 246]
@@ -1200,6 +1203,48 @@
 
     (mix-rgb bg target t)))
 
+(defn- wcag-contrast
+  "WCAG 2 contrast ratio of two RGB triples (0-255 scale)."
+  ^double [a b]
+  (let [channel
+        (fn [v]
+          (let [s (/ (double v) 255.0)]
+            (if (<= s 0.03928) (/ s 12.92) (Math/pow (/ (+ s 0.055) 1.055) 2.4))))
+
+        luminance
+        (fn [[r g b]]
+          (+ (* 0.2126 (channel r)) (* 0.7152 (channel g)) (* 0.0722 (channel b))))
+
+        la
+        (luminance a)
+
+        lb
+        (luminance b)]
+
+    (/ (+ (max la lb) 0.05) (+ (min la lb) 0.05))))
+
+(def ^:private field-grounds
+  "The grounds that a form field stands on, and its own face."
+  [:input-field-bg :panel-bg :terminal-bg :box-bg :dialog-bg])
+
+(defn- field-edge
+  "The edge of a form field: the palette's border, moved toward the text ink only
+   as far as WCAG 1.4.11 asks (3:1) on each ground of a field. The hairline `--line`
+   measured 1.13:1 in blockether-dark, so only a 1.1:1 change of the face showed
+   where a field was."
+  [palette]
+  (let [border
+        (:border-fg palette)
+
+        ink
+        (:text-fg palette)
+
+        reads?
+        (fn [edge]
+          (every? #(<= 3.0 (wcag-contrast edge (get palette %))) field-grounds))]
+
+    (or (first (filter reads? (map #(mix-rgb border ink (/ % 32.0)) (range 33)))) ink)))
+
 (def web-css-palette-tokens
   "The shared TUI/HTML theme contract: CSS custom property -> palette token.
    Browser channels consume exact semantic colors instead of approximating them
@@ -1322,6 +1367,7 @@
                  (map (fn [[css-var delta]]
                         [css-var (rgb->css (mix-to-luminance-delta bg border delta))]))
                  web-css-border-tokens)
+           {"--field-edge" (rgb->css (field-edge palette))}
            (when (get settings "HIGH_CONTRAST")
              {"--line" (rgb->css fg)
               "--line2" (rgb->css fg)

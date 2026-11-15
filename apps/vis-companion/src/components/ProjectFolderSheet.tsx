@@ -47,7 +47,7 @@ const SHEET_EDGE = 'px-3';
  * input. The crumbs inside it cannot live in `Input`, so the frame moves to the row.
  */
 const LOCATION_FIELD =
-  'flex h-8 min-w-0 items-center gap-0.5 border border-edge bg-input pl-2.5 pr-1 font-mono text-ui transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none sm:pl-3 mouse:h-7';
+  'flex h-8 min-w-0 items-center gap-0.5 border border-field-edge bg-input pl-2.5 pr-1 font-mono text-ui transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none sm:pl-3 mouse:h-7';
 
 /** A crumb inside the field keeps a 44px touch target through invisible reach. */
 const CRUMB =

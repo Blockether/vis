@@ -69,6 +69,11 @@
              (expect (>= (contrast-ratio t/dialog-hint-key t/dialog-bg) 4.5))
              (expect (>= (contrast-ratio t/status-bad t/warning-bg) 4.5))
              (expect (>= (contrast-ratio t/footer-error-fg t/warning-bg) 4.5))
+             ;; Measured: 4.01:1 and 2.13:1 in blockether-dark, 4.06:1 in vis-dark.
+             (expect (>= (contrast-ratio t/iteration-header-fg t/iteration-header-bg) 4.5)
+                     (str theme-id " iteration header"))
+             (expect (>= (contrast-ratio t/link-chrome-blocked-fg t/terminal-bg) 4.5)
+                     (str theme-id " blocked link"))
              (expect (>= (contrast-ratio (t/contrast-ink t/code-success-fg) t/code-success-fg)
                          3.0)))
            (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))

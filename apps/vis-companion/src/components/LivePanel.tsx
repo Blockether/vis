@@ -135,7 +135,9 @@ export function LivePanel({
   };
   return (
     <aside aria-label="Live views" className="flex h-full min-h-0 min-w-0 flex-col bg-panel">
-      <div className="flex min-h-13 shrink-0 items-center gap-2 border-b border-dialog-edge pl-3 pr-[max(0.75rem,env(safe-area-inset-right))] mouse:min-h-11">
+      {/* The height of the session header beside it: its rule and its close button
+          continue the header's line. */}
+      <div className="box-content flex min-h-13 shrink-0 items-center gap-2 border-b border-dialog-edge pl-3 pr-[max(0.75rem,env(safe-area-inset-right))]">
         {owners.length > 1 ? (
           <div
             role="tablist"

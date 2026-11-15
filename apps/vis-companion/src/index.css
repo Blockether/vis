@@ -71,6 +71,46 @@
   --color-diff-add-word: color-mix(in srgb, var(--ok) 15%, transparent);
   --color-diff-del-word: color-mix(in srgb, var(--err) 15%, transparent);
 }
+/* A monochrome page has one ink, so a fill on a track of that ink read as a full
+   bar: 60% of progress looked like 100%. There the track is a hairline and the fill
+   keeps its whole height. */
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) .meter-track,
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) progress.meter-track::-webkit-progress-bar {
+  background: linear-gradient(var(--fg), var(--fg)) center / 100% 1px no-repeat;
+}
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) rect.meter-track {
+  transform: scaleY(0.25);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* A control that is off keeps the whole ink there: a faded word measured 3.4:1 on a
+   page that has no third ink, and an off button looked like an on button. A dashed
+   edge says that the control is off, and a line through the word of a button. The
+   value of a field keeps its plain words. */
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) :is(button, input, select, textarea):disabled,
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) [aria-disabled='true'] {
+  border-style: dashed;
+  opacity: 1;
+}
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) button:disabled,
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) [aria-disabled='true'] {
+  text-decoration-line: line-through;
+}
+/* The part of a recording that is not played yet is hollow there. */
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) rect.meter-rest {
+  fill: var(--bg);
+  stroke: var(--fg);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+/* The series of a bar chart differ by pattern there: solid, hatched, hollow. */
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) .chart-series-1 {
+  background: repeating-linear-gradient(135deg, var(--fg) 0 2px, var(--bg) 2px 4px);
+}
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) .chart-series-2 {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--fg);
+}
 /* Monochrome pages change in place. This removes CSS motion, not streamed DOM
    updates or hardware ghosting; those need a separate reader/display policy. */
 :where([data-theme='paper'], [data-theme='high-contrast-dark']) *,
@@ -131,6 +171,10 @@
   --color-panel-2: var(--panel2);
   --color-edge: var(--line);
   --color-edge-strong: var(--line2);
+  /* The edge of a form field. A field shows where it is by this edge alone, so it
+     reads at 3:1 on each ground of a field in each theme (WCAG 1.4.11). The hairline
+     `--line` measured 1.13:1 to 1.18:1 there. */
+  --color-field-edge: var(--field-edge);
   --color-hover: var(--hover);
   --color-muted: var(--dim);
   --color-accent: var(--primary);
@@ -821,7 +865,7 @@ ol.markdown-list > li::before {
 .diff-toolbar-summary {
   display: flex;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
   overflow: hidden;
   align-items: center;
   gap: 8px;
@@ -962,7 +1006,6 @@ ol.markdown-list > li::before {
 }
 @media (width >= 40rem) and (pointer: fine) {
   .diff-toolbar {
-    height: 28px;
     min-height: 28px;
   }
   .diff-toolbar button,
@@ -1221,8 +1264,8 @@ ol.markdown-list > li::before {
   place-items: center;
   font-size: 12px;
   line-height: 16px;
+  /* The quiet ink at full strength: at 70% it measured 4.05:1 in the dark theme. */
   color: var(--dialog-hint);
-  opacity: 0.7;
 }
 .diff-draft textarea {
   font-size: var(--text-body);
@@ -1274,7 +1317,12 @@ ol.markdown-list > li::before {
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);
 }
+/* The toolbar stands in a pane of any width. When the scope and the controls do not
+   fit one row, the controls take the next row, and the scope keeps its words (user
+   report: at 820px the scope read "Uncom"). */
 .diff-toolbar {
+  flex-wrap: wrap;
+  row-gap: 4px;
   overflow-x: auto;
 }
 

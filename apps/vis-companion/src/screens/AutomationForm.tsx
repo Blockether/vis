@@ -43,7 +43,7 @@ import {
 } from '../lib/automations';
 
 const TEXT_AREA =
-  'min-h-32 w-full resize-y rounded-none border border-edge bg-input p-3 font-mono text-body text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted';
+  'min-h-32 w-full resize-y rounded-none border border-field-edge bg-input p-3 font-mono text-body text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted';
 
 /** Codes, paths and addresses: no automatic capitals or corrections. */
 const CODE_INPUT = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } as const;

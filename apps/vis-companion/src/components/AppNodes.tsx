@@ -81,7 +81,7 @@ export interface AppNodeActions {
 }
 
 const TEXTAREA =
-  'block w-full resize-y border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted';
+  'block w-full resize-y border border-field-edge bg-input px-2.5 py-1 font-mono text-ui text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted';
 
 const STATUS_INK: Record<AppActionStatus, string> = {
   idle: 'text-dialog-hint',

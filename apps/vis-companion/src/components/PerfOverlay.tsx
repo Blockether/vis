@@ -85,7 +85,9 @@ function HeatCell({ value, peak, metric }: { value: number; peak: number; metric
   return (
     <td
       className="border border-edge px-1.5 py-0.5 text-right"
-      style={{ background: `color-mix(in srgb, var(--color-err) ${Math.round(8 + heat * 72)}%, transparent)` }}
+      // At most 28% of the red: at 80% the number on it measured 3.56:1 in the dark
+      // theme and 1.6:1 in the high-contrast theme.
+      style={{ background: `color-mix(in srgb, var(--color-err) ${Math.round(8 + heat * 20)}%, transparent)` }}
       title={metric === 'bytes' ? `${value.toLocaleString()} bytes` : `${value.toLocaleString()} items`}
     >
       {metric === 'bytes' ? formatBytes(value) : value.toLocaleString()}

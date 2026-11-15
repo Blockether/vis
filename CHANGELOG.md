@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Companion: `npm run storybook:contrast` takes `CONTRAST_THEMES` (a list of themes to check) and `CONTRAST_REPORT` (a file for all failures as JSON).
 - Companion: the menu of the session header lists each session app by its name. A press opens the app, and a press on the open app closes it. Before, a grid button opened a dialog with the apps. The command `session-apps` and its key open that menu.
 - Python SDK: session groups. `client.groups()` lists the groups, `client.group(name)` gets a group or makes it, and `client.create_group`, `client.update_group` and `client.delete_group` change them. `client.create_session(group=...)` makes a session in a group, and `Session.set_group` moves a session into a group or out of it. Each group is a typed `SessionGroup`.
 
@@ -19,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Drafts: Vis ignores a `draft` key that an older version stored in the machine settings, in the project settings of `.vis/config.yml` or in the settings of a group or a session. The next save of those settings removes the key. In a `vis.yml` or `~/.vis/config.yml` that a person writes, Vis reports the key by name and does not apply the access settings of that file. Remove the key there.
 
 ### Fixed
+- Companion: the header of a session app has the height of the session header, so its close button is level with the header icons. Before, the button was 4 px higher.
+- Companion: the toolbar of the Review app wraps on a narrow panel. Before, at a width of 820 px the scope selector showed only a part of its text.
+- Themes: the text of the memory overlay, of "No changes" in a diff, of iteration headers and of blocked links has a contrast of 4.5:1 or more in each theme. The edge of an input field has a contrast of 3:1 or more. Before, the lowest values were 1.6:1 for text and 1.13:1 for a field edge.
 - Providers: price a fallback response with the rates of the model that answered. A refusal that contains text or a partial tool call now stays a refusal, not a successful response. Anthropic sessions keep the refusal text in history but return no tool calls to execute. Needs svar 0.7.240.
 - Providers: when a Claude 5 model declines a request (`stop_reason: refusal`), Anthropic serves the request on its fallback model in the same call. Vis asks for the default fallback of the provider on Anthropic and on the Anthropic coding plan, and keeps no model list. The turn note names the model that answered. The `refusal_fallback` setting turns this off. Before, Vis sent the request again to Claude Opus 4.8. The coding plan does not list that model, so the refusal stopped the turn. Needs svar 0.7.239.
 - Companion: the Send bar of the Review app shows only when there is a saved draft, a send in progress or a receipt, and it has the same padding as the diff. Before, an empty Send button stayed at the left edge of the panel.

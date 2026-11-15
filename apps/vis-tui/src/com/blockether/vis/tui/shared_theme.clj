@@ -289,7 +289,8 @@
    :link-chrome-url-fg [125 211 252]
    :link-chrome-hover-bg [30 41 59]
    :link-chrome-hover-fg [191 219 254]
-   :link-chrome-blocked-fg [100 116 139]
+   ;; 5.21:1 on the ground and 4.61:1 on a panel. [100 116 139] measured 4.06:1.
+   :link-chrome-blocked-fg [116 134 161]
    :footer-fg [203 213 225]
    :footer-fg-muted [148 163 184]
    :footer-fg-strong [241 245 249]
@@ -445,7 +446,8 @@
      :code-result-fg [243 244 246]
      :code-error-result-fg [252 165 165]
      :code-border-fg [70 74 84]
-     :iteration-header-fg [120 120 120]
+     ;; 4.99:1 on its band. The former [120 120 120] measured 4.01:1 for 10px text.
+     :iteration-header-fg [132 136 146]
      :iteration-header-bg [22 24 32]
      :answer-sep-fg [70 74 84]
      :answer-sep-bg [15 17 23]
@@ -464,7 +466,8 @@
      :link-chrome-url-fg [130 200 220]
      :link-chrome-hover-bg [30 40 50]
      :link-chrome-hover-fg [140 230 250]
-     :link-chrome-blocked-fg [70 74 84]
+     ;; A blocked link is still text to read: 5.32:1. The border ink measured 2.13:1.
+     :link-chrome-blocked-fg [132 136 146]
      :footer-fg [209 213 219]
      :footer-fg-muted [156 163 175]
      :footer-fg-strong [243 244 246]

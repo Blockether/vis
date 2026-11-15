@@ -7,7 +7,7 @@
  * faithful to how the app first paints a selected theme.
  */
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { extname, resolve, sep } from 'node:path';
 import { chromium } from 'playwright';
@@ -18,8 +18,16 @@ const [axeSource, themeCatalog] = await Promise.all([
   readFile(resolve('src/lib/themes.generated.ts'), 'utf8'),
 ]);
 const staticRoot = resolve(process.argv[2] ?? 'storybook-static');
-const themes = [...themeCatalog.matchAll(/\bid: '([^']+)'/g)].map((match) => match[1]);
-if (themes.length === 0) throw new Error('The generated application theme catalog is empty.');
+const shipped = [...themeCatalog.matchAll(/\bid: '([^']+)'/g)].map((match) => match[1]);
+if (shipped.length === 0) throw new Error('The generated application theme catalog is empty.');
+// `CONTRAST_THEMES=blockether-dark,paper` checks only those themes: one theme takes
+// about three minutes. `CONTRAST_REPORT=<file>` writes every failure as JSON; the
+// console shows only the first hundred.
+const wanted = (process.env.CONTRAST_THEMES ?? '').split(',').filter(Boolean);
+const unknown = wanted.filter((theme) => !shipped.includes(theme));
+if (unknown.length > 0) throw new Error(`Unknown theme: ${unknown.join(', ')}`);
+const themes = wanted.length > 0 ? wanted : shipped;
+const reportFile = process.env.CONTRAST_REPORT;
 const mime = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -240,6 +248,7 @@ try {
   await Promise.all(Array.from({ length: 6 }, () => worker()));
   await context.close();
 
+  if (reportFile) await writeFile(reportFile, JSON.stringify(failures, null, 1));
   if (failures.length > 0) {
     for (const failure of failures.slice(0, 100)) {
       console.error(

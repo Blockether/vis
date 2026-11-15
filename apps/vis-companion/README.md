@@ -87,7 +87,9 @@ know, and keep a test in a single layer:
   `npm run storybook`. After you change a colour or a theme, run
   `npm run storybook:contrast`: it builds Storybook and checks every story in
   every theme with axe in Chromium. That takes about half an hour, so it is
-  not part of `npm test`.
+  not part of `npm test`. `CONTRAST_THEMES=blockether-dark,high-contrast-dark`
+  checks only those themes, and `CONTRAST_REPORT=report.json` writes every
+  failure to a file.
 
 Do not test copy. A test that only checks a label, a heading, a hint or a
 message breaks on every change of wording and finds no bug. Use text only as
