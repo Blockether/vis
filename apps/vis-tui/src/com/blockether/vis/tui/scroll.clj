@@ -15,6 +15,9 @@
      {:mode :follow, :pos p}        ;;   …easing down toward the bottom
      {:mode :at, :offset n}         ;; parked at row n (user scrolled up)
      {:mode :at, :offset n, :pos p} ;;   …easing toward row n
+     {:mode :at, :offset 0, :owed r} ;; at the first LOADED row, `r` rows (or
+                                     ;;   `:all`) of scroll-up still to honour
+                                     ;;   when an older page lands
 
    Two orthogonal concerns, cleanly separated:
 
@@ -46,6 +49,25 @@
   "A concrete parked intent at row `offset` (snapped, no in-flight ease)."
   [offset]
   {:mode :at :offset (max 0 (long offset))})
+
+(defn top
+  "Emacs M-< intent. With `older?` (the session has turns that are not loaded),
+   row 0 is only the first LOADED row: `:owed :all` keeps the view at the top
+   through every older page until the real first turn is on screen."
+  [older?]
+  (cond-> (parked 0)
+    older?
+    (assoc :owed :all)))
+
+(defn owed?
+  "True while scroll-up intent waits for an older page (see `up`)."
+  [sc]
+  (some? (:owed sc)))
+
+(defn settle-owed
+  "Drop the waiting scroll-up intent: no older page will come for it."
+  [sc]
+  (dissoc sc :owed))
 
 (defn- norm
   "Tolerate a missing/legacy `:scroll` by defaulting to FOLLOW."
@@ -217,21 +239,39 @@
    viewport backward, visibly fighting the user. `:pos` is seeded from the
    display row only when no ease is already in flight, so a new ease begins
    from where the view currently sits while a continuing ease keeps its
-   origin."
-  [sc ^long amount ^long max-s]
-  (let [sc
-        (norm sc)
+   origin.
 
-        cur
-        (displayed sc max-s)
+   Row 0 is the first LOADED row. `owe-cap` is how many rows beyond it the caller
+   lets the reader keep as `:owed` (0 when the session has no older turns): the
+   part of the gesture that the clamp at row 0 would drop. `shift-prepended` pays
+   it out when the older page lands. The cap bounds how far the view still moves
+   after the reader stops."
+  ([sc ^long amount ^long max-s] (up sc amount max-s 0))
+  ([sc ^long amount ^long max-s ^long owe-cap]
+   (let [sc
+         (norm sc)
 
-        base
-        (if (= :follow (:mode sc)) max-s (long (:offset sc)))
+         cur
+         (displayed sc max-s)
 
-        t
-        (max 0 (- base amount))]
+         base
+         (if (= :follow (:mode sc)) max-s (long (:offset sc)))
 
-    {:mode :at :offset t :pos (or (:pos sc) cur)}))
+         t
+         (- base amount)
+
+         owed
+         (:owed sc)
+
+         owed
+         (cond (not (pos? owe-cap)) nil
+               (= :all owed) :all
+               :else (let [rows (min owe-cap (+ (long (or owed 0)) (max 0 (- t))))]
+                       (when (pos? rows) rows)))]
+
+     (cond-> {:mode :at :offset (max 0 t) :pos (or (:pos sc) cur)}
+       owed
+       (assoc :owed owed)))))
 
 (defn down
   "Wheel/key scroll DOWN by `amount`. Reaching the bottom re-arms FOLLOW
@@ -315,11 +355,30 @@
    without this the viewport jumps backwards in time by exactly one page.
 
    FOLLOW needs nothing: its desired row IS the (new) bottom. Any in-flight
-   ease (`:pos`) shifts too, so an animation mid-load lands where it aimed."
+   ease (`:pos`) shifts too, so an animation mid-load lands where it aimed.
+
+   `:owed` rows (see `up`) are paid out of the new page: the target moves up by
+   them while the display row stays on the line the reader sees, so the view
+   eases into the page. `:owed :all` (see `top`) keeps the target at row 0 and
+   snaps there, as M-< does."
   [sc ^long delta]
   (let [sc (norm sc)]
     (if (or (zero? delta) (not= :at (:mode sc)))
       sc
-      (cond-> (update sc :offset + delta)
-        (:pos sc)
-        (update :pos + delta)))))
+      (let [owed (:owed sc)
+            offset (+ (long (:offset sc)) delta)
+            paid (long (cond (= :all owed) offset
+                             owed (min (long owed) offset)
+                             :else 0))
+            left (cond (= :all owed) :all
+                       (and owed (< paid (long owed))) (- (long owed) paid))
+            pos (cond (= :all owed) nil
+                      (:pos sc) (+ (long (:pos sc)) delta)
+                      (pos? paid) offset)]
+
+        (cond-> {:mode :at :offset (- offset paid)}
+          pos
+          (assoc :pos pos)
+
+          left
+          (assoc :owed left))))))

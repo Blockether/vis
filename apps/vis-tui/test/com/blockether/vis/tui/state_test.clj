@@ -1146,6 +1146,95 @@
                                [:scroll-up 290 1000 30]))))
           ;; still far from the top -> no request
           (expect (nil? (:fx ((ev :scroll-up) db [:scroll-up 10 1000 30]))))))
+    (it "the loader stays several screens ahead of a reader who scrolls up"
+        ;; One screen of margin let a fast wheel reach row 0 before the page landed.
+        (let [db {:scroll (scroll/parked 100)
+                  :session {:id "s1" :history-cursor {:offset 40 :total 100 :has-more true}}}]
+          (expect (= [[:load-older-history "s1" 40]]
+                     (:fx ((ev :scroll-up) db [:scroll-up 3 1000 30]))))))
+    (it "scroll-up past the first loaded row is paid when the older page lands"
+        (let [db {:scroll (scroll/parked 5)
+                  :messages [:m1]
+                  :layout {:total-h 400 :inner-h 30}
+                  :session {:id "s1" :history-cursor {:offset 40 :total 100 :has-more true}}}
+              up (:db ((ev :scroll-up) db [:scroll-up 28 400 30]))
+              page {:messages [:o1] :offset 30 :total 100 :has-more true}
+              r ((ev :prepend-history) up [:prepend-history "s1" page 200])]
+
+          (expect (= 0 (:offset (:scroll up))))
+          ;; 28 rows asked, 5 were loaded: the other 23 come out of the page
+          (expect (= 177 (:offset (:scroll (:db r)))))
+          ;; without older turns the same key stops at row 0 and keeps nothing
+          (expect (= (scroll/parked 0)
+                     (dissoc (:scroll (:db
+                                        ((ev :scroll-up)
+                                          (assoc-in db [:session :history-cursor :has-more] false)
+                                          [:scroll-up 28 400 30])))
+                       :pos)))
+          ;; a fetch that fails ends the wait
+          (expect (not (scroll/owed? (:scroll ((ev :older-history-loading)
+                                                up
+                                                [:older-history-loading "s1" false])))))))
+    (it "prepend-history asks for the next page while the reader is still near the top"
+        (let [db {:scroll (scroll/parked 10)
+                  :messages [:m1]
+                  :layout {:total-h 400 :inner-h 30}
+                  :session {:id "s1"
+                            :history-loading? true
+                            :history-cursor {:offset 40 :total 100 :has-more true}}}
+              page {:messages [:o1] :offset 30 :total 100 :has-more true}
+              near ((ev :prepend-history) db [:prepend-history "s1" page 60])]
+
+          (expect (= [[:load-older-history "s1" 30]] (:fx near)))
+          (expect (true? (get-in near [:db :session :history-loading?])))
+          ;; a tall page puts the reader outside the margin: no request
+          (expect (nil? (:fx ((ev :prepend-history) db [:prepend-history "s1" page 500]))))
+          ;; a reader at the live bottom did not ask for history
+          (expect (nil? (:fx ((ev :prepend-history)
+                               (assoc db :scroll scroll/follow)
+                               [:prepend-history "s1" page 60]))))
+          ;; the first turn of the session is loaded: nothing to ask for
+          (expect (nil? (:fx ((ev :prepend-history)
+                               db
+                               [:prepend-history "s1"
+                                (assoc page
+                                  :offset 0
+                                  :has-more false) 60]))))))
+    (it "M-< loads page after page and stops on the first turn of the session"
+        (let [db {:scroll scroll/follow
+                  :messages [:m1]
+                  :layout {:total-h 400 :inner-h 30}
+                  :session {:id "s1" :history-cursor {:offset 40 :total 100 :has-more true}}}
+              top ((ev :scroll-to-top) db [:scroll-to-top])
+              page {:messages [:o1] :offset 30 :total 100 :has-more true}
+              mid ((ev :prepend-history) (:db top) [:prepend-history "s1" page 900])
+              end ((ev :prepend-history)
+                    (:db mid)
+                    [:prepend-history "s1"
+                     (assoc page
+                       :offset 0
+                       :has-more false) 900])]
+
+          (expect (= [[:load-older-history "s1" 40]] (:fx top)))
+          ;; a page of any height keeps the view on row 0 and asks for the next
+          (expect (= 0 (:offset (:scroll (:db mid)))))
+          (expect (= [[:load-older-history "s1" 30]] (:fx mid)))
+          (expect (nil? (:fx end)))
+          (expect (= (scroll/parked 0) (:scroll (:db end))))))
+    (it "prepend-history moves the published layout height with the page"
+        ;; The loaded tail was shorter than two screens. The next frame clamps the
+        ;; scroll to the published height, so a stale height threw the view from
+        ;; the row the reader held back to the old top.
+        (let [db {:scroll (scroll/parked 20)
+                  :messages [:m1]
+                  :layout {:total-h 66 :inner-h 44 :eff-scroll 20}
+                  :session {:id "s1" :history-cursor {:offset 40 :total 100 :has-more true}}}
+              page {:messages [:o1] :offset 30 :total 100 :has-more false}
+              r (:db ((ev :prepend-history) db [:prepend-history "s1" page 149]))
+              max-s (- (long (get-in r [:layout :total-h])) 44)]
+
+          (expect (= 169 (scroll/layout-offset (:scroll r) max-s)))
+          (expect (= 169 (get-in r [:layout :eff-scroll])))))
     (it "prepend-history splices older turns in and holds the viewport still"
         (let [db {:scroll (scroll/parked 10)
                   :messages [:m1 :m2]
@@ -1153,7 +1242,7 @@
                             :history-loading? true
                             :history-cursor {:offset 40 :total 100 :has-more true}}}
               page {:messages [:o1 :o2] :offset 30 :total 100 :has-more true}
-              r ((ev :prepend-history) db [:prepend-history "s1" page 120])]
+              r (:db ((ev :prepend-history) db [:prepend-history "s1" page 120]))]
 
           (expect (= [:o1 :o2 :m1 :m2] (:messages r)))
           ;; the read bubble stays put: offset grows by the measured page height
@@ -1161,7 +1250,7 @@
           (expect (= {:offset 30 :total 100 :has-more true} (get-in r [:session :history-cursor])))
           (expect (false? (get-in r [:session :history-loading?])))
           ;; a page for a session this tab no longer shows is dropped whole
-          (expect (= db ((ev :prepend-history) db [:prepend-history "other" page 120])))))
+          (expect (= {:db db} ((ev :prepend-history) db [:prepend-history "other" page 120])))))
     (it "prepend-history shifts semantic anchors exactly once for a short page"
         ;; #248: a page shorter than the viewport leaves stale anchors visible,
         ;; so the next layout used to apply the measured prepend shift twice.
@@ -1179,7 +1268,7 @@
                   :layout before
                   :session {:id "s1"}}
               page {:messages older :offset 0 :total 2 :has-more false}
-              prepended ((ev :prepend-history) db [:prepend-history "s1" page shift])
+              prepended (:db ((ev :prepend-history) db [:prepend-history "s1" page shift]))
               after (virtual/layout (:messages prepended)
                                     180
                                     {}
@@ -1197,7 +1286,7 @@
           (expect (= (+ (:eff-scroll before) shift) (:eff-scroll after)))
           (expect (= (- (:row anchor) (:eff-scroll before))
                      (- (:row matching) (:eff-scroll after))))
-          (expect (= db ((ev :prepend-history) db [:prepend-history "stale" page shift])))))
+          (expect (= {:db db} ((ev :prepend-history) db [:prepend-history "stale" page shift])))))
     (it "scroll-down reaching the bottom re-arms FOLLOW"
         (let [r ((ev :scroll-down) {:scroll (scroll/parked 90)} [:scroll-down 30 200 100])]
           ;; max-s 100; 90+30 reaches past 100 -> follow (eases the rest).

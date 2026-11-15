@@ -161,3 +161,42 @@
                    (expect (= 3096 (scroll/desired shifted 3099)))
                    (expect (= 3093 (scroll/displayed shifted 3099)))
                    (expect (= scroll/follow (scroll/shift-prepended scroll/follow 1896))))))
+
+(defdescribe scroll-up-past-the-first-loaded-row-is-kept-for-the-older-page
+             (it "the rows that the clamp at row 0 drops wait for the older page"
+                 ;; 30 rows asked, 10 loaded rows above: 20 wait, and the page pays them.
+                 (let [sc
+                       (scroll/up (scroll/parked 10) 30 500 96)
+
+                       landed
+                       (scroll/shift-prepended sc 200)]
+
+                   (expect (= 0 (scroll/desired sc 500)))
+                   (expect (= 20 (:owed sc)))
+                   (expect (= 180 (scroll/desired landed 700)))
+                   ;; the display row stays on the line the reader sees, then eases up
+                   (expect (= 210 (scroll/displayed landed 700)))
+                   (expect (not (scroll/owed? landed)))))
+             (it "a session with no older turns keeps nothing, and the wait is bounded"
+                 (expect (not (scroll/owed? (scroll/up (scroll/parked 10) 30 500))))
+                 (expect (= 96
+                            (:owed (-> (scroll/parked 0)
+                                       (scroll/up 80 500 96)
+                                       (scroll/up 80 500 96))))))
+             (it "a short page pays a part and the rest waits for the next page"
+                 (let [landed (scroll/shift-prepended (scroll/up (scroll/parked 0) 90 500 96) 40)]
+                   (expect (= 0 (scroll/desired landed 540)))
+                   (expect (= 50 (:owed landed)))))
+             (it "M-< holds row 0 through every older page"
+                 (let [sc
+                       (scroll/top true)
+
+                       landed
+                       (scroll/shift-prepended sc 200)]
+
+                   (expect (= 0 (scroll/displayed landed 700)))
+                   (expect (scroll/owed? landed))
+                   (expect (= (scroll/parked 0) (scroll/settle-owed landed)))
+                   (expect (= (scroll/parked 0) (scroll/top false)))
+                   ;; a move down is a new intent
+                   (expect (not (scroll/owed? (scroll/down landed 5 700)))))))

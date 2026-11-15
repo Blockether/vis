@@ -4747,13 +4747,24 @@
                   (log-scroll! :scroll-to-bottom pre (scroll-snapshot sc) {})
                   (assoc db :scroll sc))))
 
+(def ^:private ^:const history-margin-screens
+  "Screens of loaded transcript the loader keeps above a reader who scrolls up.
+   One page takes 0.1 s to 0.3 s to fetch and measure. A margin of one screen let
+   a fast wheel reach row 0 before the page landed, and the view stopped there."
+  4)
+
+(def ^:private ^:const history-owed-screens
+  "Screens of scroll-up a reader at row 0 keeps while the older page loads."
+  2)
+
 (defn- older-history-request
   "Effect vector for the lazy scroll-up loader, or nil.
 
    The session opened on its NEWEST turns only (`chat/resume-tail-turns`), so
-   the top of `:messages` is not the top of the session. Once the viewport comes
-   within one screen of that top and the cursor says older turns exist, ask for
-   ONE page. `:history-loading?` (set by the caller) is the in-flight latch, so a
+   the top of `:messages` is not the top of the session. Once a reader who
+   scrolled up comes within `history-margin-screens` of that top, or waits there
+   for more (`scroll/owed?`), and the cursor says older turns exist, ask for ONE
+   page. `:history-loading?` (set by the caller) is the in-flight latch, so a
    fast wheel-up cannot queue a dozen identical fetches."
   [db sc ^long max-s ^long inner-h]
   (let [session
@@ -4765,21 +4776,29 @@
     (when (and (:id session)
                (:has-more cursor)
                (not (:history-loading? session))
-               (<= (scroll/desired sc max-s) (max 1 inner-h)))
+               (scroll/scrolled-up? sc)
+               (or (scroll/owed? sc)
+                   (<= (scroll/desired sc max-s) (* history-margin-screens (max 1 inner-h)))))
       [:load-older-history (:id session) (long (or (:offset cursor) 0))])))
+
+(defn- older-turns?
+  "True when the session has turns above the first loaded message."
+  [db]
+  (boolean (get-in db [:session :history-cursor :has-more])))
 
 (reg-event-fx
   :scroll-to-top
   ;; Emacs M-< (beginning-of-buffer): park at the very top. The layout
   ;; clamps the offset, so row 0 is the first LOADED message — which, in a
-  ;; lazily paged session, still has older turns above it, hence the loader
-  ;; kick.
+  ;; lazily paged session, still has older turns above it. `scroll/top` keeps
+  ;; the intent, and `:prepend-history` asks for page after page until the
+  ;; first turn of the session is on screen.
   (fn [db _]
     (let [pre
           (scroll-pre! db)
 
           sc
-          (scroll/parked 0)
+          (scroll/top (older-turns? db))
 
           load
           (older-history-request db sc 0 1)
@@ -4804,46 +4823,82 @@
               ;; Latch for the lazy scroll-up loader: ONE in-flight fetch per tab, so
               ;; a fast wheel-up cannot queue a dozen identical page requests. Scoped
               ;; by session id — a tab switch mid-fetch must not flip the wrong tab's
-              ;; flag.
+              ;; flag. A fetch that ended with no page (`loading?` false) also ends
+              ;; the wait of the scroll-up rows that it was to pay.
               (fn [db [_ session-id loading?]]
                 (if (= (str session-id) (str (get-in db [:session :id])))
-                  (assoc-in db [:session :history-loading?] (boolean loading?))
+                  (cond-> (assoc-in db [:session :history-loading?] (boolean loading?))
+                    (and (not loading?) (scroll/owed? (:scroll db)))
+                    (update :scroll scroll/settle-owed))
                   db)))
 
-(reg-event-db :prepend-history
-              ;; An OLDER page of the transcript landed (the session opened on its
-              ;; newest turns only). Splice it in ABOVE the current messages and shift
-              ;; the scroll by the page's MEASURED height so the bubble the user is
-              ;; reading stays exactly where it is. Shift retained semantic anchors
-              ;; into the same document coordinates so layout does not apply the
-              ;; prepend correction a second time.
-              ;;
-              ;; Dropped when the tab has moved on to another session: the fetch is
-              ;; async and its result is only ever valid for the session it was for.
-              (fn [db [_ session-id page shift]]
-                (if-not (= (str session-id) (str (get-in db [:session :id])))
-                  db
-                  (let [older
-                        (vec (:messages page))
+(reg-event-fx
+  :prepend-history
+  ;; An OLDER page of the transcript landed (the session opened on its
+  ;; newest turns only). Splice it in ABOVE the current messages and shift
+  ;; the scroll by the page's MEASURED height so the bubble the user is
+  ;; reading stays exactly where it is. Shift the published layout (its
+  ;; height and its semantic anchors) into the same document coordinates:
+  ;; the next frame clamps the scroll to that height, and a stale height
+  ;; threw the view back toward the old top.
+  ;;
+  ;; A reader who is still near the new top, or who waits there, gets the
+  ;; next page at once: the loader does not wait for another key.
+  ;;
+  ;; Dropped when the tab has moved on to another session: the fetch is
+  ;; async and its result is only ever valid for the session it was for.
+  (fn [db [_ session-id page shift]]
+    (if-not (= (str session-id) (str (get-in db [:session :id])))
+      {:db db}
+      (let [older
+            (vec (:messages page))
 
-                        shift
-                        (long (or shift 0))]
+            shift
+            (long (or shift 0))
 
-                    (-> db
-                        (update :messages #(into older (or % [])))
-                        ;; Keep the newest 20 prompts and preserve the selected entry.
-                        (prepend-input-history older)
-                        (update :session assoc
-                                :history-loading? false
-                                :history-cursor {:offset (:offset page)
-                                                 :total (:total page)
-                                                 :has-more (boolean (:has-more page))})
-                        (update :scroll scroll/shift-prepended shift)
-                        (cond->
-                          (seq (get-in db [:layout :row-anchors]))
-                          (update-in [:layout :row-anchors]
-                                     (fn [anchors]
-                                       (mapv #(update % :row + shift) anchors)))))))))
+            has-more?
+            (boolean (:has-more page))
+
+            sc
+            (cond-> (scroll/shift-prepended (:scroll db) shift)
+              (not has-more?)
+              scroll/settle-owed)
+
+            db'
+            (-> db
+                (update :messages #(into older (or % [])))
+                ;; Keep the newest 20 prompts and preserve the selected entry.
+                (prepend-input-history older)
+                (update :session assoc
+                        :history-loading? false
+                        :history-cursor
+                        {:offset (:offset page) :total (:total page) :has-more has-more?})
+                (assoc :scroll sc)
+                (cond->
+                  (:total-h (:layout db))
+                  (update-in [:layout :total-h] + shift)
+
+                  (:eff-scroll (:layout db))
+                  (update-in [:layout :eff-scroll] + shift)
+
+                  (seq (get-in db [:layout :row-anchors]))
+                  (update-in [:layout :row-anchors]
+                             (fn [anchors]
+                               (mapv #(update % :row + shift) anchors)))))
+
+            inner-h
+            (long (or (get-in db [:layout :inner-h]) 1))
+
+            ;; Before the first paint there is no height to clamp to.
+            max-s
+            (if-some [total-h (get-in db' [:layout :total-h])]
+              (max 0 (- (long total-h) inner-h))
+              Long/MAX_VALUE)
+
+            load
+            (older-history-request db' sc max-s inner-h)]
+
+        (if load {:db (assoc-in db' [:session :history-loading?] true) :fx [load]} {:db db'})))))
 
 (reg-event-db :ease-scroll
               ;; Render-loop pulse: advance the on-screen position one ease-out step
@@ -5049,7 +5104,10 @@
           (scroll-pre! db)
 
           sc
-          (scroll/up (:scroll db) (long amount) max-s)
+          (scroll/up (:scroll db)
+                     (long amount)
+                     max-s
+                     (if (older-turns? db) (* history-owed-screens (long inner-h)) 0))
 
           load
           (older-history-request db sc max-s (long inner-h))

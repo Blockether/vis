@@ -11055,7 +11055,8 @@
        (state/reg-fx
          :load-older-history
          ;; Lazy scroll-up paging. The session opened on its NEWEST turns only, and
-         ;; the viewport has come within a screen of the top of what is loaded.
+         ;; the reader is near the top of what is loaded, or waits there
+         ;; (`state/older-history-request`).
          ;;
          ;; Fetch ONE older page on a worker (never the input or render thread),
          ;; MEASURE it with the same warm the painter's height cache reads, and
