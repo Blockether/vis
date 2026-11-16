@@ -1,7 +1,8 @@
 (ns com.blockether.vis.test-selection
   "Lazytest hook of the `:test` alias. On a developer machine it skips
    `release-bundle-test` when no file that it runs or reads has changed. CI and
-   `VIS_TEST_ALL=1` run it. `VIS_TEST_PART` runs one of the two parts of the suite,
+   `VIS_TEST_ALL=1` run it. CI with `VIS_TEST_BASE`, the last green commit, skips it
+   in the same way. `VIS_TEST_PART` runs one of the two parts of the suite,
    so two CI jobs share it. A `--namespace` or `--var` selection runs as given."
   (:require [clojure.java.shell :as sh]
             [clojure.string :as str]
@@ -21,10 +22,10 @@
     (when (zero? (long exit)) (remove str/blank? (str/split-lines out)))))
 
 (defn- changed-paths
-  "Paths that differ from the upstream branch: commits, staged and unstaged changes,
-   and untracked files. Nil when Git cannot tell."
-  []
-  (when-let [diff (git-lines "diff" "--name-only" "@{upstream}")]
+  "Paths that differ from the commit `base`, or from the upstream branch without one:
+   commits, staged and unstaged changes, and untracked files. Nil when Git cannot tell."
+  [base]
+  (when-let [diff (git-lines "diff" "--name-only" (if (str/blank? base) "@{upstream}" base))]
     (when-let [untracked (git-lines "ls-files" "--others" "--exclude-standard")]
       (concat diff untracked))))
 
@@ -35,11 +36,12 @@
 
 (defn skip-release?
   "True when the run may skip `release-bundle-test`. `changed` is nil when Git
-   cannot tell what changed; then the test runs."
+   cannot tell what changed; then the test runs. CI runs it, unless `VIS_TEST_BASE`
+   names the commit that `changed` compares with."
   [config env changed]
   (not (or (seq (:ns-filter config))
            (seq (:var-filter config))
-           (not (str/blank? (get env "CI")))
+           (and (not (str/blank? (get env "CI"))) (str/blank? (get env "VIS_TEST_BASE")))
            (= "1" (get env "VIS_TEST_ALL"))
            (nil? changed)
            (some release-input? changed))))
@@ -79,9 +81,11 @@
                                             %))))))
 
 (hooks/defhook release-scripts
-               "Skip `release-bundle-test` locally when its inputs are unchanged."
+               "Skip `release-bundle-test` when its inputs are unchanged."
                (pre-test-run [config m]
-                             (if (skip-release? config (System/getenv) (changed-paths))
+                             (if (skip-release? config
+                                                (System/getenv)
+                                                (changed-paths (System/getenv "VIS_TEST_BASE")))
                                (do (println (str "Skipped "
                                                  release-ns
                                                  ": no change under bin/, .github/, installer/, "

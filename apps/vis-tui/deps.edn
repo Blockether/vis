@@ -9,8 +9,13 @@
                          :extra-paths ["build" "test"]
                          :main-opts ["-m" "vis-tui.review"]}
            :run {:main-opts ["-m" "com.blockether.vis.tui.main"]}
+           ;; `com.blockether/imaging` downloads its native library through tools.deps when
+           ;; the machine has none in its cache, so the suite passes on a clean machine.
            :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}
-                               org.jcodec/jcodec {:mvn/version "0.2.5"}}
+                               org.jcodec/jcodec {:mvn/version "0.2.5"}
+                               org.clojure/tools.deps
+                               {:exclusions [org.clojure/tools.deps.maven-s3-transporter]
+                                :mvn/version "0.31.1646"}}
                   :extra-paths ["test"]
                   :jvm-opts ["-Dvis.logs.dir=target/vis-logs-test" "--enable-native-access=ALL-UNNAMED"]
                   :main-opts ["-m" "lazytest.main" "--hook"

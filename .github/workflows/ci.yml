@@ -24,7 +24,7 @@ jobs:
   # fail-fast false so each OS reports independently. Windows is not supported.
   #
   # Linux is the slowest runner, so two Linux jobs share the suite: `python` runs the
-  # namespaces of the embedded Python and the TUI suite, `other` runs the rest.
+  # namespaces of the embedded Python, `other` runs the rest.
   # `VIS_TEST_PART` selects the part in `test_selection.clj`. macOS runs all in one job.
   #
   # Only main pushes use the local Mac; all pull requests stay on hosted runners.
@@ -160,6 +160,20 @@ jobs:
           uv pip install --python "$RUNNER_TEMP/vis-project-pytest/bin/python" pytest
           "$RUNNER_TEMP/vis-project-pytest/bin/python" -m pytest --version
           echo "$RUNNER_TEMP/vis-project-pytest/bin" >> "$GITHUB_PATH"
+      # A main push skips `release-bundle-test` when no file that it reads differs from
+      # the last green main commit. `test_selection.clj` has the paths. A release call, a
+      # pull request and a run without that commit run the test.
+      - name: Fetch the last green main commit
+        id: green
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
+            -q '.workflow_runs[0].head_sha // empty' || true)"
+          if [ -n "$sha" ] && git fetch --quiet --depth=1 origin "$sha"; then
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must
@@ -172,10 +186,62 @@ jobs:
           # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
           JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }} ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
           VIS_TEST_PART: ${{ matrix.part }}
+          VIS_TEST_BASE: ${{ steps.green.outputs.sha }}
         # One JVM runs every namespace of the part in turn.
         run: clojure -M:test
+
+  # The TUI is its own project and never loads the engine, so its suite has its own job
+  # and does not wait for the engine suite.
+  tui:
+    name: tui / ${{ matrix.name }}
+    runs-on: ${{ matrix.host }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux, host: ubuntu-latest }
+          - name: macos
+            host: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","ARM64","vis-macos-arm64"]') || 'macos-26' }}
+    steps:
+      # CI fixtures must never overwrite the self-hosted user's Vis state.
+      # A self-hosted runner can keep empty directories of an earlier home. An empty
+      # package directory imports as a namespace package and hides a missing install.
+      - name: Create isolated CI home
+        run: |
+          rm -rf "$RUNNER_TEMP/vis-ci-home"
+          mkdir -p "$RUNNER_TEMP/vis-ci-home"
+          echo "HOME=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
+          # The classpath resolver and execution JVM must use the same home.
+          echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
+      # Every workflow shares the self-hosted workspace. Git cannot unshallow a
+      # treeless partial clone there, so start that workspace from a fresh clone.
+      - name: Drop a partial clone from the shared workspace
+        if: runner.environment == 'self-hosted'
+        run: |
+          config="$GITHUB_WORKSPACE/.git/config"
+          if [ -f "$config" ] && git config --file "$config" --get remote.origin.promisor >/dev/null; then
+            rm -rf "$GITHUB_WORKSPACE/.git"
+          fi
+      - uses: actions/checkout@v7
+      # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free
+      # download channel) and setup-graalvm's CE resolver predates the 25.1
+      # innovation naming, so we install the pinned graalvm-ce-builds asset
+      # directly. Bump the version inside the action together with
+      # `.graalvm-version` — native-image and its metadata are version-bound.
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Run standalone TUI suite
-        if: matrix.part != 'other'
         working-directory: apps/vis-tui
         run: clojure -X:deps prep && clojure -M:test
 

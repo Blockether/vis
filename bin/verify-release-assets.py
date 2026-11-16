@@ -77,6 +77,8 @@ def required_recovery_checks() -> set[str]:
             "tests / linux python",
             "tests / linux other",
             "tests / macos",
+            "tui / linux",
+            "tui / macos",
             "build / aot uberjar",
         )
     )
