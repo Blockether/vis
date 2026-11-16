@@ -1596,7 +1596,7 @@ vis_do_switch() {
 # ── Desktop companion ────────────────────────────────────────────────────────
 vis_desktop_usage() {
   cat <<'EOF'
-Usage: vis-agent desktop [--track release|beta|dev] [--update]
+Usage: vis-agent desktop [--track release|beta|dev] [--update] [--debug]
                          [--no-gateway | --gateway HOST [--gateway-token TOKEN]]
 
 Open the desktop for your installed track; --track overrides it for this launch.
@@ -1624,6 +1624,8 @@ the background when none runs, and keeps it up while the app runs. In the app, a
 this machine once with http://127.0.0.1:7890. --no-gateway, --gateway HOST or
 VIS_GATEWAY_URL starts no local gateway and opens the app alone. This command does
 not change the engine's installed track.
+--debug, --verbose or -v prints the debug logs of the engine that keeps the local
+gateway up. The app alone has no such engine.
 EOF
 }
 
@@ -1895,10 +1897,13 @@ vis_do_desktop() {
   local update=0 gateway=1 track os arch desktop_dir version cmd
   local source destination artifact log
   track="$(read_state "$vis_track_file")"
+  desktop_debug=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) vis_desktop_usage; exit 0 ;;
       --update) update=1 ;;
+      # The engine that opens the app reads these.
+      --debug|--verbose|-v) desktop_debug+=("$1") ;;
       --no-gateway) gateway=0 ;;
       # As for the TUI and web, a named gateway means that no local one starts.
       --gateway|--gateway-token)
@@ -2324,8 +2329,9 @@ case "${1:-}" in
   desktop)
     shift
     vis_do_desktop "$@"
-    # The engine opens the app and keeps the local gateway up while it runs.
-    set -- gateway desktop -- "${desktop_open[@]}"
+    # The engine opens the app and keeps the local gateway up while it runs. Its debug
+    # flags stay before `gateway`: vis_close_other_desktops knows the engine by the rest.
+    set -- ${desktop_debug[@]+"${desktop_debug[@]}"} gateway desktop -- "${desktop_open[@]}"
     ;;
   update|upgrade)
     shift

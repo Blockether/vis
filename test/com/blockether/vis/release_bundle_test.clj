@@ -2845,7 +2845,7 @@
           (str
             "#!/usr/bin/env bash\n"
             "case \"$*\" in '-X:deps prep') exit 0 ;; *-Spath*) printf src:resources; exit 0 ;; esac\n"
-            "while (( $# )) && [[ $1 != gateway ]]; do shift; done\n"
+            "while (( $# )) && [[ $1 != gateway ]]; do printf 'desktop-engine<%s>\\n' \"$1\"; shift; done\n"
             "[[ \"$*\" == 'gateway desktop -- '* ]] || { echo unexpected-engine; exit 95; }\n"
             "shift 3\nprintf 'desktop-gateway<%s>\\n' \"$@\"\nexec \"$@\"\n")))
       (doseq [command ["node" "cargo" "rustc"]]
@@ -2997,6 +2997,17 @@
               (expect (str/includes? output opened) output)
               (expect (str/includes? output "no gateway started") output)
               (expect (not (str/includes? output "desktop-gateway<")) output)))))))
+  (it "gives a debug flag before or after desktop to the engine that opens the app"
+      (with-desktop-fixture
+        "Linux"
+        "x86_64"
+        (fn [{:keys [launch! run!]}]
+          (doseq [[start! args flag] [[run! ["--debug"] "--debug"] [launch! ["-v" "desktop"] "-v"]]]
+            (let [{:keys [exit output]} (start! args {})]
+              (expect (zero? exit) output)
+              (expect (str/includes? output (str "desktop-engine<" flag ">")) output)
+              (expect (str/includes? output "desktop-gateway<APPIMAGE_EXTRACT_AND_RUN=1>")
+                      output))))))
   (it
     "checks updates without redownloading the same release, and preserves the previous cache on failure"
     (with-desktop-fixture "Linux"
