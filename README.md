@@ -37,49 +37,25 @@ sessions on each.
 
 ## Install
 
-Install Vis on the computer where your projects live. The installer does not need
-Java or Git. Native packages support Apple silicon macOS and Linux (x64 or ARM64).
-On Windows, use Linux in WSL2. See [Runtime distributions](resources/vis-docs/distributions.md)
-for source builds and other installation options.
-
-The installer writes to `~/.local/bin` and can update your shell profile. You can
-[read it first](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent).
+For macOS (Apple silicon) and Linux (x64 or ARM64). On Windows, use WSL2.
+You can [read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent) first.
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
-This installs the engine, Python and two of the three clients. All clients show the
-same sessions, so you can start a task in one client and continue it in another.
+Then run `vis-agent tui` (terminal), `vis-agent web` (browser) or `vis-agent desktop` (desktop app).
+All clients show the same sessions.
 
-| Client | What it is | How to get it |
-| --- | --- | --- |
-| [Terminal client (TUI)](resources/vis-docs/index.md#in-the-terminal) | Vis in your terminal, in the project directory. | Included. Run `vis-agent tui`. |
-| [Web app](resources/vis-docs/distributions.md#open-the-web-app) | Vis in a browser, on this computer or on other devices on your network. | Included. Run `vis-agent web`. |
-| Companion app | Vis on your desktop, phone or tablet, connected to the engine on your computer. | Run `vis-agent desktop` on macOS or Linux to download and open it automatically.<br><br>Or install the desktop app:<br><a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a><br><a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a><br><a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a><br>[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app)<br><br>Phone and tablet (public beta):<br><a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a><br><a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a><br>[Connect the desktop app](resources/vis-docs/index.md#connecting-the-companion-app) · [Pair a phone](resources/vis-docs/index.md#pair-a-phone) |
+<p>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" height="40"></a>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" height="40"></a>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" height="40"></a>
+<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" height="40"></a>
+<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" height="40"></a>
+</p>
 
-## Rationale
-
-A capable model can write code, but it does not know how your team works. It does not know which
-tests matter, how changes get reviewed or what to check before a release. You do. Vis lets you put
-that knowledge into tools the agent can use, instead of a growing list of reminders.
-
-For example, a function can select and run the right tests for a change. A hook
-can check the code after an edit and report problems. You define the operations
-and checks. The model decides how to combine them. Your instructions explain the
-process, while your code carries out its repeatable parts.
-
-Python connects those steps. Models already use it to work with code and data.
-Vis lets them use the same language to compose your tools, inspect results and
-reuse useful helper functions. You can start with the built-in tools and add
-[extensions](resources/vis-docs/extending.md) as you need them.
-
-You can also see how the answer was reached. **Activities** show actions, results
-and failures in the conversation. Your extensions choose what to show, so you
-can read a test result or build summary without deciphering a stream of shell
-commands. Switch devices to follow the same work, rather than start again.
-
-Read the full [Rationale](resources/vis-docs/rationale.md) in the manual.
+[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/index.md#pair-a-phone)
 
 ## Documentation
 
