@@ -6164,11 +6164,12 @@ class LiveView:
                 continue
             self._parents[str(node_id)] = parent
             children = node.get("children")
-            if isinstance(children, list):
-                self._index(children, str(node_id))
-            else:
+            # The toolbar of a diff is in `children` too, and the diff takes ops.
+            if node.get("type") != "group" or not isinstance(children, list):
                 self._nodes[str(node_id)] = str(node.get("type") or "plaintext")
                 self._order.append(str(node_id))
+            if isinstance(children, list):
+                self._index(children, str(node_id))
 
     def _refuse_closed(self):
         raise Interrupted(self.view_id, self.reason, self.note)

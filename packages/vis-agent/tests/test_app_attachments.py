@@ -197,6 +197,21 @@ def test_attach_opens_one_app_and_answers_its_handle(host):
     assert repr(app) == "<vis app 'app-1' open>"
 
 
+def test_a_diff_with_a_toolbar_keeps_its_handle(host):
+    # The toolbar is in `children`, as the nodes of a group are. The diff takes ops.
+    toolbar = [vis.ui.button("refresh", "Refresh")]
+    app = vis.attach(
+        vis.ui.app("Review", vis.ui.diff("change", PATCH, children=toolbar))
+    )
+    app.node("change").set(PATCH + "+z = 4\n")
+    app.flush()
+    (sent,) = host.ops("patch")
+    assert sent["patch"]["ops"] == [
+        {"op": "set", "node_id": "change", "patch": PATCH + "+z = 4\n"}
+    ]
+    assert "refresh" in app
+
+
 def test_reply_sends_only_the_given_keys(host):
     app = vis.attach(vis.ui.app("Review", vis.ui.diff("change", PATCH)))
     answer = app.reply(
