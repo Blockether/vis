@@ -1010,6 +1010,9 @@ const oauthSource =
   '\n' +
   readFileSync(join(root, 'native/ios/OAuthLoopbackPlugin.swift'), 'utf8');
 const oauthFileOk = fileOk(oauthSwift, oauthSource);
+const pasteSwift = join(appDir, 'PasteMenu.swift');
+const pasteSource = readFileSync(join(root, 'native/ios/PasteMenuPlugin.swift'), 'utf8');
+const pasteFileOk = fileOk(pasteSwift, pasteSource);
 // `cap sync` rewrites this file from the INSTALLED packages, so plugin classes
 // that live in the app target are dropped from it every time. Putting them back
 // is exactly what this hook is for — it runs as `postsync`.
@@ -1018,6 +1021,7 @@ const appPluginClasses = [
   'NativeSpeechPlugin',
   'VisHostPlugin',
   'OAuthLoopbackPlugin',
+  'PasteMenuPlugin',
 ];
 const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
 const packageClassList = capConfigJson?.packageClassList ?? [];
@@ -1025,7 +1029,9 @@ const badgeConfigOk = !capConfigJson || packageClassList.includes('VisBadgePlugi
 const speechConfigOk = !capConfigJson || packageClassList.includes('NativeSpeechPlugin');
 const hostConfigOk = !capConfigJson || packageClassList.includes('VisHostPlugin');
 const oauthConfigOk = !capConfigJson || packageClassList.includes('OAuthLoopbackPlugin');
-const capConfigOk = badgeConfigOk && speechConfigOk && hostConfigOk && oauthConfigOk;
+const pasteConfigOk = !capConfigJson || packageClassList.includes('PasteMenuPlugin');
+const capConfigOk =
+  badgeConfigOk && speechConfigOk && hostConfigOk && oauthConfigOk && pasteConfigOk;
 
 let project = existsSync(pbxprojPath) ? readFileSync(pbxprojPath, 'utf8') : '';
 if (!project) die('no ios/App/App.xcodeproj/project.pbxproj — run `npm run add:ios` first');
@@ -1582,7 +1588,31 @@ if (!oauthProjectOk) {
     `\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthLoopback.swift; sourceTree = "<group>"; };\n`,
   );
 }
+// PasteMenu is the same kind of app plugin: one Swift file compiled into the app target.
+const pasteIds = { swiftRef: objectId(42), swiftBuild: objectId(43) };
+const pasteProjectOk = project.includes(pasteIds.swiftRef) && project.includes(pasteIds.swiftBuild);
+if (!pasteProjectOk) {
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${pasteIds.swiftBuild} /* PasteMenu.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${pasteIds.swiftRef} /* PasteMenu.swift */,`,
+    'App group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${pasteIds.swiftBuild} /* PasteMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${pasteIds.swiftRef} /* PasteMenu.swift */; };\n`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${pasteIds.swiftRef} /* PasteMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteMenu.swift; sourceTree = "<group>"; };\n`,
+  );
+}
 const oauthOk = oauthFileOk && oauthProjectOk && oauthConfigOk;
+const pasteOk = pasteFileOk && pasteProjectOk && pasteConfigOk;
 const shareOk = shareFilesOk && projectOk;
 const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;
 const speechOk = speechFileOk && speechProjectOk && speechConfigOk;
@@ -1599,6 +1629,7 @@ if (check) {
     speechOk &&
     hostOk &&
     oauthOk &&
+    pasteOk &&
     splashOk
   ) {
     console.log(
@@ -1624,9 +1655,11 @@ if (check) {
                   ? 'ios: no VisHost plugin — run `node scripts/ios-prepare.mjs`'
                   : !oauthOk
                     ? 'ios: no OAuth loopback browser — run `node scripts/ios-prepare.mjs`'
-                    : !splashOk
-                      ? "ios: launch screen still shows Capacitor's splash — run `node scripts/ios-prepare.mjs`"
-                      : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
+                    : !pasteOk
+                      ? 'ios: no PasteMenu plugin — run `node scripts/ios-prepare.mjs`'
+                      : !splashOk
+                        ? "ios: launch screen still shows Capacitor's splash — run `node scripts/ios-prepare.mjs`"
+                        : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -1675,6 +1708,7 @@ if (!notifyFilesOk) {
 if (!speechFileOk) writeFileSync(speechSwift, speechSource);
 if (!hostFileOk) writeFileSync(hostSwift, hostSource);
 if (!oauthFileOk) writeFileSync(oauthSwift, oauthSource);
+if (!pasteFileOk) writeFileSync(pasteSwift, pasteSource);
 if (!capConfigOk && capConfigJson) {
   capConfigJson.packageClassList = Array.from(
     new Set([...(capConfigJson.packageClassList ?? []), ...appPluginClasses]),

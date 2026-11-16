@@ -17,6 +17,7 @@ import {
 import { Clipboard } from '@capacitor/clipboard';
 import { Capacitor } from '@capacitor/core';
 import { Markdown } from './ChatContent';
+import { hasSystemPasteMenu, hideSystemPasteMenu, moveSystemPasteMenu, showSystemPasteMenu } from '../lib/paste-menu';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -857,6 +858,9 @@ const KEYBOARD_RISE_MS = 600;
  * gives the focus, and a tap on the focused boxes shows Paste above the tapped box.
  * Reported later: a Paste verb at the far end of the hint line was not where the
  * double tap looked for it.
+ *
+ * In the phone app, that tap opens the paste menu of the system: see `lib/paste-menu`.
+ * The Paste verb of the app is for a browser and for a phone system without that menu.
  */
 function OtpBoxes({
   field,
@@ -891,6 +895,65 @@ function OtpBoxes({
   // A press that began on the boxes while the input had the focus. The tap that
   // gives the focus is not such a press, so it shows no Paste.
   const isPressInFocus = useRef(false);
+  const row = useRef<HTMLDivElement>(null);
+  // The box of the system paste menu, from a request for the menu until the request to hide it.
+  const systemMenuBox = useRef<HTMLElement | null>(null);
+  const hideSystemMenu = useCallback(() => {
+    if (!systemMenuBox.current) return;
+    systemMenuBox.current = null;
+    hideSystemPasteMenu();
+  }, []);
+  const hidePaste = useCallback(() => {
+    setPasteAt(null);
+    hideSystemMenu();
+  }, [hideSystemMenu]);
+  useEffect(() => {
+    // A touch outside the boxes closes Paste. The system menu of Android stays open under it.
+    const onPointerDown = (event: PointerEvent) => {
+      if (!row.current?.contains(event.target as Node)) hidePaste();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      hideSystemMenu();
+    };
+  }, [hidePaste, hideSystemMenu]);
+  useEffect(() => {
+    // The keyboard of Android resizes the page after a tap, and the box moves. The system
+    // menu follows the box. The shell takes its new height in the next frame, so the
+    // measurement waits for that frame.
+    let frame = 0;
+    const follow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (systemMenuBox.current) moveSystemPasteMenu(systemMenuBox.current);
+      });
+    };
+    const viewport = window.visualViewport;
+    window.addEventListener('resize', follow);
+    viewport?.addEventListener('resize', follow);
+    viewport?.addEventListener('scroll', follow);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', follow);
+      viewport?.removeEventListener('resize', follow);
+      viewport?.removeEventListener('scroll', follow);
+    };
+  }, []);
+  useEffect(() => {
+    const element = row.current;
+    if (!element) return undefined;
+    // iOS moves the caret to a touched point. A touch on a box took the caret out of the
+    // focused input: the keyboard typed nothing, and the system offered no Paste or put
+    // its own menu at the first box. React listens to `touchstart` passively, so this
+    // listener is a direct one.
+    const onTouchStart = (event: TouchEvent) => {
+      const isOnPasteVerb = pasteVerb.current?.contains(event.target as Node) ?? false;
+      if (document.activeElement === input.current && !isOnPasteVerb) event.preventDefault();
+    };
+    element.addEventListener('touchstart', onTouchStart, { passive: false });
+    return () => element.removeEventListener('touchstart', onTouchStart);
+  }, []);
   useEffect(() => {
     const element = input.current;
     if (!element) return undefined;
@@ -904,7 +967,7 @@ function OtpBoxes({
   // A pasted code REPLACES the code: an operator who pastes again after a wrong
   // paste wants the new code, not the old code with digits added.
   const paste = (text: string): boolean => {
-    setPasteAt(null);
+    hidePaste();
     const pasted = humanInputOtpDigits(field, text);
     if (pasted) onChange(field.id, pasted);
     return pasted !== '';
@@ -936,6 +999,7 @@ function OtpBoxes({
           a phone and still stops the boxes drifting apart on wider glass; from
           `sm:` up, where `Modal` becomes a 36rem box, it tightens again. */}
       <div
+        ref={row}
         data-otp-row=""
         className="relative flex max-w-md cursor-text flex-wrap justify-between gap-1.5 sm:max-w-sm"
         // A double tap still sends a mouse down, and that took the focus.
@@ -954,7 +1018,18 @@ function OtpBoxes({
           };
           // A tap between two boxes takes the nearer one.
           const box = boxes.reduce((near, next) => (distance(next) < distance(near) ? next : near));
-          setPasteAt({ left: box.offsetLeft + box.offsetWidth / 2, top: box.offsetTop });
+          const at = { left: box.offsetLeft + box.offsetWidth / 2, top: box.offsetTop };
+          if (!hasSystemPasteMenu()) {
+            setPasteAt(at);
+            return;
+          }
+          systemMenuBox.current = box;
+          showSystemPasteMenu(box).catch((error: unknown) => {
+            // An iPhone before iOS 16 has no such menu: the Paste verb of the app replaces it.
+            console.warn('one-time code: no system paste menu', error);
+            systemMenuBox.current = null;
+            setPasteAt(at);
+          });
         }}
         onMouseDown={(event) => {
           if (isFocused) event.preventDefault();
@@ -998,7 +1073,7 @@ function OtpBoxes({
             }
           }}
           onChange={(event) => {
-            setPasteAt(null);
+            hidePaste();
             onChange(field.id, humanInputOtpDigits(field, event.target.value));
           }}
           onPaste={(event) => {
@@ -1012,7 +1087,7 @@ function OtpBoxes({
           onFocus={() => setFocused(true)}
           onBlur={() => {
             setFocused(false);
-            setPasteAt(null);
+            hidePaste();
           }}
         />
         {/* The row keeps the focus under a press here too, so the keyboard stays up. */}

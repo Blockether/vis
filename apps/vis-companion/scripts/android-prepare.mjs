@@ -505,6 +505,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AudioRoutePlugin.class);
         registerPlugin(NativeSpeechPlugin.class);
         registerPlugin(OAuthLoopbackPlugin.class);
+        registerPlugin(PasteMenuPlugin.class);
         super.onCreate(savedInstanceState);
         // After super: the bridge exists now. Media from an http gateway plays
         // through the app origin; see MediaProxyClient.
@@ -1068,6 +1069,17 @@ if (!existsSync(rangeBodyStreamPath) || readFileSync(rangeBodyStreamPath, 'utf8'
   writeFileSync(rangeBodyStreamPath, rangeBodyStream);
 }
 prepareAndroidOAuth(root, appId);
+const pasteMenuPluginPath = join(javaPackageDir, 'PasteMenuPlugin.java');
+const pasteMenuPlugin = readFileSync(
+  join(root, 'native/android/PasteMenuPlugin.java'),
+  'utf8',
+).replace('package com.blockether.viscompanion;', `package ${appId};`);
+if (
+  !existsSync(pasteMenuPluginPath) ||
+  readFileSync(pasteMenuPluginPath, 'utf8') !== pasteMenuPlugin
+) {
+  writeFileSync(pasteMenuPluginPath, pasteMenuPlugin);
+}
 const audioRoutePluginPath = join(javaPackageDir, 'AudioRoutePlugin.java');
 const audioRoutePlugin = `package ${appId};
 

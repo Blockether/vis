@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Capacitor } from '@capacitor/core';
 import { HumanInputPrompt, HumanInputSheet } from './HumanInputPrompt';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import {
@@ -15,6 +16,16 @@ import {
 } from '../lib/human-input';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
+
+/** The native paste menu plugin of the phone app. A browser has no such plugin. */
+const systemMenu = vi.hoisted(() => ({ show: vi.fn(), move: vi.fn(), hide: vi.fn() }));
+vi.mock('@capacitor/core', async (importOriginal) => {
+  const core = await importOriginal<typeof import('@capacitor/core')>();
+  return {
+    ...core,
+    registerPlugin: (name: string) => (name === 'PasteMenu' ? systemMenu : core.registerPlugin(name)),
+  };
+});
 
 afterEach(() => {
   cleanup();
@@ -123,6 +134,49 @@ describe('a one-time code on a phone', () => {
     await waitFor(() => expect(shownDigits()).toEqual(['1', '2', '3', '4', '5', '6']));
     expect(document.activeElement).toBe(input);
     expect(pasteVerb()).toBeNull();
+  });
+
+  // Reported: in the phone app, Paste must be the menu of the phone system, at the tapped
+  // box. An iPhone before iOS 16 has no such menu, so the Paste verb of the app replaces it.
+  it('opens the system paste menu at the tapped box in the phone app', async () => {
+    vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    vi.spyOn(Capacitor, 'isPluginAvailable').mockImplementation((name) => name === 'PasteMenu');
+    vi.spyOn(console, 'warn').mockImplementation(noop);
+    systemMenu.hide.mockReset().mockResolvedValue(undefined);
+    systemMenu.move.mockReset().mockResolvedValue(undefined);
+    systemMenu.show
+      .mockReset()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('No system paste menu on this host.'));
+    render(<OtpSheet />);
+    const input = codeInput();
+    const box = document.querySelector('[data-otp-box="2"]') as HTMLElement;
+    box.getBoundingClientRect = () => new DOMRect(143, 597, 44, 44);
+    const tap = (target: HTMLElement) => {
+      fireEvent.pointerDown(target, { pointerType: 'touch', clientX: 165, clientY: 619 });
+      fireEvent.pointerUp(target, { pointerType: 'touch', clientX: 165, clientY: 619 });
+    };
+    fireEvent.pointerDown(input, { pointerType: 'touch' });
+    act(() => input.focus());
+    fireEvent.pointerUp(input, { pointerType: 'touch' });
+    expect(systemMenu.show).not.toHaveBeenCalled();
+    // iOS moves the caret out of the input at a touch on a box. Then it offers no Paste.
+    expect(fireEvent.touchStart(box)).toBe(false);
+    tap(box);
+    expect(systemMenu.show).toHaveBeenCalledWith({ x: 143, y: 597, width: 44, height: 44 });
+    await act(async () => {});
+    expect(screen.queryByRole('button', { name: 'Paste' })).toBeNull();
+    // The keyboard of Android resizes the page after the tap. The menu follows the box.
+    box.getBoundingClientRect = () => new DOMRect(143, 329, 44, 44);
+    fireEvent(window, new Event('resize'));
+    await waitFor(() => expect(systemMenu.move).toHaveBeenCalledWith({ x: 143, y: 329, width: 44, height: 44 }));
+    // The toolbar of Android stays open under a touch, so a touch outside the boxes closes it.
+    fireEvent.pointerDown(document.body);
+    expect(systemMenu.hide).toHaveBeenCalledTimes(1);
+    tap(box);
+    expect(await screen.findByRole('button', { name: 'Paste' })).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('button', { name: 'Paste' })).toBeNull();
   });
 });
 
