@@ -62,6 +62,7 @@ an existing session stays in the shard of that session. Thus a run does not wait
 another run, and a run does not slow the sessions of people.
 
 - `front` reads `routes/<id>` for the session or the run of a call and sends the call to the worker of that shard. `main` gets its calls from SQS. Another shard gets its calls as objects in `calls/`, because a queue for each run would stay in the account.
+- A call for the settings or the MCP servers of a session, or for a reload of its extensions, goes to the worker of that session. `main` answers for the machine, a project and a group.
 - `front` adds the rows of `lists/` to the session list of `main`, so the list starts no worker. A row gets the project and the group that `main` has for the same directory and the same group name.
 - `front` joins the event streams of the shards whose sessions a browser follows. An event stream does not keep the worker of a run: `front` holds the stream while the shard has no worker, and joins the worker again when a call starts one.
 - The worker of a run stops after 300 s without work, and after 60 s when it only answered reads. A call to its session, a decision at its gate or the schedule starts a new worker from the checkpoint.
@@ -70,6 +71,8 @@ The limits:
 
 - All workers use the one `worker` function with 4096 MB. Its reserved concurrency, 20, is the largest number of workers at the same time.
 - A session that a person starts does not get its own shard. Vis keeps the project, the groups and the settings in each home directory, and `front` joins them only for the session list.
+- The settings of the machine, of a project and of a group apply to the sessions of `main`. A run session has only its own session settings.
+- A run session stays in the group of its workflow: a move to another group gives `unknown session group`. The archive of all the sessions of a project or of a search does not archive a run session: archive it by itself.
 - The lease, the last checkpoint and the list of a shard stay in the bucket after the run.
 - A search finds a run session by its title, not by its transcript. The first page of the session list and of a search has all the run sessions: the later pages have only the sessions of `main`. The fleet feed of the event stream also has only the sessions of `main`.
 - Vis web shows a new run session at its next read of the list, 30 s at most. The status of a run session in the list is the last one that its worker recorded.

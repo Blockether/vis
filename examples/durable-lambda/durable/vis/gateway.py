@@ -101,7 +101,7 @@ class Gateway:
         self._shown = ""
 
     def start(self) -> None:
-        """Write the configuration and the token, start the process and wait until it answers."""
+        """Write the configuration and the token, start the process and wait for its extensions."""
         os.makedirs(os.path.join(HOME, ".vis"), exist_ok=True)
         with open(os.path.join(HOME, ".vis", "config.yml"), "w", encoding="utf-8") as file:
             file.write(config(self.broker))
@@ -116,10 +116,15 @@ class Gateway:
                 status, health = self.call("GET", "/healthz", timeout=2)
                 if status == 200:
                     self.protocol = str(health["protocol"]["protocol"])
-                    log("gateway ready", health["protocol"]["version"])
-                    return
+                    # The gateway answers before it loads its extensions. A settings list
+                    # from that time lacks their rows, and its revision is then refused.
+                    stage = ((self.call("GET", "/v1/admin/status", timeout=2)[1] or {}).get("extensions") or {}).get("stage")
+                    if stage != "initializing":
+                        log("gateway ready", health["protocol"]["version"], "extensions", stage)
+                        return
             except OSError:
-                time.sleep(0.2)
+                pass
+            time.sleep(0.2)
         raise RuntimeError(f"the gateway did not start in {GATEWAY_START_S} s")
 
     # -- the two ways to call the gateway -----------------------------------------

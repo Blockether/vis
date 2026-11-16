@@ -31,8 +31,11 @@ ONE = re.compile(rf"/(?:v1|dashboard/api)/sessions/({SESSION.pattern})(?:/.*)?")
 ACT = re.compile(rf"/dashboard/api/runs/({RUN.pattern})/.+")
 # The event stream of the gateway. It can have sessions of more than one shard.
 EVENTS = "/v1/events"
-# A setting of one session names the session in its query.
+# A setting, an MCP server and a reload of the extensions name their session in the query or in a JSON body.
 SETTINGS = "/v1/settings"
+NAMED = (SETTINGS, "/v1/mcp/servers", "/v1/extensions/reload")
+# The session whose own scopes mark the rows of a settings answer.
+CONTEXT = "context_session_id"
 # The headers of an answer that are not true after the front changed its body.
 CHANGED = {"content-encoding", "etag", "last-modified"}
 # The head and the comment of an event stream that the front holds for a shard without a worker.
@@ -40,13 +43,44 @@ HELD = {"status": 200, "headers": [["content-type", "text/event-stream"], ["cach
 PING = b": ping\n\n"
 
 
+def named(request: Request) -> dict[str, Any]:
+    """Return the fields of the query and of a JSON body. A field of the body wins, as in the gateway."""
+    fields: dict[str, Any] = dict(urllib.parse.parse_qsl(request.query))
+    try:
+        body = json.loads(request.body) if request.body else None
+    except ValueError:
+        body = None
+    return {**fields, **body} if isinstance(body, dict) else fields
+
+
 def place(request: Request, is_fresh: bool = False) -> str:
     """Return the shard whose worker answers a call."""
     found = ONE.fullmatch(request.path) or (request.method == "POST" and ACT.fullmatch(request.path))
-    if not found and request.path.startswith(SETTINGS):
-        found = SESSION.fullmatch(dict(urllib.parse.parse_qsl(request.query)).get("target_id", ""))
+    if not found and request.path.startswith(NAMED):
+        # The target of a project or of a group has no record, so `main` answers.
+        target = named(request).get("target_id")
+        found = SESSION.fullmatch(target) if isinstance(target, str) else None
         return shards.owner(found.group(0), is_fresh) if found else MAIN
     return shards.owner(found.group(1), is_fresh) if found else MAIN
+
+
+def known(request: Request, shard: str) -> Request:
+    """Remove the context session of a settings call when the worker that answers does not have it.
+
+    The gateway refuses a session that it does not know. The context only marks the
+    rows that the session takes from its own scopes, so the answer stays right without it.
+    """
+    if not request.path.startswith(SETTINGS):
+        return request
+    session = named(request).get(CONTEXT)
+    if not isinstance(session, str) or not SESSION.fullmatch(session) or shards.owner(session) == shard:
+        return request
+    query = urllib.parse.urlencode([(name, value) for name, value in urllib.parse.parse_qsl(request.query, keep_blank_values=True) if name != CONTEXT])
+    if CONTEXT.encode() not in request.body:
+        return dataclasses.replace(request, query=query)
+    body = json.dumps({name: value for name, value in json.loads(request.body).items() if name != CONTEXT}).encode()
+    # The body has a new length: the connection of the worker counts it.
+    return dataclasses.replace(request, query=query, body=body, headers={k: v for k, v in request.headers.items() if k != "content-length"})
 
 
 def call(request: Request, shard: str, deadline: float, wakes: bool = True) -> Iterator[tuple[bytes, bool]]:
@@ -200,6 +234,7 @@ def relay(request: Request, context: Context) -> HttpStream:
     stream = "text/event-stream" in request.headers.get("accept", "")
     deadline = time.time() + min(STREAM_S if stream else LIFETIME, context.remaining_s() - 10)
     shard = place(request)
+    request = known(request, shard)
     is_list = navigator.wanted(request)
     if is_list:
         # The front changes this answer: it must be complete, not compressed and not an answer of a cache.
