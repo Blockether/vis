@@ -585,6 +585,121 @@
           (try (expect (= :done (extension/invoke-symbol-wrapper ext entry [] {})))
                (finally (extension/unregister-op-hooks-for-owner! :after-once)))
           (expect (= 1 @calls))))
+    (it
+      "runs a pattern hook once and gives it the name that a block calls"
+      (let [seen
+            (atom [])
+
+            entry
+            {:ext.symbol/symbol 'ptn.watch
+             :ext.symbol/tag :observation
+             :ext.symbol/fn (fn []
+                              (extension/success {:result :done}))}
+
+            ext
+            {:ext/name "test.pattern"
+             :ext/engine {:ext.engine/alias 'ptn
+                          :ext.engine/exact-symbol-names? true
+                          :ext.engine/symbols [entry]}
+             :ext/op-hooks (for [pattern [:ptn.* :other.*]]
+                             {:op pattern
+                              :phase :after
+                              :fn (fn [_ op _ r]
+                                    (swap! seen conj [:declared pattern op])
+                                    r)})}]
+
+        (doseq [pattern [:ptn.* :*.watch :other.*]]
+          (extension/register-op-hook! {:op pattern
+                                        :owner :pattern
+                                        :phase :before
+                                        :fn (fn [_ op args]
+                                              (swap! seen conj [:registered pattern op])
+                                              args)}))
+        (try (with-redefs [scoped/values (fn [_ _]
+                                           {})]
+               (expect (= :done
+                          (extension/invoke-symbol-wrapper
+                            ext
+                            entry
+                            []
+                            {:extensions (atom [ext]) :db-info ::db :session-id "s1"}))))
+             (finally (extension/unregister-op-hooks-for-owner! :pattern)))
+        (expect (= [[:registered :*.watch :ptn.watch] [:registered :ptn.* :ptn.watch]
+                    [:declared :ptn.* :ptn.watch]]
+                   @seen))))
+    (it
+      "gives the hooks of a door the call of its handle, and never the door"
+      (let [seen
+            (atom [])
+
+            got
+            (atom nil)
+
+            ext
+            {:ext/name "test.door" :ext/engine {:ext.engine/alias 'door}}
+
+            entry
+            {:ext.symbol/symbol 'call
+             :ext.symbol/tag :observation
+             :ext.symbol/binding '__door__
+             :ext.symbol/inject-env? true
+             :ext.symbol/handles {:names (fn []
+                                           ["srv"])
+                                  :argv (fn [_]
+                                          nil)
+                                  :call (fn [_ [server tool arguments]]
+                                          {:name (str server "." tool)
+                                           :args [arguments]
+                                           :argv (fn [[arguments]]
+                                                   [server tool arguments])})}
+             :ext.symbol/fn (fn [_env server tool arguments]
+                              (reset! got [server tool arguments])
+                              (extension/success {:result :done}))}]
+
+        (doseq [op [:door/call :door_call :__door__]]
+          (extension/register-op-hook! {:op op
+                                        :owner :door
+                                        :fn (fn [_ op _ r]
+                                              (swap! seen conj [:door op])
+                                              r)}))
+        (extension/register-op-hook! {:op :srv.*
+                                      :owner :door
+                                      :phase :before
+                                      :fn (fn [_ op [arguments]]
+                                            (swap! seen conj [op arguments])
+                                            [(assoc arguments "extra" 1)])})
+        (extension/register-op-hook! {:op :srv.read
+                                      :owner :door
+                                      :fn (fn [_ op args r]
+                                            (swap! seen conj [op args])
+                                            r)})
+        (try (expect (= :done
+                        (extension/invoke-symbol-wrapper ext entry ["srv" "read" {"id" 1}] {})))
+             (finally (extension/unregister-op-hooks-for-owner! :door)))
+        (expect (= [[:srv.read {"id" 1}] [:srv.read [{"id" 1 "extra" 1}]]] @seen))
+        (expect (= ["srv" "read" {"id" 1 "extra" 1}] @got))))
+    (it "reports a hook on a door, and no hook on a handle or on a pattern of a tool"
+        (let [hook
+              (fn [op]
+                {:op op
+                 :phase :after
+                 :fn (fn [_ _ _ r]
+                       r)})
+
+              ext
+              {:ext/name "test.unmatched"
+               :ext/engine {:ext.engine/alias 'door
+                            :ext.engine/symbols [{:ext.symbol/symbol 'call
+                                                  :ext.symbol/binding '__door__
+                                                  :ext.symbol/handles {:names (fn []
+                                                                                ["srv"])}}
+                                                 {:ext.symbol/symbol 'look}]}
+               :ext/op-hooks (map hook
+                                  [:srv :srv.read :srv.* :s*.read :*.read :door_look :door_*
+                                   :door/call :door_call :__door__ :srvx.read :other.*])}]
+
+          (expect (= ["door/call" "door_call" "__door__" "srvx.read" "other.*"]
+                     (mapv :op (extension/unmatched-op-hooks [ext]))))))
     (it "declarative :ext/op-hooks install on register and tear down on deregister"
         (try (extension/register-extension! {:ext/name "test.ophooks-ext"
                                              :ext/description "declarative op-hooks lifecycle"

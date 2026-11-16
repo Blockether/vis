@@ -1218,6 +1218,49 @@
                        (filterv #(#{"tools/call" "prompts/get"} (first %)) @sent)))
             (expect (= ["resolve-library-id"]
                        (mapv #(get % "name") (get (extension-call! "alpha" [] {}) "tools"))))))))
+  (it
+    "runs an op hook on a tool, a server or a prompt by its name, and none on the host verb"
+    (let [seen
+          (atom [])
+
+          sent
+          (atom [])
+
+          hook
+          (fn [op]
+            {:op op
+             :owner ::hooks
+             :phase :before
+             :fn (fn [_ call [arguments]]
+                   (swap! seen conj [op call arguments])
+                   [(cond-> arguments
+                      (= :alpha.resolve_library_id op)
+                      (assoc "limit" 1))])})]
+
+      (with-catalog
+        sent
+        (fn [_call!]
+          (run! (comp extension/register-op-hook! hook)
+                [:alpha.resolve_library_id :alpha.* :alpha.prompts.* :beta.* :mcp/call :mcp_call
+                 :__vis_mcp_call__])
+          (try (extension-call! "alpha.resolve_library_id" [] {"query" "x"})
+               (extension-call! "alpha.prompts.greet" [] {"who" "Ann"})
+               (finally (extension/unregister-op-hooks-for-owner! ::hooks)))
+          (expect (= [[:alpha.resolve_library_id :alpha.resolve_library_id {"query" "x"}]
+                      [:alpha.* :alpha.resolve_library_id {"query" "x" "limit" 1}]
+                      [:alpha.* :alpha.prompts.greet {"who" "Ann"}]
+                      [:alpha.prompts.* :alpha.prompts.greet {"who" "Ann"}]]
+                     @seen))
+          (expect (= [["tools/call"
+                       {"name" "resolve-library-id" "arguments" {"query" "x" "limit" 1}}]
+                      ["prompts/get" {"name" "greet" "arguments" {"who" "Ann"}}]]
+                     (filterv #(#{"tools/call" "prompts/get"} (first %)) @sent)))
+          (expect (= ["mcp_call"]
+                     (mapv :op
+                           (extension/unmatched-op-hooks
+                             [mcp/vis-extension
+                              {:ext/name "test.hooks"
+                               :ext/op-hooks (map hook [:alpha.* :alpha.read :mcp_call])}]))))))))
   (it "has no tool for the host verb or for a server that the session does not see"
       (with-catalog (atom [])
                     (fn [_call!]

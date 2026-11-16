@@ -42,7 +42,8 @@
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)
            (java.net URL)
-           (java.util.jar JarEntry JarFile)))
+           (java.util.jar JarEntry JarFile)
+           (java.util.regex Pattern)))
 
 ;; Tool-result contract
 (def ^:private max-trace-frames 12)
@@ -427,7 +428,9 @@
     (optional-field? x :ext.symbol/raw? boolean?)
     (optional-field? x :ext.symbol/hidden? boolean?)
     (optional-field? x :ext.symbol/binding symbol?)
-    (optional-field? x :ext.symbol/handles fn?)
+    (optional-field? x
+                     :ext.symbol/handles
+                     #(and (map? %) (every? (fn [k] (fn? (get % k))) [:names :argv :call])))
     (optional-field? x :ext.symbol/tag op-tags)
     (optional-field? x :ext.symbol/presenter keyword?)
     (optional-field? x
@@ -665,9 +668,16 @@
    shim calls. Tool lists and operations keep the `symbol-binding`.
 
    The shim binds handles that call the door, and the engine does not know their
-   names. So the symbol gives `:ext.symbol/handles`, `(fn [name])`: for the name of
-   a handle, the `(fn [args kwargs])` that gives the arguments of the door, else
-   nil. `vis.tools` runs a handle through it."
+   names. So the symbol gives `:ext.symbol/handles`, a map of three functions:
+
+   - `:names`, `(fn [])`: the first name of each handle, such as `linear`.
+   - `:argv`, `(fn [name])`: for the name of a handle, the `(fn [args kwargs])`
+     that gives the arguments of the door, else nil. `vis.tools` runs a handle
+     through it.
+   - `:call`, `(fn [env argv])`: the call of a handle that the arguments `argv` of
+     the door make, or nil. `:name` is the handle as a block types it, `:args` are
+     its arguments, and `:argv` is the `(fn [args])` that gives the arguments of
+     the door again. An op hook sees that call, never the door."
   [ext sym]
   (or (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/binding %)) (ext-symbols ext))
       (symbol-binding ext sym)))
@@ -1439,10 +1449,15 @@
     (if pred? (str "is_" base) base)))
 
 (defn- tool-op-keywords
-  "Each operation name that an op hook can give for tool `sym` of `ext`: the
-   operation name `alias/sym` and the name that `python_execution` calls."
-  [ext sym]
-  (distinct [(keyword (tool-call-name ext sym)) (keyword (sym->py-name (symbol-binding ext sym)))]))
+  "Each operation name that an op hook can give for the tool `sym-entry` of `ext`:
+   the operation name `alias/sym`, then the name that `python_execution` calls.
+   A door (`:ext.symbol/binding`) has none: a block calls its handles, and
+   `:ext.symbol/handles` names each call."
+  [ext sym-entry]
+  (when-not (:ext.symbol/binding sym-entry)
+    (let [sym (:ext.symbol/symbol sym-entry)]
+      (distinct [(keyword (tool-call-name ext sym))
+                 (keyword (sym->py-name (symbol-binding ext sym)))]))))
 
 (defn- tool-start-label
   "One-line human label for the PRIMARY argument of a tool call, so Activity can
@@ -1900,21 +1915,71 @@
                        (with-context {:ext ext :env environment} (f request)))
             {:owner (ext-op-hook-owner ext)}))))
 
+(defn- op-text
+  "The name of operation `op` as text: `:clj/repl-start` is `clj/repl-start`."
+  [op]
+  (if (keyword? op) (subs (str op) 1) (str op)))
+
+(def ^:private op-pattern
+  "The regex of hook operation `op` when it is a pattern, else nil. A pattern has
+   `*`, which matches any characters, as in a tool list: `linear.*`."
+  (memoize (fn [op]
+             (let [text (op-text op)]
+               (when (str/includes? text "*")
+                 (re-pattern (str/join ".*"
+                                       (map #(Pattern/quote %) (str/split text #"\*" -1)))))))))
+
+(defn- descriptor-op-hooks
+  "The declared hooks of `extensions` whose operation satisfies `match?`, without
+   the extensions that the settings of `env` turn off."
+  [match? env extensions]
+  (let [live (delay (scoped/live-values env))]
+    (for [ext @extensions
+          hook (:ext/op-hooks ext)
+          :let [gate-kw (gate-op (:op hook))]
+          :when (and (match? (or gate-kw (keyword (:op hook))))
+                     (not= "off" (scoped/engine-mode env ext live)))]
+
+      (assoc hook
+        :owner (ext-op-hook-owner ext)
+        :phase (if gate-kw :gate (or (:phase hook) :after))))))
+
 (defn- environment-op-hooks
   [op-kw env]
   (if-let [extensions (:extensions env)]
-    (let [live (delay (scoped/live-values env))]
-      (concat (remove ::descriptor? (get @op-hooks op-kw))
-              (for [ext @extensions
-                    hook (:ext/op-hooks ext)
-                    :let [gate-kw (gate-op (:op hook))]
-                    :when (and (= op-kw (or gate-kw (keyword (:op hook))))
-                               (not= "off" (scoped/engine-mode env ext live)))]
-
-                (assoc hook
-                  :owner (ext-op-hook-owner ext)
-                  :phase (if gate-kw :gate (or (:phase hook) :after))))))
+    (concat (remove ::descriptor? (get @op-hooks op-kw))
+            (descriptor-op-hooks #(= op-kw %) env extensions))
     (get @op-hooks op-kw)))
+
+(defn- pattern-op-hooks
+  "The hooks whose operation is a pattern that matches `call-kw`, the name that
+   `python_execution` calls. Each carries that name as `::matched`, so its function
+   gets the name of the call and not the pattern."
+  [call-kw env]
+  (let [call-name
+        (op-text call-kw)
+
+        match?
+        (fn [op]
+          (some-> (op-pattern op)
+                  (re-matches call-name)))
+
+        registered
+        (mapcat val (sort-by (comp str key) (filter (comp match? key) @op-hooks)))]
+
+    (map #(assoc % ::matched call-kw)
+         (if-let [extensions (:extensions env)]
+           (concat (remove ::descriptor? registered) (descriptor-op-hooks match? env extensions))
+           registered))))
+
+(defn- call-op-hooks
+  "The hooks of one tool call. `names` are the operation names of the call, and the
+   last is the name that `python_execution` calls. A hook on one of the names runs,
+   then a hook whose operation is a pattern that matches the last name."
+  [names env]
+  (vec (concat (mapcat #(environment-op-hooks % env) names)
+               (some-> (last names)
+                       (pattern-op-hooks env)))))
 
 (defn- run-op-before-hooks
   "Thread `args` through every :before hook registered for `op-kw`, or through
@@ -1923,7 +1988,7 @@
   ([op-kw env args hooks]
    (reduce (fn [as {:keys [phase owner] hook-fn :fn :as hook}]
              (if (= :before phase)
-               (try (let [r (hook-fn env (or (:op hook) op-kw) as)]
+               (try (let [r (hook-fn env (or (::matched hook) (:op hook) op-kw) as)]
                       (if (sequential? r) (vec r) as))
                     (catch Throwable e
                       (log-hook! :warn
@@ -1946,7 +2011,7 @@
   ([op-kw env args result hooks]
    (reduce (fn [res {:keys [phase owner] hook-fn :fn :as hook}]
              (if (= :after phase)
-               (try (let [r (hook-fn env (or (:op hook) op-kw) args res)]
+               (try (let [r (hook-fn env (or (::matched hook) (:op hook) op-kw) args res)]
                       (if (tool-result? r) r res))
                     (catch Throwable e
                       (log-hook! :warn
@@ -1982,7 +2047,7 @@
       (base args)
       ((reduce (fn [nxt {hook-fn :fn :as hook}]
                  (fn [as]
-                   (hook-fn env (or (:op hook) op-kw) as nxt)))
+                   (hook-fn env (or (::matched hook) (:op hook) op-kw) as nxt)))
                base
                arounds)
         args))))
@@ -2201,21 +2266,43 @@
 
               ;; :inject-env? prepends the live env as the first arg — decoupled
               ;; from before-fn, which is now a pure hook (not a gate / injector).
-              call-args
-              (if (:ext.symbol/inject-env? sym-entry) (into [call-env] call-args) call-args)
+              inject
+              (fn [as]
+                (if (:ext.symbol/inject-env? sym-entry) (into [call-env] as) (vec as)))
+
+              ;; The op hooks of a door see the call of the handle that a block
+              ;; wrote, never the door. `restore` gives the arguments of the door.
+              view
+              (when-let [describe (:call (:ext.symbol/handles sym-entry))]
+                (describe call-env call-args))
+
+              restore
+              (if view (comp inject (:argv view)) identity)
+
+              op-kw
+              (if view (keyword (:name view)) op-kw)
 
               ;; One resolution serves every phase of this call. The :after hooks
               ;; run once, below, after the symbol's own after-fn. A hook can name
-              ;; the tool by its operation name or by its Python name.
+              ;; the tool by its operation name, by its Python name or by a pattern.
               hooks
-              (vec (mapcat #(environment-op-hooks % call-env) (tool-op-keywords ext sym)))
+              (call-op-hooks (if view [op-kw] (tool-op-keywords ext sym-entry)) call-env)
+
+              hook-args
+              (run-op-before-hooks op-kw call-env (if view (:args view) (inject call-args)) hooks)
 
               call-args
-              (run-op-before-hooks op-kw call-env call-args hooks)
+              (restore hook-args)
+
+              hooked
+              (if view
+                (fn [& as]
+                  (apply f (restore as)))
+                f)
 
               call-result
               (let [ct0 (System/nanoTime)]
-                (try (let [r (run-op-around op-kw call-env f call-args hooks)
+                (try (let [r (run-op-around op-kw call-env hooked hook-args hooks)
                            ms (elapsed-ms ct0)]
 
                        (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
@@ -2235,7 +2322,7 @@
               (run-after ext-ns sym-entry call-env f call-args (:result call-result))
 
               result
-              (run-op-after-hooks op-kw call-env call-args result hooks)
+              (run-op-after-hooks op-kw call-env hook-args result hooks)
 
               result
               (->> result
@@ -3155,21 +3242,57 @@
 (defn unmatched-op-hooks
   "One row for each op hook of `extensions` that names no tool of `extensions`, no
    host operation and no gate: `{:extension :op :suggestion}`. A hook like that never
-   runs. `:suggestion` is the Python name of a tool that differs only in its
-   separators, or nil."
+   runs. A pattern names each tool that it matches. The handles of a door are known
+   only by their first name, so each name and each pattern under one is a tool.
+   `:suggestion` is the Python name of a tool that differs only in its separators,
+   or nil."
   [extensions]
   (let [tool-names
         (for [ext
               extensions
 
               entry
-              (ext-symbols ext)]
+              (ext-symbols ext)
 
-          [(tool-op-keywords ext (:ext.symbol/symbol entry))
-           (sym->py-name (symbol-binding ext (:ext.symbol/symbol entry)))])
+              :let [names
+                    (tool-op-keywords ext entry)]
+              :when (seq names)]
+
+          [names (op-text (last names))])
 
         known
         (into (into host-operations (keys gate-ops)) (mapcat first) tool-names)
+
+        roots
+        (for [ext
+              extensions
+
+              entry
+              (ext-symbols ext)
+
+              :let [names
+                    (:names (:ext.symbol/handles entry))]
+              :when names
+
+              root
+              (names)]
+
+          (str root "."))
+
+        handle?
+        (fn [text]
+          (let [stem (first (str/split text #"\*" 2))]
+            (some #(or (= text (subs % 0 (dec (count %))))
+                       (str/starts-with? stem %)
+                       (and (not= stem text) (str/starts-with? % stem)))
+                  roots)))
+
+        known?
+        (fn [op-kw]
+          (or (contains? known op-kw)
+              (when-let [pattern (op-pattern op-kw)]
+                (some #(re-matches pattern (second %)) tool-names))
+              (handle? (op-text op-kw))))
 
         folded
         #(str/replace (str %) #"[./-]" "_")]
@@ -3182,13 +3305,12 @@
 
           :let [op-kw
                 (or (gate-op op) (keyword op))]
-          :when (not (contains? known op-kw))]
+          :when (not (known? op-kw))]
 
       {:extension (:ext/name ext)
-       :op (subs (str op-kw) 1)
+       :op (op-text op-kw)
        :suggestion (some (fn [[_ python-name]]
-                           (when (= (folded python-name) (folded (subs (str op-kw) 1)))
-                             python-name))
+                           (when (= (folded python-name) (folded (op-text op-kw))) python-name))
                          tool-names)})))
 
 (defn registered-extensions

@@ -847,7 +847,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                           named)
                                     (some (fn [[_ ext entry]]
                                             (when-let [handles (:ext.symbol/handles entry)]
-                                              (when-let [arguments (handles tool)]
+                                              (when-let [arguments ((:argv handles) tool)]
                                                 [ext entry arguments])))
                                           usable)
                                     (throw (unknown-tool tool (map first named))))

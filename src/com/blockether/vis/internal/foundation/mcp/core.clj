@@ -2011,8 +2011,8 @@
   (into {} (concat (first args) kwargs)))
 
 (defn- handle-call
-  "`:ext.symbol/handles` of the verb. `target` is the name of a handle as a block
-   types it: `linear`, `linear.get_issue`, `linear.prompts` or
+  "`:argv` of `:ext.symbol/handles` of the verb. `target` is the name of a handle
+   as a block types it: `linear`, `linear.get_issue`, `linear.prompts` or
    `linear.prompts.greet`. Gives the `(fn [args kwargs])` that makes the arguments
    of the verb, as the handle of the sandbox shim does. Nil when no visible server
    has that name."
@@ -2046,6 +2046,52 @@
                                                 {:type :mcp/arguments}))
                 rest [server "prompts/list"]
                 :else [server]))))))
+
+(defn- handle-names
+  "`:names` of `:ext.symbol/handles` of the verb: what a block types for each
+   server that each session has, and for each server that a live session added."
+  []
+  (let [taken (sandbox-names)]
+    (map #(python-name % taken)
+         (distinct (concat (keys (visible-servers nil)) (mapcat keys (vals @session-specs)))))))
+
+(defn- hook-call
+  "`:call` of `:ext.symbol/handles` of the verb: the call of a handle that the
+   arguments `[server tool arguments]` of the verb make, which is what an op hook
+   sees. `:name` is the handle as a block types it: `linear`, `linear.get_issue`,
+   `linear.prompts` or `linear.prompts.greet`. An MCP request other than a prompt
+   is a tool name, so `resources/read` is `linear.resources_read`. `:args` holds
+   the one dict of arguments of the call, and `:argv` gives the arguments of the
+   verb for the `:args` that the hooks give back. Nil when the session has no
+   server with that name."
+  [env [requested tool arguments]]
+  (let [server
+        (or (canonical-name requested) requested)
+
+        tool
+        (when (and (string? tool) (not (str/blank? tool))) tool)
+
+        prompt
+        (when (and (= "prompts/get" tool) (map? arguments)) (get arguments "name"))
+
+        given
+        (if prompt (get arguments "arguments") arguments)]
+
+    (when (contains? (visible-servers (:session-id env)) server)
+      {:name (str/join "."
+                       (cons (python-name server)
+                             (cond prompt ["prompts" (identifier prompt)]
+                                   (= "prompts/list" tool) ["prompts"]
+                                   tool [(identifier tool)])))
+       :args [(if (nil? given) {} given)]
+       :argv (fn [[given]]
+               (cond prompt [server tool
+                             (cond-> (dissoc arguments "arguments")
+                               (seq given)
+                               (assoc "arguments" given))]
+                     (= "prompts/list" tool) [server tool]
+                     tool [server tool given]
+                     :else [server]))})))
 
 (def ^:private resource-source
   "The `:source` of the attachment descriptor of an MCP resource."
@@ -2176,7 +2222,7 @@
       :symbol 'call
       ;; A block calls a server by its name. The handles of the shim call this.
       :binding '__vis_mcp_call__
-      :handles handle-call
+      :handles {:names handle-names :argv handle-call :call hook-call}
       :hidden? true
       :name "mcp__call"
       :result

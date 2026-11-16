@@ -1168,6 +1168,16 @@ that name as `call["op"]`. For such a tool, `args` holds the positional
 arguments, then one dict with the keyword arguments. The call
 `clj.repl_start("app", aliases=["dev"])` gives `["app", {"aliases": ["dev"]}]`.
 
+A name with `*` is a pattern, and `*` matches any characters. `"gh.*"` matches
+each tool of `gh`, and `"gh.watch"` matches one. A pattern matches only tools,
+not `"python_execution"`. The hook receives the name of the call as
+`call["op"]`, not the pattern.
+
+A tool of an MCP server has the name that a block types, such as
+`"linear.get_issue"`. `"linear.*"` matches each tool and prompt of the server
+`linear`. A prompt has the name `"linear.prompts.<name>"`. For these calls, `args` holds one dict
+with the arguments: `linear.get_issue(id="ENG-1")` gives `[{"id": "ENG-1"}]`.
+
 A hook on a name that no loaded tool or operation has never runs. `vis-agent
 doctor` and the log then show a warning with the correct name, when Vis can find
 one.
