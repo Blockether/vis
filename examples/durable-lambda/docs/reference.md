@@ -21,7 +21,7 @@ the standard library. It supports plain answers and streamed answers.
 | --- | --- | --- |
 | `lease.json` | The active worker, its last checkpoint and the work that waits | permanent |
 | `state/<worker>/<n>.tar.gz` | A checkpoint of the Vis home directory: sessions, transcripts, attached files, settings | the last one; a checkpoint of a failed worker stays |
-| `workflows/<name>.py` | The source of a workflow | permanent |
+| `workflows/<name>.py` | The source of a workflow. Each save also commits the file `workflows/<name>.py` to `main` of the repository | permanent |
 | `runs/index.json` | One line for each of the 300 newest runs | permanent |
 | `runs/<run>/run.json` | What the pages show of a run: its workflow activities, the decisions at its gates (`approved`, `comment` and the time) and the sessions that it left with a fork. The record of the work is the transcript of the session | permanent |
 | `runs/<run>/workflow.py` | The source that the run uses, also after an edit of the workflow | permanent |
@@ -185,8 +185,8 @@ The Software factory API has these addresses below `/dashboard/api/`. A body and
 | `GET workflows` | | The workflows with their inputs and workflow activities |
 | `POST workflows/check` | `{source}` | The description of a source that is not saved, or the syntax error |
 | `GET workflows/<name>` | | One workflow with its source |
-| `PUT workflows/<name>` | `{source}` | Saves a workflow |
-| `DELETE workflows/<name>` | | Removes a workflow |
+| `PUT workflows/<name>` | `{source}` | Saves a workflow: a commit on `main` of the repository, then the copy in S3. The answer has `commit`, `committed` and `url` |
+| `DELETE workflows/<name>` | | Removes a workflow, in the repository and in S3 |
 | `GET runs` | | The 100 newest runs |
 | `POST runs` | `{workflow, input, session}` | Starts a run. `input` is an object of the inputs of the workflow. `session` is optional: the id of the session that the run works in. Without it, the run makes its own session |
 | `GET runs/<id>` | | One run with its workflow activities, its source and its attached files |

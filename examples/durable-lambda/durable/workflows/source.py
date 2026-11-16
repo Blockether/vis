@@ -1,6 +1,9 @@
 """The workflow files: their sources in S3 and what a source says about its workflow.
 
 workflows/<name>.py   the source of a workflow
+
+A run reads the source from S3. Each save and each removal also goes to the main
+branch of the repository, as a commit of the repo function.
 """
 
 from __future__ import annotations
@@ -13,7 +16,8 @@ from typing import Any
 
 from durable import aws
 from durable.domain import NAME, Refused, need
-from durable.settings import SAMPLES, WORKFLOW_LIMIT
+from durable.helpers import log
+from durable.settings import REPO_FUNCTION, SAMPLES, WORKFLOW_LIMIT
 
 
 def literal(node: ast.expr | None) -> Any:
@@ -92,18 +96,29 @@ def listing() -> list[dict[str, Any]]:
     return sorted(found, key=lambda about: about["title"].lower())
 
 
+def commit(name: str, source: str | None) -> dict[str, Any]:
+    """Put the file of a workflow in the repository, or remove it there. Return the commit."""
+    raw, failed = aws.invoke(REPO_FUNCTION, action="store", name=name, source=source)
+    if failed:
+        log("store failed", raw[:400].decode(errors="replace"))
+        raise Refused(502, "GitHub did not get the workflow, so nothing changed. Save again.")
+    return json.loads(raw)
+
+
 def save(name: str, source: str) -> dict[str, Any]:
-    """Store the source of a workflow that is valid. Return what it says about itself."""
+    """Store the source of a workflow that is valid, in GitHub and then in S3. Return what it says about itself."""
     if len(source) > WORKFLOW_LIMIT:
         raise Refused(413, "the workflow is too large")
     about = describe(need(NAME, name, "the workflow name"), source)
+    stored = commit(name, source)
     aws.put(f"workflows/{name}.py", source.encode())
-    return about
+    return {**about, "commit": stored["sha"], "committed": stored["changed"], "url": stored["url"]}
 
 
 def remove(name: str) -> None:
-    """Remove the source of a workflow."""
-    aws.delete(f"workflows/{need(NAME, name, 'the workflow name')}.py")
+    """Remove the source of a workflow, in GitHub and then in S3."""
+    commit(need(NAME, name, "the workflow name"), None)
+    aws.delete(f"workflows/{name}.py")
 
 
 def seed() -> None:

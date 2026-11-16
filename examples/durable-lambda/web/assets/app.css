@@ -165,8 +165,6 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .cm-s-default .cm-variable-2 { color: #2d6a9f; } .cm-s-default .cm-operator { color: var(--charcoal); }
 .cm-error-line { background: var(--bad-soft) !important; }
 .problem { padding: 8px 14px; background: var(--bad-soft); color: var(--bad); font: 11px var(--mono); border-top: 1px solid #efc9c3; }
-.outline { padding: 10px 14px; border-top: 1px solid var(--line); background: var(--cream-soft); display: flex; gap: 6px; align-items: center; overflow-x: auto; }
-.outline > * { flex: none; }
 .runs { border-left: 1px solid var(--line-strong); background: var(--page); }
 .runs-body { overflow-y: auto; flex: 1; padding: 12px; display: grid; gap: 10px; align-content: start; }
 .run { padding: 12px 13px; display: grid; gap: 8px; cursor: pointer; text-align: left; width: 100%; font: inherit; color: inherit; }

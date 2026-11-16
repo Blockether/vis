@@ -263,7 +263,7 @@ push. After 3 rejections at one gate, the run ends without a push.
 
 | Page | Content |
 | --- | --- |
-| `/dashboard` | The workflow editor and the runs. A waiting run shows its gate. `/` goes here |
+| `/dashboard` | The workflow editor and the runs. Save commits the file `workflows/<name>.py` to `main` of the repository. A waiting run shows its gate. `/` goes here |
 | `/dashboard/factory` | The song factory as a line of stations: give a prompt, decide at each gate, see the commit |
 | `/dashboard/vis` | Vis web with the sessions. The global apps button of its header opens the Workflows app: Run, Gates and History |
 

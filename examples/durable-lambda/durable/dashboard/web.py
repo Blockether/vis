@@ -26,10 +26,11 @@ PAGE_POLICY = (
 )
 # The Vis web app starts with inline scripts. It shows text that a session wrote, so
 # it loads images and data only from this address: a link in a transcript cannot
-# send data to another host.
+# send data to another host. The app reads a downloaded file again through its
+# `blob:` address, so `connect-src` allows `blob:` and `data:`; both stay in the page.
 WEB_POLICY = (
     "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; "
+    "img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' blob: data:; "
     "worker-src 'self' blob:; frame-src 'self' blob: data:; object-src 'none'; base-uri 'self'; "
     "form-action 'self'; frame-ancestors 'none'"
 )

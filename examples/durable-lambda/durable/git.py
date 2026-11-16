@@ -3,7 +3,8 @@
 The key gives access to one repository. The worker has no route to GitHub. `fetch`
 copies the main branch to S3 and the sync function puts it on EFS. `publish` pushes
 the commits of a session, which the worker left in S3 as a Git bundle. A push never
-uses force: when main moved, the commits go to a new branch.
+uses force: when main moved, the commits go to a new branch. `store` commits the file
+of a workflow that a person saved in the editor.
 """
 
 from __future__ import annotations
@@ -19,9 +20,26 @@ import time
 from typing import Any
 
 from durable import aws
+from durable.domain import NAME
 from durable.helpers import log, write_secret
 from durable.lambda_runtime import Context
-from durable.settings import BRANCH, BUNDLE_LIMIT, DEPLOY_KEY_FILE, DEPLOY_KEY_PARAMETER, ENV, GIT_S, GUARDED, KNOWN_HOSTS, REPO, REPO_URL, SYNC_FUNCTION
+from durable.settings import (
+    BRANCH,
+    BUNDLE_LIMIT,
+    DEPLOY_KEY_FILE,
+    DEPLOY_KEY_PARAMETER,
+    ENV,
+    GIT_EMAIL,
+    GIT_NAME,
+    GIT_S,
+    GUARDED,
+    KNOWN_HOSTS,
+    REPO,
+    REPO_URL,
+    SYNC_FUNCTION,
+    WORKFLOW_DIR,
+    WORKFLOW_LIMIT,
+)
 
 # The branch of the stack, and the name that the commits of a bundle get in the clone.
 MAIN, INCOMING = f"refs/heads/{BRANCH}", "refs/heads/incoming"
@@ -151,11 +169,48 @@ def publish(publication: str) -> dict[str, Any]:
     return result
 
 
+def store(name: str, source: str | None) -> dict[str, Any]:
+    """Commit the file of a workflow to main and push it. Without a source, remove the file.
+
+    The push uses no force. When main moved after the clone, the push fails and the
+    person saves again. A source that main already has makes no commit.
+    """
+    if not NAME.fullmatch(name):
+        raise ValueError("name must be a workflow name")
+    if source is not None and len(source) > WORKFLOW_LIMIT:
+        raise ValueError("the workflow is too large")
+    file = f"{WORKFLOW_DIR}/{name}.py"
+    with tempfile.TemporaryDirectory(dir="/tmp") as folder:
+        target = clone(folder, "--depth", "1")
+        path = os.path.join(target, file)
+        if source is None:
+            if os.path.exists(path):
+                os.remove(path)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="") as text:
+                text.write(source)
+        git("add", "--all", "--", WORKFLOW_DIR, cwd=target)
+        changed = bool(git("status", "--porcelain", "--", WORKFLOW_DIR, cwd=target).stdout.strip())
+        if changed:
+            message = f"{'Remove' if source is None else 'Save'} the workflow {name}"
+            git("-c", f"user.name={GIT_NAME}", "-c", f"user.email={GIT_EMAIL}", "commit", "--quiet", "--message", message, cwd=target)
+            git("push", "--quiet", "origin", f"HEAD:{MAIN}", cwd=target)
+        sha = git("rev-parse", "HEAD", cwd=target).stdout.strip()
+    if changed:
+        log("stored", file, "in", sha)
+        fetch()
+    return {"sha": sha, "changed": changed, "file": file, "url": f"https://github.com/{REPO}/blob/{sha}/{file}"}
+
+
 def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
-    """Do the action of the event: `fetch` (the default) or `publish`."""
+    """Do the action of the event: `fetch` (the default), `publish` or `store`."""
     action = event.get("action", "fetch")
     if action == "publish":
         return publish(str(event.get("id", "")))
+    if action == "store":
+        source = event.get("source")
+        return store(str(event.get("name", "")), None if source is None else str(source))
     if action == "fetch":
         return fetch(bool(event.get("force")))
     raise ValueError(f"unknown action {action!r}")

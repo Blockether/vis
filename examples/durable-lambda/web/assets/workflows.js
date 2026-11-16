@@ -6,7 +6,6 @@ const studio = document.querySelector("#studio");
 const list = document.querySelector("#list");
 const head = document.querySelector("#editor-head");
 const problem = document.querySelector("#problem");
-const outline = document.querySelector("#outline");
 const runsHead = document.querySelector("#runs-head");
 const runsBody = document.querySelector("#runs");
 const state = { workflows: [], name: "", saved: "", about: null, runs: [], run: null, doc: null, turns: [], all: false };
@@ -50,26 +49,6 @@ def ${name}(ctx, request: str = "Describe the request here."):
     return {"decision": "go", "files": [report(ctx).name]}
 `;
 
-const SNIPPETS = {
-  decision: (name, title, prompt, made) => `class ${made}(BaseModel):
-    decision: Literal["yes", "no"] = Field(description="yes: ... no: ...")
-    reason: str
-
-
-@activity(title=${JSON.stringify(title)})
-def ${name}(ctx) -> ${made}:
-    return ctx.ask(${JSON.stringify(prompt)}, ${made})
-`,
-  document: (name, title, prompt, made) => `@activity(title=${JSON.stringify(title)})
-def ${name}(ctx):
-    return ctx.document(${JSON.stringify(made)}, ${JSON.stringify(prompt)})
-`,
-  answer: (name, title, prompt) => `@activity(title=${JSON.stringify(title)})
-def ${name}(ctx) -> str:
-    return ctx.ask(${JSON.stringify(prompt)})
-`,
-};
-
 // -- the editor ------------------------------------------------------------------------------
 
 // CodeMirror 5 comes from plain scripts of the page, before this module.
@@ -105,7 +84,7 @@ editor.on("change", () => {
   drawHead();
 });
 
-/** Ask the worker about the source: the activities and the inputs, or the error with its line. */
+/** Ask the worker about the source: what it says about its workflow, or the error with its line. */
 async function check() {
   if (marked !== null) editor.removeLineClass(marked, "background", "cm-error-line");
   marked = null;
@@ -119,34 +98,7 @@ async function check() {
     const line = /^line (\d+)/.exec(error.message);
     if (line) marked = editor.addLineClass(Number(line[1]) - 1, "background", "cm-error-line");
   }
-  drawOutline();
   drawHead();
-}
-
-function drawOutline() {
-  const about = state.about;
-  const none = (text) => h("span", { class: "small muted", text });
-  update(outline, about && [about.activities, about.inputs], () =>
-    about
-      ? [
-          h("h4", { text: "Activities" }),
-          about.activities.map((step) => h("button", { class: "chip amber", type: "button", title: `Go to ${step.name}`, text: step.title, onclick: () => jump(`def ${step.name}(`) })),
-          !about.activities.length && none("none yet"),
-          h("h4", { style: "margin-left:10px", text: "Inputs" }),
-          about.inputs.map((input) => chip(input.name, "mono")),
-          !about.inputs.length && none("none"),
-        ]
-      : none("Correct the source to see the activities."),
-  );
-}
-
-/** Put the cursor on the first row that has the text. */
-function jump(text) {
-  const at = editor.getValue().split("\n").findIndex((row) => row.includes(text));
-  if (at < 0) return;
-  editor.setCursor(at, 0);
-  editor.scrollIntoView({ line: at, ch: 0 }, 120);
-  editor.focus();
 }
 
 function drawHead() {
@@ -157,7 +109,6 @@ function drawHead() {
     dirty() && chip("not saved", "amber"),
     about && h("span", { class: "small muted clip only-wide", text: about.title }),
     h("span", { class: "right row wrap" },
-      button("Add activity", { class: "small", onclick: addActivity, disabled: !state.name }, "plus"),
       button("Save", { class: "small", id: "save", onclick: () => save(), disabled: !state.name || !dirty() }, "save"),
       button("Run", { class: "small primary", onclick: () => run(), disabled: !state.name }, "play"),
       button("", { class: "small quiet danger", title: "Delete the workflow", "aria-label": "Delete the workflow", onclick: remove, disabled: !state.name }, "trash"),
@@ -208,9 +159,9 @@ async function save() {
   const control = document.querySelector("#save");
   return guard(control, async () => {
     const source = editor.getValue();
-    await api(`workflows/${state.name}`, { method: "PUT", body: { source } });
+    const stored = await api(`workflows/${state.name}`, { method: "PUT", body: { source } });
     state.saved = source;
-    toast(`Saved ${state.name}.py in S3.`, "good");
+    toast(stored.committed ? `Saved ${state.name}.py. GitHub has it in commit ${stored.commit.slice(0, 7)}.` : `Saved ${state.name}.py. GitHub has this source already.`, "good");
     drawHead();
     await loadList();
     return true;
@@ -218,7 +169,7 @@ async function save() {
 }
 
 async function remove() {
-  if (!confirm(`Delete ${state.name}.py? The runs stay.`)) return;
+  if (!confirm(`Delete ${state.name}.py here and in GitHub? The runs stay.`)) return;
   await guard(null, async () => {
     await api(`workflows/${state.name}`, { method: "DELETE" });
     state.name = state.saved = "";
@@ -244,35 +195,6 @@ function create() {
   };
   const about = h("p", { class: "small muted", text: "The new file has one structured decision, one branch and one document. Change it as you like." });
   const box = dialog("New workflow", [field("Title", title), field("File name (Python name)", name), about], [button("Create", { class: "primary", onclick: press(make) }, "plus")]);
-}
-
-function addActivity() {
-  const title = h("input", { class: "input", placeholder: "Analysis of the story", maxlength: "60" });
-  const kind = h("select", { class: "input" }, h("option", { value: "decision", text: "Structured decision — a Pydantic model that the workflow branches on" }), h("option", { value: "document", text: "Document — a file in S3 and in the transcript" }), h("option", { value: "answer", text: "Plain answer — text" }));
-  const prompt = h("textarea", { class: "input", placeholder: "What Vis does in this activity" });
-  const add = () => {
-    const name = pythonName(title.value) || "new_activity";
-    // A document has a file name. A decision has the name of its Pydantic model.
-    const model = name.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join("");
-    const made = kind.value === "document" ? `${name.toUpperCase()}.md` : model;
-    const snippet = SNIPPETS[kind.value](name, title.value || name, prompt.value || "Describe the work here.", made);
-    const rows = editor.getValue().split("\n");
-    const entry = rows.findIndex((row) => row.startsWith("@workflow"));
-    if (entry < 0) return toast("The file has no @workflow function.", "bad");
-    let last = -1;
-    rows.forEach((row, index) => index > entry && /^ {4}return\b/.test(row) && (last = index));
-    const callRow = `    ${name}_result = ${name}(ctx)`;
-    editor.operation(() => {
-      if (last >= 0) editor.replaceRange(`${callRow}\n`, { line: last, ch: 0 });
-      else editor.replaceRange(`\n${callRow}\n`, { line: editor.lastLine() + 1, ch: 0 });
-      editor.replaceRange(`${snippet}\n\n`, { line: entry, ch: 0 });
-    });
-    box.close();
-    jump(`def ${name}(`);
-    toast(`Added the activity ${name}.`, "good");
-  };
-  const about = h("p", { class: "small muted", text: "The activity goes above the workflow function, and a call goes before its last return. Each activity is one journal step: a run that starts again does not repeat a completed step." });
-  const box = dialog("Add an activity", [field("Title", title), field("Kind", kind), field("Request to Vis", prompt), about], [button("Add to the workflow", { class: "primary", onclick: add }, "plus")]);
 }
 
 // -- runs --------------------------------------------------------------------------------------

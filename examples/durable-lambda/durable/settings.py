@@ -80,6 +80,8 @@ REPO_URL = ENV.get("VIS_REPO_URL") or f"git@github.com:{REPO}.git"
 BRANCH = "main"
 # The name of the Vis project. Vis uses it only when it makes the project.
 PROJECT_NAME = REPO.rpartition("/")[2] or "durable"
+# The directory of the repository that gets a copy of each workflow that a person saves.
+WORKFLOW_DIR = "workflows"
 # GitHub runs the workflow files of this directory with internet access, so a session cannot change it.
 GUARDED = ".github"
 # The author of each commit that the stack makes.
