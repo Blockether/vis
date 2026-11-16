@@ -42,12 +42,13 @@ The terminal shows the keys in its key legend instead of a row of buttons.
 
 | Button | Key | Action |
 | --- | --- | --- |
-| This session | `1` | Show only the changes that this session made. This is the first view of `/review`. Edits of other sessions in the same folder stay out. |
+| This session | `1` | Show only the changes that this session made and that the base branch does not have yet. This is the first view of `/review`. Edits of other sessions in the same folder stay out. |
 | All changes | `2` | Show every change since the first checkpoint, also the edits of other sessions. |
 | Latest change | `3` | Show only what the newest checkpoint changed. |
 | Uncommitted | `4` | Compare the files with the git commit `HEAD`. |
 | Against base branch | `5` | Compare the files with the commit where `HEAD` left the default branch. |
 | Show full files | `F` | Show every unchanged line too. Click again to show only the changes. |
+| Include merged changes | `M` | In **This session**, show also the changes that the base branch already has. Click again to hide them. |
 | Refresh | `R` | Record a checkpoint now. |
 | Run checks | `C` | Run the diff checks and the language checks on the changed files. |
 | Run tests | `T` | Run the checks, and also the tests of the language tools. |
@@ -57,6 +58,13 @@ The terminal shows the keys in its key legend instead of a row of buttons.
 | Restore to here | `B` | Bring every file back to how the chosen checkpoint left it. |
 
 An undo records a checkpoint first, so you can undo the undo. A repeated undo changes nothing.
+
+**This session** compares the files of the session with the base branch (`origin/HEAD`, else the default branch):
+
+- A file that the base branch has with the same content is merged, and it stays out.
+- When the base branch is old, the view shows more files, never fewer.
+- Without Git, the view shows every change of the session.
+- A step can also bring changes of others: a pull, or an edit of a session that runs beside it. They go to a separate checkpoint, **Changes of others during a step**, and stay out.
 
 ## Checks
 

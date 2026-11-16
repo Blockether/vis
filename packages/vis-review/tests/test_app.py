@@ -11,6 +11,7 @@ from vis_lang_interface.tree import walked
 from vis_review.ai import AiFinding, AiReview
 from vis_review.app import ReviewApp, extension_opener, image_node
 from vis_review.journal import FileDiff, Journal
+from vis_review.recorder import Recorder
 
 
 def setup(tmp_path, recorder, **doors):
@@ -27,6 +28,26 @@ def edit(root, rel, text, kind="block"):
     path.write_text(text)
     stat = os.stat(path)
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+
+def repository(root):
+    """Make `root` a git repository with one commit of its files. Return its `git` call."""
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=root, env=env, check=True)
+
+    git("init", "-q", "-b", "main")
+    git("add", "-A")
+    git("commit", "-q", "-m", "first")
+    return git
 
 
 def wait_for(check, timeout=2.0):
@@ -515,6 +536,57 @@ def test_a_session_review_shows_only_its_own_changes_by_default(tmp_path, record
     recorder.send("activate", "undo-file")
     assert wait_for(lambda: (root / "a.py").read_text() == "a = 1 by them\n")
     assert (root / "theirs.py").read_text() == "x = 1\n"
+
+
+def test_a_session_review_hides_the_changes_that_the_base_branch_has(
+    tmp_path, recorder
+):
+    # Session 27112fd6: "This session" showed 331 files, and main had 329 of them.
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.py").write_text("a = 1\n")
+    (root / "b.py").write_text("b = 1\n")
+    git = repository(root)
+    journal = Journal(root, "s1", tmp_path / "base", files=walked)
+    app = ReviewApp(journal, extension_opener, is_session_scoped=True).open()
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block", "edit a")
+    git("commit", "-q", "-am", "merge a")
+    edit(root, "b.py", "b = 2\n")
+    journal.checkpoint("block", "edit b")
+    app.refresh()
+    assert items(recorder, "file") == ["file-all", "file:b.py"]
+    assert chosen(recorder) == {"session", "file-all"}
+    recorder.send("activate", "merged")
+    assert wait_for(
+        lambda: items(recorder, "file") == ["file-all", "file:a.py", "file:b.py"]
+    )
+    recorder.send("activate", "merged")
+    assert wait_for(lambda: items(recorder, "file") == ["file-all", "file:b.py"])
+
+
+def test_a_step_after_a_commit_hides_the_merged_change_though_no_file_changed(
+    tmp_path, recorder
+):
+    # A commit moves the base branch and changes no file, so no checkpoint follows it.
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.py").write_text("a = 1\n")
+    (root / "b.py").write_text("b = 1\n")
+    git = repository(root)
+    steps = Recorder(tmp_path / "base", files=walked)
+    journal = steps.journal("s1", root)
+    steps.record("s1", root, "block", "first")
+    steps.keep(
+        "s1", ReviewApp(journal, extension_opener, is_session_scoped=True).open()
+    )
+    edit(root, "a.py", "a = 2\n")
+    edit(root, "b.py", "b = 2\n")
+    steps.record("s1", root, "block", "edit both")
+    assert items(recorder, "file") == ["file-all", "file:a.py", "file:b.py"]
+    git("commit", "-q", "-m", "merge a", "a.py")
+    assert steps.record("s1", root, "block", "commit") is None
+    assert items(recorder, "file") == ["file-all", "file:b.py"]
 
 
 def _buttons_in(nodes):

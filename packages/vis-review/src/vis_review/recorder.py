@@ -63,13 +63,16 @@ class Recorder:
             return found
 
     def record(self, key: str, root, kind: str, label: str) -> Entry | None:
-        """Record what changed under `root`, and repaint the open app when it did."""
+        """Record what changed under `root`. Repaint the open app when files changed.
+
+        A commit or a push changes no file and still changes what the app shows, so
+        an app that is behind git gets a paint too.
+        """
         journal = self.journal(key, root)
         entry = journal.checkpoint(kind, label)
-        if entry is not None:
-            app = self.app(key, journal.root)
-            if app is not None:
-                app.refresh()
+        app = self.app(key, journal.root)
+        if app is not None and (entry is not None or app.is_behind()):
+            app.refresh()
         return entry
 
     def app(self, key: str, root) -> Any:

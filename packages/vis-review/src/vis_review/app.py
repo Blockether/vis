@@ -50,6 +50,7 @@ BUTTONS = (
     "uncommitted",
     "branch",
     "full",
+    "merged",
     "refresh",
     "checks",
     "tests",
@@ -67,6 +68,7 @@ KEYS = {
     "uncommitted": "4",
     "branch": "5",
     "full": "F",
+    "merged": "M",
     "refresh": "R",
     "checks": "C",
     "tests": "T",
@@ -165,6 +167,12 @@ class ReviewApp:
         # range then shows only those changes, never the edits of other sessions.
         self.is_session_scoped = is_session_scoped
         self.is_own = is_session_scoped
+        # "This session" leaves out the changes that the base branch has, until a person asks.
+        self.is_merged_shown = False
+        # The git commit that the last "This session" paint compared with, or None.
+        self.own_base: str | None = None
+        # The stamp of the git refs at the last paint: a later stamp can show other changes.
+        self._refs: tuple = ()
         self.findings: list[checks.Finding] = []
         self.ai_summary = ""
         self.notice = ("Ready", "idle")
@@ -208,6 +216,15 @@ class ReviewApp:
             if self.view is not None:
                 self._paint(self.render())
 
+    def is_behind(self) -> bool:
+        """True when the app compares with git, and a git ref moved since the last paint."""
+        is_git = self.against is not None or (
+            self._is_own_range() and not self.is_merged_shown
+        )
+        return (
+            self.view is not None and is_git and self.journal.refs_stamp() != self._refs
+        )
+
     def _paint(self, nodes: list[dict]) -> None:
         with self.view.batch():
             before = None
@@ -230,6 +247,7 @@ class ReviewApp:
         text, tone = self.notice
         return {
             **{name: getattr(self, name) for name in _KEPT},
+            "is_merged_shown": self.is_merged_shown,
             # A run does not continue after a restart.
             "notice": ["Ready", "idle"] if tone == "running" else [text, tone],
             "findings": [dataclasses.asdict(finding) for finding in self.findings],
@@ -278,6 +296,8 @@ class ReviewApp:
             return
         for name, value in kept.items():
             setattr(self, name, value)
+        # A state that an older version saved has no such field.
+        self.is_merged_shown = state.get("is_merged_shown") is True
         # Only a session door knows which checkpoints the session wrote itself.
         self.is_own = self.is_own and self.is_session_scoped
         self.findings, self.notice = findings, (text, tone)
@@ -307,6 +327,7 @@ class ReviewApp:
 
     def render(self) -> list[dict]:
         """Every node of the app for the current state: the diff first."""
+        self._refs = self.journal.refs_stamp()
         diffs_all = self._scope_diffs()
         if all(d.path != self.path for d in diffs_all):
             # An undo or a new range can take the chosen file out of the list.
@@ -339,9 +360,21 @@ class ReviewApp:
                 return found
             self.notice = (f"Git cannot show {_AGAINST[self.against]} here", "warn")
             self.against = None
+        self.own_base = None
         if self._is_own_range():
+            ref = None if self.is_merged_shown else base_ref(self.journal.root)
+            found = ref and self.journal.own_open(ref, self._context())
+            if found is not None and ref:
+                self.own_base = ref
+                return found
             return self.journal.own_diff(self._context())
         return self.journal.diff(self.start, self.end, context=self._context())
+
+    def _merged_count(self, diffs_all: list[FileDiff]) -> int:
+        """The own changed files that "This session" leaves out: the base branch has them."""
+        if self.own_base is None:
+            return 0
+        return len(set(self.journal.own_paths()) - {d.path for d in diffs_all})
 
     def _is_own_range(self) -> bool:
         """True when the app shows only the changes of its own session."""
@@ -385,7 +418,7 @@ class ReviewApp:
         return [
             ui.shortcut(KEYS[button], node_id=button)
             for button in BUTTONS
-            if button != "session" or self.is_session_scoped
+            if button not in ("session", "merged") or self.is_session_scoped
         ]
 
     def _scope_label(self) -> str:
@@ -447,6 +480,7 @@ class ReviewApp:
                 else []
             ),
         ]
+        merged = self._merged_count(diffs_all)
         more = [
             ui.button("checks", "Run checks", is_disabled=not has_diffs),
             ui.button(
@@ -457,6 +491,21 @@ class ReviewApp:
             ),
             ui.button(
                 "full", "Show changes only" if self.is_full else "Show full files"
+            ),
+            *(
+                [
+                    ui.button(
+                        "merged",
+                        "Hide merged changes"
+                        if self.is_merged_shown
+                        else f"Include merged changes ({merged})"
+                        if merged
+                        else "Include merged changes",
+                        is_disabled=not own,
+                    )
+                ]
+                if self.is_session_scoped
+                else []
             ),
             *(
                 [
@@ -501,7 +550,7 @@ class ReviewApp:
         """What the diff compares with: a git ref or the first checkpoint of the range."""
         if self.against is not None:
             return self.against_ref or self.against
-        return f"#{max(self.start, 0)}"
+        return self.own_base or f"#{max(self.start, 0)}"
 
     def _diff(
         self, patch: str, threads: list[dict], diffs, diffs_all, end: int
@@ -509,7 +558,12 @@ class ReviewApp:
         """The diff node of `patch` with its toolbar and `threads`, one for each finding on a line."""
         return ui.diff(
             "diff",
-            patch or "No change in this range.\n",
+            patch
+            or (
+                "Every change of this session is merged.\n"
+                if self._merged_count(diffs_all)
+                else "No change in this range.\n"
+            ),
             old_revision=self._old_revision(),
             new_revision=f"#{end}"
             if self.end is not None and not self.against
@@ -662,6 +716,15 @@ class ReviewApp:
     def _full(self) -> None:
         self.is_full = not self.is_full
         text = "Showing full files" if self.is_full else "Showing changes only"
+        self.refresh((text, "idle"))
+
+    def _merged(self) -> None:
+        self.is_merged_shown = not self.is_merged_shown
+        text = (
+            "Showing the merged changes of this session too"
+            if self.is_merged_shown
+            else "Showing the changes of this session that are not merged"
+        )
         self.refresh((text, "idle"))
 
     def _refresh(self) -> None:

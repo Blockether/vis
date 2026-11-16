@@ -41,6 +41,11 @@ from vis_review.store import Store
 KINDS = ("baseline", "outside", "block", "patch", "undo", "manual")
 # Kinds that the session itself wrote; "outside" holds the edits of others.
 OWN_KINDS = ("block", "patch", "undo")
+# Kinds that record a step of the session. A step takes time, so its changes can
+# hold the work of others: a pull, or the edit of a session that runs beside it.
+STEP_KINDS = ("block", "patch")
+# The most paths that one git command names; above it, git lists the whole tree.
+MOST_NAMED_PATHS = 400
 # Seconds after which the file list is read again, to see files that git now lists.
 REFRESH_S = 300
 # A text side larger than this shows no line diff; its counts still come from line_changes.
@@ -130,6 +135,15 @@ class Journal:
         self._tree: Tree | None = None
         self._diffs: OrderedDict[tuple, FileDiff] = OrderedDict()
         self._diffs_lock = threading.Lock()
+        # The time and the git HEAD of the last scan: where the next step starts.
+        self._scanned_at: float | None = None
+        self._head: str | None = None
+        # The git directory of the root: None before the first look, "" without git.
+        self._git_dir: str | None = None
+        # The git directory that holds the branches: another one in a linked work tree.
+        self._common_dir = ""
+        # Git blob names by content digest. A content never changes, so nor does its name.
+        self._oids: dict[str, str] = {}
         self.entries: list[Entry] = []
         self.state: dict[str, str] = {}
         self._load()
@@ -200,12 +214,171 @@ class Journal:
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
         with self._lock:
+            since, head = self._scanned_at, self._head
             delta = self._scan()
+            self._scanned_at = self._clock()
+            self._head = self._head_now()
             if not self.entries:
                 return self._append("baseline", label or "Baseline", delta)
             if not delta:
                 return None
+            if kind in STEP_KINDS:
+                theirs = self._of_others(delta, since, head)
+                if theirs:
+                    other = self._append(
+                        "outside",
+                        "Changes of others during a step",
+                        {rel: delta.pop(rel) for rel in theirs},
+                    )
+                    if not delta:
+                        return other
             return self._append(kind, label, delta)
+
+    def _head_now(self) -> str | None:
+        """The commit of HEAD. The reflog gives it without a git process."""
+        if not self._git_dirs():
+            return None
+        return _reflog_head(os.path.join(self._git_dir, "logs", "HEAD")) or _line(
+            _git(self.root, "rev-parse", "--verify", "--quiet", "HEAD")
+        )
+
+    def _git_dirs(self) -> bool:
+        """Find the git directories of the root one time. False without git."""
+        if self._git_dir is None:
+            both = _git(
+                self.root,
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-dir",
+                "--git-common-dir",
+            )
+            rows = (both or "").split("\n")
+            if len(rows) >= 2 and rows[0] and rows[1]:
+                self._git_dir, self._common_dir = rows[0], rows[1]
+            else:
+                # A git before 2.31 does not know `--path-format`.
+                found = _line(_git(self.root, "rev-parse", "--absolute-git-dir"))
+                self._git_dir = self._common_dir = found or ""
+        return bool(self._git_dir)
+
+    def refs_stamp(self) -> tuple:
+        """A value that changes when HEAD or a base branch moves; `()` without git.
+
+        A commit, a push and a fetch change what git shows, and they change no file
+        of the root. The stamp reads only file times, so each step can ask for it.
+        """
+        if not self._git_dirs():
+            return ()
+        common = self._common_dir
+        paths = [
+            os.path.join(self._git_dir, "logs", "HEAD"),
+            os.path.join(common, "packed-refs"),
+        ]
+        for ref in _BASE_REFS.values():
+            paths += [os.path.join(common, ref), os.path.join(common, "logs", ref)]
+        return tuple(_file_stamp(path) for path in paths)
+
+    def _of_others(
+        self, delta: Mapping[str, str | None], since: float | None, head: str | None
+    ) -> set[str]:
+        """The paths of `delta` that the step did not write itself.
+
+        Git brought a file when HEAD moved to a commit that has the file as it is
+        now, and no commit made during the step changed it. Another session wrote
+        a file when its journal recorded the same content as its own change
+        during the step. A session keeps a file that it changed before.
+        """
+        if since is None:
+            since = self.entries[-1].at
+        theirs = self._brought_by_git(delta, since, head)
+        claimed = self._peer_claims(since)
+        contested = {rel for rel in delta if (rel, delta[rel]) in claimed} - theirs
+        if contested:
+            theirs |= contested - {
+                rel
+                for entry in self.entries
+                if entry.kind in OWN_KINDS
+                for rel in entry.files
+            }
+        return theirs
+
+    def _brought_by_git(
+        self, delta: Mapping[str, str | None], since: float, head: str | None
+    ) -> set[str]:
+        new = self._head
+        if not head or not new or head == new:
+            return set()
+        names = ("--name-only", "-z", "--no-renames", "--relative")
+        moved = _names(_git(self.root, "diff", *names, head, new))
+        fresh = _names(
+            _git(
+                self.root,
+                "log",
+                f"--since=@{int(since)}",
+                "--format=",
+                *names,
+                f"{head}..{new}",
+            )
+        )
+        if moved is None or fresh is None:
+            return set()
+        maybe = sorted((set(delta) & moved) - fresh)
+        at_new = self._oids_at(new, maybe) if maybe else {}
+        if at_new is None:
+            return set()
+        return {rel for rel in maybe if at_new.get(rel) == self._oid(delta[rel])}
+
+    def _peer_claims(self, since: float) -> set[tuple[str, str | None]]:
+        """`(path, digest)` of each own change that another journal of this root recorded since `since`."""
+        claims: set[tuple[str, str | None]] = set()
+        try:
+            peers = [path for path in self._folder.glob("*.jsonl") if path != self.path]
+        except OSError:
+            return claims
+        for path in peers:
+            try:
+                if path.stat().st_mtime < since - 1:
+                    continue
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in reversed(lines):
+                try:
+                    raw = json.loads(line)
+                    if float(raw["at"]) < since:
+                        break
+                    if raw["kind"] in OWN_KINDS:
+                        claims.update(dict(raw.get("files") or {}).items())
+                except (ValueError, KeyError, TypeError):
+                    continue
+        return claims
+
+    def _oid(self, sha: str | None) -> str | None:
+        """The git blob name of the content with digest `sha`; "" when the store has no copy."""
+        if sha is None:
+            return None
+        found = self._oids.get(sha)
+        if found is None:
+            data = self.store.get(sha)
+            if data is None:
+                return ""
+            found = hashlib.sha1(
+                b"blob %d\0" % len(data) + data, usedforsecurity=False
+            ).hexdigest()
+            self._oids[sha] = found
+        return found
+
+    def _oids_at(self, commit: str, rels: list[str]) -> dict[str, str] | None:
+        """`{path: git blob name}` of `rels` at `commit`; None when git failed."""
+        named = rels if len(rels) <= MOST_NAMED_PATHS else []
+        listed = _git(self.root, "ls-tree", "-r", "-z", commit, "--", *named)
+        if listed is None:
+            return None
+        found = {}
+        for row in filter(None, listed.split("\0")):
+            head, _, rel = row.partition("\t")
+            found[rel] = head.split()[2]
+        return found
 
     def _scan(self) -> dict[str, str | None]:
         """`{path: digest or None}` of each file whose content differs from `state`."""
@@ -314,35 +487,59 @@ class Journal:
         content after the last own change. An edit of another session between
         these two changes stays in, because it is in the same file content.
         """
-        spans: dict[str, tuple[int, int]] = {}
-        for entry in self.entries:
-            if entry.kind in OWN_KINDS:
-                for rel in entry.files:
-                    spans[rel] = (spans.get(rel, (entry.seq - 1, 0))[0], entry.seq)
-        states = self._states_at({seq for span in spans.values() for seq in span})
-        diffs = []
-        for rel in sorted(spans):
-            first, last = spans[rel]
-            before, after = states[first].get(rel), states[last].get(rel)
-            if before != after:
-                diffs.append(self.file_diff(rel, before, after, context))
-        return diffs
+        return [
+            self.file_diff(rel, before, after, context)
+            for rel, (before, after) in self._own_changes().items()
+        ]
 
-    def _states_at(self, seqs: set[int]) -> dict[int, dict[str, str]]:
-        """`state_at` of each of `seqs`, in one pass over the journal."""
-        states: dict[int, dict[str, str]] = {}
+    def own_paths(self) -> list[str]:
+        """The paths that the session itself changed, in order."""
+        return list(self._own_changes())
+
+    def _own_changes(self) -> dict[str, tuple[str | None, str | None]]:
+        """`{path: (digest before, digest after)}` of each own change, by path."""
         state: dict[str, str] = {}
-        if 0 in seqs:
-            states[0] = {}
+        spans: dict[str, tuple[str | None, str | None]] = {}
         for entry in self.entries:
             for rel, sha in entry.files.items():
+                if entry.kind in OWN_KINDS:
+                    spans[rel] = (spans.get(rel, (state.get(rel),))[0], sha)
                 if sha is None:
                     state.pop(rel, None)
                 else:
                     state[rel] = sha
-            if entry.seq in seqs:
-                states[entry.seq] = dict(state)
-        return states
+        return {
+            rel: spans[rel] for rel in sorted(spans) if spans[rel][0] != spans[rel][1]
+        }
+
+    def own_open(self, ref: str, context: int = 3) -> list[FileDiff] | None:
+        """The own changes that git commit `ref` does not have; None where git cannot tell.
+
+        Each file that the session changed goes from its content at `ref` to the
+        newest checkpoint. A file that `ref` has with the same content is left
+        out: its change is merged.
+        """
+        place = _place(self.root, ref)
+        if place is None:
+            return None
+        prefix, top, commit = place
+        own = self.own_paths()
+        at_ref = self._oids_at(commit, own)
+        if at_ref is None:
+            return None
+        changed = [
+            rel for rel in own if at_ref.get(rel) != self._oid(self.state.get(rel))
+        ]
+        names = [prefix + rel for rel in changed if rel in at_ref]
+        old = _restored(top, commit, names, prefix) if names else {}
+        if old is None:
+            return None
+        before = {rel: self.store.put(data) for rel, data in old.items()}
+        return [
+            self.file_diff(rel, before.get(rel), self.state.get(rel), context)
+            for rel in changed
+            if before.get(rel) != self.state.get(rel)
+        ]
 
     def against(self, ref: str, context: int = 3) -> list[FileDiff] | None:
         """How each file differs from git commit `ref`; None where git cannot tell.
@@ -540,11 +737,70 @@ def _git(root: str, *args: str, timeout_s: int = 60) -> str | None:
     return done.out if done.is_ok else None
 
 
+def _line(out: str | None) -> str | None:
+    """The one line that git printed, or None."""
+    return (out or "").strip() or None
+
+
+def _names(out: str | None) -> set[str] | None:
+    """The paths of a NUL separated git list; None when git failed."""
+    if out is None:
+        return None
+    return {name.strip("\n") for name in out.split("\0")} - {""}
+
+
+def _reflog_head(path: str) -> str | None:
+    """The commit that the newest line of the reflog at `path` moved to, or None."""
+    try:
+        with open(path, "rb") as log:
+            size = log.seek(0, os.SEEK_END)
+            span = 1024
+            while True:
+                log.seek(max(0, size - span))
+                tail = log.read().rstrip(b"\n")
+                if b"\n" in tail or span >= size:
+                    break
+                span *= 4
+    except OSError:
+        return None
+    fields = tail.rpartition(b"\n")[2].split(b" ", 2)
+    new = fields[1].decode("ascii", "replace") if len(fields) == 3 else ""
+    return new if len(new) >= 40 and set(new) <= set("0123456789abcdef") else None
+
+
+def _place(root: str, ref: str) -> tuple[str, str, str] | None:
+    """`(prefix of root in the work tree, top of the work tree, commit of ref)`, or None."""
+    out = _git(
+        root, "rev-parse", "--show-prefix", "--show-toplevel", f"{ref}^{{commit}}"
+    )
+    rows = (out or "").split("\n")
+    if len(rows) < 3 or not rows[1] or not rows[2]:
+        return None
+    return rows[0], rows[1], rows[2]
+
+
+# The branches that can be the base, in order, and the git ref of each.
+_BASE_REFS = {
+    "origin/HEAD": "refs/remotes/origin/HEAD",
+    "origin/main": "refs/remotes/origin/main",
+    "origin/master": "refs/remotes/origin/master",
+    "main": "refs/heads/main",
+    "master": "refs/heads/master",
+}
+
+
+def _file_stamp(path: str) -> tuple[int, int] | None:
+    """`(time, size)` of the file at `path`, or None when there is no file."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
 def base_ref(root: str) -> str | None:
     """The commit where HEAD left the default branch, for "Automatic"; None if unknown."""
-    default = _git(root, "rev-parse", "--abbrev-ref", "origin/HEAD")
-    names = [default.strip()] if default and default.strip() != "origin/HEAD" else []
-    for name in [*names, "origin/main", "origin/master", "main", "master"]:
+    for name in _BASE_REFS:
         base = _git(root, "merge-base", "HEAD", name)
         if base and base.strip():
             return base.strip()
@@ -558,12 +814,10 @@ def git_files(root: str, ref: str) -> dict[str, bytes | None] | None:
     work tree and a temporary index, so the repository itself never changes.
     Returns None where `root` is no git work tree or `ref` is no commit.
     """
-    prefix = _git(root, "rev-parse", "--show-prefix")
-    top = _git(root, "rev-parse", "--show-toplevel")
-    commit = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-    if prefix is None or top is None or not commit:
+    place = _place(root, ref)
+    if place is None:
         return None
-    prefix, top = prefix.strip(), top.strip()
+    prefix, top, commit = place
     status = _git(
         root, "diff", "--name-status", "-z", "--no-renames", "--relative", ref
     )
@@ -579,7 +833,7 @@ def git_files(root: str, ref: str) -> dict[str, bytes | None] | None:
         dict.fromkeys(rel for code, rel in zip(fields[::2], fields[1::2]) if rel)
     )
     if at_ref:
-        old = _restored(top, commit.strip(), [prefix + rel for rel in at_ref], prefix)
+        old = _restored(top, commit, [prefix + rel for rel in at_ref], prefix)
         if old is None:
             return None
         files.update(old)

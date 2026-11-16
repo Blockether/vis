@@ -27,7 +27,12 @@ def test_a_checkpoint_with_a_change_repaints_the_open_app_and_one_without_does_n
     painted = []
     journal = recorder.journal("s1", root)
     recorder.keep(
-        "s1", SimpleNamespace(journal=journal, refresh=lambda: painted.append(1))
+        "s1",
+        SimpleNamespace(
+            journal=journal,
+            refresh=lambda: painted.append(1),
+            is_behind=lambda: False,
+        ),
     )
     assert recorder.record("s1", root, "block", "first").kind == "baseline"
     assert recorder.record("s1", root, "block", "nothing") is None

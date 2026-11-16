@@ -374,3 +374,88 @@ def test_a_repaint_reuses_the_diff_of_the_same_contents(tmp_path, monkeypatch):
     first = j.diff(1)
     monkeypatch.setattr(journal_module, "unified", None)
     assert j.diff(1) == first
+
+
+def test_own_open_shows_only_the_own_files_that_the_base_does_not_have(tmp_path):
+    # Session 27112fd6: "This session" showed 331 files, and main had 329 of them.
+    top = repo(tmp_path)
+    j = Journal(top / "sub", "s1", tmp_path / "base", files=walked, clock=lambda: 1.0)
+    j.checkpoint()
+    write(j, "a.py", "merged\n")
+    j.checkpoint("block", "edit a")
+    git(top, "commit", "-q", "-am", "merge a")
+    write(j, "keep.py", "open\n")
+    write(j, "new.py", "new\n")
+    os.unlink(os.path.join(j.root, "gone.py"))
+    j.checkpoint("block", "edit more")
+    write(j, "theirs.py", "other session\n")
+    j.checkpoint("outside", "Changes between blocks")
+    diffs = {d.path: d for d in j.own_open("HEAD")}
+    assert {p: d.status for p, d in diffs.items()} == {
+        "gone.py": "deleted",
+        "keep.py": "modified",
+        "new.py": "added",
+    }
+    assert "-keep\n+open\n" in diffs["keep.py"].patch
+    assert journal(tmp_path).own_open("HEAD") is None
+
+
+def test_a_block_leaves_out_the_files_that_git_brought_in(tmp_path, monkeypatch):
+    # Session fd5c4248: the block that ran `git pull` owned 24 files of other sessions.
+    top = repo(tmp_path)
+    git(top, "switch", "-q", "-c", "upstream")
+    (top / "sub" / "a.py").write_text("upstream\n")
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2001-01-01T00:00:00+0000")
+    git(top, "commit", "-q", "-am", "work of another session")
+    monkeypatch.delenv("GIT_COMMITTER_DATE")
+    git(top, "switch", "-q", "main")
+    j = Journal(top / "sub", "s1", tmp_path / "base", files=walked)
+    j.checkpoint()
+    j.checkpoint("outside", "Changes between blocks")
+    write(j, "keep.py", "mine\n")
+    git(top, "merge", "-q", "--ff-only", "upstream")
+    entry = j.checkpoint("block", "git pull")
+    assert (entry.kind, set(entry.files)) == ("block", {"keep.py"})
+    assert [d.path for d in j.own_diff()] == ["keep.py"]
+    assert j.store.get(j.state["a.py"]) == b"upstream\n"
+
+
+def test_a_block_owns_the_file_that_it_commits(tmp_path):
+    top = repo(tmp_path)
+    j = Journal(top / "sub", "s1", tmp_path / "base", files=walked)
+    j.checkpoint()
+    j.checkpoint("outside", "Changes between blocks")
+    write(j, "a.py", "mine\n")
+    git(top, "commit", "-q", "-am", "my work")
+    entry = j.checkpoint("block", "edit and commit")
+    assert (entry.kind, set(entry.files)) == ("block", {"a.py"})
+
+
+def test_a_block_leaves_out_a_change_that_another_session_recorded_first(tmp_path):
+    # Session fd5c4248 owned CHANGELOG.md: another session wrote it while a long block ran.
+    mine, theirs = journal(tmp_path, "s1"), journal(tmp_path, "s2")
+    write(mine, "mine.py", "m1\n")
+    mine.checkpoint()
+    theirs.checkpoint()
+    write(theirs, "theirs.py", "t1\n")
+    theirs.checkpoint("block", "a short edit")
+    write(mine, "mine.py", "m2\n")
+    entry = mine.checkpoint("block", "a long block")
+    assert (entry.kind, set(entry.files)) == ("block", {"mine.py"})
+    assert [d.path for d in mine.own_diff()] == ["mine.py"]
+    assert mine.store.get(mine.state["theirs.py"]) == b"t1\n"
+
+
+def test_a_session_keeps_a_file_that_it_changed_before(tmp_path):
+    # Two blocks ran together and the other one ended first: an own file stays own.
+    mine, theirs = journal(tmp_path, "s1"), journal(tmp_path, "s2")
+    write(mine, "shared.py", "s1\n")
+    mine.checkpoint()
+    theirs.checkpoint()
+    write(mine, "shared.py", "s2\n")
+    mine.checkpoint("block", "the first own change")
+    theirs.checkpoint("outside", "Changes between blocks")
+    write(mine, "shared.py", "s3\n")
+    theirs.checkpoint("block", "ended first")
+    entry = mine.checkpoint("block", "the second own change")
+    assert (entry.kind, set(entry.files)) == ("block", {"shared.py"})
