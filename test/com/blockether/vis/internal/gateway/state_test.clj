@@ -12,6 +12,8 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -4292,24 +4294,97 @@
 
 ;; Regression, reported in Vis session 74b502e2: a 429 failed the leader turn. Then each of its
 ;; four subagent results started one more leader turn, and each one failed with the same error.
-(defdescribe council-wake-after-failed-turn-test
-             (let [eligible? (fn [status agent]
-                               (with-redefs-fn {#'state/registry
-                                                (atom {"lead" {:turns {"first" {:status "completed"}
-                                                                       "last" {:status status}}
-                                                               :turn-order ["first" "last"]}})
-                                                #'persistance/db-get-session (constantly {:id
-                                                                                          "lead"})
-                                                #'persistance/db-agent-info (constantly agent)
-                                                #'bus/live-turns (constantly {})}
-                                 #(#'state/council-wake-eligible? ::db "lead")))]
-               (it "does not wake the session of a person after its latest turn failed"
-                   (expect (false? (eligible? "failed" nil))))
-               (it "wakes that session when its latest turn did not fail"
-                   (doseq [status ["completed" "cancelled" "suspended"]]
-                     (expect (true? (eligible? status nil)) status)))
-               (it "still wakes a managed subagent after its latest turn failed"
-                   (expect (true? (eligible? "failed" {:status "failed"}))))))
+(defdescribe
+  council-wake-holds-during-a-rate-limit-test
+  (let [limited
+        {:status "failed" :content [{"type" "error" "code" "provider_rate_limit"}]}
+
+        entry
+        (fn [id]
+          {:entry_id id
+           :group_id "g"
+           :author_session_id (str "child-" id)
+           :content (str "result " id)})
+
+        run
+        (fn [agent f]
+          (let [submitted
+                (atom [])
+
+                scheduled
+                (atom [])]
+
+            (with-redefs-fn {#'state/registry (atom {"lead" {:turns {}}})
+                             #'toggles/enabled? (constantly true)
+                             #'state/council-wake-eligible? (constantly true)
+                             #'council/default-group (constantly "g")
+                             #'persistance/db-agent-info (constantly agent)
+                             #'state/schedule-held-wakes! (fn [sid ms]
+                                                            (swap! scheduled conj [sid ms]))
+                             #'state/submit-turn! (fn [_ opts]
+                                                    (swap! submitted conj opts)
+                                                    {:turn {}})}
+              #(f submitted scheduled))))
+
+        end-hold!
+        (fn []
+          (swap! @#'state/registry assoc-in ["lead" :rate-limit :until] 0))]
+
+    (it "holds each notification while the rate limit lasts and schedules one release"
+        (run nil
+             (fn [submitted scheduled]
+               (#'state/note-rate-limit! "lead" limited)
+               (doseq [id [1 2 3 4]]
+                 (expect (state/council-wake! ::db "lead" (entry id))))
+               (expect (= [] @submitted))
+               (expect (= 1 (count @scheduled)))
+               (expect (<= 1 (second (first @scheduled)) 60000)))))
+    (it "gives the held notifications to one turn when the hold ends"
+        (run nil
+             (fn [submitted _]
+               (#'state/note-rate-limit! "lead" limited)
+               (doseq [id [1 2 3 4]]
+                 (state/council-wake! ::db "lead" (entry id)))
+               (end-hold!)
+               (#'state/release-held-wakes! "lead")
+               (expect (= [1 2 3 4] (mapv #(get-in % [:council-ping :entry-id]) @submitted)))
+               (expect (str/includes? (:request (first @submitted))
+                                      "Council notifications #1, #2, #3, #4."))
+               (expect (= "result 1\n\nresult 2\n\nresult 3\n\nresult 4"
+                          (:display-request (first @submitted))))
+               (expect (nil? (:council-held (get @@#'state/registry "lead")))))))
+    (it "holds them again when the release comes before the end of the hold"
+        (run nil
+             (fn [submitted scheduled]
+               (#'state/note-rate-limit! "lead" limited)
+               (state/council-wake! ::db "lead" (entry 1))
+               (#'state/release-held-wakes! "lead")
+               (expect (= [] @submitted))
+               (expect (= 2 (count @scheduled)))
+               (expect (= [1]
+                          (mapv :entry_id
+                                (get-in @@#'state/registry ["lead" :council-held :entries])))))))
+    (it "doubles the hold for each rate limit in a row and clears it after another end"
+        (run nil
+             (fn [_ _]
+               (let [hold-ms (fn [patch]
+                               (let [before (util/now-ms)]
+                                 (#'state/note-rate-limit! "lead" patch)
+                                 (some-> (get-in @@#'state/registry ["lead" :rate-limit :until])
+                                         (- before))))]
+                 (expect (<= 60000 (hold-ms limited) 61000))
+                 (expect (<= 120000 (hold-ms limited) 121000))
+                 (expect (nil? (hold-ms {:status "completed" :content []})))
+                 (expect (<= 60000 (hold-ms limited) 61000))))))
+    (it "starts the follow-up turn of a managed subagent during the hold"
+        (run {:status "failed" :iterations_used 0 :iteration_budget 10}
+             (fn [submitted scheduled]
+               (#'state/note-rate-limit! "lead" limited)
+               (with-redefs-fn {#'agents/wake-allowed? (constantly true)
+                                #'agents/queue-turn! (constantly (constantly nil))}
+                 #(state/council-wake! ::db "lead" (entry 1)))
+               (expect (= [1] (mapv #(get-in % [:council-ping :entry-id]) @submitted)))
+               (expect (= [] @scheduled)))))))
 
 ;; Regression, reported in this Vis session ("dalej wisi a jesteśmy przy 1h już"): the
 ;; stall watchdog failed a turn, the registry recorded `turn.failed`, but the journal

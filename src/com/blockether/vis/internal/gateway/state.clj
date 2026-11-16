@@ -3951,8 +3951,36 @@
                     :id ::agent-settle-failed
                     :data {:session-id sid :error-class (.getName (class e))}}))))
 
+(def ^:private RATE_LIMIT_HOLD_MS
+  "How long Council holds the notifications of a session after a provider rate limit failed its
+   turn. Each such failure in a row doubles the time, to [[RATE_LIMIT_HOLD_MAX_MS]]."
+  60000)
+
+(def ^:private RATE_LIMIT_HOLD_MAX_MS 900000)
+
+(defn- note-rate-limit!
+  "Record on the registry whether a provider rate limit failed the turn of `sid` that ends with
+   `patch`. Until `:until`, Council holds the notifications of the session: see [[council-wake!]].
+   Each such failure in a row doubles the hold. Any other end clears it. A restart forgets it:
+   the next refusal records it again."
+  [sid patch]
+  (let [limited? (and (= "failed" (:status patch))
+                      (some #(= "provider_rate_limit" (get % "code")) (:content patch)))]
+    (update-existing-session!
+      sid
+      (fn [entry]
+        (if limited?
+          (let [streak (inc (long (get-in entry [:rate-limit :streak] 0)))
+                hold (min (long RATE_LIMIT_HOLD_MAX_MS)
+                          (bit-shift-left (long RATE_LIMIT_HOLD_MS) (min 8 (dec streak))))]
+
+            (assoc entry :rate-limit {:streak streak :until (+ (long (util/now-ms)) hold)}))
+          (dissoc entry :rate-limit))))))
+
 (defn- finish-turn!
   [sid tid patch]
+  ;; Before the turn leaves the registry: a wake that sees the session idle sees the hold too.
+  (note-rate-limit! sid patch)
   (agents/finish! (lp/db-info) sid (:status patch))
   ;; A subagent's background shells and REPLs end with its turn. Nothing else stops them, and a
   ;; leftover can hold a shared lock for hours. Before the result: the leader sees them gone.
@@ -6075,6 +6103,8 @@
           (next-drainable-turn (session-entry sid) false) (pause-queue! sid {:reason "turn_failed"})
           :else nil)))
 
+(declare release-held-wakes!)
+
 (defn submit-turn!
   "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.
    A fresh idle submission clears a provider-failure pause before it starts;
@@ -6328,74 +6358,137 @@
                                   :engine-opts engine-opts
                                   :attachments attachments
                                   :display-request display-request})
+            ;; The started turn takes the Council entries that a rate limit held.
+            (release-held-wakes! sid)
             {:turn turn}))))))
-
-(defn- latest-turn-failed?
-  "True when the latest turn of registry `entry` failed."
-  [entry]
-  (= "failed"
-     (:status (some->> (:turn-order entry)
-                       peek
-                       (get (:turns entry))))))
 
 (defn council-wake-eligible?
   "True when `sid` exists and Council may wake it: it already holds a Council
-   activation, or it is idle - no current or foreign live turn and an unpaused queue.
-   The session of a person is not idle after its latest turn failed. Only the person
-   starts its next turn, so one provider failure does not repeat for each notification.
-   A managed subagent stays eligible: the ping of its parent is its follow-up task."
+   activation, or it is idle - no current or foreign live turn and an unpaused queue."
   [db sid]
   (let [entry (session-entry sid)]
     (and (persistance/db-get-session db sid)
          (or (:council entry)
              (and (not (:current-turn entry))
                   (not (:queue-paused entry))
-                  (not (and (latest-turn-failed? entry) (nil? (agents/info db sid))))
                   ;; Local terminal state precedes journal cleanup and its cached marker.
                   (let [live-tid (get (bus/live-turns) (str sid))]
                     (or (nil? live-tid)
                         (contains? #{"completed" "failed" "cancelled" "suspended"}
                                    (get-in entry [:turns live-tid :status])))))))))
 
+(defn- rate-limit-hold-ms
+  "The milliseconds that Council still holds the notifications of idle session `sid`, or nil.
+   A provider rate limit failed its latest turn, so a wake now fails the same way. A managed
+   subagent has no hold: the ping of its parent is its follow-up task on the route of the parent."
+  [db sid]
+  (let [entry
+        (session-entry sid)
+
+        left
+        (- (long (get-in entry [:rate-limit :until] 0)) (long (util/now-ms)))]
+
+    (when (and (pos? left) (not (:current-turn entry)) (nil? (agents/info db sid))) left)))
+
+(defonce ^:private held-wake-timer
+  (delay (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
+           (util/daemon-thread-factory "vis-council-held-wake"))))
+
+(defn- schedule-held-wakes!
+  "Release the held Council entries of `sid` after `delay-ms`."
+  [sid delay-ms]
+  (.schedule ^java.util.concurrent.ScheduledExecutorService @held-wake-timer
+             ^Runnable
+             (fn []
+               (try (release-held-wakes! sid)
+                    (catch Throwable t
+                      (tel/log! {:level :warn
+                                 :id ::held-wake-release-failed
+                                 :data {:session-id sid :error-class (.getName (class t))}}))))
+             (long delay-ms)
+             java.util.concurrent.TimeUnit/MILLISECONDS))
+
+(defn- hold-wake!
+  "Keep Council `entry` for `sid` while its rate limit hold lasts. The first held entry schedules
+   the one release at the end of the hold. Answers a true value: the session takes the entry later."
+  [db sid entry hold-ms]
+  (let [first? (volatile! false)]
+    (update-existing-session! sid
+                              (fn [e]
+                                (vreset! first? (empty? (get-in e [:council-held :entries])))
+                                (-> e
+                                    (assoc-in [:council-held :db] db)
+                                    (update-in [:council-held :entries] (fnil conj []) entry))))
+    (when @first? (schedule-held-wakes! sid hold-ms))
+    {:held? true}))
+
 (defn council-wake!
   "Start `sid`'s notification turn for Council `entry`; throws when it may no
-   longer be woken or the turn cannot start."
-  [db sid entry]
-  (when-not (and (council/enabled?)
-                 (council-wake-eligible? db sid)
-                 (= (:group_id entry) (council/default-group db sid))
-                 (agents/wake-allowed? db (:author_session_id entry) sid))
-    (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
-  ;; A ping from its parent to a finished subagent is its follow-up task.
-  (let [restore!
-        (or (agents/queue-turn! db sid)
-            (throw (ex-info "Subagent cannot take a follow-up turn" {:error :invalid-recipient})))
+   longer be woken or the turn cannot start. The same turn takes the later entries
+   `others`, so its request names them too. While a rate limit hold lasts, the entry
+   starts no turn: see [[hold-wake!]]."
+  ([db sid entry] (council-wake! db sid entry nil))
+  ([db sid entry others]
+   (when-not (and (council/enabled?)
+                  (council-wake-eligible? db sid)
+                  (= (:group_id entry) (council/default-group db sid))
+                  (agents/wake-allowed? db (:author_session_id entry) sid))
+     (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
+   (if-let [hold-ms (rate-limit-hold-ms db sid)]
+     (hold-wake! db sid entry hold-ms)
+     ;; A ping from its parent to a finished subagent is its follow-up task.
+     (let [restore! (or (agents/queue-turn! db sid)
+                        (throw (ex-info "Subagent cannot take a follow-up turn"
+                                        {:error :invalid-recipient})))
+           entries (cons entry others)
+           result
+           (try
+             (submit-turn!
+               sid
+               {:request
+                (or
+                  (agents/task-request db sid entry)
+                  (str
+                    "Council notification" (when (seq others) "s")
+                    " #" (str/join ", #" (map :entry_id entries))
+                    ". Read the attributed Council input; if missing or truncated, use council.get("
+                    (if (seq others) "id" (:entry_id entry))
+                    ")." (when (:reply_required entry)
+                           (str
+                             " Reply before ending this turn with await council.publish(content, "
+                             "reply_to="
+                             (:entry_id entry)
+                             ")."))))
+                :display-request (str/join "\n\n" (map :content entries))
+                :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
+                :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})
+             (catch Throwable t (restore!) (throw t)))]
 
-        result
-        (try
-          (submit-turn!
-            sid
-            {:request
-             (or (agents/task-request db sid entry)
-                 (str
-                   "Council notification #" (:entry_id entry)
-                   ". Read the attributed Council input; if missing or truncated, use council.get("
-                   (:entry_id entry)
-                   ")." (when (:reply_required entry)
-                          (str " Reply before ending this turn with await council.publish(content, "
-                               "reply_to="
-                               (:entry_id entry)
-                               ")."))))
-             :display-request (:content entry)
-             :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-             :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})
-          (catch Throwable t (restore!) (throw t)))]
+       (when (:error result)
+         (restore!)
+         (throw (ex-info (:message result "Council target cannot be started")
+                         {:error (:error result)})))
+       result))))
 
-    (when (:error result)
-      (restore!)
-      (throw (ex-info (:message result "Council target cannot be started")
-                      {:error (:error result)})))
-    result))
+(defn- release-held-wakes!
+  "Give the Council entries that a rate limit held for `sid` to the wake path, oldest first.
+   One turn takes them all: the first entry starts it or joins the running turn, and the others
+   join it as Council input. While the hold lasts, they are held again."
+  [sid]
+  (let [held (volatile! nil)]
+    (update-existing-session! sid
+                              (fn [e]
+                                (vreset! held (:council-held e))
+                                (dissoc e :council-held)))
+    (when-let [{:keys [db entries]} @held]
+      (doseq [[n entry] (map-indexed vector entries)]
+        (try (council-wake! db sid entry (when (zero? (long n)) (subvec entries 1)))
+             (catch Throwable t
+               (tel/log! {:level :warn
+                          :id ::held-wake-skipped
+                          :data {:session-id sid
+                                 :entry-id (:entry_id entry)
+                                 :error-class (.getName (class t))}})))))))
 
 (defn- parked-turn-ids
   "The ids of the parked gateway turns in `db` that a start can still resume."
