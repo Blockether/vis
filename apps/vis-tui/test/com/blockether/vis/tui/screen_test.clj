@@ -3698,6 +3698,87 @@ therapy line 2"
           (expect (= [clear] (clear-of [clear] [[12 5 20 9]])))
           (expect (= [clear] (clear-of [clear] [[2 6 20 9]])))))))
 
+;; User report: rows of the slash menu stayed around Settings after `/settings`. The
+;; dialog took the draw lock before the render thread painted the completed command.
+(defdescribe
+  dialog-opens-over-the-newest-frame-test
+  (let [db
+        {:session {:id "due-frame"}
+         :workspace {}
+         :messages []
+         :scroll scroll/follow
+         :input (#'screen/input-state-from-text "/set")
+         :settings {}
+         :pending-sends []
+         :detail-expansions {}
+         :live-views []
+         :loading? false
+         :cancelling? false
+         :progress nil
+         :channel-status {}
+         :tabs []
+         :tab-locals {}
+         :slash-command-index 0
+         :render-version 0}
+
+        menu-row?
+        (fn [grid]
+          (boolean (some #(str/includes? % "Slash commands") grid)))
+
+        ;; The screen rows before the command is complete, and under the dialog that
+        ;; `open!` opens after it is complete.
+        rows-under-dialog
+        (fn [open!]
+          (virtual/invalidate-heights!)
+          (render/invalidate-cache!)
+          (let [before
+                (atom nil)
+
+                under
+                (atom nil)]
+
+            (with-redefs [state/app-db
+                          (atom db)
+
+                          timg/images-protocol
+                          (constantly nil)]
+
+              (try (cap/capture!
+                     {:cols 100
+                      :rows 30
+                      :paint! (fn [{:keys [terminal screen]}]
+                                (let [grid! (fn []
+                                              (.refresh ^TerminalScreen screen)
+                                              (term/grid terminal))]
+                                  ;; The render thread painted the menu of `/set`.
+                                  (#'screen/render-frame! screen 100 30 @state/app-db 1000)
+                                  (reset! @#'screen/painted-frame {:screen screen
+                                                                   :version (:render-version
+                                                                              @state/app-db)})
+                                  (reset! before (grid!))
+                                  ;; Enter completed the command: a frame without the menu is due.
+                                  (state/dispatch [:update-input
+                                                   (#'screen/input-state-from-text "/settings ")])
+                                  (open! screen #(reset! under (grid!)))))})
+                   (finally (reset! @#'screen/painted-frame nil))))
+            {:before @before :under @under}))]
+
+    (it "paints the frame that was due before the dialog opens"
+        (let [{:keys [before under]} (rows-under-dialog (fn [_ seen!]
+                                                          (#'screen/with-dialog-lock seen!)))]
+          (expect (menu-row? before))
+          (expect (some? under))
+          (expect (not (menu-row? under)))))
+    (it "keeps an open dialog under a dialog that opens from it"
+        (let [{:keys [under]} (rows-under-dialog
+                                (fn [^TerminalScreen screen seen!]
+                                  (#'screen/with-dialog-lock
+                                   (fn []
+                                     (.putString (.newTextGraphics screen) 2 2 "OUTER DIALOG")
+                                     (state/dispatch [:bump-render-version])
+                                     (#'screen/with-dialog-lock seen!)))))]
+          (expect (some #(str/includes? % "OUTER DIALOG") under))))))
+
 (defdescribe
   provider-limits-active-provider-test
   "The background limits poller must resolve the SAME provider the footer

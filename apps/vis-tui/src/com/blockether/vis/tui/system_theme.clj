@@ -10,7 +10,8 @@
    - Linux: the `color-scheme` setting of the XDG Desktop Portal, then of GNOME.
    - Windows, through WSL: the `AppsUseLightTheme` registry value.
 
-   Each read is one short command at the start. Nothing polls."
+   Each read is one short command. `screen` reads at the start and, for a terminal
+   that reports no color scheme, again at an interval."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.external-opener :as opener])
   (:import [java.util.concurrent TimeUnit]))
@@ -97,4 +98,4 @@
    not the one that the person looks at, so only `COLORFGBG` counts."
   [env]
   (or (colorfgbg-scheme (get env "COLORFGBG"))
-      (when-not (or (seq (get env "SSH_CONNECTION")) (seq (get env "SSH_TTY"))) (os-scheme))))
+      (when-not (some #(seq (get env %)) ["SSH_CONNECTION" "SSH_TTY" "SSH_CLIENT"]) (os-scheme))))

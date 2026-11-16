@@ -2,7 +2,9 @@
   "The `auto` theme asks the system for its color scheme when the terminal reports none."
   (:require [com.blockether.vis.tui.external-opener :as opener]
             [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
+            [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.system-theme :as system-theme]
             [com.blockether.vis.tui.theme :as t]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -54,6 +56,7 @@
       (expect (= :dark (detect-on "linux" true {} {"gsettings" "'prefer-dark'"}))))
   (it "does not ask the remote system in an SSH session"
       (expect (nil? (detect-on "mac os x" false {"SSH_TTY" "/dev/ttys001"} {"defaults" "Dark"})))
+      (expect (nil? (detect-on "mac os x" false {"SSH_CLIENT" "10.0.0.1 50000 22"} {"defaults" "Dark"})))
       (expect (= :dark
                  (detect-on "mac os x" false {"SSH_TTY" "/dev/ttys001" "COLORFGBG" "15;0"} {})))))
 
@@ -101,3 +104,46 @@
              (it "gives an answer that comes in time"
                  (with-redefs [system-theme/detect (constantly :dark)]
                    (expect (= :dark (@#'screen/detect-system-color-scheme! {} 1000 identity))))))
+
+(defn- poll-on
+  "The calls of one poll step with the stored theme `theme-name`: what the step asked
+   and what it applied."
+  [theme-name terminal-answers? os-scheme]
+  (let [calls (atom [])
+        saved-db @state/app-db]
+
+    (try (reset! state/app-db {:settings {:theme-name theme-name}})
+         (with-redefs [system-theme/detect (fn [_env]
+                                             (swap! calls conj :os)
+                                             os-scheme)]
+           (@#'screen/poll-color-scheme-once! {}
+                                              terminal-answers?
+                                              #(swap! calls conj :terminal)
+                                              #(swap! calls conj [:apply %])))
+         @calls
+         (finally (reset! state/app-db saved-db)))))
+
+(defdescribe
+  a-terminal-without-color-scheme-reports
+  (it "asks the terminal again when it answered at the start"
+      (expect (= [:terminal] (poll-on :auto true :dark))))
+  (it "asks the operating system, and applies only a change"
+      (try (t/set-system-color-scheme! :light)
+           (expect (= [:os [:apply :dark]] (poll-on :auto false :dark)))
+           (t/set-system-color-scheme! :dark)
+           (expect (= [:os] (poll-on :auto false :dark)))
+           (expect (= [:os] (poll-on :auto false nil)))
+           (finally (t/set-system-color-scheme! :light))))
+  (it "asks nothing for an explicit theme"
+      (expect (= [] (poll-on :vis-light true :dark)))
+      (expect (= [] (poll-on :vis-light false :dark))))
+  (it "leaves the background of a terminal that it asks again to the terminal"
+      (let [written (fn [theme-name]
+                      (let [out (java.io.ByteArrayOutputStream.)]
+                        (with-redefs [vis/tty-out (delay out)]
+                          (state/sync-terminal-background! theme-name))
+                        (.toString out "UTF-8")))]
+        (try (reset! state/terminal-background-polled? true)
+             (expect (= "\u001B]111\u0007" (written :auto)))
+             (expect (re-find #"^\u001B]11;rgb:" (written :vis-light)))
+             (finally (reset! state/terminal-background-polled? false))))))

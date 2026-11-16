@@ -933,13 +933,20 @@
              :level
              :warn)))))
 
+(def terminal-background-polled?
+  "True when the TUI asks the terminal for its default background again and again: a
+   terminal that answers OSC 11 and sends no color scheme reports (mode 2031).
+   `screen/follow-system-color-scheme!` and its poll are the only writers."
+  (atom false))
+
 (defn sync-terminal-background!
   "Give the padding of the emulator the background of the applied theme (OSC 11).
-   With the `auto` theme in tmux, give the default background back instead. tmux
-   derives the color scheme of a pane from that background, so an override there
-   hides each later change of the system."
+   With the `auto` theme, give the default background back instead in tmux and on a
+   terminal that the TUI asks for its background again. The color scheme comes from
+   that background there, so an override hides each later change of the system."
   [theme-name]
-  (try (if (and (tui-theme/follows-system? theme-name) (seq (System/getenv "TMUX")))
+  (try (if (and (tui-theme/follows-system? theme-name)
+                (or (seq (System/getenv "TMUX")) @terminal-background-polled?))
          (input/reset-default-bg! @vis/tty-out)
          (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
            (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))))

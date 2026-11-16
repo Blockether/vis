@@ -192,6 +192,12 @@
   ;; full frame writes it; a cheap path reads it to keep those rail cells.
   (atom nil))
 
+(defonce ^:private painted-frame
+  ;; `{:screen :version}` of the frame in the back buffer: the screen and the
+  ;; `:render-version` of the app-db that the render thread painted last. Only the
+  ;; render thread writes it. nil before the first frame.
+  (atom nil))
+
 (def ^:private gc-beans (delay (vec (ManagementFactory/getGarbageCollectorMXBeans))))
 
 (defn- gc-totals
@@ -2862,6 +2868,18 @@
 
 (declare repaint-chat-frame!)
 
+(defn- paint-due-frame!
+  "Paint the chat frame again, without a flush, when the app-db is newer than the frame
+   in the back buffer. Call it with `draw-lock` held, before a dialog or a band opens.
+   The lock stops the render thread, so a frame that was due is not painted: the
+   dialog then keeps cells of an older state around it until it closes, for example
+   the rows of a slash menu that is closed. Only the first holder of the lock paints:
+   a dialog that opens from a dialog has that dialog under it, not the chat frame."
+  []
+  (when (= 1 (.getHoldCount ^ReentrantLock draw-lock))
+    (when-let [{:keys [screen version]} @painted-frame]
+      (when (not= version (:render-version @state/app-db)) (repaint-chat-frame! screen)))))
+
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
    whole session. Holding the lock blocks the render thread cleanly
@@ -2874,6 +2892,7 @@
    repaint over the dialog area."
   [f]
   (.lock ^ReentrantLock draw-lock)
+  (paint-due-frame!)
   (let [outer? (nil? @modal-images)]
     (when outer? (reset! modal-images {:hidden @last-image-regions :kept [] :own []}))
     ;; Kitty inline images ride ABOVE text cells, so any transcript image would
@@ -3285,6 +3304,7 @@
    every picture disappear the moment C-x was pressed."
   [band-top f]
   (.lock ^ReentrantLock draw-lock)
+  (paint-due-frame!)
   (clip-terminal-images-to-band! band-top)
   (try (state/dispatch [:set-dialog-open true])
        (try (dlg/with-host repaint-chat-frame! f)
@@ -6281,6 +6301,7 @@
                                  was-blocked?))
                       (let [[layout publish-layout?]
                             (paint-frame! screen path cols rows db now-ms last-layout)]
+                        (reset! painted-frame {:screen screen :version (:render-version db)})
                         ;; Publish layout back to app-db without bumping the version (see
                         ;; no-render-bump-events).
                         (when publish-layout? (state/dispatch [:set-layout layout]))
@@ -6798,10 +6819,34 @@
        (catch IllegalArgumentException _ nil)
        (catch Throwable _ nil)))
 
+(defn- register-terminate-handler!
+  "SIGTERM ends the process outside the tear-down of the screen. Give the terminal its
+   default background back first, then let the earlier handler end the process."
+  []
+  (try (let [signal
+             (Signal. "TERM")
+
+             previous
+             (atom nil)]
+
+         (reset! previous (Signal/handle signal
+                                         (reify
+                                           SignalHandler
+                                             (handle [_ received]
+                                               (try (input/reset-default-bg! @vis/tty-out)
+                                                    (catch Throwable _ nil))
+                                               (try (Signal/handle received @previous)
+                                                    (Signal/raise received)
+                                                    (catch Throwable _ nil))))))
+         (fn []
+           (try (Signal/handle signal @previous) (catch Throwable _ nil))))
+       (catch Throwable _ nil)))
+
 (defn- register-terminal-interrupt-handlers!
   []
-  (let [cleanups (keep #(register-terminal-signal-handler! % handle-terminal-interrupt!)
-                       ["INT" "TSTP"])]
+  (let [cleanups (concat (keep #(register-terminal-signal-handler! % handle-terminal-interrupt!)
+                               ["INT" "TSTP"])
+                         (keep identity [(register-terminate-handler!)]))]
     (fn []
       (doseq [cleanup cleanups]
         (cleanup)))))
@@ -9082,11 +9127,50 @@
           nil)
       scheme)))
 
+(def ^:private color-scheme-poll-ms
+  "How often the TUI asks for the color scheme when the terminal does not report its changes."
+  3000)
+
+(defn- poll-color-scheme-once!
+  "One step of the poll for a terminal without color scheme reports (mode 2031). A theme
+   that does not follow the system asks nothing. A terminal that answered at the start
+   gets the query again from `ask-terminal!`: its answer comes with the input. Else
+   `system-theme/detect` asks the operating system, and `apply!` gets a changed scheme."
+  [env terminal-answers? ask-terminal! apply!]
+  (let [theme-name (get-in @state/app-db [:settings :theme-name])]
+    (when (t/follows-system? theme-name)
+      (if terminal-answers?
+        (do
+          ;; The first answer can come after the start. Give the background back before the query.
+          (when (compare-and-set! state/terminal-background-polled? false true)
+            (state/sync-terminal-background! theme-name))
+          (ask-terminal!))
+        (when-let [scheme (system-theme/detect env)]
+          (when (not= scheme @t/system-color-scheme) (apply! scheme)))))))
+
+(defn- start-color-scheme-poll!
+  "Run `poll-color-scheme-once!` each `color-scheme-poll-ms` until the TUI shuts down."
+  [^ANSITerminal terminal ^TerminalCapabilities capabilities env apply!]
+  (doto (Thread. ^Runnable
+                 (fn []
+                   (while (not (:shutdown? @state/app-db))
+                     (try (Thread/sleep (long color-scheme-poll-ms))
+                          (when-not (:shutdown? @state/app-db)
+                            (poll-color-scheme-once! env
+                                                     (some? (.getColorScheme capabilities))
+                                                     #(.queryColorScheme terminal)
+                                                     apply!))
+                          (catch Throwable _ nil))))
+                 "vis-tui-color-scheme-poll")
+    (.setDaemon true)
+    (.start)))
+
 (defn- follow-system-color-scheme!
   "Give the `auto` theme the color scheme of the system, on a real terminal. The
    terminal comes first: it reports its scheme at the start and, with mode 2031, each
    later change. When the terminal reports nothing, `system-theme/detect` asks the
-   environment and the operating system. Without an answer, the scheme is light."
+   environment and the operating system. Without an answer, the scheme is light. A
+   terminal without mode 2031 gets a poll, so a later change still arrives."
   [terminal env]
   (when-let [^TerminalCapabilities capabilities (when (instance? ANSITerminal terminal)
                                                   (.getTerminalCapabilities ^ANSITerminal
@@ -9107,11 +9191,14 @@
                                (reify
                                  java.util.function.Consumer
                                    (accept [_ reported] (apply! (scheme reported)))))
-      (state/dispatch
-        [:set-system-color-scheme
-         (or (reported)
-             (detect-system-color-scheme! env wait-ms #(when-not (reported) (apply! %)))
-             :light)]))))
+      (let [polled? (not (.hasColorSchemeReports capabilities))]
+        (reset! state/terminal-background-polled? (boolean (and polled? (reported))))
+        (state/dispatch
+          [:set-system-color-scheme
+           (or (reported)
+               (detect-system-color-scheme! env wait-ms #(when-not (reported) (apply! %)))
+               :light)])
+        (when polled? (start-color-scheme-poll! terminal capabilities env apply!))))))
 
 (defn- probe-terminal-cell-size!
   "Ask a GRAPHICAL terminal for its REAL cell pixel size and feed it into
