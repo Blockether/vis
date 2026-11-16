@@ -3425,10 +3425,10 @@
                        (= :log (:kind signal))
                        (dissoc :kind))))
 
-(defn init!
-  "The standalone client owns its file sink; no engine init runs in this process.
+(defn- add-file-handler!
+  "Install the one file sink at `min-level`; a second call replaces the first sink.
    A bounded dropping queue keeps diagnostic IO off the input and render threads."
-  []
+  [min-level]
   (tel/add-handler! :file/tui
                     (tel/handler:file {:path (paths/log-file)
                                        :output-fn log-line
@@ -3437,10 +3437,23 @@
                                        :max-num-parts 8
                                        :max-num-intervals 14
                                        :gzip-archives? true})
-                    {:min-level :info :async {:mode :dropping :buffer-size 2048 :n-threads 1}})
+                    {:min-level min-level :async {:mode :dropping :buffer-size 2048 :n-threads 1}}))
+
+(defn init!
+  "The standalone client owns its file sink; no engine init runs in this process."
+  []
+  (add-file-handler! :info)
   (tel/log! {:level :info
              :id ::diagnostics-ready
              :msg "TUI diagnostics enabled: all frames, input stalls, and terminal events"})
+  true)
+
+(defn debug-logs!
+  "Write debug signals to the log file too. The terminal is the screen, so `--debug`
+   has no console here."
+  []
+  (tel/set-min-level! :debug)
+  (add-file-handler! :debug)
   true)
 
 (defn shutdown!

@@ -274,6 +274,34 @@
                                  (doseq [f (reverse (file-seq dir))]
                                    (.delete ^java.io.File f)))))))
 
+(defdescribe debug-logs-keep-debug-signals-in-the-file
+             (it "writes a debug signal to the file only after debug-logs!"
+                 (let [dir
+                       (.toFile (java.nio.file.Files/createTempDirectory
+                                  "vis-tui-debug-logs-"
+                                  (make-array java.nio.file.attribute.FileAttribute 0)))
+
+                       log
+                       (io/file dir "tui.log")]
+
+                   (try (with-redefs-fn {#'paths/log-file (constantly (.getPath log))
+                                         #'client/shutdown-subscriptions! (fn []
+                                                                            nil)
+                                         #'client/release-client! (fn []
+                                                                    nil)
+                                         #'client/client-finalizing? (atom false)}
+                          #(do (client/init!)
+                               (tel/log! {:level :debug :id ::dropped-probe :msg "dropped-probe"})
+                               (client/debug-logs!)
+                               (tel/log! {:level :debug :id ::debug-probe :msg "debug-probe"})
+                               (client/shutdown!)))
+                        (expect (.contains (slurp log) "debug-probe"))
+                        (expect (not (.contains (slurp log) "dropped-probe")))
+                        (finally (tel/set-min-level! :info)
+                                 (tel/remove-handler! :file/tui)
+                                 (doseq [f (reverse (file-seq dir))]
+                                   (.delete ^java.io.File f)))))))
+
 (defdescribe
   provider-requests-carry-the-open-session
   ;; #410: the gateway resolves a provider that several projects register through this session.

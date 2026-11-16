@@ -12078,7 +12078,7 @@
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--vanilla] [--extensions LIST] [--tools LIST]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--vanilla] [--extensions LIST] [--tools LIST] [--debug]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -12135,6 +12135,9 @@
           "--tools"
           (let [v (flag-value arg more tui-usage)]
             (recur (next more) (assoc opts :tools v)))
+
+          ("--debug" "--verbose" "-v")
+          (recur more (assoc opts :debug true))
 
           (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
                           {:vis/user-error true})))))))
@@ -12237,6 +12240,7 @@
     (try (let [opts (parse-args args)
                launch (launch-session-options opts (System/getenv))]
 
+           (when (:debug opts) (vis/debug-logs!))
            (chat/set-launch-session-options! launch)
            (run-chat! (cond-> opts
                         (seq launch)

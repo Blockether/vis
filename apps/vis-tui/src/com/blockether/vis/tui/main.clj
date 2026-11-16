@@ -23,7 +23,7 @@
   (:gen-class))
 
 (def usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue | --check-audio] [--no-global] [--no-project] [--vanilla] [--extensions LIST]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue | --check-audio] [--no-global] [--no-project] [--vanilla] [--extensions LIST] [--debug]")
 
 (def ^:private help-text
   [usage "" "The Vis terminal application. It talks to a Vis gateway over HTTP and SSE;"
@@ -43,6 +43,7 @@
    "  --tools LIST           new sessions keep only these tools of their extensions (py.lint_code,py.repl_*)"
    "                        or turn these off (-py.repl_stop) (env VIS_TOOLS); with --session-id, --resume"
    "                        or --continue, also the first saved session that you open"
+   "  --debug, --verbose, -v write debug signals to the log file under ~/.vis/logs"
    "  --version, -V          print the version" "  --help, -h             print this help"])
 
 (defn- version

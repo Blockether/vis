@@ -3158,12 +3158,24 @@
 
 (def ^:private debug-flags #{"--debug" "--verbose" "-v"})
 
-(defn- debug-mode?
-  "True when the flags of Vis or VIS_DEBUG ask for console logs. `python` gives each later
-   word to Python or uv, so the `-v` of `python -m pytest -v` asks Vis for nothing."
+(defn- split-debug-flags
+  "Split the debug flags of Vis out of `args`. Return `{:debug? bool :args [...]}`.
+   `python` gives each later word to Python or uv, and a word after a bare `--` is prompt
+   text or the argv of a child program, so a `-v` there asks Vis for nothing."
   [args]
-  (or (some debug-flags (when-not (= "python" (first args)) args))
-      (= "1" (System/getenv "VIS_DEBUG"))))
+  (let [[lead more]
+        (split-with debug-flags args)
+
+        [own tail]
+        (if (= "python" (first more)) [nil more] (split-with #(not= "--" %) more))]
+
+    {:debug? (boolean (or (seq lead) (some debug-flags own)))
+     :args (into (vec (remove debug-flags own)) tail)}))
+
+(defn- debug-mode?
+  "True when the flags of Vis or VIS_DEBUG ask for console logs."
+  [args]
+  (or (:debug? (split-debug-flags args)) (= "1" (System/getenv "VIS_DEBUG"))))
 
 (defn- log-file-path [] (config/log-path))
 
@@ -3775,8 +3787,13 @@
         {gateway :gateway stripped :args}
         (split-gateway-flags (strip-global-args (or own raw-args)))
 
+        ;; `configure-logging!` owns the debug flags, so the command tree never reads them in
+        ;; `args`. The one-shot agent parses them from `run-args` itself.
+        run-args
+        (into (rewrite-ext-alias stripped) program)
+
         args
-        (into (rewrite-ext-alias stripped) program)]
+        (:args (split-debug-flags run-args))]
 
     (paths/set-log-role! (log-role-for-args args))
     (when measure? (System/setProperty "vis.measure" "1"))
@@ -3793,7 +3810,7 @@
       ;; Quiet stdout BEFORE any extension load triggers Telemere registration
       ;; spam - the user only sees logs when they pass --debug / --verbose / -v
       ;; (or set VIS_DEBUG=1).
-      (timed-startup! measure? "configure-logging" #(configure-logging! args))
+      (timed-startup! measure? "configure-logging" #(configure-logging! run-args))
       ;; Stale-state sweep: `~/.vis/logs` gains a file per nrepl/JFR start and a
       ;; directory per `shell` command, the display caches a file per rendered
       ;; picture, `~/.vis/rewind` a store per session — and nothing ever removed
@@ -3833,7 +3850,7 @@
                                                 (first args)))
                                   (System/exit 2))
                               (and unknown-root? (root-run-shortcut? root args))
-                              (timed-startup! measure? "run-shortcut" #(cli-run! {} args))
+                              (timed-startup! measure? "run-shortcut" #(cli-run! {} run-args))
                               unknown-root? (do (println (commandline/render-tree root))
                                                 (println)
                                                 (println (str "Unknown command: "

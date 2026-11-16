@@ -299,7 +299,19 @@
       (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jfr" "--help"]))))
   (it "strips --stream-trace, which the wrapper consumes as a system property"
       (expect (= ["channels" "tui"]
-                 (#'main/strip-global-args ["channels" "--stream-trace" "tui"])))))
+                 (#'main/strip-global-args ["channels" "--stream-trace" "tui"]))))
+  (it "keeps a debug flag out of the command tree, wherever it is"
+      (expect (= {:debug? true :args ["gateway" "status"]}
+                 (#'main/split-debug-flags ["gateway" "status" "--debug"])))
+      (expect (= {:debug? true :args ["sessions" "list"]}
+                 (#'main/split-debug-flags ["-v" "sessions" "--verbose" "list"]))))
+  (it "leaves the words of a child program, of Python and of the prompt alone"
+      (expect (= {:debug? false :args ["gateway" "tui" "--" "vis-tui" "--debug"]}
+                 (#'main/split-debug-flags ["gateway" "tui" "--" "vis-tui" "--debug"])))
+      (expect (= {:debug? false :args ["python" "-m" "pytest" "-v"]}
+                 (#'main/split-debug-flags ["python" "-m" "pytest" "-v"])))
+      (expect (= {:debug? true :args ["--" "fix" "-v"]}
+                 (#'main/split-debug-flags ["--debug" "--" "fix" "-v"])))))
 
 (defdescribe stdio-command-help-test
              (it "explains the SDK stdio mode without starting it"

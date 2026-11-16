@@ -2691,7 +2691,10 @@ therapy line 2"
                  (expect (user-error? #(parse-args ["--extensions"]))))
              (it "--tools captures the list, takes a leading dash and needs a value"
                  (expect (= {:tools "-py.repl_stop"} (parse-args ["--tools" "-py.repl_stop"])))
-                 (expect (user-error? #(parse-args ["--tools"])))))
+                 (expect (user-error? #(parse-args ["--tools"]))))
+             (it "--debug, --verbose and -v ask for debug logs and stop no launch"
+                 (doseq [flag ["--debug" "--verbose" "-v"]]
+                   (expect (= {:debug true :resume true} (parse-args [flag "--resume"]))))))
 
 (def ^:private launch-session-options (deref #'screen/launch-session-options))
 
