@@ -23,7 +23,7 @@ from durable.dashboard.web import RELAY_POLICY, RELAYED, SECURITY, Request, erro
 from durable.domain import RUN, SESSION
 from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
-from durable.settings import ANSWER_S, LIFETIME, MAIN, MESSAGE_LIMIT, STREAM_S
+from durable.settings import ANSWER_S, HOLD_S, LIFETIME, MAIN, MESSAGE_LIMIT, PING_S, STREAM_S
 
 # A call for one session, and a call that changes one run. Each other call goes to `main`:
 # a look at a run reads S3, so it does not start the worker of the run.
@@ -35,6 +35,9 @@ EVENTS = "/v1/events"
 SETTINGS = "/v1/settings"
 # The headers of an answer that are not true after the front changed its body.
 CHANGED = {"content-encoding", "etag", "last-modified"}
+# The head and the comment of an event stream that the front holds for a shard without a worker.
+HELD = {"status": 200, "headers": [["content-type", "text/event-stream"], ["cache-control", "no-cache"]]}
+PING = b": ping\n\n"
 
 
 def place(request: Request, is_fresh: bool = False) -> str:
@@ -46,8 +49,8 @@ def place(request: Request, is_fresh: bool = False) -> str:
     return shards.owner(found.group(1), is_fresh) if found else MAIN
 
 
-def call(request: Request, shard: str, deadline: float) -> Iterator[tuple[bytes, bool]]:
-    """Send a call to the worker of a shard. Return the parts of its answer."""
+def call(request: Request, shard: str, deadline: float, wakes: bool = True) -> Iterator[tuple[bytes, bool]]:
+    """Send a call to the worker of a shard. Return the parts of its answer. `wakes` starts a worker for the call."""
     rid = str(uuid.uuid4())
     message: dict[str, Any] = {
         "id": rid,
@@ -65,7 +68,7 @@ def call(request: Request, shard: str, deadline: float) -> Iterator[tuple[bytes,
     else:
         message["body"] = base64.b64encode(request.body).decode()
     shards.send(shard, message)
-    return shards.parts(rid, deadline, shard)
+    return shards.parts(rid, deadline, shard, wakes)
 
 
 def split(request: Request) -> list[tuple[str, Request, bool]]:
@@ -80,10 +83,11 @@ def split(request: Request) -> list[tuple[str, Request, bool]]:
     for token in filter(None, (asked.get("sids") or "").split(",")):
         session = token.partition(":")[0].strip().lower()
         groups.setdefault(shards.owner(session) if SESSION.fullmatch(session) else MAIN, []).append(token)
-    if scope == "fleet" or not groups or (len(groups) == 1 and (MAIN in groups or scope != "both")):
-        return [(next(iter(groups), MAIN) if scope != "fleet" else MAIN, request, False)]
-    # The parts of a compressed stream do not join.
+    # The parts of a compressed stream do not join, and the front cannot hold such a stream.
     headers = {name: value for name, value in request.headers.items() if name != "accept-encoding"}
+    if scope == "fleet" or not groups or (len(groups) == 1 and (MAIN in groups or scope != "both")):
+        shard = next(iter(groups), MAIN) if scope != "fleet" else MAIN
+        return [(shard, request if shard == MAIN else dataclasses.replace(request, headers=headers), False)]
     calls = []
     for shard, tokens in groups.items():
         query = [(name, ",".join(tokens) if name == "sids" else value) for name, value in fields if name != "scope" or shard == MAIN]
@@ -110,11 +114,14 @@ def tagged(events: bytes) -> bytes:
 
 
 def merged(calls: list[tuple[str, Request, bool]], deadline: float) -> HttpStream:
-    """Join the event streams of more than one shard in one answer.
+    """Join the event streams of the shards in one answer.
 
     The answer starts with the first stream that starts, and each other stream joins
     when its worker answers. It ends when one stream ends: the client connects again
     with its cursors, and each worker continues from them.
+
+    An event stream alone does not start the worker of a run. The front holds the
+    stream of such a shard until a call starts its worker, then the stream joins.
     """
     # The head of a stream, complete events of it, or None for its end.
     found: queue.Queue[dict[str, Any] | bytes | None] = queue.Queue()
@@ -122,7 +129,13 @@ def merged(calls: list[tuple[str, Request, bool]], deadline: float) -> HttpStrea
     def pump(shard: str, request: Request, is_fleet: bool) -> None:
         """Read the stream of one shard and give its complete events to the answer."""
         try:
-            source = call(request, shard, deadline)
+            if shard != MAIN and not shards.live(shard):
+                found.put(HELD)
+                while not shards.live(shard):
+                    if time.time() > deadline - HOLD_S:
+                        return
+                    time.sleep(HOLD_S)
+            source = call(request, shard, deadline, wakes=shard == MAIN)
             part = next(source, None)
             if part is None:
                 return
@@ -153,15 +166,20 @@ def merged(calls: list[tuple[str, Request, bool]], deadline: float) -> HttpStrea
     relayed = {k.lower(): v for k, v in head["headers"] if k.lower() in RELAYED - {"content-encoding"}}
 
     def body() -> Iterator[bytes]:
-        """Yield the events of each stream until one stream ends."""
+        """Yield the events of each stream until one stream ends, and a comment when no stream sent bytes for PING_S."""
+        sent = time.time()
         while time.time() < deadline:
             try:
                 item = found.get(timeout=1)
             except queue.Empty:
+                if time.time() - sent > PING_S:
+                    sent = time.time()
+                    yield PING
                 continue
             if item is None:
                 return
             if isinstance(item, bytes):
+                sent = time.time()
                 yield item
 
     return HttpStream(status=200, headers={**relayed, **SECURITY, "content-security-policy": RELAY_POLICY}, chunks=body())
@@ -188,7 +206,7 @@ def relay(request: Request, context: Context) -> HttpStream:
         request = dataclasses.replace(request, headers={k: v for k, v in request.headers.items() if k not in {"accept-encoding", "if-none-match", "if-modified-since"}})
     if request.path.rstrip("/") == EVENTS:
         calls = split(request)
-        if len(calls) > 1:
+        if len(calls) > 1 or calls[0][0] != MAIN:
             return merged(calls, deadline)
         shard, request, _ = calls[0]
     source = call(request, shard, deadline)

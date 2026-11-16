@@ -43,6 +43,8 @@ class Relay:
         """Start without an open call. `gateway` gets the calls of Vis, `api` gets the calls of `/dashboard/api/` and `inbox` has the messages."""
         self.gateway, self.api, self.inbox = gateway, api, inbox
         self.inflight, self.last = 0, time.time()
+        # The open event streams: they are a part of `inflight`.
+        self.streams = 0
         # True after a call that is not a read.
         self.wrote = False
         # True when the worker stops: each open event stream then ends.
@@ -82,6 +84,11 @@ class Relay:
         while self.inflight and time.time() < end:
             time.sleep(0.1)
 
+    def open(self, streams: bool) -> int:
+        """Return the number of the open calls. `streams` counts the open event streams."""
+        with self._lock:
+            return self.inflight if streams else self.inflight - self.streams
+
     def done(self, rid: str) -> None:
         """Remove the message of an answered call from the inbox."""
         with self._lock:
@@ -92,9 +99,9 @@ class Relay:
         with self._lock:
             self.inflight += 1
             self.wrote = self.wrote or call["method"] != "GET"
-        rid = call["id"]
+        rid, is_stream = call["id"], False
         try:
-            self.answer(call)
+            is_stream = self.answer(call)
         except Exception as failure:  # the browser gets a plain answer, the log gets the cause
             log("call failed", call["method"], call["path"], repr(failure))
             reply(rid, {"status": 502, "headers": wire.JSON}, b'{"error": "the Vis worker could not answer the call"}')
@@ -102,7 +109,9 @@ class Relay:
             self.done(rid)
             with self._lock:
                 self.inflight -= 1
-                self.last = time.time()
+                # An event stream does not keep the worker of a run: its end is not the end of work.
+                if not is_stream or self.api.shard == MAIN:
+                    self.last = time.time()
 
     def forked(self, status: int, data: bytes) -> None:
         """Record the shard of a fork. The front must know it before a client asks for the fork."""
@@ -119,8 +128,8 @@ class Relay:
             return data or b""
         return base64.b64decode(call.get("body") or "")
 
-    def answer(self, call: dict[str, Any]) -> None:
-        """Send a call to the API or to the gateway and write its answer.
+    def answer(self, call: dict[str, Any]) -> bool:
+        """Send a call to the API or to the gateway and write its answer. Return True when the answer was an event stream.
 
         A call that makes, uses or deletes a session also changes its work directory:
         see `vis/sessions.py`.
@@ -128,7 +137,8 @@ class Relay:
         rid, body = call["id"], self.body(call)
         if call["path"].startswith("/dashboard/api/"):
             status, headers, data = self.api.handle(call["method"], call["path"], body)
-            return reply(rid, {"status": status, "headers": headers}, data)
+            reply(rid, {"status": status, "headers": headers}, data)
+            return False
         headers = {**call["headers"], **self.gateway.headers(), "host": f"{LOOPBACK}:{GATEWAY_PORT}"}
         if "content-type" in call["headers"]:  # the gateway headers name JSON: the type of the call wins
             headers["content-type"] = call["headers"]["content-type"]
@@ -164,8 +174,16 @@ class Relay:
                         after(answer.status, data)
                     except Exception as failure:  # the gateway answered: the call keeps its answer
                         log("no work directory change", method, path, repr(failure))
-                return reply(rid, head, data)
-            self.stream(call, head, answer)
+                reply(rid, head, data)
+                return False
+            with self._lock:
+                self.streams += 1
+            try:
+                self.stream(call, head, answer)
+            finally:
+                with self._lock:
+                    self.streams -= 1
+            return True
         finally:
             connection.close()
 
@@ -178,7 +196,8 @@ class Relay:
             try:
                 while chunk := answer.read1(CHUNK):
                     chunks.put(chunk)
-            except (OSError, http.client.HTTPException):
+            # The writer closes the connection at the deadline: `http.client` then fails with one of these.
+            except (OSError, http.client.HTTPException, AttributeError, ValueError):
                 pass
             chunks.put(None)
 

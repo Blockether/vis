@@ -5,6 +5,8 @@ It gives every session of Software factory three things:
 - A copy in S3 of each file that a step wrote in the work directory or in `/tmp`.
   The copy is temporary: S3 removes it after 7 days. Each step also tells the worker
   that the work directory changed, so the worker copies its Git work to S3.
+- The `/tmp` files of a session on each worker: a new worker starts with another `/tmp`,
+  so the first step of a session gets its files from their copies.
 - The `durable` tools: list and start workflows, read a run with `run_status`, put the
   work directory on the newest release, and publish its commits to GitHub.
 - The `/workflows` command, which starts a workflow. The Workflows app of Vis is not here:
@@ -25,7 +27,9 @@ import os
 import stat
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 import blockether.vis.extension as vis
 
@@ -34,11 +38,14 @@ LOG = logging.getLogger("durable")
 SKIPPED = {".git", "__pycache__", "node_modules", ".cpcache", ".venv", "target", ".pytest_cache", ".ruff_cache", ".clj-kondo", ".lsp"}
 # Entries of /tmp that belong to the worker (it names them) or to Vis and the tools.
 PRIVATE_TMP = set(os.environ.get("DURABLE_PRIVATE_TMP", "").split(":"))
-INTERNAL_TMP = (".", "vis-gateway-", "vis-turn-trace-", "uv-", "hsperfdata_")
+INTERNAL_TMP = (".", "vis-gateway-", "vis-turn-trace-", "vis-lang-", "uv-", "hsperfdata_")
 FILE_LIMIT, CALL_LIMIT, SCAN_LIMIT = 1_000_000, 4_000_000, 20_000
 # For each directory: the size and the time of its files at the last scan.
 _seen = {}
 _lock = threading.Lock()
+# The sessions that have their /tmp files in this gateway process.
+_restored = set()
+_restoring = threading.Lock()
 
 
 def call(method, path, body=None, timeout=120):
@@ -111,13 +118,61 @@ def _scan(label, root):
     return found
 
 
+def _restore(session):
+    """Write the `/tmp` files of a session from their copies in S3. Return the paths of the written files.
+
+    A file stays when this worker has it and its copy is not newer. Thus a second
+    restore changes nothing, and a newer file of another session with the same name stays.
+    """
+    root = _roots()["tmp"]
+
+    def write(item):
+        label, _, path = item["name"].partition("/")
+        target = os.path.join(root, path)
+        if label != "tmp" or not path or ".." in path.split("/") or _private(path.split("/")[0]):
+            return None
+        try:
+            if os.lstat(target).st_mtime >= item["at"]:
+                return None
+        except OSError:
+            pass
+        try:
+            data = call("GET", f"tmp/{session}/" + urllib.parse.quote(item["name"]))
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            # A link in the path can name a directory outside /tmp.
+            if os.path.commonpath([root, os.path.realpath(os.path.dirname(target))]) != root:
+                return None
+            # A private name: no scan sees the file before it is complete.
+            part = os.path.join(root, f".durable-{threading.get_ident()}")
+            with open(part, "wb") as file:
+                file.write(data)
+            os.utime(part, (item["at"], item["at"]))
+            os.replace(part, target)
+        except (OSError, RuntimeError):
+            return None
+        return path
+
+    with ThreadPoolExecutor(8) as pool:
+        return [path for path in pool.map(write, api("GET", "tmp?session=" + session)["files"]) if path]
+
+
 def before_step(step):
-    """Remember the files before the first step, so the first copy holds only new work."""
+    """Give a session its `/tmp` files before its first step, and remember the files, so the first copy holds only new work."""
     try:
+        session, written = _session_id(), []
+        with _restoring:
+            if session and session not in _restored:
+                written = _restore(session)
+                _restored.add(session)
         with _lock:
             for label, root in _roots().items():
                 if root not in _seen:
                     _seen[root] = _scan(label, root)
+                elif label == "tmp":
+                    # Another session made the first scan: a restored file is not new work.
+                    for path in written:
+                        info = os.lstat(os.path.join(root, path))
+                        _seen[root][path] = (info.st_size, info.st_mtime_ns)
     except Exception:  # noqa: BLE001 - a copy error must never stop a step
         LOG.exception("durable: before %s", step.get("op"))
 

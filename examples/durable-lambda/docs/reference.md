@@ -63,7 +63,7 @@ another run, and a run does not slow the sessions of people.
 
 - `front` reads `routes/<id>` for the session or the run of a call and sends the call to the worker of that shard. `main` gets its calls from SQS. Another shard gets its calls as objects in `calls/`, because a queue for each run would stay in the account.
 - `front` adds the rows of `lists/` to the session list of `main`, so the list starts no worker. A row gets the project and the group that `main` has for the same directory and the same group name.
-- `front` joins the event streams of the shards whose sessions a browser follows.
+- `front` joins the event streams of the shards whose sessions a browser follows. An event stream does not keep the worker of a run: `front` holds the stream while the shard has no worker, and joins the worker again when a call starts one.
 - The worker of a run stops after 300 s without work, and after 60 s when it only answered reads. A call to its session, a decision at its gate or the schedule starts a new worker from the checkpoint.
 
 The limits:
@@ -71,10 +71,11 @@ The limits:
 - All workers use the one `worker` function with 4096 MB. Its reserved concurrency, 20, is the largest number of workers at the same time.
 - A session that a person starts does not get its own shard. Vis keeps the project, the groups and the settings in each home directory, and `front` joins them only for the session list.
 - The lease, the last checkpoint and the list of a shard stay in the bucket after the run.
-- A search, the archived sessions and the later pages of the session list have only the sessions of `main`. The fleet feed of the event stream also has only these sessions.
+- A search finds a run session by its title, not by its transcript. The first page of the session list and of a search has all the run sessions: the later pages have only the sessions of `main`. The fleet feed of the event stream also has only the sessions of `main`.
 - Vis web shows a new run session at its next read of the list, 30 s at most. The status of a run session in the list is the last one that its worker recorded.
 - After a failure of a worker, the schedule starts a new worker in about 160 s.
-- A worker cannot know that a browser left an event stream. The worker lives until the stream ends, 870 s at most, and then for its time without work.
+- The worker of `main` cannot know that a browser left an event stream. It lives until the stream ends, 870 s at most, and then for its time without work.
+- Vis web reads the session that a tab shows each 30 s. Thus the worker of a run lives while a tab shows its session.
 
 ## A commit becomes the project of the next worker
 
@@ -159,8 +160,15 @@ The extension has a hook after each `python_execution`, `patch` and `shell` oper
 The hook finds the files that changed in `/tmp` and in the work directory and sends
 them to `tmp/<session>/tmp/` and `tmp/<session>/project/`. The Files tab of a session
 shows them below the attached files. S3 removes them after 7 days. The hook copies only regular files. It does
-not follow a link. These copies are for the pages. The copy that brings a work directory
+not follow a link. The copy that brings a work directory
 back is in `work/`: see [Each session has its own work directory](#each-session-has-its-own-work-directory).
+
+A new worker starts with another `/tmp`. Before the first step of a session on a worker,
+the hook writes the `/tmp` files of the session from their copies. A file stays when the
+worker has it and the copy is not newer. Thus a file in `/tmp` comes back while S3 has
+its copy: 7 days after its last change, and only a file of at most 1 000 000 bytes. The functions and
+the variables that a session defines in its sandbox are in the Vis home directory, so
+the checkpoint keeps them without a limit of time.
 
 ## A document is a Vis attachment
 

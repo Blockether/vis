@@ -162,19 +162,24 @@ def send(shard: str, message: dict[str, Any]) -> None:
         aws.put(f"bells/{shard}", message["id"].encode())
 
 
+def live(shard: str) -> bool:
+    """Return True when a live worker holds the lease of a shard."""
+    return aws.alive(lease(shard)[0])
+
+
 def wake(shard: str) -> None:
     """Start the worker of a shard when no live worker holds its lease, at most each WAKE_S."""
     with _lock:
         if time.time() - _woke.get(shard, 0.0) < WAKE_S:
             return
         _woke[shard] = time.time()
-    if not aws.alive(lease(shard)[0]):
+    if not live(shard):
         log("waking worker", shard)
         aws.start(WORKER_FUNCTION, kind="wake", shard=shard)
 
 
-def parts(rid: str, deadline: float, shard: str) -> Iterator[tuple[bytes, bool]]:
-    """Yield each part of the answer of a call and whether it is the last part."""
+def parts(rid: str, deadline: float, shard: str, wakes: bool = True) -> Iterator[tuple[bytes, bool]]:
+    """Yield each part of the answer of a call and whether it is the last part. `wakes` starts a worker for the call."""
     index, wait, started = 0, 0.03, time.time()
     while time.time() < deadline:
         chunk, _ = aws.get(f"relay/{rid}/{index}")
@@ -182,7 +187,8 @@ def parts(rid: str, deadline: float, shard: str) -> Iterator[tuple[bytes, bool]]
             if index == 0:
                 if time.time() - started > ANSWER_S:
                     return
-                wake(shard)
+                if wakes:
+                    wake(shard)
             time.sleep(wait)
             wait = min(wait * 1.5, 0.25)
             continue

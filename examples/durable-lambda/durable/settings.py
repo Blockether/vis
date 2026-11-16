@@ -157,6 +157,9 @@ CALLS = 64
 ANSWER_S = 55
 # A relayed event stream ends after STREAM_S; the client connects again from its cursor.
 STREAM_S = int(ENV.get("VIS_STREAM_S", "870"))
+# The front holds the event stream of a run shard that has no worker. It looks for a
+# worker each HOLD_S and sends a comment each PING_S, as the gateway does.
+HOLD_S, PING_S = 1, 20
 # An event stream collects its bytes for COLLECT_S, writes one S3 object, then waits PAUSE_S.
 COLLECT_S, PAUSE_S = 0.2, 0.15
 # The front starts the worker of a shard at most each WAKE_S.

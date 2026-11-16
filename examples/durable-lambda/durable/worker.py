@@ -80,7 +80,8 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
                 reason = "handoff"
                 break
             # An idle worker stops, unless an automation is due soon.
-            busy = relay.inflight or running or api.runs.live()
+            # An event stream alone does not keep the worker of a run: the front holds the stream of a shard without a worker.
+            busy = relay.open(streams=shard == MAIN) or running or api.runs.live()
             worked = worked or relay.wrote or bool(running or api.runs.live())
             if not busy and now - relay.last > (IDLE_S if shard == MAIN or worked else READ_IDLE_S) and not (due and due - now < DUE_S):
                 break
