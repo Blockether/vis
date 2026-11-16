@@ -14,9 +14,9 @@
 # reports another commit. To move to another commit, change VIS_COMMIT, its two
 # checksums, the revision in extensions.yml and requirements/site.* together.
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:5c6ed3b38335b2aa424a045f1e564c8c508409ead0ff3f8bf5e62c31b94082cb
-ARG VIS_COMMIT=3bc91731f16986928f77f702818afa9ddbfda715
-ARG VIS_AGENT_SHA256=e742334aa3f8f06cdac49e32cee1eca880b795a4c44ab8f43f40dad21d5e7634
-ARG VIS_WEB_SHA256=4b26dccaca8470ade050bd16ee6f22650de7034d4a9a4325cbc2ef415431c118
+ARG VIS_COMMIT=7404a87020398d1c5ee2c70b5eabf647adbf2a30
+ARG VIS_AGENT_SHA256=b60ee0eed36c77ea7ae34901ca2f0d9eaeec09f38ac734152564b8e362bfc9f3
+ARG VIS_WEB_SHA256=9fb0b6757f645d7236fa07f61b4b1effefb579a7183d10800c5880f8933c3e0a
 # The speech-to-text model of Vis web: NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0), from the
 # Vis asset pack. resources/vis-models/manifest.edn of Vis has the address and the hash.
 ARG PARAKEET_URL=https://github.com/Blockether/vis/releases/download/assets-pack/parakeet-asr-onnx.tar.bz2
