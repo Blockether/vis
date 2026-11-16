@@ -4949,28 +4949,43 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       (::scope-result (meta (get fingerprints project-root))))))
 
 (defn- unmatched-op-hook-findings
-  "Doctor rows for each op hook that names no loaded tool or host operation."
+  "Doctor rows for each op hook that names no loaded tool or host operation. A hook
+   on a name that only a project or a session can add is information, not a warning."
   []
-  (for [{:keys [extension op suggestion]} (distinct (extension/unmatched-op-hooks
-                                                      (extension/registered-extensions)))]
-    {:level :warn
-     :check-id ::op-hook-target
-     :message (str "Extension '"
-                   extension
-                   "' has an op hook on `"
-                   op
-                   "`, which names no loaded tool or host operation, so the hook never runs.")
-     :remediation
-     (if suggestion
-       (str "Write `" suggestion "`, the name that python_execution calls.")
-       "Write the name that python_execution calls, or load the extension that owns the tool.")}))
+  (for [{:keys [extension op suggestion kind]} (distinct (extension/unmatched-op-hooks
+                                                           (extension/registered-extensions)))
+        :let [hook (str "Extension '" extension "' has an op hook on `" op "`, which ")]]
+    (case kind
+      :door
+      {:level :warn
+       :check-id ::op-hook-target
+       :message (str hook "is a host verb and not a tool, so the hook never runs.")
+       :remediation
+       "Write the name that python_execution calls, such as `linear.get_issue` for one tool of an MCP server or `linear.*` for all."}
+
+      :scoped
+      {:level :info
+       :check-id ::op-hook-target
+       :message
+       (str
+         hook
+         "names no tool that is loaded now. The hook runs only in a session that has an MCP server with that name.")
+       :remediation "If the name is a tool of an extension, load that extension or correct the name."}
+
+      {:level :warn
+       :check-id ::op-hook-target
+       :message (str hook "names no loaded tool or host operation, so the hook never runs.")
+       :remediation
+       (if suggestion
+         (str "Write `" suggestion "`, the name that python_execution calls.")
+         "Write the name that python_execution calls, or load the extension that owns the tool.")})))
 
 (defn- warn-unmatched-op-hooks!
-  "Log each op hook that never runs, after a load that changed the extensions."
+  "Log each op hook that does not run now, after a load that changed the extensions."
   [{:keys [changed?]}]
   (when changed?
-    (doseq [{:keys [message remediation]} (unmatched-op-hook-findings)]
-      (tel/log! {:level :warn :id ::op-hook-target :msg (str message " " remediation)}))))
+    (doseq [{:keys [level message remediation]} (unmatched-op-hook-findings)]
+      (tel/log! {:level level :id ::op-hook-target :msg (str message " " remediation)}))))
 
 (defn- load-scopes!
   [opts force?]

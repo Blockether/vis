@@ -1261,6 +1261,10 @@
                              [mcp/vis-extension
                               {:ext/name "test.hooks"
                                :ext/op-hooks (map hook [:alpha.* :alpha.read :mcp_call])}]))))))))
+  (it "gives a tool list the name of each server, and no name of the host verb"
+      (with-catalog (atom [])
+                    (fn [_call!]
+                      (expect (= ["alpha"] (vec (extension/handle-roots mcp/vis-extension)))))))
   (it "has no tool for the host verb or for a server that the session does not see"
       (with-catalog (atom [])
                     (fn [_call!]

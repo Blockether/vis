@@ -1346,18 +1346,17 @@
                (expect (= (str moved "/repos/a") (where "glob-a")))))
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
-  (it
-    "reads a nested project's settings for an extension that a glob loads"
-    ;; #399: a nested extension read its settings only from the workspace configuration,
-    ;; so it behaved differently than in a session at its own project.
-    (let [root
-          (.getCanonicalPath ^java.io.File (temp-dir))
+  (it "reads a nested project's settings for an extension that a glob loads"
+      ;; #399: a nested extension read its settings only from the workspace configuration,
+      ;; so it behaved differently than in a session at its own project.
+      (let [root
+            (.getCanonicalPath ^java.io.File (temp-dir))
 
-          store
-          (ps/db-create-connection! :memory)
+            store
+            (ps/db-create-connection! :memory)
 
-          mode
-          "nested_mode"]
+            mode
+            "nested_mode"]
 
         (spit (io/file root "vis.yml") "toggles:\n  nested_mode: workspace\n")
         (write-ext! (io/file root) "repos/a/vis.yml" "toggles:\n  nested_mode: nested\n")
@@ -1396,20 +1395,20 @@
                                 :workspace-atom (atom {:root root})
                                 :config/toggles (atom snapshot)})]
 
-            (expect (= "nested" (read-in {:workspace/root root})))
-            ;; A session snapshot holds the workspace value; the nested project still decides.
-            (expect (= "nested" (read-in (in-session {mode "workspace"}))))
-            (binding [toggles/*invocation-overrides* {mode "cli"}]
-              (expect (= "cli" (read-in (in-session {mode "cli"})))))
-            ;; A value that the user sets for the session stays visible.
-            (scoped/set-setting! store
-                                 (scoped/target store "session" (str sid))
-                                 mode
-                                 "value"
-                                 "session")
-            (expect (= "session" (read-in (in-session {mode "session"}))))))
-        (finally (binding [workspace/*workspace-root* root]
-                   (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+              (expect (= "nested" (read-in {:workspace/root root})))
+              ;; A session snapshot holds the workspace value; the nested project still decides.
+              (expect (= "nested" (read-in (in-session {mode "workspace"}))))
+              (binding [toggles/*invocation-overrides* {mode "cli"}]
+                (expect (= "cli" (read-in (in-session {mode "cli"})))))
+              ;; A value that the user sets for the session stays visible.
+              (scoped/set-setting! store
+                                   (scoped/target store "session" (str sid))
+                                   mode
+                                   "value"
+                                   "session")
+              (expect (= "session" (read-in (in-session {mode "session"}))))))
+          (finally (binding [workspace/*workspace-root* root]
+                     (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "gives a nested project's directory to the storage of a setting that a glob loads"
       ;; #477: `read` and `write` got the workspace directory, so the extension of a nested
       ;; project read and wrote the file of another project.
@@ -4339,7 +4338,30 @@ vis.register_extension(vis.Extension(name='name-hook', description='Name fixture
 
                   :when (= :com.blockether.vis.internal.python.extensions/op-hook-target check-id)]
 
-              [(re-find #"`[^`]+`" message) remediation])))))))
+              [(re-find #"`[^`]+`" message) remediation]))))))
+  ;; #458: a hook on a server of another session does run there, so it is no warning.
+  (it
+    "tells a hook on the host verb of MCP from a hook on a server that a session can add"
+    (let [hook (fn [op]
+                 {:op op
+                  :phase :after
+                  :fn (fn [_ _ _ r]
+                        r)})]
+      (with-redefs [extension/registered-extensions
+                    (constantly [{:ext/name "door"
+                                  :ext/engine {:ext.engine/alias 'mcp
+                                               :ext.engine/symbols [{:ext.symbol/symbol 'call
+                                                                     :ext.symbol/binding '__door__
+                                                                     :ext.symbol/handles
+                                                                     {:names (constantly [])}}]}}
+                                 {:ext/name "hooks"
+                                  :ext/op-hooks (map hook [:mcp_call :later.get_issue :later.*])}])]
+        (expect
+          (= [[:warn "`mcp_call`" "never runs"] [:info "`later.get_issue`" "runs only"]
+              [:info "`later.*`" "runs only"]]
+             (for [{:keys [level message]}
+                   (#'com.blockether.vis.internal.python.extensions/unmatched-op-hook-findings)]
+               [level (re-find #"`[^`]+`" message) (re-find #"never runs|runs only" message)])))))))
 
 (defdescribe
   code-quality-recipe-test

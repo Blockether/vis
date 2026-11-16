@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.config.validation :as validation]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.sandbox.policy :as policy]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (def fields
@@ -96,17 +97,24 @@
 (defn tool-pattern
   "Compile one entry of a tool list. `*` matches any characters."
   [s]
-  (re-pattern (str/join ".*" (map #(java.util.regex.Pattern/quote %) (str/split s #"\*" -1)))))
+  (util/glob-pattern s))
+
+(defn tool-known?
+  "True when `entry` of a tool list matches a name of `known`. A name of `known`
+   that ends in `.*` is each name under it: the tools of an MCP server, which Vis
+   learns only when it connects."
+  [known entry]
+  (let [pattern (tool-pattern entry)]
+    (boolean (some #(or (re-matches pattern %)
+                        (and (str/ends-with? % ".*")
+                             (util/glob-under? (subs % 0 (dec (count %))) entry)))
+                   known))))
 
 (defn check-tool-names!
   "Throw a 400 error for an entry of `names` that matches no tool of `target`."
   [target names]
   (when-let [known (tool-names target)]
-    (let [matches? (fn [entry]
-                     (let [pattern (tool-pattern entry)]
-                       (some #(re-matches pattern %) known)))
-          unknown (remove matches? names)]
-
+    (let [unknown (remove #(tool-known? known %) names)]
       (when (seq unknown)
         (throw (ex-info (str "Unknown tool: " (str/join ", " unknown) ". Choose a suggested name.")
                         {:status 400 :type :tool/unknown :tools (vec unknown)})))))
@@ -277,41 +285,40 @@
                      [section (scoped/inherited-definitions db target section)]))
               sections)]
 
-    (mapv
-      (fn [{:keys [id section key label default type editor choices applies description]}]
-        (let [{:keys [value source is-override] :or {value default source "default"}}
-              (get-in layers [section key])
+    (mapv (fn [{:keys [id section key label default type editor choices applies description]}]
+            (let [{:keys [value source is-override] :or {value default source "default"}}
+                  (get-in layers [section key])
 
-              parent
-              (get-in inherited [section key] {:value default :source "default"})]
+                  parent
+                  (get-in inherited [section key] {:value default :source "default"})]
 
-          (cond->
-            {:id id
-             :label label
-             :type type
-             :editor editor
-             :schema (str "config.json#/$defs/" (first section) "/properties/" key)
-             :scopes ["global" "project" "group" "session"]
-             :scope (:scope target)
-             :source source
-             :is-override (boolean is-override)
-             :inherited-value (:value parent)
-             :inherited-source (:source parent)
-             :own-value (when is-override value)
-             :applies (or applies "next_turn")}
-            ;; The contract has no null description. The band header names when changes apply.
-            (or description (= "project" (:scope target)))
-            (assoc :description (or description "Project access cannot exceed host permissions."))
+              (cond-> {:id id
+                       :label label
+                       :type type
+                       :editor editor
+                       :schema (str "config.json#/$defs/" (first section) "/properties/" key)
+                       :scopes ["global" "project" "group" "session"]
+                       :scope (:scope target)
+                       :source source
+                       :is-override (boolean is-override)
+                       :inherited-value (:value parent)
+                       :inherited-source (:source parent)
+                       :own-value (when is-override value)
+                       :applies (or applies "next_turn")}
+                ;; The contract has no null description. The band header names when changes apply.
+                (or description (= "project" (:scope target)))
+                (assoc :description
+                  (or description "Project access cannot exceed host permissions."))
 
-            (= type "boolean")
-            (assoc :enabled value)
+                (= type "boolean")
+                (assoc :enabled value)
 
-            (not= type "boolean")
-            (assoc :value value)
+                (not= type "boolean")
+                (assoc :value value)
 
-            choices
-            (assoc :choices choices))))
-      fields)))
+                choices
+                (assoc :choices choices))))
+          fields)))
 
 (defn validate-candidate!
   "Validate a complete staged access configuration before any owner is written."

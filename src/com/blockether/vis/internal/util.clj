@@ -633,3 +633,17 @@
   (when-let [s (normalize-thinking-text text)]
     (when-let [end (last-closed-thought-end s)]
       (not-empty (str/trimr (subs s 0 end))))))
+
+(defn glob-pattern
+  "The regex of the name pattern `s`, in which `*` matches any characters. Tool
+   lists and op hooks write their names in this one grammar."
+  [s]
+  (re-pattern (str/join ".*"
+                        (map #(java.util.regex.Pattern/quote %) (str/split (str s) #"\*" -1)))))
+
+(defn glob-under?
+  "True when `text`, a name or a [[glob-pattern]], can name something under
+   `root`, a name that ends in `.`: `linear.get_issue` and `lin*` under `linear.`."
+  [root text]
+  (let [stem (first (str/split (str text) #"\*" 2))]
+    (or (str/starts-with? stem root) (and (not= stem (str text)) (str/starts-with? root stem)))))

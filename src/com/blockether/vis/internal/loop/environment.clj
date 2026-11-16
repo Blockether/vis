@@ -96,9 +96,27 @@
           :else true)))
 
 (defn- ext-tool-names
-  "The names that `python_execution` binds for the symbols of `ext`."
+  "The names that `python_execution` binds for the symbols of `ext`. A door has no
+   name here: a block calls its handles."
   [ext]
-  (mapv #(env/sym->py-name (extension/symbol-binding ext (:ext.symbol/symbol %)))
+  (into []
+        (comp (remove :ext.symbol/binding)
+              (map #(env/sym->py-name (extension/symbol-binding ext (:ext.symbol/symbol %)))))
+        (extension/ext-symbols ext)))
+
+(defn- handle-tool-names
+  "The names that a tool list can give for the handles under the first name `root`,
+   such as an MCP server: the handle itself, and each name under it."
+  [root]
+  [root (str root ".*")])
+
+(defn- door-tool-names
+  "The names that a tool list of an older Vis gave the doors of `ext`, such as
+   `mcp_call`. No new list can name them."
+  [ext]
+  (into []
+        (comp (filter :ext.symbol/binding)
+              (map #(env/sym->py-name (extension/symbol-binding ext (:ext.symbol/symbol %)))))
         (extension/ext-symbols ext)))
 
 (defn- list-selection
@@ -116,23 +134,43 @@
     (mapv list-selection (scoped-policy/tool-lists db-info session-id))
     []))
 
+(defn- listed-on?
+  "False when the tool list of `environment` or a scoped tool list turns off `tool` of
+   `ext`. `tools` are the names of [[tool-on?]]. Every list applies. Parts of Vis stay on."
+  [environment ext tools tool]
+  (or (not (scoped/engine-setting! ext))
+      (every? #(tool-on? % tools tool)
+              (cons (some-> (:config/tools environment)
+                            deref)
+                    (some-> (:config/tool-policy environment)
+                            deref)))))
+
 (defn tool-allowed?
   "False when the tool list of `environment` or a scoped tool list turns off `tool`, the
    bound name of a tool of `ext`. Every list applies. Parts of Vis stay on."
   [environment ext tool]
-  (or (not (scoped/engine-setting! ext))
-      (let [tools (ext-tool-names ext)]
-        (every? #(tool-on? % tools tool)
-                (cons (some-> (:config/tools environment)
-                              deref)
-                      (some-> (:config/tool-policy environment)
-                              deref))))))
+  (listed-on? environment ext (ext-tool-names ext) tool))
 
 (defn- tool-call-allowed?
-  "[[tool-allowed?]] for symbol `sym` of `ext`. The extension wrapper calls it before
-   each call, so a saved handle of a tool that is off fails before extension IO."
-  [environment ext sym]
-  (tool-allowed? environment ext (env/sym->py-name (extension/symbol-binding ext sym))))
+  "[[tool-allowed?]] for `tool` of `ext`: the symbol of a tool, or the name of a handle
+   of a door as a string. The extension wrapper calls it before each call, so a saved
+   handle of a tool that is off fails before extension IO.
+
+   A door itself stays on, because a tool list names its handles. Each first name of
+   a handle is an extension of its own for a list, so `linear.get_issue` in a keep
+   list turns off the other tools of `linear` and no tool of another server."
+  [environment ext tool]
+  (cond (string? tool)
+        (and (listed-on? environment ext (handle-tool-names (first (str/split tool #"\." 2))) tool)
+             ;; A list that an older Vis saved names the door. Its `-name` still turns
+             ;; off each handle, so an update turns no tool on.
+             (every? #(listed-on? environment ext [%] %) (door-tool-names ext)))
+        (some #(and (= tool (:ext.symbol/symbol %)) (:ext.symbol/binding %))
+              (extension/ext-symbols ext))
+        true
+        :else (tool-allowed? environment
+                             ext
+                             (env/sym->py-name (extension/symbol-binding ext tool)))))
 
 (defn sync-extension-symbols-into!
   "The symbol sync itself, against a context handed in EXPLICITLY.
@@ -1946,15 +1984,23 @@
 
 (defn- unknown-tool-hint
   "One hint for an unknown tool name: the tools of the extension that it names, or one
-   example name."
+   example name. For the name of a door, the name of a handle that the door runs."
   [tool-name selectable]
   (let [prefix
         (first (str/split tool-name #"\." 2))
 
         same
-        (filter #(str/starts-with? % (str prefix ".")) selectable)]
+        (filter #(str/starts-with? % (str prefix ".")) selectable)
 
-    (cond (and (str/includes? tool-name ".") (seq same))
+        handles
+        (filter #(str/ends-with? % ".*") selectable)]
+
+    (cond (some #(some #{tool-name} (door-tool-names %)) (extension/registered-extensions))
+          (str "A tool list names the tools that " tool-name
+               " runs, by the name that python_execution calls"
+               (when (seq handles) (str ", such as " (first handles)))
+               ".")
+          (and (str/includes? tool-name ".") (seq same))
           (str "Tools of " prefix ": " (str/join ", " same) ".")
           (seq selectable)
           (str "Use the name that python_execution binds, such as " (first selectable) ".")
@@ -1962,7 +2008,8 @@
 
 (defn selectable-tools
   "The sorted names of the tools that a tool list can name in the bound project: the
-   public tools of its optional extensions."
+   public tools of its optional extensions. Each handle of a door, such as an MCP
+   server, gives its first name and that name with `.*`."
   []
   (python-extensions/ensure-python-extensions-loaded!)
   (sort (into #{}
@@ -1970,7 +2017,8 @@
                                                                     (workspace/source-enabled?
                                                                       scope))))
                     (filter scoped/engine-setting!)
-                    (mapcat ext-tool-names)
+                    (mapcat #(concat (ext-tool-names %)
+                                     (mapcat handle-tool-names (extension/handle-roots %))))
                     (remove #(str/starts-with? (last (str/split % #"\.")) "_")))
               (extension/registered-extensions))))
 
@@ -1992,10 +2040,7 @@
   [tools]
   (when-let [{:keys [names]} (tool-selection tools)]
     (let [selectable (selectable-tools)
-          unknown (remove (fn [tool-name]
-                            (some #(re-matches (scoped-policy/tool-pattern tool-name) %)
-                                  selectable))
-                    names)]
+          unknown (remove #(scoped-policy/tool-known? selectable %) names)]
 
       (when (seq unknown)
         (throw (ex-info (str "Unknown tool: " (str/join ", " unknown)

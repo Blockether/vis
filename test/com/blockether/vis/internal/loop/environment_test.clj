@@ -300,6 +300,76 @@
 
         {:calls @calls :error error}))))
 
+(defn- door-extension
+  "An optional extension with one tool and one door, whose handles start with `srv`."
+  []
+  {:ext/name "door"
+   :ext/engine {:ext.engine/alias 'door
+                :ext.engine/symbols [{:ext.symbol/symbol 'look}
+                                     {:ext.symbol/symbol 'call
+                                      :ext.symbol/binding '__door__
+                                      :ext.symbol/handles {:names (fn []
+                                                                    ["srv"])}}]}})
+
+(defn- door-allows
+  "The names of `tools` that the scoped tool lists `lists` keep for `door-extension`. A
+   string is the name of a handle, and a symbol is a symbol of the extension."
+  [lists tools]
+  (with-redefs [scoped/engine-setting! (constantly "engines_door")]
+    (let [environment {:config/tool-policy (atom (mapv (deref #'loop-env/list-selection) lists))}]
+      (filterv #(#'loop-env/tool-call-allowed? environment (door-extension) %) tools))))
+
+(defn- with-door
+  "Run `(f)` in a project whose one optional extension is `door-extension`."
+  [f]
+  (with-redefs [python-extensions/ensure-python-extensions-loaded!
+                (constantly nil)
+
+                extension/registered-extensions
+                (constantly [(door-extension)])
+
+                scoped/engine-setting!
+                (constantly "engines_door")]
+
+    (f)))
+
+(defn- door-checked
+  "Validate the tool list `names` against `door-extension`. Return it, or the error type."
+  [names]
+  (with-door #(try (loop-env/check-tool-selection! names)
+                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+
+;; #458: a tool list names the handle of a door, such as a tool of an MCP server.
+(defdescribe
+  door-tool-lists-test
+  (let [handles ["srv" "srv.read" "srv.write" "srv.prompts.greet" "other.read"]]
+    (it "turns off the handles that a deny list names, and never the door"
+        (expect (= ["srv" "other.read"] (door-allows [{:deny ["srv.*"]}] handles)))
+        (expect (= ["srv" "srv.write" "srv.prompts.greet" "other.read"]
+                   (door-allows [{:deny ["srv.read"]}] handles)))
+        ;; A list of an older Vis names the door. It still turns off each handle, so an
+        ;; update turns no tool on. The door stays in the sandbox.
+        (expect (= ['call] (door-allows [{:deny ["door_call"]}] ['call "srv.read" "other.read"])))
+        (expect (= ['call "srv.read"] (door-allows [{:deny ["__door__"]}] ['call "srv.read"]))))
+    (it "keeps only the named handles of the first name that an allow list names"
+        ;; The call of `srv` itself lists its tools. Only a list that names `srv` turns it off.
+        (expect (= ["srv" "srv.read" "other.read"] (door-allows [{:allow ["srv.read"]}] handles)))
+        (expect (= ["other.read"] (door-allows [{:allow ["srv.none"]} {:deny ["srv"]}] handles)))
+        (expect (= ['look "srv.read" "srv.write"]
+                   (door-allows [{:allow ["door_look"]}] ['look "srv.read" "srv.write"]))))
+    (it
+      "takes the name of a handle in a tool list, and refuses the name of the door"
+      (expect (= ["door_look" "srv" "srv.*"] (with-door #(vec (loop-env/selectable-tools)))))
+      (expect (= ["srv.read" "srv.*" "s*.read" "-srv"]
+                 (mapcat door-checked [["srv.read" "srv.*" "s*.read"] ["-srv"]])))
+      (expect (= [:tool/unknown :tool/unknown :tool/unknown]
+                 (mapv door-checked [["door_call"] ["__door__"] ["srvx.read"]])))
+      (expect
+        (=
+          "Unknown tool: door_call. A tool list names the tools that door_call runs, by the name that python_execution calls, such as srv.*."
+          (with-door #(try (loop-env/check-tool-selection! ["-door_call"])
+                           (catch clojure.lang.ExceptionInfo e (ex-message e)))))))))
+
 ;; #416: tool lists in configuration and in scoped settings, not only `--tools`.
 (defdescribe
   scoped-tool-lists-test

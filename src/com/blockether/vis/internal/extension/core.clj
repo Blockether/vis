@@ -42,8 +42,7 @@
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)
            (java.net URL)
-           (java.util.jar JarEntry JarFile)
-           (java.util.regex Pattern)))
+           (java.util.jar JarEntry JarFile)))
 
 ;; Tool-result contract
 (def ^:private max-trace-frames 12)
@@ -1925,9 +1924,7 @@
    `*`, which matches any characters, as in a tool list: `linear.*`."
   (memoize (fn [op]
              (let [text (op-text op)]
-               (when (str/includes? text "*")
-                 (re-pattern (str/join ".*"
-                                       (map #(Pattern/quote %) (str/split text #"\*" -1)))))))))
+               (when (str/includes? text "*") (util/glob-pattern text))))))
 
 (defn- descriptor-op-hooks
   "The declared hooks of `extensions` whose operation satisfies `match?`, without
@@ -2198,12 +2195,15 @@
 
 (defn- assert-tool-on!
   "Refuse a call to a tool that the tool lists of `env` turn off, before any extension IO.
-   A saved handle or a `vis.tools` call of that tool fails here too (#416)."
-  [env ext sym]
+   A saved handle or a `vis.tools` call of that tool fails here too (#416). `tool` is
+   the symbol of the tool, or the name of a handle of a door as a string."
+  [env ext tool]
   (when-let [on? (:config/tool-on? env)]
-    (when-not (on? env ext sym)
-      (throw (ex-info (str "Tool is turned off in this session: " (symbol-binding ext sym) ".")
-                      {:type :tool/disabled :extension (:ext/name ext) :tool (str sym)})))))
+    (when-not (on? env ext tool)
+      (throw (ex-info (str "Tool is turned off in this session: "
+                           (if (string? tool) tool (symbol-binding ext tool))
+                           ".")
+                      {:type :tool/disabled :extension (:ext/name ext) :tool (str tool)})))))
 
 (defn- invoke-symbol-wrapper*
   "Full invocation pipeline for an observed tool symbol entry:
@@ -2275,6 +2275,10 @@
               view
               (when-let [describe (:call (:ext.symbol/handles sym-entry))]
                 (describe call-env call-args))
+
+              ;; A tool list names the handle, as a block types it.
+              _
+              (when view (assert-tool-on! call-env ext (:name view)))
 
               restore
               (if view (comp inject (:argv view)) identity)
@@ -3239,13 +3243,34 @@
    tools and `gate-ops`, they are every name that an op hook can match."
   #{:python_execution})
 
+(defn handle-roots
+  "The first name of each handle that a door of `ext` has now, such as `linear`.
+   See [[sandbox-binding]]."
+  [ext]
+  (for [entry
+        (ext-symbols ext)
+
+        :let [names
+              (:names (:ext.symbol/handles entry))]
+        :when names
+
+        root
+        (names)]
+
+    root))
+
 (defn unmatched-op-hooks
   "One row for each op hook of `extensions` that names no tool of `extensions`, no
-   host operation and no gate: `{:extension :op :suggestion}`. A hook like that never
-   runs. A pattern names each tool that it matches. The handles of a door are known
-   only by their first name, so each name and each pattern under one is a tool.
-   `:suggestion` is the Python name of a tool that differs only in its separators,
-   or nil."
+   host operation and no gate: `{:extension :op :suggestion :kind}`. A pattern names
+   each tool that it matches. The handles of a door are known only by their first
+   name, so each name and each pattern under one is a tool. `:suggestion` is the
+   Python name of a tool that differs only in its separators, or nil. `:kind` says
+   why the hook does not run:
+
+   - nil: no tool has the name.
+   - `:door`: the name is a door, and a hook names only the handles of a door.
+   - `:scoped`: the name can be a handle that only a project or a session adds,
+     such as an MCP server. The hook runs there."
   [extensions]
   (let [tool-names
         (for [ext
@@ -3263,29 +3288,29 @@
         known
         (into (into host-operations (keys gate-ops)) (mapcat first) tool-names)
 
+        doors
+        (into #{}
+              (for [ext
+                    extensions
+
+                    entry
+                    (ext-symbols ext)
+
+                    :when (:ext.symbol/binding entry)
+
+                    door
+                    [(tool-call-name ext (:ext.symbol/symbol entry))
+                     (sym->py-name (symbol-binding ext (:ext.symbol/symbol entry)))
+                     (str (:ext.symbol/binding entry))]]
+
+                door))
+
         roots
-        (for [ext
-              extensions
-
-              entry
-              (ext-symbols ext)
-
-              :let [names
-                    (:names (:ext.symbol/handles entry))]
-              :when names
-
-              root
-              (names)]
-
-          (str root "."))
+        (mapcat handle-roots extensions)
 
         handle?
         (fn [text]
-          (let [stem (first (str/split text #"\*" 2))]
-            (some #(or (= text (subs % 0 (dec (count %))))
-                       (str/starts-with? stem %)
-                       (and (not= stem text) (str/starts-with? % stem)))
-                  roots)))
+          (some #(or (= text %) (util/glob-under? (str % ".") text)) roots))
 
         known?
         (fn [op-kw]
@@ -3293,6 +3318,20 @@
               (when-let [pattern (op-pattern op-kw)]
                 (some #(re-matches pattern (second %)) tool-names))
               (handle? (op-text op-kw))))
+
+        first-name
+        #(first (str/split % #"[./]" 2))
+
+        owners
+        (into #{} (map (comp first-name op-text)) known)
+
+        ;; A dotted name or a pattern under a first name that no loaded tool has.
+        scoped?
+        (fn [text]
+          (and (seq doors)
+               (re-matches #"[a-z*][a-z0-9_*]*(\..+)?" text)
+               (or (str/includes? text ".") (str/includes? text "*"))
+               (not (contains? owners (first-name text)))))
 
         folded
         #(str/replace (str %) #"[./-]" "_")]
@@ -3304,13 +3343,18 @@
           (:ext/op-hooks ext)
 
           :let [op-kw
-                (or (gate-op op) (keyword op))]
+                (or (gate-op op) (keyword op))
+
+                text
+                (op-text op-kw)]
           :when (not (known? op-kw))]
 
       {:extension (:ext/name ext)
-       :op (op-text op-kw)
+       :op text
+       :kind (cond (contains? doors text) :door
+                   (scoped? text) :scoped)
        :suggestion (some (fn [[_ python-name]]
-                           (when (= (folded python-name) (folded (op-text op-kw))) python-name))
+                           (when (= (folded python-name) (folded text)) python-name))
                          tool-names)})))
 
 (defn registered-extensions

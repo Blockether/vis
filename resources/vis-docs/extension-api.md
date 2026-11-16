@@ -1180,7 +1180,8 @@ with the arguments: `linear.get_issue(id="ENG-1")` gives `[{"id": "ENG-1"}]`.
 
 A hook on a name that no loaded tool or operation has never runs. `vis-agent
 doctor` and the log then show a warning with the correct name, when Vis can find
-one.
+one. A name such as `"linear.*"` can be an MCP server that only a project or a
+session adds. For such a name, they show a note and not a warning.
 
 With `phase="before"`, `fn(call)` receives `{"op", "args"}`. Return `None` to
 allow the call or `vis.block(reason)` to refuse it. The model sees the reason

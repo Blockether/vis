@@ -2049,11 +2049,20 @@
 
 (defn- handle-names
   "`:names` of `:ext.symbol/handles` of the verb: what a block types for each
-   server that each session has, and for each server that a live session added."
+   server that Vis knows now. These are the servers of the current session or of
+   each session, of the configuration of the project, and of each live session
+   that added its own."
   []
-  (let [taken (sandbox-names)]
+  (let [taken
+        (sandbox-names)
+
+        project
+        (keep canonical-name (keys (get-in (config/load-project-tiers-raw) ["mcp" "servers"])))]
+
     (map #(python-name % taken)
-         (distinct (concat (keys (visible-servers nil)) (mapcat keys (vals @session-specs)))))))
+         (distinct (concat (keys (visible-servers (:session-id extension/*current-environment*)))
+                           project
+                           (mapcat keys (vals @session-specs)))))))
 
 (defn- hook-call
   "`:call` of `:ext.symbol/handles` of the verb: the call of a handle that the

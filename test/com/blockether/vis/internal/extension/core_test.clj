@@ -696,10 +696,57 @@
                                                  {:ext.symbol/symbol 'look}]}
                :ext/op-hooks (map hook
                                   [:srv :srv.read :srv.* :s*.read :*.read :door_look :door_*
-                                   :door/call :door_call :__door__ :srvx.read :other.*])}]
+                                   :door/call :door_call :__door__ :srvx.read :other.* :door_lok
+                                   :door.look])}]
 
-          (expect (= ["door/call" "door_call" "__door__" "srvx.read" "other.*"]
-                     (mapv :op (extension/unmatched-op-hooks [ext]))))))
+          ;; A dotted name under a first name that no tool has can be a handle of
+          ;; another session. A name under `door`, which has tools, is a mistake.
+          (expect (= [["door/call" :door] ["door_call" :door] ["__door__" :door]
+                      ["srvx.read" :scoped] ["other.*" :scoped] ["door_lok" nil] ["door.look" nil]]
+                     (mapv (juxt :op :kind) (extension/unmatched-op-hooks [ext]))))))
+    (it
+      "asks the tool lists about the handle of a door, and never about the door"
+      (let [asked
+            (atom [])
+
+            calls
+            (atom 0)
+
+            ext
+            {:ext/name "test.door-list" :ext/engine {:ext.engine/alias 'door}}
+
+            entry
+            {:ext.symbol/symbol 'call
+             :ext.symbol/tag :observation
+             :ext.symbol/binding '__door__
+             :ext.symbol/handles {:names (fn []
+                                           ["srv"])
+                                  :argv (fn [_]
+                                          nil)
+                                  :call (fn [_ [server tool]]
+                                          {:name (str server "." tool)
+                                           :args []
+                                           :argv (fn [_]
+                                                   [server tool])})}
+             :ext.symbol/fn (fn [_ _]
+                              (swap! calls inc)
+                              (extension/success {:result :done}))}
+
+            env
+            {:config/tool-on? (fn [_ _ tool]
+                                (swap! asked conj tool)
+                                (not= "srv.write" tool))}
+
+            call
+            (fn [tool]
+              (try (extension/invoke-symbol-wrapper ext entry ["srv" tool] env)
+                   (catch clojure.lang.ExceptionInfo e [(:type (ex-data e)) (ex-message e)])))]
+
+        (expect (= :done (call "read")))
+        (expect (= [:tool/disabled "Tool is turned off in this session: srv.write."]
+                   (call "write")))
+        (expect (= 1 @calls))
+        (expect (= ['call "srv.read" 'call "srv.write"] @asked))))
     (it "declarative :ext/op-hooks install on register and tear down on deregister"
         (try (extension/register-extension! {:ext/name "test.ophooks-ext"
                                              :ext/description "declarative op-hooks lifecycle"

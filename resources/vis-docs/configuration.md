@@ -247,6 +247,12 @@ those tools of the extensions that they name. Other extensions keep all of their
 `-names` turns only those tools off. Do not mix the two forms in one list. A `*` matches any part
 of a name, as in `py.repl_*`.
 
+A tool of an MCP server has the name that the agent calls, such as `linear.get_issue`. For a tool
+list, each server is an extension of its own. So `-linear.*` turns off each tool and prompt of
+`linear`, and no tool of another server. Vis learns the tools of a server only when it connects, so
+it checks only the name of the server. The name of the server stays in the sandbox, and Vis refuses
+a call to a tool that is off.
+
 Vis refuses an unknown name before the session starts, and the error lists the tools of that
 extension. For scripts, set `VIS_TOOLS` to a tool list for new sessions. The `--tools` flag wins over
 the variable.
