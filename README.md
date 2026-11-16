@@ -59,14 +59,7 @@ All clients show the same sessions.
 
 ## Documentation
 
-Read the manual at [vis.blockether.com](https://vis.blockether.com/) or in
-[`resources/vis-docs/`](resources/vis-docs/). Its five modules, in reading order:
-
-- **Intro**: [Rationale](resources/vis-docs/rationale.md) and [Getting started](resources/vis-docs/index.md).
-- **Concepts**: one page for each feature, such as [Sessions](resources/vis-docs/sessions.md).
-- **Programmatic access**: [Python SDK](resources/vis-docs/python-sdk.md), [Python API reference](https://vis.blockether.com/python-sdk-api/) and [HTTP API](resources/vis-docs/http-api.md).
-- **Extensions**: [Extending Vis](resources/vis-docs/extending.md), [code checks example](resources/vis-docs/extension-design.md#check-code-complexity-after-edits) and the [Extension Center](https://vis.blockether.com/extensions/).
-- **Reference**: exact facts, such as [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md).
+Read the manual at [vis.blockether.com](https://vis.blockether.com/).
 
 ## License
 

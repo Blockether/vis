@@ -40,11 +40,6 @@ def test_recipe_registers_both_edit_boundaries_and_supplies_context(recipe):
         "limit": 3,
         "findings": [],
     }
-    readme = Path(__file__).parents[3] / "README.md"
-    assert (
-        "resources/vis-docs/extension-design.md#check-code-complexity-after-edits"
-        in readme.read_text()
-    )
 
 
 @pytest.mark.parametrize(

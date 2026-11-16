@@ -152,8 +152,7 @@ test('generated API pages have discovery metadata and no inline executable conte
     }
   }
   expect(sitemap).not.toContain('index.html');
-  for (const path of ['../../README.md', '../../packages/vis-agent/README.md'])
-    expect(readFileSync(path, 'utf8')).toContain(origin + prefix);
+  expect(readFileSync('../../packages/vis-agent/README.md', 'utf8')).toContain(origin + prefix);
   expect(read('/python-sdk.html')).toContain(origin + prefix);
 });
 
