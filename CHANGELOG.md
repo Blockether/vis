@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Sandbox: a `next(...)` call that finds no item at the top level of a block fails with `StopIteration`, and the error shows the line of the call. Before, the error was `RuntimeError: coroutine raised StopIteration` and showed no line. The Python runtime is now at commit cea960d.
 - Gateway: a cached list is fetched one time when two readers find it old at the same moment. Before, the later reader could start a second fetch.
 - Gateway: a client that connects while another Vis process runs a turn gets each event of that turn one time. Before, the start of the turn could arrive two times.
 - TUI: wheel ticks in the opposite direction at the end of a scroll do not make the direction lock weaker. Before, each such tick decreased the lock, and a later tick could move the view back.
