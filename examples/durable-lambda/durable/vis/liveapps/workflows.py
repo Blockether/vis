@@ -61,6 +61,8 @@ class Workflows(threading.Thread):
         self.has_status = False
         # The reason why the API did not take the last decision at a gate.
         self.problem = ""
+        # The lists of the form: the name and the title of each workflow, and the id and the title of each session.
+        self.lists: tuple[list[tuple[str, str]], list[tuple[str, str]]] = ([], [])
 
     # -- the content of each tab ------------------------------------------------
 
@@ -74,23 +76,30 @@ class Workflows(threading.Thread):
                 vis.ui.steps("activities", []),
                 vis.ui.button("new-run", "New run"),
             )
-        flows = self.api.workflows()["workflows"]
-        sessions = [vis.ui.option(session, title) for session, title in self.api.sessions.places()]
         return vis.ui.column(
             "body",
             vis.ui.paragraph("about", "Select a workflow and give its input. A run works in its own new Vis session, or in a session that you select."),
-            vis.ui.group(
-                "start",
-                vis.ui.select("workflow", [vis.ui.option(flow["name"], flow["title"]) for flow in flows], label="Workflow", is_required=True),
-                vis.ui.multiline("input", label="Input", description="A text for the first input of the workflow, or a JSON object."),
-                vis.ui.select(
-                    "session",
-                    [vis.ui.option(NEW, "A new session for this run"), *sessions],
-                    label="Session",
-                    description="In a session that you select, the run works in the directory of that session.",
-                ),
-                vis.ui.button("start-run", "Run workflow", action="submit", variant="primary"),
+            self.form(),
+        )
+
+    def look(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """Read the lists of the form: the workflows from S3 and the sessions from the gateway."""
+        return [(flow["name"], flow["title"]) for flow in self.api.workflows()["workflows"]], self.api.sessions.places()
+
+    def form(self) -> dict[str, Any]:
+        """Return the form of a new run from the lists that the app holds. It reads nothing."""
+        flows, sessions = self.lists
+        return vis.ui.group(
+            "start",
+            vis.ui.select("workflow", [vis.ui.option(name, title) for name, title in flows], label="Workflow", is_required=True),
+            vis.ui.multiline("input", label="Input", description="A text for the first input of the workflow, or a JSON object."),
+            vis.ui.select(
+                "session",
+                [vis.ui.option(NEW, "A new session for this run"), *(vis.ui.option(session, title) for session, title in sessions)],
+                label="Session",
+                description="In a session that you select, the run works in the directory of that session.",
             ),
+            vis.ui.button("start-run", "Run workflow", action="submit", variant="primary"),
         )
 
     def gates_tab(self) -> dict[str, Any]:
@@ -172,6 +181,14 @@ class Workflows(threading.Thread):
                 app.drop(node)
             app.add(tabs(tab))
             app.add(body)
+        if tab == "run" and not self.followed:
+            # The tab shows first, with the lists that the app holds. Only then the app reads them again.
+            lists = self.look()
+            if lists != self.lists:
+                self.lists = lists
+                with app.batch():
+                    app.drop("start")
+                    app.add(self.form(), after="about")
         self.paint(app)
 
     def paint(self, app: Any) -> None:
@@ -242,6 +259,7 @@ class Workflows(threading.Thread):
 
     def run(self) -> None:
         """Open the app with the SDK client of this thread, then serve its events and paint it until the gateway stops."""
+        self.lists = self.look()
         app = vis.ui.app(
             "Workflows",
             tabs(self.tab),
