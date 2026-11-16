@@ -18,7 +18,15 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    BinaryIO,
+    NotRequired,
+    TypeAlias,
+    TypedDict,
+    overload,
+)
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -38,6 +46,18 @@ JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 )
 Query: TypeAlias = Mapping[str, str | int | float | bool | None]
+
+
+class SessionOptions(TypedDict):
+    """The session creation options of a project, from `session_options`.
+
+    Give them to `create_session` with `**`. `root` is the folder that the
+    session works in. `channel` names the kind of client.
+    """
+
+    root: str
+    channel: NotRequired[str]
+
 
 _PROTOCOL = definition("gateway", "handshake")["properties"]["protocol"]["const"]
 _MIN_GATEWAY = definition("gateway", "handshake")["properties"]["min_gateway"]["const"]
@@ -360,7 +380,7 @@ class ExecutionLayer(ABC):
         """Release this layer's resources without deleting remote sessions."""
 
     @abstractmethod
-    def session_options(self, project=".") -> dict[str, JSONValue]:
+    def session_options(self, project=".") -> SessionOptions:
         """Validate a project and return its wire-ready session creation options."""
 
     @abstractmethod
@@ -605,8 +625,8 @@ class ExecutionLayer(ABC):
         provider: str | None = None,
         model: str | None = None,
         group: SessionGroup | str | None = None,
-        timeout=None,
-        **options,
+        timeout: float | None = None,
+        **options: object,
     ) -> Session:
         """Create a conversation and return a `Session` handle.
 
@@ -3777,7 +3797,7 @@ class GatewayClient(ExecutionLayer):
             self._lease = None
             self._token = None
 
-    def session_options(self, project=".") -> dict[str, JSONValue]:
+    def session_options(self, project=".") -> SessionOptions:
         """Prepare an app-channel session using a path on the gateway machine."""
         path = PurePosixPath(project)
         if not path.is_absolute():
@@ -3846,7 +3866,7 @@ class Session:
         self.client._pump_client_extensions(self.id)
         return self._call("GET")
 
-    def update(self, **fields):
+    def update(self, **fields: object) -> JSONValue:
         """Patch session fields and return the engine's JSON response.
 
         Field names and validation follow the gateway session-update contract.
@@ -3872,7 +3892,9 @@ class Session:
         """
         return self._call("DELETE")
 
-    def turns(self, **query):
+    def turns(
+        self, **query: str | int | float | bool | None
+    ) -> list[dict[str, JSONValue]]:
         """Read turn history, or the queued subset with status='queued'."""
         return _field(self._call("GET", "/turns", query=query), "turns", list)
 
@@ -3994,7 +4016,11 @@ class Session:
         return self.send(f"/goal {budget}-- {objective.strip()}", **options)
 
     def send(
-        self, request: str, *, idempotency_key: str | None = None, **options
+        self,
+        request: str,
+        *,
+        idempotency_key: str | None = None,
+        **options: object,
     ) -> Turn:
         """Submit a user message or slash command and return its `Turn` handle.
 

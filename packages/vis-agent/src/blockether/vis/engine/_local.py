@@ -30,6 +30,7 @@ from ._client import (
     JobEvents,
     ProtocolError,
     Session,
+    SessionOptions,
     TransportError,
     VisTimeout,
     _duration,
@@ -155,7 +156,7 @@ class LocalEngine(ExecutionLayer):
         # The stdio frames carry no request ids, so only one exchange can be in flight.
         self._exchange = threading.RLock()
 
-    def session_options(self, project=".") -> dict:
+    def session_options(self, project=".") -> SessionOptions:
         """Resolve an existing local directory before the caller changes directory."""
         path = Path(project).resolve(strict=True)
         if not path.is_dir():

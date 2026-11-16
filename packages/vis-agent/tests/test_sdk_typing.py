@@ -53,14 +53,37 @@ def context(env):
     assert_type(LEVEL.value(), str)
 """
 
+_SESSION_FIXTURE = """from typing import assert_type
+
+from blockether.vis.engine import GatewayClient, JSONValue, Session, final_answer
+
+
+def start(client: GatewayClient, project: str, group: str) -> Session:
+    options = client.session_options(project)
+    assert_type(options["root"], str)
+    session = client.create_session(**options)
+    session.update(title="Run")
+    return client.create_session(group=group, timeout=30.0, **options)
+
+
+def answer(session: Session) -> str | None:
+    rows = session.turns(status="queued")
+    assert_type(rows, list[dict[str, JSONValue]])
+    session.send("Hello", provider="p", model="m", attachments=["upload-1"])
+    return final_answer(rows[0])
+
+
+WRONG = final_answer("text")
+"""
+
 
 # These evals modules import the optional `harbor` extra.
 _HARBOR_MODULES = ("agent.py", "check.py", "environment.py", "judge.py")
 
 
-def _pyright(tmp_path, *targets, ignore=()):
+def _pyright(tmp_path, *targets, ignore=(), mode="standard"):
     config = tmp_path / "pyrightconfig.json"
-    settings = {"typeCheckingMode": "standard", "pythonVersion": "3.12"}
+    settings = {"typeCheckingMode": mode, "pythonVersion": "3.12"}
     if ignore:
         settings["ignore"] = [str(path) for path in ignore]
     config.write_text(json.dumps(settings))
@@ -115,3 +138,19 @@ def test_setting_value_has_the_type_of_its_default(tmp_path):
     fixture.write_text(_SETTING_FIXTURE)
     result = _pyright(tmp_path, fixture)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_session_calls_have_known_types_under_pyright_strict(tmp_path):
+    # `create_session(**layer.session_options(project))` is the documented call.
+    # It and the turn calls of a session must have no unknown type for a strict
+    # caller. Only the wrong argument of the last line is a finding.
+    fixture = tmp_path / "session_calls.py"
+    fixture.write_text(_SESSION_FIXTURE)
+    result = _pyright(tmp_path, fixture, mode="strict")
+    report = json.loads(result.stdout)
+    found = [
+        (item["range"]["start"]["line"], item["rule"])
+        for item in report["generalDiagnostics"]
+    ]
+    wrong = _SESSION_FIXTURE.splitlines().index('WRONG = final_answer("text")')
+    assert found == [(wrong, "reportArgumentType")], result.stdout

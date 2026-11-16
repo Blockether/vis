@@ -14,8 +14,8 @@ from pathlib import PurePosixPath
 
 from ._client import (
     ExecutionLayer,
-    JSONValue,
     ProtocolError,
+    SessionOptions,
     TransportError,
 )
 from ._local import _envelope, _LocalJobEvents, _LocalSession, _reply, _request_frame
@@ -45,7 +45,7 @@ class HostLayer(ExecutionLayer):
         self._closed = True
         self._clear_client_extensions()
 
-    def session_options(self, project=".") -> dict[str, JSONValue]:
+    def session_options(self, project=".") -> SessionOptions:
         """Prepare an app-channel session for an absolute path on the host machine."""
         path = PurePosixPath(project)
         if not path.is_absolute():

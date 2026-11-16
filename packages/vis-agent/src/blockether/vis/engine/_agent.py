@@ -4,7 +4,7 @@ import json
 import math
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from itertools import islice
 from typing import Any, TypeVar, overload
@@ -239,7 +239,7 @@ def _syntax_message(answer: str, error: json.JSONDecodeError) -> str:
     return f"not valid JSON: {error.msg} at {where}"
 
 
-def final_answer(turn: dict) -> str | None:
+def final_answer(turn: Mapping[str, object]) -> str | None:
     """Return the final answer text of the turn record `turn`, or None.
 
     A turn record has no `answer` field. The answer is the Markdown of the last
@@ -487,7 +487,9 @@ class Agent:
         self.execution_layer = (
             LocalEngine(root=project) if execution_layer is None else execution_layer
         )
-        self._session_options = self.execution_layer.session_options(project)
+        self._session_options: dict[str, Any] = dict(
+            self.execution_layer.session_options(project)
+        )
         if tools is not None:
             self._session_options["tools"] = tools
         self.project = self._session_options["root"]
