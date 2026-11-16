@@ -427,6 +427,7 @@
     (optional-field? x :ext.symbol/raw? boolean?)
     (optional-field? x :ext.symbol/hidden? boolean?)
     (optional-field? x :ext.symbol/binding symbol?)
+    (optional-field? x :ext.symbol/handles fn?)
     (optional-field? x :ext.symbol/tag op-tags)
     (optional-field? x :ext.symbol/presenter keyword?)
     (optional-field? x
@@ -661,7 +662,12 @@
   "The name that `python_execution` binds `sym` of `ext` under: the
    `:ext.symbol/binding` of the symbol when it declares one, else its
    [[symbol-binding]]. A symbol declares a name for a door that only its sandbox
-   shim calls. Tool lists and operations keep the `symbol-binding`."
+   shim calls. Tool lists and operations keep the `symbol-binding`.
+
+   The shim binds handles that call the door, and the engine does not know their
+   names. So the symbol gives `:ext.symbol/handles`, `(fn [name])`: for the name of
+   a handle, the `(fn [args kwargs])` that gives the arguments of the door, else
+   nil. `vis.tools` runs a handle through it."
   [ext sym]
   (or (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/binding %)) (ext-symbols ext))
       (symbol-binding ext sym)))
@@ -819,6 +825,9 @@
 
           (:binding opts)
           (assoc :ext.symbol/binding (:binding opts))
+
+          (:handles opts)
+          (assoc :ext.symbol/handles (:handles opts))
 
           (:contract opts)
           (assoc :ext.symbol/contract (:contract opts))

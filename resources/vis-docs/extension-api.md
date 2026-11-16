@@ -1636,7 +1636,11 @@ import blockether.vis.extension as vis
 runs = vis.tools.gh_runs(limit=5)                   # the model calls gh_runs(limit=5)
 reservation = vis.tools.spel.reserve("x-login")     # an object method, spel.reserve(...)
 reservation = vis.tools["spel.reserve"]("x-login")  # the same call, named by a string
+issue = vis.tools.linear.get_issue(id="ENG-1")      # a tool of the MCP server linear
 ```
+
+An MCP server has the name that `python_execution` gives it: the `python_name` of its row in
+`session["env"]["mcp"]["servers"]`.
 
 The call runs in the session that called your extension, the same way the
 model's call would. It uses only tools that are active in that session and

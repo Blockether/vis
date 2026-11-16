@@ -2001,6 +2001,52 @@
                                      (catch Throwable failure
                                        {"error" (or (ex-message failure) (str failure))}))))})
 
+(defn- handle-arguments
+  "The one dict of arguments of a call of the handle `target`: one dict, keyword
+   arguments, or both. The sandbox shim has the same rule."
+  [target args kwargs]
+  (when (or (next args) (and (seq args) (not (map? (first args)))))
+    (throw (ex-info (str target " takes keyword arguments, or one dict of arguments.")
+                    {:type :mcp/arguments})))
+  (into {} (concat (first args) kwargs)))
+
+(defn- handle-call
+  "`:ext.symbol/handles` of the verb. `target` is the name of a handle as a block
+   types it: `linear`, `linear.get_issue`, `linear.prompts` or
+   `linear.prompts.greet`. Gives the `(fn [args kwargs])` that makes the arguments
+   of the verb, as the handle of the sandbox shim does. Nil when no visible server
+   has that name."
+  [target]
+  (let [[typed rest bare?]
+        (handle-parts target)
+
+        visible
+        (when bare? (visible-servers (:session-id extension/*current-environment*)))
+
+        taken
+        (when (seq visible) (sandbox-names))
+
+        server
+        (some #(when (= typed (python-name % taken)) %) (keys visible))
+
+        prompt
+        (some->> rest
+                 (re-matches #"prompts\.(.+)")
+                 second)]
+
+    (when server
+      (fn [args kwargs]
+        (let [arguments (handle-arguments target args kwargs)]
+          (cond prompt [server "prompts/get"
+                        (cond-> {"name" prompt}
+                          (seq arguments)
+                          (assoc "arguments" arguments))]
+                (and rest (not= "prompts" rest)) [server rest arguments]
+                (seq arguments) (throw (ex-info (str target " takes no arguments.")
+                                                {:type :mcp/arguments}))
+                rest [server "prompts/list"]
+                :else [server]))))))
+
 (def ^:private resource-source
   "The `:source` of the attachment descriptor of an MCP resource."
   "mcp")
@@ -2130,6 +2176,7 @@
       :symbol 'call
       ;; A block calls a server by its name. The handles of the shim call this.
       :binding '__vis_mcp_call__
+      :handles handle-call
       :hidden? true
       :name "mcp__call"
       :result

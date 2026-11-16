@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.python.extensions :as py-extensions]
             [com.blockether.vis.test-python-context :as tpc]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]
@@ -1191,6 +1192,40 @@
   (loop-env/sync-active-extension-symbols!
     {:python-context ctx :extensions (atom [mcp/vis-extension]) :active-extensions (atom [])}
     [mcp/vis-extension]))
+
+(defn- extension-call!
+  "Call `tool` through `vis.tools`, as an extension of a session with the MCP
+   extension does."
+  [tool args kwargs]
+  (binding [extension/*current-environment* {:extensions (atom [mcp/vis-extension])
+                                             :active-extensions (atom [mcp/vis-extension])}]
+    (#'py-extensions/call-tool! ::caller tool args kwargs)))
+
+(defdescribe
+  mcp-extension-tool-test
+  (it "runs a tool and a prompt of a server for an extension, by the name that a block types"
+      (let [sent (atom [])]
+        (with-catalog
+          sent
+          (fn [_call!]
+            (expect (= "resolve-library-id"
+                       (get (extension-call! "alpha.resolve_library_id" [] {"query" "x"}) "tool")))
+            (extension-call! "alpha.resolve-library-id" [{"query" "y"}] {})
+            (extension-call! "alpha.prompts.greet" [] {"who" "Ann"})
+            (expect (= [["tools/call" {"name" "resolve-library-id" "arguments" {"query" "x"}}]
+                        ["tools/call" {"name" "resolve-library-id" "arguments" {"query" "y"}}]
+                        ["prompts/get" {"name" "greet" "arguments" {"who" "Ann"}}]]
+                       (filterv #(#{"tools/call" "prompts/get"} (first %)) @sent)))
+            (expect (= ["resolve-library-id"]
+                       (mapv #(get % "name") (get (extension-call! "alpha" [] {}) "tools"))))))))
+  (it "has no tool for the host verb or for a server that the session does not see"
+      (with-catalog (atom [])
+                    (fn [_call!]
+                      (doseq [tool ["mcp_call" "beta.read"]]
+                        (expect (= :unknown-tool
+                                   (try (extension-call! tool ["alpha"] {})
+                                        (catch clojure.lang.ExceptionInfo e
+                                          (:error (ex-data e)))))))))))
 
 (defdescribe
   mcp-doc-handle-test

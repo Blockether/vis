@@ -823,7 +823,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
              {:error :unknown-tool :tool tool})))
 
 (defn- call-tool!
-  "Run the tool `python_execution` binds as `tool` for a calling extension.
+  "Run the tool `python_execution` binds as `tool` for a calling extension: a
+   symbol by its name, or a handle of a sandbox shim through the
+   `:ext.symbol/handles` of its door.
 
    The call runs in the bound session as the model's call would, with its own
    Activity, and answers deep-stringified data. `sess`, the calling context, is
@@ -836,12 +838,23 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (let [usable (filter (fn [[_ _ entry]]
                            (extension/symbol-active? entry session-env))
                          (tool-candidates session-env))
-          [_ ext entry] (or (some #(when (= tool (first %)) %) usable)
-                            (throw (unknown-tool tool (map first usable))))
+          ;; A door of a sandbox shim has no name of its own: a block types its handles.
+          named (remove (fn [[_ _ entry]]
+                          (:ext.symbol/binding entry))
+                        usable)
+          [ext entry arguments] (or (some (fn [[nm ext entry]]
+                                            (when (= tool nm) [ext entry python-host/call-args]))
+                                          named)
+                                    (some (fn [[_ ext entry]]
+                                            (when-let [handles (:ext.symbol/handles entry)]
+                                              (when-let [arguments (handles tool)]
+                                                [ext entry arguments])))
+                                          usable)
+                                    (throw (unknown-tool tool (map first named))))
           f (get (extension/wrap-extension ext session-env) (:ext.symbol/symbol entry))]
 
       (binding [*suspended-contexts* (conj *suspended-contexts* sess)]
-        (stringify-deep (apply f (python-host/call-args (plainify args) (plainify kwargs))))))))
+        (stringify-deep (apply f (arguments (plainify args) (plainify kwargs))))))))
 
 (defn- put!
   "Record host callable `f` under the guest name `n`.
