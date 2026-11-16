@@ -757,10 +757,17 @@
   ^long [n size offset]
   (max 0 (min (long (or offset 0)) (- (long n) (long size)))))
 
+(defn- leader-lines
+  "The lines of leader row `row` in a table: the rule of the head, the row, and a rule that
+   divides the leader from its agents. `:leader` tells a rule on which side the leader row is."
+  [row]
+  [{:kind :mid :leader :below} {:kind :row :row row} {:kind :mid :leader :above}])
+
 (defn table-lines
   "The lines of the agent table for `rows`, from the top border to the bottom border:
-   `{:kind}` maps. With `max-rows`, a longer team shows `max-rows - 1` rows from `offset` and
-   a last row that counts the rows above (`:above`) and below (`:n`) them."
+   `{:kind}` maps. A first leader row has a rule under it (see `leader-lines`). With `max-rows`,
+   a longer team shows `max-rows - 1` rows from `offset` and a last row that counts the rows
+   above (`:above`) and below (`:n`) them."
   ([rows] (table-lines rows nil 0))
   ([rows max-rows] (table-lines rows max-rows 0))
   ([rows max-rows offset]
@@ -780,12 +787,18 @@
          (window-start n size offset)
 
          shown
-         (subvec rows start (+ start (long size)))]
+         (subvec rows start (+ start (long size)))
 
-     (-> [{:kind :top} {:kind :head} {:kind :mid}]
+         leader
+         (when (leader? (first shown)) (first shown))]
+
+     (-> [{:kind :top} {:kind :head}]
+         (into (if leader (leader-lines leader) [{:kind :mid}]))
          (into (map (fn [row]
                       {:kind :row :row row}))
-               shown)
+               (cond->> shown
+                 leader
+                 rest))
          (cond->
            overflow?
            (conj {:kind :more :above start :n (- n start (long size))}))
@@ -832,6 +845,25 @@
           :else
           (assoc-in columns [i :key] :now))))
 
+(defn- rule-text
+  "The rule between two table rows across `columns`. `leader` is `:below` or `:above` when the
+   row on that side is a leader row. That row has no rail between the title and the detail (see
+   `line-columns`), so the junction there has no arm to that side."
+  [columns leader]
+  (let [columns
+        (vec columns)
+
+        text
+        (p/boxed-horiz-line (map #(+ 2 (long (:w %))) columns) \├ \┼ \┤)
+
+        i
+        (first (keep-indexed #(when (= :label (:key %2)) %1) columns))]
+
+    (if (and leader i (= :now (:key (get columns (inc (long i))))))
+      (let [rail (dec (table-width (subvec columns 0 (inc (long i)))))]
+        (str (subs text 0 rail) (if (= :below leader) \┴ \┬) (subs text (inc rail))))
+      text)))
+
 (defn table-segments
   "The painted parts of one table line: `[col text part]` vectors. `part` is `:chrome` for
    the grid, `:head` for a title, `:more` for the hidden count, else the column key."
@@ -843,7 +875,7 @@
       [[0 (p/boxed-horiz-line widths \┌ \┬ \┐) :chrome]]
 
       :mid
-      [[0 (p/boxed-horiz-line widths \├ \┼ \┤) :chrome]]
+      [[0 (rule-text columns (:leader line)) :chrome]]
 
       :bottom
       [[0 (p/boxed-horiz-line widths \└ \┴ \┘) :chrome]]
@@ -1181,11 +1213,12 @@
         (not= old new)))))
 
 (defn- with-leader-line
-  "Table `lines` with the row of `leader` right after the head: top border, titles and rule."
+  "Table `lines` with the row of `leader` right after the titles, between the rule of the head
+   and a rule that divides it from its agents (see `leader-lines`)."
   [lines leader]
   (let [lines (vec lines)]
-    (-> (subvec lines 0 3)
-        (conj {:kind :row :row leader})
+    (-> (subvec lines 0 2)
+        (into (leader-lines leader))
         (into (subvec lines 3)))))
 
 (defn dock-lines

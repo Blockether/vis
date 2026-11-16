@@ -739,7 +739,15 @@
           (expect (re-find #"DONE +│ +3m 20s \(waited 1m 00s\)" leader))
           (expect (< (.indexOf ^java.util.List text leader)
                      (.indexOf ^java.util.List text
-                               (first (filter #(str/includes? % "Read docs") text)))))))))
+                               (first (filter #(str/includes? % "Read docs") text)))))
+          ;; User request 2026-11-16: a rule divides the leader from its agents. The leader has no
+          ;; rail between the title and the detail, so the rules close that rail on its side.
+          (let [at (.indexOf ^java.util.List text leader)
+                rail (str/index-of (nth text 1) "│ Detail")]
+
+            (expect (= [\┴ \┬ \│] (mapv #(nth (nth text (+ at (long %))) rail) [-1 1 2])))
+            (expect (not= \│ (nth leader rail)) "The leader line crosses the place of the rail")
+            (expect (re-find #"^├[─┼┬]+┤$" (nth text (inc at)))))))))
   (it "puts the running leader first in the dock and counts only agents"
       (with-redefs [team/summary (constantly {:agents every-state})]
         (team/toggle-dock! "leader")
@@ -755,11 +763,13 @@
                (expect (re-find #"LEADER +│ Waiting for the parser fix" row)
                        "The live leader line takes the title cell too")
                (expect (re-find #"RUNNING +│ +1m 30s \(waited 30s\)" row))
-               (expect (str/includes? (nth text 5) "Map the gateway routes"))
+               (expect (str/starts-with? (nth text 5) "├") "A rule stands under the leader row")
+               (expect (str/includes? (nth text 6) "Map the gateway routes"))
                (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1))
                        "Digit 1 still opens agent 1")
-               (expect (= (inc (team/dock-height "leader" "turn-1" 120))
-                          (team/dock-height "leader" "turn-1" 120 leader))))
+               (expect (= (+ 2 (team/dock-height "leader" "turn-1" 120))
+                          (team/dock-height "leader" "turn-1" 120 leader))
+                       "The leader adds its row and its rule"))
              (finally (team/toggle-dock! "leader"))))))
 
 (defdescribe
