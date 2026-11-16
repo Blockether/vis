@@ -698,7 +698,7 @@
 
 (defn- extension-prompt-id
   [ext]
-  (str (or (extension/ext-alias-symbol ext) (:ext/name ext) "unknown")))
+  (str (or (extension/advertised-alias ext) (:ext/name ext) "unknown")))
 
 (defn- extension-prompt-fragment
   [ext body]

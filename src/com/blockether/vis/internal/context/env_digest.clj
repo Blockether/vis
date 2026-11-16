@@ -182,15 +182,16 @@
        (catch Throwable _ nil)))
 
 (defn- extensions-digest
-  "Count and aliases of `active`, the active extensions."
+  "Count of `active`, the active extensions, and each alias that a block types
+   a name under."
   [active]
   (try (let [active
              (or active [])
 
-             ;; ext-alias-symbol yields a Clojure SYMBOL — forbidden as a boundary
-             ;; value; stringify each alias so the set carries plain strings.
+             ;; An alias is a Clojure SYMBOL — forbidden as a boundary value;
+             ;; stringify each alias so the set carries plain strings.
              aliases
-             (into (sorted-set) (comp (keep extension/ext-alias-symbol) (map str)) active)]
+             (into (sorted-set) (comp (keep extension/advertised-alias) (map str)) active)]
 
          {"active_count" (count active) "aliases" aliases})
        (catch Throwable _ nil)))

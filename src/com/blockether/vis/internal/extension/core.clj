@@ -666,6 +666,14 @@
   (or (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/binding %)) (ext-symbols ext))
       (symbol-binding ext sym)))
 
+(defn advertised-alias
+  "The alias of `ext` that the model reads as a name: nil when each symbol of
+   `ext` is hidden, because a block types no name under that alias then. An
+   extension without symbols keeps its alias: a shim of it can bind the names."
+  [ext]
+  (let [symbols (ext-symbols ext)]
+    (when (or (empty? symbols) (not-every? :ext.symbol/hidden? symbols)) (ext-alias-symbol ext))))
+
 (defn ext-builtin? [ext] (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
 
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))

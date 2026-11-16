@@ -25,29 +25,35 @@
 
 (defdescribe
   base-digest-test
-  (it "produces host + project + extensions when an environment is supplied"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+  (it
+    "produces host + project + extensions when an environment is supplied"
+    (with-redefs [agents/instructions
+                  (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [{:ext/name "foundation-core" :ext/engine {:ext.engine/alias 'v}}
-                                 {:ext/name "sample-tools" :ext/engine {:ext.engine/alias 'sample}}
-                                 {:ext/name "no-alias-ext"}])]
+                  prompt/active-extensions
+                  (constantly [{:ext/name "foundation-core" :ext/engine {:ext.engine/alias 'v}}
+                               {:ext/name "sample-tools" :ext/engine {:ext.engine/alias 'sample}}
+                               {:ext/name "no-alias-ext"}
+                               ;; Each symbol is hidden, so a block types no name under `door`.
+                               {:ext/name "door-only"
+                                :ext/engine {:ext.engine/alias 'door
+                                             :ext.engine/symbols [{:ext.symbol/symbol 'call
+                                                                   :ext.symbol/hidden? true}]}}])]
 
-        (with-tmp-root* (fn [^java.io.File root]
-                          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
-                            (let [d (env-digest/base-digest {:fake true})]
-                              (expect (contains? d "host"))
-                              ;; "cwd" removed — it duplicated session["workspace"]["root"].
-                              (expect (not (contains? (get d "host") "cwd")))
-                              (expect (string? (get-in d ["host" "os"])))
-                              (expect (contains? d "project"))
-                              ;; AGENTS.md content now rides in PROJECT-INSTRUCTIONS
-                              ;; system block; the digest no longer carries the flag.
-                              (expect (not (contains? (get d "project") "agents_md")))
-                              (expect (= "single" (get-in d ["project" "kind"])))
-                              (expect (= 3 (get-in d ["extensions" "active_count"])))
-                              (expect (= #{"v" "sample"} (get-in d ["extensions" "aliases"])))))))))
+      (with-tmp-root* (fn [^java.io.File root]
+                        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+                          (let [d (env-digest/base-digest {:fake true})]
+                            (expect (contains? d "host"))
+                            ;; "cwd" removed — it duplicated session["workspace"]["root"].
+                            (expect (not (contains? (get d "host") "cwd")))
+                            (expect (string? (get-in d ["host" "os"])))
+                            (expect (contains? d "project"))
+                            ;; AGENTS.md content now rides in PROJECT-INSTRUCTIONS
+                            ;; system block; the digest no longer carries the flag.
+                            (expect (not (contains? (get d "project") "agents_md")))
+                            (expect (= "single" (get-in d ["project" "kind"])))
+                            (expect (= 4 (get-in d ["extensions" "active_count"])))
+                            (expect (= #{"v" "sample"} (get-in d ["extensions" "aliases"])))))))))
   (it "detects polylith when bases/ + components/ are both present"
       (with-redefs [agents/instructions
                     (constantly {:found? false})
