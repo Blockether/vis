@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Examples: the icons on the pages of `examples/durable-lambda/` do not flicker. Before, each click and each refresh made the page parts again, also when their data was the same. Now a part changes only when its data changes, and a duration counts in place.
 - Examples: the Workflows page of `examples/durable-lambda/` shows the text of a note of a run. Before, it showed `[object Object]`.
+- Examples: on a phone, the tabs of the Workflows page of `examples/durable-lambda/` have space above them and at the two sides. Before, they touched the line of the top bar.
 - Review: the Review app tells in its notice which files are too large to show and how many findings have no thread. Before, this text was the label of the diff, thus the Companion showed a long line of file names as a heading above the toolbar.
 - Companion: when the program of an app connects again, the app header does not show **Disconnected** from the old refusal. Before, the word stayed until the next action.
 - Companion: a long review opens without a stop of the page. A diff mounts the lines of a file only when the file comes near the visible area, and it removes them when the file goes far away. Before, a review of 19,000 lines in 165 files mounted all lines at the same time, and the page did not respond for more than a second. Find in diff and the file tree show a file that is not mounted yet.

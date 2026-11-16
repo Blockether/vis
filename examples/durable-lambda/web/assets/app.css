@@ -214,7 +214,7 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
   .act-body { margin-left: 0; }
   .act .sum { display: none; }
   .studio { display: block; height: calc(100dvh - var(--bar) - 40px); overflow: hidden; }
-  #phone-tabs { height: 40px; background: var(--cream-soft); } #phone-tabs button { flex: 1; }
+  #phone-tabs { height: 40px; padding: 0 12px; align-items: center; background: var(--cream-soft); } #phone-tabs button { flex: 1; }
   .studio > section { display: none; height: 100%; }
   .studio[data-pane="list"] > .side, .studio[data-pane="editor"] > .work, .studio[data-pane="runs"] > .runs { display: flex; position: static; width: auto; }
   .studio .runs { border-left: 0; }
