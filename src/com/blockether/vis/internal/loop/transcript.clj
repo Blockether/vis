@@ -1068,10 +1068,12 @@
                   unfinished?
                   (terminal-incomplete-turn-status? status)
 
-                  ;; A fork notice ends the copy of a turn that still ran in the source.
-                  ;; It is not prose the model said, so it never counts as an answer.
+                  ;; A fork notice ends the copy of a turn that still ran in the source,
+                  ;; and a leader notice ends a turn that the leader stopped. Neither is
+                  ;; prose the model said, so it never counts as an answer.
                   {notices true blocks false}
-                  (group-by content/fork-notice? (:content turn))
+                  (group-by #(or (content/fork-notice? %) (content/leader-cancel-notice? %))
+                            (:content turn))
 
                   answer
                   (answer-markdown (vec blocks))
@@ -1109,7 +1111,8 @@
                                              (not-any? #(= "error" (get % "type")) (:content turn)))
                                     answer)
                   :interrupted? (interrupted-turn-status? status)
-                  :forked? (boolean (seq notices))
+                  :forked? (boolean (some content/fork-notice? notices))
+                  :leader-cancelled? (boolean (some content/leader-cancel-notice? notices))
                   :cancelled? (= :cancelled status)})])))
         turns))))
 

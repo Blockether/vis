@@ -3997,10 +3997,13 @@
          ;; client's throttled body deltas (notably in browsers), so speech alone
          ;; would settle the bubble with a footer but no visible answer until transcript
          ;; persistence catches up. Code/tool payloads remain transcript-only.
+         ;; A leader stop ships its notice: without it a client says a user cancelled.
          content
          (not-empty (if (= "failed" status)
                       (vec (:content turn))
-                      (filterv #(contains? #{"prose" "speech"} (get % "type")) (:content turn))))
+                      (filterv #(or (contains? #{"prose" "speech"} (get % "type"))
+                                    (content/leader-cancel-notice? %))
+                        (:content turn))))
 
          error
          (when (= "failed" status)
@@ -5392,6 +5395,12 @@
                   needs-input? "suspended"
                   :else "completed")
 
+            ;; A leader stop names itself: no person cancelled this subagent turn.
+            content-blocks
+            (cond-> content-blocks
+              (= "cancelled" status)
+              (content/with-cancel-notice tid (cancellation/cancel-reason cancel-token)))
+
             ;; A "failed" turn must NEVER ship empty. Channels reconcile the
             ;; terminal event independently of the blocking worker; with no content
             ;; and no :error all they can paint is a fabricated bare "Turn failed."
@@ -5535,7 +5544,8 @@
                               (if (str/blank? message) class message)))
 
                 content
-                (cond user-cancel? []
+                (cond user-cancel?
+                      (content/with-cancel-notice [] tid (cancellation/cancel-reason cancel-token))
                       ;; A provider failure that unwound the worker (rate limit, auth
                       ;; rejection, dead connection) is the SAME failure the in-loop path
                       ;; renders as a styled card. Emitting the bare `ex-message` here is
@@ -5570,7 +5580,7 @@
                 sid
                 tid
                 (if user-cancel?
-                  {:status :interrupted :content [] :prior-outcome :cancelled}
+                  {:status :interrupted :content content :prior-outcome :cancelled}
                   (cond-> {:status :error :content content :prior-outcome :error}
                     (seq content)
                     (assoc :error (first content)))))
@@ -5630,15 +5640,22 @@
                            "turn never started running: force-cancelled with no worker activity"
                            "provider stream stalled: force-cancelled with no output"))
     (when (claim-turn-terminal! sid tid cancel-token)
-      (persist-forced-terminal! sid
-                                tid
-                                {:status :interrupted :content [] :prior-outcome :cancelled})
-      (finish-turn! sid
-                    tid
-                    {:status "cancelled" :role "assistant" :content [] :completed_at (util/now-ms)})
-      (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled" {:content []}))
-      (emit-context-updated! sid)
-      (after-turn-terminal! sid tid {:failed? false :cancel-token cancel-token :stalled? false}))))
+      ;; A leader stop names itself: no person cancelled this subagent turn.
+      (let [blocks (content/with-cancel-notice [] tid (cancellation/cancel-reason cancel-token))]
+        (persist-forced-terminal! sid
+                                  tid
+                                  {:status :interrupted :content blocks :prior-outcome :cancelled})
+        (finish-turn!
+          sid
+          tid
+          {:status "cancelled" :role "assistant" :content blocks :completed_at (util/now-ms)})
+        (append-event! sid
+                       "turn.cancelled"
+                       (turn-terminal-payload sid tid "cancelled" {:content blocks}))
+        (emit-context-updated! sid)
+        (after-turn-terminal! sid
+                              tid
+                              {:failed? false :cancel-token cancel-token :stalled? false})))))
 
 (defn- launch-turn-worker!
   [sid tid request

@@ -214,6 +214,11 @@ export function isForkNotice(block: ContentBlock): boolean {
   return block.type === 'notice' && block.code === 'turn_forked';
 }
 
+/** The notice of a subagent turn that its leader stopped. */
+export function isLeaderCancelNotice(block: ContentBlock): boolean {
+  return block.type === 'notice' && block.code === 'turn_cancelled_by_leader';
+}
+
 /**
  * The outline row of one turn. A transcript row gives its content, and a gateway fork
  * point gives the start of its answer. A turn that a fork settled has a cancelled status,

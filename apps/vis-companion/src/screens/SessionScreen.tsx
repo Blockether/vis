@@ -177,7 +177,7 @@ import {
   readerRetreatedFrom,
   shouldOfferLatest,
 } from '../lib/reading-position';
-import { JUMP_MARGIN, outlineEntry } from '../lib/transcript-outline';
+import { JUMP_MARGIN, isLeaderCancelNotice, outlineEntry } from '../lib/transcript-outline';
 import type {
   ContentBlock,
   GatewayCapabilities,
@@ -2935,7 +2935,13 @@ export function SessionScreen({
           // Completion can overtake the 150 ms body-delta queue in a browser.
           // The terminal frame therefore carries canonical prose plus speech;
           // paint it immediately instead of settling to a bare meta/footer row.
-          content: terminalBlocks?.length ? terminalBlocks : turn.content,
+          // A leader stop with no answer ships only its notice: add it to the streamed
+          // blocks, because it does not replace them.
+          content: !terminalBlocks?.length
+            ? turn.content
+            : terminalBlocks.every(isLeaderCancelNotice)
+              ? [...(turn.content ?? []), ...terminalBlocks]
+              : terminalBlocks,
         };
         runningTurnRef.current = next;
         return next;

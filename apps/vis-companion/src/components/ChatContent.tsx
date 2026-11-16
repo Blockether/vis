@@ -48,7 +48,7 @@ import {
   type ActivityProjection,
 } from '../lib/activity';
 import { usePythonCodeShown, useStepsSummarized, useZenMode } from '../lib/transcript-display';
-import { isForkNotice } from '../lib/transcript-outline';
+import { isForkNotice, isLeaderCancelNotice } from '../lib/transcript-outline';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import {
   advanceSplit,
@@ -4695,10 +4695,14 @@ export const AssistantMessage = memo(function AssistantMessage({
   // the row carries no content blocks (issue #145).
   const answered = useMemo(() => answeredProse(turn.content, fallback), [turn.content, fallback]);
   const cancelled = turn.status === 'cancelled' || turn.prior_outcome === 'cancelled';
-  // A fork settles the copy of a turn that still ran in the source with this notice
-  // (`content/fork-notice` in the engine). The phase line says it; nobody cancelled the turn.
-  const forkNotice = cancelled ? blocks.find(isForkNotice) : undefined;
-  const shownBlocks = forkNotice ? blocks.filter((block) => block !== forkNotice) : blocks;
+  // A fork settles the copy of a turn that still ran in the source with a notice, and a
+  // leader stop settles a subagent turn with one (`content/fork-notice` and
+  // `content/leader-cancel-notice` in the engine). The phase line says it; no person
+  // cancelled the turn.
+  const settleNotice = cancelled
+    ? blocks.find((block) => isForkNotice(block) || isLeaderCancelNotice(block))
+    : undefined;
+  const shownBlocks = settleNotice ? blocks.filter((block) => block !== settleNotice) : blocks;
   const emptyStatus =
     !streaming &&
     !blocks.length &&
@@ -4795,7 +4799,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             busy={pythonBusy}
           />
         ) : cancelled ? (
-          <TurnPhaseLine phase={forkNotice?.message ?? 'Cancelled by user.'} terminal />
+          <TurnPhaseLine phase={settleNotice?.message ?? 'Cancelled by user.'} terminal />
         ) : pending ? (
           <TurnPhaseLine phase={pending} />
         ) : turn.status === 'running' ? (

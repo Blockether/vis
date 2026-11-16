@@ -74,7 +74,7 @@
    the turn's answer as an assistant message. An unfinished turn closes with
    what the model had said by then plus an explicit fork, cancellation or
    interruption notice. A finished turn without an answer closes with nothing."
-  [{:keys [turn request answer partial-answer interrupted? cancelled? forked?]}]
+  [{:keys [turn request answer partial-answer interrupted? cancelled? forked? leader-cancelled?]}]
   (let
     [trimmed
      (fn [s]
@@ -103,6 +103,10 @@
                    "session. Completed tool calls and their persisted results remain valid; do not "
                    "repeat settled work. The unfinished edge did not run here. Follow the latest "
                    "user request.</turn_forked>")
+         leader-cancelled?
+         (str "<turn_cancelled>The leader cancelled this turn. Completed tool calls and their "
+              "persisted results remain valid; do not repeat settled work. The unfinished edge "
+              "was aborted. Follow the latest request.</turn_cancelled>")
          cancelled?
          (str "<turn_cancelled>The user cancelled this turn. Completed tool calls and their "
               "persisted results remain valid; do not repeat settled work. The unfinished edge "

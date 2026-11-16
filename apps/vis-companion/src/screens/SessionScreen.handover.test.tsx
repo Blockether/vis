@@ -121,6 +121,55 @@ describe('a finished turn handed to its persisted row', () => {
     expect(screen.queryByText('THE FINAL ANSWER')).toBeInTheDocument();
   });
 });
+// Regression, user report: a subagent turn that its leader stopped said "Cancelled by
+// user.", although no person stopped that session. The gateway settles it with a notice.
+describe('a subagent turn that its leader stopped', () => {
+  it('shows the leader notice as its status and keeps the streamed work', async () => {
+    const events = subscriptionHub();
+    const persisted = deferred<never[]>();
+    const bubble = {
+      id: 'gw-leader-stop',
+      request: 'check the parser',
+      answer: '',
+      content: [{ id: 'p1', type: 'prose' as const, markdown: 'STREAMED WORK' }],
+      iterations: [],
+      startedAt: Date.now(),
+      status: 'running' as const,
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedTranscript: () => [],
+        transcript: () => persisted.promise,
+      },
+      subscriptions: { subscribeSession: events.subscribeSession },
+    });
+
+    expect(await screen.findByText('STREAMED WORK')).toBeInTheDocument();
+    events.emit({
+      type: 'turn.cancelled',
+      turn_id: 'gw-leader-stop',
+      seq: 6,
+      status: 'cancelled',
+      content: [
+        {
+          id: 'gw-leader-stop:cancelled',
+          type: 'notice',
+          code: 'turn_cancelled_by_leader',
+          message: 'Cancelled by the leader.',
+        },
+      ],
+    } as unknown as SseEvent);
+
+    expect((await screen.findAllByText('Cancelled by the leader.')).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('Cancelled by user.')).toHaveLength(0);
+    expect(screen.getByText('STREAMED WORK')).toBeInTheDocument();
+    // The notice is the status line, not a second answer block.
+    const row = document.querySelector('[data-live="true"]') as HTMLElement;
+    expect(row.querySelectorAll('.bg-answer')).toHaveLength(1);
+  });
+});
 // Regression, Vis session 976f705e-fd80-4787-adc6-1ae8388fdaa2: cancelling
 // mounted a second loading status beneath the cancellation, so the live row grew
 // for the handover and shrank again when its persisted row arrived.

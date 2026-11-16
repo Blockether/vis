@@ -102,6 +102,39 @@
   [block]
   (and (= "notice" (get block "type")) (= fork-notice-code (get block "code"))))
 
+(def ^:const leader-cancel-notice-code
+  "Notice code of a subagent turn that its leader stopped."
+  "turn_cancelled_by_leader")
+
+(defn leader-cancel-notice
+  "The notice that settles a subagent turn that its leader stopped, or nil when the cancel
+   `source` is not the leader. Clients show it instead of a user cancel notice: no person
+   stopped that session. `:agent-cancel` is a `council.cancel` and `:parent-cancel` is the
+   stop of the leader turn."
+  [id source]
+  (case source
+    :agent-cancel
+    (notice id leader-cancel-notice-code "Cancelled by the leader.")
+
+    :parent-cancel
+    (notice id leader-cancel-notice-code "Cancelled when the leader turn stopped.")
+
+    nil))
+
+(defn leader-cancel-notice?
+  "True when `block` is the notice of a turn that the leader stopped."
+  [block]
+  (and (= "notice" (get block "type")) (= leader-cancel-notice-code (get block "code"))))
+
+(defn with-cancel-notice
+  "The `blocks` of the cancelled turn `turn-id`, with the notice of a leader stop when the
+   cancel `source` is the leader. The notice id is fixed, so each terminal path writes the
+   same block."
+  [blocks turn-id source]
+  (if-let [block (leader-cancel-notice (str turn-id ":cancelled") source)]
+    (conj (vec blocks) block)
+    (vec blocks)))
+
 (defn message
   [{:keys [id role status content created-at completed-at model provider author]
     :or {status "streaming" content [] created-at (util/now-ms)}}]

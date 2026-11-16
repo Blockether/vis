@@ -7304,6 +7304,96 @@
                   (expect (= (:content written) (:content payload))))))
           (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid)))))))
 
+;; Regression, user report: a subagent turn that its leader stopped said "Cancelled by
+;; user." in the TUI and the Companion, although no person stopped that session.
+(defdescribe
+  leader-cancel-notice-test
+  (doseq [[source leader?]
+          [[:agent-cancel true] [:parent-cancel true] [:client-cancel-turn false]]
+
+          path
+          [:engine :worker-throw :backstop]]
+
+    (it
+      (str "names the leader only for a leader stop; source=" (name source) " path=" (name path))
+      (let [sid
+            (str "leader-cancel-" (java.util.UUID/randomUUID))
+
+            tid
+            "turn-1"
+
+            token
+            (cancellation/cancellation-token)
+
+            registry
+            @#'state/registry
+
+            writes
+            (atom [])
+
+            events
+            (atom [])
+
+            environment
+            {:db-info ::db
+             :session-id sid
+             :router {:providers [{:id :openai-codex :models [{:name "fixture-model"}]}]}}]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :current-turn tid
+                :turn-order [tid]
+                :turns {tid {:turn_id tid
+                             :status "running"
+                             :request "continue"
+                             :cancel-token token
+                             :cancelling_at 1}}})
+             (with-redefs-fn
+               {#'lp/db-info (constantly ::db)
+                #'persistance/db-store-session-turn! (fn [_ _]
+                                                       tid)
+                #'persistance/db-update-session-turn! (fn [_ _ opts]
+                                                        (swap! writes conj opts)
+                                                        true)
+                #'transcript/session-turn-position (fn [_ _]
+                                                     1)
+                #'iteration/iteration-loop
+                (fn [_ _ _]
+                  (cancellation/cancel! token source)
+                  (if (= :worker-throw path)
+                    (throw (InterruptedException. "sleep interrupted"))
+                    {:status :cancelled :answer nil :trace [] :iteration-count 0 :duration-ms 0}))
+                #'lp/send! (fn [_ request opts]
+                             (#'turn/run-normal-turn! environment request opts))
+                #'state/append-event! (fn [_ type payload & _]
+                                        (swap! events conj [type payload]))
+                #'state/emit-context-updated! (fn [_]
+                                                nil)
+                #'state/record-metrics! (fn [_ _]
+                                          nil)}
+               (fn []
+                 (if (= :backstop path)
+                   (do (cancellation/cancel! token source)
+                       (#'state/cancel-waiting-turn! sid tid token))
+                   (#'state/run-turn!
+                    sid
+                    tid
+                    "continue"
+                    {:cancel-token token :stall (atom {:started? true :phase :provider-call})}))))
+             (let [stored
+                   (:content (last @writes))
+
+                   shown
+                   (:content (second (first (filter #(= "turn.cancelled" (first %)) @events))))]
+
+               (expect (= 1 (count @writes)))
+               (expect (= (if leader? 1 0) (count (filter content/leader-cancel-notice? shown))))
+               ;; A reopened session shows the same blocks as the live event.
+               (expect (= (vec stored) (vec shown))))
+             (finally (swap! registry dissoc sid)
+                      (#'state/release-turn-terminal-claim! sid tid)))))))
+
 (defdescribe
   worker-failure-diagnostics-test
   ;; #252: message-less startup failures must remain diagnosable after reconnect.

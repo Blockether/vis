@@ -547,7 +547,11 @@
         ;; A failed turn's fallback may be a raw provider value instead of answer
         ;; content. Persist the diagnostic reconstructed from its trace rather than
         ;; letting answer validation hide the failure or leave history blank.
-        (transcript/failed-turn-content (:answer result) (:trace result))
+        (cond-> (transcript/failed-turn-content (:answer result) (:trace result))
+          ;; A leader stop names itself: no person cancelled this subagent turn.
+          (= :cancelled (:status result))
+          (content/with-cancel-notice session-turn-id
+                                      (cancellation/cancel-reason (:cancel-token loop-opts))))
 
         turn-error
         (or (transcript/turn-error-data (:answer result)) (transcript/turn-error-data turn-content))

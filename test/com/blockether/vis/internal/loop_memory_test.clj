@@ -520,3 +520,25 @@
           (expect (= ["user"] (mapv :role closing)))
           (expect (str/includes? (:content (first closing)) "<turn_forked>"))
           (expect (not (str/includes? (:content (first closing)) "Forked from this point.")))))))
+
+;; Regression, user report: the next turn of a subagent read a leader stop as a user cancel,
+;; and the leader notice as words that the model had said.
+(defdescribe
+  leader-cancel-boundary-test
+  (it "closes a turn that the leader stopped with a marker that names the leader"
+      (with-redefs [db/db-list-session-attachments-meta
+                    (fn [& _]
+                      [])
+
+                    db/db-read-session-turns
+                    (by-turn-id (fn [_ _ id]
+                                  {:id id
+                                   :status :cancelled
+                                   :user-request "question"
+                                   :content [(content/leader-cancel-notice "n1" :agent-cancel)]}))]
+
+        (let [closing (get-in (#'transcript/turn-boundary-messages :db "s" [["stopped" 1]])
+                              ["stopped" :closing])]
+          (expect (= ["user"] (mapv :role closing)))
+          (expect (str/includes? (:content (first closing)) "<turn_cancelled>"))
+          (expect (not (str/includes? (:content (first closing)) "user cancelled")))))))
