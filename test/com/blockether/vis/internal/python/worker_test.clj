@@ -1919,9 +1919,11 @@ print(worker_value)"))))
                                     (deliver entered true)
                                     (try @release (finally (deliver exited true))))}
                    #(worker/retire-worker! session "slow capture"))
-                 (expect (true? (deref entered 1000 false)))
-                 (expect (true? (deref exited 1000 false)))
-                 (expect (< (- (System/nanoTime) started) 1000000000))
+                 ;; The helper waits for `release` without the cancel, so a loaded runner
+                 ;; gets 5 s and a retire that waits still fails.
+                 (expect (true? (deref entered 5000 false)))
+                 (expect (true? (deref exited 5000 false)))
+                 (expect (< (- (System/nanoTime) started) 5000000000))
                  (expect (not (worker/worker-live? session)))
                  (finally (deliver release true))))))))
 

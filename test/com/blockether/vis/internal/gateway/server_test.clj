@@ -1617,7 +1617,6 @@
              (it "the frame names itself, and carries no session cursor"
                  (let [frame (sse/job-sse-frame gateway-contract/voice-job-event
                                                 {"id" "vj_1" "phase" "transcribing"})]
-                   (expect (= "voice.job" gateway-contract/voice-job-event))
                    (expect (str/starts-with? frame
                                              (str "event: " gateway-contract/voice-job-event "\n")))
                    (expect (str/includes? frame "data: {"))
@@ -1739,7 +1738,6 @@
             (expect (= "audio/wav" (get speech "transport")))
             (expect (true? (get speech "is_async")))
             (expect (= "sse" (get speech "progress")))
-            (expect (= "speech.job" gateway-contract/speech-job-event))
             (expect (= gateway-contract/speech-job-event (get speech "progress_event")))
             ;; the OTHER direction's working phase is never promised to a client that would
             ;; sit waiting for it

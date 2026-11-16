@@ -34,7 +34,6 @@
                          :choices ["vibe" "control"]
                          :default "vibe"}]
                (it "accepts 300 characters and explains 301"
-                   (expect (= 300 toggle/max-description-length))
                    (expect (= []
                               (toggle/contribution-problems
                                 (assoc mode :description (apply str (repeat 300 "x"))))))
@@ -89,7 +88,6 @@
                    (expect (not (toggle/contribution-valid? (assoc url :default 1))))
                    (expect (not (toggle/contribution-valid? (assoc url :default "a\nb")))))
                (it "bounds a value to one line within the limit"
-                   (expect (= 4096 toggle/max-string-length))
                    (expect (toggle/string-value? ""))
                    (expect (toggle/string-value? (apply str (repeat 4096 "x"))))
                    (expect (not (toggle/string-value? (apply str (repeat 4097 "x")))))

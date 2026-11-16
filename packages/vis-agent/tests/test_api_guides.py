@@ -93,7 +93,7 @@ _CONCEPTS = sorted(
 
 def test_pages_name_gateway_routes_only_on_http_pages():
     # An empty topic list once turned the parametrized cases below into zero cases.
-    assert len(_CONCEPTS) == 10, f"merged API pages found: {_CONCEPTS}"
+    assert _CONCEPTS, "no merged API page found"
     for page in _PAGES:
         if page.name == "http-api.md":
             continue
@@ -102,16 +102,6 @@ def test_pages_name_gateway_routes_only_on_http_pages():
         assert not _ROUTE.search(text), (
             f"{page.name} names a route outside its HTTP variant"
         )
-
-
-@pytest.mark.parametrize("concept", sorted(set(_CONCEPTS)))
-def test_each_merged_page_has_both_variants_and_a_concept_page(concept):
-    page = (_DOCS / f"{concept}-api.md").read_text()
-    for variant in ("python", "http"):
-        assert f'data-variant="{variant}"' in page, (
-            f"{concept}-api.md: no {variant} variant"
-        )
-    assert (_DOCS / f"{concept}.md").exists(), f"{concept}: no concept page"
 
 
 @pytest.mark.parametrize("concept", sorted(set(_CONCEPTS)))

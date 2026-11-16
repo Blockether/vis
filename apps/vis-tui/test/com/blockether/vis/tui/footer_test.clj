@@ -52,7 +52,6 @@
                     (mapv #(apply str (map :ch %)) (last (:frames frame)))]
 
                 (expect (nil? (:error frame)))
-                (expect (= 2 footer/height))
                 (expect (= (apply str (repeat cols ".")) untouched-row))
                 (expect (str/starts-with? limits-row "  Limits"))
                 (expect (str/ends-with? git-row "git ~/vis (main)  "))

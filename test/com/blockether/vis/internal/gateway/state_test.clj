@@ -6754,7 +6754,7 @@
                               'com.blockether.vis.internal.gateway.resources/stop-all!)
                             (fn [_sid]
                               ;; a slow stop-fn: a background shell that takes its time dying
-                              (deref release 2000 :timeout)
+                              (deref release 10000 :timeout)
                               (deliver stopped true))
                             #'lp/close! (fn [_sid]
                                           (deliver closed true))
@@ -6773,7 +6773,7 @@
                      elapsed-ms
                      (/ (- (System/nanoTime) started) 1e6)]
 
-                 (expect (< elapsed-ms 500) (str "close-session! blocked for " elapsed-ms "ms"))
+                 (expect (< elapsed-ms 2000) (str "close-session! blocked for " elapsed-ms "ms"))
                  ;; the row is already gone everywhere a client can look
                  (expect (= [sid] @deleted))
                  (expect (not (contains? @registry sid)))

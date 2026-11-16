@@ -341,7 +341,8 @@
                 stale-ms (/ (- (System/nanoTime) t0) 1e6)]
 
             (expect (= [{:id :old}] stale) "stale read serves the last-known snapshot immediately")
-            (expect (< stale-ms 50.0) "stale read must NOT block on the enumeration")
+            ;; The gate holds the enumeration for 10 s, so a read that waits is far over 2 s.
+            (expect (< stale-ms 2000.0) "stale read must NOT block on the enumeration")
             ;; wait for the ONE background refresh to actually reach the enumeration,
             ;; where the gate now holds it
             (loop [n 0]

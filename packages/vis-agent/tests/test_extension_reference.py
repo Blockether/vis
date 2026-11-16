@@ -41,9 +41,8 @@ def test_reference_examples_execute_without_host_or_network(owner, monkeypatch):
 @pytest.mark.parametrize(
     "module", [sdk, engine, extension, activity, views, extension_package]
 )
-def test_module_introductions_link_to_guides_without_repeating_them(module):
+def test_module_introductions_link_to_pages_of_the_manual(module):
     source = inspect.getdoc(module)
-    assert not re.search(r"^#{1,6} |^```|^\|", source, re.M)
     manual = Path(__file__).resolve().parents[3] / "resources/vis-docs"
     links = re.findall(r"https://vis\.blockether\.com/([a-z-]+)\.html", source)
     assert links

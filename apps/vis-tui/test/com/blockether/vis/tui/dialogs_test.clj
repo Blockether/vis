@@ -976,7 +976,9 @@
               result (atom nil)
               entered (promise)
               release (promise)
-              _ (future (Thread/sleep 500) (deliver release true))
+              ;; The lookup waits 5 s without the release below, so a call that waits
+              ;; for the lookup is far over 2 s.
+              _ (future (Thread/sleep 5000) (deliver release true))
               started (System/nanoTime)]
 
           (schedule! task
@@ -988,7 +990,7 @@
                        @release
                        {"s2" {:kind :reply}}))
           (let [elapsed-ms (/ (- (System/nanoTime) started) 1000000.0)]
-            (expect (< elapsed-ms 250.0)))
+            (expect (< elapsed-ms 2000.0)))
           (expect (= "needle" (deref entered 1000 ::timeout)))
           (deliver release true)
           (loop [attempts 50]

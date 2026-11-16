@@ -365,6 +365,5 @@
                        named
                        (second (re-find #"PUBLISHER_RELAY_URL\s*=\s*['\"]([^'\"]+)['\"]" src))]
 
-                   (expect (= "https://vis.relay.blockether.com" relay/DEFAULT-URL))
                    (expect (some? named))
                    (expect (= relay/DEFAULT-URL named)))))

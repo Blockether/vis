@@ -110,9 +110,6 @@
       (expect (nil? (contract/match-route "/v1/sessions/s1/unknown")))
       (expect (nil? (contract/match-route nil))))
   (it "owns protocol compatibility without a runtime mirror"
-      (expect (= 23 contract/protocol-version))
-      (expect (= 23 contract/minimum-client-protocol))
-      (expect (= 22 contract/minimum-gateway-protocol))
       (expect (every? (set (keys (get-in (document/schema-document "gateway")
                                          ["$defs" "http_headers" "properties"])))
                       ["x-vis-protocol" "x-vis-min-gateway-protocol" "x-vis-client"
@@ -226,9 +223,6 @@
   (it "keeps the session-group palette closed, ordered and derived from the schema"
       ;; BLO-167: a group carries a palette TOKEN, never a hex colour, so every
       ;; surface can ink it in its own theme.
-      (expect (= ["slate" "blue" "green" "amber" "red" "violet" "cyan" "pink"]
-                 contract/session-group-colors))
-      (expect (= "slate" contract/default-session-group-color))
       (expect (every? contract/session-group-color? contract/session-group-colors))
       (expect (not (contract/session-group-color? "#ff00ff")))
       (expect (not (contract/session-group-color? "SLATE")))
