@@ -19,8 +19,14 @@ the standard library. It supports plain answers and streamed answers.
 
 | Key | Content | Kept for |
 | --- | --- | --- |
-| `lease.json` | The active worker, its last checkpoint and the work that waits | permanent |
-| `state/<worker>/<n>.tar.gz` | A checkpoint of the Vis home directory: sessions, transcripts, attached files, settings | the last one; a checkpoint of a failed worker stays |
+| `lease.json` | The active worker of the shard `main`, its last checkpoint and the work that waits | permanent |
+| `shards/<shard>/lease.json` | The same for the shard of a run | permanent |
+| `routes/<id>` | The shard of a session or of a run. An id without this object is in `main` | permanent for a run; for a session, until a person deletes it |
+| `pending/<shard>` | A shard that can have work. The schedule starts its worker again | until the work ends |
+| `calls/<shard>/<id>` | A call for the worker of a shard. `main` gets its calls from SQS | 1 day |
+| `bells/<shard>` | The id of the last call of a shard | permanent |
+| `lists/<shard>` | The list rows of the sessions of a shard, for the session list of Vis web | permanent |
+| `state/<worker>/<n>.tar.gz` | A checkpoint of the Vis home directory of a shard: sessions, transcripts, attached files, settings | the last one of each shard; a checkpoint of a failed worker stays |
 | `workflows/<name>.py` | The source of a workflow: a copy of the file `workflows/<name>.py` on `main` of the repository. Only `repo` writes it | permanent |
 | `runs/index.json` | One line for each of the 300 newest runs | permanent |
 | `runs/<run>/run.json` | What the pages show of a run: its workflow activities, the decisions at its gates (`approved`, `comment` and the time) and the sessions that it left with a fork. The record of the work is the transcript of the session | permanent |
@@ -36,16 +42,39 @@ the standard library. It supports plain answers and streamed answers.
 
 The bucket also keeps each old version of an object for 7 days.
 
-A worker takes `lease.json` with a conditional write. It saves a checkpoint when the
-home directory changed and names the checkpoint in the lease with a second conditional
-write. Then it deletes the earlier checkpoint. A worker that lost the lease cannot
-replace newer state. All sessions are in the one home directory, so the stack holds
-many sessions and each new worker gets them all.
+A worker takes the lease of its shard with a conditional write. It saves a checkpoint
+when the home directory changed and names the checkpoint in the lease with a second
+conditional write. Then it deletes the earlier checkpoint. A worker that lost the lease
+cannot replace newer state. All sessions of a shard are in its one home directory, so
+a shard holds many sessions and each new worker of the shard gets them all.
 
 A worker that stops between the upload of a checkpoint and the lease write leaves that
 checkpoint in `state/`. The template has no lifecycle rule for `state/`: a rule can
 remove the only checkpoint of a stack that nobody used for some days. The lease names
 the checkpoint that counts. You can delete each other object in `state/`.
+
+## Each run has its own worker
+
+A shard is one Vis home directory with its own worker, lease and checkpoint. The shard
+`main` has the sessions that people start. A workflow run that makes its own session
+gets a new shard, and the forks and the subagents of that session stay in it. A run in
+an existing session stays in the shard of that session. Thus a run does not wait for
+another run, and a run does not slow the sessions of people.
+
+- `front` reads `routes/<id>` for the session or the run of a call and sends the call to the worker of that shard. `main` gets its calls from SQS. Another shard gets its calls as objects in `calls/`, because a queue for each run would stay in the account.
+- `front` adds the rows of `lists/` to the session list of `main`, so the list starts no worker. A row gets the project and the group that `main` has for the same directory and the same group name.
+- `front` joins the event streams of the shards whose sessions a browser follows.
+- The worker of a run stops after 300 s without work, and after 60 s when it only answered reads. A call to its session, a decision at its gate or the schedule starts a new worker from the checkpoint.
+
+The limits:
+
+- All workers use the one `worker` function with 4096 MB. Its reserved concurrency, 20, is the largest number of workers at the same time.
+- A session that a person starts does not get its own shard. Vis keeps the project, the groups and the settings in each home directory, and `front` joins them only for the session list.
+- The lease, the last checkpoint and the list of a shard stay in the bucket after the run.
+- A search, the archived sessions and the later pages of the session list have only the sessions of `main`. The fleet feed of the event stream also has only these sessions.
+- Vis web shows a new run session at its next read of the list, 30 s at most. The status of a run session in the list is the last one that its worker recorded.
+- After a failure of a worker, the schedule starts a new worker in about 160 s.
+- A worker cannot know that a browser left an event stream. The worker lives until the stream ends, 870 s at most, and then for its time without work.
 
 ## A commit becomes the project of the next worker
 
@@ -172,8 +201,9 @@ session groups:
 | The session of a workflow run | The group Workflows of the project |
 
 Each session works in its own directory and is only listed in its group. A session
-that a person starts in another group stays in that group. The worker makes the project
-and the groups at its start. To change the name of
+that a person starts in another group stays in that group. Each worker makes the project
+and the groups at its start, and `front` shows the sessions of all the workers in the
+one project. To change the name of
 the project, use "Rename project" in the project menu of Vis web. The worker does not
 replace a changed name.
 
@@ -288,7 +318,8 @@ and a gateway of the same Vis version. `ctx.document` uses them.
 
 Runs and workflows:
 
-- 3 runs work at the same time. The other runs wait in the queue. A waiting run uses no place.
+- A run that makes its own session starts at once in its own worker. 20 workers can live at the same time.
+- Of the runs in the sessions of one worker, 3 work at the same time. The other runs wait in the queue. A waiting run uses no place.
 - A run can work for 8 hours (`VIS_RUN_LIMIT_S`), which is 36 processes. Each worker change and each decision at a gate starts a new process.
 - A run can have at most 1000 workflow activities.
 - `runs/index.json` holds the 300 newest runs, and `GET runs` returns the 100 newest.
@@ -402,12 +433,13 @@ route to the internet and no key.
 | [`aws.py`](../durable/aws.py) | Each call to S3, SQS, the Parameter Store and Lambda |
 | [`wire.py`](../durable/wire.py) | The form of an answer that goes through S3 |
 | [`core.py`](../durable/core.py) | The lease and the checkpoints of the Vis home |
+| [`shards.py`](../durable/shards.py) | The shards: the worker of a session or of a run, its calls and its list rows |
 | [`git.py`](../durable/git.py) | The `repo` function: the fetch from GitHub and the push to GitHub |
 | [`worktree.py`](../durable/worktree.py) | The `sync` function and the directories on EFS: the releases, the work directories and their copy in S3 |
 | [`llm.py`](../durable/llm.py) | The `llm` function: it adds the provider key to a model call of the gateway and streams the answer |
-| [`worker.py`](../durable/worker.py) | The `worker` function: the loop of the one live worker |
+| [`worker.py`](../durable/worker.py) | The `worker` function: the loop of the live worker of one shard |
 | [`app.py`](../durable/app.py) | The routes of the Software factory API |
-| [`dashboard/`](../durable/dashboard) | The `front` function: `front.py` has the pages and the webhook, `relay.py` sends a call to the worker, `web.py` has the request and the answer |
+| [`dashboard/`](../durable/dashboard) | The `front` function: `front.py` has the pages and the webhook, `relay.py` sends a call to the worker of its shard, `navigator.py` makes the session list of all the shards, `web.py` has the request and the answer |
 | [`vis/`](../durable/vis) | What the worker does with Vis: `gateway.py` runs the gateway and calls it with the Vis SDK, `relay.py` answers the calls of the queue, `broker.py` sends the model calls of the gateway to the `llm` function, `sessions.py` gives each session its work directory, `files.py` copies the files of a session, `registry.py` registers the project, the groups and the apps, `liveapps/` has the Workflows app |
 | [`workflows/`](../durable/workflows) | The workflows: `sdk.py` has `@workflow` and `@activity`, `source.py` reads a workflow file, `runs.py` keeps the runs, `process.py` is the process of one run, `client.py` calls the API from that process |
-| [`local.py`](../durable/local.py) | All the functions in one process, without AWS |
+| [`local.py`](../durable/local.py) | All the functions on one computer, without AWS |

@@ -22,9 +22,9 @@ import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
-from durable import aws, wire
-from durable.domain import NAME, RUN, Answer, Refused, need
-from durable.settings import COMMENT_LIMIT, MODELS, REPO, RUNS_LISTED, WORK
+from durable import aws, shards, wire
+from durable.domain import LIVE, NAME, RUN, Answer, Elsewhere, Refused, need
+from durable.settings import COMMENT_LIMIT, MAIN, MODELS, REPO, RUNS_LISTED, WORK
 from durable.vis.files import Files
 from durable.vis.sessions import Sessions
 from durable.workflows import source
@@ -35,12 +35,12 @@ from durable.worktree import Workspaces
 class Api:
     """The routes of the API. `environment` returns the variables of a process that works for a session."""
 
-    def __init__(self, project: str, release: str, environment: Callable[[], dict[str, str]]) -> None:
-        """Make the owner of each kind of data and the table of the routes. `project` is the project directory and `release` is its commit."""
-        self.project, self.release = project, release
+    def __init__(self, project: str, release: str, environment: Callable[[], dict[str, str]], shard: str = MAIN) -> None:
+        """Make the owner of each kind of data and the table of the routes. `project` is the project directory, `release` is its commit and `shard` is the shard of this worker."""
+        self.project, self.release, self.shard = project, release, shard
         self.started = time.time()
         self.workspaces = Workspaces(environment)
-        self.runs = Runs(release, environment, self.workspaces)
+        self.runs = Runs(release, environment, self.workspaces, shard)
         self.sessions = Sessions(release, self.workspaces, self.runs)
         self.files = Files(self.runs.attach, self.sessions.touch)
         # The method, the path below `/dashboard/api/` and the function of each route. A group of the path is an argument.
@@ -84,10 +84,20 @@ class Api:
                     answer = function(*found.groups(), query=query, payload=payload)
                     return answer if isinstance(answer, tuple) else (200, wire.JSON, json.dumps(answer).encode())
             raise Refused(404, "no such path")
+        except Elsewhere as other:  # the worker of the shard that owns the run or the session answers
+            return shards.ask(other.shard, method, target, body)
         except Refused as refusal:
             return refusal.status, wire.JSON, json.dumps({"error": str(refusal), **refusal.detail}).encode()
         except ValueError:
             return 400, wire.JSON, b'{"error":"the body is not JSON"}'
+
+    def ask(self, method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Call a route for a caller in this process, and return its answer or raise its refusal. The run can be in another shard."""
+        status, _, data = self.handle(method, f"/dashboard/api/{path}", json.dumps(payload).encode())
+        answer = json.loads(data)
+        if status >= 400:
+            raise Refused(status, str(answer.get("error") or "the call failed"))
+        return answer
 
     # -- status ----------------------------------------------------------------
 
@@ -99,7 +109,7 @@ class Api:
             "repository": REPO,
             "models": [model["name"] for model in MODELS],
             "started": self.started,
-            "live_runs": self.runs.live(),
+            "live_runs": sum(1 for line in self.runs.listing() if line["status"] in LIVE),
         }
 
     # -- workflows -------------------------------------------------------------
@@ -131,7 +141,7 @@ class Api:
 
     def list_runs(self, **_: Any) -> dict[str, Any]:
         """List the last runs, the newest first."""
-        return {"runs": self.runs.index[:RUNS_LISTED]}
+        return {"runs": self.runs.listing()[:RUNS_LISTED]}
 
     def run(self, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
         """Start a run of a workflow, in its own new session or in the session that the call names."""
@@ -145,6 +155,8 @@ class Api:
         session = payload.get("session")
         if not session:
             return self.runs.create(name, text, about, given)
+        if shards.owner(str(session)) != self.shard:
+            raise Elsewhere(shards.owner(str(session)))
         root = self.sessions.home(session)
         if os.path.dirname(os.path.realpath(root)) != os.path.realpath(WORK):
             raise Refused(400, "the session does not work in a directory of Software factory")

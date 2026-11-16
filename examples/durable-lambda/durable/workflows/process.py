@@ -12,7 +12,7 @@ import traceback
 import types
 from collections.abc import Callable
 
-from blockether.vis.engine import GatewayClient, Session
+from blockether.vis.engine import GatewayClient, GatewayError, Session
 
 from durable.settings import GATEWAY_URL, PROVIDER, RUN_GROUP, TOKEN_FILE
 from durable.workflows.client import Durable
@@ -50,12 +50,26 @@ def main(run_id: str) -> int:
             session.update(title=f"{run['title']} · run {run_id[:8]}")
             return session
 
+        def opened(known: str) -> tuple[Session, int]:
+            """Return the session of the run and the number of its turns.
+
+            A worker that stops before its first checkpoint takes a new session with it.
+            The run then has no transcript: it starts again in a new session.
+            """
+            session = client.session(known)
+            try:
+                return session, len(session.turns())
+            except GatewayError as failure:
+                if failure.status != 404 or not run.get("own"):
+                    raise
+                return fresh(), 0
+
         # An earlier process of this run made the session, or a person selected it.
         known = run.get("session_id")
-        session = client.session(known) if known else fresh()
+        session, turns = opened(known) if known else (fresh(), 0)
         base = run.get("base")
         if base is None:  # the turns that the session had before the run are not the transcript of the run
-            base = run["base"] = len(session.turns())
+            base = run["base"] = turns
         api.event(run_id, "started", session_id=session.id, base=base)
         result = function(Context(run, session, api, fresh, about.activities, about.requests), **run["input"])
         api.event(run_id, "completed", result=encode(result))

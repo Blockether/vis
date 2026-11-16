@@ -1,6 +1,6 @@
 """The relay of the worker: it answers the calls that the front function sends.
 
-A call arrives as one SQS message. The worker sends it to the gateway, or to the
+A call arrives as one message of the inbox of the shard (see `shards.py`). The worker sends it to the gateway, or to the
 Software factory API for `/dashboard/api/`, and writes the answer as S3 objects (see `wire.py`).
 An event stream becomes a series of objects, so the browser gets each event at once.
 """
@@ -17,14 +17,17 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from durable import aws, wire
+from durable import aws, shards, wire
 from durable.app import Api
+from durable.domain import SESSION
 from durable.helpers import log
-from durable.settings import ANSWERED_S, CHUNK, COLLECT_S, GATEWAY_PORT, LOOPBACK, PAUSE_S, QUEUE
+from durable.settings import ANSWERED_S, CHUNK, COLLECT_S, GATEWAY_PORT, LOOPBACK, MAIN, PAUSE_S
 from durable.vis.gateway import Gateway
 
 # The gateway calls that make a session and start a turn, and the calls that delete one session or many sessions.
 CREATE, TURN = re.compile(r"/v1/sessions/?"), re.compile(r"/v1/sessions/([0-9a-f-]{36})/turns/?")
+# The call that makes a fork of a session.
+FORK = re.compile(r"/v1/sessions/[0-9a-f-]{36}/forks/?")
 ONE, MANY = re.compile(r"/v1/sessions/([0-9a-f-]{36})/?"), re.compile(r"/v1/(session-groups|projects)/[^/]+/?")
 
 
@@ -34,12 +37,14 @@ def reply(rid: str, head: dict[str, Any], body: bytes) -> None:
 
 
 class Relay:
-    """The calls that this worker answers, and their messages in the queue."""
+    """The calls that this worker answers, and their messages in the inbox."""
 
-    def __init__(self, gateway: Gateway, api: Api) -> None:
-        """Start without an open call. `gateway` gets the calls of Vis and `api` gets the calls of `/dashboard/api/`."""
-        self.gateway, self.api = gateway, api
+    def __init__(self, gateway: Gateway, api: Api, inbox: shards.Inbox) -> None:
+        """Start without an open call. `gateway` gets the calls of Vis, `api` gets the calls of `/dashboard/api/` and `inbox` has the messages."""
+        self.gateway, self.api, self.inbox = gateway, api, inbox
         self.inflight, self.last = 0, time.time()
+        # True after a call that is not a read.
+        self.wrote = False
         # True when the worker stops: each open event stream then ends.
         self.closing = False
         self._lock = threading.Lock()
@@ -61,12 +66,12 @@ class Relay:
         return None if known else call
 
     def _delete(self, rid: str) -> None:
-        """Remove the message of a call from the queue. The caller holds the lock."""
+        """Remove the message of a call from the inbox. The caller holds the lock."""
         receipt = self._receipts.pop(rid, None)
         self._answered[rid] = time.time()
         if receipt:
             try:
-                aws.client("sqs").delete_message(QueueUrl=QUEUE, ReceiptHandle=receipt)
+                self.inbox.delete(receipt)
             except aws.ClientError as failure:
                 log("delete message failed", repr(failure))
 
@@ -78,7 +83,7 @@ class Relay:
             time.sleep(0.1)
 
     def done(self, rid: str) -> None:
-        """Remove the message of an answered call from the queue."""
+        """Remove the message of an answered call from the inbox."""
         with self._lock:
             self._delete(rid)
 
@@ -86,6 +91,7 @@ class Relay:
         """Answer one call. A failure becomes a 502 answer."""
         with self._lock:
             self.inflight += 1
+            self.wrote = self.wrote or call["method"] != "GET"
         rid = call["id"]
         try:
             self.answer(call)
@@ -97,6 +103,13 @@ class Relay:
             with self._lock:
                 self.inflight -= 1
                 self.last = time.time()
+
+    def forked(self, status: int, data: bytes) -> None:
+        """Record the shard of a fork. The front must know it before a client asks for the fork."""
+        made = json.loads(data) if status < 300 else {}
+        found = (made.get("id") or (made.get("session") or {}).get("id")) if isinstance(made, dict) else None
+        if isinstance(found, str) and SESSION.fullmatch(found):
+            shards.assign(found, self.api.shard)
 
     def body(self, call: dict[str, Any]) -> bytes:
         """Return the body of a call. A large body comes in its own S3 object."""
@@ -133,9 +146,11 @@ class Relay:
             self.api.sessions.touch(turn.group(1))
         elif method == "DELETE" and one:
             roots = self.api.sessions.leaving(one.group(1))
-            after = lambda status, data: status < 300 and self.api.sessions.reap(roots)  # noqa: E731
+            after = lambda status, data: status < 300 and (self.api.sessions.reap(roots), self.api.shard != MAIN and shards.forget(one.group(1)))  # noqa: E731
         elif method == "DELETE" and MANY.fullmatch(path):
             after = lambda status, data: status < 300 and self.api.sessions.reap(None)  # noqa: E731
+        elif method == "POST" and self.api.shard != MAIN and FORK.fullmatch(path):
+            after = self.forked
         # The call goes to the gateway as it is: the SDK does not relay the call of another client.
         connection = http.client.HTTPConnection(LOOPBACK, GATEWAY_PORT, timeout=max(5.0, call["deadline"] - time.time()))
         try:

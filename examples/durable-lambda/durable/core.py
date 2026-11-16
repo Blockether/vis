@@ -1,6 +1,6 @@
 """What makes the worker durable: the lease and the checkpoints.
 
-The lease is one S3 object that names the one live worker and its last checkpoint.
+The lease of a shard is one S3 object that names its one live worker and its last checkpoint.
 Every write is conditional on the ETag that this worker read. A second worker that
 starts by mistake loses the first conditional write and stops. This makes S3 a
 database with one writer.
@@ -24,24 +24,24 @@ import time
 import uuid
 from typing import Any
 
-from durable import aws
+from durable import aws, shards
 from durable.helpers import log, private, safe
-from durable.settings import HOME, LEASE, LEASE_TTL
+from durable.settings import HOME, LEASE_TTL
 
 
 class Lease:
     """The lease of this worker. `data` is the last content that it wrote."""
 
-    def __init__(self, data: dict[str, Any], etag: str | None) -> None:
-        """Keep what the lease said and its ETag. The first write makes this worker the owner."""
-        self.id = str(uuid.uuid4())
+    def __init__(self, data: dict[str, Any], etag: str | None, shard: str) -> None:
+        """Keep what the lease of a shard said and its ETag. The first write makes this worker the owner."""
+        self.id, self.shard, self.key = str(uuid.uuid4()), shard, shards.lease_key(shard)
         self.data, self.etag, self.saves = data, etag, 0
 
     def write(self, **fields: Any) -> None:
         """Write the lease with new fields. A lost lease raises ClientError."""
         data = {**self.data, **fields, "owner": self.id}
         condition = {"IfMatch": self.etag} if self.etag else {"IfNoneMatch": "*"}
-        self.etag = aws.put(LEASE, json.dumps(data).encode(), **condition)
+        self.etag = aws.put(self.key, json.dumps(data).encode(), **condition)
         self.data = data
 
     def renew(self, **fields: Any) -> None:
@@ -53,12 +53,12 @@ class Lease:
         self.write(expires=0, **fields)
 
     @classmethod
-    def acquire(cls) -> Lease | None:
-        """Take the lease, or return None when another worker holds it."""
-        data, etag = aws.lease()
+    def acquire(cls, shard: str) -> Lease | None:
+        """Take the lease of a shard, or return None when another worker holds it."""
+        data, etag = shards.lease(shard)
         if aws.alive(data):
             return None
-        held = cls({k: v for k, v in data.items() if k != "owner"}, etag)
+        held = cls({k: v for k, v in data.items() if k != "owner"}, etag, shard)
         try:
             held.renew()
         except aws.ClientError:

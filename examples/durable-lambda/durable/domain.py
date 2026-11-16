@@ -31,6 +31,15 @@ class Refused(Exception):
         self.status, self.detail = status, detail
 
 
+class Elsewhere(Exception):
+    """A call for a run or a session that the worker of another shard owns."""
+
+    def __init__(self, shard: str) -> None:
+        """Keep the shard that answers the call."""
+        super().__init__(f"the shard {shard} owns it")
+        self.shard = shard
+
+
 class Conflict(Exception):
     """Git could not put the work of a workspace on the new release."""
 

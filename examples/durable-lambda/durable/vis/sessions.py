@@ -11,7 +11,7 @@ import os
 import time
 from typing import Any
 
-from durable import worktree
+from durable import shards, worktree
 from durable.domain import SESSION, Conflict, Refused, need
 from durable.helpers import log
 from durable.settings import HOME_S, PLACES, WORK
@@ -104,12 +104,15 @@ class Sessions:
         `roots` has the directory of the one session of the call. Without it, the call
         could delete many sessions: then each workspace whose session is gone goes. A
         directory stays while another session or a run that did not end works in it.
+        The gateway of this worker knows only the sessions of its shard, so the
+        workspace of a session of another shard stays.
         """
         if not self.engine:
             return
         used = self.engine.roots() | self.runs.roots()
         if roots is None:
-            names = [name for name in self.workspaces.names() if (owner := self.workspaces.owner(name)) and self.engine.is_gone(owner)]
+            mine = self.runs.shard
+            names = [name for name in self.workspaces.names() if (owner := self.workspaces.owner(name)) and shards.owner(owner, is_fresh=True) == mine and self.engine.is_gone(owner)]
         else:
             names = [name for name in map(name_of, roots) if name]
         for name in names:

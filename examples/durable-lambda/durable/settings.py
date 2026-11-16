@@ -33,8 +33,10 @@ RUNTIME_API = ENV.get("AWS_LAMBDA_RUNTIME_API", "")
 
 BUCKET = ENV.get("VIS_BUCKET", "")
 QUEUE = ENV.get("VIS_QUEUE_URL", "")
-# The S3 object that names the one live worker and its last checkpoint.
+# The S3 object that names the one live worker of the shard `main` and its last checkpoint.
 LEASE = "lease.json"
+# The shard of the sessions of people. Each other shard has the sessions of one workflow run (see `shards.py`).
+MAIN = "main"
 # The names of the SSM parameters that hold the secrets. Only the function that
 # needs a secret gets the name of its parameter.
 LLM_URL_PARAMETER = ENV.get("VIS_LLM_URL_PARAMETER", "")
@@ -64,7 +66,7 @@ PROJECT_DIR = "main"
 # The home directory of Vis. A checkpoint saves it (see `core.py`).
 HOME = ENV.get("VIS_HOME", "/tmp/home")
 # The files of the worker itself. A session must not copy them as its work.
-WORKER_DIR = "/tmp/worker"
+WORKER_DIR = ENV.get("VIS_WORKER_DIR", "/tmp/worker")
 # The entries of /tmp that are not the work of a session.
 PRIVATE_TMP = ["home", "worker", *filter(None, ENV.get("VIS_PRIVATE_TMP", "").split(":"))]
 # The deploy key of the repo function, as a file for SSH.
@@ -112,7 +114,7 @@ REQUEST_LIMIT, PROVIDER_S = 5_000_000, 600
 # -- the Vis gateway of the worker ---------------------------------------------------
 
 # The gateway and the broker listen only on the loopback interface.
-LOOPBACK, GATEWAY_PORT = "127.0.0.1", 7890
+LOOPBACK, GATEWAY_PORT = "127.0.0.1", int(ENV.get("VIS_GATEWAY_PORT", "7890"))
 GATEWAY_URL = f"http://{LOOPBACK}:{GATEWAY_PORT}"
 # The token of the gateway. The worker makes a new token at each start.
 TOKEN_FILE = f"{WORKER_DIR}/gateway.token"
@@ -133,6 +135,8 @@ MARGIN = int(ENV.get("VIS_HANDOFF_MARGIN_S", "90"))
 LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - MARGIN
 # A worker without work stops after IDLE_S.
 IDLE_S = int(ENV.get("VIS_IDLE_S", "300"))
+# A worker of a run that only answered reads stops after READ_IDLE_S: Vis web reads the first sessions of its list at each load.
+READ_IDLE_S = min(IDLE_S, 60)
 # A worker starts, or stays alive, when an automation is due in DUE_S.
 DUE_S = 120
 # A worker that stops without a release loses the lease after LEASE_TTL.
@@ -155,8 +159,15 @@ ANSWER_S = 55
 STREAM_S = int(ENV.get("VIS_STREAM_S", "870"))
 # An event stream collects its bytes for COLLECT_S, writes one S3 object, then waits PAUSE_S.
 COLLECT_S, PAUSE_S = 0.2, 0.15
-# The front starts a worker at most each WAKE_S.
+# The front starts the worker of a shard at most each WAKE_S.
 WAKE_S = 5
+# A caller asks S3 again for the shard of a session after ROUTE_S, and a worker
+# publishes the new sessions of its shard each ROUTE_S.
+ROUTE_S = 2
+# A worker reads the bell of its shard each INBOX_S, and lists the calls each INBOX_LIST_S also without a bell.
+INBOX_S, INBOX_LIST_S = 0.2, 10
+# The schedule starts a worker for a shard that has no lease only after START_S: its first worker can still start.
+START_S = 90
 # The worker knows an answered call for ANSWERED_S, so a repeated message gets no second answer.
 ANSWERED_S = 1200
 # A larger body of a call goes in its own S3 object: an SQS message has a size limit.
@@ -166,7 +177,7 @@ CHUNK = 65536
 
 # -- the workflow runs ---------------------------------------------------------------
 
-# The runs that work at the same time. The other runs wait.
+# The runs that work at the same time in one worker. The other runs wait.
 PARALLEL = 3
 # The activities that one run can have.
 STEPS = 1000

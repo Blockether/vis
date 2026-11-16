@@ -7,7 +7,7 @@ import os
 
 from durable import aws, worktree
 from durable.app import Api
-from durable.settings import HOME, PEOPLE_GROUP, PROJECT_DIR, PROJECT_NAME, REPO_FUNCTION, WORK
+from durable.settings import HOME, MAIN, PEOPLE_GROUP, PROJECT_DIR, PROJECT_NAME, REPO_FUNCTION, WORK
 from durable.vis import gateway
 from durable.vis.liveapps.workflows import Workflows
 
@@ -25,12 +25,13 @@ def keep_review(old: str, new: str) -> None:
             file.write(new + "\n")
 
 
-def project() -> tuple[str, str]:
+def project(shard: str = MAIN) -> tuple[str, str]:
     """Return the project directory and the commit of the current release.
 
     `work/main` is the directory of the one project of Vis. It takes each new release,
     so the project stays when the repository changes. Each session works in its own
-    clone next to it: see `durable/worktree.py`.
+    clone next to it: see `durable/worktree.py`. Only the worker of the shard `main`
+    changes the directory: no session of another shard works in it.
     """
     release = worktree.current()
     if not release:
@@ -39,6 +40,8 @@ def project() -> tuple[str, str]:
         release = worktree.current()
     if not release:
         raise RuntimeError("EFS has no release of the repository")
+    if shard != MAIN:
+        return worktree.clone(release, PROJECT_DIR, gateway.environment("")), release
     worktree.sweep(PROJECT_DIR)
     main, moved = f"{WORK}/{PROJECT_DIR}", f"{WORK}/{PROJECT_DIR}/.git/durable-earlier"
     earlier = "" if os.path.isdir(main) else worktree.earlier()
@@ -54,11 +57,15 @@ def project() -> tuple[str, str]:
 
 
 def register(engine: gateway.Gateway, api: Api) -> None:
-    """Give the API its gateway, make the session groups of the project and start the live apps."""
+    """Give the API its gateway, make the session groups of the project and start the live apps.
+
+    The Workflows app shows the runs of each shard, so only the shard of the people has it.
+    """
     root = api.project
     api.sessions.engine, api.runs.busy = engine, engine.busy
     api.runs.group = engine.organize(root, PROJECT_NAME)
     api.sessions.people = engine.group(root, PEOPLE_GROUP)
     # `engine.client` gives each thread its own SDK client.
     api.files.open = lambda session: engine.client().session(session)
-    Workflows(api, engine.client).start()
+    if api.shard == MAIN:
+        Workflows(api, engine.client).start()

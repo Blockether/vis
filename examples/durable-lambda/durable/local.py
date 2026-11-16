@@ -1,9 +1,10 @@
 """Run all of Software factory on one machine, without AWS: `python -m durable.local`.
 
 The front function, the relay, the worker, the llm function, the repo function, the
-sync function run as they are. Only the AWS services have a replacement: S3 is a
-directory, the queue is a list, a parameter is an environment variable and an
-invocation is a function call. GitHub is a bare repository in a directory.
+sync function run as they are. Only the AWS services have a replacement: S3 and the
+queue are directories, a parameter is an environment variable and an invocation is a
+function call. The worker of each shard that is not `main` is its own process, with
+its own home directory and gateway port. GitHub is a bare repository in a directory.
 
 Set `DURABLE_LLM_URL` and `DURABLE_LLM_KEY`. Then open http://localhost:8080. Use this only for development: nothing here isolates the key.
 """
@@ -12,13 +13,15 @@ from __future__ import annotations
 
 import base64
 import datetime
+import fcntl
 import hashlib
 import io
 import json
 import os
-import queue
 import shutil
+import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -55,7 +58,10 @@ os.environ.setdefault("DURABLE_DEPLOY_KEY", "not used: GitHub is a directory")
 
 from durable import aws, git, lambda_runtime, llm, worker, worktree  # noqa: E402 - the settings come first
 from durable.dashboard import front  # noqa: E402
-from durable.settings import GIT_EMAIL, GIT_NAME, REPO_URL  # noqa: E402
+from durable.settings import GIT_EMAIL, GIT_NAME, MAIN, REPO_URL  # noqa: E402
+
+# The variable that a worker process of a shard has, and the file that asks the first process for a worker of `main`.
+CHILD, WANTED = "DURABLE_LOCAL_WORKER", f"{ROOT}/wake-main"
 
 
 def refusal(code: str, operation: str) -> ClientError:
@@ -67,10 +73,8 @@ class Bucket:
     """S3 as a directory. A write can be conditional, as in S3."""
 
     def __init__(self) -> None:
-        """Use the directory `s3` of the local run."""
-        self.root, self.lock = f"{ROOT}/s3", threading.Lock()
-        # The metadata of each object that this process wrote.
-        self.meta: dict[str, dict[str, str]] = {}
+        """Use the directory `s3` of the local run, and `s3-meta` for the metadata of its objects."""
+        self.root, self.meta, self.lock = f"{ROOT}/s3", f"{ROOT}/s3-meta", threading.Lock()
 
     def path(self, key: str) -> str:
         """Return the file of a key."""
@@ -86,30 +90,40 @@ class Bucket:
 
     def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803 - the names of boto3
         """Return the bytes and the ETag of an object."""
-        tag = self.tag(Key)
-        if tag is None:
-            raise refusal("NoSuchKey", "GetObject")
-        with open(self.path(Key), "rb") as file:
-            return {"Body": io.BytesIO(file.read()), "ETag": tag}
+        try:
+            with open(self.path(Key), "rb") as file:
+                data = file.read()
+        except OSError:
+            raise refusal("NoSuchKey", "GetObject") from None
+        return {"Body": io.BytesIO(data), "ETag": '"' + hashlib.md5(data).hexdigest() + '"'}  # noqa: S324 - an ETag, as in S3
 
     def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
         """Return the size and the metadata of an object."""
         if self.tag(Key) is None:
             raise refusal("404", "HeadObject")
-        return {"ContentLength": os.path.getsize(self.path(Key)), "Metadata": self.meta.get(Key, {})}
+        try:
+            with open(os.path.join(self.meta, Key), encoding="utf-8") as file:
+                return {"ContentLength": os.path.getsize(self.path(Key)), "Metadata": json.load(file)}
+        except OSError:
+            return {"ContentLength": os.path.getsize(self.path(Key)), "Metadata": {}}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, **options: Any) -> dict[str, Any]:  # noqa: N803
         """Write an object with one rename. `IfMatch` and `IfNoneMatch` make the write conditional."""
-        with self.lock:
+        os.makedirs(self.root, exist_ok=True)
+        # One thread of one process at a time writes: the check and the rename are one step.
+        with self.lock, open(f"{self.root}.lock", "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
             tag = self.tag(Key)
             if ("IfNoneMatch" in options and tag) or ("IfMatch" in options and options["IfMatch"] != tag):
                 raise refusal("PreconditionFailed", "PutObject")
-            os.makedirs(os.path.dirname(self.path(Key)), exist_ok=True)
-            temporary = f"{self.path(Key)}.{uuid.uuid4().hex}"
+            for folder in (self.root, self.meta):
+                os.makedirs(os.path.dirname(os.path.join(folder, Key)), exist_ok=True)
+            temporary = f"{ROOT}/incoming-{uuid.uuid4().hex}"
             with open(temporary, "wb") as file:
                 file.write(Body)
             os.replace(temporary, self.path(Key))
-            self.meta[Key] = options.get("Metadata", {})
+            with open(os.path.join(self.meta, Key), "w", encoding="utf-8") as file:
+                json.dump(options.get("Metadata", {}), file)
             return {"ETag": self.tag(Key)}
 
     def delete_object(self, Bucket: str, Key: str) -> None:  # noqa: N803
@@ -129,31 +143,44 @@ class Bucket:
                 path = os.path.join(folder, name)
                 key = os.path.relpath(path, self.root)
                 if key.startswith(Prefix):
-                    changed = datetime.datetime.fromtimestamp(os.path.getmtime(path), datetime.UTC)
-                    found.append({"Key": key, "Size": os.path.getsize(path), "LastModified": changed})
+                    try:
+                        changed = datetime.datetime.fromtimestamp(os.path.getmtime(path), datetime.UTC)
+                        found.append({"Key": key, "Size": os.path.getsize(path), "LastModified": changed})
+                    except OSError:
+                        pass  # another process removed the object
         return [{"Contents": sorted(found, key=lambda item: item["Key"])}]
 
 
 class Queue:
-    """SQS as a list."""
+    """SQS as a directory: each process of the local run sends to it."""
 
     def __init__(self) -> None:
-        """Start with no message."""
-        self.messages: queue.Queue[str] = queue.Queue()
+        """Use the directory `queue` of the local run."""
+        self.root = f"{ROOT}/queue"
 
     def send_message(self, QueueUrl: str, MessageBody: str) -> None:  # noqa: N803
-        """Add a message."""
-        self.messages.put(MessageBody)
+        """Add a message with one rename."""
+        os.makedirs(self.root, exist_ok=True)
+        name = f"{time.time_ns()}-{uuid.uuid4().hex}"
+        with open(f"{ROOT}/incoming-{name}", "w", encoding="utf-8") as file:
+            file.write(MessageBody)
+        os.replace(f"{ROOT}/incoming-{name}", f"{self.root}/{name}")
 
     def receive_message(self, QueueUrl: str, MaxNumberOfMessages: int, WaitTimeSeconds: int) -> dict[str, Any]:  # noqa: N803
-        """Wait for one message and return it, or return no message."""
-        try:
-            return {"Messages": [{"Body": self.messages.get(timeout=WaitTimeSeconds), "ReceiptHandle": uuid.uuid4().hex}]}
-        except queue.Empty:
-            return {}
+        """Wait for messages and return them, or return no message. A received message leaves the directory."""
+        end = time.time() + WaitTimeSeconds
+        while True:
+            found = []
+            for name in sorted(os.listdir(self.root) if os.path.isdir(self.root) else [])[:MaxNumberOfMessages]:
+                with open(f"{self.root}/{name}", encoding="utf-8") as file:
+                    found.append({"Body": file.read(), "ReceiptHandle": name})
+                os.remove(f"{self.root}/{name}")
+            if found or time.time() > end:
+                return {"Messages": found} if found else {}
+            time.sleep(0.05)
 
     def delete_message(self, QueueUrl: str, ReceiptHandle: str) -> None:  # noqa: N803
-        """Do nothing: a received message is not in the list."""
+        """Do nothing: a received message is not in the directory."""
         pass
 
 
@@ -171,14 +198,32 @@ def context(seconds: float = 900) -> lambda_runtime.Context:
 
 
 class Functions:
-    """Lambda as function calls."""
+    """Lambda as function calls, and as a process for the worker of a shard."""
 
     wake = threading.Event()
+    # The worker processes that this process started.
+    workers: list[subprocess.Popen[bytes]] = []
+
+    def start(self, shard: str, payload: bytes) -> None:
+        """Start the worker of a shard that is not `main`, as a process with its own home directory and gateway port."""
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        place = {"VIS_HOME": f"{ROOT}/shards/{shard}/home", "VIS_WORKER_DIR": f"{ROOT}/shards/{shard}/worker", "VIS_GATEWAY_PORT": str(port), CHILD: shard}
+        self.workers[:] = [process for process in self.workers if process.poll() is None]
+        self.workers.append(subprocess.Popen([sys.executable, "-m", "durable.local", "worker", payload.decode()], env={**os.environ, **place}))
 
     def invoke(self, FunctionName: str, Payload: bytes = b"{}", InvocationType: str = "RequestResponse") -> dict[str, Any]:  # noqa: N803
-        """Call the handler of the repo or the sync function. A worker start only sets a flag for `main`."""
+        """Call the handler of the repo or the sync function. A worker start sets a flag for `main`, or starts a process."""
         if FunctionName == "worker":
-            self.wake.set()
+            shard = json.loads(Payload).get("shard") or MAIN
+            if shard != MAIN:
+                self.start(shard, Payload)
+            elif CHILD in os.environ:  # only the first process runs the worker of `main`
+                with open(WANTED, "w", encoding="utf-8"):
+                    pass
+            else:
+                self.wake.set()
             return {}
         handler = {"repo": git.handler, "sync": worktree.handler}[FunctionName]
         try:
@@ -261,22 +306,39 @@ class Page(BaseHTTPRequestHandler):
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = serve
 
 
+def schedule() -> None:
+    """Call the tick of the front function each minute, as the schedule of the stack does."""
+    while True:
+        time.sleep(60)
+        try:
+            print("tick:", front.tick(), flush=True)
+        except Exception as failure:  # the next tick tries again, as the schedule does
+            print("tick failed:", repr(failure), flush=True)
+
+
 def main() -> None:
-    """Make the repository and its first release, serve the pages and start a worker when one is wanted."""
+    """Make the repository and its first release, serve the pages and start a worker when one is wanted.
+
+    With the arguments `worker` and an event, work as the worker of the shard that the event names.
+    """
+    if sys.argv[1:2] == ["worker"]:
+        print("worker:", worker.handler(json.loads(sys.argv[2]), context()), flush=True)
+        return
     os.makedirs(ROOT, exist_ok=True)
     github(SEED)
     print("first release:", git.fetch(), flush=True)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Page)  # noqa: S104 - a container port
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=schedule, daemon=True).start()
     print(f"Software factory on http://localhost:{PORT}", flush=True)
     while True:
-        # The schedule of the stack: a tick each minute, and a worker when one is wanted.
-        if Functions.wake.wait(timeout=60):
+        # A worker of `main` when one is wanted. The tick runs beside it, as in the stack.
+        if Functions.wake.wait(timeout=1) or os.path.exists(WANTED):
             Functions.wake.clear()
+            if os.path.exists(WANTED):
+                os.remove(WANTED)
             print("worker:", worker.handler({"kind": "wake"}, context()), flush=True)
-        else:
-            front.tick()
 
 
 if __name__ == "__main__":

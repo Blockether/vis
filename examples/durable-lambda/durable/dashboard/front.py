@@ -1,7 +1,7 @@
 """The front function: the only public entry of the stack.
 
 It answers the Function URL. It serves the Vis web app and the Software factory pages,
-and relays every API call to the live worker (see `relay.py`). It has no sign-in: each
+and relays every API call to the worker of its shard (see `relay.py`). It has no sign-in: each
 caller of the address can use the stack. It also takes the webhook of GitHub and the
 tick of the schedule. The front function has no network path to the worker or the
 file system, and no permission to read the provider key.
@@ -15,12 +15,12 @@ import os
 import time
 from typing import Any
 
-from durable import aws
+from durable import aws, shards
 from durable.dashboard.relay import relay
 from durable.dashboard.web import PAGE_POLICY, WEB_POLICY, Request, answer, error
 from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
-from durable.settings import DUE_S, PAGES_WEB, REPO_FUNCTION, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
+from durable.settings import DUE_S, MAIN, PAGES_WEB, REPO_FUNCTION, START_S, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
 
 # The pages of Software factory, by path.
 PAGES = {"/dashboard": "workflows.html", "/dashboard/factory": "factory.html"}
@@ -82,14 +82,30 @@ def route(request: Request, context: Context) -> HttpStream:
     return relay(request, context)
 
 
-def tick() -> dict[str, str]:
-    """Start a worker when work waits and no worker lives. A schedule calls this each minute."""
-    data, _ = aws.lease()
+def waits(data: dict[str, Any]) -> bool:
+    """Return True when the lease of a stopped worker names work."""
     due = data.get("next_due")
-    if aws.alive(data) or not (data.get("running") or data.get("parked") or data.get("runs") or (due and due - time.time() < DUE_S)):
-        return {"tick": "nothing to do"}
-    aws.start(WORKER_FUNCTION, kind="tick")
-    return {"tick": "worker started"}
+    return bool(data.get("running") or data.get("parked") or data.get("runs") or (due and due - time.time() < DUE_S))
+
+
+def tick() -> dict[str, Any]:
+    """Start a worker for each shard where work waits and no worker lives. A schedule calls this each minute."""
+    started = []
+    data, _ = shards.lease(MAIN)
+    if not aws.alive(data) and waits(data):
+        started.append(MAIN)
+    for shard, at in shards.marked():
+        data, _ = shards.lease(shard)
+        if aws.alive(data):
+            continue
+        # A shard without a lease has a new run: its first worker did not start.
+        if waits(data) or (not data and time.time() - at > START_S):
+            started.append(shard)
+        elif data:
+            shards.unmark(shard)
+    for shard in started:
+        aws.start(WORKER_FUNCTION, kind="tick", shard=shard)
+    return {"tick": "worker started", "shards": started} if started else {"tick": "nothing to do"}
 
 
 def handler(event: dict[str, Any], context: Context) -> Any:

@@ -179,6 +179,7 @@ class Run(TypedDict):
     title: str
     input: dict[str, JSONValue]
     session_id: NotRequired[str | None]
+    own: NotRequired[bool]
     base: NotRequired[int | None]
     activities: NotRequired[list[Recorded]]
     decisions: NotRequired[dict[str, Made]]

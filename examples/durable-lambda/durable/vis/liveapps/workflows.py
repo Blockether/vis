@@ -138,7 +138,7 @@ class Workflows(threading.Thread):
     def picture(self) -> dict[str, Any]:
         """Return the data that the open tab shows."""
         if self.tab == "history":
-            lines = self.api.runs.index
+            lines = self.api.runs.listing()
             counts = {count: sum(1 for line in lines if line["status"] in statuses) for count, _, statuses, _ in COUNTS}
             rows = [
                 (line["id"], [line["title"], time.strftime("%d %b %H:%M", time.gmtime(line["created"])), f"{line['status'].capitalize()} {done(line['activities'])}"], TONES[line["status"]])
@@ -146,7 +146,7 @@ class Workflows(threading.Thread):
             ]
             return {"counts": counts, "rows": rows}
         if self.tab == "gates":
-            waiting = [line["id"] for line in self.api.runs.index if line["status"] == "waiting"]
+            waiting = [line["id"] for line in self.api.runs.listing() if line["status"] == "waiting"]
             # The oldest waiting run comes first. The index has the newest run first.
             run = self.api.runs.copy(waiting[-1]) if waiting else {}
             gate = run.get("waiting")
@@ -236,7 +236,7 @@ class Workflows(threading.Thread):
             try:
                 session = values.get("session")
                 asked = {"workflow": values.get("workflow"), "input": values.get("input") or "", "session": None if session in (None, "", NEW) else session}
-                self.followed, self.refusal = self.api.run(asked)["id"], ""
+                self.followed, self.refusal = self.api.ask("POST", "runs", asked)["id"], ""
             except Refused as refusal:
                 self.followed, self.refusal = None, str(refusal)
             else:
@@ -244,13 +244,13 @@ class Workflows(threading.Thread):
         elif event.type == "submit" and event.node_id in ("gate-approve", "gate-reject") and self.shown.get("gate"):
             run, key = self.shown["gate"][:2]
             try:
-                self.api.decide(run, key, payload={"approved": event.node_id == "gate-approve", "comment": (event.values or {}).get("comment") or ""})
+                self.api.ask("POST", f"runs/{run}/gates/{key}", {"approved": event.node_id == "gate-approve", "comment": (event.values or {}).get("comment") or ""})
                 self.problem = ""
             except Refused as refusal:
                 self.problem = f"The decision did not go in: {refusal}."
         elif event.type == "activate" and event.node_id == "retry-run" and self.followed:
             try:
-                self.api.retry(self.followed)
+                self.api.ask("POST", f"runs/{self.followed}/retry", {})
             except Refused:  # the run is not failed any more: the next paint shows its status
                 pass
         elif event.type == "activate" and event.node_id == "new-run":

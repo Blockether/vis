@@ -11,9 +11,9 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
-from durable.settings import BUCKET, LEASE
+from durable.settings import BUCKET
 
-__all__ = ["BotoCoreError", "ClientError", "alive", "client", "delete", "get", "head", "invoke", "keys", "lease", "parameter", "put", "start"]
+__all__ = ["BotoCoreError", "ClientError", "alive", "client", "delete", "get", "head", "invoke", "keys", "parameter", "put", "start"]
 
 
 @functools.cache
@@ -84,12 +84,6 @@ def invoke(function: str, **event: Any) -> tuple[bytes, bool]:
 def start(function: str, **event: Any) -> None:
     """Start a function with an event. Do not wait for its end."""
     client("lambda").invoke(FunctionName=function, InvocationType="Event", Payload=json.dumps(event).encode())
-
-
-def lease() -> tuple[dict[str, Any], str | None]:
-    """Return the lease of the worker and its ETag."""
-    raw, etag = get(LEASE)
-    return (json.loads(raw) if raw else {}), etag
 
 
 def alive(data: dict[str, Any]) -> bool:

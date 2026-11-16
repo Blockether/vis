@@ -1,11 +1,14 @@
 """The workflow runs: their records in S3 and their processes.
 
-runs/index.json              one line for each run
+runs/index.json              one line for each run of each shard
 runs/<id>/run.json           the run, its activities and the decisions of a person at its gates
 runs/<id>/workflow.py        the source that the run uses, also after an edit
 
 The transcript of the session of a run is the record of its work: a new process of a
 run reads the answers there (see `sdk.py`). The run in S3 is what the pages show.
+
+Each worker writes only the runs of its own shard (see `shards.py`). The index is the
+one object that each worker writes, so each write of it is conditional on its ETag.
 """
 
 from __future__ import annotations
@@ -21,56 +24,93 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from durable import aws, worktree
-from durable.domain import FILE, LIVE, NAME, OPEN, SESSION, Refused, need
+from durable import aws, shards, worktree
+from durable.domain import FILE, LIVE, NAME, OPEN, SESSION, Elsewhere, Refused, need
 from durable.helpers import log
-from durable.settings import ENV, PARALLEL, RUN_LIMIT_S, RUNS_KEPT, STARTS, STEPS
+from durable.settings import ENV, LOOK_S, MAIN, PARALLEL, RUN_LIMIT_S, RUNS_KEPT, STARTS, STEPS, WORKER_FUNCTION
 from durable.worktree import FAILURES, Workspaces
+
+# What S3 answers when another worker wrote the index first.
+RACED = ("PreconditionFailed", "ConditionalRequestConflict")
+# The variables of the worker that a run process reads in `settings.py`. Only a local run sets them.
+PLACE = ("VIS_GATEWAY_PORT", "VIS_WORKER_DIR")
 
 
 class Runs:
-    """The workflow runs. Only the worker that holds the lease writes them."""
+    """The workflow runs of one shard. Only the worker that holds the lease of the shard writes them."""
 
-    def __init__(self, release: str, environment: Callable[[], dict[str, str]], workspaces: Workspaces) -> None:
+    def __init__(self, release: str, environment: Callable[[], dict[str, str]], workspaces: Workspaces, shard: str = MAIN) -> None:
         """Read the index of the runs. `environment` returns the variables of a run process."""
-        self.release, self.environment, self.workspaces = release, environment, workspaces
+        self.release, self.environment, self.workspaces, self.shard = release, environment, workspaces, shard
         self.lock = threading.RLock()
         self.docs: dict[str, dict[str, Any]] = {}
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
         # The worker sets these after the gateway starts: the session group of the runs, and True while a turn runs in a session.
         self.group = ""
         self.busy: Callable[[str], bool] = lambda session: False
-        raw, _ = aws.get("runs/index.json")
-        self.index: list[dict[str, Any]] = json.loads(raw) if raw else []
+        # The index as this worker read or wrote it last, and the time of that look.
+        self.index: list[dict[str, Any]] = []
+        self.looked = 0.0
+        self.listing(is_fresh=True)
+
+    def listing(self, is_fresh: bool = False) -> list[dict[str, Any]]:
+        """Return the line of each run of each shard. Read the index again after LOOK_S."""
+        with self.lock:  # a write of this worker must not come between the read and the assignment
+            if is_fresh or time.time() - self.looked > LOOK_S:
+                raw, _ = aws.get("runs/index.json")
+                self.index, self.looked = (json.loads(raw) if raw else []), time.time()
+            return self.index
+
+    def mine(self) -> list[dict[str, Any]]:
+        """Return the line of each run of this shard. Only this worker changes them."""
+        return [line for line in self.index if (line.get("shard") or MAIN) == self.shard]
 
     def doc(self, run_id: str) -> dict[str, Any]:
-        """Return the one object of a run. Read it from S3 at its first use."""
+        """Return the one object of a run of this shard. Read it from S3 at its first use."""
         with self.lock:  # two callers must get the same object, or one of them loses its change
             if run_id not in self.docs:
                 raw, _ = aws.get(f"runs/{run_id}/run.json")
                 if raw is None:
                     raise Refused(404, "no such run")
-                self.docs[run_id] = json.loads(raw)
+                doc = json.loads(raw)
+                if (doc.get("shard") or MAIN) != self.shard:
+                    raise Elsewhere(doc.get("shard") or MAIN)
+                self.docs[run_id] = doc
             return self.docs[run_id]
 
     def copy(self, run_id: str) -> dict[str, Any]:
-        """Return a run as a copy that no other thread changes."""
+        """Return a run as a copy that no other thread changes. S3 has the run of another shard."""
         with self.lock:
-            return copy.deepcopy(self.doc(run_id))
+            if run_id in self.docs:
+                return copy.deepcopy(self.docs[run_id])
+        raw, _ = aws.get(f"runs/{run_id}/run.json")
+        if raw is None:
+            raise Refused(404, "no such run")
+        return json.loads(raw)
 
     def write(self, doc: dict[str, Any]) -> None:
         """Save a run and its line in the index."""
         aws.put(f"runs/{doc['id']}/run.json", json.dumps(doc).encode())
-        line = {key: doc.get(key) for key in ("id", "workflow", "title", "status", "created", "finished", "session_id")}
+        line = {key: doc.get(key) for key in ("id", "workflow", "title", "status", "created", "finished", "session_id", "shard")}
         line["activities"] = [[a["title"], a["status"]] for a in doc["activities"]]
-        self.index = [line] + [old for old in self.index if old["id"] != doc["id"]]
-        aws.put("runs/index.json", json.dumps(self.index[:RUNS_KEPT]).encode())
+        while True:
+            raw, etag = aws.get("runs/index.json")
+            index = ([line] + [old for old in (json.loads(raw) if raw else []) if old["id"] != doc["id"]])[:RUNS_KEPT]
+            try:
+                aws.put("runs/index.json", json.dumps(index).encode(), **({"IfMatch": etag} if etag else {"IfNoneMatch": "*"}))
+            except aws.ClientError as failure:
+                if failure.response["Error"]["Code"] not in RACED:
+                    raise
+                continue  # the worker of another shard wrote the index first
+            self.index, self.looked = index, time.time()
+            return
 
     def create(self, workflow: str, source: str, about: dict[str, Any], given: dict[str, Any], session: str | None = None, root: str | None = None) -> dict[str, Any]:
         """Record a new run with a copy of its source, and start it when a place is free.
 
-        Without a session, the run makes its own session in its own directory. With a
-        session, the run works in that session and in its directory.
+        Without a session, the run makes its own session in its own directory, and the
+        worker of a new shard works on it. With a session, the run works in that
+        session and in its directory: this worker owns the session.
         """
         known = {item["name"] for item in about["inputs"]}
         unknown = set(given) - known
@@ -82,10 +122,14 @@ class Runs:
             "title": about["title"],
             "input": given,
             "status": "queued",
+            # The shard whose worker works on the run.
+            "shard": self.shard if session else shards.fresh(),
             "created": time.time(),
             "started": None,
             "finished": None,
             "session_id": session,
+            # True when the run makes its own session. A new process makes that session again when the gateway lost it.
+            "own": session is None,
             "result": None,
             "error": None,
             "starts": 0,
@@ -102,12 +146,20 @@ class Runs:
             "sessions": [],
         }
         with self.lock:
-            if session and any(line["session_id"] == session and line["status"] in OPEN for line in self.index):
+            if session and any(line["session_id"] == session and line["status"] in OPEN for line in self.mine()):
                 raise Refused(409, "another run uses the session")
             aws.put(f"runs/{doc['id']}/workflow.py", source.encode())
-            self.docs[doc["id"]] = doc
+            # The front sends the calls for the run to its shard.
+            shards.assign(doc["id"], doc["shard"])
+            if doc["shard"] == self.shard:
+                self.docs[doc["id"]] = doc
+                self.write(doc)
+                self.fill()
+                return doc
             self.write(doc)
-            self.fill()
+        # The mark comes first: the schedule starts the worker when this start does not.
+        shards.mark(doc["shard"])
+        aws.start(WORKER_FUNCTION, kind="run", shard=doc["shard"])
         return doc
 
     def fill(self) -> None:
@@ -120,11 +172,13 @@ class Runs:
                     self.workspaces.mark(doc["root"])
                     if doc["status"] in LIVE:
                         self.finish(doc, "failed", error=f"the run process stopped with exit code {process.returncode}")
-            ready = [line["id"] for line in reversed(self.index) if line["status"] in LIVE and line["id"] not in self.processes]
+            ready = [line["id"] for line in reversed(self.mine()) if line["status"] in LIVE and line["id"] not in self.processes]
             for run_id in ready:
                 if len(self.processes) >= PARALLEL:
                     break
                 doc = self.doc(run_id)
+                if doc["status"] not in LIVE:
+                    continue
                 if doc["starts"] >= STARTS:
                     self.finish(doc, "failed", error=f"the run did not end in {RUN_LIMIT_S // 3600} hours of work ({STARTS} processes)")
                     continue
@@ -133,6 +187,7 @@ class Runs:
                     continue
                 # `settings.py` of the run process reads the group as RUN_GROUP.
                 env = {**self.environment(), "PYTHONPATH": ENV.get("PYTHONPATH", ""), "PYTHONUNBUFFERED": "1", "DURABLE_GROUP": self.group}
+                env.update((name, ENV[name]) for name in PLACE if name in ENV)
                 # A new run starts from the newest release, also when the worker is older.
                 release = worktree.current() or self.release
                 try:
@@ -176,9 +231,12 @@ class Runs:
                 doc.update(status="running", session_id=session, started=doc["started"] or now)
                 if doc.get("base") is None and type(event.get("base")) is int:
                     doc["base"] = event["base"]
+                # The record comes before the session owns a workspace: no other worker then removes the workspace.
+                shards.assign(session, self.shard)
                 self.workspaces.own(doc["root"], session)
             elif kind == "forked":  # a retry continues in a fork of the session
                 session = need(SESSION, event.get("session_id"), "the session id")
+                shards.assign(session, self.shard)
                 doc.setdefault("sessions", []).append(doc["session_id"])
                 doc.update(session_id=session, retry=False)
             elif kind == "activity_started" and seq is not None and isinstance(event.get("name"), str):
@@ -219,7 +277,7 @@ class Runs:
     def attach(self, session: str, name: str) -> None:
         """Show an attached file in the running activity of the run of a session."""
         with self.lock:
-            line = next((row for row in self.index if row["session_id"] == session and row["status"] == "running"), None)
+            line = next((row for row in self.mine() if row["session_id"] == session and row["status"] == "running"), None)
             if not line:
                 return
             doc = self.doc(line["id"])
@@ -276,13 +334,13 @@ class Runs:
             return doc
 
     def live(self) -> int:
-        """Return the number of runs that have, or wait for, a process."""
-        return sum(1 for line in self.index if line["status"] in LIVE)
+        """Return the number of runs of this shard that have, or wait for, a process."""
+        return sum(1 for line in self.mine() if line["status"] in LIVE)
 
     def roots(self) -> set[str]:
-        """Return the directory of each run that did not end."""
+        """Return the directory of each run of this shard that did not end."""
         with self.lock:
-            roots = [self.doc(line["id"])["root"] for line in self.index if line["status"] in OPEN]
+            roots = [self.doc(line["id"])["root"] for line in self.mine() if line["status"] in OPEN]
         return {os.path.realpath(root) for root in roots if root}
 
     def stop(self) -> None:

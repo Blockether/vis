@@ -23,6 +23,7 @@ from typing import Any
 
 from blockether.vis.engine import GatewayClient, GatewayError
 
+from durable import shards
 from durable.helpers import log, private, write_secret
 from durable.settings import (
     DRAIN_GRACE_S,
@@ -93,6 +94,11 @@ class Gateway:
         self.process: subprocess.Popen[bytes] | None = None
         # The SDK client of each thread: one client serves one thread.
         self._clients = threading.local()
+        # The sessions whose shard this worker recorded.
+        self._published: set[str] = set()
+        self._teams: dict[str, int] = {}
+        # The list rows that this worker recorded last.
+        self._shown = ""
 
     def start(self) -> None:
         """Write the configuration and the token, start the process and wait until it answers."""
@@ -161,6 +167,50 @@ class Gateway:
             if not page.get("has_more") or not page.get("next_cursor"):
                 return list(rows.values())
             query["after"] = page["next_cursor"]
+
+    def publish(self, shard: str) -> None:
+        """Record the shard of each session that the gateway got. The front sends the calls of a session to its shard."""
+        try:
+            rows = self.sessions()
+        except GatewayError as failure:
+            return log("no list of the sessions", repr(failure))
+        for row in rows:
+            self.route(row["id"], shard)
+            total = (row.get("team") or {}).get("total", 0)
+            if total > self._teams.get(row["id"], 0):
+                try:
+                    children = self.children(row["id"])
+                except GatewayError as failure:
+                    log("no transcript of the leader", row["id"], repr(failure))
+                    continue
+                for child in children:
+                    self.route(child, shard)
+                self._teams[row["id"]] = total
+        self.show(shard, rows)
+
+    def show(self, shard: str, rows: list[dict[str, Any]]) -> None:
+        """Record the list rows of the sessions when they changed. Each row gets the directory of the project and the name of its group."""
+        state = json.dumps([{name: value for name, value in row.items() if name != "server_time_ms"} for row in rows], sort_keys=True)
+        if state == self._shown:
+            return
+        try:
+            listed = self.client().get_session_groups(query={"archived": "include", "root": self.project})
+        except GatewayError as failure:
+            return log("no list of the groups", repr(failure))
+        names = {group["id"]: group["name"] for group in (listed or {}).get("groups") or []}
+        shards.show(shard, [{**row, "project_root": self.project, "group": names.get(row.get("group_id"))} for row in rows])
+        self._shown = state
+
+    def route(self, session: str, shard: str) -> None:
+        """Record the shard of a session one time."""
+        if session not in self._published:
+            shards.assign(session, shard)
+            self._published.add(session)
+
+    def children(self, leader: str) -> list[str]:
+        """Return the subagent sessions of a leader. The list of the sessions does not have them."""
+        turns = self.client().get_session_transcript(leader).get("turns") or []
+        return [agent["session_id"] for turn in turns for agent in turn.get("agents") or []]
 
     def roots(self) -> set[str]:
         """Return the directory of each session that has a turn. The gateway does not list an empty session."""

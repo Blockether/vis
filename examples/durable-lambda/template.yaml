@@ -53,6 +53,8 @@ Resources:
           # The files of a session that the pages show are temporary.
           - {Id: tmp, Status: Enabled, Prefix: tmp/, ExpirationInDays: 7}
           - {Id: relay, Status: Enabled, Prefix: relay/, ExpirationInDays: 1}
+          # A call that no worker answered.
+          - {Id: calls, Status: Enabled, Prefix: calls/, ExpirationInDays: 1}
           - {Id: outbox, Status: Enabled, Prefix: outbox/, ExpirationInDays: 1}
           - {Id: snapshots, Status: Enabled, Prefix: repo/snapshots/, ExpirationInDays: 30}
           - {Id: uploads, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}}
@@ -234,7 +236,8 @@ Resources:
         Statement:
           - Effect: Allow
             Principal: "*"
-            Action: [sqs:ReceiveMessage, sqs:DeleteMessage]
+            # The worker of a run sends a call to the worker of the people when that worker owns the session of the call.
+            Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:SendMessage]
             Resource: !GetAtt Queue.Arn
             Condition: {StringEquals: {aws:PrincipalAccount: !Ref AWS::AccountId}}
 
@@ -307,12 +310,20 @@ Resources:
                 Action: ssm:GetParameter
                 Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/webhook-secret"
               - {Effect: Allow, Action: sqs:SendMessage, Resource: !GetAtt Queue.Arn}
-              - {Effect: Allow, Action: s3:GetObject, Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/relay/*"]}
-              - {Effect: Allow, Action: s3:PutObject, Resource: !Sub "${Bucket.Arn}/relay/*"}
+              # The lease of each shard, the shard of a session or of a run and the answers of the workers (see `durable/shards.py`).
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/shards/*", !Sub "${Bucket.Arn}/routes/*", !Sub "${Bucket.Arn}/lists/*", !Sub "${Bucket.Arn}/relay/*"]
+              # The calls for the worker of a shard, and their bell.
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: [!Sub "${Bucket.Arn}/relay/*", !Sub "${Bucket.Arn}/calls/*", !Sub "${Bucket.Arn}/bells/*"]
+              # The schedule removes the mark of a shard that has no work.
+              - {Effect: Allow, Action: s3:DeleteObject, Resource: !Sub "${Bucket.Arn}/pending/*"}
               - Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
-                Condition: {StringLike: {s3:prefix: [lease.json, relay/*]}}
+                Condition: {StringLike: {s3:prefix: [lease.json, relay/*, shards/*, routes/*, lists/*, pending/*]}}
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
@@ -411,6 +422,13 @@ Resources:
                   - !Sub "${Bucket.Arn}/attached/*"
                   - !Sub "${Bucket.Arn}/tmp/*"
                   - !Sub "${Bucket.Arn}/work/*"
+                  # The objects of the shards: see `durable/shards.py`.
+                  - !Sub "${Bucket.Arn}/shards/*"
+                  - !Sub "${Bucket.Arn}/routes/*"
+                  - !Sub "${Bucket.Arn}/pending/*"
+                  - !Sub "${Bucket.Arn}/calls/*"
+                  - !Sub "${Bucket.Arn}/bells/*"
+                  - !Sub "${Bucket.Arn}/lists/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               # The repo function is the only writer of the workflows.
               - Effect: Allow
@@ -424,6 +442,9 @@ Resources:
                   - !Sub "${Bucket.Arn}/relay/*"
                   - !Sub "${Bucket.Arn}/tmp/*"
                   - !Sub "${Bucket.Arn}/work/*"
+                  - !Sub "${Bucket.Arn}/routes/*"
+                  - !Sub "${Bucket.Arn}/pending/*"
+                  - !Sub "${Bucket.Arn}/calls/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
                 Action: s3:PutObject
@@ -434,10 +455,10 @@ Resources:
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
                 Condition:
-                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*, work/*]}
+                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*, work/*, shards/*, routes/*, pending/*, calls/*, bells/*, lists/*]}
                   StringEquals: {aws:SourceVpc: !Ref Vpc}
               - Effect: Allow
-                Action: [sqs:ReceiveMessage, sqs:DeleteMessage]
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:SendMessage]
                 Resource: !GetAtt Queue.Arn
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
@@ -483,8 +504,9 @@ Resources:
       # `VIS_LIFETIME_S` of `durable/settings.py` has the same value. Change the two together.
       Timeout: 900
       EphemeralStorage: {Size: 4096}
-      # One worker holds the lease. The others are a handoff or a start that ends at once.
-      ReservedConcurrentExecutions: 5
+      # One worker holds the lease of each shard: one for the people and one for each run that works.
+      # The others are a handoff or a start that ends at once. A run that gets no instance waits for one.
+      ReservedConcurrentExecutions: 20
       LoggingConfig: {LogGroup: !Ref WorkerLog}
       VpcConfig: {SubnetIds: [!Ref PrivateSubnet], SecurityGroupIds: [!Ref FunctionGroup]}
       FileSystemConfigs: [{Arn: !GetAtt WorkerAccess.Arn, LocalMountPath: /mnt/efs}]
