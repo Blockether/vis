@@ -137,6 +137,8 @@ LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - MARGIN
 IDLE_S = int(ENV.get("VIS_IDLE_S", "300"))
 # A worker of a run that only answered reads stops after READ_IDLE_S: Vis web reads the first sessions of its list at each load.
 READ_IDLE_S = min(IDLE_S, 60)
+# At its end a worker records the answers to at most SEEN reads that a tab repeats, each of at most SEEN_LIMIT bytes (see `shards.py`).
+SEEN, SEEN_LIMIT = 100, 500_000
 # A worker starts, or stays alive, when an automation is due in DUE_S.
 DUE_S = 120
 # A worker that stops without a release loses the lease after LEASE_TTL.
@@ -157,9 +159,11 @@ CALLS = 64
 ANSWER_S = 55
 # A relayed event stream ends after STREAM_S; the client connects again from its cursor.
 STREAM_S = int(ENV.get("VIS_STREAM_S", "870"))
-# The front holds the event stream of a run shard that has no worker. It looks for a
+# The front holds the event stream of a shard that has no worker. It looks for a
 # worker each HOLD_S and sends a comment each PING_S, as the gateway does.
 HOLD_S, PING_S = 1, 20
+# A worker has JOIN_S to start an event stream. A worker that stops does not take the call, so the front holds the stream.
+JOIN_S = 10
 # An event stream collects its bytes for COLLECT_S, writes one S3 object, then waits PAUSE_S.
 COLLECT_S, PAUSE_S = 0.2, 0.15
 # The front starts the worker of a shard at most each WAKE_S.
@@ -207,3 +211,5 @@ WORKFLOW_LIMIT, ATTACHED_LIMIT = 200_000, 2_000_000
 COMMENT_LIMIT = 4_000
 # The worker keeps the directory of a session for HOME_S before it asks the gateway again.
 HOME_S = 60
+# The search of the front reads the last TEXT_TURNS turns of a session of a run, and TEXT_LIMIT characters of each request and reply.
+TEXT_TURNS, TEXT_LIMIT = 100, 4_000

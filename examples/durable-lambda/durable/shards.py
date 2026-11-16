@@ -11,6 +11,8 @@ pending/<shard>           a shard that can have work: the schedule starts its wo
 calls/<shard>/<id>        a call for the worker of a shard. `main` gets its calls from the queue
 bells/<shard>             the id of the last call of a shard
 lists/<shard>             the list rows of the sessions of a shard: the front shows them and starts no worker
+texts/<shard>             the requests and the replies of the sessions of a shard: the front searches them and starts no worker
+seen/<shard>              the answers of the last worker of a shard to the reads that a tab repeats: the front gives them and starts no worker
 
 A queue for each shard would stay in the account after its run, so the calls of a
 shard are S3 objects. The worker reads the one bell object, which costs less than a list.
@@ -29,19 +31,27 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from durable import aws, wire
-from durable.domain import Answer
+from durable.domain import SESSION, Answer
 from durable.helpers import log
-from durable.settings import ANSWER_S, INBOX_LIST_S, INBOX_S, LEASE, MAIN, QUEUE, ROUTE_S, WAKE_S, WORKER_FUNCTION
+from durable.settings import ANSWER_S, HOLD_S, INBOX_LIST_S, INBOX_S, LEASE, MAIN, QUEUE, ROUTE_S, WAKE_S, WORKER_FUNCTION
 
 # The form of the name of a shard that is not `main`.
 SHARD = re.compile(r"[0-9a-f]{32}")
+# The reads that a tab of Vis web makes without a person, at its load, when its event stream starts again and each 30 s:
+# the health, the list, its groups, one session with its views and its model, the settings and the parts of the machine.
+QUIET = re.compile(
+    r"/healthz|/v1/(?:sessions|session-groups|settings(?:/[a-z_]+)?|apps|router|mcp/servers|devices|automations|capabilities|web/brand)/?"
+    rf"|/v1/sessions/{SESSION.pattern}(?:/views/[a-z]+|/model)?/?"
+)
+# The time of the gateway in an answer.
+CLOCK = re.compile(rb'("server_time_ms":\s*)\d+')
 # The shard of each id that S3 named, the time of each id that S3 did not name and the time of the last start of each worker.
 _routes: dict[str, str] = {}
 _missed: dict[str, float] = {}
 _woke: dict[str, float] = {}
-# The list rows of each shard with the version of their object, and the time of the last look at S3.
-_lists: dict[str, tuple[Any, list[dict[str, Any]]]] = {}
-_looked = 0.0
+# For the list rows and for the texts: the object of each shard with its version, and the time of the last look at S3.
+_shown: dict[str, dict[str, tuple[Any, Any]]] = {"lists/": {}, "texts/": {}}
+_looked: dict[str, float] = {}
 _lock = threading.Lock()
 
 
@@ -130,23 +140,74 @@ def show(shard: str, rows: list[dict[str, Any]]) -> None:
     aws.put(f"lists/{shard}", json.dumps(rows).encode())
 
 
-def shown() -> list[dict[str, Any]]:
-    """Return the list rows of the sessions of each shard that is not `main`. S3 gives only the objects that changed."""
-    global _looked
+def tell(shard: str, texts: dict[str, list[list[Any]]]) -> None:
+    """Record the texts of the sessions of a shard: for each session, the side, the time and the text of each request and reply."""
+    aws.put(f"texts/{shard}", json.dumps(texts).encode())
+
+
+def recorded(prefix: str) -> list[Any]:
+    """Return the object of each shard below `lists/` or `texts/`. S3 gives only the objects that changed."""
+    known = _shown[prefix]
     with _lock:
-        if time.time() - _looked < ROUTE_S:
-            return [row for _, rows in _lists.values() for row in rows]
-    found = {item["Key"]: item.get("ETag") or (item["LastModified"], item["Size"]) for item in aws.keys("lists/")}
+        if time.time() - _looked.get(prefix, 0.0) < ROUTE_S:
+            return [value for _, value in known.values()]
+    found = {item["Key"]: item.get("ETag") or (item["LastModified"], item["Size"]) for item in aws.keys(prefix)}
     with _lock:
-        changed = [key for key, version in found.items() if key not in _lists or _lists[key][0] != version]
+        changed = [key for key, version in found.items() if key not in known or known[key][0] != version]
     with ThreadPoolExecutor(8) as pool:
-        read = list(pool.map(lambda key: json.loads(aws.get(key)[0] or b"[]"), changed))
+        read = list(pool.map(lambda key: json.loads(aws.get(key)[0] or b"null"), changed))
     with _lock:
-        for key in set(_lists) - set(found):
-            del _lists[key]
-        _lists.update({key: (found[key], rows) for key, rows in zip(changed, read, strict=True)})
-        _looked = time.time()
-        return [row for _, rows in _lists.values() for row in rows]
+        for key in set(known) - set(found):
+            del known[key]
+        known.update({key: (found[key], value) for key, value in zip(changed, read, strict=True)})
+        _looked[prefix] = time.time()
+        return [value for _, value in known.values()]
+
+
+def shown() -> list[dict[str, Any]]:
+    """Return the list rows of the sessions of each shard that is not `main`."""
+    return [row for rows in recorded("lists/") for row in rows or []]
+
+
+def told() -> dict[str, list[list[Any]]]:
+    """Return the texts of each session of each shard that is not `main`."""
+    return {session: texts for one in recorded("texts/") for session, texts in (one or {}).items()}
+
+
+# -- the reads that a tab repeats ----------------------------------------------------
+
+
+def quiet(method: str, target: str) -> bool:
+    """Return True for a read that a tab makes without a person. Such a read does not keep a worker, and does not start one when the record has its answer."""
+    return method == "GET" and bool(QUIET.fullmatch(target.partition("?")[0]))
+
+
+def keep(shard: str, answers: dict[str, list[Any]]) -> None:
+    """Record the answers of a worker that stops: for each read, its head and its body.
+
+    Without a worker nothing changes the sessions of a shard, so the record stays true.
+    The next worker starts with an empty record and with the reads of this record (see `reads`).
+    """
+    aws.put(f"seen/{shard}", json.dumps(answers).encode())
+
+
+def reads(shard: str) -> list[str]:
+    """Return the reads of the record of a shard, the newest last.
+
+    A tab asks most of them only when its event stream starts again, which is when a
+    worker stops. So the next worker must record them too, although no tab asked it.
+    """
+    raw, _ = aws.get(f"seen/{shard}")
+    return list(json.loads(raw)) if raw else []
+
+
+def kept(shard: str, target: str) -> bytes | None:
+    """Return the recorded answer to a read as part 0 of an answer, with the time of now, or None."""
+    raw, _ = aws.get(f"seen/{shard}")
+    found = json.loads(raw).get(target) if raw else None
+    if not found:
+        return None
+    return wire.frame(found[0], CLOCK.sub(rb"\g<1>%d" % int(time.time() * 1000), base64.b64decode(found[1])))
 
 
 # -- the calls of a shard ------------------------------------------------------------
@@ -178,15 +239,25 @@ def wake(shard: str) -> None:
         aws.start(WORKER_FUNCTION, kind="wake", shard=shard)
 
 
-def parts(rid: str, deadline: float, shard: str, wakes: bool = True) -> Iterator[tuple[bytes, bool]]:
-    """Yield each part of the answer of a call and whether it is the last part. `wakes` starts a worker for the call."""
-    index, wait, started = 0, 0.03, time.time()
+def parts(rid: str, deadline: float, shard: str, wakes: bool = True, patience: float = ANSWER_S, read: str | None = None) -> Iterator[tuple[bytes, bool]]:
+    """Yield each part of the answer of a call and whether it is the last part.
+
+    `wakes` starts a worker for the call, and the first part has `patience` seconds to come.
+    A worker that stops does not take a call. `read` is the target of a read that a
+    tab repeats: the record of that worker then has its answer.
+    """
+    index, wait, started, looked = 0, 0.03, time.time(), time.time()
     while time.time() < deadline:
         chunk, _ = aws.get(f"relay/{rid}/{index}")
         if chunk is None:
             if index == 0:
-                if time.time() - started > ANSWER_S:
+                if time.time() - started > patience:
                     return
+                if read and time.time() - looked > HOLD_S:
+                    looked, found = time.time(), kept(shard, read)
+                    if found:
+                        yield found, True
+                        return
                 if wakes:
                     wake(shard)
             time.sleep(wait)

@@ -61,7 +61,9 @@ Lambda base image.
   with a conditional write and saves checkpoints of its Vis home directory. Before the
   Lambda time limit, it gives its work to a new worker. Without work, it stops: nothing
   runs when nobody uses the stack. A run that makes its own session gets its own worker,
-  so a run does not wait for another run. Vis web shows all the sessions in one list.
+  so a run does not wait for another run. Vis web shows all the sessions in one list
+  and searches their titles, requests and replies. An open tab of Vis web that nobody
+  uses keeps no worker: `front` answers its reads from the record of the last worker.
 - **A commit on `main` becomes a release.** A new session and a new run get a clone of
   the newest release. `durable.resync()` puts the work of a session on a newer release.
 - **A session publishes with `durable.publish(message)`.** The push goes to `main` when
@@ -302,8 +304,9 @@ of samples. The times of a call are from one computer in Europe.
 | Image in ECR | 1.58 GB compressed, 3.64 GB on disk. The speech model is 0.49 GB of the compressed size |
 | Cold start of a function (`Init Duration`) | `front` 0.3 to 0.4 s, `worker` 0.6 to 1.2 s, `llm` 0.4 to 0.6 s, `repo` 0.4 s, `sync` 0.7 s. The first start after a new image: 1.4 s |
 | Worker start, from the invocation to a ready gateway | 1.9 to 2.1 s: state from S3 0.1 s, project 0.1 s, Vis gateway 1.7 to 1.9 s |
-| First answer when no worker runs | 3.9 to 4.1 s for `GET /healthz` through `front`, SQS, `worker` and S3 |
-| Answer when a worker runs | 0.3 s for the same call and for `GET /dashboard/api/status` |
+| First answer when no worker runs | 3.3 s for `GET /dashboard/api/status` through `front`, SQS, `worker` and S3 |
+| Answer when a worker runs | 0.3 s for the same call and for `GET /healthz` |
+| Read of an open tab of Vis web when no worker runs | 0.2 s from the record of the last worker. No worker starts |
 | Four runs that start at the same time | Each run has its own worker. The first step of each run starts 7 to 8 s after the start |
 | First answer from the session of a run whose worker stopped | 3.2 s, then 0.4 s |
 | Decision at a gate when the worker of the run stopped | The answer comes in 1.9 s. The run continues from its checkpoint in S3 |
@@ -330,7 +333,7 @@ tokens and 15 USD for a million output tokens. Your provider sets the real price
 | Part | Cost |
 | --- | --- |
 | Stack without work | About 18 USD each month: 17.52 USD for the two interface endpoints, 0.2 to 0.9 USD for the five images in ECR and 0.1 USD for the two schedules. EFS, S3 and the logs cost less than 0.02 USD |
-| Worker | 0.19 USD for each hour that a worker lives. Each run has its own worker. A call to a stack without a worker costs 0.02 USD, for the 300 s that the worker stays. A read of the session of a run whose worker stopped costs 0.003 USD, for 60 s |
+| Worker | 0.19 USD for each hour that a worker lives. Each run has its own worker. A call to a stack without a worker costs 0.02 USD, for the 300 s that the worker stays. A read of the session of a run whose worker stopped costs 0.003 USD, for 60 s. An open tab of Vis web that nobody uses starts no worker |
 | Run of `song_factory` | AWS 0.06 to 0.09 USD. Model 2 to 5 USD: 0.3 to 0.9 million input tokens and 17,000 to 31,000 output tokens |
 | Run of `remix_and_publish` | AWS 0.04 USD. Model 3 USD: 0.5 million input tokens and 19,000 output tokens |
 | Run of `studio_review` | AWS 0.08 USD. Model 2 USD: 0.3 million input tokens and 24,000 output tokens |

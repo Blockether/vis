@@ -33,6 +33,9 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
     calls, then park the turns, save the state and release the lease.
     """
     started, shard = time.time(), held.shard
+    # The record of the last worker is true only until this worker changes a session.
+    known = shards.reads(shard)
+    shards.keep(shard, {})
     core.restore(held.data.get("state"))
     restored = time.time()
     root, release = registry.project(shard)
@@ -45,7 +48,7 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
     engine.start()
     registry.register(engine, api)
     inbox = shards.Inbox(shard)
-    relay = Relay(engine, api, inbox)
+    relay = Relay(engine, api, inbox, known)
     pool = ThreadPoolExecutor(max_workers=CALLS)
     saved, renewed, checked, published = core.fingerprint(), 0.0, time.time(), 0.0
     # One thread at a time copies the changed work directories to S3, and one records the shard of the new sessions.
@@ -79,9 +82,9 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
             if now - started > LIFETIME or context.remaining_s() < MARGIN:
                 reason = "handoff"
                 break
-            # An idle worker stops, unless an automation is due soon.
-            # An event stream alone does not keep the worker of a run: the front holds the stream of a shard without a worker.
-            busy = relay.open(streams=shard == MAIN) or running or api.runs.live()
+            # An idle worker stops, unless an automation is due soon. An event stream and a read that a tab repeats
+            # do not keep a worker: the front holds the stream and answers the read (see `shards.py`).
+            busy = relay.open() or running or api.runs.live()
             worked = worked or relay.wrote or bool(running or api.runs.live())
             if not busy and now - relay.last > (IDLE_S if shard == MAIN or worked else READ_IDLE_S) and not (due and due - now < DUE_S):
                 break
@@ -95,6 +98,9 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
     # The event streams stay open while the gateway drains: a client sees the end of a
     # turn that completes now. A later gateway does not send those events again.
     parked = engine.drain(max(5.0, min(DRAIN_S, context.remaining_s() - LAST_SAVE_S)))
+    if not (parked or relay.open()):
+        # Nothing changes the sessions after this point, so the front can answer the reads of an open tab.
+        relay.record()
     engine.stop()
     relay.settle(SETTLE_S)
     pool.shutdown(wait=False, cancel_futures=True)

@@ -313,7 +313,7 @@ Resources:
               # The lease of each shard, the shard of a session or of a run and the answers of the workers (see `durable/shards.py`).
               - Effect: Allow
                 Action: s3:GetObject
-                Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/shards/*", !Sub "${Bucket.Arn}/routes/*", !Sub "${Bucket.Arn}/lists/*", !Sub "${Bucket.Arn}/relay/*"]
+                Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/shards/*", !Sub "${Bucket.Arn}/routes/*", !Sub "${Bucket.Arn}/lists/*", !Sub "${Bucket.Arn}/texts/*", !Sub "${Bucket.Arn}/seen/*", !Sub "${Bucket.Arn}/relay/*"]
               # The calls for the worker of a shard, and their bell.
               - Effect: Allow
                 Action: s3:PutObject
@@ -323,7 +323,7 @@ Resources:
               - Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
-                Condition: {StringLike: {s3:prefix: [lease.json, relay/*, shards/*, routes/*, lists/*, pending/*]}}
+                Condition: {StringLike: {s3:prefix: [lease.json, relay/*, shards/*, routes/*, lists/*, texts/*, seen/*, pending/*]}}
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
@@ -429,6 +429,8 @@ Resources:
                   - !Sub "${Bucket.Arn}/calls/*"
                   - !Sub "${Bucket.Arn}/bells/*"
                   - !Sub "${Bucket.Arn}/lists/*"
+                  - !Sub "${Bucket.Arn}/texts/*"
+                  - !Sub "${Bucket.Arn}/seen/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               # The repo function is the only writer of the workflows.
               - Effect: Allow
@@ -455,7 +457,7 @@ Resources:
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
                 Condition:
-                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*, work/*, shards/*, routes/*, pending/*, calls/*, bells/*, lists/*]}
+                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*, work/*, shards/*, routes/*, pending/*, calls/*, bells/*, lists/*, texts/*, seen/*]}
                   StringEquals: {aws:SourceVpc: !Ref Vpc}
               - Effect: Allow
                 Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:SendMessage]

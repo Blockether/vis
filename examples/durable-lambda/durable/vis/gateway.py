@@ -39,6 +39,8 @@ from durable.settings import (
     PRIVATE_TMP,
     PROVIDER,
     RUNS_GROUP,
+    TEXT_LIMIT,
+    TEXT_TURNS,
     TOKEN_FILE,
     VIS_BINARY,
     VIS_PYTHON_NATIVE,
@@ -99,6 +101,9 @@ class Gateway:
         self._teams: dict[str, int] = {}
         # The list rows that this worker recorded last.
         self._shown = ""
+        # The texts of each session that this worker recorded, and the last turn that they have.
+        self._texts: dict[str, list[list[Any]]] = {}
+        self._told: dict[str, tuple[Any, Any]] = {}
 
     def start(self) -> None:
         """Write the configuration and the token, start the process and wait for its extensions."""
@@ -145,16 +150,20 @@ class Gateway:
         head = {"authorization": f"Bearer {self.token}", "content-type": "application/json"}
         return {**head, "x-vis-protocol": self.protocol} if self.protocol else head
 
-    def call(self, method: str, path: str, body: Any = None, timeout: float = 30) -> tuple[int, Any]:
-        """Call a route that the SDK does not have. Return the status and the JSON answer."""
+    def read(self, method: str, path: str, body: Any = None, timeout: float = 30) -> tuple[int, list[list[str]], bytes]:
+        """Call the gateway without the SDK. Return the status, the headers and the bytes of the answer."""
         connection = http.client.HTTPConnection(LOOPBACK, GATEWAY_PORT, timeout=timeout)
         try:
             connection.request(method, path, None if body is None else json.dumps(body), self.headers())
             answer = connection.getresponse()
-            raw = answer.read()
-            return answer.status, (json.loads(raw) if raw else None)
+            return answer.status, [[name, value] for name, value in answer.getheaders()], answer.read()
         finally:
             connection.close()
+
+    def call(self, method: str, path: str, body: Any = None, timeout: float = 30) -> tuple[int, Any]:
+        """Call a route that the SDK does not have. Return the status and the JSON answer."""
+        status, _, raw = self.read(method, path, body, timeout)
+        return status, (json.loads(raw) if raw else None)
 
     # -- the sessions -------------------------------------------------------------
 
@@ -192,6 +201,7 @@ class Gateway:
                     self.route(child, shard)
                 self._teams[row["id"]] = total
         self.show(shard, rows)
+        self.tell(shard, rows)
 
     def show(self, shard: str, rows: list[dict[str, Any]]) -> None:
         """Record the list rows of the sessions when they changed. Each row gets the directory of the project and the name of its group."""
@@ -205,6 +215,28 @@ class Gateway:
         names = {group["id"]: group["name"] for group in (listed or {}).get("groups") or []}
         shards.show(shard, [{**row, "project_root": self.project, "group": names.get(row.get("group_id"))} for row in rows])
         self._shown = state
+
+    def tell(self, shard: str, rows: list[dict[str, Any]]) -> None:
+        """Record the requests and the replies of each session whose last turn changed. The search of the front reads them."""
+        changed = bool(set(self._texts) - {row["id"] for row in rows})
+        for row in rows:
+            mark = (row.get("modified_at"), row.get("turn_count"))
+            if self._told.get(row["id"]) == mark or row.get("status") == "running":
+                continue
+            try:
+                turns = self.client().get_session_transcript(row["id"], query={"limit": TEXT_TURNS, "iteration_limit": 1}).get("turns") or []
+            except GatewayError as failure:
+                log("no transcript of the session", row["id"], repr(failure))
+                continue
+            texts: list[list[Any]] = []
+            for turn in turns:
+                reply = "\n".join(block.get("markdown") or "" for block in turn.get("content") or [] if block.get("type") == "prose")
+                answered = ((turn.get("iterations") or [{}])[-1]).get("created_at") or turn.get("created_at")
+                texts += [[side, at, text[:TEXT_LIMIT]] for side, at, text in (("request", turn.get("created_at"), turn.get("request") or ""), ("reply", answered, reply)) if text.strip()]
+            self._texts[row["id"]], self._told[row["id"]], changed = texts, mark, True
+        if changed:
+            self._texts = {row["id"]: self._texts[row["id"]] for row in rows if row["id"] in self._texts}
+            shards.tell(shard, self._texts)
 
     def route(self, session: str, shard: str) -> None:
         """Record the shard of a session one time."""

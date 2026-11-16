@@ -26,6 +26,8 @@ the standard library. It supports plain answers and streamed answers.
 | `calls/<shard>/<id>` | A call for the worker of a shard. `main` gets its calls from SQS | 1 day |
 | `bells/<shard>` | The id of the last call of a shard | permanent |
 | `lists/<shard>` | The list rows of the sessions of a shard, for the session list of Vis web | permanent |
+| `texts/<shard>` | The requests and the replies of the sessions of a shard, for the search of Vis web | permanent |
+| `seen/<shard>` | The answers of the last worker of a shard to the reads of an open tab. Empty while a worker runs | permanent |
 | `state/<worker>/<n>.tar.gz` | A checkpoint of the Vis home directory of a shard: sessions, transcripts, attached files, settings | the last one of each shard; a checkpoint of a failed worker stays |
 | `workflows/<name>.py` | The source of a workflow: a copy of the file `workflows/<name>.py` on `main` of the repository. Only `repo` writes it | permanent |
 | `runs/index.json` | One line for each of the 300 newest runs | permanent |
@@ -63,8 +65,10 @@ another run, and a run does not slow the sessions of people.
 
 - `front` reads `routes/<id>` for the session or the run of a call and sends the call to the worker of that shard. `main` gets its calls from SQS. Another shard gets its calls as objects in `calls/`, because a queue for each run would stay in the account.
 - A call for the settings or the MCP servers of a session, or for a reload of its extensions, goes to the worker of that session. `main` answers for the machine, a project and a group.
-- `front` adds the rows of `lists/` to the session list of `main`, so the list starts no worker. A row gets the project and the group that `main` has for the same directory and the same group name.
-- `front` joins the event streams of the shards whose sessions a browser follows. An event stream does not keep the worker of a run: `front` holds the stream while the shard has no worker, and joins the worker again when a call starts one.
+- `front` adds the rows of `lists/` to each page of the session list and of a search of `main`, so the list starts no worker. A row gets the project and the group that `main` has for the same directory and the same group name. The rows are in the order of the gateway, and the cursor of a page names the place in `main` and in the other shards.
+- A search finds a run session by its title, and by a request or a reply. Each worker records these texts in `texts/`, and `front` searches them with the rules of the gateway.
+- `front` joins the event streams of the shards whose sessions a browser follows. An event stream does not start and does not keep a worker: `front` holds the stream while a shard has no worker, and joins the worker when a call starts one. When a worker stops, the stream ends and Vis web connects again.
+- Vis web reads the list, the session that a tab shows, its settings and the parts of the machine again each 30 s and when its event stream starts again. Such a read does not keep a worker. A worker that stops records its answers to these reads in `seen/`, and `front` answers from the record while the shard has no worker. Thus an open tab that nobody uses keeps no worker and starts none.
 - The worker of a run stops after 300 s without work, and after 60 s when it only answered reads. A call to its session, a decision at its gate or the schedule starts a new worker from the checkpoint.
 
 The limits:
@@ -73,12 +77,11 @@ The limits:
 - A session that a person starts does not get its own shard. Vis keeps the project, the groups and the settings in each home directory, and `front` joins them only for the session list.
 - The settings of the machine, of a project and of a group apply to the sessions of `main`. A run session has only its own session settings.
 - A run session stays in the group of its workflow: a move to another group gives `unknown session group`. The archive of all the sessions of a project or of a search does not archive a run session: archive it by itself.
-- The lease, the last checkpoint and the list of a shard stay in the bucket after the run.
-- A search finds a run session by its title, not by its transcript. The first page of the session list and of a search has all the run sessions: the later pages have only the sessions of `main`. The fleet feed of the event stream also has only the sessions of `main`.
+- The lease, the last checkpoint, the list, the texts and the record of the reads of a shard stay in the bucket after the run.
+- The search of the texts of a run session uses the last 100 turns, the first 4,000 characters of each request and of each reply, and no thinking text. The fleet feed of the event stream has only the sessions of `main`.
+- The record has at most 100 reads, and only reads that a worker of the shard answered before. Each other read starts the worker, for example the transcript of a session that a person opens.
 - Vis web shows a new run session at its next read of the list, 30 s at most. The status of a run session in the list is the last one that its worker recorded.
 - After a failure of a worker, the schedule starts a new worker in about 160 s.
-- The worker of `main` cannot know that a browser left an event stream. It lives until the stream ends, 870 s at most, and then for its time without work.
-- Vis web reads the session that a tab shows each 30 s. Thus the worker of a run lives while a tab shows its session.
 
 ## A commit becomes the project of the next worker
 

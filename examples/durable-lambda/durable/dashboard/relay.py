@@ -23,7 +23,7 @@ from durable.dashboard.web import RELAY_POLICY, RELAYED, SECURITY, Request, erro
 from durable.domain import RUN, SESSION
 from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
-from durable.settings import ANSWER_S, HOLD_S, LIFETIME, MAIN, MESSAGE_LIMIT, PING_S, STREAM_S
+from durable.settings import ANSWER_S, HOLD_S, JOIN_S, LIFETIME, MAIN, MESSAGE_LIMIT, PING_S, STREAM_S
 
 # A call for one session, and a call that changes one run. Each other call goes to `main`:
 # a look at a run reads S3, so it does not start the worker of the run.
@@ -83,8 +83,16 @@ def known(request: Request, shard: str) -> Request:
     return dataclasses.replace(request, query=query, body=body, headers={k: v for k, v in request.headers.items() if k != "content-length"})
 
 
-def call(request: Request, shard: str, deadline: float, wakes: bool = True) -> Iterator[tuple[bytes, bool]]:
-    """Send a call to the worker of a shard. Return the parts of its answer. `wakes` starts a worker for the call."""
+def call(request: Request, shard: str, deadline: float, wakes: bool = True, patience: float = ANSWER_S) -> Iterator[tuple[bytes, bool]]:
+    """Send a call to the worker of a shard. Return the parts of its answer.
+
+    `wakes` starts a worker for the call, and the worker has `patience` seconds to start its answer.
+    A read that a tab repeats gets the record of a shard whose worker stopped, so it starts no worker (see `shards.keep`).
+    """
+    read = request.target if shards.quiet(request.method, request.target) else None
+    found = shards.kept(shard, read) if read else None
+    if found:
+        return iter([(found, True)])
     rid = str(uuid.uuid4())
     message: dict[str, Any] = {
         "id": rid,
@@ -92,7 +100,7 @@ def call(request: Request, shard: str, deadline: float, wakes: bool = True) -> I
         "path": request.target,
         "deadline": deadline,
         # After this time no client waits for the answer, so the worker drops the call.
-        "answer_by": time.time() + ANSWER_S,
+        "answer_by": time.time() + patience,
         # The worker adds its own gateway token: a token of the caller never reaches the gateway.
         "headers": {k: v for k, v in request.headers.items() if k not in wire.HOP | {"cookie", "authorization"} and not k.startswith("x-amz")},
     }
@@ -102,7 +110,7 @@ def call(request: Request, shard: str, deadline: float, wakes: bool = True) -> I
     else:
         message["body"] = base64.b64encode(request.body).decode()
     shards.send(shard, message)
-    return shards.parts(rid, deadline, shard, wakes)
+    return shards.parts(rid, deadline, shard, wakes, patience, read)
 
 
 def split(request: Request) -> list[tuple[str, Request, bool]]:
@@ -121,7 +129,7 @@ def split(request: Request) -> list[tuple[str, Request, bool]]:
     headers = {name: value for name, value in request.headers.items() if name != "accept-encoding"}
     if scope == "fleet" or not groups or (len(groups) == 1 and (MAIN in groups or scope != "both")):
         shard = next(iter(groups), MAIN) if scope != "fleet" else MAIN
-        return [(shard, request if shard == MAIN else dataclasses.replace(request, headers=headers), False)]
+        return [(shard, dataclasses.replace(request, headers=headers), False)]
     calls = []
     for shard, tokens in groups.items():
         query = [(name, ",".join(tokens) if name == "sids" else value) for name, value in fields if name != "scope" or shard == MAIN]
@@ -154,8 +162,8 @@ def merged(calls: list[tuple[str, Request, bool]], deadline: float) -> HttpStrea
     when its worker answers. It ends when one stream ends: the client connects again
     with its cursors, and each worker continues from them.
 
-    An event stream alone does not start the worker of a run. The front holds the
-    stream of such a shard until a call starts its worker, then the stream joins.
+    An event stream alone does not start and does not keep a worker. The front holds
+    the stream of a shard without a worker until a call starts its worker, then the stream joins.
     """
     # The head of a stream, complete events of it, or None for its end.
     found: queue.Queue[dict[str, Any] | bytes | None] = queue.Queue()
@@ -163,16 +171,21 @@ def merged(calls: list[tuple[str, Request, bool]], deadline: float) -> HttpStrea
     def pump(shard: str, request: Request, is_fleet: bool) -> None:
         """Read the stream of one shard and give its complete events to the answer."""
         try:
-            if shard != MAIN and not shards.live(shard):
-                found.put(HELD)
-                while not shards.live(shard):
-                    if time.time() > deadline - HOLD_S:
+            part = None
+            while part is None:
+                if not shards.live(shard):
+                    found.put(HELD)
+                    while not shards.live(shard):
+                        if time.time() > deadline - HOLD_S:
+                            return
+                        time.sleep(HOLD_S)
+                source = call(request, shard, deadline, wakes=False, patience=JOIN_S)
+                part = next(source, None)
+                if part is None:
+                    # The worker stops or starts: it did not take the call.
+                    found.put(HELD)
+                    if time.time() > deadline - JOIN_S:
                         return
-                    time.sleep(HOLD_S)
-            source = call(request, shard, deadline, wakes=shard == MAIN)
-            part = next(source, None)
-            if part is None:
-                return
             head, pending = wire.unframe(part[0])
             found.put(head)
             while head["status"] == 200:
@@ -233,17 +246,14 @@ def relay(request: Request, context: Context) -> HttpStream:
     """Send the call to the worker of its shard and stream its answer."""
     stream = "text/event-stream" in request.headers.get("accept", "")
     deadline = time.time() + min(STREAM_S if stream else LIFETIME, context.remaining_s() - 10)
-    shard = place(request)
+    shard, asked = place(request), request
     request = known(request, shard)
     is_list = navigator.wanted(request)
     if is_list:
         # The front changes this answer: it must be complete, not compressed and not an answer of a cache.
-        request = dataclasses.replace(request, headers={k: v for k, v in request.headers.items() if k not in {"accept-encoding", "if-none-match", "if-modified-since"}})
+        request = navigator.paged(dataclasses.replace(request, headers={k: v for k, v in request.headers.items() if k not in {"accept-encoding", "if-none-match", "if-modified-since"}}))
     if request.path.rstrip("/") == EVENTS:
-        calls = split(request)
-        if len(calls) > 1 or calls[0][0] != MAIN:
-            return merged(calls, deadline)
-        shard, request, _ = calls[0]
+        return merged(split(request), deadline)
     source = call(request, shard, deadline)
     first = next(source, None)
     if first is None:
@@ -252,7 +262,7 @@ def relay(request: Request, context: Context) -> HttpStream:
     status = head["status"]
     if status == 404 and shard == MAIN and place(request, is_fresh=True) != MAIN:
         # Another shard made the session after the last look of this function.
-        return relay(request, context)
+        return relay(asked, context)
     if type(status) is not int or not 100 <= status <= 599:
         return error(502, "the Vis worker sent a status that is not valid")
     if 300 <= status < 400 and status != 304:
@@ -260,7 +270,7 @@ def relay(request: Request, context: Context) -> HttpStream:
     relayed = {k.lower(): v for k, v in head["headers"] if k.lower() in RELAYED - (CHANGED if is_list else set())}
     headers = {**relayed, **SECURITY, "content-security-policy": RELAY_POLICY}
     if is_list and status == 200:
-        whole = navigator.joined(request, data + b"".join(chunk for chunk, _ in source), lambda path, query: fetch(request, path, query, deadline))
+        whole = navigator.joined(asked, data + b"".join(chunk for chunk, _ in source), lambda path, query: fetch(request, path, query, deadline))
         return HttpStream(status=200, headers=headers, chunks=iter([whole]))
 
     def body() -> Iterator[bytes]:
