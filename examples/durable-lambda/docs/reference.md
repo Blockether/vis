@@ -21,7 +21,7 @@ the standard library. It supports plain answers and streamed answers.
 | --- | --- | --- |
 | `lease.json` | The active worker, its last checkpoint and the work that waits | permanent |
 | `state/<worker>/<n>.tar.gz` | A checkpoint of the Vis home directory: sessions, transcripts, attached files, settings | the last one; a checkpoint of a failed worker stays |
-| `workflows/<name>.py` | The source of a workflow. Each save also commits the file `workflows/<name>.py` to `main` of the repository | permanent |
+| `workflows/<name>.py` | The source of a workflow: a copy of the file `workflows/<name>.py` on `main` of the repository. Only `repo` writes it | permanent |
 | `runs/index.json` | One line for each of the 300 newest runs | permanent |
 | `runs/<run>/run.json` | What the pages show of a run: its workflow activities, the decisions at its gates (`approved`, `comment` and the time) and the sessions that it left with a fork. The record of the work is the transcript of the session | permanent |
 | `runs/<run>/workflow.py` | The source that the run uses, also after an edit of the workflow | permanent |
@@ -53,6 +53,23 @@ the checkpoint that counts. You can delete each other object in `state/`.
 2. `repo` clones `main` with the deploy key and writes `repo/snapshots/<commit>.tar.gz`.
 3. `sync` extracts the snapshot into a hidden directory and renames it to `releases/<commit>`.
 4. `sync` writes a new `CURRENT` file and renames it over the old one.
+
+## A workflow has two places
+
+The file `workflows/<name>.py` on `main` is the workflow. S3 has a copy, which a run
+reads. `repo` is the only writer of both places:
+
+- Save and Delete in the editor are a commit of `repo` on `main`.
+- In step 2 above, `repo` also makes the workflows of S3 the same as the files of
+  `main`. Thus an edit, a new file and a removal in GitHub come to the stack with the
+  webhook, or 15 minutes later at most.
+- Save sends the source that the editor opened. When `main` has another source, `repo`
+  commits nothing and the editor says so. Open the workflow again to get the new source.
+- `repo` copies only a regular file with a workflow name that is not larger than a
+  workflow. It ignores a link, another name and a subdirectory.
+- The first fetch of a stack commits the workflows that only the stack has: the sample
+  workflows of the image for a new stack, or the workflows of S3 that `main` does not
+  have for a stack from before this rule.
 
 Steps 3 and 4 each end with one rename. A reader sees the old release or the new
 release, and never a part of one. `work/main` is the directory of the one Vis project.
@@ -185,7 +202,7 @@ The Software factory API has these addresses below `/dashboard/api/`. A body and
 | `GET workflows` | | The workflows with their inputs and workflow activities |
 | `POST workflows/check` | `{source}` | The description of a source that is not saved, or the syntax error |
 | `GET workflows/<name>` | | One workflow with its source |
-| `PUT workflows/<name>` | `{source}` | Saves a workflow: a commit on `main` of the repository, then the copy in S3. The answer has `commit`, `committed` and `url` |
+| `PUT workflows/<name>` | `{source, base}` | Saves a workflow: a commit on `main` of the repository, then the copy in S3. The answer has `commit`, `committed` and `url`. `base` is the source that the person changed: 409 when `main` has another source |
 | `DELETE workflows/<name>` | | Removes a workflow, in the repository and in S3 |
 | `GET runs` | | The 100 newest runs |
 | `POST runs` | `{workflow, input, session}` | Starts a run. `input` is an object of the inputs of the workflow. `session` is optional: the id of the session that the run works in. Without it, the run makes its own session |

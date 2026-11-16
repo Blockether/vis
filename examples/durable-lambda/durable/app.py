@@ -68,7 +68,6 @@ class Api:
             ("POST", r"publish", self.publish),
         ]
         self.routes = [(method, re.compile(pattern), function) for method, pattern, function in routes]
-        source.seed()
 
     def handle(self, method: str, target: str, body: bytes) -> Answer:
         """Answer one call. The answer is a status, the headers and the body."""
@@ -120,7 +119,8 @@ class Api:
 
     def save(self, name: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
         """Store the source of a workflow."""
-        return source.save(name, str(payload.get("source", "")))
+        base = payload.get("base")
+        return source.save(name, str(payload.get("source", "")), base if isinstance(base, str) else None)
 
     def remove(self, name: str, **_: Any) -> dict[str, Any]:
         """Remove a workflow. Its runs keep their own copy of the source."""

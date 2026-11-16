@@ -159,7 +159,8 @@ async function save() {
   const control = document.querySelector("#save");
   return guard(control, async () => {
     const source = editor.getValue();
-    const stored = await api(`workflows/${state.name}`, { method: "PUT", body: { source } });
+    // `base` is the source as opened: the save is refused when the repository has another one.
+    const stored = await api(`workflows/${state.name}`, { method: "PUT", body: { source, base: state.saved } });
     state.saved = source;
     toast(stored.committed ? `Saved ${state.name}.py. GitHub has it in commit ${stored.commit.slice(0, 7)}.` : `Saved ${state.name}.py. GitHub has this source already.`, "good");
     drawHead();

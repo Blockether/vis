@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Gateway: a cached list is fetched one time when two readers find it old at the same moment. Before, the later reader could start a second fetch.
 - Gateway: a client that connects while another Vis process runs a turn gets each event of that turn one time. Before, the start of the turn could arrive two times.
 - TUI: wheel ticks in the opposite direction at the end of a scroll do not make the direction lock weaker. Before, each such tick decreased the lock, and a later tick could move the view back.
+- Examples: in `examples/durable-lambda/`, a change of a workflow file on `main` of the repository comes to the stack. Before, only Save in the editor wrote a workflow, so the stack did not get an edit made in GitHub. Save refuses a source that is older than the file of the repository.
 
 ## [v0.5.19] - 2026-11-16
 

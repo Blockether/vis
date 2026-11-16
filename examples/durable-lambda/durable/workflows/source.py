@@ -2,22 +2,21 @@
 
 workflows/<name>.py   the source of a workflow
 
-A run reads the source from S3. Each save and each removal also goes to the main
-branch of the repository, as a commit of the repo function.
+A run reads the source from S3. The main branch of the repository has the same files,
+and the repo function is the only writer of both: it commits each save and each
+removal, and it copies each change of the main branch to S3.
 """
 
 from __future__ import annotations
 
 import ast
-import glob
 import json
-import os
 from typing import Any
 
 from durable import aws
 from durable.domain import NAME, Refused, need
 from durable.helpers import log
-from durable.settings import REPO_FUNCTION, SAMPLES, WORKFLOW_LIMIT
+from durable.settings import REPO_FUNCTION, WORKFLOW_LIMIT
 
 
 def literal(node: ast.expr | None) -> Any:
@@ -80,7 +79,11 @@ def read(name: Any) -> str:
     raw, _ = aws.get(f"workflows/{need(NAME, name, 'the workflow name')}.py")
     if raw is None:
         raise Refused(404, "no such workflow")
-    return raw.decode()
+    try:
+        return raw.decode()
+    except UnicodeDecodeError:
+        # The file comes from the repository, where a person can put any bytes.
+        raise Refused(400, "the file is not UTF-8 text") from None
 
 
 def listing() -> list[dict[str, Any]]:
@@ -96,34 +99,31 @@ def listing() -> list[dict[str, Any]]:
     return sorted(found, key=lambda about: about["title"].lower())
 
 
-def commit(name: str, source: str | None) -> dict[str, Any]:
-    """Put the file of a workflow in the repository, or remove it there. Return the commit."""
-    raw, failed = aws.invoke(REPO_FUNCTION, action="store", name=name, source=source)
+def commit(name: str, source: str | None, base: str | None = None) -> dict[str, Any]:
+    """Put the file of a workflow in the repository, or remove it there. The repo function then updates S3. Return the commit."""
+    raw, failed = aws.invoke(REPO_FUNCTION, action="store", name=name, source=source, base=base)
     if failed:
         log("store failed", raw[:400].decode(errors="replace"))
-        raise Refused(502, "GitHub did not get the workflow, so nothing changed. Save again.")
-    return json.loads(raw)
+        raise Refused(502, "The save did not complete. Save again.")
+    stored = json.loads(raw)
+    if stored["moved"]:
+        raise Refused(409, "The repository has another version of this workflow. Open the workflow again, then change it.")
+    return stored
 
 
-def save(name: str, source: str) -> dict[str, Any]:
-    """Store the source of a workflow that is valid, in GitHub and then in S3. Return what it says about itself."""
+def save(name: str, source: str, base: str | None = None) -> dict[str, Any]:
+    """Store the source of a workflow that is valid. Return what it says about itself.
+
+    `base` is the source that the person changed. The save is refused when the
+    repository has another source.
+    """
     if len(source) > WORKFLOW_LIMIT:
         raise Refused(413, "the workflow is too large")
     about = describe(need(NAME, name, "the workflow name"), source)
-    stored = commit(name, source)
-    aws.put(f"workflows/{name}.py", source.encode())
+    stored = commit(name, source, base)
     return {**about, "commit": stored["sha"], "committed": stored["changed"], "url": stored["url"]}
 
 
 def remove(name: str) -> None:
-    """Remove the source of a workflow, in GitHub and then in S3."""
+    """Remove the source of a workflow."""
     commit(need(NAME, name, "the workflow name"), None)
-    aws.delete(f"workflows/{name}.py")
-
-
-def seed() -> None:
-    """Give a new stack the workflows of the image."""
-    if not aws.keys("workflows/"):
-        for path in sorted(glob.glob(f"{SAMPLES}/*.py")):
-            with open(path, "rb") as file:
-                aws.put(f"workflows/{os.path.basename(path)}", file.read())

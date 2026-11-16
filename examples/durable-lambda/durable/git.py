@@ -5,10 +5,15 @@ copies the main branch to S3 and the sync function puts it on EFS. `publish` pus
 the commits of a session, which the worker left in S3 as a Git bundle. A push never
 uses force: when main moved, the commits go to a new branch. `store` commits the file
 of a workflow that a person saved in the editor.
+
+The function is also the only writer of `workflows/` in S3. Each fetch makes these
+objects the same as the workflow files of main, so a change in GitHub and a change in
+the editor end in the same place.
 """
 
 from __future__ import annotations
 
+import glob
 import io
 import json
 import os
@@ -36,6 +41,7 @@ from durable.settings import (
     KNOWN_HOSTS,
     REPO,
     REPO_URL,
+    SAMPLES,
     SYNC_FUNCTION,
     WORKFLOW_DIR,
     WORKFLOW_LIMIT,
@@ -89,14 +95,94 @@ def tree(target: str, commit: str, path: str) -> str:
     return git("rev-parse", "--verify", "--quiet", f"{commit}:{path}", cwd=target, check=False).stdout.strip()
 
 
+def workflows(target: str) -> dict[str, bytes]:
+    """Return the workflow files of the commit of a clone, by workflow name.
+
+    Git gives the list with the type of each entry, and only a regular file is a
+    workflow. A session can push a link, and the target of a link can be a file of this
+    function, such as the deploy key.
+    """
+    found = {}
+    for line in git("ls-tree", "-l", "HEAD", f"{WORKFLOW_DIR}/", cwd=target).stdout.splitlines():
+        about, _, path = line.partition("\t")
+        mode, _, _, size = about.split()
+        name = os.path.basename(path).removesuffix(".py")
+        if mode in ("100644", "100755") and path.endswith(".py") and NAME.fullmatch(name) and int(size) <= WORKFLOW_LIMIT:
+            with open(os.path.join(target, path), "rb") as file:
+                found[name] = file.read()
+    return found
+
+
+def write(target: str, name: str, data: bytes | None) -> None:
+    """Write the file of a workflow in a clone. Without data, remove it. A link at its place goes away first."""
+    path = os.path.join(target, WORKFLOW_DIR, f"{name}.py")
+    if os.path.lexists(path):
+        os.remove(path)
+    if data is not None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as file:
+            file.write(data)
+
+
+def commit(target: str, message: str) -> bool:
+    """Commit the changed workflow files of a clone and push them to main. Return False when no file changed.
+
+    The push uses no force: when main moved after the clone, it fails.
+    """
+    git("add", "--all", "--", WORKFLOW_DIR, cwd=target)
+    if not git("status", "--porcelain", "--", WORKFLOW_DIR, cwd=target).stdout.strip():
+        return False
+    git("-c", f"user.name={GIT_NAME}", "-c", f"user.email={GIT_EMAIL}", "commit", "--quiet", "--message", message, cwd=target)
+    git("push", "--quiet", "origin", f"HEAD:{MAIN}", cwd=target)
+    return True
+
+
+def samples() -> dict[str, bytes]:
+    """Return the workflows of the image, by workflow name."""
+    found = {}
+    for path in sorted(glob.glob(f"{SAMPLES}/*.py")):
+        with open(path, "rb") as file:
+            found[os.path.basename(path).removesuffix(".py")] = file.read()
+    return found
+
+
+def mirror(target: str, first: bool) -> list[str]:
+    """Make the workflows of S3 the same as the workflows of a clone of main. Return their names.
+
+    The repository wins: S3 gets each file of the clone and loses each workflow that the
+    clone does not have. At the first time of a stack, the repository first gets the
+    workflows that only the stack has, as one commit: the files of S3, or the samples of
+    the image when there is no workflow at all.
+    """
+    stored = {item["Key"][len("workflows/") : -len(".py")]: item["Key"] for item in aws.keys("workflows/")}
+    files = workflows(target)
+    if first:
+        extra = {name: aws.get(key)[0] for name, key in stored.items() if name not in files and NAME.fullmatch(name)}
+        extra = extra or ({} if files else samples())
+        for name, data in extra.items():
+            write(target, name, data)
+        if extra and commit(target, "Add the workflows of the stack"):
+            files = workflows(target)
+    for name, data in files.items():
+        if name not in stored or aws.get(stored[name])[0] != data:
+            aws.put(f"workflows/{name}.py", data)
+    for name, key in stored.items():
+        if name not in files:
+            aws.delete(key)
+    return sorted(files)
+
+
 def fetch(force: bool = False) -> dict[str, Any]:
-    """Copy a new main branch to S3 and to EFS. Without a new commit, do nothing."""
+    """Copy a new main branch to S3 and to EFS, and its workflows to S3. Without a new commit, do nothing."""
     sha = head()
     recorded, _ = aws.get("repo/HEAD")
-    if not force and recorded and json.loads(recorded).get("sha") == sha:
+    record = json.loads(recorded) if recorded else {}
+    # A record without workflows is from a stack that did not copy them yet.
+    if not force and record.get("sha") == sha and "workflows" in record:
         return {"sha": sha, "changed": False}
     with tempfile.TemporaryDirectory(dir="/tmp") as folder:
         target = clone(folder)
+        names = mirror(target, "workflows" not in record)
         sha = git("rev-parse", "HEAD", cwd=target).stdout.strip()
         git("remote", "remove", "origin", cwd=target)
         buffer = io.BytesIO()
@@ -106,7 +192,8 @@ def fetch(force: bool = False) -> dict[str, Any]:
     answer, failed = aws.invoke(SYNC_FUNCTION, sha=sha)
     if failed:
         raise RuntimeError(f"the sync function failed: {answer[:400]!r}")
-    aws.put("repo/HEAD", json.dumps({"sha": sha, "at": time.time()}).encode())
+    # The record comes last: a fetch that failed before this line runs again.
+    aws.put("repo/HEAD", json.dumps({"sha": sha, "at": time.time(), "workflows": names}).encode())
     log("fetched", sha)
     return {"sha": sha, "changed": True}
 
@@ -169,11 +256,14 @@ def publish(publication: str) -> dict[str, Any]:
     return result
 
 
-def store(name: str, source: str | None) -> dict[str, Any]:
+def store(name: str, source: str | None, base: str | None = None) -> dict[str, Any]:
     """Commit the file of a workflow to main and push it. Without a source, remove the file.
 
     The push uses no force. When main moved after the clone, the push fails and the
-    person saves again. A source that main already has makes no commit.
+    person saves again. A source that main already has makes no commit. `base` is the
+    source that the person changed: when main has another source, the answer has
+    `moved` and there is no commit, because the save would remove a change of GitHub.
+    The fetch at the end gives S3 the workflows of main in each case.
     """
     if not NAME.fullmatch(name):
         raise ValueError("name must be a workflow name")
@@ -182,25 +272,16 @@ def store(name: str, source: str | None) -> dict[str, Any]:
     file = f"{WORKFLOW_DIR}/{name}.py"
     with tempfile.TemporaryDirectory(dir="/tmp") as folder:
         target = clone(folder, "--depth", "1")
-        path = os.path.join(target, file)
-        if source is None:
-            if os.path.exists(path):
-                os.remove(path)
-        else:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8", newline="") as text:
-                text.write(source)
-        git("add", "--all", "--", WORKFLOW_DIR, cwd=target)
-        changed = bool(git("status", "--porcelain", "--", WORKFLOW_DIR, cwd=target).stdout.strip())
-        if changed:
-            message = f"{'Remove' if source is None else 'Save'} the workflow {name}"
-            git("-c", f"user.name={GIT_NAME}", "-c", f"user.email={GIT_EMAIL}", "commit", "--quiet", "--message", message, cwd=target)
-            git("push", "--quiet", "origin", f"HEAD:{MAIN}", cwd=target)
+        moved = base is not None and workflows(target).get(name) != base.encode()
+        changed = False
+        if not moved:
+            write(target, name, None if source is None else source.encode())
+            changed = commit(target, f"{'Remove' if source is None else 'Save'} the workflow {name}")
         sha = git("rev-parse", "HEAD", cwd=target).stdout.strip()
     if changed:
         log("stored", file, "in", sha)
-        fetch()
-    return {"sha": sha, "changed": changed, "file": file, "url": f"https://github.com/{REPO}/blob/{sha}/{file}"}
+    fetch()
+    return {"sha": sha, "changed": changed, "moved": moved, "file": file, "url": f"https://github.com/{REPO}/blob/{sha}/{file}"}
 
 
 def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
@@ -209,8 +290,8 @@ def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
     if action == "publish":
         return publish(str(event.get("id", "")))
     if action == "store":
-        source = event.get("source")
-        return store(str(event.get("name", "")), None if source is None else str(source))
+        source, base = event.get("source"), event.get("base")
+        return store(str(event.get("name", "")), None if source is None else str(source), None if base is None else str(base))
     if action == "fetch":
         return fetch(bool(event.get("force")))
     raise ValueError(f"unknown action {action!r}")

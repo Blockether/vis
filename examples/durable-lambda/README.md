@@ -54,7 +54,7 @@ Lambda base image.
 | `front` | the webhook secret | Serves the pages and Vis web. Sends each call to the worker through SQS and streams the answer from S3. |
 | `worker` | no secret, no internet | Runs the Vis gateway and the workflow runs. Saves the Vis home directory and the work of each session to S3. |
 | `llm` | the provider key | Adds the key to a model call of the gateway. It is the only way from the worker to the provider. |
-| `repo` | the GitHub deploy key | Copies `main` to S3 and pushes the commits of a session. It never uses force. |
+| `repo` | the GitHub deploy key | Copies `main` to S3 and pushes the commits of a session. It never uses force. It keeps the workflows of S3 the same as the files `workflows/*.py` of `main`. |
 | `sync` | no secret | Puts a snapshot of `main` on EFS as the current release. |
 
 - **One worker at a time.** A worker takes the lease in S3 with a conditional write and
@@ -263,7 +263,7 @@ push. After 3 rejections at one gate, the run ends without a push.
 
 | Page | Content |
 | --- | --- |
-| `/dashboard` | The workflow editor and the runs. Save commits the file `workflows/<name>.py` to `main` of the repository. A waiting run shows its gate. `/` goes here |
+| `/dashboard` | The workflow editor and the runs. Save commits the file `workflows/<name>.py` to `main` of the repository, and a change of that file in GitHub comes to the editor. A waiting run shows its gate. `/` goes here |
 | `/dashboard/factory` | The song factory as a line of stations: give a prompt, decide at each gate, see the commit |
 | `/dashboard/vis` | Vis web with the sessions. The global apps button of its header opens the Workflows app: Run, Gates and History |
 

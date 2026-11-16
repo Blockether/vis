@@ -408,17 +408,20 @@ Resources:
                   - !Sub "${Bucket.Arn}/state/*"
                   - !Sub "${Bucket.Arn}/relay/*"
                   - !Sub "${Bucket.Arn}/runs/*"
-                  - !Sub "${Bucket.Arn}/workflows/*"
                   - !Sub "${Bucket.Arn}/attached/*"
                   - !Sub "${Bucket.Arn}/tmp/*"
                   - !Sub "${Bucket.Arn}/work/*"
+                Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
+              # The repo function is the only writer of the workflows.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${Bucket.Arn}/workflows/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
                 Action: s3:DeleteObject
                 Resource:
                   - !Sub "${Bucket.Arn}/state/*"
                   - !Sub "${Bucket.Arn}/relay/*"
-                  - !Sub "${Bucket.Arn}/workflows/*"
                   - !Sub "${Bucket.Arn}/tmp/*"
                   - !Sub "${Bucket.Arn}/work/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
@@ -571,10 +574,12 @@ Resources:
                 Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/deploy-key"
               - {Effect: Allow, Action: [s3:GetObject, s3:PutObject], Resource: !Sub "${Bucket.Arn}/repo/*"}
               - {Effect: Allow, Action: [s3:GetObject, s3:DeleteObject], Resource: !Sub "${Bucket.Arn}/outbox/*"}
+              # The workflows of S3 are a copy of the workflow files of main.
+              - {Effect: Allow, Action: [s3:GetObject, s3:PutObject, s3:DeleteObject], Resource: !Sub "${Bucket.Arn}/workflows/*"}
               - Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
-                Condition: {StringLike: {s3:prefix: [repo/*, outbox/*]}}
+                Condition: {StringLike: {s3:prefix: [repo/*, outbox/*, workflows/*]}}
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-sync"
