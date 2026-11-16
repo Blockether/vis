@@ -251,13 +251,14 @@ describe('a reader reaching the end of a turn that is still being written', () =
     viewport.scrollTop += 100;
     fireEvent.scroll(viewport);
     await paint();
-    expect(screen.getByRole('button', { name: /1 message$/ }).textContent).toContain('1 message');
+    // The count follows a scroll in steps, not in each frame.
+    expect((await screen.findByRole('button', { name: /1 message$/ })).textContent).toContain('1 message');
 
     ends[4] += 300;
     ends[5] += 300;
     act(() => resize(content));
     await paint();
-    expect(screen.getByRole('button', { name: /2 messages/ }).textContent).toContain('2 messages');
+    expect((await screen.findByRole('button', { name: /2 messages/ })).textContent).toContain('2 messages');
   });
 
   // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: WebKit can keep

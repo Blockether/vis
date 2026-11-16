@@ -291,8 +291,12 @@ export function railLines(
  * children of `column` that carry `data-turn-id`.
  */
 export function readingTurnId(viewport: HTMLElement, column: HTMLElement | null): string | null {
+  // Only the direct children are read. A `:scope >` query still visits each element of
+  // each turn, and this runs in each frame of a scroll.
   const rows = column
-    ? Array.from(column.querySelectorAll<HTMLElement>(':scope > [data-turn-id]'))
+    ? Array.from(column.children as HTMLCollectionOf<HTMLElement>).filter(
+        (row) => row.dataset.turnId !== undefined,
+      )
     : [];
   if (rows.length === 0) return null;
   if (isAtBottom(viewport)) return rows[rows.length - 1].dataset.turnId ?? null;

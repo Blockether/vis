@@ -249,6 +249,12 @@ function forcesRunningTurnFlushDuringRotation(event: SseEvent): boolean {
   return TERMINAL_EVENTS.has(event.type) || event.type === 'turn.started';
 }
 
+// How often the jump button counts the messages below the reader while it shows. The
+// count reads each turn below the fold, so its cost grows with the distance from the end.
+// Measured on a 3 900-step session: counted in each frame, it was the largest cost of
+// the scroll handler.
+const JUMP_COUNT_INTERVAL_MS = 200;
+
 // A settle's transcript refetch only has to pick up the ONE row the finished
 // turn just persisted, on top of a snapshot that already holds the tail. Four
 // rows cover that with slack (a turn and its neighbours, a queued row that
@@ -283,6 +289,10 @@ const FIRST_PAINT_TURNS = 2;
 // of markdown. A small ramp leaves input focus, keyboard animation, and scrolling
 // a chance to paint between batches.
 const HYDRATE_TURNS_PER_FRAME = 2;
+// A history turn can cost many frames of render work. As a transition, React renders it
+// in slices between frames, so a scroll does not stop on it. An urgent update starts that
+// render again. When a busy stream holds the turns back this long, they mount as urgent work.
+const HYDRATE_PATIENCE_MS = 1000;
 // How long the opening veil may wait for that ramp to FINISH. Every chunk it
 // hydrates grows the transcript by thousands of pixels and the corrector's
 // re-pin is a frame behind the growth, so a transcript revealed after its first
@@ -1781,18 +1791,39 @@ export function SessionScreen({
 
   // Keep the existing offer behavior, but measure the number of message bubbles
   // below the viewport whenever scroll, growth, or layout changes its geometry.
+  const jumpCountTimerRef = useRef<number | null>(null);
+  const countRemaining = useCallback(() => {
+    jumpCountTimerRef.current = null;
+    const viewport = scrollRef.current;
+    const remaining =
+      viewport && showJumpRef.current ? messagesBelow(viewport, transcriptRef.current) : 0;
+    if (remainingMessagesRef.current === remaining) return;
+    remainingMessagesRef.current = remaining;
+    setRemainingMessages(remaining);
+  }, []);
+  useEffect(
+    () => () => {
+      if (jumpCountTimerRef.current !== null) window.clearTimeout(jumpCountTimerRef.current);
+    },
+    [],
+  );
+  // The offer is one comparison and follows each frame. The count is not: the button
+  // gets it when it appears, and then once in each `JUMP_COUNT_INTERVAL_MS`.
   const syncJump = useCallback(() => {
     const viewport = scrollRef.current;
     const offer = shouldOfferLatest(viewport, followingRef.current);
-    const remaining = offer && viewport ? messagesBelow(viewport, transcriptRef.current) : 0;
-    if (remainingMessagesRef.current !== remaining) {
-      remainingMessagesRef.current = remaining;
-      setRemainingMessages(remaining);
+    const appeared = offer && !showJumpRef.current;
+    if (showJumpRef.current !== offer) {
+      showJumpRef.current = offer;
+      setShowJump(offer);
     }
-    if (showJumpRef.current === offer) return;
-    showJumpRef.current = offer;
-    setShowJump(offer);
-  }, []);
+    if (!offer || appeared) {
+      if (jumpCountTimerRef.current !== null) window.clearTimeout(jumpCountTimerRef.current);
+      countRemaining();
+    } else if (jumpCountTimerRef.current === null) {
+      jumpCountTimerRef.current = window.setTimeout(countRemaining, JUMP_COUNT_INTERVAL_MS);
+    }
+  }, [countRemaining]);
 
   // Where the corrector last left `scrollTop`. Every correction below records it,
   // because a scroll event that finds the scroller on this pixel is the echo of
@@ -1938,6 +1969,9 @@ export function SessionScreen({
   // the turn at the top edge before the flip and put it back after, or simply
   // stay pinned to the bottom when that is where the reader was.
   const scrollAnchorRef = useRef<ScrollAnchor | null>(null);
+  // The frame in which `handleScroll` read the anchor. The observer below asks for the
+  // same reading in the same frame, and the transcript is deep: one reading is enough.
+  const anchorFrameRef = useRef(-1);
   // Empty room above the transcript. It takes the height of turns that land above the
   // reader, so they can mount in a flick: see `ScrollBallast`.
   const ballastRef = useRef<HTMLDivElement>(null);
@@ -2014,8 +2048,9 @@ export function SessionScreen({
     // `captureScrollAnchor` already ignores the echo of our own corrections.
     // Rotation is its own transaction and owns the anchor for its duration.
     const busy = () => isViewportRotating() || rotationRestorePendingRef.current;
-    const recapture = () => {
+    const recapture = (now?: number) => {
       frame = null;
+      if (now !== undefined && anchorFrameRef.current === now) return;
       if (!busy()) captureScrollAnchor();
     };
     const handleViewportScroll = () => {
@@ -3430,12 +3465,15 @@ export function SessionScreen({
   useEffect(() => {
     const target = Math.min(visibleTurnCount, turns.length);
     if (hydratedTurnCount >= target) return;
+    const advance = (count: number) => Math.min(target, count + HYDRATE_TURNS_PER_FRAME);
     let frame: number | null = window.requestAnimationFrame(() => {
       frame = null;
-      setHydratedTurnCount((count) => Math.min(target, count + HYDRATE_TURNS_PER_FRAME));
+      startTransition(() => setHydratedTurnCount(advance));
     });
+    const overdue = window.setTimeout(() => setHydratedTurnCount(advance), HYDRATE_PATIENCE_MS);
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
+      window.clearTimeout(overdue);
     };
   }, [hydratedTurnCount, visibleTurnCount, turns.length]);
 
@@ -4522,8 +4560,9 @@ export function SessionScreen({
     // Scroll fires faster than the screen can paint. Batch its geometry reads and
     // anchor scan into one frame to avoid forcing repeated transcript layouts.
     if (scrollMetricsFrameRef.current !== null) return;
-    scrollMetricsFrameRef.current = window.requestAnimationFrame(() => {
+    scrollMetricsFrameRef.current = window.requestAnimationFrame((now) => {
       scrollMetricsFrameRef.current = null;
+      anchorFrameRef.current = -1;
       const viewport = scrollRef.current;
       if (!viewport) return;
       // Rotation owns the scroll position through its terminal anchor restore.
@@ -4567,6 +4606,7 @@ export function SessionScreen({
         }
         syncJump();
         captureScrollAnchor();
+        anchorFrameRef.current = now;
         return;
       }
       // The bottom tolerance only helps a downward gesture ARRIVE at a live end.
@@ -4612,7 +4652,10 @@ export function SessionScreen({
       // Keep the rotation anchor fresh: iOS can deliver the orientation signal
       // AFTER the reflow, and by then the top-most turn is already unreadable.
       // Scrolls during a rotation are the reflow's own, never the reader's.
-      if (!isViewportRotating()) captureScrollAnchor();
+      if (!isViewportRotating()) {
+        captureScrollAnchor();
+        anchorFrameRef.current = now;
+      }
     });
   }
 

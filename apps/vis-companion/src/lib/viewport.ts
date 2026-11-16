@@ -1102,7 +1102,12 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // iOS Safari scrolls the page about 200 ms after the keyboard is up, even when
     // the field is already visible. Follow it in the scroll event itself: the next
     // animation frame is one painted frame late, and the header jumps up and back.
-    const onPageScroll = () => {
+    const onPageScroll = (event: Event) => {
+      // The capture listener also hears each scroller inside the page. Their scroll moves
+      // no viewport: without this check the transcript paid a viewport read in each frame.
+      const target = event.target;
+      if (target instanceof Element && target !== document.documentElement && target !== document.body)
+        return;
       if (webKeyboard && currentBox)
         setBox({ height: currentBox.height, top: Math.round(window.scrollY) });
       sync();

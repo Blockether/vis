@@ -1162,7 +1162,8 @@ export function ChoiceRow({
  */
 export function ChoiceList({ children, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className="flex min-w-0 flex-col [&>*+*]:-mt-px" {...props}>
+    // Not `[&>*+*]`: a sibling rule without a class makes each mounted turn restyle the transcript.
+    <div className="flex min-w-0 flex-col [&>*:not(:first-child)]:-mt-px" {...props}>
       {children}
     </div>
   );

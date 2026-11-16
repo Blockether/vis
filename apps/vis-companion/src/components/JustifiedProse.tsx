@@ -434,21 +434,33 @@ let frame = 0;
 let compositions = 0;
 let sizes: ResizeObserver | null = null;
 
-/** The nearest vertical scroller, cached per parent as the transcript's paint skip does. */
+/**
+ * The nearest vertical scroller. Each ancestor that the walk passes remembers the answer,
+ * so the paragraphs of one turn share one walk. Measured on a 3 900-step session: with one
+ * entry per parent, each paragraph read the style of all its ancestors again, and the walks
+ * took more of a flick through history than React did.
+ */
 function scrollerOf(element: Element): Element | null {
   const parent = element.parentElement;
   if (!parent) return null;
-  const known = scrollers.get(parent);
-  if (known !== undefined) return known;
+  const passed: Element[] = [];
   let scroller: Element | null = null;
   for (let node: Element | null = parent; node; node = node.parentElement) {
+    const known = scrollers.get(node);
+    if (known !== undefined) {
+      scroller = known;
+      break;
+    }
+    passed.push(node);
     const overflow = getComputedStyle(node).overflowY;
     if (overflow === 'auto' || overflow === 'scroll') {
       scroller = node;
       break;
     }
   }
-  scrollers.set(parent, scroller);
+  // "No scroller" stays with the parent that asked: an ancestor can get a scroller later.
+  if (scroller) for (const node of passed) scrollers.set(node, scroller);
+  else scrollers.set(parent, null);
   return scroller;
 }
 

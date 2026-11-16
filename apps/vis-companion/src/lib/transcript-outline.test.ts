@@ -231,7 +231,7 @@ describe('readingTurnId', () => {
   /** A turn of the transcript column, with the edges that a browser gives it. */
   const turn = (id: string, top: number, bottom: number) =>
     ({ dataset: { turnId: id }, getBoundingClientRect: () => ({ top, bottom }) }) as unknown as HTMLElement;
-  const column = (...turns: HTMLElement[]) => ({ querySelectorAll: () => turns }) as unknown as HTMLElement;
+  const column = (...turns: HTMLElement[]) => ({ children: turns }) as unknown as HTMLElement;
   /** A scroller with its top edge at 100px, scrolled to `scrollTop` in 3000px of content. */
   const scroller = (scrollTop: number) =>
     ({ scrollTop, scrollHeight: 3000, clientHeight: 800, getBoundingClientRect: () => ({ top: 100 }) }) as unknown as HTMLElement;
