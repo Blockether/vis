@@ -401,9 +401,12 @@ export function ThreadNodeView({ node, actions }: { node: LiveThreadNode; action
   );
 }
 
-/** A gutter reserves three character slots, and a smaller one for single digits. */
+/**
+ * A gutter reserves three character slots, and a smaller one for single digits. After
+ * the number it keeps two characters free, where the Add comment control stands.
+ */
 function numberWidth(digits: number): number {
-  return digits === 1 ? 33.28 : Math.max(41.11, (digits + 2.25) * 7.83);
+  return digits === 1 ? 41.11 : Math.max(48.94, (digits + 3.25) * 7.83);
 }
 
 /** The number stays visible while the file scrolls sideways. */
@@ -449,7 +452,7 @@ function Gutter({
           aria-label="Add comment"
           onClick={() => onComment(line)}
         >
-          <PlusIcon className="size-4" />
+          <PlusIcon className="size-3" />
         </button>
       )}
     </td>

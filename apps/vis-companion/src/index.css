@@ -752,7 +752,8 @@ ol.markdown-list > li::before {
   z-index: 1;
   min-width: 0;
   padding-left: 15.65px;
-  padding-right: 7.83px;
+  /* Two characters: with the code inset, the seam holds the Add comment control. */
+  padding-right: 15.66px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   user-select: none;
@@ -772,7 +773,7 @@ ol.markdown-list > li::before {
   align-items: flex-start;
   justify-content: flex-end;
   width: 100%;
-  padding: 0 7.83px 0 15.65px;
+  padding: 0 15.66px 0 15.65px;
   line-height: var(--text-body--line-height);
   text-align: right;
 }
@@ -839,7 +840,7 @@ ol.markdown-list > li::before {
 }
 .app-diff[data-split='true'] .diff-gutter:nth-child(3) {
   left: 50%;
-  right: calc(50% - var(--diff-number-width, 41px));
+  right: calc(50% - var(--diff-number-width, 49px));
   border-left: 1px solid var(--dialog-border);
 }
 .diff-threads {
@@ -1102,18 +1103,25 @@ ol.markdown-list > li::before {
   color: var(--color-accent-ink);
   z-index: 4;
 }
+/* A square accent block in the middle of the seam between the number and the code:
+   3.75px free on each side, so it covers neither. */
 .diff-add-comment {
   position: absolute;
-  right: -10px;
-  top: 0;
+  right: -4.08px;
+  top: calc((var(--text-body--line-height) - 16px) / 2);
   z-index: 5;
-  width: var(--text-body--line-height);
-  height: var(--text-body--line-height);
+  width: 16px;
+  height: 16px;
   display: grid;
   place-items: center;
-  border-radius: 4px;
   background: var(--color-accent);
   color: var(--color-accent-foreground);
+}
+/* The reach keeps the target a row high and wider than the block. */
+.diff-add-comment::after {
+  content: '';
+  position: absolute;
+  inset: -2px -3.75px;
 }
 .diff-file-header {
   display: flex;
@@ -1183,7 +1191,7 @@ ol.markdown-list > li::before {
   background: var(--diff-paper);
 }
 .diff-context-marker {
-  width: 34px;
+  width: 41.83px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
@@ -1270,7 +1278,6 @@ ol.markdown-list > li::before {
 .diff-draft textarea {
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);
-  border-radius: 8px;
 }
 .diff-submit-hint {
   flex: 1;
@@ -1294,13 +1301,6 @@ ol.markdown-list > li::before {
   .diff-tree-folder,
   .diff-tree-file {
     height: 24px;
-  }
-  .diff-draft-actions button {
-    min-height: 24px;
-    height: 24px;
-    padding: 0 8px;
-    border-radius: 8px;
-    font-size: 12px;
   }
 }
 
