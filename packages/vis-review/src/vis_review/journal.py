@@ -798,12 +798,28 @@ def _file_stamp(path: str) -> tuple[int, int] | None:
     return stat.st_mtime_ns, stat.st_size
 
 
-def base_ref(root: str) -> str | None:
-    """The commit where HEAD left the default branch, for "Automatic"; None if unknown."""
+@dataclass(frozen=True)
+class Base:
+    """The commit where HEAD left the default branch, and the name of that branch."""
+
+    commit: str
+    branch: str
+
+    @property
+    def label(self) -> str:
+        """How a person reads the base, for example "origin/main@362588b1"."""
+        return f"{self.branch}@{self.commit[:8]}"
+
+
+def base_ref(root: str) -> Base | None:
+    """Where HEAD left the default branch, for "Automatic"; None if unknown."""
     for name in _BASE_REFS:
-        base = _git(root, "merge-base", "HEAD", name)
-        if base and base.strip():
-            return base.strip()
+        commit = _line(_git(root, "merge-base", "HEAD", name))
+        if commit:
+            branch = name
+            if name == "origin/HEAD":
+                branch = _line(_git(root, "rev-parse", "--abbrev-ref", name)) or name
+            return Base(commit, branch)
     return None
 
 

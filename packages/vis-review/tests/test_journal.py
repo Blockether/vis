@@ -9,7 +9,7 @@ from vis_lang_interface.tree import walked
 
 from vis_review import journal as journal_module
 from vis_review import store
-from vis_review.journal import Journal, base_ref
+from vis_review.journal import Base, Journal, base_ref
 
 
 def journal(tmp_path, key="s1"):
@@ -309,7 +309,7 @@ def test_the_base_branch_is_where_head_left_main(tmp_path):
     git(top, "switch", "-q", "-c", "feature")
     (top / "sub" / "a.py").write_text("feature\n")
     git(top, "commit", "-q", "-am", "feature work")
-    assert base_ref(str(top)) == first
+    assert base_ref(str(top)) == Base(first, "main")
     git(top, "switch", "-q", "--orphan", "lonely")
     assert base_ref(str(top)) is None
 

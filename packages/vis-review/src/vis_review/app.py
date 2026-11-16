@@ -161,7 +161,7 @@ class ReviewApp:
         self.is_full = False
         # "HEAD" or "base" compares the files with a git commit, None with checkpoints.
         self.against: str | None = None
-        # The git ref that the last "against" paint compared with, for example "origin/main".
+        # What the last "against" paint compared with, for a person: "HEAD" or the base label.
         self.against_ref: str | None = None
         # A session door knows which checkpoints the session wrote itself; its first
         # range then shows only those changes, never the edits of other sessions.
@@ -169,7 +169,7 @@ class ReviewApp:
         self.is_own = is_session_scoped
         # "This session" leaves out the changes that the base branch has, until a person asks.
         self.is_merged_shown = False
-        # The git commit that the last "This session" paint compared with, or None.
+        # The label of the base that the last "This session" paint compared with, or None.
         self.own_base: str | None = None
         # The stamp of the git refs at the last paint: a later stamp can show other changes.
         self._refs: tuple = ()
@@ -353,19 +353,20 @@ class ReviewApp:
     def _scope_diffs(self) -> list[FileDiff]:
         """Every diff of the scope: a checkpoint range, or a git commit to now."""
         if self.against is not None:
-            ref = "HEAD" if self.against == "HEAD" else base_ref(self.journal.root)
+            base = None if self.against == "HEAD" else base_ref(self.journal.root)
+            ref = base.commit if base else "HEAD" if self.against == "HEAD" else None
             found = None if ref is None else self.journal.against(ref, self._context())
             if found is not None:
-                self.against_ref = ref
+                self.against_ref = base.label if base else ref
                 return found
             self.notice = (f"Git cannot show {_AGAINST[self.against]} here", "warn")
             self.against = None
         self.own_base = None
         if self._is_own_range():
-            ref = None if self.is_merged_shown else base_ref(self.journal.root)
-            found = ref and self.journal.own_open(ref, self._context())
-            if found is not None and ref:
-                self.own_base = ref
+            base = None if self.is_merged_shown else base_ref(self.journal.root)
+            found = base and self.journal.own_open(base.commit, self._context())
+            if found is not None and base:
+                self.own_base = base.label
                 return found
             return self.journal.own_diff(self._context())
         return self.journal.diff(self.start, self.end, context=self._context())

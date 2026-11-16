@@ -1,6 +1,7 @@
 """Decisions of the review app: what it shows, and what each control changes."""
 
 import os
+import re
 import subprocess
 import time
 from types import SimpleNamespace
@@ -557,6 +558,8 @@ def test_a_session_review_hides_the_changes_that_the_base_branch_has(
     app.refresh()
     assert items(recorder, "file") == ["file-all", "file:b.py"]
     assert chosen(recorder) == {"session", "file-all"}
+    # A person reads the base as a branch and a short commit id, not as 40 characters.
+    assert re.fullmatch(r"main@[0-9a-f]{8}", recorder.node("diff")["old_revision"])
     recorder.send("activate", "merged")
     assert wait_for(
         lambda: items(recorder, "file") == ["file-all", "file:a.py", "file:b.py"]
