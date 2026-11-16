@@ -407,13 +407,22 @@ it('opens search results in folded files and returns focus when search closes', 
 });
 
 /** A diff whose first file fills the eager lines, so `far.txt` waits for the viewport. */
-function longDiff(): LiveDiffNode {
-  const lines = Array.from({ length: 600 }, (_, at) => `+line ${at}`).join('\n');
+function longDiff(length = 600): LiveDiffNode {
+  const lines = Array.from({ length }, (_, at) => `+line ${at}`).join('\n');
   return {
     ...DIFF,
     threads: [],
-    patch: `diff --git a/near.txt b/near.txt\n--- a/near.txt\n+++ b/near.txt\n@@ -0,0 +1,600 @@\n${lines}\ndiff --git a/far.txt b/far.txt\n--- a/far.txt\n+++ b/far.txt\n@@ -1 +1 @@\n-distant\n+remote`,
+    patch: `diff --git a/near.txt b/near.txt\n--- a/near.txt\n+++ b/near.txt\n@@ -0,0 +1,${length} @@\n${lines}\ndiff --git a/far.txt b/far.txt\n--- a/far.txt\n+++ b/far.txt\n@@ -1 +1 @@\n-distant\n+remote`,
   };
+}
+
+function screenWidth(isWide: boolean) {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: isWide && query.includes('min-width: 48rem'),
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
 }
 
 /** The observer of the diff, driven by the test: jsdom has no layout. */
@@ -455,6 +464,18 @@ describe('a long diff', () => {
     show(far, false, 321);
     expect(far.querySelector('[data-diff-scroll]')).toBeNull();
     expect(far.style.minHeight).toBe('321px');
+  });
+
+  // Report: a review opened slowly on a phone. It mounted 600 lines, and the screen shows about 45.
+  it('mounts fewer lines at once on a phone than on a wide screen', () => {
+    stubViewport();
+    screenWidth(false);
+    const phone = render(<DiffNodeView node={longDiff(200)} />);
+    expect(screen.getByRole('region', { name: 'far.txt' }).querySelector('[data-diff-scroll]')).toBeNull();
+    phone.unmount();
+    screenWidth(true);
+    render(<DiffNodeView node={longDiff(200)} />);
+    expect(screen.getByRole('region', { name: 'far.txt' }).querySelector('[data-diff-scroll]')).toHaveTextContent('remote');
   });
 
   it('mounts the far file of a search match', () => {

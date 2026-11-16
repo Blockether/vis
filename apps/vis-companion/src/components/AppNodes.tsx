@@ -30,6 +30,7 @@ import {
   type DiffSpan,
   type SplitRow,
 } from '../lib/app-diff';
+import { useMediaMatch } from '../lib/fit-rows';
 import {
   LIVE_MESSAGE_CHARS,
   type LiveDiffNode,
@@ -837,6 +838,10 @@ function ContextBand({ label, title, reach }: { label: string; title: string; re
 
 /** The lines that a diff mounts at once. The files after them mount only near the viewport. */
 const DIFF_EAGER_LINES = 600;
+/** A phone shows about 45 rows and builds rows slower, so it mounts fewer lines at once. */
+const DIFF_EAGER_LINES_PHONE = 160;
+/** A tablet or a desk. A narrower screen is a phone. */
+const WIDE_SCREEN = '(min-width: 48rem)';
 /** How far outside its scroller a file mounts, so that a scroll meets rows and not a gap. */
 const DIFF_NEAR_MARGIN = 1200;
 const DIFF_ROW_HEIGHT = 20;
@@ -850,11 +855,11 @@ function estimatedFileHeight(file: AppDiffFile): number {
 }
 
 /** The files after the eager lines of a diff. A short diff has none. */
-function lazyFilePaths(files: readonly AppDiffFile[]): ReadonlySet<string> {
+function lazyFilePaths(files: readonly AppDiffFile[], eagerLines: number): ReadonlySet<string> {
   const paths = new Set<string>();
   let lines = 0;
   for (const file of files) {
-    if (lines >= DIFF_EAGER_LINES) paths.add(file.path);
+    if (lines >= eagerLines) paths.add(file.path);
     lines += file.hunks.reduce((count, hunk) => count + hunk.lines.length, 0);
   }
   return paths;
@@ -880,7 +885,8 @@ interface NearFiles {
  * An engine that cannot observe mounts every file.
  */
 function useNearFiles(files: readonly AppDiffFile[], sections: { current: Map<string, HTMLElement> }) {
-  const lazy = useMemo(() => lazyFilePaths(files), [files]);
+  const eagerLines = useMediaMatch(WIDE_SCREEN) ? DIFF_EAGER_LINES : DIFF_EAGER_LINES_PHONE;
+  const lazy = useMemo(() => lazyFilePaths(files, eagerLines), [files, eagerLines]);
   const [seen, setSeen] = useState<NearFiles>(() => ({ near: new Set(), heights: new Map() }));
   const canObserve = typeof IntersectionObserver !== 'undefined';
   useEffect(() => {
