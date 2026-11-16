@@ -1812,16 +1812,29 @@ export function SessionsScreen({
     : undefined;
   const row = openSessionRow;
   const openRoot = row?.workspace?.root;
+  const notices = useNotices();
+  // The import of a snapshot: the file picker, then the new session opens as a created one does.
+  const sessionImport = useSessionImport(notices);
+  const openImport = sessionImport.open;
+  const importSnapshot = useCallback(
+    (conn: GatewayConn, root: string, groupId?: string) =>
+      openImport(clientFor(conn), { root, groupId }, (session) => {
+        if (session.id) void onOpen(conn, session.id, true);
+        void load();
+      }),
+    [openImport, onOpen, load],
+  );
   useCommands({
     'new-session':
       !!openSession && !!openRoot && (() => createSession(openSession.conn, openRoot, row?.group_id ?? undefined)),
+    'import-session':
+      !!openSession && !!openRoot && (() => importSnapshot(openSession.conn, openRoot, row?.group_id ?? undefined)),
     'fork-session': !!openSession && !!row && row.turn_count > 0 && (() => forkSession(row, openSession.conn)),
     'archive-session': !!openSession && !!row && (() => archiveSession(row, openSession.conn, !row.archived_at)),
     // The delete is confirmed in the row, so it needs the list on screen.
     'delete-session': isVisible && !!openSession && !!row && (() => startDelete(row, openSession.conn)),
   });
   // The export of a row: the three formats under the row action, then a toast with the result.
-  const notices = useNotices();
   const sessionExport = useSessionExport(notices);
   const openExport = sessionExport.open;
   const exportRow = useCallback(
@@ -1855,17 +1868,6 @@ export function SessionsScreen({
       },
     }),
     [rowCommands, deleting, actionBusy, actionError, confirmDelete, cancelDelete],
-  );
-  // The import of a snapshot: the file picker, then the new session opens as a created one does.
-  const sessionImport = useSessionImport(notices);
-  const openImport = sessionImport.open;
-  const importSnapshot = useCallback(
-    (conn: GatewayConn, root: string, groupId?: string) =>
-      openImport(clientFor(conn), { root, groupId }, (session) => {
-        if (session.id) void onOpen(conn, session.id, true);
-        void load();
-      }),
-    [openImport, onOpen, load],
   );
   const projectCreation = useMemo<ProjectCreation>(
     () => ({ state: creating, start: createSession, importSnapshot }),

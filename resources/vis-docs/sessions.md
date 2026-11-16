@@ -368,8 +368,11 @@ To export a session:
   **Export**, then the format. The desktop app saves the file in a new folder in
   **Vis Artifacts** in your downloads folder and shows it in the file manager. Its notice
   shows the path of the file. Click the path to show the file again. The phone app opens
-  the share sheet. In a browser, the file goes to your downloads. If the desktop app or
-  the browser can share a file, Vis asks you to keep the file or to share it.
+  the share sheet.
+- **Browser:** the file goes to your downloads.
+
+If the desktop app or the browser can share a file, Vis asks you to keep the file or to
+share it.
 
 Vis does not remove private data from an export. Read an export before you share
 it. To remove private details, follow [Reporting a
@@ -430,8 +433,11 @@ work to another computer or to keep a full backup.
 You can also import the file without the command line:
 
 - **Desktop app, phone app or browser:** in the session list, open the actions of
-  **Sessions** in a project and choose **Import snapshot…**, then choose the file. Vis
-  opens the new session. To put the new session in a group, use the actions of that group.
+  **Sessions** in a project. Choose **Import snapshot…**, then choose the file. Vis opens
+  the new session. To put the new session in a group, use the actions of that group.
+- **Terminal:** press **Ctrl+X s i** and type the path of the file. If the project has
+  groups, choose its sessions or one group. Vis opens the new session. In **Projects**,
+  press **i** on a row to import into the project or the group of that row.
 
 The session that the command restores uses the folder where you run the import. Use these
 options to change that:

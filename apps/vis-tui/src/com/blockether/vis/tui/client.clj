@@ -2026,6 +2026,26 @@
     (when-not (< (long (:status response)) 400) (parsed-response! response))
     (:body response)))
 
+(defn import-session!
+  "Import the `.vissnap` file `file` as a new session and return its soul. With
+   `:group-id` the session goes into that group and its project. Without it, the
+   session belongs to the workspace `:root`. `:key` makes a repeated import give the
+   same session. Throws `ex-info` with the gateway's message on a refusal."
+  [file {:keys [root group-id key]}]
+  (let [query (str/join "&"
+                        (for [[k v] [["root" root] ["group_id" group-id] ["key" key]]
+                              :when (seq (str v))]
+
+                          (str k "=" (enc v))))]
+    (with-open [in (io/input-stream (io/file file))]
+      (parsed-response! (request! :post
+                                  (str "/v1/sessions/actions/import"
+                                       (when (seq query) (str "?" query)))
+                                  {:body in
+                                   :raw-body? true
+                                   :headers {"Content-Type" "application/octet-stream"}
+                                   :timeout-ms session-export-timeout-ms})))))
+
 (defn- speech-query
   [engine-id voice-id]
   (let [parts (cond-> []

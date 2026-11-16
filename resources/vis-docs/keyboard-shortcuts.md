@@ -107,6 +107,7 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | `archive-session` | Ctrl+X s a | Archive or restore this session |
 | `session-metrics` | Ctrl+X s u | Show session metrics |
 | `export-session` | Ctrl+X s e | Export this session to a file |
+| `import-session` | Ctrl+X s i | Import a snapshot as a new session |
 | `queue-send-all-now` | Ctrl+X q s | Send the queued messages now |
 | `queue-edit` | Ctrl+X q e | Edit, send, remove or merge queued messages |
 | `toggle-agent-dock` | Ctrl+X b a | Show or hide the agent team details |
@@ -157,6 +158,7 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | Ctrl+X g n, r, c, s, a or d | Create a group, or rename, colour, open the settings of, archive or delete the group of this session. A command for the group appears only when this session is in a group |
 | Ctrl+X s u | Show session metrics: context health, totals and cache |
 | Ctrl+X s e | Export this session as HTML, Markdown or a snapshot. Vis saves the file in **Vis Artifacts** in your downloads folder |
+| Ctrl+X s i | Import a `.vissnap` snapshot as a new session. Type the path of the file. If the project has groups, choose its sessions or one group |
 | Ctrl+X q s | Send the queued messages now: the running turn reads them at its next step |
 | Ctrl+X m f 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
 | Ctrl+X q e | Select the queued messages to edit, send, remove or merge them. See [Queued messages](#queued-messages) |
@@ -373,6 +375,7 @@ row. Choose an entry to run it on the selected row. Right-click a row to open th
 | m or u | Move sessions to a group, or take them out of it |
 | f | Star or unstar a session |
 | e | Export a session to a file |
+| i | Import a session from a snapshot into the project or the group of the row |
 | R (Shift+R) | Rename the row |
 | A (Shift+A) | Archive or restore the row |
 | v | Show or hide the archived sessions of the project |

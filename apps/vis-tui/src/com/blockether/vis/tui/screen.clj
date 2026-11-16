@@ -1574,8 +1574,8 @@
 
 (def ^:private palette-only-commands
   "The palette commands that typed slash text does not offer. User request: a session
-   export has a key and a menu, and no slash command."
-  #{:export-session})
+   export has a key and a menu, and no slash command. An import is the same."
+  #{:export-session :import-session})
 
 (defn- menu-commands
   "Command universe for typed slash suggestion/exact-match handling.
@@ -8167,6 +8167,117 @@
                                                 :level :error
                                                 :ttl-ms status-error-ttl-ms))))))))))
 
+(defn- import-place-items
+  "Pick rows for an import: the sessions of the project, then each of its groups."
+  [groups]
+  (into [{:id ::no-group :label "Sessions" :description "In the project, in no group"}]
+        (map
+          (fn [group]
+            {:id (str (get group "id")) :label (str "Group · " (get group "name")) :group group}))
+        groups))
+
+(defn- import-place
+  "The `{:project-id :root :group}` that an import from the session `sid` joins. The
+   project is the project of `sid`, else the active project. When that project has
+   groups, the person chooses its sessions or one group, and the group of `sid`
+   starts selected. Nil when the person cancels."
+  [screen sid]
+  (let [db
+        @state/app-db
+
+        soul
+        (source-soul sid)
+
+        pid
+        (or (some-> (get soul "project_id")
+                    str
+                    not-empty)
+            (:active-project-id db))
+
+        project
+        (some #(when (= pid (str (get % "id"))) %) (get-in db [:project-sidebar :items]))
+
+        place
+        {:project-id pid :root (or (get project "workspace_root") (:workspace/root db))}
+
+        groups
+        (when pid
+          (try (vis/gateway-list-session-groups {:project-id pid}) (catch Throwable _ nil)))]
+
+    (if (empty? groups)
+      place
+      (let [items
+            (import-place-items groups)
+
+            gid
+            (str (get soul "group_id"))]
+
+        (when-let [pick (with-dialog-lock #(dlg/select-dialog!
+                                             screen
+                                             "Import session into…"
+                                             items
+                                             {:height :content
+                                              :enter-label "import"
+                                              :selected (or (first
+                                                              (keep-indexed
+                                                                (fn [i item]
+                                                                  (when (= gid (str (:id item))) i))
+                                                                items))
+                                                            0)}))]
+          (assoc place :group (:group pick)))))))
+
+(defn- import-session!
+  "Import a `.vissnap` file as a new session. The person types the path of the file.
+   `place` is the `{:project-id :root :group}` of a rail row. Without it, the person
+   chooses a place in the project of the open session. A worker sends the file to
+   the gateway. Then `open!` gets the id of the new session."
+  [screen place open!]
+  (when-let [entered (with-dialog-lock
+                       #(dlg/text-input-dialog!
+                          screen
+                          "Import session" "Snapshot file"
+                          :body "The path of a .vissnap file, such as ~/Downloads/work.vissnap"))]
+    (when-not (str/blank? (str entered))
+      (if-let [file (session-export/snapshot-file entered)]
+        (when-let [{:keys [project-id root group]} (or place
+                                                       (import-place screen (current-session-id)))]
+          (vis/worker-future
+            "tui-session-import"
+            (fn []
+              (try (let [gid (some-> (get group "id")
+                                     str
+                                     not-empty)
+                         soul (vis/import-session! file (if gid {:group-id gid} {:root root}))
+                         id (str (get soul "id"))]
+
+                     ;; A group carries its project. A session without a group gets the
+                     ;; project here, as a new session does.
+                     (when (and project-id (not gid)) (vis/gateway-assign-project! id project-id))
+                     (when (get-in @state/app-db [:project-sidebar :open?])
+                       (refresh-created-projects! [(cond-> soul
+                                                     project-id
+                                                     (assoc "project_id" project-id))]))
+                     (vis/notify! (str (or (not-empty (str (get soul "title"))) (.getName file))
+                                       "\n"
+                                       (if gid
+                                         (str "In the group " (get group "name"))
+                                         "In the sessions of the project"))
+                                  :title "Imported session"
+                                  :level :success
+                                  :ttl-ms export-notice-ttl-ms)
+                     (when open! (open! id)))
+                   (catch Throwable e
+                     (tel/log!
+                       {:level :warn :id ::session-import :data {:file (.getPath file)} :error e}
+                       "could not import the session")
+                     (vis/notify! (str "Could not import the session: "
+                                       (or (ex-message e) (.getSimpleName (class e))))
+                                  :level :error
+                                  :ttl-ms status-error-ttl-ms))))))
+        (vis/notify! (str "No readable file at " (str/trim (str entered)))
+                     :level :warn
+                     :ttl-ms status-error-ttl-ms)))))
+
 (defn- show-session-details!
   "Read the selected saved row's metrics/health without switching or hydrating its view."
   [screen sid session]
@@ -8241,8 +8352,9 @@
    with the verb that `projects/row-menu-items` gives the key. Every verb that
    changes the gateway refreshes the rail from the gateway's own answer.
    `start-in-group!` is called with a group id, its project root and its project
-   id when the human starts a session from the rail."
-  [screen entry start-in-group! & [choose!]]
+   id when the human starts a session from the rail. `open-session!` is called with
+   the id of an imported session."
+  [screen entry start-in-group! & [choose! open-session!]]
   (let [group
         (:group entry)
 
@@ -8333,6 +8445,14 @@
 
       :export-session
       (export-session! screen sid)
+
+      :import-session
+      ;; A session row imports into the group that holds that session.
+      (import-session! screen
+                       {:project-id pid
+                        :root (get project "workspace_root")
+                        :group (or group (:session-group entry))}
+                       open-session!)
 
       :copy-session-id
       (when sid (copy-session-id! sid))
@@ -10277,6 +10397,9 @@
                     :export-session
                     (export-session! screen (current-session-id))
 
+                    :import-session
+                    (import-session! screen nil #(switch-session! {:action :switch :id %}))
+
                     :toggle-agent-dock
                     (toggle-agent-dock!)
 
@@ -10633,6 +10756,10 @@
         ;; C-x s e — choose a format, then write this session to a file.
         :export-session
         (do (export-session! screen (current-session-id)) ::recur)
+
+        ;; C-x s i — type the path of a snapshot, then open it as a new session.
+        :import-session
+        (do (import-session! screen nil #(switch-session! {:action :switch :id %})) ::recur)
 
         ;; C-x b a — show or hide the agent table of the dock.
         :toggle-agent-dock
@@ -11840,7 +11967,9 @@
                                                (start-new-session! (:config @state/app-db)
                                                                    nil
                                                                    {:root root
-                                                                    :build-id build-id})))))))
+                                                                    :build-id build-id}))))
+                          (fn [sid]
+                            (switch-session! {:action :switch :id sid})))))
                     (fn [sid]
                       (vis/worker-future "tui-open-saved-session"
                                          (fn []

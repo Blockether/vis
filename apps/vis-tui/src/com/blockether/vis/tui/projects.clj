@@ -1559,7 +1559,8 @@
       sid
       (cond-> (if (:in-archived-group? entry)
                 []
-                [(menu-item :new-session "New session here" :new-session)])
+                [(menu-item :new-session "New session here" :new-session)
+                 (menu-item :import-session "Import session here…" :import)])
         true
         (into [(menu-item :copy-session-id "Copy session id" :copy-session-id)
                (menu-item :details "Show session details" :details)
@@ -1593,7 +1594,8 @@
       group
       (cond-> []
         (not archived-group?)
-        (conj (menu-item :new-session "New session here" :new-session))
+        (into [(menu-item :new-session "New session here" :new-session)
+               (menu-item :import-session "Import session here…" :import)])
 
         (and (not archived-group?) (seq selected))
         (conj (menu-item :move-selected (str "Move " (count selected) " selected here") :move))
@@ -1610,6 +1612,7 @@
       (cond-> [(menu-item :toggle-session-archive
                           (if (:archived? entry) "Hide archived sessions" "Show archived sessions")
                           :show-archived) (menu-item :new-session "New session here" :new-session)
+               (menu-item :import-session "Import session here…" :import)
                (menu-item :new "New group…" :new-group)]
         (seq selected)
         (conj (menu-item :ungroup-selected
@@ -1625,6 +1628,7 @@
                   :show-archived-groups) (menu-item :settings "Project settings…" :settings)]
       :else [(menu-item :use-project "Use project" :use-project)
              (menu-item :new-session "New session" :new-session)
+             (menu-item :import-session "Import session…" :import)
              (menu-item :new "New group…" :new-group)
              (menu-item :rename-project "Rename project…" :rename)
              (menu-item :move-project "Change folder…" :change-folder)
@@ -1688,7 +1692,7 @@
             taken (set (keep :key own))
             more (if target
                    (into []
-                         (comp (remove #(= :new-session (:id %)))
+                         (comp (remove #(#{:new-session :import-session} (:id %)))
                                (map (fn [item]
                                       (cond-> (assoc item :target target)
                                         (taken (:key item))

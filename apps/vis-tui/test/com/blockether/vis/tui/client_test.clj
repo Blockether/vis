@@ -509,6 +509,46 @@
                           (try (client/session-export "s1" :html)
                                (catch clojure.lang.ExceptionInfo e (ex-message e))))))))))
 
+(defdescribe
+  session-import-test
+  ;; The gateway files an import by its query. A refusal must come back as its
+  ;; message, so the person reads why the snapshot did not become a session.
+  (it
+    "sends the snapshot bytes to the place and throws the gateway's message on a refusal"
+    (let [file
+          (doto (java.io.File/createTempFile "vis-import" ".vissnap") (spit "VISSNAP-bytes"))
+
+          asked
+          (atom [])
+
+          answer
+          (atom {:status 201 :body "{\"id\":\"n1\",\"title\":\"Shop\"}"})]
+
+      (try
+        (with-redefs-fn {#'client/target! (fn []
+                                            {})
+                         #'client/ensure-client! (fn [_]
+                                                   nil)
+                         #'client/gw-send! (fn [_ verb path opts]
+                                             (swap! asked conj
+                                               [verb path (slurp (:body opts)) (:raw-body? opts)])
+                                             @answer)}
+          #(do
+             (expect (= "n1" (get (client/import-session! file {:group-id "g 1"}) "id")))
+             (client/import-session! file {:root "/code/my shop" :key "k1"})
+             (expect (= [["POST" "/v1/sessions/actions/import?group_id=g+1" "VISSNAP-bytes" true]
+                         ["POST" "/v1/sessions/actions/import?root=%2Fcode%2Fmy+shop&key=k1"
+                          "VISSNAP-bytes" true]]
+                        @asked))
+             (reset! answer
+               {:status 400
+                :body
+                "{\"error\":{\"code\":\"session/invalid-snapshot\",\"message\":\"Not a snapshot.\"}}"})
+             (expect (= "Not a snapshot."
+                        (try (client/import-session! file {:root "/code"})
+                             (catch clojure.lang.ExceptionInfo e (ex-message e)))))))
+        (finally (.delete file))))))
+
 (defdescribe router-refresh-failure-keeps-data-and-backs-off
              (it "router refresh failure keeps data and backs off"
                  (let [rows [{"id" "test-provider" "default_model" "old-model"}]]

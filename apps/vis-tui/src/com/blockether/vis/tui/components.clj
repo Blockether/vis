@@ -311,20 +311,21 @@
              [(keymap/label-for :toggle-voice-recording) "Voice recording"]
              [(keymap/label-for :toggle-help) "Toggle this help"]]}
      {:title "Messaging & navigation"
-      :rows [["Enter" "Send — or queue it while a turn is running"]
-             ["S-Enter · M-Enter" "New line in the draft"]
-             ["Esc · C-g"
-              "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
-             ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
-             [(str "M-> · " (keymap/label-for :recenter) " · C-l · C-End")
-              "Jump to the bottom (or click the ↓ messages chip)"]
-             ["M-<" "Jump to the top — beginning-of-buffer"]
-             ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
-             [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
-             [(keymap/label-for :session-metrics)
-              "Session metrics — context health, totals and cache"]
-             [(keymap/label-for :export-session)
-              "Export session — a file as HTML, Markdown or a snapshot"]]}
+      :rows
+      [["Enter" "Send — or queue it while a turn is running"]
+       ["S-Enter · M-Enter" "New line in the draft"]
+       ["Esc · C-g"
+        "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
+       ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
+       [(str "M-> · " (keymap/label-for :recenter) " · C-l · C-End")
+        "Jump to the bottom (or click the ↓ messages chip)"]
+       ["M-<" "Jump to the top — beginning-of-buffer"]
+       ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
+       [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
+       [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]
+       [(keymap/label-for :export-session)
+        "Export session — a file as HTML, Markdown or a snapshot"]
+       [(keymap/label-for :import-session) "Import session — a snapshot file as a new session"]]}
      {:title "Subagents"
       :rows [[(keymap/label-for :toggle-agent-dock) "Show or hide the agent table of the dock"]
              [(str (keymap/group-chord :agents) " 1-9") "Open the subagent with that number"]

@@ -145,6 +145,13 @@
           "x-vis-show-when": "has-turns"
         },
         {
+          "const": "import-session",
+          "title": "import session",
+          "description": "Import a snapshot as a new session",
+          "x-vis-key": "i",
+          "x-vis-group": "session"
+        },
+        {
           "const": "group-new",
           "title": "new group",
           "description": "Create a group in this session's project",

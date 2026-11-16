@@ -505,6 +505,7 @@
    {:id :ungroup :key \u :label "Take sessions out of a group"}
    {:id :details :key \d :label "Show session details"}
    {:id :export :key \e :label "Export the session to a file"}
+   {:id :import :key \i :label "Import a session from a snapshot"}
    {:id :star :key \f :label "Star or unstar a session"}
    {:id :rename :key \R :label "Rename the row"}
    {:id :recolour :key \c :label "Change the group colour"}

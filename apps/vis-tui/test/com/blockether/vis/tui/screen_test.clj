@@ -716,6 +716,63 @@
                      ((deref #'screen/export-session!) nil "s1")
                      (expect (= ["No turns to export yet"] @calls))))))
 
+;; User request: import a snapshot on the group level or on the sessions level.
+(defdescribe
+  import-session-test
+  (let [run!
+        (fn [typed place]
+          (let [calls (atom [])]
+            (with-redefs-fn {#'screen/with-dialog-lock (fn [f]
+                                                         (f))
+                             #'dlg/text-input-dialog! (fn [& _]
+                                                        typed)
+                             #'vis/worker-future (fn [_ f]
+                                                   (f))
+                             #'vis/import-session! (fn [file opts]
+                                                     (swap! calls conj
+                                                       [:import (.getName file) opts])
+                                                     (when (= "/refused" (:root opts))
+                                                       (throw (ex-info "Not a snapshot." {})))
+                                                     {"id" "n1" "title" "Shop"})
+                             #'vis/gateway-assign-project! (fn [sid pid]
+                                                             (swap! calls conj [:project sid pid]))
+                             #'vis/notify! (fn [text & _]
+                                             (swap! calls conj [:notice text])
+                                             nil)}
+              #((deref #'screen/import-session!)
+                  nil
+                  place
+                  (fn [sid]
+                    (swap! calls conj [:open sid]))))
+            @calls))
+
+        file
+        (doto (java.io.File/createTempFile "vis-import" ".vissnap")
+          (.deleteOnExit)
+          (spit "VISSNAP"))
+
+        path
+        (.getPath file)
+
+        name
+        (.getName file)]
+
+    (it "imports into a group with the group id only, and opens the new session"
+        (expect
+          (= [[:import name {:group-id "g1"}] [:notice "Shop\nIn the group Release"] [:open "n1"]]
+             (run! path {:project-id "p1" :root "/code" :group {"id" "g1" "name" "Release"}}))))
+    (it "imports into the sessions of a project with its root, and files the session there"
+        (expect (= [[:import name {:root "/code"}] [:project "n1" "p1"]
+                    [:notice "Shop\nIn the sessions of the project"] [:open "n1"]]
+                   (run! (str "  '" path "' ") {:project-id "p1" :root "/code"}))))
+    (it "tells the person that the typed path has no file, and sends nothing"
+        (expect (= [[:notice (str "No readable file at " path ".missing")]]
+                   (run! (str path ".missing") {:project-id "p1" :root "/code"}))))
+    (it "shows the gateway's message when it refuses the snapshot, and opens nothing"
+        (expect (= [[:import name {:root "/refused"}]
+                    [:notice "Could not import the session: Not a snapshot."]]
+                   (run! path {:root "/refused"}))))))
+
 (defdescribe channel-status-error-routing-test
              (it "routes error status events to the notification lane only"
                  (let [events

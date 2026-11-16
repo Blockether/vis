@@ -1,9 +1,11 @@
 (ns com.blockether.vis.tui.session-export
   "The export of one session to a file: the formats, the file name and the write.
+   Also the snapshot file that an import reads.
 
    The gateway renders each format, so the TUI, the Companion and the CLI give the
    same file. The Companion names the file with the same rule."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.paths :as paths])
   (:import [java.io File]
            [java.nio.file CopyOption Files OpenOption StandardCopyOption]))
 
@@ -59,3 +61,15 @@
                                   StandardCopyOption/ATOMIC_MOVE]))
          target
          (finally (Files/deleteIfExists tmp)))))
+
+(defn snapshot-file
+  "The readable file at the typed `path`, or nil. A leading `~` is the home folder,
+   and quotes around the path are dropped, so a path pasted from a shell works."
+  ^File [path]
+  (let [typed
+        (str/replace (str/trim (str path)) #"^(['\"])(.*)\1$" "$2")
+
+        file
+        (File. ^String (paths/expand-home typed))]
+
+    (when (and (seq typed) (.isFile file) (.canRead file)) file)))
