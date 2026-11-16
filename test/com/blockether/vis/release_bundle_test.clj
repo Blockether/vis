@@ -3528,6 +3528,38 @@
           (expect (str/includes? output "/apps/vis-tui/src:") output))
         (finally (delete-tree! root)))))
   (it
+    "gives a debug flag before tui to the terminal, not to the agent as a prompt"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-debug-tui-launcher-test-"
+                                              (make-array FileAttribute 0)))
+
+          home
+          (doto (io/file root "home") .mkdirs)
+
+          path-dir
+          (doto (io/file root "path") .mkdirs)]
+
+      (try
+        (write-executable!
+          (io/file path-dir "clojure")
+          (str
+            "#!/usr/bin/env bash\n"
+            "for arg in \"$@\"; do if [[ \"$arg\" == -Spath ]]; then printf 'src:resources'; exit 0; fi; done\n"
+            "printf '<%s>' \"$@\"\n"))
+        (doseq [flag ["--debug" "--verbose" "-v"]]
+          (let [{:keys [exit output]}
+                (run-bash ["bash" "bin/vis-agent" flag "tui" "--continue"]
+                          {"HOME" (.getAbsolutePath home)
+                           "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
+                           "VIS_NO_AUTO_INSTALL" "1"
+                           "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))})]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "<-M:vis><gateway><tui><-->") output)
+            (expect (str/includes? output
+                                   (str "<com.blockether.vis.tui.main><" flag "><--continue>"))
+                    output)))
+        (finally (delete-tree! root)))))
+  (it
     "launches the native terminal through the matching engine gateway lease"
     (let [root
           (.toFile (Files/createTempDirectory "vis-native-tui-launcher-test-"
