@@ -70,6 +70,7 @@ import {
   receiveSharedText,
   peekPendingShare,
   claimPendingShare,
+  isPendingShareClaimed,
   dropPendingShare,
   type SharedPayload,
 } from './lib/share-intake';
@@ -880,6 +881,9 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   useEffect(() => {
     if (!shareNonce || !routeApplied || shareNonce === handledShareNonce.current) return;
     handledShareNonce.current = shareNonce;
+    // The banner shows before this effect runs. A tap in that time names the
+    // destination: do not go back to the list.
+    if (isPendingShareClaimed()) return;
     void openSharedSession();
   }, [shareNonce, routeApplied, openSharedSession]);
 

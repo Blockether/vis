@@ -368,6 +368,11 @@ export function dropPendingShare(): SharedPayload | null {
   return share;
 }
 
+/** True when the user named a destination and no composer has the share yet. */
+export function isPendingShareClaimed(): boolean {
+  return claimed && pending !== null;
+}
+
 /** Watch for shares that arrive while a screen is already mounted. */
 export function onSharedText(handler: ShareListener): () => void {
   listeners.add(handler);

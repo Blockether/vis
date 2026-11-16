@@ -76,6 +76,29 @@ describe('a share that arrives with no destination', () => {
     view.unmount();
   });
 
+  it('keeps the session that the user taps in the frame that shows the share', async () => {
+    const view = renderApp({ machines: fleet() });
+    restore = view.restore;
+
+    await screen.findByText('Session one');
+    // An observer runs before the effects of the shell: the tap comes first.
+    const tapped = new Promise<void>((resolve) => {
+      const observer = new MutationObserver(() => {
+        if (!screen.queryByText('Sharing')) return;
+        observer.disconnect();
+        fireEvent.click(screen.getByText('Session one'));
+        resolve();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+    receiveSharedText({ text: 'look at this' });
+    await tapped;
+
+    await waitFor(() => expect(screen.getByLabelText('Message Vis')).toHaveValue('look at this'));
+    expect(peekPendingShare()).toBeNull();
+    view.unmount();
+  });
+
   it('closes diagnostics settings when the native share sheet returns logs to Vis', async () => {
     window.history.replaceState(null, '', '/');
     const view = renderApp({ machines: fleet() });
