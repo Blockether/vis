@@ -293,8 +293,8 @@ its own files.
 
 ## Performance
 
-Measured on 2026-11-15 in `eu-central-1` on arm64, with a small number of samples.
-The times of a call are from one computer in Europe.
+Measured on 2026-11-15 and 2026-11-16 in `eu-central-1` on arm64, with a small number
+of samples. The times of a call are from one computer in Europe.
 
 | Measure | Value |
 | --- | --- |
@@ -308,6 +308,9 @@ The times of a call are from one computer in Europe.
 | Dictation of 6.4 s of speech | 7.5 s for the first recording, which loads the model, then 0.6 s |
 | Run of `song_factory` | 14 to 24 minutes: 1 to 3 minutes to the song sheet, 11 to 20 minutes to record the song. A script decided each gate at once |
 | Run of `remix_and_publish` | 8 minutes |
+| A change of a workflow in GitHub, from the commit to the stack | 7 to 9 s: GitHub calls the webhook after 2 to 3 s, then `repo` reads `main` in 5 to 6 s. Without the webhook, 15 minutes at most |
+| Save or Delete in the editor, from the press to the message | 8 to 10 s: the commit is on GitHub after 3 to 4 s, then `repo` reads `main` again |
+| Save that the repository refuses, because `main` has another version | 3 s |
 
 A worker stops after 300 s without work, so the next call pays the first answer time
 again. A run continues when its worker changes.
