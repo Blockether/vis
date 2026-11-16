@@ -866,6 +866,18 @@
           "type": "string",
           "pattern": ".*\\S.*"
         },
+        "client_metadata_url": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^https://[^\\s/]+/\\S+$"
+            },
+            {
+              "const": false
+            }
+          ],
+          "description": "URL of a Client ID Metadata Document to send as the client_id when the authorization server reads such documents. Defaults to the document of Vis. Set false to register a client instead."
+        },
         "client_secret": {
           "type": "string",
           "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
@@ -888,7 +900,8 @@
         "transport": {
           "enum": [
             "stdio",
-            "streamable_http"
+            "streamable_http",
+            "sse"
           ]
         },
         "command": {
@@ -959,7 +972,10 @@
         {
           "properties": {
             "transport": {
-              "const": "streamable_http"
+              "enum": [
+                "streamable_http",
+                "sse"
+              ]
             }
           },
           "required": [

@@ -225,6 +225,8 @@
     (let [{:keys [status body]}
           (http-post-json registration-url
                           (cond-> {"client_name" (or client-name "Claude Code")
+                                   ;; `web`, the default, may not redirect to loopback.
+                                   "application_type" "native"
                                    "redirect_uris" [redirect-uri]
                                    "grant_types" ["authorization_code" "refresh_token"]
                                    "response_types" ["code"]
@@ -383,15 +385,54 @@
                                      (str/join " ")))
                         (with-offline-access asmeta)))}))
 
+(def ^:private client-document-url
+  "Where the Client ID Metadata Document of Vis is published. The document is
+   `vis-contract/oauth/mcp-client.json`; the documentation site serves it."
+  "https://vis.blockether.com/oauth/mcp-client.json")
+
+(defn- without-loopback-port
+  "`redirect-uri` without its port when it is a loopback address. An authorization
+   server accepts each port of a registered loopback redirect (RFC 8252 section 7.3)."
+  [redirect-uri]
+  (str/replace-first (str redirect-uri) #"^(http://(?:127\.0\.0\.1|localhost|\[::1\])):\d+" "$1"))
+
+(defn- published-client?
+  "Whether the document at `url` is what an authorization server reads for a
+   sign-in that returns to `redirect-uri`: it is there, it names `url` as its
+   `client_id` and it lists the redirect."
+  [url redirect-uri]
+  (let [document (try (http-get-json url) (catch Exception _ nil))]
+    (boolean (and (= url (get document "client_id"))
+                  ;; Not a set literal: a redirect without a port is twice the same.
+                  (some (hash-set redirect-uri (without-loopback-port redirect-uri))
+                        (get document "redirect_uris"))))))
+
+(defn- document-client-id
+  "The Client ID Metadata Document URL that is the `client_id` at this
+   authorization server, or nil when registration must give one. A configured
+   `auth.client_metadata_url` is used as it is and `false` turns documents off. The
+   document of Vis itself is used only when a read shows that it is published:
+   a server that cannot read the document refuses the person, with no way back."
+  [asmeta {configured :client-metadata-url} redirect-uri]
+  (when (true? (get asmeta "client_id_metadata_document_supported"))
+    (cond (false? configured) nil
+          (string? configured) configured
+          (published-client? client-document-url redirect-uri) client-document-url)))
+
 (defn- authorize-url
   "The authorization-endpoint URL for `ctx` at `redirect-uri`, plus the `client_id`
-   it was built for. Dynamic client registration happens HERE, once, and the id is
-   returned: registering again before the token exchange can hand back a DIFFERENT
-   client, which the authorization server then rejects the code for. A secret that
-   registration issued comes back as `:registered-secret`."
+   it was built for. The client is the configured `auth.client_id`, else a Client ID
+   Metadata Document when the server reads them, else a dynamic registration.
+   Registration happens HERE, once, and the id is returned: registering again
+   before the token exchange can hand back a DIFFERENT client, which the
+   authorization server then rejects the code for. A secret that registration
+   issued comes back as `:registered-secret`."
   [{:keys [asmeta challenge state resource scope server]} auth-hint redirect-uri]
-  (let [reg
-        (when-not (:client-id auth-hint)
+  (let [document-id
+        (when-not (:client-id auth-hint) (document-client-id asmeta auth-hint redirect-uri))
+
+        reg
+        (when-not (or (:client-id auth-hint) document-id)
           (try (register-client! server asmeta redirect-uri (:client-name auth-hint) scope)
                (catch clojure.lang.ExceptionInfo e
                  ;; Nothing said that this host is an authorization server at all.
@@ -406,7 +447,7 @@
                           e)))))
 
         client-id
-        (or (:client-id auth-hint) (get reg "client_id"))
+        (or (:client-id auth-hint) document-id (get reg "client_id"))
 
         _
         (when-not client-id
@@ -499,12 +540,17 @@
                         headers)]
 
     (when (>= (long status) 400)
-      (throw (ex-info (str "MCP " server " token exchange failed: " status)
-                      {:type :mcp/oauth-token
-                       :server server
-                       :status status
-                       :oauth-error (when (map? body) (get body "error"))
-                       :body body})))
+      (let [oauth-error (when (map? body) (get body "error"))]
+        (throw (ex-info (str "MCP " server " token exchange failed: " status)
+                        {:type :mcp/oauth-token
+                         :server server
+                         :status status
+                         :oauth-error oauth-error
+                         :body body
+                         :refusal (str "the token endpoint answered HTTP "
+                                       status
+                                       (when (string? oauth-error) (str " (" oauth-error ")"))
+                                       ".")}))))
     (write-tokens! server
                    (->tokens body
                              (cond-> {:client-id client-id
@@ -676,7 +722,7 @@
 
     (when refusal
       (throw (ex-info (str "MCP server '" server "': " refusal)
-                      {:type :mcp/oauth-error :server server})))))
+                      {:type :mcp/oauth-error :server server :refusal refusal})))))
 
 (defn- code-of
   "The authorization code inside `input`: a bare code, or the whole redirect URL
@@ -690,9 +736,15 @@
         (callback-query input)]
 
     (when-let [err (get q "error")]
-      (throw (ex-info
-               (str "MCP OAuth error: " err)
-               {:type :mcp/oauth-error :error err :description (get q "error_description")})))
+      (let [description (get q "error_description")]
+        (throw (ex-info (str "MCP OAuth error: " err)
+                        {:type :mcp/oauth-error
+                         :error err
+                         :description description
+                         :refusal (str "the authorization server answered "
+                                       err
+                                       (when description (str " (" description ")"))
+                                       ".")}))))
     (or (get q "code")
         (when-not (or (str/blank? s) (str/includes? s "?")) s)
         (throw (ex-info "No authorization code in the pasted value" {:type :mcp/oauth-error})))))

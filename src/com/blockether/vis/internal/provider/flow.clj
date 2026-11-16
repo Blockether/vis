@@ -12,6 +12,8 @@
    One live attempt per owner. All completion paths serialize on the same state;
    terminal verdicts remain pollable until expiry/cancellation. Private flow data
    and adapter results never cross the public allowlist. No browser or relay here.
+   A failed exchange shows no cause, except the `:refusal` sentence that a leg put
+   in the data of its exception for the person to read.
    Cancellation stops workers and rejects late verdicts; adapters must also obey
    interruption/expiry before persisting credentials during an in-flight exchange."
   (:require [clojure.string :as str]
@@ -96,6 +98,15 @@
 (def ^:private unknown-flow
   {:ok? false :error :unknown-flow :message "Unknown or completed authorization flow."})
 
+(defn- failure-message
+  "The verdict text for the failed exchange `t`, with the `:refusal` sentence of
+   its data when the leg wrote one. `ending` says what the person can do."
+  [t ending]
+  (let [refusal (:refusal (ex-data t))]
+    (if (and (string? refusal) (not (str/blank? refusal)))
+      (str "Authorization failed: " (subs refusal 0 (min 300 (count refusal))) " " ending)
+      (str "Authorization failed. " ending))))
+
 (defn- run-exchange!
   [{:keys [result settle] :as entry} exchange retry?]
   (locking result
@@ -119,11 +130,11 @@
                    (reset! result (if retry?
                                     {:status :pending}
                                     {:status :error
-                                     :message "Authorization failed. Start sign-in again."}))
+                                     :message (failure-message t "Start sign-in again.")}))
                    (when-not retry? (stop-receiver! entry)))
                  {:ok? false
                   :error :auth-failed
-                  :message "Authorization failed. Check the input or start sign-in again."}))))))
+                  :message (failure-message t "Check the input or start sign-in again.")}))))))
 
 (defn- complete-entry!
   [{:keys [kind public flow complete] :as entry} input automatic?]

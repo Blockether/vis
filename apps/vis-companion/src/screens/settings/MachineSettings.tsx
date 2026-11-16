@@ -17,6 +17,7 @@ import type {
   McpServer,
   McpServerInput,
   McpTestResult,
+  McpTransport,
   SettingDecidedIn,
   SettingValue,
   SettingsProjectExtensions,
@@ -931,7 +932,7 @@ export function McpServersPanel({
   // then moved every panel under it down (see `cachedMcpServers`).
   const [servers, setServers] = useState<McpServer[] | null>(() => client.cachedMcpServers(target));
   const [showForm, setShowForm] = useState(false);
-  const [transport, setTransport] = useState<'stdio' | 'streamable_http'>('stdio');
+  const [transport, setTransport] = useState<McpTransport>('stdio');
   const [name, setName] = useState('');
   const [command, setCommand] = useState('');
   const [args, setArgs] = useState('');
@@ -1147,7 +1148,7 @@ export function McpServersPanel({
   const valid = () => {
     if (!name.trim()) return 'Server name is required.';
     if (transport === 'stdio' && !command.trim()) return 'An executable is required.';
-    if (transport === 'streamable_http' && !url.trim()) return 'An MCP endpoint is required.';
+    if (transport !== 'stdio' && !url.trim()) return 'An MCP endpoint is required.';
     return null;
   };
 

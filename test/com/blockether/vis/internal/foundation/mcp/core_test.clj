@@ -97,7 +97,7 @@
                                                  ::connection)
                        #'client/list-tools (constantly [{"name" "read"
                                                          "inputSchema" {"type" "object"}}])
-                       #'client/call-tool (fn [_ tool args]
+                       #'client/call-tool (fn [_ tool args & _]
                                             (swap! called conj [tool args])
                                             {"content" [{"type" "text" "text" "ok"}]})}
         (fn []
@@ -1014,7 +1014,7 @@
                                                          "inputSchema" {"type" "object"}}])
                        #'client/alive? (constantly true)
                        #'client/close (constantly nil)
-                       #'client/call-tool (fn [_conn tool args]
+                       #'client/call-tool (fn [_conn tool args & _]
                                             (reset! called [tool args])
                                             {"content" [{"text" "ok"}]})
                        reconcile-async! (constantly nil)}
@@ -1210,7 +1210,7 @@
                                                          "inputSchema" {"type" "object"}}])
                        #'client/alive? (constantly true)
                        #'client/close (constantly nil)
-                       #'client/call-tool (fn [_conn _tool _args]
+                       #'client/call-tool (fn [_conn _tool _args & _]
                                             {"content" [{"text" "ok"}] "isError" true})
                        reconcile-async! (constantly nil)}
         (fn []

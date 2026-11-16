@@ -597,10 +597,13 @@ export interface SettingsProjectExtensions {
   names: string[];
 }
 
+/** How a gateway reaches an MCP server. `sse` is the older HTTP+SSE transport. */
+export type McpTransport = 'stdio' | 'streamable_http' | 'sse';
+
 /** Sanitized MCP inventory served by one gateway. Secret values never travel here. */
 export interface McpServer {
   name: string;
-  transport: 'stdio' | 'streamable_http';
+  transport: McpTransport;
   enabled: boolean;
   is_connected: boolean;
   /** Live gateway verdict; older gateways may omit it. */
@@ -652,7 +655,7 @@ export interface McpAuthStatus {
 }
 
 export interface McpServerInput {
-  transport: 'stdio' | 'streamable_http';
+  transport: McpTransport;
   enabled?: boolean;
   command?: string;
   args?: string[];

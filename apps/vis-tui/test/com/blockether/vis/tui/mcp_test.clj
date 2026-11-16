@@ -150,6 +150,13 @@
                                   :command-line "npx -y files"
                                   :cwd "/srv"
                                   :is-enabled false}))))
+  (it "keeps the HTTP+SSE transport and the URL of a server through an edit"
+      (let [spec (mcp/form->spec (mcp/row->form {"name" "old"
+                                                 "transport" "sse"
+                                                 "url" "https://mcp.example.com/sse"
+                                                 "enabled" true}))]
+        (expect (= {"transport" "sse" "enabled" true "url" "https://mcp.example.com/sse"} spec))
+        (expect (= "An HTTP server needs a URL." (mcp/spec-problem "old" {"transport" "sse"})))))
   (it "drops blank optionals so an edit preserves the gateway's stored secret"
       (expect (= {"transport" "streamable_http" "enabled" true "url" "https://mcp.example.com/mcp"}
                  (mcp/form->spec {:transport "streamable_http"

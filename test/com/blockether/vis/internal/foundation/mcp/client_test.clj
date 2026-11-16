@@ -556,3 +556,201 @@
           (fn [_ _]
             (try (expect (= "notifications/tools/list_changed" (deref heard 2000 :silent)))
                  (finally (deliver release true))))))))
+
+;; Elicitation: the server asks the person in the middle of a call.
+
+(defn- elicitation-event
+  [id]
+  (str "data: "
+       (json/write-json-str
+         {"jsonrpc" "2.0"
+          "id" id
+          "method" "elicitation/create"
+          "params" {"message" "Which name?"
+                    "requestedSchema" {"type" "object"
+                                       "properties" {"name" {"type" "string" "default" "Ann"}}}}})
+       "\n\n"))
+
+(defdescribe
+  mcp-elicitation-test
+  (it "gives the elicitation of a stdio server to the call that waits"
+      (let [conn (mcp/connect "fake"
+                              {:transport :stdio
+                               :command (require-executable "python3")
+                               :args [server-path]
+                               :elicitation? true})
+            asked (atom nil)
+            answer (fn [options]
+                     (json/read-json (get-in (mcp/call-tool conn "ask" {} 5000 options)
+                                             ["content" 0 "text"])))]
+        (try (expect (= {"action" "accept" "content" {"name" "Ann" "zone" "UTC" "age" 30}}
+                        (answer {:on-elicitation (fn [params]
+                                                   (reset! asked params)
+                                                   {"action" "accept" "content" {"name" "Ann"}})})))
+             ;; A person reads the fields in the order that the server wrote.
+             (expect (= ["zone" "age" "name"]
+                        (keys (get-in @asked ["requestedSchema" "properties"]))))
+             (expect (= {"action" "decline"}
+                        (answer {:on-elicitation (constantly {"action" "decline"})})))
+             ;; Nobody can answer: the server gets a cancel, and the call does not hang.
+             (expect (= {"action" "cancel"} (answer nil)))
+             (finally (mcp/close conn)))))
+  (it "does not count the time of the person against the deadline of the call"
+      (let [reply (promise)]
+        (with-http-conn
+          {"tools/call" (fn [request exchange]
+                          (with-open [out (open-stream! exchange)]
+                            (event! out (elicitation-event "server-1"))
+                            (event! out
+                                    (str "data: "
+                                         (text-result (:message request)
+                                                      (json/write-json-str
+                                                        (get (deref reply 4000 nil) "result")))
+                                         "\n\n"))))
+           :reply (fn [request exchange]
+                    (deliver reply (:message request))
+                    (send! exchange 202 "text/plain" ""))}
+          {:elicitation? true :timeout-ms 500}
+          (fn [conn _]
+            (let [result (mcp/call-tool conn
+                                        "echo"
+                                        {}
+                                        500
+                                        {:on-elicitation (fn [_]
+                                                           (Thread/sleep 1200)
+                                                           {"action" "accept" "content" {}})})]
+              (expect (= {"action" "accept" "content" {"name" "Ann"}}
+                         (json/read-json (get-in result ["content" 0 "text"])))))))))
+  (it "hears an elicitation that the server sends on its listen channel"
+      ;; The TypeScript SDK sends a server request there when it names no call.
+      (let [called (promise)
+            reply (promise)
+            release (promise)]
+        (with-http-conn
+          {:get (fn [_ exchange]
+                  (with-open [out (open-stream! exchange)]
+                    (deref called 4000 nil)
+                    (event! out (elicitation-event "server-1"))
+                    (deref release 5000 nil)))
+           "tools/call" (fn [request exchange]
+                          (deliver called true)
+                          (send! exchange
+                                 200
+                                 "application/json"
+                                 (text-result (:message request)
+                                              (json/write-json-str
+                                                (get (deref reply 4000 nil) "result")))))
+           :reply (fn [request exchange]
+                    (deliver reply (:message request))
+                    (send! exchange 202 "text/plain" ""))}
+          {:elicitation? true :listen? true}
+          (fn [conn _]
+            (try (let [result (mcp/call-tool conn
+                                             "echo"
+                                             {}
+                                             3000
+                                             {:on-elicitation (constantly {"action" "decline"})})]
+                   (expect (= {"action" "decline"}
+                              (json/read-json (get-in result ["content" 0 "text"])))))
+                 (finally (deliver release true))))))))
+
+;; HTTP+SSE transport of protocol 2024-11-05.
+
+(defn- with-legacy-sse
+  "Run `(f url end-stream!)` against a local server that has only the HTTP+SSE
+   transport: a GET on `/sse` names `/messages` for the POST of each message, and
+   every reply goes out on the stream."
+  [f]
+  (let [pool
+        (Executors/newCachedThreadPool)
+
+        server
+        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
+
+        stream
+        (promise)
+
+        release
+        (promise)
+
+        handler
+        (fn [serve]
+          (reify
+            HttpHandler
+              (handle [_ exchange]
+                (try (serve exchange) (catch Throwable _ (.close exchange))))))]
+
+    (.createContext server
+                    "/sse"
+                    (handler (fn [^HttpExchange exchange]
+                               (if (= "GET" (.getRequestMethod exchange))
+                                 (with-open [out (open-stream! exchange)]
+                                   (event! out "event: endpoint\ndata: /messages?session=1\n\n")
+                                   (deliver stream out)
+                                   (deref release 10000 nil))
+                                 (send! exchange 405 "text/plain" "Method Not Allowed")))))
+    (.createContext
+      server
+      "/messages"
+      (handler
+        (fn [^HttpExchange exchange]
+          (let [message
+                (json/read-json (slurp (.getRequestBody exchange)))
+
+                reply
+                (case (get message "method")
+                  "initialize"
+                  (rpc-result message
+                              {"protocolVersion" "2024-11-05"
+                               "capabilities" {"tools" {}}
+                               "serverInfo" {"name" "legacy" "version" "1"}})
+
+                  "tools/list"
+                  (rpc-result message {"tools" [{"name" "echo"}]})
+
+                  "tools/call"
+                  (text-result message (.getQuery (.getRequestURI exchange)))
+
+                  nil)]
+
+            (send! exchange 202 "text/plain" "")
+            (when reply (event! @stream (str "event: message\ndata: " reply "\n\n")))))))
+    (.setExecutor server pool)
+    (.start server)
+    (try (f (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/sse") #(deliver release true))
+         (finally (deliver release true) (.stop server 0) (.shutdownNow pool)))))
+
+(defdescribe
+  mcp-legacy-sse-test
+  (it "calls a tool of a server that has only the HTTP+SSE transport"
+      (with-legacy-sse
+        (fn [url end-stream!]
+          (let [conn (mcp/connect "legacy" {:transport :sse :url url :timeout-ms 3000})]
+            (try (expect (= "legacy" (get (:server-info conn) "name")))
+                 (expect (= ["echo"] (mapv #(get % "name") (mcp/list-tools conn))))
+                 ;; Each message goes to the endpoint that the stream named.
+                 (expect (= "session=1" (call-text conn)))
+                 ;; The stream is the connection: without it the server is gone.
+                 (end-stream!)
+                 (expect (loop [remaining 100]
+                           (cond (not (mcp/alive? conn)) true
+                                 (pos? remaining) (do (Thread/sleep 20) (recur (dec remaining)))
+                                 :else false)))
+                 (finally (mcp/close conn)))))))
+  (it "falls back to HTTP+SSE when a Streamable HTTP server refuses the POST"
+      (with-legacy-sse
+        (fn [url _end-stream!]
+          (let [conn (mcp/connect "legacy" {:transport :streamable-http :url url :timeout-ms 3000})]
+            (try (expect (= "legacy" (get (:server-info conn) "name")))
+                 (expect (= "session=1" (call-text conn)))
+                 (finally (mcp/close conn)))))))
+  (it "reports the refusal of the POST when the server has no HTTP+SSE transport"
+      (with-legacy-sse
+        (fn [url _end-stream!]
+          (let [failure (try (mcp/connect "none"
+                                          {:transport :streamable-http
+                                           :url (str/replace url "/sse" "/nothing")
+                                           :timeout-ms 1000})
+                             nil
+                             (catch Exception e e))]
+            (expect (= :mcp/http-error (:type (ex-data failure)))))))))

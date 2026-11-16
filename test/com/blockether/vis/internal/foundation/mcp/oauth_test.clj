@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.foundation.mcp.oauth-test
   (:require [babashka.http-client :as http]
             [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
             [lazytest.core :refer [defdescribe expect it]]
@@ -305,6 +306,10 @@
               (try
                 (let [registration (first (filter #(str/ends-with? (:uri %) "/register") @seen))]
                   (expect (= expected (get (json/read-json (:body registration)) "client_name")))
+                  ;; A web application may not register a loopback redirect (OpenID
+                  ;; Connect registration), and `web` is the default.
+                  (expect (= "native"
+                             (get (json/read-json (:body registration)) "application_type")))
                   (expect (str/includes? (get flow "url") "client_id=registered-client")))
                 (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
 
@@ -574,4 +579,71 @@
         (expect (not (completes? {:as-url issuer :asmeta {"issuer" issuer}}
                                  "&iss=https%3A%2F%2Fattacker.example.test")))
         (expect (not (completes? {:as-url issuer :asmeta {}}
-                                 "&iss=https%3A%2F%2Fattacker.example.test"))))))
+                                 "&iss=https%3A%2F%2Fattacker.example.test"))))
+    (it "tells the person why it refused the response"
+        ;; #458: the verdict said only "Authorization failed"; the cause was in the log.
+        (let [verdict (fn [query]
+                        (with-browser-flow
+                          sends-issuer
+                          (fn [flow _]
+                            (http/get (str (get flow "redirect_uri") "?state=test-state" query)
+                                      {:timeout 2000})
+                            (str (get (await-verdict (get flow "flow_id")) "error")))))]
+          (expect (str/includes? (verdict "&code=c&iss=https%3A%2F%2Fattacker.example.test")
+                                 "another issuer (https://attacker.example.test)"))
+          (expect (str/includes? (verdict (str "&error=access_denied&error_description=No+consent"
+                                              "&iss=https%3A%2F%2Fauth.example.test"))
+                                 "access_denied (No consent)"))))))
+
+(def ^:private client-document "https://vis.blockether.com/oauth/mcp-client.json")
+
+(defn- client-of
+  "The `client_id` of sign-in, and whether sign-in registered a client. The
+   authorization server has `server` in its metadata and the web has `published`
+   (URL to document)."
+  [server published options]
+  (let [seen (atom [])
+        query (authorization-query
+                (merge {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                        {"authorization_servers" ["https://auth.example.test"]}
+                        "https://auth.example.test/.well-known/oauth-authorization-server"
+                        (merge endpoints server)}
+                       published)
+                seen
+                options)]
+    [(get query "client_id") (boolean (some #(str/ends-with? % "/register") @seen))]))
+
+(defdescribe client-id-metadata-document-test
+  (let [reads-documents {"client_id_metadata_document_supported" true}
+        document {"client_id" client-document "redirect_uris" ["http://127.0.0.1/mcp-callback"]}]
+    (it "names its published document as the client, and registers nothing"
+        (expect (= [client-document false]
+                   (client-of reads-documents {client-document document} {}))))
+    (it "registers a client when the authorization server does not read documents"
+        (expect (= ["registered-client" true] (client-of {} {client-document document} {}))))
+    (it "registers a client when its document is not the one that the server would read"
+        (doseq [published [{}
+                           {client-document (assoc document "client_id" "https://other.example/c")}
+                           {client-document (assoc document
+                                              "redirect_uris"
+                                              ["http://127.0.0.1/other-callback"])}]]
+          (expect (= ["registered-client" true] (client-of reads-documents published {})))))
+    (it "names the configured document without reading it, and none when it is off"
+        (expect (= ["https://id.example/vis.json" false]
+                   (client-of reads-documents
+                              {}
+                              {:auth-hint {:client-metadata-url "https://id.example/vis.json"}})))
+        (expect (= ["registered-client" true]
+                   (client-of reads-documents
+                              {client-document document}
+                              {:auth-hint {:client-metadata-url false}})))
+        (expect (= ["configured-client" false]
+                   (client-of reads-documents
+                              {client-document document}
+                              {:auth-hint {:client-id "configured-client"}}))))
+    (it "publishes a document that names itself and has each redirect of Vis"
+        (let [published {client-document (json/read-json
+                                           (slurp (io/resource "vis-contract/oauth/mcp-client.json")))}]
+          (doseq [mode [nil "app"]]
+            (expect (= [client-document false]
+                       (client-of reads-documents published {:callback-mode mode}))))))))

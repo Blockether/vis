@@ -118,13 +118,18 @@
    :timeout-ms (str (or (get row "timeout_ms") ""))
    :is-enabled (if (contains? row "enabled") (flag row "enabled") true)})
 
+(defn- remote?
+  "Whether `transport` reaches its server at a URL. Only stdio runs a command."
+  [transport]
+  (not (contains? #{nil "" "stdio"} transport)))
+
 (defn form->spec
   "The wire spec for the gateway's save and test verbs. Only the keys the chosen
    transport owns are sent and blank optionals are dropped, so an edit that
    leaves the header field empty preserves the secret the daemon holds."
   [{:keys [transport command-line cwd url env headers timeout-ms is-enabled]}]
   (let [http?
-        (= "streamable_http" transport)
+        (remote? transport)
 
         argv
         (tokenize-command command-line)
@@ -132,7 +137,7 @@
         timeout
         (parse-long (str/trim (str timeout-ms)))]
 
-    (cond-> {"transport" (if http? "streamable_http" "stdio") "enabled" (boolean is-enabled)}
+    (cond-> {"transport" (if http? transport "stdio") "enabled" (boolean is-enabled)}
       (and (not http?) (seq argv))
       (assoc "command"
         (first argv) "args"
@@ -161,7 +166,7 @@
     (cond (str/blank? (str server)) "A server name is required."
           (and (= "stdio" transport) (str/blank? (str (get spec "command"))))
           "A stdio server needs a command to run."
-          (and (= "streamable_http" transport) (str/blank? (str (get spec "url"))))
+          (and (remote? transport) (str/blank? (str (get spec "url"))))
           "An HTTP server needs a URL."
           :else nil)))
 
@@ -202,7 +207,7 @@
                    (read! "Timeout in ms (blank for the default):"
                           {:initial (str (:timeout-ms f))
                            :placeholder "how long the gateway waits for this server"}))]]
-    (if (= "streamable_http" transport)
+    (if (remote? transport)
       [[:url
         (fn [f]
           (read! "URL:"
@@ -282,7 +287,7 @@
                                  (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
                                  ;; A successful disconnected HTTP probe is the gateway's
                                  ;; OAuth challenge verdict, not an unreachable endpoint.
-                                 (and (= "streamable_http" (get spec "transport"))
+                                 (and (remote? (get spec "transport"))
                                       (false? (get verdict "is_connected"))
                                       (not (get verdict "error")))
                                  "Sign-in required · save, then choose Sign in"

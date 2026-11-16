@@ -15,6 +15,24 @@
                                                 "url" "https://mcp.figma.com/mcp"
                                                 "auth" {"client_name" client-name}}}}}))))))
 
+(defdescribe mcp-client-metadata-url-test
+  (it "accepts an HTTPS document URL or false, and rejects each other value"
+      (doseq [[url accepted?] [["https://id.example.com/vis.json" true] [false true]
+                               ["http://id.example.com/vis.json" false]
+                               ["https://id.example.com" false] [true false] ["" false]]]
+        (expect (= accepted?
+                   (config-validation/valid?
+                     {"mcp" {"servers" {"remote" {"transport" "streamable_http"
+                                                 "url" "https://mcp.example.com/mcp"
+                                                 "auth" {"client_metadata_url" url}}}}}))))))
+
+(defdescribe mcp-legacy-transport-test
+  (it "accepts an HTTP+SSE server at a URL and rejects one with a command"
+      (doseq [[server accepted?] [[{"transport" "sse" "url" "https://mcp.example.com/sse"} true]
+                                  [{"transport" "sse" "command" "npx"} false]
+                                  [{"transport" "websocket" "url" "wss://mcp.example.com"} false]]]
+        (expect (= accepted? (config-validation/valid? {"mcp" {"servers" {"old" server}}}))))))
+
 (defdescribe workspace-python-name-test
              (it "accepts explicit snake_case Path names and rejects invalid Python identifiers"
                  (doseq [[alias accepted?] [["engine_path" true] ["library_v2_path" true]

@@ -1,0 +1,19 @@
+{
+  "client_id": "https://vis.blockether.com/oauth/mcp-client.json",
+  "client_name": "Vis",
+  "client_uri": "https://vis.blockether.com/",
+  "logo_uri": "https://vis.blockether.com/vis-icon-192.png",
+  "application_type": "native",
+  "redirect_uris": [
+    "http://127.0.0.1/mcp-callback",
+    "com.blockether.viscompanion://oauth/callback"
+  ],
+  "grant_types": [
+    "authorization_code",
+    "refresh_token"
+  ],
+  "response_types": [
+    "code"
+  ],
+  "token_endpoint_auth_method": "none"
+}

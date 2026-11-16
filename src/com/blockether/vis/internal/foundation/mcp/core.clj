@@ -42,6 +42,7 @@
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
+            [com.blockether.vis.internal.foundation.mcp.elicitation :as elicitation]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
@@ -61,6 +62,9 @@
       "stdio"
       :stdio
 
+      "sse"
+      :sse
+
       (throw (ex-info "Unsupported MCP transport" {:transport transport})))))
 
 (defn- wire-transport
@@ -72,6 +76,9 @@
   (case (transport-of spec)
     :streamable-http
     "streamable_http"
+
+    :sse
+    "sse"
 
     "stdio"))
 
@@ -114,7 +121,9 @@
 (defn- ->client-spec
   "Coerce a user spec (already `runtime-config`'d) into what `mcp/connect`
    wants: env-interpolated, `:bearer-fn` synthesised for HTTP servers without a
-   static `Authorization` header, `:timeout-ms` / `:listen?` forwarded.
+   static `Authorization` header, `:timeout-ms` forwarded. Every connection
+   declares form elicitation. A Streamable HTTP server gets the listen channel
+   unless `listen` is false: a server sends an elicitation there.
 
    The `WWW-Authenticate` atom is SHARED with the transport instead of staying
    private to the token provider: every HTTP server without a static header gets
@@ -142,20 +151,24 @@
         (auth-hint (or (:auth s) (get s "auth")))
 
         bearer-fn
-        (when (and server-name (= :streamable-http transport) (not has-static-auth?))
+        (when (and server-name
+                   (contains? #{:streamable-http :sse} transport)
+                   (not has-static-auth?))
           (mcp-oauth/make-bearer-fn server-name
                                     (:url s)
                                     www-auth
                                     (when (:client-id auth) (:client-secret auth))))]
 
-    (cond-> (assoc s :transport transport)
+    (cond-> (assoc s
+              :transport transport
+              :elicitation? true)
       auth
       (assoc :auth auth)
 
       (:timeout_ms s)
       (assoc :timeout-ms (:timeout_ms s))
 
-      (:listen s)
+      (and (= :streamable-http transport) (not (false? (:listen s))))
       (assoc :listen? true)
 
       bearer-fn
@@ -619,7 +632,7 @@
   [session-id]
   (mapv (fn [[nm spec]]
           {"name" nm
-           "transport" (name (transport-of spec))
+           "transport" (wire-transport spec)
            "is_connected" (boolean (get-in @session-conns [[session-id nm] :conn]))})
         (sort-by key (get @session-specs session-id))))
 
@@ -1394,7 +1407,13 @@
                   :hint (str "Call `await "
                              sandbox-verb
                              "(server)` for every tool's description and input schema."))
-             :else (let [r (mcp/call-tool conn tool (if (map? args) args {}))
+             :else (let [r (mcp/call-tool conn
+                                          tool
+                                          (if (map? args) args {})
+                                          (or (:timeout-ms conn) mcp/default-timeout-ms)
+                                          ;; The server can ask the person of this session.
+                                          {:on-elicitation (when-let [sid (:session-id env)]
+                                                             #(elicitation/ask! sid server %))})
                          is-error (boolean (get r "isError"))]
 
                      (ok :mcp/call

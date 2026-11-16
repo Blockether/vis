@@ -862,6 +862,17 @@ The gateway keeps one connection for each enabled server, which all sessions sha
 connection that crashed. **Kill** closes the connection until you press **Start** or the gateway
 restarts. To keep a server off after a restart, set `enabled: false`.
 
+Vis connects to a server that has a URL with Streamable HTTP. When an older server refuses that
+request, Vis uses the older HTTP+SSE transport on the same URL. To use only HTTP+SSE, set
+`transport: sse`.
+
+Vis keeps one stream open to each Streamable HTTP server. The server uses the stream to send
+changes, such as a new tool list, and its questions. To turn the stream off, set `listen: false`.
+
+A server can ask you for input in the middle of a tool call. Vis shows the question as a form in
+the TUI and in the Companion app, and the tool call waits. Select **Send** to answer or **Decline**
+to refuse. See [Forms and user input](human-input.md) for how forms work.
+
 The gateway starts an OAuth flow when an HTTP MCP server requests it with
 `401`. From the terminal, use **MCP Servers**. From the CLI:
 
@@ -908,8 +919,25 @@ mcp:
         client_secret: ${FIGMA_CLIENT_SECRET}
 ```
 
-Vis does not accept a secret as plain text. When sign-in fails, the error names the failed step
-and the HTTP status of the server.
+Vis does not accept a secret as plain text. When sign-in fails, the error names the failed step,
+the HTTP status of the server and the reason that the server gives.
+
+Some authorization servers read a client document and need no registration. To these servers, Vis
+sends the URL of its own document, `https://vis.blockether.com/oauth/mcp-client.json`, as the
+client identifier. The consent screen then shows the name `Vis`. Set `auth.client_metadata_url` to
+the URL of your own document, or to `false` to register a client:
+
+```yaml
+mcp:
+  servers:
+    figma:
+      transport: streamable_http
+      url: https://mcp.figma.com/mcp
+      auth:
+        client_metadata_url: false
+```
+
+Vis uses `auth.client_id` first, then a client document, then registration.
 
 Vis keeps server names in one form: lowercase letters, digits and hyphens. `Figma Dev` becomes
 `figma-dev`. A name without a letter or a digit is refused.

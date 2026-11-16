@@ -2,7 +2,8 @@
 # Minimal fake MCP server for the vis MCP client tests: newline-delimited
 # JSON-RPC 2.0 over stdin/stdout. Handles initialize, tools/list, tools/call.
 # The tool "ping" sends a ping to the client and reports its answer. The tool
-# "grow" adds a tool and sends notifications/tools/list_changed.
+# "grow" adds a tool and sends notifications/tools/list_changed. The tool "ask"
+# sends a form elicitation and reports the answer of the client.
 import json
 import sys
 
@@ -92,6 +93,28 @@ for line in sys.stdin:
             answer = json.loads(sys.stdin.readline() or "{}")
             is_pong = answer.get("id") == "server-1" and answer.get("result") == {}
             text_result(mid, "pong" if is_pong else "silence")
+        elif name == "ask":
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "server-2",
+                    "method": "elicitation/create",
+                    "params": {
+                        "message": "Who are you?",
+                        "requestedSchema": {
+                            "type": "object",
+                            "properties": {
+                                "zone": {"type": "string", "default": "UTC"},
+                                "age": {"type": "integer", "default": 30},
+                                "name": {"type": "string"},
+                            },
+                            "required": ["name"],
+                        },
+                    },
+                }
+            )
+            answer = json.loads(sys.stdin.readline() or "{}")
+            text_result(mid, json.dumps(answer.get("result"), sort_keys=True))
         elif name == "grow":
             grown = True
             send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
