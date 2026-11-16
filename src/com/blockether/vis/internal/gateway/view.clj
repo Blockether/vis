@@ -231,12 +231,174 @@
   [type payload]
   (when (global-listed?) (state/publish-fleet-event! type payload)))
 
+(declare chars-above?)
+
+;; --- View deltas (an app reader that is a few frames behind reads little) ---
+
+(defonce
+  ^{:private true
+    :doc
+    "App view id to `{:strings … :frames …}`. `:strings` maps `[node-id key]` to
+   the long string that a reader has there after the newest published frame.
+   `:frames` holds the newest published frames as view deltas, oldest first and
+   without a gap."}
+  deltas
+  (atom {}))
+
+(def ^:private delta-strings-kept
+  "The most long strings that the gateway keeps as bases for one app. A node that
+   goes away with its parent leaves its string here, so the map has a limit."
+  16)
+
+(defn string-edits
+  "The edits (view.json `string_edit`) that turn `base` into `target`: the common
+   start and the common end stay, and one edit carries the rest. No edit splits a
+   surrogate pair."
+  [^String base ^String target]
+  (let [n
+        (.length base)
+
+        m
+        (.length target)
+
+        limit
+        (min n m)
+
+        start
+        (loop [i 0]
+          (if (and (< i limit) (== (int (.charAt base i)) (int (.charAt target i))))
+            (recur (inc i))
+            i))
+
+        start
+        (if (and (pos? start) (Character/isHighSurrogate (.charAt base (dec start))))
+          (dec start)
+          start)
+
+        room
+        (- limit start)
+
+        end
+        (loop [k 0]
+          (if (and (< k room) (== (int (.charAt base (- n k 1))) (int (.charAt target (- m k 1)))))
+            (recur (inc k))
+            k))
+
+        end
+        (if (and (pos? end) (Character/isLowSurrogate (.charAt base (- n end)))) (dec end) end)]
+
+    (if (= start n m)
+      []
+      [{:start start :delete (- n start end) :insert (subs target start (- m end))}])))
+
+(defn- long-string?
+  [value]
+  (and (string? value) (> (count value) (long view-spec/splice-above-chars))))
+
+(defn- spliced-set
+  "`set` operation `op` at index `index` without each long string that `strings`
+   has a base for, and the splices (view.json `patch_splice`) that carry them."
+  [strings index op]
+  (reduce-kv (fn [[op splices] k value]
+               (if-let [base (when (long-string? value) (get strings [(:node-id op) k]))]
+                 [(dissoc op k)
+                  (conj splices
+                        {:op-index index
+                         :key (wire/wire-key k)
+                         :base-hash (.hashCode ^String base)
+                         :edits (string-edits base value)})]
+                 [op splices]))
+             [op []]
+             op))
+
+(defn- strings-after
+  "`strings` after `op`. A `set` gives or removes the string of each key that it
+   names. A node that comes or goes takes the strings of its id with it."
+  [strings op]
+  (let [without-node
+        (fn [id]
+          (into {} (remove (comp #{id} first key)) strings))
+
+        with-values
+        (fn [strings id values]
+          (reduce-kv
+            (fn [strings k value]
+              (if (long-string? value) (assoc strings [id k] value) (dissoc strings [id k])))
+            strings
+            values))]
+
+    (case (:op op)
+      :set
+      (with-values strings (:node-id op) (dissoc op :op :node-id))
+
+      :add-node
+      (with-values (without-node (:id (:node-spec op))) (:id (:node-spec op)) (:node-spec op))
+
+      :remove-node
+      (without-node (:node-id op))
+
+      strings)))
+
+(defn- delta-of
+  "The view delta of app frame `frame` for a reader that holds `strings`, with the
+   strings that the reader holds after it."
+  [strings frame]
+  (let [{:keys [strings ops splices]}
+        (reduce (fn [acc [index op]]
+                  (let [[spliced splices]
+                        (if (= :set (:op op)) (spliced-set (:strings acc) index op) [op []])]
+                    (-> acc
+                        (update :ops conj spliced)
+                        (update :splices into splices)
+                        (update :strings strings-after op))))
+                {:strings strings :ops [] :splices []}
+                (map-indexed vector (:ops frame)))]
+    {:strings (if (> (count strings) (long delta-strings-kept)) {} strings)
+     :delta {:first-seq (:first-seq frame)
+             :patch {:view-id (:view-id frame) :seq (:seq frame) :ops ops}
+             :splices splices}}))
+
+(defn- remember-delta!
+  "Keep app frame `frame` as a view delta. A delta that stays large, or that does
+   not continue the kept frames, starts the kept frames again."
+  [frame]
+  (swap! deltas update
+    (:view-id frame)
+    (fn [{:keys [strings frames]}]
+      (let [{:keys [strings delta]}
+            (delta-of (or strings {}) frame)
+
+            continues?
+            (when-let [held (get-in (peek frames) [:patch :seq])]
+              (= (inc (long held)) (long (:first-seq frame))))]
+
+        {:strings strings
+         :frames (cond (chars-above? [(get-in delta [:patch :ops]) (:splices delta)]
+                                     view-spec/patch-elide-above-chars)
+                       []
+                       continues? (vec (take-last (long view-spec/delta-frames-kept)
+                                                  (conj frames delta)))
+                       :else [delta])})))
+  nil)
+
+(defn deltas-since
+  "The view deltas (view.json `view_delta`) that take app `view-id` from seq `since`
+   to its newest published frame, oldest first. Nil when the gateway does not hold
+   them: then the reader takes the whole view."
+  [view-id since]
+  (let [frames (:frames (get @deltas view-id))]
+    (cond (empty? frames) nil
+          (= since (get-in (peek frames) [:patch :seq])) []
+          :else (not-empty (vec (drop-while #(not= (inc (long since)) (:first-seq %)) frames))))))
+
 (defn- publish-patches!
   "Publish one coalesced frame. `first_seq`..`seq` is the range of engine
    patches it carries, so a client can tell a COALESCED jump from a real gap: a
    frame that does not continue the one before it is a resync, not loss. The
-   frame of a global app goes to the fleet stream."
+   frame of a global app goes to the fleet stream. The frame of an app is kept as
+   a view delta first, so a reader that the event wakes finds it."
   [frame]
+  (when (and (:is-app frame) (seq (:ops frame))) (remember-delta! frame))
   (when (and (:is-global frame) (seq (:ops frame)))
     (publish-global! gateway-contract/view-patch-event
                      {:kind :live
@@ -539,6 +701,7 @@
     (let [sid (session-of event)]
       ;; An ending never overtakes buffered live work.
       (when (= :live (:kind event)) (flush-view! (:view-id event)))
+      (swap! deltas dissoc (:view-id event))
       (when (:is-global event)
         (publish-global! gateway-contract/view-close-event
                          {:kind (:kind event) :view-id (:view-id event) :result (:result event)}))

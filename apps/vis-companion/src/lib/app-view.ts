@@ -5,10 +5,9 @@
 
 import {
   applyLivePatch,
+  findLiveNode,
   liveViewFromWire,
-  nestedLiveNodes,
   upsertSubmission,
-  type LiveNode,
   type LiveView,
 } from './live-view';
 import type { SseEvent } from './types';
@@ -58,18 +57,9 @@ export function withSubmission(view: LiveView, submission: LiveSubmission): Live
   return { ...view, submissions: upsertSubmission(view.submissions ?? [], submission) };
 }
 
-function findNode(nodes: readonly LiveNode[], id: string): LiveNode | undefined {
-  for (const node of nodes) {
-    if (node.id === id) return node;
-    const found = findNode(nestedLiveNodes(node), id);
-    if (found) return found;
-  }
-  return undefined;
-}
-
 /** The diff revision the human reviews in node `nodeId`, when it is a diff. */
 export function reviewedRevision(view: LiveView, nodeId: string): string | undefined {
-  const node = findNode(view.nodes, nodeId);
+  const node = findLiveNode(view.nodes, nodeId);
   return node?.type === 'diff' ? node.new_revision : undefined;
 }
 

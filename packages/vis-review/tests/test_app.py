@@ -90,6 +90,29 @@ def test_a_new_change_shows_after_a_checkpoint_and_nodes_keep_their_place(
     assert recorder.ids() == order
 
 
+def test_a_new_change_in_a_listed_file_sends_only_the_patch_of_the_diff(
+    tmp_path, recorder
+):
+    """A new diff node makes each surface read a long review again as a whole."""
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block", "edit a")
+    app.refresh()
+    said = len(recorder.said)
+    edit(root, "a.py", "a = 3\n")
+    journal.checkpoint("block", "edit a again")
+    app.refresh()
+    ops = [
+        op
+        for envelope in recorder.said[said:]
+        for op in envelope.get("patch", {}).get("ops", [])
+        if "diff" in (op.get("node_id"), op.get("node_spec", {}).get("id"))
+    ]
+    assert [sorted(op) for op in ops] == [["node_id", "op", "patch"]]
+    assert ops[0]["op"] == "set"
+    assert "+a = 3" in recorder.node("diff")["patch"]
+
+
 def test_choosing_a_checkpoint_shows_only_its_own_change(tmp_path, recorder):
     root, journal, app = setup(tmp_path, recorder)
     edit(root, "a.py", "a = 2\n")

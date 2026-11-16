@@ -405,6 +405,89 @@
       ],
       "x-vis-elide-above-chars": 16384
     },
+    "string_edit": {
+      "description": "One change of a string. At `start`, `delete` UTF-16 code units of the base string go out and `insert` comes in. `start` counts in the base string.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "insert": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "delete",
+        "insert"
+      ]
+    },
+    "patch_splice": {
+      "description": "A long string of one `set` operation, as edits of the string that the node holds before that operation. The operation comes without the key.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op_index": {
+          "description": "The index of the `set` operation in `ops`.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "key": {
+          "description": "The key of the operation that the edits give.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "base_hash": {
+          "description": "The hash of the base string: `h = 31 * h + unit` for each UTF-16 code unit, kept as a signed 32-bit number. A client whose string has another hash reads the view.",
+          "type": "integer"
+        },
+        "edits": {
+          "description": "In ascending order of `start`, without overlap.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/string_edit"
+          }
+        }
+      },
+      "required": [
+        "op_index",
+        "key",
+        "base_hash",
+        "edits"
+      ]
+    },
+    "view_delta": {
+      "description": "One published frame of an app, as a read with `since` gives it. A string with more characters than `x-vis-splice-above-chars` comes as a `patch_splice` when the gateway has its base. The gateway keeps the last `x-vis-frames-kept` frames of an app, and only frames whose strings hold at most `x-vis-elide-above-chars` characters.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "first_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "patch": {
+          "$ref": "#/$defs/live_patch"
+        },
+        "splices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/patch_splice"
+          }
+        }
+      },
+      "required": [
+        "first_seq",
+        "patch",
+        "splices"
+      ],
+      "x-vis-splice-above-chars": 1024,
+      "x-vis-frames-kept": 8
+    },
     "option": {
       "type": "object",
       "additionalProperties": false,

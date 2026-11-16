@@ -209,9 +209,23 @@
                                                                 (= "true" summary))})
           :else (http/session-404 (get-in request [:path-params :sid])))))
 
+(defn- view-answer
+  "The answer of a read of `view`. With `since`, the reader has the view at that
+   seq: it gets `patches`, the view deltas after that seq (view.json `view_delta`),
+   when the gateway holds them. Else it gets the whole view."
+  [request view]
+  (let [since (get-in request [:query-params "since"])]
+    (cond (nil? since) (http/json-response {:view view})
+          (not (re-matches #"\d{1,18}" since))
+          (http/error-response 400 :invalid-request "since must be a whole number from 0")
+          :else (if-let [deltas (gw-view/deltas-since (:id view) (parse-long since))]
+                  (http/json-response {:patches deltas})
+                  (http/json-response {:view view})))))
+
 (defn- live-view-handler
   "GET /v1/sessions/:sid/views/live/:view-id — one live view of this session as
-   the picture a surface paints. A closed app answers too, with `is_closed`."
+   the picture a surface paints. A closed app answers too, with `is_closed`.
+   `since=<seq>` asks for the changes after that seq: see [[view-answer]]."
   [request]
   (let [sid
         (http/path-sid request)
@@ -222,7 +236,7 @@
 
     (cond (nil? sid) (http/session-404 (get-in request [:path-params :sid]))
           (nil? view) (view-404 (get-in request [:path-params :view-id]))
-          :else (http/json-response {:view view}))))
+          :else (view-answer request view))))
 
 (defn- list-global-apps-handler
   "GET /v1/apps — the global apps, oldest first, each as the picture a surface
@@ -245,11 +259,12 @@
                                                                  (= "true" summary))}))))
 
 (defn- global-app-handler
-  "GET /v1/apps/:view-id — one global app as the picture a surface paints."
+  "GET /v1/apps/:view-id — one global app as the picture a surface paints.
+   `since=<seq>` asks for the changes after that seq: see [[view-answer]]."
   [request]
   (if-let [app (some-> (path-view-id request)
                        gw-view/global-app-of)]
-    (http/json-response {:view app})
+    (view-answer request app)
     (view-404 (get-in request [:path-params :view-id]))))
 
 (defn- global-app-action-handler

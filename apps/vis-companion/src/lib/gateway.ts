@@ -99,6 +99,7 @@ import { inputViewsFromWire, type HumanInputRequest } from './human-input';
 import type { ViewAction, ViewActionOutcome } from './view';
 import {
   appSummary,
+  applyLivePatch,
   liveViewFromWire,
   liveViewsFromWire,
   type LiveLogPage,
@@ -5892,15 +5893,37 @@ export class GatewayClient {
     return liveViewsFromWire(response.views).map(appSummary);
   }
 
-  /** One live view or app, also a closed app. `null` when the gateway cannot paint it. */
-  async liveView(sid: string, viewId: string, signal?: AbortSignal): Promise<LiveView | null> {
-    const response = await this.request<{ view: unknown }>(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}`,
-      undefined,
-      signal,
-    );
+  /**
+   * The view at `path`. With `held`, the read asks only for the frames after
+   * `held.seq` (view.json `view_delta`) and folds them into `held`. A gateway that
+   * does not hold these frames, and an older gateway, answer the whole view.
+   */
+  private async readView(path: string, signal?: AbortSignal, held?: LiveView | null): Promise<LiveView | null> {
+    if (held && !held.is_summary) {
+      const response = await this.request<{ view?: unknown; patches?: unknown }>(
+        'GET',
+        `${path}?since=${held.seq}`,
+        undefined,
+        signal,
+      );
+      if (!Array.isArray(response.patches)) return liveViewFromWire(response.view);
+      const folded = response.patches.reduce<LiveView>((view, frame) => applyLivePatch(view, frame), held);
+      if (!folded.is_stale) return folded;
+    }
+    const response = await this.request<{ view: unknown }>('GET', path, undefined, signal);
     return liveViewFromWire(response.view);
+  }
+
+  /**
+   * One live view or app, also a closed app. `null` when the gateway cannot paint it.
+   * `held` is the view that the caller has: see `readView`.
+   */
+  liveView(sid: string, viewId: string, signal?: AbortSignal, held?: LiveView | null): Promise<LiveView | null> {
+    return this.readView(
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}`,
+      signal,
+      held,
+    );
   }
 
   /**
@@ -5912,15 +5935,12 @@ export class GatewayClient {
     return liveViewsFromWire(response.views).map(appSummary);
   }
 
-  /** One global app, also a closed one. `null` when the gateway cannot paint it. */
-  async globalApp(viewId: string, signal?: AbortSignal): Promise<LiveView | null> {
-    const response = await this.request<{ view: unknown }>(
-      'GET',
-      `/v1/apps/${encodeURIComponent(viewId)}`,
-      undefined,
-      signal,
-    );
-    return liveViewFromWire(response.view);
+  /**
+   * One global app, also a closed one. `null` when the gateway cannot paint it.
+   * `held` is the view that the caller has: see `readView`.
+   */
+  globalApp(viewId: string, signal?: AbortSignal, held?: LiveView | null): Promise<LiveView | null> {
+    return this.readView(`/v1/apps/${encodeURIComponent(viewId)}`, signal, held);
   }
 
   /** Apply one operator action to a global app. */

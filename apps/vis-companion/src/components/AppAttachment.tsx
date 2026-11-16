@@ -86,7 +86,8 @@ export function useAppView(
   const viewRef = useRef<LiveViewModel | null>(view);
   const reading = useRef<AbortController | null>(null);
   // An event asked for a read while one was in flight: read once more after it.
-  const again = useRef(false);
+  // A whole read wins over a read of the missed frames.
+  const again = useRef<'whole' | 'frames' | null>(null);
   // Actions go to the owner one at a time, in the order the human made them: the
   // `change` of a field that loses focus reaches the owner before the click that
   // took the focus away.
@@ -98,13 +99,19 @@ export function useAppView(
     setView(next);
   }, [setView]);
 
-  const reread = useCallback(() => {
-    const start = () => {
+  // With `isFramesOnly`, the read asks for the frames that the held view missed.
+  // Only a whole read brings what no patch carries: the close and the surfaces.
+  const read = useCallback((isFramesOnly: boolean) => {
+    const start = (isFramesOnly: boolean) => {
       reading.current?.abort();
       const controller = new AbortController();
       reading.current = controller;
-      again.current = false;
-      (sid === null ? client.globalApp(viewId, controller.signal) : client.liveView(sid, viewId, controller.signal))
+      again.current = null;
+      const held = isFramesOnly ? viewRef.current : null;
+      (sid === null
+        ? client.globalApp(viewId, controller.signal, held)
+        : client.liveView(sid, viewId, controller.signal, held)
+      )
         .then((read) => {
           if (controller.signal.aborted) return;
           if (!read) {
@@ -122,19 +129,20 @@ export function useAppView(
         .finally(() => {
           if (reading.current !== controller) return;
           reading.current = null;
-          if (again.current) start();
+          if (again.current) start(again.current === 'frames');
         });
     };
-    start();
+    start(isFramesOnly);
   }, [client, sid, viewId, commit]);
+  const reread = useCallback(() => read(false), [read]);
 
   // An event that asks for a read while one is in flight waits for it. The gateway
   // leaves out each large patch, so a stream of them must not abort every read
   // before it lands.
-  const rereadAfterEvent = useCallback(() => {
-    if (reading.current) again.current = true;
-    else reread();
-  }, [reread]);
+  const rereadAfterEvent = useCallback((isFramesOnly: boolean) => {
+    if (reading.current) again.current = isFramesOnly && again.current !== 'whole' ? 'frames' : 'whole';
+    else read(isFramesOnly);
+  }, [read]);
 
   useEffect(() => {
     reread();
@@ -157,7 +165,7 @@ export function useAppView(
       if (!held) return;
       const folded = sid === null ? foldGlobalAppView(held, event) : foldAppEvent(held, event);
       if (folded.view !== held) commit(folded.view);
-      if (folded.isReread) rereadAfterEvent();
+      if (folded.isReread) rereadAfterEvent(event.type === VIEW_PATCH_EVENT);
     };
     // A global app lives on the fleet stream, which has no replay.
     const offEvents = sid === null ? hub.subscribeFleet(fold) : hub.subscribeSession(sid, fold, { replay: false });

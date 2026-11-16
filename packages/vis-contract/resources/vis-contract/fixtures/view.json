@@ -75,5 +75,37 @@
   },
   "input_result": {
     "reason": "submitted"
+  },
+  "delta": {
+    "base": "diff --git a/é.txt b/é.txt\n--- a/é.txt\n+++ b/é.txt\n@@ -1,2 +1,2 @@\n one 😀\n-two 😀\n+two 😁\n",
+    "target": "diff --git a/é.txt b/é.txt\n--- a/é.txt\n+++ b/é.txt\n@@ -1,2 +1,2 @@\n one 😀\n-two 😀\n+two 😂\n",
+    "frame": {
+      "first_seq": 2,
+      "patch": {
+        "view_id": "live-one",
+        "seq": 2,
+        "ops": [
+          {
+            "op": "set",
+            "node_id": "change",
+            "new_revision": "fff0002"
+          }
+        ]
+      },
+      "splices": [
+        {
+          "op_index": 0,
+          "key": "patch",
+          "base_hash": 1640763359,
+          "edits": [
+            {
+              "start": 88,
+              "delete": 2,
+              "insert": "😂"
+            }
+          ]
+        }
+      ]
+    }
   }
 }

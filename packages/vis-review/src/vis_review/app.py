@@ -226,20 +226,16 @@ class ReviewApp:
         )
 
     def _paint(self, nodes: list[dict]) -> None:
+        painted = list(self._painted.values())
         with self.view.batch():
-            before = None
-            for node in nodes:
-                node_id = node["id"]
-                if self._painted.get(node_id) != node:
-                    if node_id in self._painted:
-                        self.view.drop(node_id)
-                    self.view.add(node, after=before)
-                    self._painted[node_id] = node
-                before = node_id
-            # A node that the render no longer has, like the images of an old range.
-            for node_id in set(self._painted) - {node["id"] for node in nodes}:
-                self.view.drop(node_id)
-                del self._painted[node_id]
+            for step, *args in _steps(painted, nodes, _ids(painted)) or []:
+                if step == "drop":
+                    self.view.drop(*args)
+                elif step == "add":
+                    self.view.add(args[0], after=args[1])
+                else:
+                    self.view.node(args[0]).set(**args[1])
+        self._painted = {node["id"]: node for node in nodes}
         self._keep_state()
 
     def _state(self) -> dict:
@@ -1029,6 +1025,70 @@ def _shown_nodes(view) -> dict[str, dict] | None:
         return None
     nodes = picture.get("nodes") or []
     return {node.get("id"): node for node in nodes if isinstance(node, dict)}
+
+
+# The keys of a diff that `set` replaces. Each other change needs a new node.
+_DIFF_SET = {"patch", "old_revision", "new_revision"}
+
+
+def _ids(nodes: list[dict]) -> set[str]:
+    """The id of each node in `nodes`, at any depth."""
+    return {
+        i for node in nodes for i in (node["id"], *_ids(node.get("children") or []))
+    }
+
+
+def _steps(
+    painted: list[dict], nodes: list[dict], known: set[str], is_top: bool = True
+) -> list[tuple] | None:
+    """The view calls that turn the nodes `painted` into `nodes`: `("drop", id)`,
+    `("add", node, after)` and `("set", id, changes)`.
+
+    A node changes in place when it can, so a long diff does not go to each surface
+    again as a whole node. None when the group of the nodes must come as a new node: a
+    new first node has no node to stand after, a node of `known` comes from another
+    group, or the nodes changed their order. The top list has no group: its new first
+    node goes to the end, and the first paint is the only one that has such a node.
+    """
+    held = {node["id"]: node for node in painted}
+    kept = [node["id"] for node in nodes if node["id"] in held]
+    if not is_top and kept != [i for i in held if i in set(kept)]:
+        return None
+    steps: list[tuple] = [("drop", i) for i in held if i not in set(kept)]
+    before = None
+    for node in nodes:
+        old = held.get(node["id"])
+        if old != node:
+            inner = None if old is None else _node_steps(old, node, known)
+            if inner is None:
+                is_moved = old is None and bool(_ids([node]) & known)
+                if not is_top and (before is None or is_moved):
+                    return None
+                drop = [] if old is None else [("drop", node["id"])]
+                inner = [*drop, ("add", node, before)]
+            steps += inner
+        before = node["id"]
+    return steps
+
+
+def _node_steps(old: dict, node: dict, known: set[str]) -> list[tuple] | None:
+    """The view calls that change node `old` into `node` in place. None when `node`
+    must come as a new node."""
+    if old.keys() != node.keys() or old["type"] != node["type"]:
+        return None
+    changed = {key for key in node if node[key] != old[key]}
+    steps: list[tuple] = []
+    if "children" in changed:
+        inner = _steps(old["children"], node["children"], known, False)
+        if inner is None:
+            return None
+        steps += inner
+        changed.discard("children")
+    if changed:
+        if node["type"] != "diff" or not changed <= _DIFF_SET:
+            return None
+        steps.append(("set", node["id"], {key: node[key] for key in changed}))
+    return steps
 
 
 def _painted_from(shown: dict[str, dict], nodes: list[dict]) -> dict[str, dict]:

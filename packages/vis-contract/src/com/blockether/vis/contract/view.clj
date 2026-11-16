@@ -426,6 +426,15 @@
    asked for elided app patches. A larger patch goes out as an elided frame."
   (get (definition "patch_event") "x-vis-elide-above-chars"))
 
+(def splice-above-chars
+  "The most characters of a string that a view delta sends whole. A longer string
+   goes out as edits of the string that the reader has."
+  (get (definition "view_delta") "x-vis-splice-above-chars"))
+
+(def delta-frames-kept
+  "The number of the newest frames of an app that the gateway keeps as view deltas."
+  (get (definition "view_delta") "x-vis-frames-kept"))
+
 (def live-picture-keys "Keys returned in a finished live-view picture." (schema-keys "view"))
 
 (def live-elided-keys "Keys in an elision record." (schema-keys "elided"))

@@ -460,6 +460,27 @@ describe('a patch frame', () => {
     expect(applyLivePatch(entry, frame(app, 1, [{ op: 'set', node_id: 'now', text: 'Scanning db-3' }]))).toBe(entry);
   });
 
+  // Report: an opened review read its whole view again after each change of one
+  // file. A read with `since` now gives the long patch as edits of the held string.
+  it('folds a frame with a splice into the long string that the view holds', () => {
+    const { base, target, frame: delta } = canonical.delta;
+    const app = liveViewFromWire({
+      id: 'live-one',
+      title: 'Review',
+      placement: 'attachment',
+      seq: 1,
+      nodes: [{ id: 'change', type: 'diff', patch: base, new_revision: 'fff0001' }],
+    });
+    if (!app) throw new Error('the app must be paintable');
+    const patched = applyLivePatch(app, delta);
+    expect(patched.seq).toBe(2);
+    expect(patched.nodes[0]).toMatchObject({ patch: target, new_revision: 'fff0002' });
+    // The edits are for one string only: a view with another string reads the view.
+    const other = { ...app, nodes: [{ ...app.nodes[0], patch: `${base}+more\n` } as LiveNode] };
+    expect(applyLivePatch(other, delta).is_stale).toBe(true);
+    expect(applyLivePatch({ ...app, nodes: [] }, delta).is_stale).toBe(true);
+  });
+
   // Without this, a session list that asks for summaries shows no app at all.
   it('keeps an app that a list sends without its body', () => {
     const entry = liveViewFromWire({ id: 'app-1', title: 'Review', placement: 'attachment', icon: 'review', seq: 4, is_summary: true });

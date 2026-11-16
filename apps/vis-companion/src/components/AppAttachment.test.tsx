@@ -150,6 +150,9 @@ describe('AppSurface', () => {
     );
     expect(await screen.findByText('After the large patch')).toBeInTheDocument();
     expect(liveView).toHaveBeenCalledTimes(2);
+    // The first read takes the whole view. The second asks for the frames after seq 3.
+    const held = liveView.mock.calls.map((call) => (call as unknown[])[3] ?? null);
+    expect(held).toEqual([null, expect.objectContaining({ seq: 3 })]);
   });
 
   it('saves a draft with base_seq and the revision, then reads again on a conflict', async () => {

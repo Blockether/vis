@@ -4,6 +4,7 @@ import { mergeQueueBacklog } from './gateway';
 import { STORY_GOAL } from '../dev/story-data';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import streamCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-stream.json';
+import viewCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
 import type { Session } from './types';
 
 class MemoryStorage implements Storage {
@@ -637,6 +638,34 @@ describe('GatewayClient project-page snapshots', () => {
       `${base}\u0000sessions-pin\u0000s11`,
       `${base}\u0000sessions-pin`,
     ]);
+  });
+
+  // Report: an opened review read its whole view again after each change of one file.
+  it('reads only the frames that a held app view missed, or the whole view when they do not fit', async () => {
+    const { base, target, frame } = viewCases.delta;
+    const wire = (seq: number, patch: string) => ({
+      id: 'live-one',
+      title: 'Review',
+      placement: 'attachment',
+      seq,
+      nodes: [{ id: 'change', type: 'diff', patch }],
+    });
+    const answers: unknown[] = [{ patches: [frame] }, { patches: [frame] }, { view: wire(2, target) }];
+    const fetches = vi.fn(async (_url: string) => new Response(JSON.stringify(answers.shift())));
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const { liveViewFromWire } = await import('./live-view');
+    const client = new GatewayClient(conn);
+    const asked = (call: number) => new URL(fetches.mock.calls[call]![0]).searchParams.get('since');
+
+    const read = await client.liveView('s1', 'live-one', undefined, liveViewFromWire(wire(1, base)));
+    expect(asked(0)).toBe('1');
+    expect(read).toMatchObject({ seq: 2, nodes: [{ patch: target }] });
+    expect(fetches).toHaveBeenCalledTimes(1);
+    // The edits are not for this string: the client reads the whole view.
+    const other = await client.liveView('s1', 'live-one', undefined, liveViewFromWire(wire(1, `${base}+more\n`)));
+    expect(other).toMatchObject({ seq: 2, nodes: [{ patch: target }] });
+    expect(asked(2)).toBeNull();
   });
 
   it('sends group archive and restoration as PATCH requests', async () => {

@@ -1250,6 +1250,19 @@ complete. A value other than `true` or `false` returns 400.
 `GET /v1/sessions/{sid}/views/live/{view-id}` answers one view or app in `view`, also a closed app.
 A view of another session returns 404.
 
+Add `since` when your client holds an app and a `view.patch` event tells it to read the app again.
+Give the sequence number of the app that your client holds. The gateway then answers `patches`
+and not `view`: the frames that your client missed, oldest first. An empty list means that your
+client is up to date. Each frame has `first_seq`, `patch` and `splices`.
+
+A splice gives one long string of a `set` operation as edits of the string that your client holds.
+`op_index` and `key` name the operation and its key. First compare `base_hash` with the hash of
+your string. If the two are different, read the whole app. Each edit removes `delete` UTF-16 code
+units at `start` and puts `insert` there.
+
+The gateway answers `view` when it does not hold the frames that your client missed. A `since` that
+is not a whole number returns 400.
+
 A panel view also has `placement`, `key`, `extension` and `is_stale`. `is_stale` is true for the
 saved state of a view after a gateway restart, until its extension loads again.
 
@@ -1404,8 +1417,8 @@ vis_api "$VIS_GATEWAY_URL/v1/apps"
   The list is empty while the person turns global apps off.
 - Add `summary=true` to `GET /v1/apps` to list each app without its body, as for the apps of a
   session.
-- `GET /v1/apps/{view-id}` answers one `view`. `POST /v1/apps/{view-id}/actions` takes an
-  operator action.
+- `GET /v1/apps/{view-id}` answers one `view`. It takes `since` as the read of a session app does.
+  `POST /v1/apps/{view-id}/actions` takes an operator action.
 - The fleet stream, `GET /v1/events?scope=fleet`, carries the `view.open`, `view.patch` and
   `view.close` events of global apps, without `session_id`.
 

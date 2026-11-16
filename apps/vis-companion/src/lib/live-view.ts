@@ -2098,6 +2098,64 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
   return nodes === view.nodes ? view : { ...view, nodes };
 }
 
+/** The node with `id` anywhere in the tree of `nodes`. */
+export function findLiveNode(nodes: readonly LiveNode[], id: string): LiveNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const found = findLiveNode(nestedLiveNodes(node), id);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** The hash that the gateway gives for the base string of a splice (view.json `patch_splice`). */
+function stringHash(value: string): number {
+  let hash = 0;
+  for (let at = 0; at < value.length; at += 1) hash = (Math.imul(31, hash) + value.charCodeAt(at)) | 0;
+  return hash;
+}
+
+/** `base` after `edits` (view.json `string_edit`), or `null` when they do not fit it. */
+function editedString(base: string, edits: unknown): string | null {
+  if (!Array.isArray(edits)) return null;
+  const parts: string[] = [];
+  let at = 0;
+  for (const raw of edits) {
+    const edit = record(raw);
+    if (!edit || typeof edit.insert !== 'string') return null;
+    const { start, delete: removed } = edit;
+    if (!Number.isInteger(start) || !Number.isInteger(removed)) return null;
+    const from = start as number;
+    const to = from + (removed as number);
+    if (from < at || to < from || to > base.length) return null;
+    parts.push(base.slice(at, from), edit.insert);
+    at = to;
+  }
+  parts.push(base.slice(at));
+  return parts.join('');
+}
+
+/**
+ * Operation `op` at `index` with the strings that `splices` carry for it
+ * (view.json `patch_splice`). `null` when `view` does not hold the base string of
+ * a splice: the reader then takes the whole view.
+ */
+function splicedOp(view: LiveView, op: unknown, index: number, splices: readonly unknown[]): unknown {
+  let resolved = op;
+  for (const raw of splices) {
+    const splice = record(raw);
+    if (splice?.op_index !== index) continue;
+    const key = text(splice.key);
+    const node = findLiveNode(view.nodes, text(record(op)?.node_id));
+    const base = node ? (node as unknown as Record<string, unknown>)[key] : undefined;
+    if (key === '' || typeof base !== 'string' || stringHash(base) !== splice.base_hash) return null;
+    const value = editedString(base, splice.edits);
+    if (value === null) return null;
+    resolved = { ...record(resolved), [key]: value };
+  }
+  return resolved;
+}
+
 /**
  * One patch folded into the view it names (`live/apply-patch`).
  *
@@ -2111,6 +2169,10 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
  * A list entry of an app has no body, and a patch changes nothing that a list
  * shows: it stays as it is. An elided frame (`is_elided`) says that the gateway
  * left out a large patch: a view that is behind `last_seq` is stale.
+ *
+ * A frame from a read with `since` (view.json `view_delta`) has `splices`: long
+ * strings as edits of the strings that this view holds. A splice that does not
+ * fit the view makes it stale.
  */
 export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
   if (view.is_summary) return view;
@@ -2125,7 +2187,13 @@ export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
   const firstSeq = count(envelope?.first_seq, seq);
   if (firstSeq > view.seq + 1) return { ...view, is_stale: true };
   const ops = Array.isArray(patch.ops) ? patch.ops : [];
-  const patched = ops.reduce(applyOp, view);
+  const splices = Array.isArray(envelope?.splices) ? envelope.splices : [];
+  let patched = view;
+  for (const [index, op] of ops.entries()) {
+    const resolved = splices.length ? splicedOp(patched, op, index, splices) : op;
+    if (resolved === null) return { ...view, is_stale: true };
+    patched = applyOp(patched, resolved);
+  }
   return { ...patched, seq };
 }
 
