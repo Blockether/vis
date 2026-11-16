@@ -296,7 +296,8 @@
   "The authorization-endpoint URL for `ctx` at `redirect-uri`, plus the `client_id`
    it was built for. Dynamic client registration happens HERE, once, and the id is
    returned: registering again before the token exchange can hand back a DIFFERENT
-   client, which the authorization server then rejects the code for."
+   client, which the authorization server then rejects the code for. A secret that
+   registration issued comes back as `:registered-secret`."
   [{:keys [asmeta challenge state resource scope server]} auth-hint redirect-uri]
   (let [reg
         (when-not (:client-id auth-hint)
@@ -332,6 +333,7 @@
           (assoc "resource" resource))]
 
     {:client-id client-id
+     :registered-secret (get reg "client_secret")
      :url (str endpoint (if (str/includes? endpoint "?") "&" "?") (form-encode params))}))
 
 (defn- token-auth-method
@@ -364,11 +366,16 @@
       [{"client_id" client-id} nil])))
 
 (defn- exchange-code!
-  "Spend `code` at the token endpoint and PERSIST the resulting tokens. The secret
-   itself is never persisted; only the method that a refresh must use again."
-  [{:keys [server as-url asmeta verifier resource]} client-id client-secret code redirect-uri]
+  "Spend `code` at the token endpoint and PERSIST the resulting tokens. A configured
+   secret is never persisted; only the method that a refresh must use again. A
+   secret that registration issued exists nowhere else, so it stays with the tokens."
+  [{:keys [server as-url asmeta verifier resource registered-secret]} client-id client-secret code
+   redirect-uri]
   (let [token-url
         (get asmeta "token_endpoint")
+
+        client-secret
+        (or client-secret registered-secret)
 
         method
         (token-auth-method asmeta client-secret)
@@ -389,22 +396,31 @@
 
     (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server " token exchange failed: " status)
-                      {:type :mcp/oauth-token :server server :status status :body body})))
+                      {:type :mcp/oauth-token
+                       :server server
+                       :status status
+                       :oauth-error (when (map? body) (get body "error"))
+                       :body body})))
     (write-tokens! server
                    (->tokens body
-                             {:client-id client-id
-                              :token-auth-method method
-                              :token-endpoint token-url
-                              :authorization-server as-url
-                              :resource resource}))))
+                             (cond-> {:client-id client-id
+                                      :token-auth-method method
+                                      :token-endpoint token-url
+                                      :authorization-server as-url
+                                      :resource resource}
+                               registered-secret
+                               (assoc :client-secret registered-secret))))))
 
 (defn- refresh-exchange!
   "Spend `refresh-token` at the token endpoint of `creds` and return the new
    tokens. The server may rotate the refresh token. A confidential client sends
-   `client-secret` with the method that the first exchange used."
+   `client-secret`, or the secret that registration issued, with the method that
+   the first exchange used."
   [server-name creds client-secret refresh-token]
   (let [[form headers]
-        (client-credentials (:token-auth-method creds) (:client-id creds) client-secret)
+        (client-credentials (:token-auth-method creds)
+                            (:client-id creds)
+                            (or client-secret (:client-secret creds)))
 
         {:keys [status body]}
         (http-post-form (:token-endpoint creds)
@@ -561,7 +577,7 @@
                                                      (:state ctx)
                                                      600000)]
 
-                  (try (let [{:keys [url client-id]}
+                  (try (let [{:keys [url client-id registered-secret]}
                              (authorize-url ctx auth-hint (:redirect-uri transport))]
                          (merge transport
                                 {:kind :pkce
@@ -569,6 +585,7 @@
                                  :expires-in-ms 600000
                                  :flow (assoc ctx
                                          :client-id client-id
+                                         :registered-secret registered-secret
                                          :redirect-uri (:redirect-uri transport))}))
                        (catch Throwable t
                          (when-let [stop! (get-in transport [:callback :stop!])]

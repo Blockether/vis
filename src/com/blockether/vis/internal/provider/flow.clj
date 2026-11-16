@@ -16,7 +16,8 @@
    interruption/expiry before persisting credentials during an in-flight exchange."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.provider.callback :as callback]
-            [com.blockether.vis.internal.util :as util]))
+            [com.blockether.vis.internal.util :as util]
+            [taoensso.telemere :as tel]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -108,7 +109,12 @@
                      (if-not (live? entry)
                        unknown-flow
                        (do (reset! result {:status :ok}) (stop-receiver! entry) (verdict entry)))))
-               (catch Throwable _
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::exchange-failed
+                            :data (merge {:owner (:owner entry) :error (ex-message t)}
+                                         (select-keys (ex-data t) [:type :status :oauth-error]))}
+                           "Authorization exchange failed")
                  (when (live? entry)
                    (reset! result (if retry?
                                     {:status :pending}

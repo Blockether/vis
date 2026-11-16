@@ -306,6 +306,55 @@
                   (expect (str/includes? (get flow "url") "client_id=registered-client")))
                 (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
 
+(defdescribe registered-client-secret-test
+  (it "signs in and refreshes with the secret that registration issued"
+      ;; Regression #458: Figma issues a secret at registration, and its token endpoint
+      ;; refuses a request without it. Vis dropped the secret, so sign-in always failed.
+      (let [seen (atom [])
+            discovery (authorization-server 403 seen)
+            file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")
+            basic (str "Basic "
+                       (.encodeToString (java.util.Base64/getEncoder)
+                                        (.getBytes "registered-client:issued-secret" "UTF-8")))]
+        (try
+          (with-redefs-fn
+            {#'oauth/token-file (constantly file)
+             #'http/request
+             (fn [{:keys [uri headers body] :as request}]
+               (cond
+                 (str/ends-with? uri "/register")
+                 {:status 201
+                  :body (str "{\"client_id\":\"registered-client\","
+                             "\"client_secret\":\"issued-secret\","
+                             "\"token_endpoint_auth_method\":\"none\"}")}
+
+                 (not (str/ends-with? uri "/token")) (discovery request)
+
+                 (not= basic (get headers "Authorization"))
+                 {:status 401 :body "{\"error\":\"invalid_client\"}"}
+
+                 (str/includes? body "grant_type=refresh_token")
+                 {:status 200 :body "{\"access_token\":\"refreshed-access\",\"expires_in\":3600}"}
+
+                 :else
+                 {:status 200
+                  :body (str "{\"access_token\":\"test-access\","
+                             "\"refresh_token\":\"test-refresh\",\"expires_in\":3600}")}))}
+            (fn []
+              (let [flow (oauth/start-authorization! "registered-secret-test"
+                                                    "https://mcp.example.test/mcp"
+                                                    {})
+                    state (second (re-find #"[?&]state=([^&]+)" (get flow "url")))
+                    bearer (oauth/make-bearer-fn "registered-secret-test"
+                                                 "https://mcp.example.test/mcp"
+                                                 (atom nil))]
+                (oauth/complete-authorization!
+                  (get flow "flow_id")
+                  (str (get flow "redirect_uri") "?code=test-code&state=" state))
+                (expect (= "test-access" (bearer)))
+                (expect (= "refreshed-access" (bearer "test-access"))))))
+          (finally (.delete file) (.delete (java.io.File. (str file ".lock"))))))))
+
 (defdescribe
   sign-in-refusal-test
   (it "names a refused client registration with its step, status and URL"
