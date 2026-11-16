@@ -10,7 +10,6 @@ import {
   Input,
   Modal,
   Select,
-  TextButton,
   ViewHeading,
   ViewLayout,
   ViewParagraph,
@@ -851,10 +850,13 @@ const KEYBOARD_RISE_MS = 600;
  * iOS rebuilt the keyboard for each one. With one input, focus stays put and
  * SMS autofill works.
  *
- * Paste is a visible verb under the boxes. Reported on an iPhone: the paste menu
- * of the invisible input showed, hid and showed again under a double tap, and a
- * long press showed nothing. While the input has focus, a touch on the row goes
- * to the row and keeps the focus, so the platform menu never flashes.
+ * Paste is a verb of the app, shown at the finger. Reported on an iPhone: the paste
+ * menu of the invisible input showed, hid and showed again under a double tap, and a
+ * long press showed nothing. While the input has focus, a touch on the row goes to
+ * the row and keeps the focus, so the platform menu never flashes. The first tap
+ * gives the focus, and a tap on the focused boxes shows Paste above the tapped box.
+ * Reported later: a Paste verb at the far end of the hint line was not where the
+ * double tap looked for it.
  */
 function OtpBoxes({
   field,
@@ -883,6 +885,12 @@ function OtpBoxes({
   // the second tap of a double tap lands on a key. Reported on an iPhone: a double
   // tap on the boxes typed a digit nobody chose.
   const touchFocusAt = useRef(Number.NEGATIVE_INFINITY);
+  // Where the Paste verb stands in the row: over the box that the last tap hit.
+  const [pasteAt, setPasteAt] = useState<{ left: number; top: number } | null>(null);
+  const pasteVerb = useRef<HTMLDivElement>(null);
+  // A press that began on the boxes while the input had the focus. The tap that
+  // gives the focus is not such a press, so it shows no Paste.
+  const isPressInFocus = useRef(false);
   useEffect(() => {
     const element = input.current;
     if (!element) return undefined;
@@ -896,11 +904,13 @@ function OtpBoxes({
   // A pasted code REPLACES the code: an operator who pastes again after a wrong
   // paste wants the new code, not the old code with digits added.
   const paste = (text: string): boolean => {
+    setPasteAt(null);
     const pasted = humanInputOtpDigits(field, text);
     if (pasted) onChange(field.id, pasted);
     return pasted !== '';
   };
   const pasteClipboard = () => {
+    setPasteAt(null);
     const read = Capacitor.isNativePlatform()
       ? Clipboard.read().then((result) => (result.type === 'text/plain' ? result.value : ''))
       : navigator.clipboard.readText();
@@ -930,7 +940,21 @@ function OtpBoxes({
         className="relative flex max-w-md cursor-text flex-wrap justify-between gap-1.5 sm:max-w-sm"
         // A double tap still sends a mouse down, and that took the focus.
         onPointerDown={(event) => {
+          isPressInFocus.current = isFocused && !pasteVerb.current?.contains(event.target as Node);
           if (isFocused) event.preventDefault();
+        }}
+        // The release, not the click: iOS does not always finish a tap as a click.
+        onPointerUp={(event) => {
+          if (!isPressInFocus.current) return;
+          isPressInFocus.current = false;
+          const boxes = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[data-otp-box]'));
+          const distance = (box: HTMLElement) => {
+            const rect = box.getBoundingClientRect();
+            return Math.hypot(event.clientX - (rect.left + rect.right) / 2, event.clientY - (rect.top + rect.bottom) / 2);
+          };
+          // A tap between two boxes takes the nearer one.
+          const box = boxes.reduce((near, next) => (distance(next) < distance(near) ? next : near));
+          setPasteAt({ left: box.offsetLeft + box.offsetWidth / 2, top: box.offsetTop });
         }}
         onMouseDown={(event) => {
           if (isFocused) event.preventDefault();
@@ -973,7 +997,10 @@ function OtpBoxes({
               touchFocusAt.current = performance.now();
             }
           }}
-          onChange={(event) => onChange(field.id, humanInputOtpDigits(field, event.target.value))}
+          onChange={(event) => {
+            setPasteAt(null);
+            onChange(field.id, humanInputOtpDigits(field, event.target.value));
+          }}
           onPaste={(event) => {
             if (paste(event.clipboardData.getData('text'))) event.preventDefault();
           }}
@@ -983,25 +1010,27 @@ function OtpBoxes({
             onSubmit();
           }}
           onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onBlur={() => {
+            setFocused(false);
+            setPasteAt(null);
+          }}
         />
+        {/* The row keeps the focus under a press here too, so the keyboard stays up. */}
+        {pasteAt && !disabled && (
+          <div
+            ref={pasteVerb}
+            className="absolute z-10 w-max -translate-x-1/2 -translate-y-full pb-1.5"
+            style={{ left: pasteAt.left, top: pasteAt.top }}
+          >
+            <Button variant="overlay" density="inline" pressEffect="none" onClick={pasteClipboard}>
+              Paste
+            </Button>
+          </div>
+        )}
       </div>
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-mono text-meta text-dialog-hint">
-          {min === max ? `${max} digits` : `${min}–${max} digits`}
-        </p>
-        <TextButton
-          // A 44px touch reach that leaves the hint line its own height.
-          className="relative after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[''] mouse:after:content-none"
-          disabled={disabled}
-          // A press keeps the focus, so the keyboard stays up.
-          onPointerDown={(event) => event.preventDefault()}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={pasteClipboard}
-        >
-          Paste
-        </TextButton>
-      </div>
+      <p className="font-mono text-meta text-dialog-hint">
+        {min === max ? `${max} digits` : `${min}–${max} digits`}
+      </p>
     </div>
   );
 }

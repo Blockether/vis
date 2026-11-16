@@ -101,21 +101,28 @@ describe('a one-time code on a phone', () => {
   });
 
   // Regression, user report: the paste menu of the code showed, hid and showed again
-  // under a double tap. A touch on the focused boxes keeps the focus and opens no menu,
-  // and the Paste verb fills the code.
+  // under a double tap. Reported later: the Paste verb stood at the far end of the hint
+  // line, not at the tapped box. The first tap gives the focus and shows nothing. A tap
+  // on the focused boxes keeps the focus and shows Paste, which fills the code.
   it('pastes the clipboard from the Paste verb and keeps the focus', async () => {
     vi.stubGlobal('navigator', { ...navigator, clipboard: { readText: () => Promise.resolve('Code: 123 456') } });
     render(<OtpSheet />);
     const input = codeInput();
-    const row = document.querySelector('[data-otp-row]') as HTMLElement;
+    const box = document.querySelector('[data-otp-box="0"]') as HTMLElement;
+    const pasteVerb = () => screen.queryByRole('button', { name: 'Paste' });
+    fireEvent.pointerDown(input, { pointerType: 'touch' });
     act(() => input.focus());
-    expect(fireEvent.pointerDown(row, { pointerType: 'touch' })).toBe(false);
-    expect(fireEvent.mouseDown(row)).toBe(false);
-    const verb = screen.getByRole('button', { name: 'Paste' });
+    fireEvent.pointerUp(input, { pointerType: 'touch' });
+    expect(pasteVerb()).toBeNull();
+    expect(fireEvent.pointerDown(box, { pointerType: 'touch' })).toBe(false);
+    expect(fireEvent.mouseDown(box)).toBe(false);
+    fireEvent.pointerUp(box, { pointerType: 'touch' });
+    const verb = pasteVerb() as HTMLElement;
     expect(fireEvent.pointerDown(verb, { pointerType: 'touch' })).toBe(false);
     fireEvent.click(verb);
     await waitFor(() => expect(shownDigits()).toEqual(['1', '2', '3', '4', '5', '6']));
     expect(document.activeElement).toBe(input);
+    expect(pasteVerb()).toBeNull();
   });
 });
 
