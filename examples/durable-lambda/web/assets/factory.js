@@ -40,7 +40,7 @@ function select(id) {
   return refresh();
 }
 
-/** Return the line: the belt, the product on it and the stations. */
+/** Return the line: the stations, then the belt and the product on it. */
 function line(doc) {
   const all = stations(doc);
   const active = all.findIndex((station) => station.status === "running" || station.status === "waiting");
@@ -49,18 +49,18 @@ function line(doc) {
   return h(
     "div",
     { class: `conveyor ${moving ? "moving" : ""}`, style: `--n:${all.length};--at:${at}`, role: "list", "aria-label": "Stations" },
-    h("div", { class: "belt" }, h("i")),
-    doc && h("div", { class: "crate", title: "The product of this order" }, icon("file")),
     all.map(({ name, title, status, step }, index) => {
-      const took = step?.finished ? ` · ${span((step.finished - step.started) * 1000)}` : "";
+      const took = step?.finished ? ` · ${span((step.finished - step.started) * 1000).replaceAll(" ", "\u00a0")}` : "";
       const glyph = status === "completed" ? "check" : status === "failed" ? "x" : GLYPHS[name];
       return h(
         "div",
-        { class: `station ${status}`, role: "listitem" },
+        { class: `station ${status} ${doc && index <= at ? "reached" : ""}`, role: "listitem" },
         h("div", { class: "hub" }, icon(glyph)),
         h("div", { class: "what" }, h("span", { class: "no", text: String(index + 1).padStart(2, "0") }), h("b", { text: title }), h("span", { class: "small muted", text: WORDS[status] + took })),
       );
     }),
+    h("div", { class: "belt" }, h("i")),
+    doc && h("div", { class: "crate", title: "The product of this order" }, icon("file")),
   );
 }
 
@@ -104,7 +104,7 @@ function product(doc) {
     h("b", { class: "mono", text: file.name }),
     versionOf(file) && chip(versionOf(file), "amber"),
     h("span", { class: "small muted", text: `${size(file.size)} · ${ago(file.at * 1000)}` }),
-    button("Download", { class: "small right", onclick: press(() => download(path, file.name)) }, "download"),
+    button("", { class: "small right", title: "Download", "aria-label": "Download", onclick: press(() => download(path, file.name)) }, "download"),
   );
   return h("section", { class: "card product" }, head, h("div", { class: "product-body" }, state.spec.text === null ? loading("Loading the document…") : markdown(state.spec.text)));
 }

@@ -457,11 +457,11 @@ export const sessionPath = (id) => `/dashboard/vis#/s/${id}`;
 /** Return the version label of a document. A file without a version has no label. */
 export const versionOf = (file) => (file.version ? `version ${file.version}` : "");
 
-/** Show a stored text file in a dialog, with a download button. */
+/** Show a stored text file in a dialog, with a download icon. */
 export async function preview(path, name) {
   const text = await read(path);
   const body = /\.(md|markdown)$/i.test(name) ? markdown(text) : h("div", { class: "block" }, h("pre", { text }));
-  dialog(name, body, [button("Download", { onclick: press(() => download(path, name)) }, "download")]);
+  dialog(name, body, [button("", { title: "Download", "aria-label": "Download", onclick: press(() => download(path, name)) }, "download")]);
 }
 
 /** Keep the release label of the top bar current. The bar itself is markup of the page, so it shows with the first paint. */

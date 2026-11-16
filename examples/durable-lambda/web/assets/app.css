@@ -140,7 +140,7 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .dialog-head { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; position: sticky; top: 0; background: var(--charcoal); color: var(--cream); z-index: 1; }
 .dialog-head h1, .dialog-head h2, .dialog-head h3 { font-size: 13px; font-weight: 500; }
 .dialog-head .btn { color: var(--cream); } .dialog-head .btn:hover { background: var(--ink); }
-.dialog-body { padding: 16px; display: grid; gap: 12px; overflow: auto; }
+.dialog-body { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; overflow: auto; }
 .dialog-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 16px; border-top: 1px solid var(--line-strong); position: sticky; bottom: 0; background: var(--cream); }
 .toasts { position: fixed; z-index: 100; right: 18px; bottom: 18px; display: grid; gap: 8px; max-width: min(420px, calc(100vw - 36px)); }
 .toast { padding: 9px 12px; background: var(--charcoal); color: var(--cream); font-size: 11px; box-shadow: 3px 3px 0 var(--amber); overflow-wrap: anywhere; }
@@ -236,17 +236,18 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .shipped { display: flex; align-items: center; gap: 10px; padding: 11px 14px; background: var(--good-soft); color: var(--good); font-weight: 500; }
 .floor > .problem { border: 1px solid #efc9c3; }
 /* The stations are the columns. The belt goes through the middle of the first and the last hub. */
-.conveyor { position: relative; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); padding: 40px 0 4px; }
-.belt { position: absolute; top: 64px; left: calc(50% / var(--n)); right: calc(50% / var(--n)); height: 8px; background: repeating-linear-gradient(90deg, var(--line-strong) 0 12px, var(--line) 12px 24px); overflow: hidden; }
+.conveyor { position: relative; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); padding: 36px 0 4px; }
+.belt { position: absolute; top: 54px; left: calc(50% / var(--n)); right: calc(50% / var(--n)); height: 8px; background: repeating-linear-gradient(90deg, var(--line-strong) 0 12px, var(--line) 12px 24px); overflow: hidden; }
 .belt i { display: block; height: 100%; width: calc(var(--at) / (var(--n) - 1) * 100%); background: repeating-linear-gradient(90deg, var(--charcoal) 0 12px, #575757 12px 24px); transition: width .7s cubic-bezier(.3, .7, .2, 1); }
 .conveyor.moving .belt i { animation: belt .9s linear infinite; }
 @keyframes belt { to { background-position: 24px 0; } }
 .crate { position: absolute; top: 2px; left: calc((var(--at) + .5) * 100% / var(--n)); transform: translateX(-50%); width: 30px; height: 30px; display: grid; place-items: center; background: var(--amber); border: 1.5px solid var(--amber-deep); color: var(--ink); transition: left .7s cubic-bezier(.3, .7, .2, 1); }
 .crate .icon { width: 15px; height: 15px; }
-.station { position: relative; display: grid; justify-items: center; gap: 10px; text-align: center; padding: 0 6px; min-width: 0; }
-.hub { width: 56px; height: 56px; display: grid; place-items: center; background: var(--input); border: 2px solid var(--line-strong); color: var(--muted); transition: background .3s, border-color .3s, color .3s; }
-.hub .icon { width: 22px; height: 22px; }
-.what { display: grid; gap: 1px; min-width: 0; } .what b { font-size: 12px; } .what .no { font: 600 10px var(--mono); color: var(--muted); letter-spacing: .08em; }
+/* The stations come before the belt in the page, so a style can count them. They are above the belt. */
+.station { position: relative; z-index: 1; display: grid; justify-items: center; align-content: start; gap: 8px; text-align: center; padding: 0 6px; min-width: 0; }
+.hub { width: 44px; height: 44px; display: grid; place-items: center; background: var(--input); border: 2px solid var(--line-strong); color: var(--muted); transition: background .3s, border-color .3s, color .3s; }
+.hub .icon { width: 18px; height: 18px; }
+.what { display: grid; gap: 1px; min-width: 0; text-wrap: balance; } .what b { font-size: 12px; } .what .no { font: 600 10px var(--mono); color: var(--muted); letter-spacing: .08em; }
 .station.completed .hub { background: var(--good-soft); border-color: var(--good); color: var(--good); }
 .station.running .hub { background: var(--amber); border-color: var(--amber-deep); color: var(--ink); animation: pulse 1.2s ease-in-out infinite; }
 .station.waiting .hub { background: var(--amber-soft); border: 2px dashed var(--amber-deep); color: var(--warn); }
@@ -275,14 +276,16 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
   .floor { overflow: visible; padding: 16px 12px 30px; gap: 16px; }
   /* iOS zooms the page when a field with smaller text takes the focus. */
   .start { padding: 16px; } .brief { font-size: 16px; }
-  /* On a phone the line is a column: the belt goes down the left side. */
-  .conveyor { grid-template-columns: 1fr; padding: 0; gap: 0; }
-  .station { grid-template-columns: 56px minmax(0, 1fr); justify-items: start; align-items: center; text-align: left; height: 76px; padding: 0; gap: 14px; }
-  .belt { top: 38px; bottom: 38px; left: 24px; right: auto; width: 8px; height: auto; background: repeating-linear-gradient(180deg, var(--line-strong) 0 12px, var(--line) 12px 24px); }
-  .belt i { width: 100%; height: calc(var(--at) / (var(--n) - 1) * 100%); background: repeating-linear-gradient(180deg, var(--charcoal) 0 12px, #575757 12px 24px); transition: height .7s cubic-bezier(.3, .7, .2, 1); }
-  @keyframes belt { to { background-position: 0 24px; } }
-  .crate { display: none; }
   .product-body { max-height: none; padding: 14px; }
   /* The prompt of an order is its title. On a phone it takes the rows that it needs. */
   .order-head h1 { white-space: normal; }
+}
+/* On a phone the line is rows of three stations. Each station has the part of the belt that comes from the station before it. */
+@media (max-width: 560px) {
+  .conveyor { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 0; row-gap: 16px; }
+  .belt, .crate { display: none; }
+  .hub { width: 40px; height: 40px; } .what b { font-size: 11px; }
+  .station::before { content: ""; position: absolute; top: 17px; right: calc(50% + 20px); width: calc(100% - 40px); height: 6px; background: repeating-linear-gradient(90deg, var(--line-strong) 0 12px, var(--line) 12px 24px); }
+  .station.reached::before { background: repeating-linear-gradient(90deg, var(--charcoal) 0 12px, #575757 12px 24px); }
+  .station:nth-child(3n + 1)::before { display: none; }
 }
