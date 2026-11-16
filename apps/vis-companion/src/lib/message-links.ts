@@ -9,8 +9,11 @@
  * cases of both clients.
  */
 
+/** A bare URL ends before a space, an angle bracket, a quote or a backtick. */
+const URL_TEXT = '[^\\s<>"`]';
 /** A bare URL that does not continue a word; group 2 is the URL. */
-const BARE_URL = /(^|[^A-Za-z0-9_])((?:https?:\/\/|file:\/\/\/)[^\s<>"`]+)/gi;
+const BARE_URL = new RegExp(`(^|[^A-Za-z0-9_])((?:https?://|file:///)${URL_TEXT}+)`, 'gi');
+const URL_START = new RegExp(`^${URL_TEXT}*`);
 /** A link needs more than its scheme. A file URL must name an absolute path. */
 const LINK = /^(?:https?:\/\/|file:\/\/\/)./i;
 /** A code span keeps its text, as in Markdown. */
@@ -30,6 +33,58 @@ function trimUrl(url: string): string {
       return trimmed;
     trimmed = trimmed.slice(0, -1);
   }
+}
+
+/** The bare URL that `text` starts with: it ends before a quote, without its trailing punctuation. */
+export function bareUrlAt(text: string): string {
+  return trimUrl(URL_START.exec(text)?.[0] ?? '');
+}
+
+type MarkdownNode = {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MarkdownNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
+};
+
+/** Cut each bare link below `parent` to `bareUrlAt` and give the rest back as text and links. */
+function trimBareLinks(parent: MarkdownNode): void {
+  const nodes = parent.children ?? [];
+  for (let i = 0; i < nodes.length; i += 1) {
+    const node = nodes[i];
+    const label = node.children?.length === 1 ? node.children[0] : undefined;
+    const span = (node.position?.end.offset ?? NaN) - (node.position?.start.offset ?? NaN);
+    // The source of a bare link is its label alone: `<url>` and `[label](url)` are longer.
+    const bare =
+      node.type === 'link' && label?.type === 'text' && !!label.value && span === label.value.length;
+    if (!bare || !label?.value || !node.url?.endsWith(label.value)) {
+      trimBareLinks(node);
+      continue;
+    }
+    const kept = bareUrlAt(label.value);
+    const rest = label.value.slice(kept.length);
+    if (!rest) continue;
+    node.url = node.url.slice(0, -rest.length);
+    label.value = kept;
+    // The rest can hold the next URL: `"a":"https://a.example/x","b":"https://b.example/y"`.
+    const tail = messageLinkParts(rest).map((part) =>
+      typeof part === 'string'
+        ? { type: 'text', value: part }
+        : { type: 'link', url: part.url, children: [{ type: 'text', value: part.url }] },
+    );
+    nodes.splice(i + 1, 0, ...tail);
+  }
+}
+
+/**
+ * A BARE URL IN MARKDOWN ENDS AS IT ENDS IN A SENT MESSAGE. GitHub markdown ends a bare URL
+ * only at a space or at `<`, so the link of `{"url": "https://a.example/x"}` also took `"}`.
+ * This remark plugin cuts each bare link to the rule of this file. A link that the author
+ * marked, `<url>` or `[label](url)`, stays as written.
+ */
+export function remarkBareLinks() {
+  return (tree: MarkdownNode): void => trimBareLinks(tree);
 }
 
 export type MessageTextPart = string | { url: string };

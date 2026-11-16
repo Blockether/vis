@@ -64,6 +64,23 @@ it('keeps a file URL as text when nothing can open it', () => {
   expect(view.container.textContent).toContain('See file:///tmp/a.mp3 now');
 });
 
+// GitHub markdown ends a bare URL only at a space, so the link of a JSON value took `"}` too.
+it.each([
+  ['{"branch": "main", "url": "https://github.com/a/b/commit/d8805abf"}', ['https://github.com/a/b/commit/d8805abf']],
+  ['{"a":"https://a.example/x","b":"https://b.example/y"}', ['https://a.example/x', 'https://b.example/y']],
+  ['Set {https://c.example/z} or https://d.example/w_(v).', ['https://c.example/z', 'https://d.example/w_(v)']],
+])('ends a bare URL of an answer as in a sent message: %s', (text, urls) => {
+  const view = render(<Markdown>{text}</Markdown>);
+  expect(links(view.container)).toEqual(urls);
+  // The cut characters stay in the answer as text.
+  expect(view.container.textContent).toBe(text);
+});
+
+it('keeps a link that the author marked as written', () => {
+  const view = render(<Markdown>{'<https://e.example/a"}> and [f](https://f.example/b"})'}</Markdown>);
+  expect(links(view.container)).toEqual(['https://e.example/a%22%7D', 'https://f.example/b%22%7D']);
+});
+
 // #449: react-markdown dropped the file URL of a link that the model wrote, so it was dead text.
 it('opens the file preview from a file link that the model wrote', () => {
   const openPath = vi.fn();
