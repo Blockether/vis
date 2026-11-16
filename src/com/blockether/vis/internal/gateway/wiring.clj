@@ -93,6 +93,9 @@
     (bus/set-deliver-fn! #'state/ingest-mirrored-event!)
     ;; The hang diagnosis of `read_session` skips a turn whose block still runs.
     (introspection/install-block-clock! #'bus/block-started-ms)
+    ;; A session row names the model that the session uses now. Without a model pick, that
+    ;; is the default pair of the session's project.
+    (introspection/install-default-route! #'state/session-default-model)
     (bus/set-relevant-sid-fn! #'state/session-known?)
     (bus/set-relevant-sids-fn! #'state/tracked-session-ids)
     ;; A native image starts the tailer on its first publish instead; see `bus/publish!`.

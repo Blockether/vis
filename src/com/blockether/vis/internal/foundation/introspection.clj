@@ -30,6 +30,7 @@
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.session.goals :as goals]
+            [com.blockether.vis.internal.session.model :as session-model]
             [com.blockether.vis.internal.util :as util]))
 
 ;; ---------------------------------------------------------------------------
@@ -496,6 +497,39 @@
       turn
       (assoc :outcome (turn-outcome turn)))))
 
+(defonce ^:private default-route (atom nil))
+
+(defn install-default-route!
+  "Install the function of a session id that gives the default `{:provider :model}` of
+   that session: the pair that its turns use when the session has no model pick. It
+   reads the project configuration through `gateway.state`, a higher layer, so the
+   process wiring installs it. Without it, [[session-route]] falls back to the root pair."
+  [f]
+  (reset! default-route f)
+  nil)
+
+(defn- session-route
+  "The `{:provider :model}` strings that the turns of `session` run on now: its model
+   pick, also before the debounced write saves it, else the default pair of the session.
+   The root pair of the session state is only the router default at the creation of the
+   session, and a fork copies it. Thus it is the last answer."
+  [db-info session]
+  (let [sid
+        (:id session)
+
+        route
+        (or (session-model/model-of db-info sid)
+            (when-let [default @default-route]
+              (default sid)))]
+
+    (if (:model route)
+      {:provider (some-> (:provider route)
+                         name)
+       :model (:model route)}
+      {:provider (some-> (:provider session)
+                         name)
+       :model (:model session)})))
+
 (defn- session-snapshot
   "Map for a single session: identity + every persisted turn rolled up to a
    compact `{:id :user-request :outcome :answer :iteration-count}` shape. A fork also
@@ -522,26 +556,26 @@
 
                                    (:total-cost turn)
                                    (assoc :total-cost (:total-cost turn)))))
-                             turn-rows)]
+                             turn-rows)
+                 {:keys [provider model]} (session-route db-info session)]
 
              (cond-> {:id session-id
                       :channel (:channel session)
                       :title (:title session)
                       ;; The model sees only the goal status; the objective is in the transcript.
                       :goal-status (goals/visible-status (:goal session))
-                      :model (:model session)
+                      :model model
                       :created-at (:created-at session)
                       :turns turns
                       :turn-count (count turns)}
                (:forked-from session)
                (assoc :forked-from (fork-origin db-info (:forked-from session)))
 
-               (:provider session)
-               (assoc :provider (:provider session))
+               provider
+               (assoc :provider provider)
 
-               (format-provider-model (:provider session) (:model session))
-               (assoc :provider-model
-                 (format-provider-model (:provider session) (:model session))))))
+               (format-provider-model provider model)
+               (assoc :provider-model (format-provider-model provider model)))))
          (catch Throwable _ nil))))
 
 ;; ---------------------------------------------------------------------------
@@ -675,19 +709,19 @@
      (when (and db session-id)
        (try (when-let [session (persistance/db-get-session db session-id)]
               (let [turns (session-turn-rows db (:id session))
-                    last-turn (last turns)]
+                    last-turn (last turns)
+                    {:keys [provider model]} (session-route db session)]
 
                 (cond-> (assoc (session-index-row db session turns)
                           :is-current (boolean (same-uuid? (:id session) (current-session-id env))))
-                  (:provider session)
-                  (assoc :provider (:provider session))
+                  provider
+                  (assoc :provider provider)
 
-                  (:model session)
-                  (assoc :model (:model session))
+                  model
+                  (assoc :model model)
 
-                  (format-provider-model (:provider session) (:model session))
-                  (assoc :provider-model
-                    (format-provider-model (:provider session) (:model session)))
+                  (format-provider-model provider model)
+                  (assoc :provider-model (format-provider-model provider model))
 
                   last-turn
                   (assoc :last-turn
@@ -1617,7 +1651,8 @@
      (str
        "String-keyed row `{id, channel, title, goal_status, turn_count, created_at, modified_at, "
        "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
-       "(`{id, outcome, user_request}`) when known. `goal_status` is the status of a goal that "
+       "(`{id, outcome, user_request}`) when known. The model is the one that the session uses "
+       "now: its model pick, else its default. `goal_status` is the status of a goal that "
        "still directs work (`active`, `paused`, `blocked` or `budget_limited`), else None. "
        "A starred session adds `favorite_rank` — the human's star order, lowest first. "
        "None when nothing matches.")}))

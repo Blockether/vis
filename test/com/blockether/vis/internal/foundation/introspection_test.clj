@@ -902,6 +902,49 @@
             (expect (not (contains? row :transcript)))
             (expect (not (contains? row :turns))))
           (finally (persistance/db-dispose-connection! s)))))
+  (it "names the route that the session runs on now, not the root pair of its creation"
+      ;; Issue #443: after a model switch the row kept the router default of the creation.
+      (let [s
+            (persistance/db-create-connection! :memory)
+
+            slot
+            @#'introspection/default-route
+
+            before
+            @slot
+
+            routes
+            (fn [cid]
+              [(select-keys (@#'introspection/foundation-session-descriptor {:db-info s} cid)
+                            [:provider :model :provider-model])
+               (select-keys (@#'introspection/session-snapshot s cid)
+                            [:provider :model :provider-model])])]
+
+        (try (let [root
+                   {:channel :tui :provider :openai :model "gpt-4o"}
+
+                   picked
+                   (h/store-session! s (assoc root :title "Picked"))
+
+                   plain
+                   (h/store-session! s (assoc root :title "Plain"))
+
+                   pick
+                   {:provider "github-copilot"
+                    :model "claude-opus-5.5"
+                    :provider-model "github-copilot/claude-opus-5.5"}
+
+                   default
+                   {:provider "zai" :model "glm-5" :provider-model "zai/glm-5"}]
+
+               (persistance/db-set-session-model-pref! s picked "github-copilot" "claude-opus-5.5")
+               (introspection/install-default-route! (fn [_sid]
+                                                       {:provider "zai" :model "glm-5"}))
+               (expect (= [pick pick] (routes picked)))
+               ;; Without a pick, the turns use the default pair of the session.
+               (expect (= [default default] (routes plain))))
+             (finally (introspection/install-default-route! before)
+                      (persistance/db-dispose-connection! s)))))
   (it "defaults to the current session and answers nil for an unknown target"
       (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "Default fixture"})
