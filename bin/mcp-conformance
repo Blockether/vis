@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Run the official MCP client conformance suite against the MCP client of Vis.
+# The suite starts its own MCP and authorization servers on loopback and starts
+# the client one time for each scenario. A failed check or a warning fails the run.
+#
+# Usage: bin/mcp-conformance [spec-version ...]   # default: each released version
+#
+#   VIS_MCP_CONFORMANCE_SUITE    the npm package of the suite, with its version
+#   VIS_MCP_CONFORMANCE_RESULTS  keep the result files of the suite in this directory
+#
+# Needs: java, clojure and npx on PATH.
+set -euo pipefail
+
+suite="${VIS_MCP_CONFORMANCE_SUITE:-@modelcontextprotocol/conformance@0.2.0-alpha.12}"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+versions=("$@")
+[ "${#versions[@]}" -gt 0 ] || versions=(2025-03-26 2025-06-18 2025-11-25)
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/vis-mcp-conformance.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+results="${VIS_MCP_CONFORMANCE_RESULTS:-$work/results}"
+export VIS_MCP_CONFORMANCE_WORK="$work"
+
+cd "$root"
+clojure -Spath -A:test > "$work/classpath"
+
+status=0
+for version in "${versions[@]}"; do
+  echo "== MCP client conformance, specification $version"
+  # A Node option of the caller can break the suite.
+  env -u NODE_OPTIONS npx --yes "$suite" client \
+    --command "$root/bin/mcp-conformance-client" \
+    --suite all --spec-version "$version" --timeout 180000 \
+    -o "$results/$version" || status=1
+done
+exit "$status"

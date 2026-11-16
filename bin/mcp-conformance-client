@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# The client command that the MCP conformance suite starts for each scenario:
+# the MCP client of Vis, in a JVM on the classpath that bin/mcp-conformance made.
+# Each start has its own Vis home, because the scenarios run at the same time
+# and each one saves OAuth tokens.
+set -euo pipefail
+
+: "${VIS_MCP_CONFORMANCE_WORK:?Run bin/mcp-conformance, not this script.}"
+
+home="$(mktemp -d "$VIS_MCP_CONFORMANCE_WORK/home.XXXXXX")"
+exec java -Xmx512m -XX:TieredStopAtLevel=1 -Dvis.home="$home" \
+  -cp "$(cat "$VIS_MCP_CONFORMANCE_WORK/classpath")" \
+  clojure.main -m com.blockether.vis.mcp-conformance "$@"
