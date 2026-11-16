@@ -12,9 +12,21 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
+
+;; The attachments of an outside source stay out, such as the resources of an MCP
+;; server of this machine: a test that needs one registers its own.
+(set-ns-context! [(around-each [f]
+                               (let [sources
+                                     @#'shim-attach/outside-sources
+
+                                     saved
+                                     @sources]
+
+                                 (reset! sources (empty saved))
+                                 (try (f) (finally (reset! sources saved)))))])
 
 (def ^:private picture-doubles
   "Python defining the two SHAPES `attach` duck-types, with no pip: a FIGURE
@@ -801,6 +813,50 @@
   [code]
   (let [out (block (ctx-with-root (temp-root)) code)]
     (assoc out :row (first (:attachments out)))))
+
+(defdescribe
+  outside-attachment-source-test
+  "An outside source gives attachments that another system owns. They follow the
+   rows of the session, and an attachment of the session keeps its name."
+  (it
+    "lists, finds and reads the attachments of an outside source"
+    (let [row
+          (fn [id filename]
+            {:id id :source "outside" :uri (str "x://" id) :filename filename :version 1})
+
+          sources
+          @#'shim-attach/outside-sources]
+
+      (try (shim-attach/register-outside-source!
+             "outside"
+             {:list (fn []
+                      [(row "o1" "chart.png") (row "o2" "notes.txt") (row "o3" "notes.txt")])
+              :locate (fn [target]
+                        (when (= "x://late" target) (row "late" "late.txt")))
+              :read (fn [found]
+                      (assoc found
+                        :base64 (.encodeToString (java.util.Base64/getEncoder)
+                                                 (.getBytes (str "bytes of " (:id found))))))})
+           (let [out (binding [mpl-capture/*attachment-reader* (fake-reader)]
+                       (block (ctx-with-root (temp-root))
+                              (str
+                                "print([r['id'] for r in list_attachments()])\n"
+                                "r = list_attachments()[1]\n"
+                                "print([r[k] for k in ('kind', 'size', 'audience', 'position')])\n"
+                                "print(get_attachment('x://late')['position'])\n"
+                                "print(get_attachment('chart.png')['id'])\n"
+                                "print(read_attachment('x://o1'), read_attachment('x://late'))\n"
+                                "try:\n" "    get_attachment('notes.txt')\n"
+                                "except Exception as e:\n" "    print(e)\n")))]
+             (expect (nil? (:error out)))
+             (expect (str/starts-with? (str (:stdout out))
+                                       (str "['a1', 'o1', 'o2', 'o3']\n"
+                                            ;; An outside row has each key of a session row.
+                                            "['file', None, 'model', 0]\n" "None\n"
+                                            "a1\n" "b'bytes of o1' b'bytes of late'\n")))
+             (expect (str/includes? (str (:stdout out))
+                                    "\"notes.txt\" names 2 attachments. Use one id: o2, o3.")))
+           (finally (swap! sources dissoc "outside"))))))
 
 (defdescribe
   attach-audience-test

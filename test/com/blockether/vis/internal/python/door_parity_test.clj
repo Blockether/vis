@@ -11,15 +11,28 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.python.extension-tools-test :as tools-test]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
+
+;; The attachments of an outside source stay out, such as the resources of an MCP
+;; server of this machine: a test that needs one registers its own.
+(set-ns-context! [(around-each [f]
+                               (let [sources
+                                     @#'shim-attach/outside-sources
+
+                                     saved
+                                     @sources]
+
+                                 (reset! sources (empty saved))
+                                 (try (f) (finally (reset! sources saved)))))])
 
 (def ^:private describe-source
   "Python that turns the `out` of a row, or its error, into plain data. Each door

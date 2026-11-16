@@ -124,7 +124,15 @@
                    (fn [conn]
                      (expect (= ["echo"] (mapv #(get % "name") (mcp/list-tools conn))))
                      (mcp/call-tool conn "grow" {})
-                     (expect (= ["echo" "grown"] (mapv #(get % "name") (mcp/list-tools conn))))))))
+                     (expect (= ["echo" "grown"] (mapv #(get % "name") (mcp/list-tools conn)))))))
+             (it "reads each page of a list one time, and again after the server says that it changed"
+                 (with-stdio-conn
+                   (fn [conn]
+                     (let [prompts #(mcp/list-all conn "prompts/list")]
+                       (expect (= ["first" "second"] (mapv #(get % "name") (prompts))))
+                       (expect (identical? (prompts) (prompts)))
+                       (mcp/call-tool conn "grow" {})
+                       (expect (= ["first" "second" "grown"] (mapv #(get % "name") (prompts)))))))))
 
 (defdescribe mcp-stdio-kill-tree-test
              (it "closing a server kills its whole process tree, not just the launcher"

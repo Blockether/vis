@@ -1433,6 +1433,12 @@
                                                    (if (:version late) late initialize))
                     :else (recur seen))))))))
 
+(def ^:private listed
+  "The list requests that `list-all` keeps, each with the key of its rows and the
+   notification of the server that drops the kept list."
+  {"prompts/list" ["prompts" "notifications/prompts/list_changed"]
+   "resources/list" ["resources" "notifications/resources/list_changed"]})
+
 (defn- connect-as
   "Connect to MCP server `name` on `transport` and find its era. With `probe?`,
    the first request is `server/discover`: a server of a stateless revision
@@ -1454,18 +1460,25 @@
                  :spec spec
                  :connected-at (util/now-ms)
                  :tools (atom nil)
+                 :lists (atom {})
                  :timeout-ms timeout-ms})
 
          http?
          (= :streamable-http transport)]
 
      ;; A `notifications/tools/list_changed` of the server, on either transport,
-     ;; invalidates the tools cache so the next `list-tools` fetches again. A
-     ;; caller-supplied `:on-notification` fires after that.
+     ;; invalidates the tools cache so the next `list-tools` fetches again. The
+     ;; notification of a list of `listed` drops that list. A caller-supplied
+     ;; `:on-notification` fires after that.
      (reset! (:incoming t) (let [user-cb (:on-notification spec)]
                              (fn [msg]
-                               (when (= "notifications/tools/list_changed" (get msg "method"))
-                                 (reset! (:tools conn) nil))
+                               (let [method (get msg "method")]
+                                 (when (= "notifications/tools/list_changed" method)
+                                   (reset! (:tools conn) nil))
+                                 (doseq [[request [_ notification]] listed
+                                         :when (= notification method)]
+
+                                   (swap! (:lists conn) dissoc request)))
                                (when user-cb (try (user-cb msg) (catch Throwable _ nil))))))
      (try (let [answer (cond (not probe?) {:legacy? true}
                              http? (do (when-let [modern (:modern-atom t)]
@@ -1648,6 +1661,62 @@
                   (= :mcp/rpc-error type)
                   (contains? #{-32000 -32022 -32600 -32601} code))))))
 
+(def list-row-limit
+  "The most rows that `list-all` reads from one server. A server can list
+   thousands of resources."
+  1000)
+
+(defn list-all
+  "Every row of the list request `method`, `prompts/list` or `resources/list`,
+   from the pages of the server: at most `list-row-limit` rows. Cached on the conn
+   after the first call; the `list_changed` notification of that list drops it.
+   `opts` are those of `request`."
+  ([conn method] (list-all conn method nil))
+  ([conn method opts]
+   (let [cache
+         (:lists conn)
+
+         rows-key
+         (first (listed method))]
+
+     (or (some-> cache
+                 deref
+                 (get method))
+         (let [timeout-ms
+               (or (:timeout-ms conn) default-timeout-ms)
+
+               rows
+               (loop [rows
+                      []
+
+                      cursor
+                      nil]
+
+                 (let [result
+                       (request conn method (if cursor {"cursor" cursor} {}) timeout-ms opts)
+
+                       rows
+                       (into rows (get result rows-key))
+
+                       next-cursor
+                       (get result "nextCursor")]
+
+                   (if (and (string? next-cursor)
+                            (seq next-cursor)
+                            (not= cursor next-cursor)
+                            (< (count rows) (long list-row-limit)))
+                     (recur rows next-cursor)
+                     (vec (take list-row-limit rows)))))]
+
+           (when cache (swap! cache assoc method rows))
+           rows)))))
+
 (defn alive? [conn] (boolean (try ((:alive-fn conn)) (catch Throwable _ false))))
 
-(defn close [conn] (try ((:close-fn conn)) (catch Throwable _ nil)) (reset! (:tools conn) nil) nil)
+(defn close
+  [conn]
+  (try ((:close-fn conn)) (catch Throwable _ nil))
+  (reset! (:tools conn) nil)
+  (some-> (:lists conn)
+          (reset! {}))
+  nil)

@@ -1093,8 +1093,13 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     (if (str/blank? (str target))
       (doc-corpus/index-text es)
       (let [wanted (doc-corpus/normalize-name target)
-            hit (or (first (filter #(= (str target) (:name %)) es))
-                    (first (filter #(= wanted (doc-corpus/normalize-name (:name %))) es)))]
+            listed (or (first (filter #(= (str target) (:name %)) es))
+                       (first (filter #(= wanted (doc-corpus/normalize-name (:name %))) es)))
+            ;; A resolver gives the page of a handle that no source lists yet, and
+            ;; the body of a prompt. Only the first of the two calls asks it.
+            hit (or (when (and (nil? live) (or (nil? listed) (= "prompt" (str (:kind listed)))))
+                      (doc-corpus/resolve-entry (or (:name listed) target)))
+                    listed)]
 
         (if hit
           (let [page (doc-corpus/entry-text hit

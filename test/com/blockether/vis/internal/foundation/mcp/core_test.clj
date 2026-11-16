@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.test-python-context :as tpc]
             [com.blockether.vis.contract.wire :as wire]
@@ -57,13 +58,14 @@
                                        {:tools (atom [{"name" "save_issue"
                                                        "description" "File one."}])})}
         (fn []
-          (let [entry (first (#'mcp/doc-corpus-entries))]
-            (expect (= "linear/save_issue" (:name entry)))
-            (expect (= "await mcp_call(\"linear\", \"save_issue\", {})" (:call entry)))
+          (let [[server entry] (#'mcp/doc-corpus-entries)]
+            (expect (= "mcp.linear" (:name server)))
+            (expect (= "mcp.linear.save_issue" (:name entry)))
+            (expect (= "await mcp.linear.save_issue()" (:call entry)))
             ;; The FIRST line is what `apropos` prints as the row's body, so the
             ;; call form has to live there and not below the description.
             (expect (str/includes? (first (str/split-lines (:text entry)))
-                                   "await mcp_call(\"linear\", \"save_issue\", {})"))
+                                   "await mcp.linear.save_issue()"))
             (expect (not (str/includes? (str (:call entry) (:text entry)) "mcp__call")))))))
   (it "lets apropos find a tool by the server's description"
       ;; #466: the server's description sat below a template that every MCP tool
@@ -76,8 +78,8 @@
                                                        "description" "List teams."}])})}
         (fn []
           (let [es (#'mcp/doc-corpus-entries)]
-            (expect (= ["linear/save_issue"] (mapv :name (doc-corpus/search es "ticket"))))
-            (expect (empty? (doc-corpus/search es "server"))))))))
+            (expect (= ["mcp.linear.save_issue"] (mapv :name (doc-corpus/search es "ticket"))))
+            (expect (= ["mcp.linear"] (mapv :name (doc-corpus/search es "server")))))))))
 
 (defdescribe
   mcp-call-env-injection-test
@@ -1131,6 +1133,161 @@
                                         (get r "uri"))
                                       %))))
             (expect (str/includes? (str (call! env "alpha" "prompts/list")) "has no prompts")))))))
+
+(def ^:private catalog-tools
+  [{"name" "resolve-library-id"
+    "description" "Find a library."
+    "inputSchema" {"type" "object" "properties" {"query" {}} "required" ["query"]}}])
+
+(defn- with-catalog
+  "Run `(f call!)` with the server `alpha`, which has one tool, two prompts and two
+   resources. `sent` gets each request as `[method params]`."
+  [sent f]
+  (with-alpha
+    {#'client/connect (fn [_ spec]
+                        {:transport :stdio
+                         :tools (atom catalog-tools)
+                         :lists (atom {})
+                         :spec spec
+                         :server-capabilities {"resources" {} "prompts" {}}})
+     #'client/list-tools (constantly catalog-tools)
+     #'client/call-tool (fn [_ tool args & _]
+                          (swap! sent conj ["tools/call" {"name" tool "arguments" args}])
+                          {"content" [{"type" "text" "text" "ok"}]})
+     #'client/request
+     (fn [_conn method params & _]
+       (swap! sent conj [method params])
+       (case method
+         "prompts/list"
+         {"prompts" [{"name" "code-review" "description" "Review a change."}
+                     {"name" "greet" "arguments" [{"name" "who" "required" true}]}]}
+
+         "prompts/get"
+         {"messages" [{"role" "user" "content" {"type" "text" "text" "Review it with care."}}]}
+
+         "resources/list"
+         {"resources" [{"uri" "file:///notes.txt" "name" "notes.txt" "mimeType" "text/plain"}
+                       {"uri" "file:///dot.png" "name" "dot.png" "mimeType" "image/png"}]}
+
+         "resources/read"
+         {"contents" [(if (= "file:///dot.png" (get params "uri"))
+                        {"uri" "file:///dot.png" "mimeType" "image/png" "blob" "iVBORw=="}
+                        {"uri" (get params "uri") "text" "zażółć"})]}))}
+    f))
+
+(defdescribe
+  mcp-doc-handle-test
+  (it "prints the page of a tool before a call listed it, by the name that a block types"
+      (with-catalog (atom [])
+                    (fn [_call!]
+                      (let [entry (doc-corpus/resolve-entry "mcp.alpha.resolve_library_id")]
+                        (expect (= "mcp.alpha.resolve_library_id" (:name entry)))
+                        (expect (= "await mcp.alpha.resolve_library_id(query=...)" (:call entry)))
+                        (expect (str/includes? (:text entry) "Find a library."))
+                        ;; The handle of an older page still has its page.
+                        (expect (= entry (doc-corpus/resolve-entry "alpha/resolve-library-id")))))))
+  (it "prints a prompt with its messages, and asks no messages of a prompt that needs an argument"
+      (let [sent (atom [])]
+        (with-catalog sent
+                      (fn [_call!]
+                        (let [review (doc-corpus/resolve-entry "mcp.alpha.prompts.code_review")
+                              greet (doc-corpus/resolve-entry "mcp.alpha.prompts.greet")]
+
+                          (expect (= "prompt" (:kind review)))
+                          (expect (str/includes? (:text review) "Review it with care."))
+                          (expect (= "await mcp.alpha.prompts.greet(who=...)" (:call greet)))
+                          (expect (str/includes? (:text greet) "`who` (required)"))
+                          (expect (= [["prompts/get" {"name" "code-review"}]]
+                                     (filterv #(= "prompts/get" (first %)) @sent))))))))
+  (it "prints the server for a name that it does not have, and nothing for an unknown server"
+      (with-catalog (atom [])
+                    (fn [_call!]
+                      (let [page (:text (doc-corpus/resolve-entry "mcp.alpha.nope"))]
+                        (expect (str/includes? page "has no tool `nope`"))
+                        (expect (str/includes? page "`resolve-library-id` - Find a library."))
+                        (expect (str/includes? page "`code-review` - Review a change."))
+                        (expect (nil? (doc-corpus/resolve-entry "mcp.beta.read")))))))
+  (it "lists the server, its tools and its prompts for apropos without a request"
+      (let [sent (atom [])]
+        (with-catalog sent
+                      (fn [call!]
+                        (call! {} "alpha")
+                        (reset! sent [])
+                        (expect (= ["mcp.alpha" "mcp.alpha.resolve_library_id"
+                                    "mcp.alpha.prompts.code_review" "mcp.alpha.prompts.greet"]
+                                   (mapv :name (#'mcp/doc-corpus-entries))))
+                        (expect (empty? @sent)))))))
+
+(defdescribe
+  mcp-identifier-name-test
+  (it "calls the tool and gets the prompt that an identifier names"
+      (let [sent (atom [])]
+        (with-catalog
+          sent
+          (fn [call!]
+            (let [answer (:result (call! {} "alpha" "resolve_library_id" {"query" "x"}))]
+              (expect (= "resolve-library-id" (get answer "tool")))
+              (call! {} "alpha" "prompts/get" {"name" "code_review"})
+              (expect (= [["tools/call" {"name" "resolve-library-id" "arguments" {"query" "x"}}]
+                          ["prompts/get" {"name" "code-review"}]]
+                         (filterv #(#{"tools/call" "prompts/get"} (first %)) @sent))))))))
+  (it
+    "calls a tool, reads its page and finds it through the handle `mcp` of the sandbox"
+    (let [sent (atom [])]
+      (with-catalog
+        sent
+        (fn [_call!]
+          (tpc/with-own
+            [ctx
+             {'mcp-call (get (extension/wrap-extension-thunked mcp/vis-extension (constantly {}))
+                             'call)}]
+            (let
+              [result
+               (ep/run-python-block
+                 ctx
+                 (str
+                   "r = await mcp.alpha.resolve_library_id(query='x')\n"
+                   "print(r['tool'], r['content'][0]['text'])\n"
+                   "print(doc(mcp.alpha.resolve_library_id).splitlines()[0])\n"
+                   "print('Review it with care.' in doc(mcp.alpha.prompts.code_review))\n"
+                   "print([i.name for i in apropos('find a library')])\n"
+                   "print((await mcp['alpha'].prompts['code-review']())['messages'][0]['role'])\n"))]
+              (expect (nil? (:error result)))
+              (expect (= (str "resolve-library-id ok\n"
+                              "# mcp.alpha.resolve_library_id\n" "True\n"
+                              "['mcp.alpha.resolve_library_id']\n" "user\n")
+                         (:stdout result))))))))))
+
+(defdescribe
+  mcp-resource-attachment-test
+  (it "lists the resources of a connected server as attachments, and reads and shows one"
+      (let [shown (atom [])]
+        (with-catalog
+          (atom [])
+          (fn [call!]
+            (call! {} "alpha")
+            (tpc/with-own
+              [ctx {}]
+              (let
+                [result
+                 (binding [mpl-capture/*attachment-reinspection-sink* shown]
+                   (ep/run-python-block
+                     ctx
+                     (str
+                       "rows = [r for r in list_attachments() if r['source'] == 'mcp']\n"
+                       "print([(r['id'], r['filename'], r['media_type']) for r in rows])\n"
+                       "print(read_attachment('file:///notes.txt').decode('utf-8'))\n"
+                       "print(get_attachment('notes.txt')['uri'])\n"
+                       "print(show_attachment('mcp:alpha:file:///dot.png')['media_type'])\n"
+                       "print(read_attachment('mcp:alpha:file:///other.txt').decode('utf-8'))\n")))]
+                (expect (nil? (:error result)))
+                (expect (= (str "[('mcp:alpha:file:///notes.txt', 'notes.txt', 'text/plain'),"
+                                " ('mcp:alpha:file:///dot.png', 'dot.png', 'image/png')]\n"
+                                "zażółć\n" "file:///notes.txt\n"
+                                "image/png\n" "zażółć\n")
+                           (:stdout result)))
+                (expect (= [["mcp:alpha:file:///dot.png" "image/png" "iVBORw=="]]
+                           (mapv (juxt :id :media-type :base64) @shown))))))))))
 
 (defdescribe
   mcp-oauth-visibility-test

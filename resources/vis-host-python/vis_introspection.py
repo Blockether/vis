@@ -106,7 +106,9 @@ def install(namespace):
         )
 
     def doc(target=None):
-        name = getattr(target, "name", None)
+        # A handle object names its own page: its `name` can be a child handle.
+        name = getattr(type(target), "__vis_doc_name__", None)
+        name = name(target) if callable(name) else getattr(target, "name", None)
         if name is None:
             name = getattr(target, "__name__", target)
         name = "" if name is None else str(name)

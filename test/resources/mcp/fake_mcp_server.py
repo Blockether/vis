@@ -2,7 +2,8 @@
 # Minimal fake MCP server for the vis MCP client tests: newline-delimited
 # JSON-RPC 2.0 over stdin/stdout. Handles initialize, tools/list, tools/call.
 # The tool "ping" sends a ping to the client and reports its answer. The tool
-# "grow" adds a tool and sends notifications/tools/list_changed. The tool "ask"
+# "grow" adds a tool and sends notifications/tools/list_changed. It also adds a
+# prompt to prompts/list, which has two pages, and says so. The tool "ask"
 # sends a form elicitation and reports the answer of the client. The tools
 # "roots" and "sample" do the same with roots/list and sampling/createMessage.
 # With the argument "stateless" it is a server of revision 2026-07-28: it has no
@@ -130,6 +131,14 @@ for line in sys.stdin:
                 },
             }
         )
+    elif method == "prompts/list":
+        if (msg.get("params") or {}).get("cursor") == "2":
+            page = {
+                "prompts": [{"name": "second"}] + ([{"name": "grown"}] if grown else [])
+            }
+        else:
+            page = {"prompts": [{"name": "first"}], "nextCursor": "2"}
+        send({"jsonrpc": "2.0", "id": mid, "result": page})
     elif method == "tools/call":
         args = (msg.get("params") or {}).get("arguments") or {}
         name = (msg.get("params") or {}).get("name")
@@ -207,6 +216,7 @@ for line in sys.stdin:
             grown = True
             if not stateless:
                 send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+                send({"jsonrpc": "2.0", "method": "notifications/prompts/list_changed"})
             elif subscription is not None:
                 send(
                     {

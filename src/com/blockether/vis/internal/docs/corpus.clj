@@ -29,9 +29,10 @@
    decides what to DO with it, and what `doc` RETURNS for it: `function` a
    callable's docstring, `class` a class's, `module` an importable module's,
    `tool` a Vis verb's contract, `doc` a whole documentation page, `skill` a whole
-   `SKILL.md`, `local` a callable this session defined that carries no contract at
-   all — reachable by name through `doc`, never returned by `apropos`."
-  #{"function" "class" "module" "tool" "doc" "skill" "local"})
+   `SKILL.md`, `prompt` a prompt that an MCP server gives, `local` a callable this
+   session defined that carries no contract at all — reachable by name through
+   `doc`, never returned by `apropos`."
+  #{"function" "class" "module" "tool" "doc" "skill" "prompt" "local"})
 
 ;; Rendering a gist, comparing a name
 
@@ -298,6 +299,37 @@
               (dedupe-by-name))
         @sources))
 
+;; Resolvers — one handle, asked only by `doc`
+
+(defonce ^:private resolvers
+  ;; `[[id entry-fn] ...]` in registration order: the first entry wins.
+  (atom []))
+
+(defn register-resolver!
+  "Register `entry-fn` under `id`: a function of ONE handle that gives the entry
+   of that handle, or nil for a handle that is not its own.
+
+   `doc` asks the resolvers for a handle that no source lists, and for a `prompt`
+   entry, whose list row has no body. A resolver can reach a remote peer, so
+   `apropos` never asks one. Re-registering an `id` replaces it IN PLACE."
+  [id entry-fn]
+  (swap! resolvers (fn [rs]
+                     (if (some (comp #{id} first) rs)
+                       (mapv (fn [[k v]]
+                               (if (= k id) [k entry-fn] [k v]))
+                             rs)
+                       (conj rs [id entry-fn]))))
+  id)
+
+(defn resolve-entry
+  "The entry that a resolver gives for the handle `target`, or nil. A resolver
+   that throws gives nothing."
+  [target]
+  (some (fn [[id entry-fn]]
+          (when-let [entry (try (entry-fn (str target)) (catch Throwable _ nil))]
+            (when (usable-entry? id entry) entry)))
+        @resolvers))
+
 ;; Paired variants — the site shows each one, the agent reads Python
 
 (def agent-variant
@@ -510,7 +542,7 @@
   "What `doc()` prints: a hand-ordered short list of the verbs a session starts
    from, not a corpus dump. Everything else remains addressable through
    `apropos(pattern)` and `doc(name)`."
-  ["apropos" "doc" "read_session" "fold_session" "ls" "grep" "cat" "patch" "shell" "attach"
+  ["apropos" "doc" "read_session" "fold_session" "ls" "grep" "cat" "patch" "shell" "attach" "mcp"
    "mcp_call"])
 
 ;; The three things the two verbs PRINT

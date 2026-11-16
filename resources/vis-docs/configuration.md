@@ -907,6 +907,16 @@ with the servers of today.
 A server can have tools, resources and prompts. The agent can list and read all of them. Ask in
 plain words, for example: "Read the resource `file:///logs/app.log` of the server `files`."
 
+The agent finds each of them where it looks for its other tools and files:
+
+- It calls a tool by the name of the server and the name of the tool.
+- It reads a prompt as a help page. A prompt with no arguments comes with its text.
+- It sees the resources of each connected server in its list of attachments. It reads a resource
+  as it reads a file that you attached.
+
+The agent can read the help page of a tool before the server is connected. Vis connects the
+server for that.
+
 The gateway starts an OAuth flow when an HTTP MCP server requests it with
 `401`. From the terminal, use **MCP Servers**. From the CLI:
 

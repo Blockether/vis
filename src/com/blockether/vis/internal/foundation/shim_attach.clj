@@ -120,6 +120,88 @@
   []
   (into [] (map-indexed pending-descriptor) (mpl-capture/pending-attachments)))
 
+(defonce ^:private outside-sources
+  ;; `{source-name source}`: attachments that another system owns.
+  (atom (sorted-map)))
+
+(defn register-outside-source!
+  "Register `source` under `source-name`, the `:source` of its descriptors: the
+   attachments that another system owns and that a session can read, such as the
+   resources of its MCP servers. Nothing stores them in the session. `source` has:
+
+   `:list`, a function of no arguments that gives the descriptors that the running
+   session can read. Each has `:id`, `:source`, `:filename` and `:version` 1, and
+   `:uri` when the attachment has an address. The doors add the other keys of a
+   session descriptor; see [[outside-row]].
+
+   `:locate`, a function of one target that gives the descriptor of an attachment
+   that `:list` does not give, or nil.
+
+   `:read`, a function of one descriptor that gives the attachment with its
+   `:base64`, `:media-type` and `:size`.
+
+   Registering a name again replaces its source."
+  [source-name source]
+  (swap! outside-sources assoc (str source-name) source)
+  source-name)
+
+(defn- outside-row
+  "`row` of an outside source with each key of a session descriptor, so a block
+   reads every row of `list_attachments` the same way. An unknown `:size` is nil.
+   Nothing shows the row to the person, so its audience is `model`. `position` is
+   its place among the outside rows, or nil for a row that no list has."
+  [position row]
+  (merge {:media-type nil
+          :kind (if (str/starts-with? (str (:media-type row)) "image/") "image" "file")
+          :size nil
+          :audience "model"}
+         row
+         {:position position}))
+
+(defn- outside-descriptors
+  "The descriptors of every outside source."
+  []
+  (into []
+        (comp (mapcat (fn [[_ source]]
+                        ((:list source))))
+              (map-indexed outside-row))
+        @outside-sources))
+
+(defn- locate-outside
+  "The outside descriptor that `wanted` names by id, address or filename, or nil.
+   A name of two attachments is an error that gives their ids."
+  [caller wanted]
+  (let [rows
+        (outside-descriptors)
+
+        named
+        (filterv #(or (= wanted (:uri %)) (= wanted (:filename %))) rows)]
+
+    (or (some #(when (= wanted (str (:id %))) %) rows)
+        (when (< 1 (count named))
+          (throw (ex-info (str caller
+                               ": "
+                               (pr-str wanted)
+                               " names "
+                               (count named)
+                               " attachments. Use one id: "
+                               (str/join ", " (map :id named))
+                               ".")
+                          {:type ::attachment-ambiguous :target wanted})))
+        (first named)
+        (some (fn [[_ source]]
+                (when-let [locate (:locate source)]
+                  (some->> (locate wanted)
+                           (outside-row nil))))
+              @outside-sources))))
+
+(defn- read-outside
+  "The attachment of the outside descriptor `row` with its bytes, or nil for a
+   descriptor of the session."
+  [row]
+  (when-let [source (get @outside-sources (str (:source row)))]
+    ((:read source) row)))
+
 (defn- attachment-descriptors
   "Stored and pending descriptors, in attachment order."
   []
@@ -151,6 +233,8 @@
           (cond (nil? version) (last versions)
                 (<= (- n) (long version) -1) (nth (vec versions) (+ n (long version)))
                 :else (some #(when (= (long version) (long (or (:version %) 1))) %) versions)))
+        ;; An attachment of the session wins over an outside one of the same name.
+        (when (and (zero? n) (nil? version)) (locate-outside caller wanted))
         (throw (ex-info (if (zero? n)
                           (str caller
                                ": unknown id or filename "
@@ -406,8 +490,10 @@
    "__vis_attachment_limit__" (fn []
                                 (long mpl-capture/*attachment-limit-bytes*))
    "__vis_live_app__" (attachment-tool 'attach :mutation view/app-json!)
-   "__vis_list_attachments__"
-   (attachment-tool 'list_attachments :observation #(json/write-json-str (attachment-descriptors)))
+   "__vis_list_attachments__" (attachment-tool 'list_attachments
+                                               :observation
+                                               #(json/write-json-str (into (attachment-descriptors)
+                                                                           (outside-descriptors))))
    "__vis_get_attachment__"
    (attachment-tool 'get_attachment
                     :observation
@@ -418,12 +504,16 @@
      'read_attachment
      :observation
      (fn [target version]
-       (let [id
-             (:id (doto (locate-attachment "read_attachment" target version)
-                    (->> (refuse-reference! "read_attachment"))))
+       (let [row
+             (doto (locate-attachment "read_attachment" target version)
+               (->> (refuse-reference! "read_attachment")))
+
+             id
+             (:id row)
 
              attachment
              (or (pending-by-id id)
+                 (read-outside row)
                  (when-let [reader mpl-capture/*attachment-reader*]
                    ((:read reader) (str id))))]
 
@@ -443,7 +533,10 @@
              id
              (:id row)]
 
-         (if-let [pending (pending-by-id id)]
+         (if-let [pending (or (pending-by-id id)
+                              ;; An outside image is not on the wire: `user` queues it.
+                              (some-> (read-outside row)
+                                      (assoc :audience "user")))]
            (reinspect-pending pending)
            (if-let [a (when-let [reader mpl-capture/*attachment-reader*]
                         ((:reinspect reader) (str id)))]

@@ -1,9 +1,10 @@
 (ns com.blockether.vis.internal.foundation.sandbox-shim-contract-test
   "Repo-wide contract for the built-in Python sandbox shims.
 
-   Every shim is three things that must stay in step: a lazy `shim_*.clj`
-   initializer named by the one distribution manifest, a registered extension,
-   and a `resources/vis-host-python/<name>.py` classpath resource. Drift in any one is
+   Every shim is three things that must stay in step: a namespace that the one
+   distribution manifest initializes (a lazy `shim_*.clj` for a door of the host),
+   a registered extension, and a `resources/vis-host-python/<name>.py` classpath
+   resource. Drift in any one is
    invisible until an agent imports the module, so this test pins the boundary."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -76,47 +77,49 @@
                            (str "shim namespaces missing from manifest initialization: "
                                 (pr-str unlisted)))))
              (it "registers exactly one shim per shim namespace"
-                 (expect (= (count (shim-ns-files)) (count (registered-shims))))))
+                 (expect (= (count (shim-namespaces)) (count (registered-shims))))))
 
-(defdescribe shim-source-test
-             (it "resolves every :shim/source as a classpath resource"
-                 ;; `extension/shim-python-source` slurps this resource at sandbox boot; a
-                 ;; typo here is a hard failure the moment an agent imports the module.
-                 (let [missing (remove #(io/resource (:shim/source %)) (registered-shims))]
-                   (expect (empty? missing)
-                           (str "shims whose source resource is missing: "
-                                (pr-str (map :shim/source missing))))))
-             (it "keeps shim names and their imports unique"
-                 (let [shims
-                       (registered-shims)
+(defdescribe
+  shim-source-test
+  (it "resolves every :shim/source as a classpath resource"
+      ;; `extension/shim-python-source` slurps this resource at sandbox boot; a
+      ;; typo here is a hard failure the moment an agent imports the module.
+      (let [missing (remove #(io/resource (:shim/source %)) (registered-shims))]
+        (expect (empty? missing)
+                (str "shims whose source resource is missing: "
+                     (pr-str (map :shim/source missing))))))
+  (it "keeps shim names and their imports unique"
+      (let [shims
+            (registered-shims)
 
-                       dupe-names
-                       (->> shims
-                            (map :shim/name)
-                            frequencies
-                            (filter #(< 1 (val %)))
-                            (map key))
+            dupe-names
+            (->> shims
+                 (map :shim/name)
+                 frequencies
+                 (filter #(< 1 (val %)))
+                 (map key))
 
-                       dupe-imports
-                       (->> shims
-                            (mapcat :shim/imports)
-                            frequencies
-                            (filter #(< 1 (val %)))
-                            (map key))]
+            dupe-imports
+            (->> shims
+                 (mapcat :shim/imports)
+                 frequencies
+                 (filter #(< 1 (val %)))
+                 (map key))]
 
-                   (expect (empty? dupe-names) (str "duplicate shim names: " (pr-str dupe-names)))
-                   (expect (empty? dupe-imports)
-                           (str "two shims claim the same import: " (pr-str dupe-imports)))))
-             (it "declares a name and a way for the sandbox to reach it"
-                 ;; A shim reaches Python either as an importable module (`:shim/imports`) or as
-                 ;; prebound globals (`:shim/bindings`, how the `attach` shim publishes `attach`
-                 ;; and friends) — declaring NEITHER makes it unreachable. WHAT each name does is
-                 ;; documented in the shim's own Python `__doc__`, harvested into the resource
-                 ;; that pack's own manifest entry names (`META-INF/vis/apropos/shim-<pack>.edn`).
-                 (doseq [{:shim/keys [name imports bindings]} (registered-shims)]
-                   (expect (not (str/blank? name)))
-                   (expect (or (seq imports) (some? bindings))
-                           (str name " declares neither :shim/imports nor :shim/bindings")))))
+        (expect (empty? dupe-names) (str "duplicate shim names: " (pr-str dupe-names)))
+        (expect (empty? dupe-imports)
+                (str "two shims claim the same import: " (pr-str dupe-imports)))))
+  (it "declares a name and a way for the sandbox to reach it"
+      ;; A shim reaches Python either as an importable module (`:shim/imports`) or as
+      ;; prebound globals: host functions (`:shim/bindings`, how the `attach` shim
+      ;; publishes `attach` and friends) or names of its own source (`:shim/globals`,
+      ;; how `mcp` publishes its handle) — declaring NONE makes it unreachable. WHAT each name does is
+      ;; documented in the shim's own Python `__doc__`, harvested into the resource
+      ;; that pack's own manifest entry names (`META-INF/vis/apropos/shim-<pack>.edn`).
+      (doseq [{:shim/keys [name imports globals bindings]} (registered-shims)]
+        (expect (not (str/blank? name)))
+        (expect (or (seq imports) (seq globals) (some? bindings))
+                (str name " declares none of :shim/imports, :shim/globals and :shim/bindings")))))
 
 (defdescribe
   shim-source-snapshot-test

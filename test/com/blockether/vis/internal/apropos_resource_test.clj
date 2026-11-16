@@ -291,7 +291,8 @@ def __vis_harvest__(modules, names):
                  set)]
 
         (expect (= 2 (count expected)))
-        (expect (= expected listed))))
+        ;; A namespace of another name can lend a shim too, as the MCP client does.
+        (expect (empty? (remove listed expected)))))
   (it "stores one unique flat record for every documented name"
       (let [entries
             (mapcat (comp stored-entries :apropos) (shim-entries))
@@ -299,8 +300,8 @@ def __vis_harvest__(modules, names):
             names
             (map :name entries)]
 
-        (expect (= 2 (count (registered-shims))))
-        (expect (= 6 (count entries)))
+        (expect (= 3 (count (registered-shims))))
+        (expect (= 7 (count entries)))
         ;; Unique ACROSS packs, not merely within one: `apropos` answers the first
         ;; record to claim a name, so two packs claiming one name would hide a symbol.
         (expect (= (count names) (count (distinct names))))
