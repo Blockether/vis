@@ -46,10 +46,7 @@ def main(run_id: str) -> int:
 
         def fresh() -> Session:
             """Make a session for the run. The run works in its own directory. Its session is in the group of the runs, in the one project."""
-            options = client.session_options(os.getcwd())
-            if RUN_GROUP:
-                options["group_id"] = RUN_GROUP
-            session = client.create_session(provider=PROVIDER if about.model else None, model=about.model, **options)
+            session = client.create_session(provider=PROVIDER if about.model else None, model=about.model, group=RUN_GROUP or None, **client.session_options(os.getcwd()))
             session.update(title=f"{run['title']} · run {run_id[:8]}")
             return session
 

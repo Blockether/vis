@@ -289,6 +289,15 @@ def entries(value: object) -> dict[str, object] | None:
     return cast("dict[str, object]", value) if isinstance(value, dict) else None
 
 
+def row(turn: Mapping[str, JSONValue]) -> TurnRow:
+    """Return a turn of the Vis SDK as a typed row. A turn without an id or a status is an error."""
+    turn_id, status, request, content = turn.get("turn_id"), turn.get("status"), turn.get("request"), turn.get("content")
+    if not isinstance(turn_id, str) or not isinstance(status, str):
+        raise ActivityError("the session gave a turn without an id or a status")
+    blocks = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
+    return {"turn_id": turn_id, "status": status, "request": request if isinstance(request, str) else None, "content": blocks}
+
+
 def printed(trace: JSONValue) -> list[str] | None:
     """Return each line that the tools of a turn printed, from the trace of the turn. None: the gateway gave no trace."""
     steps = trace.get("iterations") if isinstance(trace, dict) else None
@@ -411,7 +420,7 @@ class Context:
         self._current: int | None = None
         self._start: Started | None = None
         # The transcript of the run: the turns of its session after the turns of a person, and the place of the next request.
-        turns: list[TurnRow] = session.turns()
+        turns = [row(turn) for turn in session.turns()]
         base = run.get("base") or 0
         self._turns, self._at = turns[base:], 0
         # The last turn that a fork of the session keeps.
@@ -451,7 +460,7 @@ class Context:
         else:
             return
         # A fork gives each turn a new id.
-        turns: list[TurnRow] = self.session.turns()
+        turns = [row(turn) for turn in self.session.turns()]
         self._kept = turns[-1]["turn_id"] if turns else None
         self._event("forked", session_id=self.session.id)
 
@@ -517,8 +526,7 @@ class Context:
         end = time.monotonic() + timeout
         while True:
             try:
-                ended: TurnRow = Turn(self.session, turn_id).wait(timeout=max(end - time.monotonic(), 1))
-                return ended
+                return row(Turn(self.session, turn_id).wait(timeout=max(end - time.monotonic(), 1)))
             except GatewayError as failure:  # the new gateway did not take the turn yet
                 if failure.code != "turn-not-found" or time.monotonic() > end:
                     raise
@@ -531,11 +539,11 @@ class Context:
         if turn is None:
             self._leave()
             self._report()
-            sent: TurnRow = self.session.send(request.text, **using).wait(timeout=request.timeout)
+            sent = row(self.session.send(request.text, **using).wait(timeout=request.timeout))
             if sent["status"] != "completed":
                 raise ActivityError(f"the turn ended with the status {sent['status']!r}")
             turn, self._kept = sent, sent["turn_id"]
-        return Reply(final_answer(dict(turn)) or "", turn["turn_id"])
+        return Reply(final_answer(turn) or "", turn["turn_id"])
 
     def _request(self, text: str, timeout: float, llm: str | None = None, provider: str | None = None) -> Reply:
         """Send a request of an activity through the middleware of the workflow. The first middleware is the outer one."""
