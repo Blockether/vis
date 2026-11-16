@@ -1255,13 +1255,21 @@ Give the sequence number of the app that your client holds. The gateway then ans
 and not `view`: the frames that your client missed, oldest first. An empty list means that your
 client is up to date. Each frame has `first_seq`, `patch` and `splices`.
 
-A splice gives one long string of a `set` operation as edits of the string that your client holds.
-`op_index` and `key` name the operation and its key. First compare `base_hash` with the hash of
-your string. If the two are different, read the whole app. Each edit removes `delete` UTF-16 code
-units at `start` and puts `insert` there.
+A splice gives one long string of a `set` or `add-node` operation as edits of a base string. The
+operation comes without that key. `op_index` and `key` name the operation and its key. `node_id`
+names the node when the operation adds nodes: the node of `node_spec` or a node in its `children`.
 
-The gateway answers `view` when it does not hold the frames that your client missed. A `since` that
-is not a whole number returns 400.
+The base is the string that the node has for the key before the operation. If an earlier operation
+of the frame removed the node, the base is the string that the node had when the frame started.
+First compare `base_hash` with the hash of your base string. If the two are different, read the
+whole app.
+
+Then apply the edits to the base string, in their order. Each edit removes `delete` UTF-16 code
+units at `start` and puts `insert` there. Each `start` is a position in the base string. A string
+with changes in many places comes as many edits.
+
+The gateway answers `view` when it does not hold the frames that your client missed, or when those
+frames are not shorter than the app. A `since` that is not a whole number returns 400.
 
 A panel view also has `placement`, `key`, `extension` and `is_stale`. `is_stale` is true for the
 saved state of a view after a gateway restart, until its extension loads again.

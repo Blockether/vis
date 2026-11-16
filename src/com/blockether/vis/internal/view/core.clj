@@ -3110,11 +3110,14 @@
     (locking cell
       ;; A close may win while this patch waits for the view lock.
       (live-entry! view-id)
-      (let [applied
-            (landed-patch @cell patch)
+      (let [before
+            @cell
+
+            applied
+            (landed-patch before patch)
 
             patched
-            (materializer/apply-patch @cell applied)]
+            (materializer/apply-patch before applied)]
 
         (some-> (view-spec/picture-budget-error patched)
                 invalid-live-patch!)
@@ -3125,12 +3128,16 @@
         (compact-app-record! entry)
         (when (:owned-key entry) (save-owned-soon!))
         ;; An app patch is marked so the gateway keeps it out of the session journal.
+        ;; It carries the view before the patch: a view delta gives a long string as
+        ;; edits of the string that the view held.
         (publish! (:channel-ids entry)
                   (lifecycle-event :view/patch
                                    entry
                                    (cond-> {:patch applied}
                                      (:is-app entry)
-                                     (assoc :is-app true))))
+                                     (assoc :is-app
+                                       true :before
+                                       before))))
         (.notifyAll ^Object cell)
         patched))))
 

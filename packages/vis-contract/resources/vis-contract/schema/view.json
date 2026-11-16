@@ -429,17 +429,21 @@
       ]
     },
     "patch_splice": {
-      "description": "A long string of one `set` operation, as edits of the string that the node holds before that operation. The operation comes without the key.",
+      "description": "A long string of one `set` or `add-node` operation, as edits of a base string. The operation comes without the key. The base is the string that the node has for the key before the operation. For a node that an earlier operation of the frame removed, the base is the string that the node had when the frame started.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "op_index": {
-          "description": "The index of the `set` operation in `ops`.",
+          "description": "The index of the operation in `ops`.",
           "type": "integer",
           "minimum": 0
         },
+        "node_id": {
+          "description": "The node that has the key. In an `add-node` operation, it is `node_spec` or a node in its `children`. Absent: the node of the operation.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
         "key": {
-          "description": "The key of the operation that the edits give.",
+          "description": "The key of the node that the edits give.",
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "base_hash": {
@@ -462,7 +466,7 @@
       ]
     },
     "view_delta": {
-      "description": "One published frame of an app, as a read with `since` gives it. A string with more characters than `x-vis-splice-above-chars` comes as a `patch_splice` when the gateway has its base. The gateway keeps the last `x-vis-frames-kept` frames of an app, and only frames whose strings hold at most `x-vis-elide-above-chars` characters.",
+      "description": "One published frame of an app, as a read with `since` gives it. A string with more characters than `x-vis-splice-above-chars` comes as a `patch_splice` when the node had a string of that length before. The gateway keeps the newest frames of an app while their strings hold at most `x-vis-chars-kept` characters. It answers the whole view when the frames hold more characters than the view.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -471,7 +475,38 @@
           "minimum": 0
         },
         "patch": {
-          "$ref": "#/$defs/live_patch"
+          "description": "A `live_patch`. An operation comes without each key that a splice gives.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "view_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ops": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "$ref": "common.json#/$defs/non_blank_string"
+                  }
+                },
+                "required": [
+                  "op"
+                ]
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "view_id",
+            "seq",
+            "ops"
+          ]
         },
         "splices": {
           "type": "array",
@@ -486,7 +521,7 @@
         "splices"
       ],
       "x-vis-splice-above-chars": 1024,
-      "x-vis-frames-kept": 8
+      "x-vis-chars-kept": 262144
     },
     "option": {
       "type": "object",

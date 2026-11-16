@@ -233,45 +233,61 @@
 
 (declare chars-above?)
 
-;; --- View deltas (an app reader that is a few frames behind reads little) ---
+;; --- View deltas (an app reader that is behind reads the edits of long strings) ---
 
 (defonce
   ^{:private true
     :doc
-    "App view id to `{:strings … :frames …}`. `:strings` maps `[node-id key]` to
-   the long string that a reader has there after the newest published frame.
-   `:frames` holds the newest published frames as view deltas, oldest first and
-   without a gap."}
+    "App view id to `{:frames … :chars … :seq …}`. `:frames` holds the newest
+   published frames as `{:delta … :chars …}`, oldest first and without a gap.
+   `:chars` is the sum of their `:chars` and `:seq` the seq of the newest frame."}
   deltas
   (atom {}))
 
-(def ^:private delta-strings-kept
-  "The most long strings that the gateway keeps as bases for one app. A node that
-   goes away with its parent leaves its string here, so the map has a limit."
-  16)
+(def ^:private frame-chars
+  "The characters that each kept frame counts for, more than its strings: a frame
+   without strings also takes room."
+  64)
 
-(defn string-edits
-  "The edits (view.json `string_edit`) that turn `base` into `target`: the common
-   start and the common end stay, and one edit carries the rest. No edit splits a
-   surrogate pair."
-  [^String base ^String target]
-  (let [n
-        (.length base)
+(def ^:private edit-distance-cap
+  "The most lines that [[string-edits]] lets come and go between two strings. A
+   larger change comes as one edit."
+  512)
+
+(defn- range-edit
+  "The edit (view.json `string_edit`) that turns `base` from `a0` to `a1` into
+   `target` from `b0` to `b1`: the common start and the common end of the two
+   ranges stay. No edit splits a surrogate pair. Nil when the ranges are equal."
+  [^String base a0 a1 ^String target b0 b1]
+  (let [a0
+        (long a0)
+
+        a1
+        (long a1)
+
+        b0
+        (long b0)
+
+        b1
+        (long b1)
+
+        n
+        (- a1 a0)
 
         m
-        (.length target)
+        (- b1 b0)
 
         limit
         (min n m)
 
         start
         (loop [i 0]
-          (if (and (< i limit) (== (int (.charAt base i)) (int (.charAt target i))))
+          (if (and (< i limit) (== (int (.charAt base (+ a0 i))) (int (.charAt target (+ b0 i)))))
             (recur (inc i))
             i))
 
         start
-        (if (and (pos? start) (Character/isHighSurrogate (.charAt base (dec start))))
+        (if (and (pos? start) (Character/isHighSurrogate (.charAt base (+ a0 (dec start)))))
           (dec start)
           start)
 
@@ -280,116 +296,368 @@
 
         end
         (loop [k 0]
-          (if (and (< k room) (== (int (.charAt base (- n k 1))) (int (.charAt target (- m k 1)))))
+          (if (and (< k room)
+                   (== (int (.charAt base (- a1 k 1))) (int (.charAt target (- b1 k 1)))))
             (recur (inc k))
             k))
 
         end
-        (if (and (pos? end) (Character/isLowSurrogate (.charAt base (- n end)))) (dec end) end)]
+        (if (and (pos? end) (Character/isLowSurrogate (.charAt base (- a1 end)))) (dec end) end)]
 
-    (if (= start n m)
-      []
-      [{:start start :delete (- n start end) :insert (subs target start (- m end))}])))
+    (when-not (and (== start n) (== start m))
+      {:start (+ a0 start)
+       :delete (- n start end)
+       :insert (.substring target (int (+ b0 start)) (int (- b1 end)))})))
+
+(defn- line-starts
+  "The start of each line of `text` from `from` to `to`, then `to`."
+  ^ints [^String text ^long from ^long to]
+  (loop [at
+         from
+
+         starts
+         (transient [from])]
+
+    (let [newline (.indexOf text 10 (int at))]
+      (if (or (neg? newline) (>= (inc newline) to))
+        (int-array (persistent! (conj! starts to)))
+        (recur (inc newline) (conj! starts (inc newline)))))))
+
+(defn- line-ids
+  "One number for each line of `text` that `starts` gives. Equal lines have the same
+   number in `seen`."
+  ^ints [^String text ^ints starts ^java.util.HashMap seen]
+  (let [n
+        (dec (alength starts))
+
+        ids
+        (int-array n)]
+
+    (dotimes [i n]
+      (let [line (.substring text (aget starts i) (aget starts (inc i)))
+            id (or (.get seen line)
+                   (let [id (.size seen)]
+                     (.put seen line id)
+                     id))]
+
+        (aset ids i (int id))))
+    ids))
+
+(defn- changed-lines
+  "The lines of `a` that go and the lines of `b` that come in a shortest change of
+   `a` to `b`, as two boolean arrays. Nil when more than [[edit-distance-cap]]
+   lines come and go."
+  [^ints a ^ints b]
+  (let [n
+        (alength a)
+
+        m
+        (alength b)
+
+        cap
+        (min (+ n m) (long edit-distance-cap))
+
+        ;; Diagonal k is at index k + mid. The furthest x of each diagonal is in `v`.
+        mid
+        (inc cap)
+
+        v
+        (int-array (+ 3 (* 2 cap)))
+
+        trace
+        (object-array (inc cap))
+
+        down?
+        (fn [^ints v ^long d ^long k]
+          (or (== k (- d))
+              (and (not (== k d)) (< (aget v (+ mid (dec k))) (aget v (+ mid (inc k)))))))
+
+        distance
+        (loop [d 0]
+          (when (<= d cap)
+            (aset trace d (aclone v))
+            (or (loop [k (- d)]
+                  (when (<= k d)
+                    (let [x0 (long (if (down? v d k)
+                                     (aget v (+ mid (inc k)))
+                                     (inc (aget v (+ mid (dec k))))))
+                          x (loop [x x0]
+                              (let [y (- x k)]
+                                (if (and (< x n) (< y m) (== (aget a x) (aget b y)))
+                                  (recur (inc x))
+                                  x)))]
+
+                      (aset v (+ mid k) (int x))
+                      (if (and (>= x n) (>= (- x k) m)) d (recur (+ k 2))))))
+                (recur (inc d)))))]
+
+    (when distance
+      (let [gone
+            (boolean-array n)
+
+            come
+            (boolean-array m)]
+
+        (loop [d
+               (long distance)
+
+               x
+               n
+
+               y
+               m]
+
+          (when (pos? d)
+            (let [before
+                  ^ints (aget trace d)
+
+                  k
+                  (- x y)
+
+                  from-k
+                  (if (down? before d k) (inc k) (dec k))
+
+                  from-x
+                  (long (aget before (+ mid from-k)))
+
+                  from-y
+                  (- from-x from-k)]
+
+              (if (> from-k k) (aset come from-y true) (aset gone from-x true))
+              (recur (dec d) from-x from-y))))
+        [gone come]))))
+
+(defn- line-edits
+  "The edits that turn `base` from `a0` to `a1` into `target` from `b0` to `b1`,
+   one for each group of changed lines. Both ranges start and end at a line. Nil
+   when [[changed-lines]] gives no answer."
+  [^String base a0 a1 ^String target b0 b1]
+  (let [seen
+        (java.util.HashMap.)
+
+        ^ints a-starts
+        (line-starts base (long a0) (long a1))
+
+        ^ints b-starts
+        (line-starts target (long b0) (long b1))
+
+        n
+        (dec (alength a-starts))
+
+        m
+        (dec (alength b-starts))]
+
+    (when-let [[^booleans gone ^booleans come] (changed-lines (line-ids base a-starts seen)
+                                                              (line-ids target b-starts seen))]
+      (loop [i 0
+             j 0
+             edits []]
+
+        (cond (and (< i n) (< j m) (not (aget gone i)) (not (aget come j)))
+              (recur (inc i) (inc j) edits)
+              (or (< i n) (< j m))
+              (let [i2 (long (loop [i i]
+                               (if (and (< i n) (aget gone i)) (recur (inc i)) i)))
+                    j2 (long (loop [j j]
+                               (if (and (< j m) (aget come j)) (recur (inc j)) j)))
+                    edit (range-edit base
+                                     (aget a-starts i)
+                                     (aget a-starts i2)
+                                     target
+                                     (aget b-starts j)
+                                     (aget b-starts j2))]
+
+                (when-not (and (== i i2) (== j j2))
+                  (recur i2
+                         j2
+                         (cond-> edits
+                           edit
+                           (conj edit)))))
+              :else edits)))))
+
+(defn string-edits
+  "The edits (view.json `string_edit`) that turn `base` into `target`, in ascending
+   order and without overlap. Each group of changed lines is one edit, so two
+   changes far from each other do not carry the text between them. A string
+   without lines, and a change of more than [[edit-distance-cap]] lines, gives one
+   edit from the first change to the last. No edit splits a surrogate pair."
+  [^String base ^String target]
+  (let [n
+        (.length base)
+
+        m
+        (.length target)]
+
+    (if-let [{:keys [start delete insert] :as whole} (range-edit base 0 n target 0 m)]
+      (let [start (long start)
+            delete (long delete)]
+
+        (or (when (and (pos? delete) (pos? (count insert)))
+              (let [;; The lines that hold the change, whole.
+                    from (inc (.lastIndexOf base 10 (int (dec start))))
+                    newline (.indexOf base 10 (int (+ start delete)))
+                    to (long (if (neg? newline) n (inc newline)))]
+
+                (line-edits base from to target from (- m (- n to)))))
+            [whole]))
+      [])))
 
 (defn- long-string?
   [value]
   (and (string? value) (> (count value) (long view-spec/splice-above-chars))))
 
-(defn- spliced-set
-  "`set` operation `op` at index `index` without each long string that `strings`
-   has a base for, and the splices (view.json `patch_splice`) that carry them."
-  [strings index op]
-  (reduce-kv (fn [[op splices] k value]
-               (if-let [base (when (long-string? value) (get strings [(:node-id op) k]))]
-                 [(dissoc op k)
+(defn- nodes-in
+  "Node `node` and each node in it."
+  [node]
+  (tree-seq #(seq (:children %)) :children node))
+
+(defn- patch-bases
+  "The long strings that view `before` holds in the nodes that the `set` and
+   `remove-node` operations of `ops` name, and in the nodes in them: `[node-id key]`
+   to string."
+  [before ops]
+  (let [ids (into #{} (comp (filter #(contains? #{:set :remove-node} (:op %))) (map :node-id)) ops)]
+    (into {}
+          (for [named (nodes-in {:children (:nodes before)})
+                :when (contains? ids (:id named))
+                node (nodes-in named)
+                [k value] node
+                :when (and (:id node) (long-string? value))]
+
+            [[(:id node) k] value]))))
+
+(defn- spliced
+  "Map `values` of node `id`, a `set` operation or a node spec, without each long
+   string that `base-of` has a base for, and the splices (view.json `patch_splice`)
+   that carry them. `named?` puts the node id in each splice."
+  [base-of index id values named?]
+  (reduce-kv (fn [[values splices] k value]
+               (if-let [base (when (and id (long-string? value)) (base-of id k))]
+                 [(dissoc values k)
                   (conj splices
-                        {:op-index index
-                         :key (wire/wire-key k)
-                         :base-hash (.hashCode ^String base)
-                         :edits (string-edits base value)})]
-                 [op splices]))
-             [op []]
-             op))
+                        (cond-> {:op-index index
+                                 :key (wire/wire-key k)
+                                 :base-hash (.hashCode ^String base)
+                                 :edits (string-edits base value)}
+                          named?
+                          (assoc :node-id id)))]
+                 [values splices]))
+             [values []]
+             values))
 
-(defn- strings-after
-  "`strings` after `op`. A `set` gives or removes the string of each key that it
-   names. A node that comes or goes takes the strings of its id with it."
-  [strings op]
-  (let [without-node
-        (fn [id]
-          (into {} (remove (comp #{id} first key)) strings))
+(defn- spliced-spec
+  "Node spec `spec` of an `add-node` operation and the nodes in it, as [[spliced]]
+   gives them."
+  [base-of index spec]
+  (let [[spec splices]
+        (spliced base-of index (:id spec) spec true)
 
-        with-values
-        (fn [strings id values]
-          (reduce-kv
-            (fn [strings k value]
-              (if (long-string? value) (assoc strings [id k] value) (dissoc strings [id k])))
-            strings
-            values))]
+        children
+        (mapv #(spliced-spec base-of index %) (:children spec))]
 
-    (case (:op op)
-      :set
-      (with-values strings (:node-id op) (dissoc op :op :node-id))
-
-      :add-node
-      (with-values (without-node (:id (:node-spec op))) (:id (:node-spec op)) (:node-spec op))
-
-      :remove-node
-      (without-node (:node-id op))
-
-      strings)))
+    [(cond-> spec
+       (seq children)
+       (assoc :children (mapv first children))) (into splices (mapcat second) children)]))
 
 (defn- delta-of
-  "The view delta of app frame `frame` for a reader that holds `strings`, with the
-   strings that the reader holds after it."
-  [strings frame]
-  (let [{:keys [strings ops splices]}
-        (reduce (fn [acc [index op]]
-                  (let [[spliced splices]
-                        (if (= :set (:op op)) (spliced-set (:strings acc) index op) [op []])]
+  "The view delta (view.json `view_delta`) of app frame `frame`. `bases` has the
+   long strings of the view before the frame. The base of a string is the value
+   that an earlier operation of the frame gave the node, else the string in
+   `bases`. A node that the frame adds has no string in `bases`."
+  [bases frame]
+  (let [{:keys [ops splices]}
+        (reduce (fn [{:keys [known fresh] :as acc} [index op]]
+                  (let [base-of (fn [id k]
+                                  (let [value (cond (contains? known [id k]) (get known [id k])
+                                                    (contains? fresh id) nil
+                                                    :else (get bases [id k]))]
+                                    (when (long-string? value) value)))
+                        spec-nodes (when (= :add-node (:op op)) (nodes-in (:node-spec op)))
+                        [spliced-op splices] (case (:op op)
+                                               :set
+                                               (spliced base-of index (:node-id op) op false)
+
+                                               :add-node
+                                               (let [[spec splices]
+                                                     (spliced-spec base-of index (:node-spec op))]
+                                                 [(assoc op :node-spec spec) splices])
+
+                                               [op []])
+                        values (case (:op op)
+                                 :set
+                                 [[(:node-id op) (dissoc op :op :node-id)]]
+
+                                 :add-node
+                                 (map (juxt :id #(dissoc % :children)) spec-nodes)
+
+                                 [])]
+
                     (-> acc
-                        (update :ops conj spliced)
+                        (update :ops conj spliced-op)
                         (update :splices into splices)
-                        (update :strings strings-after op))))
-                {:strings strings :ops [] :splices []}
+                        (update :fresh into (map :id) spec-nodes)
+                        (assoc :known (reduce (fn [known [id node]]
+                                                (reduce-kv (fn [known k value]
+                                                             (assoc known [id k] value))
+                                                           known
+                                                           node))
+                                              known
+                                              values)))))
+                {:known {} :fresh #{} :ops [] :splices []}
                 (map-indexed vector (:ops frame)))]
-    {:strings (if (> (count strings) (long delta-strings-kept)) {} strings)
-     :delta {:first-seq (:first-seq frame)
-             :patch {:view-id (:view-id frame) :seq (:seq frame) :ops ops}
-             :splices splices}}))
+    {:first-seq (:first-seq frame)
+     :patch {:view-id (:view-id frame) :seq (:seq frame) :ops ops}
+     :splices splices}))
+
+(defn- chars-of
+  "The number of characters in the strings of `value`."
+  ^long [value]
+  (cond (string? value) (count value)
+        (map? value) (long (transduce (map chars-of) + 0 (vals value)))
+        (sequential? value) (long (transduce (map chars-of) + 0 value))
+        :else 0))
 
 (defn- remember-delta!
-  "Keep app frame `frame` as a view delta. A delta that stays large, or that does
-   not continue the kept frames, starts the kept frames again."
+  "Keep app frame `frame` as a view delta. A frame that does not continue the kept
+   frames starts them again. The oldest frames go when the kept frames count for
+   more than [[view-spec/delta-chars-kept]] characters."
   [frame]
-  (swap! deltas update
-    (:view-id frame)
-    (fn [{:keys [strings frames]}]
-      (let [{:keys [strings delta]}
-            (delta-of (or strings {}) frame)
+  (let [delta
+        (delta-of (:bases frame) frame)
 
-            continues?
-            (when-let [held (get-in (peek frames) [:patch :seq])]
-              (= (inc (long held)) (long (:first-seq frame))))]
+        size
+        (+ (long frame-chars) (chars-of [(get-in delta [:patch :ops]) (:splices delta)]))]
 
-        {:strings strings
-         :frames (cond (chars-above? [(get-in delta [:patch :ops]) (:splices delta)]
-                                     view-spec/patch-elide-above-chars)
-                       []
-                       continues? (vec (take-last (long view-spec/delta-frames-kept)
-                                                  (conj frames delta)))
-                       :else [delta])})))
-  nil)
+    (swap! deltas update
+      (:view-id frame)
+      (fn [{:keys [frames chars seq]}]
+        (let [continues? (and seq (== (inc (long seq)) (long (:first-seq frame))))]
+          (loop [frames (conj (if continues? frames clojure.lang.PersistentQueue/EMPTY)
+                              {:delta delta :chars size})
+                 chars (+ size (long (if continues? chars 0)))]
+
+            (if (> chars (long view-spec/delta-chars-kept))
+              (recur (pop frames) (- chars (long (:chars (peek frames)))))
+              {:frames frames :chars chars :seq (:seq frame)})))))
+    nil))
 
 (defn deltas-since
-  "The view deltas (view.json `view_delta`) that take app `view-id` from seq `since`
-   to its newest published frame, oldest first. Nil when the gateway does not hold
-   them: then the reader takes the whole view."
-  [view-id since]
-  (let [frames (:frames (get @deltas view-id))]
-    (cond (empty? frames) nil
-          (= since (get-in (peek frames) [:patch :seq])) []
-          :else (not-empty (vec (drop-while #(not= (inc (long since)) (:first-seq %)) frames))))))
+  "The view deltas (view.json `view_delta`) that take app `view` from seq `since` to
+   its newest published frame, oldest first. Nil when the reader must take the
+   whole view: the gateway does not hold these frames, or their strings are not
+   shorter than the strings of the view."
+  [view since]
+  (let [{:keys [frames seq]}
+        (get @deltas (:id view))
+
+        missed
+        (drop-while #(not= (inc (long since)) (long (:first-seq (:delta %)))) frames)]
+
+    (cond (nil? seq) nil
+          (= since seq) []
+          (empty? missed) nil
+          (chars-above? view (transduce (map :chars) + 0 missed)) (mapv :delta missed)
+          :else nil)))
 
 (defn- publish-patches!
   "Publish one coalesced frame. `first_seq`..`seq` is the range of engine
@@ -432,24 +700,32 @@
 
 (defn- buffer-patch!
   "Hold one accepted patch for `view-id` and make sure a flush is coming. The
-   frame of an app is published live only."
-  [sid view-id patch app? global?]
+   frame of an app is published live only. `before` is the app before the patch:
+   the frame keeps the long strings that the patch replaces, for its view delta."
+  [sid view-id patch app? global? before]
   ;; The swap that STARTS a frame schedules its flush. A freshness read taken
   ;; before the swap could miss a flush that emptied the buffer in between, and
   ;; then no later patch scheduled one: the view froze while its record grew.
-  (let [[old _] (swap-vals! buffered
-                            update
-                            view-id
-                            (fn [frame]
-                              (-> (or frame
-                                      {:session-id sid
-                                       :view-id view-id
-                                       :first-seq (:seq patch)
-                                       :ops []
-                                       :is-app app?
-                                       :is-global global?})
-                                  (assoc :seq (:seq patch))
-                                  (update :ops #(reduce coalesce % (:ops patch))))))]
+  (let [bases
+        (when before (patch-bases before (:ops patch)))
+
+        [old _]
+        (swap-vals! buffered
+                    update
+                    view-id
+                    (fn [frame]
+                      (-> (or frame
+                              {:session-id sid
+                               :view-id view-id
+                               :first-seq (:seq patch)
+                               :ops []
+                               :is-app app?
+                               :is-global global?})
+                          (assoc :seq (:seq patch))
+                          ;; The first string of a node and key is the one before the frame.
+                          (update :bases #(merge bases %))
+                          (update :ops #(reduce coalesce % (:ops patch))))))]
+
     (when (nil? (get old view-id))
       (.schedule ^ScheduledExecutorService @flusher
                  ^Runnable
@@ -695,7 +971,8 @@
                      (:view-id event)
                      (:patch event)
                      (boolean (:is-app event))
-                     (boolean (:is-global event))))
+                     (boolean (:is-global event))
+                     (:before event)))
 
     :view/close
     (let [sid (session-of event)]

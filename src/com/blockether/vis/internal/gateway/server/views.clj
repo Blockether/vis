@@ -218,7 +218,7 @@
     (cond (nil? since) (http/json-response {:view view})
           (not (re-matches #"\d{1,18}" since))
           (http/error-response 400 :invalid-request "since must be a whole number from 0")
-          :else (if-let [deltas (gw-view/deltas-since (:id view) (parse-long since))]
+          :else (if-let [deltas (gw-view/deltas-since view (parse-long since))]
                   (http/json-response {:patches deltas})
                   (http/json-response {:view view})))))
 

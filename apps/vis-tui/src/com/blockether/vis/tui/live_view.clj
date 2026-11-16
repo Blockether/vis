@@ -59,7 +59,8 @@
             [com.blockether.vis.tui.scene-motion :as scene-motion]
             [com.blockether.vis.tui.scene-raster :as scene-raster]
             [com.blockether.vis.tui.view-materializer :as live]
-            [com.blockether.vis.contract.view :as hi-spec])
+            [com.blockether.vis.contract.view :as hi-spec]
+            [com.blockether.vis.contract.wire :as wire])
   (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
@@ -324,6 +325,40 @@
         (update :view live/apply-patch patch)
         (dissoc :log-fill-error)
         (assoc :fresh (touched patch)))))
+
+(defn caught-up
+  "App `view` after the frames `deltas` of a read with `since` (view.json
+   `view_delta`, wire keys). A long string of a frame comes as edits of the string
+   that `view` holds. Nil when a frame does not fit `view`: the reader then takes
+   the whole view."
+  [view deltas]
+  (reduce (fn [view delta]
+            (let [held
+                  (long (or (:seq view) 0))
+
+                  seq-after
+                  (long (or (get-in delta ["patch" "seq"]) 0))]
+
+              (cond (<= seq-after held) view
+                    (> (long (or (get delta "first_seq") seq-after)) (inc held)) (reduced nil)
+                    :else
+                    (let [nodes
+                          (into {}
+                                (map (juxt :id identity))
+                                (tree-seq #(seq (:children %)) :children {:children (:nodes view)}))
+
+                          patch
+                          (view-model/live-patch<-wire (hi-spec/resolved-delta
+                                                         (fn [id k]
+                                                           (get (get nodes id) (wire/engine-key k)))
+                                                         delta))]
+
+                      (or (when patch
+                            (try (live/apply-patch view patch)
+                                 (catch clojure.lang.ExceptionInfo _ nil)))
+                          (reduced nil))))))
+          view
+          deltas))
 
 (def log-fill-page-size
   "Record lines ONE unasked read takes. The gateway serves at most the default log

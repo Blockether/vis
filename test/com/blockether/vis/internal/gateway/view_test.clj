@@ -1667,123 +1667,269 @@
 
 ;; Report: a phone that showed a long review read the whole view again after each
 ;; change of one file: 955,000 characters a step.
-(defn- edited
-  "String `base` after the wire `string_edit` list `edits`, as a reader applies it."
-  [^String base edits]
-  (let [out (StringBuilder.)]
-    (loop [at 0
-           edits edits]
+(defn- held-in
+  "The value that the view of route answer `response` has for a node id and a wire
+   key, as [[hi-spec/resolved-delta]] asks for it."
+  [response]
+  (let [nodes
+        (fn nodes [node]
+          (cons node (mapcat nodes (get node "children"))))
 
-      (if-let [{:strs [start delete insert]} (first edits)]
-        (do (.append out base (int at) (int start))
-            (.append out ^String insert)
-            (recur (+ (long start) (long delete)) (rest edits)))
-        (str (.append out base (int at) (.length base)))))))
+        by-id
+        (into {}
+              (map (juxt #(get % "id") identity))
+              (mapcat nodes (get-in (json-body response) ["view" "nodes"])))]
+
+    (fn [id k]
+      (get-in by-id [id k]))))
+
+(defn- app-patch!
+  "Send the operations `ops` to app `view-id` as one patch, and publish the frame."
+  [view-id ops]
+  (app-op! {"op" "patch" "view_id" view-id "patch" {"ops" ops}})
+  (gw-hi/flush-live-patches!))
+
+(defn- app-answer
+  "The answer of the one-view route for app `view-id` to a reader that has seq `since`."
+  [sid view-id since]
+  (#'views-api/live-view-handler
+   {:path-params {:sid sid :view-id view-id}
+    :query-params (cond-> {}
+                    since
+                    (assoc "since" (str since)))}))
+
+(defn- with-large-app
+  "Call `f` with a session id, the id of an app whose diff has `large-app-patch`, and
+   the answer of a whole read of it."
+  [f]
+  (gw-hi/install!)
+  (recorded (fn []
+              (let [sid
+                    (str (random-uuid))
+
+                    view-id
+                    (open-app! sid)]
+
+                (set-app-patch! view-id large-app-patch "fff0001")
+                (f sid view-id (app-answer sid view-id nil))))))
+
+(def ^:private large-app-lines (str/split-lines large-app-patch))
+
+(defn- large-patch-with
+  "`large-app-patch` with line `line` before each line index of `places`."
+  [line & places]
+  (str (str/join "\n"
+                 (reduce (fn [lines at]
+                           (into (conj (subvec lines 0 at) line) (subvec lines at)))
+                         large-app-lines
+                         (sort > places)))
+       "\n"))
 
 (defdescribe
   app-view-delta-test
   (it
     "answers a reader that is behind with the edits of the long string"
-    (gw-hi/install!)
-    (recorded
-      (fn []
-        (let [sid
-              (str (random-uuid))
+    (with-large-app
+      (fn [sid view-id first-read]
+        (let [answer
+              #(app-answer sid view-id %)
 
-              view-id
-              (open-app! sid)
-
-              answer
-              (fn [since]
-                (#'views-api/live-view-handler
-                 {:path-params {:sid sid :view-id view-id}
-                  :query-params (cond-> {}
-                                  since
-                                  (assoc "since" (str since)))}))
-
-              patch-of
-              #(get (app-node % "change") "patch")
+              first-seq
+              (get-in (json-body first-read) ["view" "seq"])
 
               second-patch
-              (str (subs large-app-patch 0 20000) "+one new line\n" (subs large-app-patch 20000))
+              (large-patch-with "+one new line" 900)
 
-              third-patch
-              (str/replace-first second-patch "+one new line\n" "")]
+              _
+              (set-app-patch! view-id second-patch "fff0002")
 
-          (set-app-patch! view-id large-app-patch "fff0001")
-          (let [first-read
-                (answer nil)
+              body
+              (json-body (answer first-seq))
 
-                first-seq
-                (get-in (json-body first-read) ["view" "seq"])]
+              [delta]
+              (get body "patches")
 
-            (set-app-patch! view-id second-patch "fff0002")
-            (let [body
-                  (json-body (answer first-seq))
+              [splice]
+              (get delta "splices")]
 
-                  [delta]
-                  (get body "patches")
+          (expect (= 1 (count (get body "patches"))))
+          (expect (document/valid-json? "view" "view_delta" delta))
+          (expect (= [{"op" "set" "node_id" "change" "new_revision" "fff0002"}]
+                     (get-in delta ["patch" "ops"])))
+          (expect (= (.hashCode ^String large-app-patch) (get splice "base_hash")))
+          (expect (= second-patch (hi-spec/edited-string large-app-patch (get splice "edits"))))
+          (expect (< (count (wire/json-str body)) 1000))
+          ;; Two frames behind: both frames come, oldest first.
+          (set-app-patch! view-id large-app-patch "fff0003")
+          (let [deltas (get (json-body (answer first-seq)) "patches")]
+            (expect (= ["fff0002" "fff0003"]
+                       (mapv #(get-in % ["patch" "ops" 0 "new_revision"]) deltas)))
+            (expect (= large-app-patch
+                       (reduce (fn [text delta]
+                                 (hi-spec/edited-string text (get-in delta ["splices" 0 "edits"])))
+                               large-app-patch
+                               deltas)))
+            ;; A reader that has the newest frame has nothing to apply.
+            (expect (= {"patches" []} (json-body (answer (get-in (peek deltas) ["patch" "seq"]))))))
+          ;; The frames after seq 0 hold the whole patch: the view is not longer.
+          (expect (= large-app-patch (get (app-node (answer 0) "change") "patch")))
+          (expect (= 400 (:status (answer "soon"))))))))
+  (it "gives one edit for each changed place, so the text between them stays out"
+      (with-large-app
+        (fn [sid view-id first-read]
+          (let [target
+                (large-patch-with "+a new line" 100 1900)
 
-                  [splice]
-                  (get delta "splices")]
+                _
+                (set-app-patch! view-id target "fff0002")
 
-              (expect (= 1 (count (get body "patches"))))
-              (expect (document/valid-json? "view" "view_delta" delta))
-              (expect (= [{"op" "set" "node_id" "change" "new_revision" "fff0002"}]
-                         (get-in delta ["patch" "ops"])))
-              (expect (= (.hashCode ^String large-app-patch) (get splice "base_hash")))
-              (expect (= second-patch (edited large-app-patch (get splice "edits"))))
-              (expect (< (count (wire/json-str body)) 1000))
-              ;; Two frames behind: both frames come, oldest first.
-              (set-app-patch! view-id third-patch "fff0003")
-              (let [deltas (get (json-body (answer first-seq)) "patches")]
-                (expect (= ["fff0002" "fff0003"]
-                           (mapv #(get-in % ["patch" "ops" 0 "new_revision"]) deltas)))
-                (expect (= third-patch
-                           (reduce (fn [text delta]
-                                     (edited text (get-in delta ["splices" 0 "edits"])))
-                                   large-app-patch
-                                   deltas)))
-                ;; A reader that has the newest frame has nothing to apply.
-                (expect (= {"patches" []}
-                           (json-body (answer (get-in (peek deltas) ["patch" "seq"]))))))
-              ;; The gateway holds no small frame after seq 0: the whole view comes.
-              (expect (= third-patch (patch-of (answer 0))))
-              (expect (= 400 (:status (answer "soon"))))))))))
-  (it "gives the hash and the edits of the shared sample that the Companion applies"
-      (let [{:strs [base target frame]}
-            (get (wire/parse-json (slurp (io/resource "vis-contract/fixtures/view.json"))) "delta")
+                body
+                (json-body (app-answer sid view-id (get-in (json-body first-read) ["view" "seq"])))
+
+                edits
+                (get-in body ["patches" 0 "splices" 0 "edits"])]
+
+            (expect (= 2 (count edits)))
+            (expect (= target (hi-spec/edited-string large-app-patch edits)))
+            (expect (< (count (wire/json-str body)) 1000))))))
+  (it
+    "has the base of the first frame after a restart"
+    (with-large-app
+      (fn [sid view-id first-read]
+        ;; A restart drops the kept frames. The app has its strings.
+        (reset! @#'gw-hi/deltas {})
+        (let [target
+              (large-patch-with "+a new line" 900)
+
+              _
+              (set-app-patch! view-id target "fff0002")
+
+              body
+              (json-body (app-answer sid view-id (get-in (json-body first-read) ["view" "seq"])))]
+
+          (expect (= target
+                     (hi-spec/edited-string large-app-patch
+                                            (get-in body ["patches" 0 "splices" 0 "edits"]))))
+          (expect (< (count (wire/json-str body)) 1000))))))
+  (it "gives a node that comes again as edits of the string that it had"
+      (with-large-app
+        (fn [sid view-id first-read]
+          (let [target
+                (large-patch-with "+a new line" 900)
+
+                _
+                (app-patch! view-id
+                            [{"op" "remove-node" "node_id" "change"}
+                             {"op" "add-node"
+                              "node_spec"
+                              {"id" "change" "type" "diff" "label" "Again" "patch" target}}])
+
+                body
+                (json-body (app-answer sid view-id (get-in (json-body first-read) ["view" "seq"])))
+
+                [delta]
+                (get body "patches")
+
+                patch
+                (hi-spec/resolved-delta (held-in first-read) delta)]
+
+            (expect (document/valid-json? "view" "view_delta" delta))
+            (expect (= ["change"] (mapv #(get % "node_id") (get delta "splices"))))
+            (expect (< (count (wire/json-str body)) 1000))
+            (expect (document/valid-json? "view" "live_patch" patch))
+            (expect (= target (get-in patch ["ops" 1 "node_spec" "patch"])))
+            (expect (= target (get (app-node (app-answer sid view-id nil) "change") "patch")))
+            ;; A reader whose string is another one gets no patch from the delta.
+            (expect (nil? (hi-spec/resolved-delta (constantly target) delta)))))))
+  (it "answers a reader that is many small frames behind"
+      (with-large-app
+        (fn [sid view-id first-read]
+          (dotimes [n 40]
+            (app-patch! view-id [{"op" "set" "node_id" "change" "new_revision" (str "rev" n)}]))
+          (let [since
+                (get-in (json-body first-read) ["view" "seq"])
+
+                deltas
+                (get (json-body (app-answer sid view-id since)) "patches")]
+
+            (expect (= (mapv #(str "rev" %) (range 40))
+                       (mapv #(get-in % ["patch" "ops" 0 "new_revision"]) deltas)))))))
+  (it "gives the frame of the shared samples that the Companion and the TUI apply"
+      (let [{:strs [delta delta_fold]}
+            (wire/parse-json (slurp (io/resource "vis-contract/fixtures/view.json")))
+
+            {:strs [base target frame]}
+            delta
 
             [splice]
             (get frame "splices")]
 
         (expect (document/valid-json? "view" "view_delta" frame))
         (expect (= (.hashCode ^String base) (get splice "base_hash")))
-        (expect (= (get splice "edits") (wire/->wire (gw-hi/string-edits base target))))))
-  (it "gives edits that rebuild the target, also next to surrogate pairs"
-      (let [random
-            (java.util.Random. 7)
+        (expect (= (get splice "edits") (wire/->wire (gw-hi/string-edits base target))))
+        (let [{:strs [view frame patch]}
+              delta_fold
 
-            pieces
-            ["a" "b" "\n" "é" "😀" "𝄞"]
+              held
+              (held-in {:body (wire/json-str {"view" view})})
 
-            text
-            (fn []
-              (apply str
-                (repeatedly (.nextInt random 8) #(nth pieces (.nextInt random (count pieces))))))]
+              base
+              (held "change" "patch")]
 
-        (dotimes [_ 3000]
-          (let [start (text)
-                end (text)
-                base (str start (text) end)
-                target (str start (text) end)
-                edits (wire/->wire (gw-hi/string-edits base target))]
+          (expect (document/valid-json? "view" "view_delta" frame))
+          (expect (document/valid-json? "view" "live_patch" patch))
+          (expect (= patch (hi-spec/resolved-delta held frame)))
+          (expect (= (get-in frame ["splices" 0 "edits"])
+                     (wire/->wire
+                       (gw-hi/string-edits base (get-in patch ["ops" 1 "node_spec" "patch"]))))))))
+  (it
+    "gives edits that rebuild the target, also next to surrogate pairs"
+    (let [random
+          (java.util.Random. 7)
 
-            (expect (= target (edited base edits)))
-            ;; An edit that splits a pair does not come back from UTF-8 as it was.
-            (expect (every? #(= (get % "insert")
-                                (String. (.getBytes ^String (get % "insert") "UTF-8") "UTF-8"))
-                            edits)))))))
+          pieces
+          ["a" "b" "\n" "é" "😀" "𝄞"]
+
+          text
+          (fn [most]
+            (apply str
+              (repeatedly (.nextInt random (int most))
+                          #(nth pieces (.nextInt random (count pieces))))))
+
+          rebuilds?
+          (fn [base target]
+            (let [edits (wire/->wire (gw-hi/string-edits base target))]
+              (and (= target (hi-spec/edited-string base edits))
+                   ;; An edit that splits a pair does not come back from UTF-8 as it was.
+                   (every? #(= (get % "insert")
+                               (String. (.getBytes ^String (get % "insert") "UTF-8") "UTF-8"))
+                           edits))))]
+
+      (dotimes [_ 3000]
+        (let [start (text 8)
+              end (text 8)]
+
+          (expect (rebuilds? (str start (text 8) end) (str start (text 8) end)))))
+      ;; Texts of many lines, with changes in some places.
+      (dotimes [_ 300]
+        (let [lines (vec (repeatedly 40 #(text 6)))
+              changed (reduce (fn [lines _]
+                                (let [at (.nextInt random (count lines))]
+                                  (case (.nextInt random 3)
+                                    0
+                                    (assoc lines at (text 6))
+
+                                    1
+                                    (into (conj (subvec lines 0 at) (text 6)) (subvec lines at))
+
+                                    (into (subvec lines 0 at) (subvec lines (inc at))))))
+                              lines
+                              (range (.nextInt random 6)))]
+
+          (expect (rebuilds? (str/join "\n" lines) (str/join "\n" changed)))))
+      ;; More changed lines than the search for the shortest change takes.
+      (expect (rebuilds? (apply str (map #(str "old " % "\n") (range 2000)))
+                         (apply str (map #(str "new " % "\n") (range 2000))))))))
 
 ;; A game's app froze in every surface after a few minutes while its record kept
 ;; growing: a flush that took the frame during a patch left the next frame without
@@ -1808,7 +1954,8 @@
              view-id
              {:seq n :ops [{:op :set :node-id "state" :text (str n)}]}
              true
-             false))
+             false
+             nil))
 
           coalesce
           @#'gw-hi/coalesce

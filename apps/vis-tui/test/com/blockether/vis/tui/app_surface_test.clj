@@ -1,7 +1,10 @@
 (ns com.blockether.vis.tui.app-surface-test
-  (:require [com.blockether.vis.tui.app-model :as model]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.app-surface :as surface]
+            [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -9,6 +12,8 @@
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
+            [com.blockether.vis.tui.view-materializer :as live]
+            [com.blockether.vis.tui.view-model :as view-model]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
@@ -292,6 +297,55 @@
       (expect (false? (get-in @state/app-db [:app-views "app-1" :is-gap])))
       (state/dispatch [:live-view-close "app-1" {:reason :completed}])
       (expect (= :closed (model/status (get-in @state/app-db [:app-views "app-1" :view]))))))
+
+;; Report: an open review read its whole view again after each change of one file.
+(defdescribe
+  app-read
+  (let [{:strs [view frame patch]}
+        (get (json/read-json (slurp (io/resource "vis-contract/fixtures/view.json"))) "delta_fold")
+
+        held
+        (view-model/live-view<-wire (assoc view
+                                      "title" "Review"
+                                      "placement" "attachment"))
+
+        read-app
+        @#'surface/read-app
+
+        asked
+        (fn [answer f]
+          (let [calls (atom [])]
+            (with-redefs [vis/gateway-app-read (fn [sid view-id since]
+                                                 (swap! calls conj [sid view-id since])
+                                                 (if since answer {"view" (assoc view "seq" 9)}))]
+              [(f) @calls])))]
+
+    (it "asks only for the frames after the held copy and folds their string edits"
+        (let [[read calls] (asked {"patches" [frame]} #(read-app "s1" "live-one" held))]
+          (expect (= (live/apply-patch held (view-model/live-patch<-wire patch)) read))
+          (expect (= [["s1" "live-one" 1]] calls)))
+        (let [[read calls] (asked {"patches" []} #(read-app nil "live-one" held))]
+          (expect (= held read))
+          (expect (= [[nil "live-one" 1]] calls))))
+    (it "takes the whole view when a frame does not fit, or when no copy is held"
+        (let [other
+              (assoc-in held [:nodes 0 :patch] "other")
+
+              [read calls]
+              (asked {"patches" [frame]} #(read-app "s1" "live-one" other))]
+
+          (expect (= 9 (:seq read)))
+          (expect (= [["s1" "live-one" 1] ["s1" "live-one" nil]] calls)))
+        (let [[read calls] (asked {"patches" [(assoc frame "first_seq" 4)]}
+                                  #(read-app "s1" "live-one" held))]
+          (expect (= 9 (:seq read)))
+          (expect (= 2 (count calls))))
+        (let [[read calls] (asked {"view" (assoc view "seq" 7)} #(read-app "s1" "live-one" held))]
+          (expect (= 7 (:seq read)))
+          (expect (= [["s1" "live-one" 1]] calls)))
+        (let [[read calls] (asked nil #(read-app "s1" "live-one" nil))]
+          (expect (= 9 (:seq read)))
+          (expect (= [["s1" "live-one" nil]] calls))))))
 
 (def ^:private game
   "A small app with controls, a selectable table, an input and shortcuts."

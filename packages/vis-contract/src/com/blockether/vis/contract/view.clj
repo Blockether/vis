@@ -431,9 +431,116 @@
    goes out as edits of the string that the reader has."
   (get (definition "view_delta") "x-vis-splice-above-chars"))
 
-(def delta-frames-kept
-  "The number of the newest frames of an app that the gateway keeps as view deltas."
-  (get (definition "view_delta") "x-vis-frames-kept"))
+(def delta-chars-kept
+  "The most characters in the strings of the view deltas that the gateway keeps for
+   one app."
+  (get (definition "view_delta") "x-vis-chars-kept"))
+
+(defn edited-string
+  "String `base` after `edits` (view.json `string_edit`, wire keys). Nil when the
+   edits do not fit `base`."
+  [^String base edits]
+  (let [out
+        (StringBuilder.)
+
+        n
+        (.length base)]
+
+    (loop [at
+           0
+
+           edits
+           (seq edits)]
+
+      (if-let [{:strs [start delete insert]} (first edits)]
+        (when (and (int? start) (int? delete) (string? insert))
+          (let [from (long start)
+                to (+ from (long delete))]
+
+            (when (<= at from to n)
+              (.append out base (int at) (int from))
+              (.append out ^String insert)
+              (recur to (next edits)))))
+        (str (.append out base (int at) n))))))
+
+(defn resolved-delta
+  "The patch (view.json `live_patch`, wire keys) of view delta `delta` with each
+   spliced string in its operation. `held` gives the value that the view of the
+   reader has for a node id and a wire key before the frame. The base of a splice is
+   the value that an earlier operation of the frame gave the node, else that value.
+   Nil when a splice does not fit: the reader then takes the whole view."
+  [held delta]
+  (let [splices
+        (group-by #(get % "op_index") (get delta "splices"))
+
+        spec-nodes
+        (fn spec-nodes [spec]
+          (cons spec (mapcat spec-nodes (get spec "children"))))
+
+        with-key
+        (fn with-key [spec id k value]
+          (cond (= id (get spec "id")) (assoc spec k value)
+                (seq (get spec "children")) (update spec
+                                                    "children"
+                                                    (fn [children]
+                                                      (mapv #(with-key % id k value) children)))
+                :else spec))]
+
+    (loop [index
+           0
+
+           ops
+           (seq (get-in delta ["patch" "ops"]))
+
+           known
+           {}
+
+           fresh
+           #{}
+
+           resolved
+           []]
+
+      (if-let [op (first ops)]
+        (let [base-of (fn [id k]
+                        (cond (contains? known [id k]) (get known [id k])
+                              (contains? fresh id) nil
+                              :else (held id k)))
+              op (reduce (fn [op splice]
+                           (let [k (get splice "key")
+                                 id (or (get splice "node_id") (get op "node_id"))
+                                 base (base-of id k)
+                                 value (when (and (string? base)
+                                                  (= (.hashCode ^String base)
+                                                     (get splice "base_hash")))
+                                         (edited-string base (get splice "edits")))]
+
+                             (cond (nil? value) (reduced nil)
+                                   (= "add-node" (get op "op"))
+                                   (update op "node_spec" with-key id k value)
+                                   :else (assoc op k value))))
+                         op
+                         (get splices index))]
+
+          (when op
+            (let [added (when (= "add-node" (get op "op")) (spec-nodes (get op "node_spec")))
+                  values (cond added (map (juxt #(get % "id") #(dissoc % "children")) added)
+                               (= "set" (get op "op")) [[(get op "node_id")
+                                                         (dissoc op "op" "node_id")]]
+                               :else [])]
+
+              (recur (inc index)
+                     (next ops)
+                     (reduce (fn [known [id node]]
+                               (reduce-kv (fn [known k value]
+                                            (assoc known [id k] value))
+                                          known
+                                          node))
+                             known
+                             values)
+                     (into fresh (map #(get % "id")) added)
+                     (conj resolved op)))))
+        (assoc (get delta "patch") "ops" resolved)))))
 
 (def live-picture-keys "Keys returned in a finished live-view picture." (schema-keys "view"))
 

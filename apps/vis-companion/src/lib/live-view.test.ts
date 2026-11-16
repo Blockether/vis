@@ -481,6 +481,21 @@ describe('a patch frame', () => {
     expect(applyLivePatch({ ...app, nodes: [] }, delta).is_stale).toBe(true);
   });
 
+  // Report: a review that changed its threads added its diff again, and the reader
+  // took the whole view. The splice of an added node has its own `node_id`.
+  it('folds a frame that adds a node again with the long string as edits', () => {
+    const fold = canonical.delta_fold;
+    const app = liveViewFromWire({ title: 'Review', placement: 'attachment', ...fold.view });
+    if (!app) throw new Error('the app must be paintable');
+    const whole = applyLivePatch(app, { first_seq: fold.frame.first_seq, patch: fold.patch });
+    const patched = applyLivePatch(app, fold.frame);
+    expect(patched.is_stale).toBeUndefined();
+    expect(patched).toEqual(whole);
+    expect(patched.nodes[0]).toMatchObject({ patch: fold.patch.ops[2].patch, label: 'Again' });
+    const other = { ...app, nodes: [{ ...app.nodes[0], patch: 'other' } as LiveNode] };
+    expect(applyLivePatch(other, fold.frame).is_stale).toBe(true);
+  });
+
   // Without this, a session list that asks for summaries shows no app at all.
   it('keeps an app that a list sends without its body', () => {
     const entry = liveViewFromWire({ id: 'app-1', title: 'Review', placement: 'attachment', icon: 'review', seq: 4, is_summary: true });

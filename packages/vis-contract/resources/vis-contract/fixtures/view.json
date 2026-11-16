@@ -107,5 +107,101 @@
         }
       ]
     }
+  },
+  "delta_fold": {
+    "view": {
+      "id": "live-one",
+      "seq": 1,
+      "nodes": [
+        {
+          "id": "change",
+          "type": "diff",
+          "patch": "diff --git a/é.txt b/é.txt\n--- a/é.txt\n+++ b/é.txt\n@@ -1,60 +1,60 @@\n+one 😁\n line 2 of the text\n line 3 of the text\n line 4 of the text\n line 5 of the text\n line 6 of the text\n line 7 of the text\n line 8 of the text\n line 9 of the text\n line 10 of the text\n line 11 of the text\n line 12 of the text\n line 13 of the text\n line 14 of the text\n line 15 of the text\n line 16 of the text\n line 17 of the text\n line 18 of the text\n line 19 of the text\n line 20 of the text\n line 21 of the text\n line 22 of the text\n line 23 of the text\n line 24 of the text\n line 25 of the text\n line 26 of the text\n line 27 of the text\n line 28 of the text\n line 29 of the text\n line 30 of the text\n line 31 of the text\n line 32 of the text\n line 33 of the text\n line 34 of the text\n line 35 of the text\n line 36 of the text\n line 37 of the text\n line 38 of the text\n line 39 of the text\n+forty 𝄞\n line 41 of the text\n line 42 of the text\n line 43 of the text\n line 44 of the text\n line 45 of the text\n line 46 of the text\n line 47 of the text\n line 48 of the text\n line 49 of the text\n line 50 of the text\n line 51 of the text\n line 52 of the text\n line 53 of the text\n line 54 of the text\n line 55 of the text\n line 56 of the text\n line 57 of the text\n line 58 of the text\n line 59 of the text\n line 60 of the text\n"
+        }
+      ]
+    },
+    "frame": {
+      "first_seq": 2,
+      "patch": {
+        "view_id": "live-one",
+        "seq": 2,
+        "ops": [
+          {
+            "op": "remove-node",
+            "node_id": "change"
+          },
+          {
+            "op": "add-node",
+            "node_spec": {
+              "id": "change",
+              "type": "diff",
+              "label": "Again"
+            }
+          },
+          {
+            "op": "set",
+            "node_id": "change",
+            "new_revision": "fff0003"
+          }
+        ]
+      },
+      "splices": [
+        {
+          "op_index": 1,
+          "key": "patch",
+          "base_hash": -1610968926,
+          "edits": [
+            {
+              "start": 74,
+              "delete": 2,
+              "insert": "😂"
+            },
+            {
+              "start": 876,
+              "delete": 0,
+              "insert": "𝄞"
+            }
+          ],
+          "node_id": "change"
+        },
+        {
+          "op_index": 2,
+          "key": "patch",
+          "base_hash": 2012309847,
+          "edits": [
+            {
+              "start": 1299,
+              "delete": 0,
+              "insert": "+the end\n"
+            }
+          ]
+        }
+      ]
+    },
+    "patch": {
+      "view_id": "live-one",
+      "seq": 2,
+      "ops": [
+        {
+          "op": "remove-node",
+          "node_id": "change"
+        },
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "change",
+            "type": "diff",
+            "label": "Again",
+            "patch": "diff --git a/é.txt b/é.txt\n--- a/é.txt\n+++ b/é.txt\n@@ -1,60 +1,60 @@\n+one 😂\n line 2 of the text\n line 3 of the text\n line 4 of the text\n line 5 of the text\n line 6 of the text\n line 7 of the text\n line 8 of the text\n line 9 of the text\n line 10 of the text\n line 11 of the text\n line 12 of the text\n line 13 of the text\n line 14 of the text\n line 15 of the text\n line 16 of the text\n line 17 of the text\n line 18 of the text\n line 19 of the text\n line 20 of the text\n line 21 of the text\n line 22 of the text\n line 23 of the text\n line 24 of the text\n line 25 of the text\n line 26 of the text\n line 27 of the text\n line 28 of the text\n line 29 of the text\n line 30 of the text\n line 31 of the text\n line 32 of the text\n line 33 of the text\n line 34 of the text\n line 35 of the text\n line 36 of the text\n line 37 of the text\n line 38 of the text\n line 39 of the text\n+forty 𝄞𝄞\n line 41 of the text\n line 42 of the text\n line 43 of the text\n line 44 of the text\n line 45 of the text\n line 46 of the text\n line 47 of the text\n line 48 of the text\n line 49 of the text\n line 50 of the text\n line 51 of the text\n line 52 of the text\n line 53 of the text\n line 54 of the text\n line 55 of the text\n line 56 of the text\n line 57 of the text\n line 58 of the text\n line 59 of the text\n line 60 of the text\n"
+          }
+        },
+        {
+          "op": "set",
+          "node_id": "change",
+          "patch": "diff --git a/é.txt b/é.txt\n--- a/é.txt\n+++ b/é.txt\n@@ -1,60 +1,60 @@\n+one 😂\n line 2 of the text\n line 3 of the text\n line 4 of the text\n line 5 of the text\n line 6 of the text\n line 7 of the text\n line 8 of the text\n line 9 of the text\n line 10 of the text\n line 11 of the text\n line 12 of the text\n line 13 of the text\n line 14 of the text\n line 15 of the text\n line 16 of the text\n line 17 of the text\n line 18 of the text\n line 19 of the text\n line 20 of the text\n line 21 of the text\n line 22 of the text\n line 23 of the text\n line 24 of the text\n line 25 of the text\n line 26 of the text\n line 27 of the text\n line 28 of the text\n line 29 of the text\n line 30 of the text\n line 31 of the text\n line 32 of the text\n line 33 of the text\n line 34 of the text\n line 35 of the text\n line 36 of the text\n line 37 of the text\n line 38 of the text\n line 39 of the text\n+forty 𝄞𝄞\n line 41 of the text\n line 42 of the text\n line 43 of the text\n line 44 of the text\n line 45 of the text\n line 46 of the text\n line 47 of the text\n line 48 of the text\n line 49 of the text\n line 50 of the text\n line 51 of the text\n line 52 of the text\n line 53 of the text\n line 54 of the text\n line 55 of the text\n line 56 of the text\n line 57 of the text\n line 58 of the text\n line 59 of the text\n line 60 of the text\n+the end\n",
+          "new_revision": "fff0003"
+        }
+      ]
+    }
   }
 }

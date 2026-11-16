@@ -1469,23 +1469,24 @@
                               "/views/live?placement=attachment" (when archived? "&archived=true")))
              "views"))))
 
-(defn live-view-state
-  "The current state of view `view-id` of `sid`, also when it is closed, in
-   canonical wire shape. A client reads it again after a gap in patch numbers."
-  [sid view-id]
-  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live/" (enc view-id))) "view"))
+(defn app-read
+  "A read of app `view-id` of `sid`, or of a global app without `sid`, also when it
+   is closed, in canonical wire shape. Without `since`, the answer has the whole app
+   in `view`. With `since`, the seq of the copy that the client holds, it has
+   `patches`: the frames after that seq (view.json `view_delta`). The gateway
+   answers `view` when it does not hold those frames or when they are not shorter
+   than the view."
+  [sid view-id since]
+  (send-json! "GET"
+              (str (if sid (str "/v1/sessions/" (enc sid) "/views/live/") "/v1/apps/")
+                   (enc view-id)
+                   (when since (str "?since=" (long since))))))
 
 (defn global-apps
   "The global apps, oldest first, in canonical wire shape. A closed app stays listed.
    The list is empty while the person turns global apps off."
   []
   (vec (get (send-json! "GET" "/v1/apps") "views")))
-
-(defn global-app
-  "The current state of global app `view-id`, also when it is closed, in canonical
-   wire shape. A client reads it again after a gap in patch numbers."
-  [view-id]
-  (get (send-json! "GET" (str "/v1/apps/" (enc view-id))) "view"))
 
 (defn- post-app-action!
   "POST app `action` to `path`. Never throws; see [[app-action!]]."
@@ -2674,13 +2675,11 @@
 
 (def gateway-app-views app-views)
 
-(def gateway-live-view-state live-view-state)
+(def gateway-app-read app-read)
 
 (def gateway-app-action! app-action!)
 
 (def gateway-global-apps global-apps)
-
-(def gateway-global-app global-app)
 
 (def gateway-global-app-action! global-app-action!)
 

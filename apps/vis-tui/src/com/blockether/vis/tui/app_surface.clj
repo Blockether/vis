@@ -1934,17 +1934,35 @@
   [session-id view-id]
   (get-in @state/app-db [(if session-id :app-views :global-apps) view-id]))
 
+(defn- read-app
+  "The newest copy of the app from the gateway. With copy `held`, the read asks only
+   for the frames after its seq and folds them into it. The whole view comes when
+   the gateway does not hold those frames or when a frame does not fit `held`."
+  [session-id view-id held]
+  (let [whole
+        #(view-model/live-view<-wire (get (vis/gateway-app-read session-id view-id nil) "view"))
+
+        since
+        (long (or (:seq held) 0))]
+
+    (if (pos? since)
+      (let [answer (vis/gateway-app-read session-id view-id since)]
+        (if (contains? answer "patches")
+          (or (lv/caught-up held (get answer "patches")) (whole))
+          (view-model/live-view<-wire (get answer "view"))))
+      (whole))))
+
 (defn- read-view!
-  "Read the current state of the app and give it to the session state."
-  [box session-id view-id]
+  "Read the current state of the app and give it to the session state. With
+   `whole?`, the read ignores the held copy and takes the whole view."
+  [box session-id view-id & [whole?]]
   (when (compare-and-set! (:reading box) false true)
     (vis/worker-future
       "vis-app-read"
       (fn []
-        (try (when-let [view (view-model/live-view<-wire (if session-id
-                                                           (vis/gateway-live-view-state session-id
-                                                                                        view-id)
-                                                           (vis/gateway-global-app view-id)))]
+        (try (when-let [view (read-app session-id
+                                       view-id
+                                       (when-not whole? (:view (held-view session-id view-id))))]
                (swap! (:view box) newer view)
                (state/dispatch [(if session-id :app-view-loaded :global-app-open) view]))
              (catch Throwable e
@@ -2071,7 +2089,7 @@
    :edit! (partial edit-effect! box session-id view-id screen modal!)
    :shortcut! (partial shortcut-effect! box session-id view-id)
    :reload! (fn []
-              (read-view! box session-id view-id))
+              (read-view! box session-id view-id true))
    :inspect! (partial inspect-effect! box open-picture!)
    :log! (partial log-effect! screen modal! current)
    :copy! input/clipboard-copy!

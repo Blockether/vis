@@ -2135,23 +2135,70 @@ function editedString(base: string, edits: unknown): string | null {
   return parts.join('');
 }
 
+/** The node specs of `spec` and of its `children`, as wire records. */
+function specNodes(spec: Record<string, unknown> | null): Record<string, unknown>[] {
+  return spec ? [spec, ...rows(spec.children).flatMap((child) => specNodes(child))] : [];
+}
+
+/** Node spec `spec` with `value` at `key` in its node `id`. */
+function specWithKey(
+  spec: Record<string, unknown>,
+  id: string,
+  key: string,
+  value: string,
+): Record<string, unknown> {
+  if (spec.id === id) return { ...spec, [key]: value };
+  if (!Array.isArray(spec.children)) return spec;
+  return {
+    ...spec,
+    children: spec.children.map((child) => {
+      const nested = record(child);
+      return nested ? specWithKey(nested, id, key, value) : child;
+    }),
+  };
+}
+
 /**
- * Operation `op` at `index` with the strings that `splices` carry for it
- * (view.json `patch_splice`). `null` when `view` does not hold the base string of
- * a splice: the reader then takes the whole view.
+ * The operations of a frame with each spliced string in its operation (view.json
+ * `patch_splice`, the rule of `resolved-delta` in the contract). The base of a
+ * splice is the value that an earlier operation of the frame gave the node, else
+ * the value that `view` holds. `null` when a splice does not fit: the reader then
+ * takes the whole view.
  */
-function splicedOp(view: LiveView, op: unknown, index: number, splices: readonly unknown[]): unknown {
-  let resolved = op;
-  for (const raw of splices) {
-    const splice = record(raw);
-    if (splice?.op_index !== index) continue;
-    const key = text(splice.key);
-    const node = findLiveNode(view.nodes, text(record(op)?.node_id));
-    const base = node ? (node as unknown as Record<string, unknown>)[key] : undefined;
-    if (key === '' || typeof base !== 'string' || stringHash(base) !== splice.base_hash) return null;
-    const value = editedString(base, splice.edits);
-    if (value === null) return null;
-    resolved = { ...record(resolved), [key]: value };
+function splicedOps(view: LiveView, ops: readonly unknown[], splices: readonly unknown[]): unknown[] | null {
+  const known = new Map<string, unknown>();
+  const fresh = new Set<string>();
+  const slot = (id: string, key: string) => `${id}\u0000${key}`;
+  const resolved: unknown[] = [];
+  for (const [index, raw] of ops.entries()) {
+    let op = record(raw);
+    for (const item of splices) {
+      const splice = record(item);
+      if (!op || splice?.op_index !== index) continue;
+      const key = text(splice.key);
+      const id = text(splice.node_id ?? op.node_id);
+      const held = fresh.has(id)
+        ? undefined
+        : (findLiveNode(view.nodes, id) as unknown as Record<string, unknown> | undefined)?.[key];
+      const base = known.has(slot(id, key)) ? known.get(slot(id, key)) : held;
+      if (key === '' || typeof base !== 'string' || stringHash(base) !== splice.base_hash) return null;
+      const value = editedString(base, splice.edits);
+      if (value === null) return null;
+      const spec = record(op.node_spec);
+      op = op.op === 'add-node' && spec ? { ...op, node_spec: specWithKey(spec, id, key, value) } : { ...op, [key]: value };
+    }
+    const added = op?.op === 'add-node' ? specNodes(record(op.node_spec)) : [];
+    for (const node of added) {
+      const id = text(node.id);
+      fresh.add(id);
+      for (const [key, value] of Object.entries(node)) if (key !== 'children') known.set(slot(id, key), value);
+    }
+    if (op?.op === 'set') {
+      for (const [key, value] of Object.entries(op)) {
+        if (key !== 'op' && key !== 'node_id') known.set(slot(text(op.node_id), key), value);
+      }
+    }
+    resolved.push(op ?? raw);
   }
   return resolved;
 }
@@ -2188,13 +2235,9 @@ export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
   if (firstSeq > view.seq + 1) return { ...view, is_stale: true };
   const ops = Array.isArray(patch.ops) ? patch.ops : [];
   const splices = Array.isArray(envelope?.splices) ? envelope.splices : [];
-  let patched = view;
-  for (const [index, op] of ops.entries()) {
-    const resolved = splices.length ? splicedOp(patched, op, index, splices) : op;
-    if (resolved === null) return { ...view, is_stale: true };
-    patched = applyOp(patched, resolved);
-  }
-  return { ...patched, seq };
+  const resolved = splices.length ? splicedOps(view, ops, splices) : ops;
+  if (resolved === null) return { ...view, is_stale: true };
+  return { ...resolved.reduce<LiveView>(applyOp, view), seq };
 }
 
 /** Where `view` stands. A view without a placement is inline. */
