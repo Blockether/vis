@@ -32,6 +32,19 @@ const pageColour = () => {
   return [1, 3, 5].map((at) => Number.parseInt(found[1].slice(at - 1, at + 1), 16));
 };
 
+/** The page colour of the palette that the auto theme paints on a dark system. */
+const darkPageColour = () => {
+  const dark = /dark: \{ id: '([\w-]+)'/.exec(
+    readFileSync(join(root, 'src', 'lib', 'themes.generated.ts'), 'utf8'),
+  );
+  expect(dark).not.toBeNull();
+  const found = new RegExp(`\\[data-theme='${dark[1]}'\\] \\{[^}]*?--bg:\\s*#([0-9a-f]{6})`, 'i').exec(
+    readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'),
+  );
+  expect(found).not.toBeNull();
+  return [1, 3, 5].map((at) => Number.parseInt(found[1].slice(at - 1, at + 1), 16));
+};
+
 describe('ios launch screen', () => {
   // 64 pt tall at every scale: the size `App.tsx`'s `<Splash/>` paints the same mark at
   // (`h-16`), so the launch image and the first web frame are one picture.
@@ -56,6 +69,25 @@ describe('ios launch screen', () => {
       return Math.round(Number(found[1]) * 255);
     });
     expect(components).toEqual(pageColour());
+  });
+
+  // The report: on a dark system the launch screen stayed light until the web layer
+  // painted the dark palette of the auto theme.
+  it('paints the dark colour of the auto theme on a dark system', () => {
+    const contents = /`([^`]*)`/.exec(
+      source.slice(source.indexOf('const splashColorContents'), source.indexOf('const splashColorOk')),
+    );
+    expect(contents).not.toBeNull();
+    const dark = JSON.parse(contents[1]).colors.find((entry) =>
+      entry.appearances?.some(
+        (appearance) => appearance.appearance === 'luminosity' && appearance.value === 'dark',
+      ),
+    );
+    expect(dark).toBeDefined();
+    const components = ['red', 'green', 'blue'].map((channel) =>
+      Math.round(Number(dark.color.components[channel]) * 255),
+    );
+    expect(components).toEqual(darkPageColour());
   });
 
 });

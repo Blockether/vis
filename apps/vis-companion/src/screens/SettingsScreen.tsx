@@ -12,7 +12,13 @@ import {
   useStepsSummarized,
   useZenMode,
 } from '../lib/transcript-display';
-import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from '../lib/storage';
+import {
+  DEFAULT_SPEECH_PREFS,
+  getSpeechPrefs,
+  getThemePref,
+  setThemePref,
+  watchThemePref,
+} from '../lib/storage';
 import { speechOutput } from '../lib/speech';
 import { MinusIcon, PlusIcon } from '../components/icons';
 import { ZenPictureChoice } from '../components/ZenPictures';
@@ -121,6 +127,9 @@ export function SettingsDialog({
       cancelled = true;
     };
   }, []);
+
+  // A choice in another tab: `main.tsx` paints it, and this marks it as the current one.
+  useEffect(() => watchThemePref(setPref), []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

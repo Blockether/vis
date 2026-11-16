@@ -279,6 +279,20 @@ export async function setThemePref(pref: ThemePref): Promise<void> {
   await setRaw(THEME_PREF_KEY, pref);
 }
 
+/**
+ * Hear the preference that another tab or window of this origin stored.
+ * The browser sends `storage` to each other document, never to the one that wrote.
+ * Returns the function that stops it.
+ */
+export function watchThemePref(receive: (pref: ThemePref) => void): () => void {
+  const hear = (event: StorageEvent) => {
+    // A null key is `localStorage.clear()`: then no choice is stored.
+    if (event.key === null || event.key === THEME_PREF_KEY) receive(loadThemePrefSync());
+  };
+  globalThis.addEventListener?.('storage', hear);
+  return () => globalThis.removeEventListener?.('storage', hear);
+}
+
 // ── Speech engines ────────────────────────────────────────────────────────
 //
 // Engine selection is app-local: the phone chooses an ASR engine for requests it

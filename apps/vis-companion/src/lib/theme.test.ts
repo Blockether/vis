@@ -3,6 +3,7 @@
 // page that ships, not in a module that loads after it.
 import html from '../../index.html?raw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { watchThemePref } from './storage';
 import { followSystemTheme, paintStoredTheme, paintThemePref, resolveTheme } from './theme';
 import { AUTO_THEME_PREF, AUTO_THEMES, DEFAULT_THEME, THEMES } from './themes.generated';
 
@@ -129,6 +130,50 @@ describe('the auto theme', () => {
     } finally {
       stop();
     }
+  });
+});
+
+// The report: a theme choice in one browser tab did not show in the other open tabs.
+describe('a theme choice in another tab', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    delete document.documentElement.dataset.theme;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** What the browser does in each OTHER tab when one tab stores `value` under `key`. */
+  const otherTabStores = (key: string, value: string) => {
+    localStorage.setItem(key, value);
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue: value }));
+  };
+
+  it('paints here with no reload, and `auto` follows the system again', () => {
+    const system = systemScheme(true);
+    const stopSystem = followSystemTheme();
+    const stop = watchThemePref(paintThemePref);
+    const root = document.documentElement;
+    try {
+      paintStoredTheme();
+      expect(root.dataset.theme).toBe(AUTO_THEMES.dark.id);
+
+      otherTabStores(THEME_PREF_KEY, 'solarized-light');
+      expect(root.dataset.theme).toBe('solarized-light');
+      // A different key of the same origin changes nothing.
+      otherTabStores('vis.connections', '[]');
+      expect(root.dataset.theme).toBe('solarized-light');
+
+      otherTabStores(THEME_PREF_KEY, AUTO_THEME_PREF);
+      expect(root.dataset.theme).toBe(AUTO_THEMES.dark.id);
+      system.set(false);
+      expect(root.dataset.theme).toBe(AUTO_THEMES.light.id);
+    } finally {
+      stop();
+      stopSystem();
+    }
+    otherTabStores(THEME_PREF_KEY, 'solarized-light');
+    expect(root.dataset.theme).toBe(AUTO_THEMES.light.id);
   });
 });
 

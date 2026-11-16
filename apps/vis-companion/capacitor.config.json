@@ -3,7 +3,6 @@
   "appName": "Vis",
   "webDir": "dist",
   "loggingBehavior": "none",
-  "backgroundColor": "#faf3eb",
   "server": {
     "androidScheme": "https"
   },

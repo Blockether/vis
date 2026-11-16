@@ -8,7 +8,8 @@ import { captureContextMenu, captureLinkClicks } from './lib/desktop';
 import { installDiagnostics } from './lib/diagnostics';
 import { loadHost, stampShellHost } from './lib/host';
 import { perfActive } from './lib/perf';
-import { followSystemTheme, paintStoredTheme } from './lib/theme';
+import { watchThemePref } from './lib/storage';
+import { followSystemTheme, paintStoredTheme, paintThemePref } from './lib/theme';
 import { takeWebLaunch } from './lib/web-launch';
 import './index.css';
 
@@ -31,6 +32,8 @@ stampShellHost();
 paintStoredTheme();
 // The `auto` preference follows each later change of the system color scheme.
 followSystemTheme();
+// A choice in another tab or window of this origin paints here too, with no reload.
+watchThemePref(paintThemePref);
 // The gateway that serves this page can carry a white label. Its saved copy painted
 // the frame above; a changed answer paints the brand theme again.
 void loadBrand().then((isChanged) => {

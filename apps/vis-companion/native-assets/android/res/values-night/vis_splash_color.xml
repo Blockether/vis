@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The page colour of the dark palette of the auto theme. The system draws the launch
+     window before the app runs, so the window follows the night mode of the system. -->
+<resources>
+    <color name="vis_splash">#0f1117</color>
+</resources>

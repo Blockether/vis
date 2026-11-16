@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The page colour of the default light theme, which the web layer paints the
-     moment it takes over, so the handover from the launch window shows no flash. -->
+     moment it takes over, so the handover from the launch window shows no flash.
+     The values-night copy holds the colour for a system in night mode. -->
 <resources>
     <color name="vis_splash">#faf3eb</color>
 </resources>

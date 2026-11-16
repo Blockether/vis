@@ -121,7 +121,9 @@ const splashFilesOk =
 
 // The colour lives in the asset catalog because `UILaunchScreen` names it there — the one
 // place both halves of the launch screen (colour + mark) can be read by the system without
-// a nib.
+// a nib. The system draws the launch screen before the app runs, so it can follow only the
+// appearance of the system: the first colour is the light palette of the `auto` theme, and
+// the dark appearance is its dark palette.
 const splashColorDir = join(appDir, 'Assets.xcassets', 'SplashBackground.colorset');
 const splashColorContents = `{
   "colors": [
@@ -133,6 +135,24 @@ const splashColorContents = `{
           "red": "0.98039215686274506",
           "green": "0.95294117647058818",
           "blue": "0.92156862745098034",
+          "alpha": "1.000"
+        }
+      }
+    },
+    {
+      "idiom": "universal",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ],
+      "color": {
+        "color-space": "srgb",
+        "components": {
+          "red": "0.058823529411764705",
+          "green": "0.066666666666666666",
+          "blue": "0.090196078431372548",
           "alpha": "1.000"
         }
       }
@@ -155,6 +175,7 @@ const launchBoardSource = `<?xml version="1.0" encoding="UTF-8"?>
     <dependencies>
         <deployment identifier="iOS"/>
         <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="17105"/>
+        <capability name="Named colors" minToolsVersion="9.0"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
@@ -165,7 +186,7 @@ const launchBoardSource = `<?xml version="1.0" encoding="UTF-8"?>
                     <imageView key="view" userInteractionEnabled="NO" contentMode="center" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="Splash" id="snD-IY-ifK">
                         <rect key="frame" x="0.0" y="0.0" width="375" height="667"/>
                         <autoresizingMask key="autoresizingMask"/>
-                        <color key="backgroundColor" red="0.98039215686274506" green="0.95294117647058818" blue="0.92156862745098034" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <color key="backgroundColor" name="SplashBackground"/>
                     </imageView>
                 </viewController>
                 <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
@@ -175,6 +196,9 @@ const launchBoardSource = `<?xml version="1.0" encoding="UTF-8"?>
     </scenes>
     <resources>
         <image name="Splash" width="72" height="64"/>
+        <namedColor name="SplashBackground">
+            <color red="0.98039215686274506" green="0.95294117647058818" blue="0.92156862745098034" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
     </resources>
 </document>
 `;
@@ -983,8 +1007,20 @@ const speechFileOk = fileOk(speechSwift, speechSource);
 // keyboard driver (`src/lib/viewport.ts`, via `src/lib/pointer.ts`) reserved a third
 // of the window for keys nobody could see. `ProcessInfo.isiOSAppOnMac` is the truth,
 // and this one-verb plugin (`src/lib/host.ts`) is how the web layer reads it.
+//
+// The plugin also gives the web view the colour of the launch screen. The web view shows
+// its own colour until the page paints, and behind tiles that are not rendered during a
+// fast scroll. The named colour has a dark appearance, so it follows the system: a fixed
+// colour showed as a light flash between a dark launch screen and a dark page.
+//
+// It also removes the launch images that iOS keeps for the app, at each start. iOS keeps
+// those images across an update and across a restart of the device, so an updated app kept
+// the light launch screen of the build that it replaced. With no image kept, iOS makes one
+// from the installed build at each start. Until the first restart of the device after an
+// update, iOS can still make it from the replaced build.
 const hostSource = `import Capacitor
 import Foundation
+import UIKit
 
 @objc(VisHostPlugin)
 public class VisHostPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -993,6 +1029,19 @@ public class VisHostPlugin: CAPPlugin, CAPBridgedPlugin {
   public let pluginMethods: [CAPPluginMethod] = [
     CAPPluginMethod(name: "info", returnType: CAPPluginReturnPromise)
   ]
+
+  public override func load() {
+    dropLaunchImages()
+    guard let ground = UIColor(named: "SplashBackground") else { return }
+    bridge?.webView?.backgroundColor = ground
+    bridge?.webView?.scrollView.backgroundColor = ground
+  }
+
+  private func dropLaunchImages() {
+    guard let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
+    else { return }
+    try? FileManager.default.removeItem(at: library.appendingPathComponent("SplashBoard"))
+  }
 
   @objc public func info(_ call: CAPPluginCall) {
     var isMac = false

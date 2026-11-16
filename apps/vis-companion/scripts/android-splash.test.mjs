@@ -56,9 +56,24 @@ describe('android launch screen assets', () => {
     expect(colours).toContain(`<color name="vis_splash">${page[1]}</color>`);
   });
 
+  // The report: on a system in night mode the launch window stayed light until the web
+  // layer painted the dark palette of the auto theme.
+  it('paints the dark colour of the auto theme on a system in night mode', () => {
+    const colours = readFileSync(join(resources, 'values-night', 'vis_splash_color.xml'), 'utf8');
+    const dark = /dark: \{ id: '([\w-]+)'/.exec(
+      readFileSync(join(root, 'src', 'lib', 'themes.generated.ts'), 'utf8'),
+    );
+    expect(dark).not.toBeNull();
+    const page = new RegExp(`\\[data-theme='${dark[1]}'\\] \\{[^}]*?--bg:\\s*(#[0-9a-f]{6})`, 'i').exec(
+      readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'),
+    );
+    expect(page).not.toBeNull();
+    expect(colours).toContain(`<color name="vis_splash">${page[1]}</color>`);
+  });
+
   // Regression: aapt2 refuses an XML comment containing a double hyphen, and the build died
   // on `values/vis_splash_color.xml` naming the CSS token by its own dashed spelling.
-  it.each(['values/vis_splash_color.xml', 'drawable/splash.xml'])(
+  it.each(['values/vis_splash_color.xml', 'values-night/vis_splash_color.xml', 'drawable/splash.xml'])(
     '%s has XML-legal comments',
     (relative) => {
       const xml = readFileSync(join(resources, relative), 'utf8');

@@ -21,9 +21,9 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   // Native bridge diagnostics otherwise print appUrlOpen payloads (OAuth codes).
   loggingBehavior: 'none',
-  // Matches --bg of the default light palette; WKWebView paints this behind
-  // unrendered tiles during fast scroll instead of flashing white.
-  backgroundColor: '#faf3eb',
+  // No `backgroundColor`: a fixed colour cannot follow the system. The native projects
+  // give the web view the colour of the launch screen, light or dark
+  // (`scripts/ios-prepare.mjs`, `scripts/android-prepare.mjs`).
   server: {
     androidScheme: 'https',
   },

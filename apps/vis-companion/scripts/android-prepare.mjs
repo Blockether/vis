@@ -473,6 +473,7 @@ const mainActivity = `package ${appId};
 
 import android.content.ContentResolver;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
@@ -510,6 +511,24 @@ public class MainActivity extends BridgeActivity {
         // After super: the bridge exists now. Media from an http gateway plays
         // through the app origin; see MediaProxyClient.
         bridge.setWebViewClient(new MediaProxyClient(bridge));
+        paintWebViewGround();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        paintWebViewGround();
+    }
+
+    /**
+     * The WebView shows its own colour until the page paints. It is the colour of the
+     * launch window, which follows the night mode of the system: a fixed colour showed
+     * as a light flash between a dark launch window and a dark page.
+     */
+    private void paintWebViewGround() {
+        if (bridge != null) {
+            bridge.getWebView().setBackgroundColor(getColor(R.color.vis_splash));
+        }
     }
 
     @Override
