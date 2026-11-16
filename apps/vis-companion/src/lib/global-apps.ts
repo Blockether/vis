@@ -5,7 +5,7 @@
  */
 
 import { appStateWord, foldAppEvent, newerAppView, type AppFold } from './app-view';
-import { liveViewFromWire, type LiveView } from './live-view';
+import { appSummary, liveViewFromWire, type LiveView } from './live-view';
 import type { SseEvent } from './types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT } from './view';
 
@@ -36,8 +36,10 @@ export function foldGlobalApps(apps: LiveView[], event: SseEvent): GlobalAppsFol
   if (isFleetReady(event)) return { apps, isReread: true };
   if (!isGlobalAppFrame(event)) return { apps, isReread: false };
   if (event.type === VIEW_OPEN_EVENT) {
-    const opened = liveViewFromWire(event.view);
-    if (opened?.scope !== 'global') return { apps, isReread: false };
+    const read = liveViewFromWire(event.view);
+    if (read?.scope !== 'global') return { apps, isReread: false };
+    // The list keeps only the entry of an app. The opened app reads its own body.
+    const opened = appSummary(read);
     const at = apps.findIndex((one) => one.id === opened.id);
     if (at < 0) return { apps: [...apps, opened], isReread: false };
     const next = apps.slice();

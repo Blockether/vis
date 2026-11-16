@@ -183,6 +183,8 @@ describe('GatewayClient event-stream hard deadline', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(new URL(fetches.mock.calls[0]![0]).searchParams.get('scope')).toBe('both');
+      // A large app patch stays at the gateway until the app is on screen.
+      expect(new URL(fetches.mock.calls[0]![0]).searchParams.get('app_patches')).toBe('elided');
       expect(seen).toEqual(frames.map((frame) => frame.type));
       expect(cursors.get('s1')).toBe(5);
     } finally {
@@ -2218,4 +2220,23 @@ describe('mergeQueueBacklog', () => {
     expect(merged.rows.map((item) => item.turnId)).toEqual(['b']);
     expect(merged.forget).toEqual(['a']);
   });
+});
+
+// Report: a session with a long review opened slowly on a phone. Two list requests
+// ran at each open, and each carried the whole patch of the review.
+it('reads the views and the apps of a session with one summary request', async () => {
+  const app = { id: 'app-1', title: 'Review', placement: 'attachment', icon: 'review', seq: 4, created_at: 1, is_summary: true };
+  const run = { id: 'run-1', title: 'CI', seq: 1, created_at: 2, nodes: [{ id: 'n', type: 'paragraph', text: 'Hi' }] };
+  const fetchMock = vi.fn(async (_input: string) => new Response(JSON.stringify({ views: [app, run] })));
+  vi.stubGlobal('fetch', fetchMock);
+  const { GatewayClient } = await import('./gateway');
+  const client = new GatewayClient(conn);
+  const [views, apps] = await Promise.all([client.liveViews('s1'), client.appViews('s1')]);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(new URL(String(fetchMock.mock.calls[0]![0])).searchParams.get('summary')).toBe('true');
+  expect(views.map((view) => view.id)).toEqual(['app-1', 'run-1']);
+  expect(apps).toEqual([expect.objectContaining({ id: 'app-1', nodes: [], is_summary: true })]);
+  // A later read asks again: it can follow an event that the first read missed.
+  await client.appViews('s1');
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });

@@ -4,6 +4,7 @@ import fixture from './live-view.fixture.json';
 import canonical from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import {
+  appSummary,
   applyLivePatch,
   applyLiveViewEvent,
   isLiveViewEvent,
@@ -435,6 +436,34 @@ describe('a patch frame', () => {
     const view = patched(opened(), 4, [{ op: 'set', node_id: 'now', text: 'Scanning db-3' }], 1);
     expect(view.is_stale).toBeUndefined();
     expect(view.seq).toBe(4);
+  });
+
+  // Report: each step sent the whole patch of a review to a phone that did not show
+  // the review. The gateway now leaves out a large app patch (`is_elided`).
+  it('marks an opened app stale after an elided frame, and leaves a list entry as it is', () => {
+    const app: LiveView = { ...opened(), placement: 'attachment' };
+    const elided: SseEvent = {
+      type: VIEW_PATCH_EVENT,
+      kind: 'live',
+      view_id: app.id,
+      first_seq: 1,
+      is_elided: true,
+      last_seq: 1,
+    };
+    expect(applyLivePatch(app, elided).is_stale).toBe(true);
+    // A replayed frame is not news.
+    const read = { ...app, seq: 1 };
+    expect(applyLivePatch(read, elided)).toBe(read);
+    const entry = appSummary(app);
+    expect(entry.nodes).toEqual([]);
+    expect(applyLivePatch(entry, elided)).toBe(entry);
+    expect(applyLivePatch(entry, frame(app, 1, [{ op: 'set', node_id: 'now', text: 'Scanning db-3' }]))).toBe(entry);
+  });
+
+  // Without this, a session list that asks for summaries shows no app at all.
+  it('keeps an app that a list sends without its body', () => {
+    const entry = liveViewFromWire({ id: 'app-1', title: 'Review', placement: 'attachment', icon: 'review', seq: 4, is_summary: true });
+    expect(entry).toMatchObject({ id: 'app-1', nodes: [], is_summary: true, icon: 'review', seq: 4 });
   });
 });
 

@@ -635,6 +635,11 @@ export interface LiveView {
   icon?: AppIconName;
   /** The newest debug log entries of an app, oldest first. */
   log?: readonly LiveLogEntry[];
+  /**
+   * The entry of an app in a list (view.json `live_view_summary`): the app without
+   * its nodes, log and Send receipts. The opened app reads its own body.
+   */
+  is_summary?: true;
 }
 
 /**
@@ -1423,8 +1428,9 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
   // gateway — so this is a contract violation, not a variant to tolerate.
   if (view.classification !== undefined || view.activity !== undefined) return null;
 
-  const nodes = liveNodesFromWire(view.nodes);
-  if (nodes.length === 0) return null;
+  const isSummary = view.is_summary === true;
+  const nodes = isSummary ? [] : liveNodesFromWire(view.nodes);
+  if (!isSummary && nodes.length === 0) return null;
 
   return {
     id,
@@ -1454,7 +1460,19 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(view.icon === undefined ? {} : { icon: appIconName(view.icon) }),
     ...(typeof view.settings_key === 'string' ? { settings_key: view.settings_key } : {}),
     ...(Array.isArray(view.log) ? { log: keyed(view.log, logEntryFromWire) } : {}),
+    ...(isSummary ? { is_summary: true as const } : {}),
   };
+}
+
+/**
+ * The list entry of an app: `view` without its body. A list shows the name, the
+ * icon and the state of an app, and a large body costs each list that holds it.
+ * A view that is no app stays whole, because a transcript shows it in place.
+ */
+export function appSummary(view: LiveView): LiveView {
+  if (view.placement !== 'attachment' || view.is_summary) return view;
+  const { log: _log, submissions: _submissions, ...entry } = view;
+  return { ...entry, nodes: [], is_summary: true };
 }
 
 /** Every view the snapshot holds, oldest first, unpaintable ones dropped. */
@@ -2089,9 +2107,17 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
  * re-read on every reconnect — and is dropped. A frame whose `first_seq` skips
  * past what this picture has seen means frames were LOST, so the view is marked
  * stale for the section to re-read the snapshot rather than paint a hole.
+ *
+ * A list entry of an app has no body, and a patch changes nothing that a list
+ * shows: it stays as it is. An elided frame (`is_elided`) says that the gateway
+ * left out a large patch: a view that is behind `last_seq` is stale.
  */
 export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
+  if (view.is_summary) return view;
   const envelope = record(frame);
+  if (envelope?.is_elided === true) {
+    return count(envelope.last_seq, 0) > view.seq ? { ...view, is_stale: true } : view;
+  }
   const patch = record(envelope?.patch);
   if (!patch) return view;
   const seq = count(patch.seq, 0);
@@ -2159,8 +2185,10 @@ export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView
     return kept.length === views.length ? views : kept;
   }
   if (event.type === VIEW_OPEN_EVENT) {
-    const view = liveViewFromWire(event.view);
-    if (!view) return views;
+    const opened = liveViewFromWire(event.view);
+    if (!opened) return views;
+    // The list keeps only the entry of an app. The opened app reads its own body.
+    const view = appSummary(opened);
     const current = views;
     const at = current.findIndex((open) => open.id === view.id);
     if (at < 0) return [...current, view];

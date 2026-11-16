@@ -5009,7 +5009,8 @@ export function SessionScreen({
     const timer = setTimeout(() => setReveal(null), Math.max(0, reveal.until - Date.now()));
     return () => clearTimeout(timer);
   }, [reveal, listedApps, setPickedAppId]);
-  const reviewAppId = listedApps.find((view) => view.nodes.some((node) => node.type === 'diff'))?.id;
+  // A list entry has no nodes: the review app is the app with the review icon.
+  const reviewAppId = listedApps.find((view) => view.icon === 'review' || view.nodes.some((node) => node.type === 'diff'))?.id;
   useEffect(() => {
     if (!reviewAppId) return;
     const toggleReview = (event: KeyboardEvent) => {

@@ -21,7 +21,7 @@ import { onSettingChange, type GatewayClient } from '../lib/gateway';
 import { appFrameStep, appSurfaces, isAppSurfaceSetting, pressReveal, shownAppFrame, type AppReveal } from '../lib/app-surfaces';
 import { foldGlobalAppView, globalAppStateWord } from '../lib/global-apps';
 import type { HumanInputValue } from '../lib/human-input';
-import { liveViewFromWire, nestedLiveNodes, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
+import { appSummary, liveViewFromWire, nestedLiveNodes, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
 import {
   ariaShortcut,
   isAppKeyTarget,
@@ -85,6 +85,8 @@ export function useAppView(
   const [isMissing, setMissing] = useState(false);
   const viewRef = useRef<LiveViewModel | null>(view);
   const reading = useRef<AbortController | null>(null);
+  // An event asked for a read while one was in flight: read once more after it.
+  const again = useRef(false);
   // Actions go to the owner one at a time, in the order the human made them: the
   // `change` of a field that loses focus reaches the owner before the click that
   // took the focus away.
@@ -97,25 +99,42 @@ export function useAppView(
   }, [setView]);
 
   const reread = useCallback(() => {
-    reading.current?.abort();
-    const controller = new AbortController();
-    reading.current = controller;
-    (sid === null ? client.globalApp(viewId, controller.signal) : client.liveView(sid, viewId, controller.signal))
-      .then((read) => {
-        if (controller.signal.aborted) return;
-        if (!read) {
+    const start = () => {
+      reading.current?.abort();
+      const controller = new AbortController();
+      reading.current = controller;
+      again.current = false;
+      (sid === null ? client.globalApp(viewId, controller.signal) : client.liveView(sid, viewId, controller.signal))
+        .then((read) => {
+          if (controller.signal.aborted) return;
+          if (!read) {
+            if (!viewRef.current) setMissing(true);
+            return;
+          }
+          setMissing(false);
+          commit(newerAppView(viewRef.current, read));
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          console.warn('app attachment: read failed', viewId, error);
           if (!viewRef.current) setMissing(true);
-          return;
-        }
-        setMissing(false);
-        commit(newerAppView(viewRef.current, read));
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        console.warn('app attachment: read failed', viewId, error);
-        if (!viewRef.current) setMissing(true);
-      });
+        })
+        .finally(() => {
+          if (reading.current !== controller) return;
+          reading.current = null;
+          if (again.current) start();
+        });
+    };
+    start();
   }, [client, sid, viewId, commit]);
+
+  // An event that asks for a read while one is in flight waits for it. The gateway
+  // leaves out each large patch, so a stream of them must not abort every read
+  // before it lands.
+  const rereadAfterEvent = useCallback(() => {
+    if (reading.current) again.current = true;
+    else reread();
+  }, [reread]);
 
   useEffect(() => {
     reread();
@@ -138,7 +157,7 @@ export function useAppView(
       if (!held) return;
       const folded = sid === null ? foldGlobalAppView(held, event) : foldAppEvent(held, event);
       if (folded.view !== held) commit(folded.view);
-      if (folded.isReread) reread();
+      if (folded.isReread) rereadAfterEvent();
     };
     // A global app lives on the fleet stream, which has no replay.
     const offEvents = sid === null ? hub.subscribeFleet(fold) : hub.subscribeSession(sid, fold, { replay: false });
@@ -152,7 +171,7 @@ export function useAppView(
       offEvents();
       offConnection();
     };
-  }, [hub, sid, commit, reread]);
+  }, [hub, sid, commit, reread, rereadAfterEvent]);
 
   const act = useCallback(
     async (action: ViewAction) => {
@@ -839,8 +858,10 @@ export function useSessionApps(client: GatewayClient, sid: string): LiveViewMode
       (event) => {
         const now = held.current;
         if (event.type === VIEW_OPEN_EVENT) {
-          const opened = liveViewFromWire(event.view);
-          if (!opened || opened.placement !== 'attachment') return;
+          const read = liveViewFromWire(event.view);
+          if (!read || read.placement !== 'attachment') return;
+          // The list keeps only the entry of an app. The opened app reads its own body.
+          const opened = appSummary(read);
           const at = now.findIndex((one) => one.id === opened.id);
           if (at < 0) {
             setApps([...now, opened]);

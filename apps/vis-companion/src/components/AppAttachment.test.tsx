@@ -138,6 +138,20 @@ describe('AppSurface', () => {
     expect(liveView).toHaveBeenCalledTimes(2);
   });
 
+  // Report: each step sent the whole patch of a review to a phone that did not show
+  // the review. The gateway now leaves out a large app patch, and the opened app reads.
+  it('reads the app again after a frame whose large patch the gateway left out', async () => {
+    const { hub, emit } = fakeHub();
+    const { client, liveView } = fakeClient([view(3), view(4, 'After the large patch')], async () => ({}));
+    open(client, hub);
+    expect(await screen.findByText('Bumped it.')).toBeInTheDocument();
+    act(() =>
+      emit({ type: VIEW_PATCH_EVENT, kind: 'live', view_id: 'app-1', first_seq: 4, is_elided: true, last_seq: 4 }),
+    );
+    expect(await screen.findByText('After the large patch')).toBeInTheDocument();
+    expect(liveView).toHaveBeenCalledTimes(2);
+  });
+
   it('saves a draft with base_seq and the revision, then reads again on a conflict', async () => {
     const { hub } = fakeHub();
     const { client, viewAction, liveView } = fakeClient([view(3, 'Mine'), view(5, 'Theirs')], async () => {

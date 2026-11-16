@@ -98,6 +98,7 @@ import { PROTOCOL_HEADERS } from './compat';
 import { inputViewsFromWire, type HumanInputRequest } from './human-input';
 import type { ViewAction, ViewActionOutcome } from './view';
 import {
+  appSummary,
   liveViewFromWire,
   liveViewsFromWire,
   type LiveLogPage,
@@ -333,6 +334,12 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * stayed "connecting" until something else in the app forced a fresh attempt.
  */
 const SSE_CONNECT_TIMEOUT_MS = 10_000;
+/**
+ * Ask the event stream for a large app patch without its patch (view.json
+ * `patch_event` `is_elided`). Only an opened app needs it, and that app reads its
+ * view again. An older gateway ignores the option and sends every patch.
+ */
+const ELIDED_APP_PATCHES = 'app_patches=elided';
 const SSE_STALL_TIMEOUT_MS = 45_000;
 
 /**
@@ -5838,13 +5845,32 @@ export class GatewayClient {
    * snapshot the TUI pane restores from, already materialized by the engine.
    */
   async liveViews(sid: string, signal?: AbortSignal): Promise<LiveView[]> {
-    const response = await this.request<{ views: unknown[] }>(
+    const read = this.liveList(sid);
+    return signal ? raceAbort(read, signal) : read;
+  }
+
+  /**
+   * The list reads of one tick, by session. The hooks of one screen ask for the
+   * views and for the apps of a session at the same time: they share one request.
+   */
+  private readonly liveLists = new Map<string, Promise<LiveView[]>>();
+
+  /**
+   * Every live view of a session, each app as its list entry: `summary=true`
+   * leaves out the body of an app, and an older gateway that sends it is cut here.
+   */
+  private liveList(sid: string): Promise<LiveView[]> {
+    const held = this.liveLists.get(sid);
+    if (held) return held;
+    const read = this.request<{ views: unknown[] }>(
       'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/views/live`,
-      undefined,
-      signal,
-    );
-    return liveViewsFromWire(response.views);
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live?summary=true`,
+    ).then((response) => liveViewsFromWire(response.views).map(appSummary));
+    this.liveLists.set(sid, read);
+    // Only the callers of this tick share the read. A later caller asks after an
+    // event that this read can miss, so it reads again.
+    queueMicrotask(() => this.liveLists.delete(sid));
+    return read;
   }
 
   /**
@@ -5852,15 +5878,18 @@ export class GatewayClient {
    * out unless `archived` asks for it.
    */
   async appViews(sid: string, archived = false, signal?: AbortSignal): Promise<LiveView[]> {
+    if (!archived) {
+      const read = this.liveList(sid);
+      const views = await (signal ? raceAbort(read, signal) : read);
+      return views.filter((view) => view.placement === 'attachment');
+    }
     const response = await this.request<{ views: unknown[] }>(
       'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/views/live?placement=attachment${
-        archived ? '&archived=true' : ''
-      }`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live?placement=attachment&archived=true&summary=true`,
       undefined,
       signal,
     );
-    return liveViewsFromWire(response.views);
+    return liveViewsFromWire(response.views).map(appSummary);
   }
 
   /** One live view or app, also a closed app. `null` when the gateway cannot paint it. */
@@ -5879,8 +5908,8 @@ export class GatewayClient {
    * The list is empty while the person turns global apps off.
    */
   async globalApps(signal?: AbortSignal): Promise<LiveView[]> {
-    const response = await this.request<{ views: unknown[] }>('GET', '/v1/apps', undefined, signal);
-    return liveViewsFromWire(response.views);
+    const response = await this.request<{ views: unknown[] }>('GET', '/v1/apps?summary=true', undefined, signal);
+    return liveViewsFromWire(response.views).map(appSummary);
   }
 
   /** One global app, also a closed one. `null` when the gateway cannot paint it. */
@@ -6133,7 +6162,7 @@ export class GatewayClient {
           // stays unready, so the list keeps its existing polling safety net.
           const scope = opts.includeFleet ? '&scope=both' : '';
           const response = await raceAbort(
-            fetch(`${this.base}/v1/events?sids=${encodeURIComponent(spec)}${scope}`, {
+            fetch(`${this.base}/v1/events?sids=${encodeURIComponent(spec)}${scope}&${ELIDED_APP_PATCHES}`, {
               headers: this.headers({ Accept: 'text/event-stream' }),
               signal: attemptSignal,
             }),
@@ -6303,7 +6332,7 @@ export class GatewayClient {
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
           const response = await raceAbort(
-            fetch(`${this.base}/v1/events?scope=fleet`, {
+            fetch(`${this.base}/v1/events?scope=fleet&${ELIDED_APP_PATCHES}`, {
               headers: this.headers({ Accept: 'text/event-stream' }),
               signal: attemptSignal,
             }),
