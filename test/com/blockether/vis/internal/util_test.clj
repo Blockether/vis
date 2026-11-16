@@ -585,6 +585,25 @@
         (expect (= 2 @calls))
         (swap! cache assoc :k [0 :new])
         (expect (eventually #(do (util/refreshed cache 60000 :k compute false) (= 3 @calls))))))
+  (it "computes one value when a reader gets the slot after the value arrived"
+      ;; A reader saw the old entry, then got the slot after the computation stored its
+      ;; value and released the slot. It started a second computation: 35 of 300 runs.
+      (let [trial (fn []
+                    (let [cache (atom {:k [0 :old]})
+                          calls (atom 0)
+                          compute #(do (swap! calls inc) :new)
+                          go (promise)
+                          readers (mapv (fn [_]
+                                          (future @go
+                                                  (dotimes [_ 200]
+                                                    (util/refreshed cache 60000 :k compute false))))
+                                        (range 8))]
+
+                      (deliver go true)
+                      (run! deref readers)
+                      (eventually #(= :new (util/refreshed cache 60000 :k compute false)))
+                      @calls))]
+        (expect (= #{1} (set (repeatedly 150 trial))))))
   (it "computes a missing value on this thread with wait?, else answers nil first"
       (let [cache (atom {})]
         (expect (= 1 (util/refreshed cache 60000 :wait (constantly 1) true)))

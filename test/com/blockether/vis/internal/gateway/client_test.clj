@@ -1864,118 +1864,87 @@
       ;; daemon round-trip MUST run in the background so a busy/slow daemon can't
       ;; stall painting. A cold read returns the last-known value (nil) instantly
       ;; and kicks a single-flight refresh; once it lands, subsequent reads are
-      ;; served from cache. If someone reintroduces a synchronous round-trip this
-      ;; test blocks for `slow-ms` and the timing assertion fails.
-      (let [slow-ms
-            300
+      ;; served from cache. If someone reintroduces a synchronous round-trip, the
+      ;; cold read waits for the gate and answers `::blocked`.
+      (let [gate
+            (promise)
 
             cache
             (rv 'resources-cache)
 
             calls
-            (atom 0)]
+            (atom 0)
+
+            read
+            #(deref (future (client/list-resources-cached "sid-x")) 2000 ::blocked)]
 
         ;; A long TTL: a pause past a real 750 ms TTL made a poll start a third fetch.
         ;; Staleness comes only from the entries this test writes.
         (with-redefs-fn {(rv 'resources-cache-ttl-ms) 60000
                          (rv 'list-resources) (fn [_sid]
                                                 (swap! calls inc)
-                                                (Thread/sleep slow-ms)
+                                                (deref gate 10000 nil)
                                                 [{"id" "bg"}])}
           (fn []
             (reset! @cache {})
-            (let [t0
-                  (System/nanoTime)
-
-                  cold
-                  (client/list-resources-cached "sid-x")
-
-                  cold-ms
-                  (/ (- (System/nanoTime) t0) 1e6)]
-
-              (expect (nil? cold) "cold read serves the last-known value (nil) immediately")
-              (expect (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
-              ;; several stale reads while the fetch is in flight stay single-flight
-              (dotimes [_ 5]
-                (client/list-resources-cached "sid-x"))
-              (await-value #(client/list-resources-cached "sid-x") [{"id" "bg"}])
-              (expect (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
-              (let [t1
-                    (System/nanoTime)
-
-                    warm
-                    (client/list-resources-cached "sid-x")
-
-                    warm-ms
-                    (/ (- (System/nanoTime) t1) 1e6)]
-
-                (expect (= [{"id" "bg"}] warm) "a fresh entry is served from cache")
-                (expect (< warm-ms 50.0) "warm read is a pure cache hit")
-                ;; a stale read after the fetch starts the next one
-                (swap! @cache assoc "sid-x" [0 [{"id" "old"}]])
-                (expect (= [{"id" "old"}] (client/list-resources-cached "sid-x")))
-                (await-value #(client/list-resources-cached "sid-x") [{"id" "bg"}])
-                (expect (= 2 @calls) "the in-flight slot is released after the fetch"))))))))
+            ;; The fetch waits for `gate`, so a read that waits for the fetch is `::blocked`.
+            (expect (nil? (read)) "cold read serves the last-known value (nil) immediately")
+            ;; several stale reads while the fetch is in flight stay single-flight
+            (dotimes [_ 5]
+              (expect (nil? (read))))
+            (deliver gate true)
+            (await-value #(client/list-resources-cached "sid-x") [{"id" "bg"}])
+            (expect (= [{"id" "bg"}] (read)) "a fresh entry is served from cache")
+            (expect (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
+            ;; a stale read after the fetch starts the next one
+            (swap! @cache assoc "sid-x" [0 [{"id" "old"}]])
+            (expect (= [{"id" "old"}] (read)))
+            (await-value #(client/list-resources-cached "sid-x") [{"id" "bg"}])
+            (expect (= 2 @calls) "the in-flight slot is released after the fetch"))))))
 
 (defdescribe
   session-model-cached-never-blocks-the-caller
-  (it "session model cached never blocks the caller"
-      ;; REGRESSION (issue #29, gateway leg): the footer reads the session's model
-      ;; pref every frame. This used to be a LIVE daemon round-trip per frame; it
-      ;; must serve from a per-sid cache and refresh in the background — same
-      ;; discipline as `list-resources-cached` above.
-      (let [slow-ms
-            300
+  (it
+    "session model cached never blocks the caller"
+    ;; REGRESSION (issue #29, gateway leg): the footer reads the session's model
+    ;; pref every frame. This used to be a LIVE daemon round-trip per frame; it
+    ;; must serve from a per-sid cache and refresh in the background — same
+    ;; discipline as `list-resources-cached` above.
+    (let [gate
+          (promise)
 
-            cache
-            (rv 'session-model-cache)
+          cache
+          (rv 'session-model-cache)
 
-            calls
-            (atom 0)]
+          calls
+          (atom 0)
 
-        ;; A long TTL: see `list-resources-cached-never-blocks-the-caller`.
-        (with-redefs-fn {(rv 'session-model-cache-ttl-ms) 60000
-                         (rv 'session-model) (fn [_sid]
-                                               (swap! calls inc)
-                                               (Thread/sleep slow-ms)
-                                               {:provider "anthropic" :model "opus"})}
-          (fn []
-            (reset! @cache {})
-            (let [t0
-                  (System/nanoTime)
+          read
+          #(deref (future (client/session-model-cached "sid-m")) 2000 ::blocked)]
 
-                  cold
-                  (client/session-model-cached "sid-m")
-
-                  cold-ms
-                  (/ (- (System/nanoTime) t0) 1e6)]
-
-              (expect (nil? cold) "cold read serves the last-known value (nil) immediately")
-              (expect (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
-              ;; several stale reads while the fetch is in flight stay single-flight
-              (dotimes [_ 5]
-                (client/session-model-cached "sid-m"))
-              (await-value #(client/session-model-cached "sid-m")
-                           {:provider "anthropic" :model "opus"})
-              (expect (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
-              (let [t1
-                    (System/nanoTime)
-
-                    warm
-                    (client/session-model-cached "sid-m")
-
-                    warm-ms
-                    (/ (- (System/nanoTime) t1) 1e6)]
-
-                (expect (= {:provider "anthropic" :model "opus"} warm)
-                        "a fresh entry is served from cache")
-                (expect (< warm-ms 50.0) "warm read is a pure cache hit")
-                ;; a stale read after the fetch starts the next one
-                (swap! @cache assoc "sid-m" [0 {:provider "zai" :model "glm"}])
-                (expect (= {:provider "zai" :model "glm"} (client/session-model-cached "sid-m")))
-                (await-value #(client/session-model-cached "sid-m")
-                             {:provider "anthropic" :model "opus"})
-                (expect (= 2 @calls) "the in-flight slot is released after the fetch"))))))))
+      ;; A long TTL: see `list-resources-cached-never-blocks-the-caller`.
+      (with-redefs-fn {(rv 'session-model-cache-ttl-ms) 60000
+                       (rv 'session-model) (fn [_sid]
+                                             (swap! calls inc)
+                                             (deref gate 10000 nil)
+                                             {:provider "anthropic" :model "opus"})}
+        (fn []
+          (reset! @cache {})
+          ;; The fetch waits for `gate`, so a read that waits for the fetch is `::blocked`.
+          (expect (nil? (read)) "cold read serves the last-known value (nil) immediately")
+          ;; several stale reads while the fetch is in flight stay single-flight
+          (dotimes [_ 5]
+            (expect (nil? (read))))
+          (deliver gate true)
+          (await-value #(client/session-model-cached "sid-m") {:provider "anthropic" :model "opus"})
+          (expect (= {:provider "anthropic" :model "opus"} (read))
+                  "a fresh entry is served from cache")
+          (expect (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
+          ;; a stale read after the fetch starts the next one
+          (swap! @cache assoc "sid-m" [0 {:provider "zai" :model "glm"}])
+          (expect (= {:provider "zai" :model "glm"} (read)))
+          (await-value #(client/session-model-cached "sid-m") {:provider "anthropic" :model "opus"})
+          (expect (= 2 @calls) "the in-flight slot is released after the fetch"))))))
 
 (defdescribe set-session-model!-writes-through-the-session-model-cache
              (it "set session model! writes through the session model cache"

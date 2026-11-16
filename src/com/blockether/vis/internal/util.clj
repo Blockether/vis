@@ -282,15 +282,21 @@
   (atom #{}))
 
 (defn- refresh!
-  "Compute `k` of `cache` again on a future, unless that computation runs already."
+  "Compute `k` of `cache` again on a future, unless that computation runs already. A
+   caller can read an old entry, then get the slot after another computation stored its
+   value and released the slot. So read the entry again with the slot held."
   [cache ttl-ms k f]
   (let [slot [cache k]]
     (when-not (contains? (first (swap-vals! refreshing conj slot)) slot)
-      (future (try (store! cache ttl-ms k (f))
-                   (catch Throwable t
-                     (tel/log!
-                       {:level :warn :id ::cache-refresh-failed :data {:key (pr-str k)} :error t}))
-                   (finally (swap! refreshing disj slot)))))
+      (let [entry (get @cache k)]
+        (if (and entry (< (now-ms) (long (nth entry 0))))
+          (swap! refreshing disj slot)
+          (future (try
+                    (store! cache ttl-ms k (f))
+                    (catch Throwable t
+                      (tel/log!
+                        {:level :warn :id ::cache-refresh-failed :data {:key (pr-str k)} :error t}))
+                    (finally (swap! refreshing disj slot)))))))
     nil))
 
 (defn refreshed

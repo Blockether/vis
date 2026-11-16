@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Gateway: a cached list is fetched one time when two readers find it old at the same moment. Before, the later reader could start a second fetch.
+
 ## [v0.5.19] - 2026-11-16
 
 ### Added
