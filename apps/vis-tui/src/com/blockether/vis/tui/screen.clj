@@ -383,8 +383,9 @@
         new-mom
         (if eff (long (.momentum merged)) old-mom)]
 
-    (vreset! mom-vol new-mom)
-    (when eff (vreset! at-vol now-ms))
+    ;; An absorbed tick writes nothing. The decay is then always from the last effective tick,
+    ;; and a second absorbed tick cannot decay a value that is decayed already.
+    (when eff (vreset! mom-vol new-mom) (vreset! at-vol now-ms))
     {:old-mom old-mom
      :new-mom new-mom
      :eff (some-> eff

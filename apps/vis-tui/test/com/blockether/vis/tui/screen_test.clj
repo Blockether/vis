@@ -529,7 +529,8 @@
                      (vreset! at stale)
                      (expect (nil? (:eff (smooth-wheel! mom at 1))))
                      (expect (= stale (long @at)))
-                     (expect (neg? (long @mom))))))
+                     ;; The stored momentum stays whole: a second absorbed tick must not decay it again.
+                     (expect (= -3 (long @mom))))))
              (it "accepts a new direction once the hold window expired"
                  (let [mom
                        (volatile! 0)
