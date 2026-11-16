@@ -31,23 +31,11 @@ afterEach(() => {
   for (const dom of documents.splice(0)) dom.window.close();
 });
 
-test('one gallery combines all nine screenshots with one README preview grid', async () => {
+test('one gallery combines all nine screenshots', async () => {
   const { window, gallery, track } = galleryDocument({ enhanced: false });
-  const readme = readFileSync('../../README.md', 'utf8');
-  const readmeGallery = readme.split('## Screenshot gallery')[1].split('\n## ')[0];
-  const preview = new JSDOM(readmeGallery);
-  documents.push(preview);
   expect(window.document.querySelectorAll('[data-screenshot-gallery]')).toHaveLength(1);
   expect(gallery.getAttribute('aria-label')).toBe('Vis screenshots');
   expect(gallery.id).toBe('screenshot-gallery');
-  expect(preview.window.document.querySelectorAll('table')).toHaveLength(1);
-  expect(preview.window.document.querySelector('table').getAttribute('width')).toBe('100%');
-  for (const row of preview.window.document.querySelectorAll('tr')) {
-    expect([...row.cells].map((cell) => cell.getAttribute('width'))).toEqual(['42%', '15%', '43%']);
-  }
-  expect(preview.window.document.querySelectorAll('img')).toHaveLength(9);
-  expect(readmeGallery).not.toMatch(/^### /m);
-  expect(readmeGallery.trimStart()).toMatch(/^[^<\s][\s\S]*\n\n<table\b/);
   expect(gallery.previousElementSibling.tagName).toBe('P');
   expect(gallery.previousElementSibling.previousElementSibling.tagName).toBe('H2');
   const ids = [...window.document.querySelectorAll('[id]')].map((node) => node.id);
@@ -75,13 +63,6 @@ test('one gallery combines all nine screenshots with one README preview grid', a
     expect(metadata.height).toBe(Number(image.getAttribute('height')));
     expect(metadata.exif).toBeUndefined();
     expect(metadata.xmp).toBeUndefined();
-    const thumbnail = preview.window.document.querySelector(
-      `img[src="resources/vis-docs/${source}"]`,
-    );
-    expect(thumbnail.closest('a').getAttribute('href')).toBe(`resources/vis-docs/${source}`);
-    expect(thumbnail.getAttribute('width')).toBe('100%');
-    expect(thumbnail.hasAttribute('height')).toBe(false);
-    expect(thumbnail.alt).toBe(image.alt);
   }
   expect(platforms).toEqual([
     'desktop',

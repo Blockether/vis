@@ -92,29 +92,6 @@ Read the manual at [vis.blockether.com](https://vis.blockether.com/) or in
 - **Extensions**: [Extending Vis](resources/vis-docs/extending.md), [code checks example](resources/vis-docs/extension-design.md#check-code-complexity-after-edits) and the [Extension Center](https://vis.blockether.com/extensions/).
 - **Reference**: exact facts, such as [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md).
 
-## Screenshot gallery
-
-All images come from one demo project, `fieldnotes`, after real tasks: a project tour,
-a bug fix with a regression test and a release preparation.
-
-<table width="100%">
-  <tr>
-    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-conversation.png"><img src="resources/vis-docs/assets/screenshots/desktop-conversation.png" width="100%" alt="Desktop Vis with the fieldnotes project sidebar and the tag search fix, with its patch and test run open."></a></td>
-    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-conversation.png"><img src="resources/vis-docs/assets/screenshots/ios-conversation.png" width="100%" alt="Vis on iOS showing the end of the tag search fix: regression tests, other checks and work not done."></a></td>
-    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-conversation.png"><img src="resources/vis-docs/assets/screenshots/tui-conversation.png" width="100%" alt="Vis TUI with the Projects sidebar open next to the finished tag search fix in the fieldnotes project."></a></td>
-  </tr>
-  <tr>
-    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-release.png"><img src="resources/vis-docs/assets/screenshots/desktop-release.png" width="100%" alt="Desktop Vis showing a release 0.3.0 preparation task with its version bump, changelog and checks."></a></td>
-    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-project.png"><img src="resources/vis-docs/assets/screenshots/ios-project.png" width="100%" alt="Vis on iOS showing a tour of the fieldnotes project and the problems that the agent noticed."></a></td>
-    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-sessions.png"><img src="resources/vis-docs/assets/screenshots/tui-sessions.png" width="100%" alt="Vis TUI session navigator with the three fieldnotes sessions and a preview of the tag search fix."></a></td>
-  </tr>
-  <tr>
-    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-settings.png"><img src="resources/vis-docs/assets/screenshots/desktop-settings.png" width="100%" alt="Desktop Vis settings with the paired machine, settings groups and application toggles."></a></td>
-    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-sessions.png"><img src="resources/vis-docs/assets/screenshots/ios-sessions.png" width="100%" alt="Vis on iOS listing the three sessions of the fieldnotes project on one paired machine."></a></td>
-    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-settings.png"><img src="resources/vis-docs/assets/screenshots/tui-settings.png" width="100%" alt="Vis TUI settings with general and view options and the configured model providers."></a></td>
-  </tr>
-</table>
-
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
