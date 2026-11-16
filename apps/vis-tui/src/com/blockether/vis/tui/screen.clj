@@ -2860,6 +2860,8 @@
                           (assoc images :kept (images-clear-of (:hidden images) footprints)))))
   (paint-modal-images!))
 
+(declare repaint-chat-frame!)
+
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
    whole session. Holding the lock blocks the render thread cleanly
@@ -2882,7 +2884,7 @@
     (drop-terminal-images!)
     (try (state/dispatch [:set-dialog-open true])
          (try (binding [dlg/*on-modal-footprints* modal-footprints-changed!]
-                (f))
+                (dlg/with-host repaint-chat-frame! f))
               (finally (reset! dialog-closed-at (System/currentTimeMillis))
                        (when outer? (reset! modal-images nil))
                        (state/dispatch [:set-dialog-open false])))
@@ -3285,7 +3287,7 @@
   (.lock ^ReentrantLock draw-lock)
   (clip-terminal-images-to-band! band-top)
   (try (state/dispatch [:set-dialog-open true])
-       (try (f)
+       (try (dlg/with-host repaint-chat-frame! f)
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock ^ReentrantLock draw-lock))))
@@ -9063,6 +9065,23 @@
            (.setTerminalCapabilities terminal (TerminalCapabilities. ^java.util.Map env))
            (catch Throwable _ nil)))))
 
+(defn- detect-system-color-scheme!
+  "Ask `system-theme/detect` on another thread and wait `wait-ms` for the answer. An
+   answer that comes later goes to `late!`. A tool of the operating system can hang,
+   and the first frame must not wait for it."
+  [env wait-ms late!]
+  (let [answer
+        (future (try (system-theme/detect env) (catch Throwable _ nil)))
+
+        scheme
+        (deref answer wait-ms ::late)]
+
+    (if (= ::late scheme)
+      (do (future (some-> @answer
+                          late!))
+          nil)
+      scheme)))
+
 (defn- follow-system-color-scheme!
   "Give the `auto` theme the color scheme of the system, on a real terminal. The
    terminal comes first: it reports its scheme at the start and, with mode 2031, each
@@ -9073,19 +9092,26 @@
                                                   (.getTerminalCapabilities ^ANSITerminal
                                                                             terminal))]
     (let [scheme (fn [reported]
-                   (if (= TerminalCapabilities$ColorScheme/DARK reported) :dark :light))]
+                   (if (= TerminalCapabilities$ColorScheme/DARK reported) :dark :light))
+          reported (fn []
+                     (some-> (.getColorScheme capabilities)
+                             scheme))
+          apply! (fn [scheme]
+                   (state/dispatch [:set-system-color-scheme scheme])
+                   ;; The theme changes after the event. Paint with it.
+                   (state/dispatch [:bump-render-version :full-frame]))
+          ;; Only a theme that follows the system needs the answer for the first frame.
+          wait-ms (if (t/follows-system? (get-in @state/app-db [:settings :theme-name])) 300 0)]
+
       (.setColorSchemeListener capabilities
                                (reify
                                  java.util.function.Consumer
-                                   (accept [_ reported]
-                                     (state/dispatch [:set-system-color-scheme (scheme reported)])
-                                     ;; The theme changes after the event. Paint with it.
-                                     (state/dispatch [:bump-render-version :full-frame]))))
-      (state/dispatch [:set-system-color-scheme
-                       (or (some-> (.getColorScheme capabilities)
-                                   scheme)
-                           (system-theme/detect env)
-                           :light)]))))
+                                   (accept [_ reported] (apply! (scheme reported)))))
+      (state/dispatch
+        [:set-system-color-scheme
+         (or (reported)
+             (detect-system-color-scheme! env wait-ms #(when-not (reported) (apply! %)))
+             :light)]))))
 
 (defn- probe-terminal-cell-size!
   "Ask a GRAPHICAL terminal for its REAL cell pixel size and feed it into

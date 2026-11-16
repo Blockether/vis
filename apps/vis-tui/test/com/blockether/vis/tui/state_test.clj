@@ -669,6 +669,11 @@
            (expect (= [:vis-dark] @notices))
            (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))
            (finally (reset! state/app-db saved-db) (theme/apply-theme! saved-theme)))))
+  (it "uses the auto theme when the stored preferences name no theme"
+      (with-redefs [vis/load-config-raw (constantly {"zen_mode" true})]
+        (expect (= :auto (:theme-name (#'state/load-persisted-settings)))))
+      (with-redefs [vis/load-config-raw (constantly {"theme_name" "vis-dark"})]
+        (expect (= :vis-dark (:theme-name (#'state/load-persisted-settings))))))
   (it
     "follows the color scheme of the system with the auto theme, and saves nothing"
     (let [saved-db

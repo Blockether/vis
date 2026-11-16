@@ -110,6 +110,31 @@
    - `:blank` after a resize wiped the host cells under the modals."
   nil)
 
+(def ^:dynamic *repaint-below!*
+  "Function of the screen that paints again, without a flush, each layer under the
+   innermost dialog, or nil. The screen binds it to paint the chat frame. A dialog that
+   hosts a band adds its own paint. The modal input calls it after each theme change, so
+   a change of the system color scheme does not leave a frame of two themes."
+  nil)
+
+(def ^:dynamic *theme-seen*
+  "Atom with the theme revision that the open dialogs of one host painted last, or nil
+   outside a host. `with-host` binds it."
+  nil)
+
+(defn with-host
+  "Call `f`, which opens dialogs over a host frame. `repaint!` is the `*repaint-below!*`
+   of that frame. Only a theme change that comes while `f` runs wakes its dialogs: a
+   dialog that opens after a change paints with the new theme by itself."
+  [repaint! f]
+  (binding [*repaint-below!*
+            repaint!
+
+            *theme-seen*
+            (or *theme-seen* (atom @t/theme-revision))]
+
+    (f)))
+
 (defn- report-modal-footprints!
   "Tell `*on-modal-footprints*` where the open modals paint now."
   []
@@ -117,15 +142,21 @@
     (let [footprints (mapv (comp :footprint deref :state) *modal-backgrounds*)]
       (when (seq footprints) (f (if (every? some? footprints) footprints :unknown))))))
 
-(defn- invalidate-modal-backgrounds!
-  "Discard every active backdrop for this screen after a terminal resize."
+(defn- forget-modal-backgrounds!
+  "Discard every active backdrop for this screen. The next paint of a modal captures
+   the cells that are under it then."
   [screen]
   (doseq [background
           *modal-backgrounds*
 
           :when (identical? screen (:screen background))]
 
-    (swap! (:state background) assoc :restore! nil :footprint nil :cursor nil))
+    (swap! (:state background) assoc :restore! nil :footprint nil :cursor nil)))
+
+(defn- invalidate-modal-backgrounds!
+  "Discard every active backdrop for this screen after a terminal resize."
+  [screen]
+  (forget-modal-backgrounds! screen)
   (when-let [f *on-modal-footprints*]
     (f :blank)))
 
@@ -461,15 +492,31 @@
     (.set ^ThreadLocal modal-seen-revision revision)
     (and (some? seen) (not= seen revision))))
 
+(defn- theme-wake?
+  "True one time after each theme application that comes while a host has dialogs open."
+  []
+  (when-let [seen *theme-seen*]
+    (let [revision @t/theme-revision]
+      (not= revision (first (reset-vals! seen revision))))))
+
 (defn- poll-modal-key!
-  "Return queued input, or one harmless wake key after a resize or a settings change."
+  "Return queued input, or one harmless wake key after a resize, a settings change or a
+   theme change. After a theme change, the layers under the dialog are painted again
+   first: the wake key then paints the dialog on them."
   ^KeyStroke [^TerminalScreen screen]
   (or (.pollInput screen)
       (when-let [size (frame/resize! screen)]
         (clear-screen-buffer! screen size)
         (invalidate-modal-backgrounds! screen)
         (KeyStroke. KeyType/Unknown))
-      (when (settings-wake?) (KeyStroke. KeyType/Unknown))))
+      (when (settings-wake?) (KeyStroke. KeyType/Unknown))
+      (when (theme-wake?)
+        (when-let [repaint! *repaint-below!*]
+          ;; The old backdrops hold cells of the theme before the change. Forget them
+          ;; first: a dialog that `repaint!` paints then captures the new cells under it.
+          (forget-modal-backgrounds! screen)
+          (repaint! screen))
+        (KeyStroke. KeyType/Unknown))))
 
 (defn- await-modal-key!
   ^KeyStroke [^TerminalScreen screen]
@@ -4910,59 +4957,55 @@
         (max 1 (quot (+ (count choices) (dec page-size)) page-size))]
 
     (when (seq choices)
-      (loop [page
-             0
+      ;; A theme change from outside paints the host again. Capture that frame too.
+      (binding [*repaint-below!* (let [below *repaint-below!*]
+                                   (fn [screen]
+                                     (when below (below screen))
+                                     (reset! restore (frame-restorer screen))))]
+        (loop [page 0
+               selected current]
 
-             selected
-             current]
+          (let [items (mapv (fn [i {:keys [theme-id label]}]
+                              {:key (str (nth bindings i))
+                               :type :action
+                               :id theme-id
+                               :label (str label (when (= theme-id selected) "  ● current"))})
+                            (range)
+                            (theme-picker-items (take page-size
+                                                      (drop (* (long page) page-size) choices))))
+                spec
+                {:title "Theme"
+                 :escape-label "close"
+                 :groups
+                 (cond-> (let [cell-w
+                               (+ 9 (long (reduce max 0 (map #(p/display-width (:label %)) items))))
+                               columns (max 1 (quot (max 1 (- (long (:inner-w region)) 24)) cell-w))
+                               per-column (max 1 (quot (+ (count items) (dec columns)) columns))]
 
-        (let [items
-              (mapv (fn [i {:keys [theme-id label]}]
-                      {:key (str (nth bindings i))
-                       :type :action
-                       :id theme-id
-                       :label (str label (when (= theme-id selected) "  ● current"))})
-                    (range)
-                    (theme-picker-items (take page-size (drop (* (long page) page-size) choices))))
+                           (mapv (fn [i column]
+                                   {:title (if (zero? (long i))
+                                             (str "Themes  " (inc (long page)) "/" pages)
+                                             "")
+                                    :items (vec column)})
+                                 (range)
+                                 (partition-all per-column items)))
+                   (> pages 1)
+                   (conj {:title "Commands"
+                          :items [{:key "n" :type :action :id ::next-theme-page :label "Next page"}
+                                  {:key "p"
+                                   :type :action
+                                   :id ::previous-theme-page
+                                   :label "Previous page"}]}))}
+                action (:action (embed-transient! screen g region spec))]
 
-              spec
-              {:title "Theme"
-               :escape-label "close"
-               :groups
-               (cond-> (let [cell-w
-                             (+ 9 (long (reduce max 0 (map #(p/display-width (:label %)) items))))
-
-                             columns
-                             (max 1 (quot (max 1 (- (long (:inner-w region)) 24)) cell-w))
-
-                             per-column
-                             (max 1 (quot (+ (count items) (dec columns)) columns))]
-
-                         (mapv (fn [i column]
-                                 {:title (if (zero? (long i))
-                                           (str "Themes  " (inc (long page)) "/" pages)
-                                           "")
-                                  :items (vec column)})
-                               (range)
-                               (partition-all per-column items)))
-                 (> pages 1)
-                 (conj
-                   {:title "Commands"
-                    :items
-                    [{:key "n" :type :action :id ::next-theme-page :label "Next page"}
-                     {:key "p" :type :action :id ::previous-theme-page :label "Previous page"}]}))}
-
-              action
-              (:action (embed-transient! screen g region spec))]
-
-          (cond (nil? action) nil
-                (= action ::next-theme-page) (recur (long (mod (inc (long page)) (long pages)))
-                                                    selected)
-                (= action ::previous-theme-page) (recur (long (mod (dec (long page)) (long pages)))
-                                                        selected)
-                :else (do (apply! action)
-                          (reset! restore (frame-restorer screen))
-                          (recur page action))))))))
+            (cond (nil? action) nil
+                  (= action ::next-theme-page) (recur (long (mod (inc (long page)) (long pages)))
+                                                      selected)
+                  (= action ::previous-theme-page)
+                  (recur (long (mod (dec (long page)) (long pages))) selected)
+                  :else (do (apply! action)
+                            (reset! restore (frame-restorer screen))
+                            (recur page action)))))))))
 
 (defn- activate-theme-row!
   [screen g region values callbacks {:keys [choices key]}]
@@ -6958,23 +7001,33 @@
 
                           activate-row!
                           (fn [row]
-                            (activate-settings-row! screen
-                                                    g
-                                                    {:left left
-                                                     :inner-w inner-w
-                                                     :hint-row hint-row
-                                                     :text-w (max 1 (- (long inner-w) 2))
-                                                     :min-row list-top
-                                                     ;; One snapshot per activation: a shorter band gives the
-                                                     ;; rows a taller one covered back to the list itself.
-                                                     :restore! (frame-restorer screen)}
-                                                    values
-                                                    (assoc callbacks
-                                                      :on-change
-                                                      (fn [settings]
-                                                        (notify-settings-change! callbacks settings)
-                                                        (paint-settings! true)))
-                                                    row))
+                            ;; A band of this row paints in this frame. After a theme change
+                            ;; from outside, this frame is one of the layers under the band.
+                            (let [;; One snapshot per activation: a shorter band gives the
+                                  ;; rows a taller one covered back to the list itself.
+                                  snapshot (atom (frame-restorer screen))]
+                              (binding [*repaint-below!* (let [below *repaint-below!*]
+                                                           (fn [screen]
+                                                             (when below (below screen))
+                                                             (paint-settings! true)
+                                                             (reset! snapshot (frame-restorer
+                                                                                screen))))]
+                                (activate-settings-row!
+                                  screen
+                                  g
+                                  {:left left
+                                   :inner-w inner-w
+                                   :hint-row hint-row
+                                   :text-w (max 1 (- (long inner-w) 2))
+                                   :min-row list-top
+                                   :restore! (fn [& bounds]
+                                               (apply @snapshot bounds))}
+                                  values
+                                  (assoc callbacks
+                                    :on-change (fn [settings]
+                                                 (notify-settings-change! callbacks settings)
+                                                 (paint-settings! true)))
+                                  row))))
 
                           ;; Fold or open one section, then select its header or first setting.
                           fold-section!
@@ -9418,8 +9471,27 @@
         (binding [frame/*column-offset* left]
           (frame/surface-graphics screen cols (.getRows size)))
 
+        ;; A theme change from outside paints the frame again. The band then gives back
+        ;; the cells of that frame, not the cells of the old theme.
+        snapshot
+        (atom (frame-restorer screen))
+
         restore!
-        (frame-restorer screen)
+        (fn [& bounds]
+          (apply @snapshot bounds))
+
+        repaint-below!
+        (let [below
+              *repaint-below!*
+
+              offset
+              frame/*column-offset*]
+
+          (fn [screen]
+            (when below
+              (binding [frame/*column-offset* offset]
+                (below screen)))
+            (reset! snapshot (frame-restorer screen))))
 
         region
         (assoc (tr/band-region cols (.getRows size) (or content-top 1) (or prompt-h tr/prompt-rows))
@@ -9431,11 +9503,14 @@
     ;; there. Anything inside the band that reads typed text (`band-questions`)
     ;; places it again for itself.
     (.setCursorPosition screen nil)
-    (try (binding [frame/*column-offset* left]
+    (try (binding [frame/*column-offset*
+                   left
+
+                   *repaint-below!*
+                   repaint-below!]
+
            (body g region))
-         (finally (when restore! (restore!))
-                  (.setCursorPosition screen nil)
-                  (frame/refresh! screen)))))
+         (finally (restore!) (.setCursorPosition screen nil) (frame/refresh! screen)))))
 
 (defn session-band!
   "Run ONE transient as a BAND inside the LIVE SESSION frame — the same
@@ -9482,12 +9557,17 @@
 
    `read-modal-key!` hands back whatever the terminal sent, wheel notches
    included. `input/resolve-prefix-key` reads anything that is not a key it
-   knows as an abort, so one mouse MOVE used to close the band mid-chord."
-  ^KeyStroke [^TerminalScreen screen]
+   knows as an abort, so one mouse MOVE used to close the band mid-chord.
+
+   A wake key (`KeyType/Unknown`) is not an answer either. `repaint!` paints the band
+   again and returns true, or returns false when the band cannot stay."
+  ^KeyStroke [^TerminalScreen screen repaint!]
   (loop []
 
     (let [key (read-modal-key! screen)]
-      (if (pointer-drift? key) (recur) key))))
+      (if (or (pointer-drift? key) (and key (= KeyType/Unknown (key-type key)) (repaint!)))
+        (recur)
+        key))))
 
 (defn prefix-band!
   "The C-x HYDRA: paint `spec` as a band in the LIVE SESSION frame, read the ONE
@@ -9503,14 +9583,22 @@
    notches (`read-chord-key!`) instead of letting the resolver read them as an
    abort. A CLICK still is one — that is a gesture, and it dismisses the band.
 
+   A THEME CHANGE IS NOT AN ANSWER: the frame under the band was painted again, so
+   the band paints again on it and waits. After a resize its region is stale, and
+   the band closes.
+
    Returns the `KeyStroke` (Esc included — the resolver reads it as an abort), or
    nil when the terminal had nothing to give."
   [^TerminalScreen screen anchor spec]
   (session-band-instance! screen
                           anchor
                           (fn [g region]
-                            (band-frame! screen g region spec)
-                            (read-chord-key! screen))))
+                            (let [size (.getTerminalSize screen)]
+                              (band-frame! screen g region spec)
+                              (read-chord-key! screen
+                                               #(when (= size (.getTerminalSize screen))
+                                                  (band-frame! screen g region spec)
+                                                  true))))))
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str :group str :description str}.

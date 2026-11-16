@@ -4,7 +4,7 @@
 import html from '../../index.html?raw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { followSystemTheme, paintStoredTheme, paintThemePref, resolveTheme } from './theme';
-import { AUTO_THEMES, DEFAULT_THEME, THEMES } from './themes.generated';
+import { AUTO_THEME_PREF, AUTO_THEMES, DEFAULT_THEME, THEMES } from './themes.generated';
 
 /** The key `storage.ts` mirrors into localStorage beside the durable Preferences copy. */
 const THEME_PREF_KEY = 'vis.themePref';
@@ -62,7 +62,6 @@ describe('painting the stored palette before React renders', () => {
 
     expect(paintStoredTheme()).toEqual(dark);
     expect(document.documentElement.dataset.theme).toBe(dark.id);
-    expect(document.documentElement.style.colorScheme).toBe('dark');
   });
 
   it('migrates the old light/dark preference instead of flashing the default', () => {
@@ -84,7 +83,19 @@ describe('the auto theme', () => {
   it('paints the palette of the system when no theme is stored', () => {
     systemScheme(true);
     expect(paintStoredTheme()).toEqual(AUTO_THEMES.dark);
-    expect(document.documentElement.style.colorScheme).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe(AUTO_THEMES.dark.id);
+  });
+
+  // Regression: the desktop shell reads an inline `color-scheme` on the root as a theme
+  // override and pins the appearance of the app. After "Blockether Light", then "Auto",
+  // the app stayed light on a dark system until a restart.
+  it('writes no inline color scheme, so a desktop shell does not pin the system', () => {
+    systemScheme(true);
+    paintThemePref('blockether-light');
+    expect(document.documentElement.style.colorScheme).toBe('');
+    paintThemePref(AUTO_THEME_PREF);
+    expect(document.documentElement.style.colorScheme).toBe('');
+    expect(document.documentElement.dataset.theme).toBe(AUTO_THEMES.dark.id);
   });
 
   it('paints again when the system changes, and stops for an explicit theme', () => {
@@ -102,6 +113,19 @@ describe('the auto theme', () => {
       system.set(false);
       system.set(true);
       expect(root.dataset.theme).toBe(chosen.id);
+    } finally {
+      stop();
+    }
+  });
+
+  it('follows the system for a stored id that the catalog does not hold', () => {
+    const system = systemScheme(true);
+    const stop = followSystemTheme();
+    try {
+      localStorage.setItem(THEME_PREF_KEY, 'a-theme-that-was-uninstalled');
+      expect(paintStoredTheme()).toEqual(AUTO_THEMES.dark);
+      system.set(false);
+      expect(document.documentElement.dataset.theme).toBe(AUTO_THEMES.light.id);
     } finally {
       stop();
     }
@@ -133,6 +157,23 @@ describe('the boot stamp in index.html', () => {
       new Function('document', 'localStorage', inline)(document, localStorage);
       expect(document.documentElement.dataset.theme).toBe(AUTO_THEMES.dark.id);
     } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // The browser paints its own chrome from this element before the bundle runs.
+  it('gives the browser chrome the color of the system palette', () => {
+    const meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    meta.content = AUTO_THEMES.light.chrome;
+    document.head.append(meta);
+    localStorage.clear();
+    systemScheme(true);
+    try {
+      new Function('document', 'localStorage', inline)(document, localStorage);
+      expect(meta.content).toBe(AUTO_THEMES.dark.chrome);
+    } finally {
+      meta.remove();
       vi.unstubAllGlobals();
     }
   });

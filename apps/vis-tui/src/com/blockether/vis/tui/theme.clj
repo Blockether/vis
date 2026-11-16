@@ -16,14 +16,31 @@
   [scheme]
   (reset! system-color-scheme (if (= :dark scheme) :dark :light)))
 
-(defn- resolve-theme-id
-  "The theme id that the preference `theme-id` names. The `auto` preference names the
-   theme for the color scheme of the system."
+(defonce
+  ^{:doc
+    "The count of theme applications. `apply-theme!` is its only writer. An open dialog
+     compares it to paint again after a change that the dialog did not make."}
+  theme-revision
+  (atom 0))
+
+(defn follows-system?
+  "True when the preference `theme-id` follows the color scheme of the system. That is
+   the `auto` preference, and also an id that names no theme: a stored theme that is
+   gone must not hold one fixed palette."
   [theme-id]
-  (let [id (or (some-> theme-id
-                       name)
-               theme/default-theme-id)]
-    (if (= theme/auto-theme-id id) (get theme/auto-theme-ids @system-color-scheme) id)))
+  (when-let [id (some-> theme-id
+                        name)]
+    (or (= theme/auto-theme-id id) (not (contains? (theme/theme-registry) id)))))
+
+(defn- resolve-theme-id
+  "The theme id that the preference `theme-id` names. A preference that follows the
+   system names the theme for the color scheme of the system."
+  [theme-id]
+  (if (follows-system? theme-id)
+    (get theme/auto-theme-ids @system-color-scheme)
+    (or (some-> theme-id
+                name)
+        theme/default-theme-id)))
 
 (def default-theme (theme/theme @active-theme-id))
 
@@ -537,4 +554,5 @@
       (alter-var-root v (constantly (get widths token))))
     (doseq [[token v] spacing-vars]
       (alter-var-root v (constantly (get spacing token))))
+    (swap! theme-revision inc)
     theme-map))

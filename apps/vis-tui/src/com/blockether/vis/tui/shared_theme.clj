@@ -1028,7 +1028,10 @@
 (defn- theme-entry
   [id entry]
   (let [id (or (normalize-theme-id id) (normalize-theme-id (:name entry)))]
-    (cond (and id (valid-theme? entry)) [id (assert-theme! (assoc entry :name id))]
+    (cond (= auto-theme-id id) (throw (ex-info "The theme id auto is the system preference"
+                                               {:type :vis.internal.theme/reserved-theme-id
+                                                :id id}))
+          (and id (valid-theme? entry)) [id (assert-theme! (assoc entry :name id))]
           (and id (map? entry)) [id (settings->theme id entry)]
           :else (throw (ex-info
                          "Invalid theme registry entry"

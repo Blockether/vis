@@ -3748,6 +3748,37 @@
                                    (deref reader 750 nil))
                                  (.stopScreen screen))))))
 
+(defdescribe modal-theme-wake-test
+             (it "wakes a blocked modal and paints the layers under it again when the theme changes"
+                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                       (term/virtual-screen)
+
+                       theme-id
+                       @t/active-theme-id
+
+                       repaints
+                       (atom 0)
+
+                       reader
+                       (dlg/with-host (fn [_screen]
+                                        (swap! repaints inc))
+                                      #(future (dlg/read-modal-key! screen)))]
+
+                   (try (Thread/sleep 100)
+                        (expect (zero? @repaints))
+                        (t/apply-theme!
+                          (if (= "blockether-dark" theme-id) "blockether-light" "blockether-dark"))
+                        (let [key (deref reader 750 ::blocked)]
+                          (when (= ::blocked key) (.addInput terminal (KeyStroke. KeyType/Escape)))
+                          (expect (not= ::blocked key))
+                          (expect (= KeyType/Unknown (.getKeyType ^KeyStroke key)))
+                          (expect (= 1 @repaints)))
+                        (finally (when-not (future-done? reader)
+                                   (.addInput terminal (KeyStroke. KeyType/Escape))
+                                   (deref reader 750 nil))
+                                 (t/apply-theme! theme-id)
+                                 (.stopScreen screen))))))
+
 (defdescribe modal-paint-resize-clear-test
              (it "clears stale cells when a paint loop consumes the resize first"
                  (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}

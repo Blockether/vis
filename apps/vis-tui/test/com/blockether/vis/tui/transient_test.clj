@@ -10,9 +10,10 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminals :as term]
+            [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.transient :as tr])
   (:import [com.googlecode.lanterna TerminalPosition]
-           [com.googlecode.lanterna.input MouseAction MouseActionType]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
@@ -751,6 +752,42 @@
                               (.getCharacter (dlg/prefix-band! screen
                                                                {:content-top 1 :prompt-h 3}
                                                                leader-spec)))))))
+
+;; Regression: with the `auto` theme, a change of the system color scheme closed the
+;; C-x band, and the next key went into the composer as text.
+(defdescribe
+  band-theme-change-test
+  (it "a theme change never answers the chord: the band paints again and waits for a real key"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+            (term/virtual-screen)
+
+            theme-id
+            @theme/active-theme-id
+
+            repaints
+            (atom 0)
+
+            reader
+            (dlg/with-host (fn [_screen]
+                             (swap! repaints inc))
+                           #(future
+                              (dlg/prefix-band! screen {:content-top 1 :prompt-h 3} leader-spec)))]
+
+        (try (Thread/sleep 150)
+             (theme/apply-theme!
+               (if (= "blockether-dark" theme-id) "blockether-light" "blockether-dark"))
+             (Thread/sleep 150)
+             (expect (= 1 @repaints))
+             (expect (not (future-done? reader)))
+             (.addInput terminal (term/keystroke \d))
+             (expect (= \d
+                        (some-> ^KeyStroke (deref reader 1000 nil)
+                                .getCharacter)))
+             (finally (when-not (future-done? reader)
+                        (.addInput terminal (KeyStroke. KeyType/Escape))
+                        (deref reader 750 nil))
+                      (theme/apply-theme! theme-id)
+                      (.stopScreen screen))))))
 
 ;; Regression: the C-x band must use the chat pane, not cover the project rail.
 (defdescribe

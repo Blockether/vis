@@ -7,7 +7,7 @@
 import { Preferences } from '@capacitor/preferences';
 import { bridged } from './bridge';
 import { forgetNotifyVerdict } from './notify-verdict';
-import { AUTO_THEME_PREF } from './themes.generated';
+import { AUTO_THEME_PREF, THEMES } from './themes.generated';
 import type { GatewayConn, SpeechPrefs, ThemePref } from './types';
 
 const CONNS_KEY = 'vis.connections';
@@ -244,11 +244,15 @@ export async function getPrimaryConnection(): Promise<GatewayConn | null> {
   return primary;
 }
 
-/** The stored id, migrated from the old light/dark preference. */
+/**
+ * The stored id, migrated from the old light/dark preference.
+ * An id that the catalog does not hold is no choice: the default applies.
+ */
 function normalizeThemePref(raw: string | null): ThemePref {
   if (raw === 'light') return 'blockether-light';
   if (raw === 'dark') return 'blockether-dark';
-  return raw?.trim() || DEFAULT_THEME_PREF;
+  const id = raw?.trim();
+  return id && THEMES.some((theme) => theme.id === id) ? id : DEFAULT_THEME_PREF;
 }
 
 /**

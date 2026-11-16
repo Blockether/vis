@@ -69,3 +69,13 @@
                      (doseq [ground ["--input-field-bg" "--surface" "--bg" "--box-bg"]]
                        (expect (<= 3.0 (contrast (rgb "--field-edge") (rgb ground)))
                                (str id " --field-edge on " ground)))))))
+
+(defdescribe the-auto-preference-id-test
+             ;; `auto` is the preference that follows the system. An extension theme with
+             ;; that id showed "Auto" two times in the theme picker.
+             (it "refuses an extension theme with the id auto"
+                 (try (expect (= :vis.internal.theme/reserved-theme-id
+                                 (try (theme/register-themes! {"auto" {"MODE" "dark"}})
+                                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                      (expect (not (contains? (theme/theme-registry) "auto")))
+                      (finally (theme/unregister-theme! "auto")))))

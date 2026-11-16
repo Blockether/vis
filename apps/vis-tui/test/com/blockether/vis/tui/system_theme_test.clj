@@ -1,6 +1,8 @@
 (ns com.blockether.vis.tui.system-theme-test
   "The `auto` theme asks the system for its color scheme when the terminal reports none."
   (:require [com.blockether.vis.tui.external-opener :as opener]
+            [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.system-theme :as system-theme]
             [com.blockether.vis.tui.theme :as t]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -48,6 +50,8 @@
       (expect
         (= :light
            (detect-on "linux" true {} {"reg.exe" "    AppsUseLightTheme    REG_DWORD    0x1"}))))
+  (it "reads the Linux desktop in WSL when Windows gives no answer"
+      (expect (= :dark (detect-on "linux" true {} {"gsettings" "'prefer-dark'"}))))
   (it "does not ask the remote system in an SSH session"
       (expect (nil? (detect-on "mac os x" false {"SSH_TTY" "/dev/ttys001"} {"defaults" "Dark"})))
       (expect (= :dark
@@ -65,4 +69,35 @@
                         (t/set-system-color-scheme! :dark)
                         (t/apply-theme! :solarized-light)
                         (expect (= "solarized-light" @t/active-theme-id))
-                        (finally (t/set-system-color-scheme! :light) (t/apply-theme! before))))))
+                        (finally (t/set-system-color-scheme! :light) (t/apply-theme! before)))))
+             (it "follows the system for a stored id that names no theme"
+                 (let [before @t/active-theme-id]
+                   (try (t/set-system-color-scheme! :dark)
+                        (t/apply-theme! :a-theme-that-is-gone)
+                        (expect (= "blockether-dark" @t/active-theme-id))
+                        (expect (t/follows-system? :a-theme-that-is-gone))
+                        (expect (not (t/follows-system? :solarized-light)))
+                        (finally (t/set-system-color-scheme! :light) (t/apply-theme! before)))))
+             (it "keeps the id auto for the preference: no theme can take it"
+                 (try (expect (= :vis.internal.theme/reserved-theme-id
+                                 (try (shared-theme/register-theme! "auto" {"MODE" "dark"})
+                                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                      (finally (shared-theme/unregister-theme! "auto")))))
+
+(defdescribe the-start-of-the-terminal
+             (it "does not wait for a slow answer of the operating system, and uses it when it comes"
+                 (let [late (promise)
+                       detect! @#'screen/detect-system-color-scheme!]
+
+                   (with-redefs [system-theme/detect (fn [_env]
+                                                       (Thread/sleep 400)
+                                                       :dark)]
+                     (let [started (System/nanoTime)
+                           answer (detect! {} 0 #(deliver late %))]
+
+                       (expect (nil? answer))
+                       (expect (< (- (System/nanoTime) started) 200000000))
+                       (expect (= :dark (deref late 2000 ::none)))))))
+             (it "gives an answer that comes in time"
+                 (with-redefs [system-theme/detect (constantly :dark)]
+                   (expect (= :dark (@#'screen/detect-system-color-scheme! {} 1000 identity))))))

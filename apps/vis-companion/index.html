@@ -31,10 +31,13 @@
       if (pref === 'light') pref = 'blockether-light';
       else if (pref === 'dark') pref = 'blockether-dark';
       pref = pref ? pref.trim() : '';
+      // The color of the browser chrome (`theme-color`) for the stamped palette, when the stamp knows it.
+      var chrome = null;
       // No choice and `auto` follow the color scheme of the system (`theme.ts` does the same).
       if (!pref || pref === 'auto') {
         var isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         pref = isDark ? 'blockether-dark' : 'blockether-light';
+        chrome = isDark ? '#0f1117' : '#faf3eb';
       }
       document.documentElement.dataset.theme = pref;
       // The theme of a white label is the only palette. The gateway brand (the
@@ -53,10 +56,14 @@
           for (var name in theme.colors || {}) {
             if (name.indexOf('--') === 0) root.style.setProperty(name, String(theme.colors[name]));
           }
+          chrome = (theme.colors || {})['--bg'] || null;
         }
       } catch (e) {
         /* A damaged brand: `paintStoredTheme()` decides. */
       }
+      // The browser paints its chrome before the bundle runs: `applyTheme` is too late for that frame.
+      var chromeMeta = chrome && document.querySelector('meta[name="theme-color"]');
+      if (chromeMeta) chromeMeta.setAttribute('content', String(chrome));
     </script>
   </head>
   <body>

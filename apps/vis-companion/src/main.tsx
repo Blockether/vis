@@ -26,8 +26,8 @@ stampShellHost();
 // read the preference through the native bridge and repaint from an effect, so
 // a dark-theme device painted the light default first — a white sheet under the
 // splash on every launch and on every reload iOS performs after recycling the
-// backgrounded webview. `index.html` already stamped the raw stored id during
-// parse; this settles it against the shipped catalog.
+// backgrounded webview. `index.html` already stamped the resolved palette id
+// during parse; this settles it against the shipped catalog.
 paintStoredTheme();
 // The `auto` preference follows each later change of the system color scheme.
 followSystemTheme();

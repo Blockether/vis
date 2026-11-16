@@ -939,7 +939,7 @@
    derives the color scheme of a pane from that background, so an override there
    hides each later change of the system."
   [theme-name]
-  (try (if (and (= (keyword shared-theme/auto-theme-id) theme-name) (seq (System/getenv "TMUX")))
+  (try (if (and (tui-theme/follows-system? theme-name) (seq (System/getenv "TMUX")))
          (input/reset-default-bg! @vis/tty-out)
          (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
            (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))))
@@ -962,7 +962,7 @@
         (fn [[scheme theme-name]]
           (tui-theme/set-system-color-scheme! scheme)
           ;; An explicit theme does not follow the system.
-          (when (= (keyword shared-theme/auto-theme-id) theme-name) (paint-theme! theme-name))))
+          (when (tui-theme/follows-system? theme-name) (paint-theme! theme-name))))
 
 (defn- model-entry
   [provider model]

@@ -33,7 +33,9 @@ function systemTheme(): ThemeChoice {
 export function applyTheme(theme: ThemeChoice): void {
   const root = document.documentElement;
   if (root.dataset.theme !== theme.id) root.dataset.theme = theme.id;
-  if (root.style.colorScheme !== theme.mode) root.style.colorScheme = theme.mode;
+  // No inline `color-scheme`: the stylesheet block of the palette holds it. The desktop
+  // shell reads an inline value as an override and pins the appearance of the app. Then
+  // `prefers-color-scheme` stops following the system, and so does the auto theme.
 
   // A brand theme is its base palette with some variables replaced on the root.
   const brand = currentBrand().theme;
@@ -90,7 +92,7 @@ export function followSystemTheme(): () => void {
  * `index.html` stamps `data-theme` from the same mirrored key during parse, so
  * the very first frame is already the right paper; this is the same decision
  * made against the shipped catalog — an id no longer in it resolves to the
- * default, and the colour scheme and the browser chrome follow it here.
+ * default, and the browser chrome follows it here.
  */
 export function paintStoredTheme(): ThemeChoice {
   return paintThemePref(loadThemePrefSync());

@@ -87,7 +87,8 @@
   []
   (let [os (opener/os-name)]
     (cond (str/includes? os "mac") (macos-scheme)
-          (opener/wsl?) (windows-scheme)
+          ;; WSL can run without access to the Windows tools. Its Linux desktop then answers.
+          (opener/wsl?) (or (windows-scheme) (linux-scheme))
           (str/includes? os "linux") (linux-scheme))))
 
 (defn detect
