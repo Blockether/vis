@@ -48,6 +48,17 @@
             (render/render (render/markdown->ast "<details>secret</details>") :markdown {})]
         (expect (str/includes? rendered "<details>secret</details>")))))
 
+;; User report (screenshot): a failed reload named two `~/` paths, and the text
+;; between them showed struck through.
+(defdescribe
+  markdown-home-path-test
+  (it "keeps a single tilde as text and marks only a double tilde"
+      (let [nodes (tree-seq vector?
+                            seq
+                            (render/markdown->ast "Load ~/a/ext.py failed (~/b/ext.py). ~~old~~"))]
+        (expect (= "Load ~/a/ext.py failed (~/b/ext.py). old" (apply str (filter string? nodes))))
+        (expect (some #{[:em {} [:span {} "old"]]} nodes)))))
+
 (defdescribe
   markdown-soft-break-test
   (it "prose default collapses a bare newline to a single space (CommonMark)"

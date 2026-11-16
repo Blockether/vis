@@ -156,6 +156,18 @@ describe('Markdown thinking breaks', () => {
   });
 });
 
+// User report (screenshot): a failed reload named two `~/` paths, and the text between
+// them showed struck through.
+describe('Markdown home paths', () => {
+  it('keeps a single tilde as text and strikes only a double tilde', () => {
+    const html = renderToStaticMarkup(
+      <Markdown>{'Load ~/a/ext.py failed (~/b/ext.py). ~~old~~'}</Markdown>,
+    );
+    expect(count(html, /<del/g)).toBe(1);
+    expect(text(html)).toContain('Load ~/a/ext.py failed (~/b/ext.py). old');
+  });
+});
+
 // User report (screenshot): a numbered list in an answer started further left than the
 // bulleted list right above it. Native markers are sized by the engine, so both lists now
 // draw their own marker in a fixed column instead of leaning on `list-style`.

@@ -538,7 +538,11 @@
 
 (def ^:private ^Parser md-parser
   (-> (Parser/builder)
-      (.extensions [(TablesExtension/create) (StrikethroughExtension/create)])
+      ;; One `~` is text: a home path such as `~/project` is not a strikethrough mark.
+      (.extensions [(TablesExtension/create)
+                    (-> (StrikethroughExtension/builder)
+                        (.requireTwoTildes true)
+                        (.build))])
       (.build)))
 
 (defn- cm-children-seq

@@ -1,4 +1,5 @@
 import type { Options } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { approxBytes, registerMemorySource } from './perf';
 
 /**
@@ -80,6 +81,12 @@ export function cachedTree<T>(text: string, parse: () => T): T {
 }
 
 type RemarkPlugin = NonNullable<Options['remarkPlugins']>[number];
+
+/**
+ * GitHub markdown for a message. One `~` is text: a home path such as `~/project` is
+ * not a strikethrough mark. `~~text~~` strikes text.
+ */
+export const remarkMessageGfm: RemarkPlugin = [remarkGfm, { singleTilde: false }];
 
 /** Recent texts whose block starts stay known: the stream tails and their earlier states. */
 const NOTED_STARTS = 32;

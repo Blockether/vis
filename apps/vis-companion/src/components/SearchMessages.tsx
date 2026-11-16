@@ -1,10 +1,10 @@
 import { Fragment, type ReactNode } from 'react';
 import type { Element, Root, Text } from 'hast';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 import { timeLabel } from '../lib/fleet';
 import type { SessionMatch, SessionMatchHit } from '../lib/gateway';
+import { remarkMessageGfm } from '../lib/markdown-trees';
 import type { ForkPoint } from '../lib/types';
 import { searchRanges, searchSegments, searchTerms } from '../lib/search-highlight';
 import { JustifiedProse } from './JustifiedProse';
@@ -128,7 +128,7 @@ function MessageList({
                 Blocks keep a gap, as the chat's paragraphs do. */}
             <span className="mt-1 block space-y-2 break-words font-mono text-ui text-dialog-foreground">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkMessageGfm]}
                 rehypePlugins={[[highlightMarkdown, terms]]}
                 skipHtml
                 allowedElements={[

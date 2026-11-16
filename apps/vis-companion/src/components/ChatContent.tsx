@@ -53,6 +53,7 @@ import { useStickyOverlay } from '../lib/sticky-overlay';
 import {
   advanceSplit,
   blockStartsOf,
+  remarkMessageGfm,
   remarkParseCache,
   wholeSplit,
   type SplitPiece,
@@ -95,7 +96,6 @@ import {
 } from './ui';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
-import remarkGfm from 'remark-gfm';
 import { councilMarkdown } from '../lib/council-markdown';
 import { parseUserMessage, type UserMessagePart } from '../lib/paste';
 import { filePathOfUrl, remarkBareLinks } from '../lib/message-links';
@@ -496,8 +496,8 @@ function markdownUrlTransform(url: string): string {
 }
 
 /** Messages parse as GitHub markdown; the parse cache serves a text parsed before. */
-const MARKDOWN_PLUGINS = [remarkGfm, remarkBareLinks, remarkParseCache];
-const HARD_BREAK_PLUGINS = [remarkGfm, remarkBareLinks, remarkBreaks, remarkParseCache];
+const MARKDOWN_PLUGINS = [remarkMessageGfm, remarkBareLinks, remarkParseCache];
+const HARD_BREAK_PLUGINS = [remarkMessageGfm, remarkBareLinks, remarkBreaks, remarkParseCache];
 
 type HastNode = {
   type: string;

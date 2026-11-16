@@ -874,3 +874,13 @@
         (doseq [i (range (+ 100 (long @#'layout/prepared-prose-limit)))]
           (prepare (str "streamed paragraph " i) []))
         (locking cache (expect (<= (.size cache) (long @#'layout/prepared-prose-limit)))))))
+
+;; User report (screenshot): a failed reload named two `~/` paths, and the text
+;; between them showed struck through.
+(defdescribe home-path-tilde-test
+             (it "keeps a single tilde as text and marks only a double tilde"
+                 (expect (= ["Load ~/a/ext.py failed (~/b/ext.py). old"]
+                            (texts (layout/ast->lines
+                                     (ir/markdown->ast
+                                       "Load ~/a/ext.py failed (~/b/ext.py). ~~old~~")
+                                     80))))))
