@@ -415,6 +415,17 @@
   "Every key a live view may carry, engine stamps included."
   (schema-keys "live_view"))
 
+(def live-summary-omitted-keys
+  "The keys that the summary of an app leaves out of its live view."
+  (property-keys {"properties" (into {}
+                                     (filter (comp false? val))
+                                     (get (definition "live_view_summary") "properties"))}))
+
+(def patch-elide-above-chars
+  "The most characters in the strings of an app patch that a stream sends when it
+   asked for elided app patches. A larger patch goes out as an elided frame."
+  (get (definition "patch_event") "x-vis-elide-above-chars"))
+
 (def live-picture-keys "Keys returned in a finished live-view picture." (schema-keys "view"))
 
 (def live-elided-keys "Keys in an elision record." (schema-keys "elided"))

@@ -374,14 +374,36 @@
         },
         "patch": {
           "$ref": "#/$defs/live_patch"
+        },
+        "is_elided": {
+          "description": "True when the stream left out the patch of an app. Only a stream that asked for `app_patches=elided` gets such a frame, and only for a patch whose strings hold more characters than `x-vis-elide-above-chars`. The view changed: a client that shows it reads it again.",
+          "const": true
+        },
+        "last_seq": {
+          "description": "The seq of the view after an elided frame. A frame with a patch has it in the patch.",
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
         "kind",
         "view_id",
-        "first_seq",
-        "patch"
-      ]
+        "first_seq"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "patch"
+          ]
+        },
+        {
+          "required": [
+            "is_elided",
+            "last_seq"
+          ]
+        }
+      ],
+      "x-vis-elide-above-chars": 16384
     },
     "option": {
       "type": "object",
@@ -3033,6 +3055,22 @@
       ],
       "x-vis-max-nodes": 64,
       "x-vis-max-picture-bytes": 8388608
+    },
+    "live_view_summary": {
+      "description": "An app in a list that asked for `summary=true`: the live view of the app without its body. The properties with the schema `false` are the keys that a summary leaves out. Read the view to get them.",
+      "type": "object",
+      "properties": {
+        "is_summary": {
+          "const": true
+        },
+        "nodes": false,
+        "log": false,
+        "submissions": false,
+        "agent_note": false
+      },
+      "required": [
+        "is_summary"
+      ]
     },
     "live_op": {
       "x-vis-patch-targets": {

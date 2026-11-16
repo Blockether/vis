@@ -719,6 +719,11 @@ A `content.block.delta` event carries only new text for one `block_id` and `fiel
 before `offset` and add `text` after it. The `offset` counts UTF-16 code units from the start of the
 block text. A repeated event then changes nothing, and an `offset` of 0 starts the text again.
 
+Add `app_patches=elided` when your client shows only some of the apps. The stream then sends a
+large `view.patch` event of an app without its `patch`. The event has `"is_elided": true` and
+`last_seq`, the sequence number of the patch that it left out. Read the app again when you show it.
+Small patches arrive in full.
+
 A client that cannot keep a stream open can read pages instead:
 
 ```bash
@@ -1238,6 +1243,10 @@ The `placement` query parameter keeps only the `inline`, `panel` or `attachment`
 value returns 400. Without it, you get every view except the archived apps. `archived=true` lists
 only the archived [apps](live-views.md#apps).
 
+Add `summary=true` to list each app without its body. Such an app has `"is_summary": true` and no
+`nodes`, `log`, `submissions` or `agent_note`. Read one app to get its body. The other views stay
+complete. A value other than `true` or `false` returns 400.
+
 `GET /v1/sessions/{sid}/views/live/{view-id}` answers one view or app in `view`, also a closed app.
 A view of another session returns 404.
 
@@ -1393,6 +1402,8 @@ vis_api "$VIS_GATEWAY_URL/v1/apps"
 - Give `"is_persistent": false` in the view for an app that ends at a gateway restart.
 - `GET /v1/apps` answers `views`, oldest first. Add `archived=true` to list only the archived apps.
   The list is empty while the person turns global apps off.
+- Add `summary=true` to `GET /v1/apps` to list each app without its body, as for the apps of a
+  session.
 - `GET /v1/apps/{view-id}` answers one `view`. `POST /v1/apps/{view-id}/actions` takes an
   operator action.
 - The fleet stream, `GET /v1/events?scope=fleet`, carries the `view.open`, `view.patch` and

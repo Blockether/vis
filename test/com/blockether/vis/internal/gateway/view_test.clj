@@ -12,6 +12,7 @@
    bridge at the same time — is the standalone app suite under `apps/vis-tui/test`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.core :as activity]
@@ -30,7 +31,8 @@
             [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.core :refer [defdescribe expect it]]
             [reitit.ring :as ring]
-            [ring.adapter.jetty9 :as jetty])
+            [ring.adapter.jetty9 :as jetty]
+            [ring.core.protocols :as ring-protocols])
   (:import [java.net URLEncoder]
            [org.eclipse.jetty.server Server ServerConnector]))
 
@@ -1481,6 +1483,188 @@
                          (expect (= 1 (count (stored-patches sid view-id))))
                          (finally (hi/close-live! view-id))))))))
 
+;; Report: a session with a long review opened slowly on a phone. The list of its
+;; views carried the whole patch of the review, also when nobody opened the review.
+(defdescribe
+  app-list-summary-test
+  (it "lists an app without its body on request, and another live view whole"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (open-app! sid)
+
+                live-id
+                (:id (hi/open-live!
+                       {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]}))
+
+                answer
+                (fn [summary]
+                  (#'views-api/list-live-views-handler
+                   {:path-params {:sid sid} :query-params {"summary" summary}}))
+
+                listed
+                (fn [summary]
+                  (into {}
+                        (map (juxt #(get % "id") identity))
+                        (get (json-body (answer summary)) "views")))]
+
+            (try (let [whole
+                       (get (listed "false") view-id)
+
+                       summary
+                       (get (listed "true") view-id)]
+
+                   (expect (seq (get whole "nodes")))
+                   (expect (document/valid-json? "view" "live_view_summary" summary))
+                   (expect (= "Review" (get summary "title")))
+                   (expect (= (dissoc summary "is_summary")
+                              (select-keys whole (keys (dissoc summary "is_summary")))))
+                   ;; The body of an app is one read away.
+                   (expect (some? (app-node (app-view sid view-id) "change")))
+                   ;; A transcript shows a live view in place, so its entry stays whole.
+                   (expect (seq (get-in (listed "true") [live-id "nodes"])))
+                   (expect (= (get (listed "false") live-id) (get (listed "true") live-id)))
+                   (expect (= 400 (:status (answer "yes")))))
+                 (finally (hi/close-live! live-id))))))))
+
+(def ^:private large-app-patch
+  "A patch with more characters than a stream sends that asked for elided app patches."
+  (str "diff --git a/big.txt b/big.txt\n--- /dev/null\n+++ b/big.txt\n@@ -0,0 +1,2000 @@\n"
+       (apply str (repeat 2000 "+a line of the change\n"))))
+
+(defn- set-app-patch!
+  "Give the diff of app `view-id` the patch `patch`, and publish the frame."
+  [view-id patch revision]
+  (app-op! {"op" "patch"
+            "view_id" view-id
+            "patch" {"ops"
+                     [{"op" "set" "node_id" "change" "patch" patch "new_revision" revision}]}})
+  (gw-hi/flush-live-patches!))
+
+;; Report: each step of a session sent the whole patch of the review to the phone,
+;; also while the review was closed: 900,000 characters a step on a mobile network.
+(defdescribe
+  large-app-patch-elision-test
+  (it "leaves the patch out of a large app frame, and says which seq the view has"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (with-events
+            (fn [seen]
+              (let [sid
+                    (str (random-uuid))
+
+                    view-id
+                    (open-app! sid)
+
+                    frames
+                    #(mapv second (live-events-of seen gateway-contract/view-patch-event view-id))]
+
+                (set-app-patch! view-id app-patch "fff0000")
+                (expect (await-true #(= 1 (count (frames)))))
+                (set-app-patch! view-id large-app-patch "fff0001")
+                (expect (await-true #(= 2 (count (frames)))))
+                (let [[small large]
+                      (frames)
+
+                      elided
+                      (gw-hi/elided-app-patch large)]
+
+                  (expect (= small (gw-hi/elided-app-patch small)))
+                  (expect (not (contains? elided "patch")))
+                  (expect (= (get-in large ["patch" "seq"]) (get elided "last_seq")))
+                  (expect (= (dissoc large "patch") (dissoc elided "is_elided" "last_seq")))
+                  (expect (document/valid-json? "view"
+                                                "patch_event"
+                                                (select-keys elided
+                                                             ["kind" "view_id" "first_seq"
+                                                              "is_elided" "last_seq"])))
+                  (expect (document/valid-json?
+                            "view"
+                            "patch_event"
+                            (select-keys small ["kind" "view_id" "first_seq" "patch"]))))
+                (bus/forget! sid)))))))
+  (it "keeps a large patch of a live view that is no app"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (with-events
+            (fn [seen]
+              (let [sid
+                    (str (random-uuid))
+
+                    view-id
+                    (:id (hi/open-live!
+                           {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]}))]
+
+                (try (hi/patch-live! view-id
+                                     [{:op "append"
+                                       :node-id "tail"
+                                       :lines (vec (repeat 500 (apply str (repeat 60 "x"))))}])
+                     (gw-hi/flush-live-patches!)
+                     (expect (await-true #(seq (live-events-of seen
+                                                               gateway-contract/view-patch-event
+                                                               view-id))))
+                     (let [frame (second (first (live-events-of seen
+                                                                gateway-contract/view-patch-event
+                                                                view-id)))]
+                       (expect (= frame (gw-hi/elided-app-patch frame))))
+                     (finally (hi/close-live! view-id)))))))))
+  (it
+    "elides only on a stream that asked with app_patches=elided"
+    (gw-hi/install!)
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (open-app! sid)
+
+              handler
+              (requiring-resolve 'com.blockether.vis.internal.gateway.server/multi-events-handler)
+
+              stream
+              (fn [query]
+                (let [out (java.io.ByteArrayOutputStream.)]
+                  {:out out
+                   :pump (future (try (ring-protocols/write-body-to-stream
+                                        (:body (handler {:query-params (assoc query "sids" sid)
+                                                         :headers {}}))
+                                        {}
+                                        out)
+                                      (catch Throwable _ nil)))}))
+
+              text
+              #(String. (.toByteArray ^java.io.ByteArrayOutputStream (:out %)) "UTF-8")]
+
+          (with-redefs-fn {#'state/soul (constantly {"id" sid})
+                           #'state/session-exists? (constantly true)}
+            (fn []
+              (let [asked
+                    (stream {"app_patches" "elided"})
+
+                    plain
+                    (stream {})]
+
+                (try (expect (await-true #(every? (fn [one]
+                                                    (str/includes? (text one) "subscription.ready"))
+                                                  [asked plain])))
+                     (set-app-patch! view-id large-app-patch "fff0001")
+                     (expect (await-true #(every? (fn [one]
+                                                    (str/includes? (text one) "view.patch"))
+                                                  [asked plain])))
+                     (expect (str/includes? (text asked) "\"is_elided\":true"))
+                     (expect (not (str/includes? (text asked) "a line of the change")))
+                     (expect (str/includes? (text plain) "a line of the change"))
+                     (expect (not (str/includes? (text plain) "is_elided")))
+                     (finally (run! #(future-cancel (:pump %)) [asked plain])
+                              (bus/forget! sid)))))))))))
+
 ;; A game's app froze in every surface after a few minutes while its record kept
 ;; growing: a flush that took the frame during a patch left the next frame without
 ;; a scheduled flush, and no later patch scheduled one.
@@ -1924,6 +2108,13 @@
 
             (try (expect (= 200 (:status opened)))
                  (expect (= [view-id] (listed)))
+                 (expect (document/valid-json? "view"
+                                               "live_view_summary"
+                                               (first (get (json-body
+                                                             (#'views-api/list-global-apps-handler
+                                                              {:query-params {"summary" "true"}}))
+                                                           "views")))
+                         "a list that asks for summaries gets the app without its body")
                  (expect (= "global"
                             (get-in (json-body (#'views-api/global-app-handler
                                                 {:path-params {:view-id view-id}}))

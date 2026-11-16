@@ -179,6 +179,7 @@
   "GET /v1/sessions/:sid/views/live — the live views this session is showing
    right now, oldest first, each as the picture a surface paints. Its apps stay
    listed after they close; `archived=true` lists only the archived apps.
+   `summary=true` lists each app without its body (view.json `live_view_summary`).
 
    The `view.open` / `view.patch` / `view.close` events are the fast path; this is
    what a client that connected later reads to recover the current picture."
@@ -187,7 +188,10 @@
         (get-in request [:query-params "placement"])
 
         archived
-        (get-in request [:query-params "archived"])]
+        (get-in request [:query-params "archived"])
+
+        summary
+        (get-in request [:query-params "summary"])]
 
     (cond (not (or (nil? placement) (contains? view-spec/placements placement)))
           (http/error-response 400
@@ -196,9 +200,13 @@
                                     (str/join ", " (sort (keys view-spec/placements)))))
           (not (contains? #{nil "true" "false"} archived))
           (http/error-response 400 :invalid-request "archived must be true or false")
-          (http/path-sid request)
-          (http/json-response
-            {:views (gw-view/live-views (http/path-sid request) placement (= "true" archived))})
+          (not (contains? #{nil "true" "false"} summary))
+          (http/error-response 400 :invalid-request "summary must be true or false")
+          (http/path-sid request) (http/json-response {:views (gw-view/live-views
+                                                                (http/path-sid request)
+                                                                placement
+                                                                (= "true" archived)
+                                                                (= "true" summary))})
           :else (http/session-404 (get-in request [:path-params :sid])))))
 
 (defn- live-view-handler
@@ -219,13 +227,22 @@
 (defn- list-global-apps-handler
   "GET /v1/apps — the global apps, oldest first, each as the picture a surface
    paints. A closed app stays listed; `archived=true` lists only the archived apps.
+   `summary=true` lists each app without its body (view.json `live_view_summary`).
    The list is empty while the person turns global apps off. The fleet stream
    carries their `view.open`, `view.patch` and `view.close` frames."
   [request]
-  (let [archived (get-in request [:query-params "archived"])]
-    (if-not (contains? #{nil "true" "false"} archived)
-      (http/error-response 400 :invalid-request "archived must be true or false")
-      (http/json-response {:views (gw-view/global-apps (= "true" archived))}))))
+  (let [archived
+        (get-in request [:query-params "archived"])
+
+        summary
+        (get-in request [:query-params "summary"])]
+
+    (cond (not (contains? #{nil "true" "false"} archived))
+          (http/error-response 400 :invalid-request "archived must be true or false")
+          (not (contains? #{nil "true" "false"} summary))
+          (http/error-response 400 :invalid-request "summary must be true or false")
+          :else (http/json-response {:views (gw-view/global-apps (= "true" archived)
+                                                                 (= "true" summary))}))))
 
 (defn- global-app-handler
   "GET /v1/apps/:view-id — one global app as the picture a surface paints."

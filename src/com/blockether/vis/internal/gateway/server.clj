@@ -627,16 +627,27 @@
     (update event "result" dissoc "view")
     event))
 
+(defn- elides-app-patches?
+  "True when the client asked for `app_patches=elided`: it reads an app again
+   after a large patch, and only while it shows that app."
+  [request]
+  (= "elided"
+     (some-> (get-in request [:query-params "app_patches"])
+             str/trim)))
+
 (defn- stream-outbound
   "Outbound transform for ONE event stream. A form's later Activity receipts carry
    only the rows that changed since this stream's previous receipt of that form
-   (`activity-contract/encode-stream-event`). Call it once per written frame."
-  []
+   (`activity-contract/encode-stream-event`). With `elide?`, a large app patch
+   goes out without its patch. Call it once per written frame."
+  [elide?]
   (let [forms (volatile! {})]
     (fn [event]
       (let [[next-forms event] (activity-contract/encode-stream-event
                                  @forms
-                                 (without-settled-picture event)
+                                 (cond-> (without-settled-picture event)
+                                   elide?
+                                   gw-view/elided-app-patch)
                                  gateway-contract/turn-terminal-event-types)]
         (vreset! forms next-forms)
         event))))
@@ -950,7 +961,7 @@
    Replays each session past its cursor in `replay` mode (see [[sse-replay]];
    default `:settled`), then drains live and heartbeats; a
    dead client unsubscribes every feed."
-  [sid+cursors proxied? owner-pid & [include-fleet? replay gzip?]]
+  [sid+cursors proxied? owner-pid & [include-fleet? replay gzip? elide?]]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -958,7 +969,7 @@
               (sse-stream output-stream gzip?)
 
               outbound
-              (stream-outbound)
+              (stream-outbound elide?)
 
               sub-id
               (str (java.util.UUID/randomUUID))
@@ -987,7 +998,11 @@
               write!
               (fn [event]
                 (if (= "fleet" (get event "scope"))
-                  (do (.write out (.getBytes (sse/sse-frame event) StandardCharsets/UTF_8))
+                  (do (.write out
+                              (.getBytes (sse/sse-frame (cond-> event
+                                                          elide?
+                                                          gw-view/elided-app-patch))
+                                         StandardCharsets/UTF_8))
                       (.flush out))
                   (let [esid (str (get event "session_id"))]
                     (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
@@ -1050,8 +1065,9 @@
    real change costs about a hundred bytes and arrives at once. The windowed read
    stays as the COLD read — first paint, reconnect, foreground — and is also the
    only resync: this stream has no replay and no cursor, so a gap heals with one
-   ordinary read instead of a rewind."
-  [proxied? owner-pid gzip?]
+   ordinary read instead of a rewind. With `elide?`, a large patch of a global
+   app goes out without its patch."
+  [proxied? owner-pid gzip? & [elide?]]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -1079,7 +1095,11 @@
 
               write!
               (fn [event]
-                (.write out (.getBytes (sse/sse-frame event) StandardCharsets/UTF_8))
+                (.write out
+                        (.getBytes (sse/sse-frame (cond-> event
+                                                    elide?
+                                                    gw-view/elided-app-patch))
+                                   StandardCharsets/UTF_8))
                 (.flush out))]
 
           (swap! instance/server-state (fn [st]
@@ -1105,7 +1125,9 @@
 (defn- multi-events-handler
   "GET /v1/events?sids=a:10,b,c:3 carries every listed session on one SSE
    connection. Add scope=both to carry whole-machine status changes on that
-   connection too. scope=fleet remains the fleet-only feed."
+   connection too. scope=fleet remains the fleet-only feed. With
+   app_patches=elided, a large patch of an app comes without its patch (view.json
+   `patch_event`)."
   [request]
   (let [proxied?
         (boolean (some #(get-in request [:headers %])
@@ -1129,7 +1151,10 @@
 
     (cond fleet? {:status 200
                   :headers (sse-encoding-headers gzip?)
-                  :body (fleet-sse-body proxied? (request-client-pid request) gzip?)}
+                  :body (fleet-sse-body proxied?
+                                        (request-client-pid request)
+                                        gzip?
+                                        (elides-app-patches? request))}
           (seq sid+cursors) {:status 200
                              :headers (sse-encoding-headers gzip?)
                              :body (multi-sse-body sid+cursors
@@ -1137,7 +1162,8 @@
                                                    (request-client-pid request)
                                                    combined?
                                                    (sse-replay request)
-                                                   gzip?)}
+                                                   gzip?
+                                                   (elides-app-patches? request))}
           :else (http/error-response 400 :bad-request "no valid sids"))))
 
 ;; /metrics (§6.5)

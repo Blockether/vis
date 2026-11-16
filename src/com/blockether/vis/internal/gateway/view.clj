@@ -297,15 +297,25 @@
                  TimeUnit/MILLISECONDS))
     nil))
 
+(defn- summary
+  "The list entry of app `view` without its body: a list shows the name and the state
+   of an app, and the client reads the body when a person opens it. Another view
+   stays whole, because a transcript shows it in place."
+  [view]
+  (if (app/app? view)
+    (assoc (apply dissoc view view-spec/live-summary-omitted-keys) :is-summary true)
+    view))
+
 (defn live-views
   "The live views of session `sid`, oldest first — the resync a client reads after
    joining late, waking up or losing its stream. A `placement` (`inline`, `panel`
    or `attachment`) keeps only the views it names. An app stays in the list after
    it closes, until it is archived. With `archived?`, the list holds only the
-   archived apps."
-  ([sid] (live-views sid nil false))
-  ([sid placement] (live-views sid placement false))
-  ([sid placement archived?]
+   archived apps. With `summary?`, an app comes without its body."
+  ([sid] (live-views sid nil false false))
+  ([sid placement] (live-views sid placement false false))
+  ([sid placement archived?] (live-views sid placement archived? false))
+  ([sid placement archived? summary?]
    (let [sid
          (str sid)
 
@@ -323,7 +333,9 @@
      (->> (concat views apps)
           (filter #(or (nil? placement) (= placement (:placement %))))
           (sort-by :created-at)
-          (mapv app-surfaces/shown)))))
+          (mapv (cond-> app-surfaces/shown
+                  summary?
+                  (comp summary)))))))
 
 (defn live-view-of
   "Live view `view-id` when it belongs to `sid`, else nil. Every REST answer goes
@@ -332,13 +344,52 @@
   (let [{:keys [kind view]} (view-of sid view-id)]
     (when (= :live kind) (app-surfaces/shown view))))
 
+(defn- chars-above?
+  "True when the strings of `value` hold more than `limit` characters. It stops there."
+  [value limit]
+  (let [left (volatile! (long limit))]
+    (letfn [(above? [x]
+              (cond (string? x) (neg? (long (vswap! left
+                                                    (fn [n]
+                                                      (- (long n) (count x))))))
+                    (map? x) (boolean (some above? (vals x)))
+                    (sequential? x) (boolean (some above? x))
+                    :else false))]
+      (above? value))))
+
+(declare global-app-of)
+
+(defn elided-app-patch
+  "Wire event `event` as a stream that asked for elided app patches gets it. The
+   `view.patch` of an app whose strings hold more characters than
+   [[view-spec/patch-elide-above-chars]] leaves out its patch and says so. A client
+   that shows the app reads the view again; another client does no work for it.
+   Every other event stays as it is."
+  [event]
+  (if (and (= gateway-contract/view-patch-event (get event "type"))
+           (chars-above? (get-in event ["patch" "ops"]) view-spec/patch-elide-above-chars)
+           (some-> (if (= "fleet" (get event "scope"))
+                     (global-app-of (get event "view_id"))
+                     (:view (view-of (get event "session_id") (get event "view_id"))))
+                   app/app?))
+    (-> event
+        (dissoc "patch")
+        (assoc "is_elided" true
+               "last_seq" (get-in event ["patch" "seq"])))
+    event))
+
 (defn global-apps
   "The global apps, oldest first. A closed app stays listed until it is archived;
-   with `archived?`, only the archived apps. Empty while `apps_global` is off."
-  ([] (global-apps false))
-  ([archived?]
+   with `archived?`, only the archived apps. With `summary?`, each app comes without
+   its body. Empty while `apps_global` is off."
+  ([] (global-apps false false))
+  ([archived?] (global-apps archived? false))
+  ([archived? summary?]
    (if (global-listed?)
-     (filterv #(= (boolean archived?) (boolean (:is-archived %))) (view/global-apps))
+     (into []
+           (comp (filter #(= (boolean archived?) (boolean (:is-archived %))))
+                 (map (if summary? summary identity)))
+           (view/global-apps))
      [])))
 
 (defn global-app-of
