@@ -1,7 +1,8 @@
 (ns com.blockether.vis.test-selection
   "Lazytest hook of the `:test` alias. On a developer machine it skips
    `release-bundle-test` when no file that it runs or reads has changed. CI and
-   `VIS_TEST_ALL=1` run it. A `--namespace` or `--var` selection runs as given."
+   `VIS_TEST_ALL=1` run it. `VIS_TEST_PART` runs one of the two parts of the suite,
+   so two CI jobs share it. A `--namespace` or `--var` selection runs as given."
   (:require [clojure.java.shell :as sh]
             [clojure.string :as str]
             [lazytest.hooks :as hooks]))
@@ -42,6 +43,40 @@
            (= "1" (get env "VIS_TEST_ALL"))
            (nil? changed)
            (some release-input? changed))))
+
+(def ^:private python-prefix "com.blockether.vis.internal.python.")
+
+(defn in-part?
+  "True when the namespace `n` runs in `part`, the value of `VIS_TEST_PART`. The part
+   `python` has the namespaces of the embedded Python, which take about half of the
+   time of the suite. The part `other` has every other namespace. Without a part,
+   every namespace runs."
+  [part n]
+  (let [python? (str/starts-with? (str n) python-prefix)]
+    (case part
+      (nil "")
+      true
+
+      "python"
+      python?
+
+      "other"
+      (not python?)
+
+      (throw (ex-info (str "VIS_TEST_PART must be python or other, not " (pr-str part))
+                      {:part part})))))
+
+(hooks/defhook part
+               "Run only the namespaces of `VIS_TEST_PART`."
+               (pre-test-run [config m]
+                             (let [part (System/getenv "VIS_TEST_PART")]
+                               (if (or (seq (:ns-filter config)) (seq (:var-filter config)))
+                                 m
+                                 (update m
+                                         :children
+                                         #(filterv (fn [s]
+                                                     (in-part? part (:doc s)))
+                                            %))))))
 
 (hooks/defhook release-scripts
                "Skip `release-bundle-test` locally when its inputs are unchanged."

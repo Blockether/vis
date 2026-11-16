@@ -123,7 +123,8 @@
          :main-opts ["-m" "lazytest.main" "--hook"
                      "com.blockether.vis.test-network-guard/no-network" "--hook"
                      "com.blockether.vis.test-builtins/builtins" "--hook"
-                     "com.blockether.vis.test-selection/release-scripts" "test"]}
+                     "com.blockether.vis.test-selection/release-scripts" "--hook"
+                     "com.blockether.vis.test-selection/part" "test"]}
   ;; What only `target/vis` can answer, after `clojure -T:build native`; separate so it fails
   ;; loudly when the binary is missing. No network hook: the binary is a separate process.
   :test-native {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}

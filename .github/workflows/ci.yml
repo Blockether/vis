@@ -1,10 +1,13 @@
 name: CI
 
 on:
+  # No test reads `examples/`, so a change of only an example starts no run.
   push:
     branches: [main]
+    paths-ignore: ['examples/**']
   pull_request:
     branches: [main]
+    paths-ignore: ['examples/**']
   workflow_call:
 # New branch pushes supersede older checks. A reusable release check has its
 # caller's workflow/ref, so it neither waits for nor cancels ordinary main CI.
@@ -20,6 +23,10 @@ jobs:
   # native binary is built with. JVM users may use any JDK 25+ distribution.
   # fail-fast false so each OS reports independently. Windows is not supported.
   #
+  # Linux is the slowest runner, so two Linux jobs share the suite: `python` runs the
+  # namespaces of the embedded Python and the TUI suite, `other` runs the rest.
+  # `VIS_TEST_PART` selects the part in `test_selection.clj`. macOS runs all in one job.
+  #
   # Only main pushes use the local Mac; all pull requests stay on hosted runners.
   tests:
     name: tests / ${{ matrix.name }}
@@ -29,7 +36,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux, host: ubuntu-latest }
+          - { name: linux python, host: ubuntu-latest, part: python }
+          - { name: linux other, host: ubuntu-latest, part: other }
           - name: macos
             host: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","ARM64","vis-macos-arm64"]') || 'macos-26' }}
     steps:
@@ -163,9 +171,11 @@ jobs:
           # less memory than Linux, whose default quarter-RAM heap also exhausted.
           # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
           JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }} ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
-        # One JVM runs every namespace in turn.
+          VIS_TEST_PART: ${{ matrix.part }}
+        # One JVM runs every namespace of the part in turn.
         run: clojure -M:test
       - name: Run standalone TUI suite
+        if: matrix.part != 'other'
         working-directory: apps/vis-tui
         run: clojure -X:deps prep && clojure -M:test
 

@@ -74,7 +74,8 @@ def required_recovery_checks() -> set[str]:
             "lint / clj-kondo",
             "classpath / .",
             "classpath / apps/vis-tui",
-            "tests / linux",
+            "tests / linux python",
+            "tests / linux other",
             "tests / macos",
             "build / aot uberjar",
         )
