@@ -167,6 +167,7 @@
   "Lower-layer slots that hold a higher layer's function."
   '#{com.blockether.vis.internal.council.core/install-runtime!
      com.blockether.vis.internal.council.core/install-waker!
+     com.blockether.vis.internal.foundation.mcp.sampling/install-model!
      com.blockether.vis.internal.gateway.bus/set-deliver-fn!
      com.blockether.vis.internal.gateway.bus/set-relevant-sid-fn!
      com.blockether.vis.internal.gateway.bus/set-relevant-sids-fn!

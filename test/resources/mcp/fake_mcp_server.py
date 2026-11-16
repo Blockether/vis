@@ -3,16 +3,25 @@
 # JSON-RPC 2.0 over stdin/stdout. Handles initialize, tools/list, tools/call.
 # The tool "ping" sends a ping to the client and reports its answer. The tool
 # "grow" adds a tool and sends notifications/tools/list_changed. The tool "ask"
-# sends a form elicitation and reports the answer of the client.
+# sends a form elicitation and reports the answer of the client. The tools
+# "roots" and "sample" do the same with roots/list and sampling/createMessage.
 # With the argument "stateless" it is a server of revision 2026-07-28: it has no
 # handshake, each request must name its protocol version, and it says that its
 # tools changed only on a subscription.
+# More arguments: "dual" also answers the handshake of an older revision, "mute"
+# gives no answer to a request that it does not know, and "slow" starts late.
 import json
 import sys
+import time
 
+modes = set(sys.argv[1:])
 grown = False
-stateless = sys.argv[1:] == ["stateless"]
+dual = "dual" in modes
+stateless = dual or "stateless" in modes
 subscription = None
+
+if "slow" in modes:
+    time.sleep(0.6)
 
 
 def send(obj):
@@ -43,6 +52,7 @@ for line in sys.stdin:
     meta = (msg.get("params") or {}).get("_meta") or {}
     if (
         stateless
+        and not dual
         and mid is not None
         and (
             method == "initialize"
@@ -166,6 +176,33 @@ for line in sys.stdin:
             )
             answer = json.loads(sys.stdin.readline() or "{}")
             text_result(mid, json.dumps(answer.get("result"), sort_keys=True))
+        elif name in ("roots", "sample"):
+            send(
+                {"jsonrpc": "2.0", "id": "server-3", "method": "roots/list"}
+                if name == "roots"
+                else {
+                    "jsonrpc": "2.0",
+                    "id": "server-3",
+                    "method": "sampling/createMessage",
+                    "params": {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": {
+                                    "type": "text",
+                                    "text": "Capital of France?",
+                                },
+                            }
+                        ],
+                        "maxTokens": 50,
+                    },
+                }
+            )
+            answer = json.loads(sys.stdin.readline() or "{}")
+            text_result(
+                mid,
+                json.dumps(answer.get("result") or answer.get("error"), sort_keys=True),
+            )
         elif name == "grow":
             grown = True
             if not stateless:
@@ -194,7 +231,7 @@ for line in sys.stdin:
                     },
                 }
             )
-    elif mid is not None:
+    elif mid is not None and "mute" not in modes:
         send(
             {
                 "jsonrpc": "2.0",

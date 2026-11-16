@@ -26,6 +26,34 @@
                                                  "url" "https://mcp.example.com/mcp"
                                                  "auth" {"client_metadata_url" url}}}}}))))))
 
+(defdescribe mcp-machine-grant-test
+  (it "accepts a grant with no person, and rejects a secret in plain text"
+      (doseq [[auth accepted?]
+              [[{"grant" "client_credentials" "client_id" "vis" "private_key_file" "/keys/vis.pem"
+                 "signing_algorithm" "ES256" "dpop" true} true]
+               [{"grant" "client_credentials" "client_id" "vis" "client_secret" "${VIS_SECRET}"} true]
+               [{"grant" "jwt_bearer" "assertion_file" "/run/secrets/workload-token"} true]
+               [{"grant" "enterprise_managed" "idp_issuer" "https://idp.example.com"
+                 "idp_client_id" "vis" "idp_client_secret" "${IDP_SECRET}"
+                 "idp_id_token_file" "/run/secrets/id-token"} true]
+               [{"grant" "client_credentials" "private_key" "-----BEGIN PRIVATE KEY-----"} false]
+               [{"grant" "jwt_bearer" "assertion" "eyJhbGciOiJFUzI1NiJ9.e30.sig"} false]
+               [{"grant" "password"} false]]]
+        (expect (= accepted?
+                   (config-validation/valid?
+                     {"mcp" {"servers" {"remote" {"transport" "streamable_http"
+                                                 "url" "https://mcp.example.com/mcp"
+                                                 "auth" auth}}}}))))))
+
+(defdescribe mcp-input-options-test
+  (it "accepts roots and sampling as true or false only"
+      (doseq [[options accepted?] [[{"roots" false} true] [{"sampling" true} true]
+                                   [{"roots" "workspace"} false] [{"sampling" 1} false]]]
+        (expect (= accepted?
+                   (config-validation/valid?
+                     {"mcp" {"servers" {"files" (merge {"transport" "stdio" "command" "npx"}
+                                                       options)}}}))))))
+
 (defdescribe mcp-legacy-transport-test
   (it "accepts an HTTP+SSE server at a URL and rejects one with a command"
       (doseq [[server accepted?] [[{"transport" "sse" "url" "https://mcp.example.com/sse"} true]

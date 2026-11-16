@@ -4,9 +4,10 @@
 # the client one time for each scenario. For a released version, each scenario of
 # the suite runs, and a failed check or a warning fails the run. For a draft
 # revision, its requirement set runs, and a failed check of a scenario that the
-# revision requires fails the run.
+# revision requires fails the run. `extensions` runs the authorization extensions
+# that no revision scores: a failed check of one fails the run.
 #
-# Usage: bin/mcp-conformance [spec-version ...]   # default: each version below
+# Usage: bin/mcp-conformance [spec-version | extensions ...]   # default: each below
 #
 #   VIS_MCP_CONFORMANCE_SUITE    the npm package of the suite, with its version
 #   VIS_MCP_CONFORMANCE_RESULTS  keep the result files of the suite in this directory
@@ -17,8 +18,11 @@ set -euo pipefail
 suite="${VIS_MCP_CONFORMANCE_SUITE:-@modelcontextprotocol/conformance@0.2.0-alpha.12}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 versions=("$@")
-[ "${#versions[@]}" -gt 0 ] || versions=(2025-03-26 2025-06-18 2025-11-25 2026-07-28)
+[ "${#versions[@]}" -gt 0 ] || versions=(2025-03-26 2025-06-18 2025-11-25 2026-07-28 extensions)
 drafts=" 2026-07-28 "
+# The grants that need no person, and DPoP.
+extensions=(auth/client-credentials-jwt auth/client-credentials-basic
+  auth/enterprise-managed-authorization auth/dpop auth/dpop-nonce auth/wif-jwt-bearer)
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/vis-mcp-conformance.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -29,17 +33,26 @@ cd "$root"
 clojure -Spath -A:test > "$work/classpath"
 
 status=0
-for version in "${versions[@]}"; do
-  echo "== MCP client conformance, specification $version"
-  if [[ "$drafts" == *" $version "* ]]; then
-    selection=(--requirements "$version")
-  else
-    selection=(--suite all --spec-version "$version")
-  fi
+run_suite() {
   # A Node option of the caller can break the suite.
   env -u NODE_OPTIONS npx --yes "$suite" client \
     --command "$root/bin/mcp-conformance-client" \
-    "${selection[@]}" --timeout 180000 \
-    -o "$results/$version" || status=1
+    "$@" --timeout 180000 || status=1
+}
+
+for version in "${versions[@]}"; do
+  if [ "$version" = extensions ]; then
+    echo "== MCP client conformance, authorization extensions"
+    for scenario in "${extensions[@]}"; do
+      run_suite --scenario "$scenario" -o "$results/extensions/${scenario//\//-}"
+    done
+    continue
+  fi
+  echo "== MCP client conformance, specification $version"
+  if [[ "$drafts" == *" $version "* ]]; then
+    run_suite --requirements "$version" -o "$results/$version"
+  else
+    run_suite --suite all --spec-version "$version" -o "$results/$version"
+  fi
 done
 exit "$status"

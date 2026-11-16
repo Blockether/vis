@@ -12,6 +12,7 @@
   (:require [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
+            [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as automation-runner]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -20,6 +21,7 @@
             [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.router :as router]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.env :as python-env]
@@ -96,6 +98,8 @@
     ;; A session row names the model that the session uses now. Without a model pick, that
     ;; is the default pair of the session's project.
     (introspection/install-default-route! #'state/session-default-model)
+    ;; A sampling request of an MCP server gets its answer from the router of the loop.
+    (sampling/install-model! #'router/llm-text!)
     (bus/set-relevant-sid-fn! #'state/session-known?)
     (bus/set-relevant-sids-fn! #'state/tracked-session-ids)
     ;; A native image starts the tailer on its first publish instead; see `bus/publish!`.

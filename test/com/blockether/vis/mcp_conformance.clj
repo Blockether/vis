@@ -69,12 +69,15 @@
             (do (Thread/sleep 100) (recur (inc polls)))))))))
 
 (defn- wants-sign-in?
+  "True when a person can change `failure`. A grant that needs no person gets its
+   token by itself: its refusal is the answer."
   [spec failure]
   (let [chain (take-while some? (iterate ex-cause failure))]
-    (boolean (or (some #(= :mcp/oauth-required (:type (ex-data %))) chain)
-                 (and (some-> (:www-auth-atom spec)
-                              deref)
-                      (some #(#{401 403} (:status (ex-data %))) chain))))))
+    (boolean (and (not (oauth/machine-grant? (:auth spec)))
+                  (or (some #(= :mcp/oauth-required (:type (ex-data %))) chain)
+                      (and (some-> (:www-auth-atom spec)
+                                   deref)
+                           (some #(#{401 403} (:status (ex-data %))) chain)))))))
 
 (defn- with-sign-in
   "The result of `(f)`. When the server asks for a sign-in, sign in and call `f`
@@ -131,19 +134,43 @@
           [["json_schema_echo" {"schema" (get tool "inputSchema")}]])
         :else (throw (ex-info (str "Unknown scenario " scenario) {}))))
 
-(defn- run-scenario!
-  [url scenario]
-  (let [{client-id "client_id" client-secret "client_secret"}
+(defn- auth-of
+  "The `auth` block of the configuration for `scenario`, from the data of the
+   scenario. Like the reference client of the suite: the client that the scenario
+   registered before, else the client document of the suite."
+  [scenario]
+  (let [{client-id "client_id" client-secret "client_secret" :as data}
         (context)
 
-        ;; Like the reference client of the suite: the client that the scenario
-        ;; registered before, else the client document of the suite.
-        auth
-        (if (string? client-id)
-          (cond-> {"client_id" client-id}
-            (string? client-secret)
-            (assoc "client_secret" client-secret))
-          {"client_metadata_url" "https://conformance-test.local/client-metadata.json"})
+        client
+        (cond-> {}
+          (string? client-id)
+          (assoc "client_id" client-id)
+
+          (string? client-secret)
+          (assoc "client_secret" client-secret))]
+
+    (cond (str/starts-with? scenario "auth/client-credentials-")
+          (cond-> (assoc client "grant" "client_credentials")
+            (get data "private_key_pem")
+            (assoc "private_key"
+              (get data "private_key_pem") "signing_algorithm"
+              (get data "signing_algorithm")))
+          (= scenario "auth/wif-jwt-bearer") (assoc client
+                                               "grant" "jwt_bearer"
+                                               "assertion" (get data "valid_jwt"))
+          (= scenario "auth/enterprise-managed-authorization")
+          (merge client
+                 {"grant" "enterprise_managed"}
+                 (select-keys data
+                              ["idp_client_id" "idp_id_token" "idp_issuer" "idp_token_endpoint"]))
+          (seq client) client
+          :else {"client_metadata_url" "https://conformance-test.local/client-metadata.json"})))
+
+(defn- run-scenario!
+  [url scenario]
+  (let [auth
+        (auth-of scenario)
 
         spec
         (#'core/->client-spec

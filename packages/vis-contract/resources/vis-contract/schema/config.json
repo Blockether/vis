@@ -890,6 +890,74 @@
         "authorization_timeout_ms": {
           "type": "integer",
           "minimum": 1
+        },
+        "grant": {
+          "enum": [
+            "client_credentials",
+            "jwt_bearer",
+            "enterprise_managed"
+          ],
+          "description": "A grant that needs no person: the client gets the token by itself, with no browser. Without it, a person signs in."
+        },
+        "private_key": {
+          "type": "string",
+          "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+          "description": "PEM private key that signs the client assertion (private_key_jwt), as an environment reference. Plain text is refused."
+        },
+        "private_key_file": {
+          "type": "string",
+          "pattern": ".*\\S.*",
+          "description": "Path of the PEM private key that signs the client assertion."
+        },
+        "signing_algorithm": {
+          "enum": [
+            "ES256",
+            "RS256"
+          ],
+          "description": "Algorithm of the client assertion. Defaults to the algorithm of the private key."
+        },
+        "assertion": {
+          "type": "string",
+          "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+          "description": "JWT for the grant jwt_bearer, as an environment reference. Plain text is refused."
+        },
+        "assertion_file": {
+          "type": "string",
+          "pattern": ".*\\S.*",
+          "description": "Path of the JWT for the grant jwt_bearer, such as a workload identity token. Read for each token request."
+        },
+        "idp_token_endpoint": {
+          "type": "string",
+          "pattern": "^https?://\\S+$",
+          "description": "Token endpoint of the identity provider for the grant enterprise_managed."
+        },
+        "idp_issuer": {
+          "type": "string",
+          "pattern": "^https?://\\S+$",
+          "description": "Issuer of the identity provider. Vis reads the token endpoint from its OpenID configuration."
+        },
+        "idp_client_id": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "idp_client_secret": {
+          "type": "string",
+          "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+          "description": "Secret of the client at the identity provider, as an environment reference. Plain text is refused."
+        },
+        "idp_id_token": {
+          "type": "string",
+          "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+          "description": "Identity token of the person, as an environment reference. Plain text is refused."
+        },
+        "idp_id_token_file": {
+          "type": "string",
+          "pattern": ".*\\S.*",
+          "description": "Path of the identity token of the person. Read for each token request."
+        },
+        "dpop": {
+          "type": "boolean",
+          "description": "Bind each token to a key of this client (DPoP, RFC 9449). Defaults to true when the MCP server asks for DPoP and the authorization server accepts ES256 proofs."
         }
       },
       "additionalProperties": false
@@ -943,6 +1011,14 @@
         },
         "listen": {
           "type": "boolean"
+        },
+        "roots": {
+          "type": "boolean",
+          "description": "Give the server the workspace of the session as MCP roots. Defaults to true for stdio and to false for a remote server."
+        },
+        "sampling": {
+          "type": "boolean",
+          "description": "Let the server ask the model for an answer. The person allows each request. Defaults to false."
         },
         "auth": {
           "$ref": "#/$defs/mcpAuth"

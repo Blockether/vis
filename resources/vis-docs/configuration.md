@@ -869,7 +869,11 @@ request, Vis uses the older HTTP+SSE transport on the same URL. To use only HTTP
 Vis works with both generations of the MCP specification. It first asks the server which protocol
 versions it supports. A server of revision `2026-07-28` answers, and Vis then sends each request on
 its own, without a session. Any other server gets a session, as before. You set nothing for either
-kind. A local server that does not answer the question starts about five seconds later.
+kind. A local server that does not answer the question within one second gets the older start
+request too, so it starts without a long wait.
+
+A server can change its generation while Vis runs, for example after an upgrade. Vis then connects
+again and sends the refused request one more time. You do nothing.
 
 Vis keeps one stream open to each Streamable HTTP server. The server uses the stream to send
 changes, such as a new tool list, and its questions. To turn the stream off, set `listen: false`.
@@ -877,6 +881,31 @@ changes, such as a new tool list, and its questions. To turn the stream off, set
 A server can ask you for input in the middle of a tool call. Vis shows the question as a form in
 the TUI and in the Companion app, and the tool call waits. Select **Send** to answer or **Decline**
 to refuse. See [Forms and user input](human-input.md) for how forms work.
+
+A local server gets the folders of your session as MCP roots: the workspace, and each other folder
+that the session can search. A filesystem server uses them to limit what it reads. A server at a
+URL does not get them. Set `roots: true` or `roots: false` to change this for one server.
+
+A server can also ask a model for an answer. MCP calls this sampling, and it is off. Set
+`sampling: true` for a server that you trust:
+
+```yaml
+mcp:
+  servers:
+    research:
+      transport: stdio
+      command: research-mcp
+      sampling: true
+```
+
+Vis then shows you each request before a model sees it. Select **Allow** to send it or **Decline**
+to refuse it. An allowed request costs tokens, and Vis sends only its text to a low-cost model.
+
+The MCP specification deprecates roots and sampling from revision `2026-07-28`. Both still work
+with the servers of today.
+
+A server can have tools, resources and prompts. The agent can list and read all of them. Ask in
+plain words, for example: "Read the resource `file:///logs/app.log` of the server `files`."
 
 The gateway starts an OAuth flow when an HTTP MCP server requests it with
 `401`. From the terminal, use **MCP Servers**. From the CLI:
@@ -943,6 +972,40 @@ mcp:
 ```
 
 Vis uses `auth.client_id` first, then a client document, then registration.
+
+Some servers give a token to a program, with no sign-in in a browser. Set `auth.grant` for such a
+server:
+
+| `auth.grant` | Use it when | Also set |
+|---|---|---|
+| `client_credentials` | The provider gave you a client for a service. | `client_id`, and `client_secret` or `private_key_file` |
+| `jwt_bearer` | Your platform gives the workload a signed token. | `assertion_file` |
+| `enterprise_managed` | The identity provider of your company decides the access. | `idp_issuer` or `idp_token_endpoint`, and `idp_id_token_file` |
+
+```yaml
+mcp:
+  servers:
+    reports:
+      transport: streamable_http
+      url: https://mcp.example.com/mcp
+      auth:
+        grant: client_credentials
+        client_id: <CLIENT_ID>
+        private_key_file: /etc/vis/reports-key.pem
+```
+
+With a private key, Vis signs in with a signed assertion and sends no secret. The key selects the
+algorithm, `ES256` or `RS256`. Vis reads a token file again for each token request, because a
+platform replaces the file. For `enterprise_managed`, also set `idp_client_id` and
+`idp_client_secret` when the identity provider wants a client.
+
+Each of `private_key`, `assertion`, `idp_client_secret` and `idp_id_token` takes only an
+environment reference, such as `${REPORTS_KEY}`. When the server refuses the grant, the server
+shows as unhealthy and the error gives the reason of the server.
+
+Some servers bind a token to a key of the client, so that a stolen token does not work elsewhere.
+This is DPoP. Vis does it when the server asks for it. Set `auth.dpop: true` to always ask for
+such a token, or `auth.dpop: false` to never ask for one.
 
 Vis keeps server names in one form: lowercase letters, digits and hyphens. `Figma Dev` becomes
 `figma-dev`. A name without a letter or a digit is refused.

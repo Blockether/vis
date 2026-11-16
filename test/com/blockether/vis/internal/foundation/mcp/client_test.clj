@@ -68,13 +68,50 @@
                      (finally (mcp/close conn) (expect (false? (mcp/alive? conn))))))))
 
 (defn- with-stdio-conn
-  "Run `(f conn)` with a connection to the fake stdio server."
-  [f]
-  (let [conn (mcp/connect "fake"
-                          {:transport :stdio
-                           :command (require-executable "python3")
-                           :args [(.getPath (io/file server-path))]})]
-    (try (f conn) (finally (mcp/close conn)))))
+  "Run `(f conn)` with a connection to the fake stdio server. `options` are more
+   keys of the client spec."
+  ([f] (with-stdio-conn {} f))
+  ([options f]
+   (let [conn (mcp/connect "fake"
+                           (merge {:transport :stdio
+                                   :command (require-executable "python3")
+                                   :args [(.getPath (io/file server-path))]}
+                                  options))]
+     (try (f conn) (finally (mcp/close conn))))))
+
+(defn- call-json
+  "The text of the result of tool `tool` on `conn`, read as JSON."
+  [conn tool opts]
+  (json/read-json (get-in (mcp/call-tool conn tool {} 3000 opts) ["content" 0 "text"])))
+
+(def ^:private model-answer
+  {"role" "assistant"
+   "content" {"type" "text" "text" "Paris"}
+   "model" "small"
+   "stopReason" "endTurn"})
+
+(defdescribe mcp-stdio-input-test
+             (it "gives a server the roots of the newest call"
+                 (with-stdio-conn
+                   {:roots? true}
+                   (fn [conn]
+                     (doseq [uri ["file:///work/a" "file:///work/b"]]
+                       (let [roots [{"uri" uri "name" "work"}]]
+                         (expect (= {"roots" roots} (call-json conn "roots" {:roots roots}))))))))
+             (it "gives a sampling request to the call that waits, and refuses it with no answer"
+                 (with-stdio-conn
+                   {:sampling? true}
+                   (fn [conn]
+                     (let [seen (atom nil)
+                           answer (fn [params]
+                                    (reset! seen params)
+                                    model-answer)]
+                       (expect (= model-answer (call-json conn "sample" {:on-sampling answer})))
+                       (expect (= "Capital of France?"
+                                  (get-in @seen ["messages" 0 "content" "text"])))
+                       (expect (= -1
+                                  (get (call-json conn "sample" {:on-sampling (constantly nil)})
+                                       "code"))))))))
 
 (defdescribe mcp-stdio-server-message-test
              (it "answers a ping that the server sends before its reply"
@@ -870,6 +907,56 @@
             (expect (not (contains? (get-in (nth (requests-of requests "tools/call") 2)
                                             [:message "params"])
                                     "requestState")))))))
+  (it "answers roots and sampling that a result asks for, and ends the call on a refusal"
+      (with-http-conn
+        (stateless-routes
+          [{"name" "echo"}]
+          {"tools" {}}
+          (fn [request exchange]
+            (send! exchange
+                   200
+                   "application/json"
+                   (if (get-in request [:message "params" "inputResponses"])
+                     (text-result (:message request) "done")
+                     (rpc-result (:message request)
+                                 {"resultType" "input_required"
+                                  "inputRequests"
+                                  {"where" {"method" "roots/list"}
+                                   "what" {"method" "sampling/createMessage"
+                                           "params" {"messages" [] "maxTokens" 9}}}})))))
+        {:roots? true :sampling? true}
+        (fn [conn requests]
+          (let [roots [{"uri" "file:///work" "name" "work"}]
+                call (fn [sample]
+                       (mcp/call-tool conn "echo" {} 3000 {:roots roots :on-sampling sample}))]
+            (expect (= "done" (get-in (call (constantly model-answer)) ["content" 0 "text"])))
+            (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
+              (expect (= {"roots" {"listChanged" true} "sampling" {}}
+                         (get-in asked
+                                 ["params" "_meta" "io.modelcontextprotocol/clientCapabilities"])))
+              (expect (= {"where" {"roots" roots} "what" model-answer}
+                         (get-in answered ["params" "inputResponses"]))))
+            (expect (= :mcp/input-refused
+                       (try (call (constantly nil))
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+  (it "reads a resource of a server and names it in the headers"
+      (with-http-conn
+        (assoc (stateless-routes [] {"resources" {}} nil)
+          "resources/read" (fn [request exchange]
+                             (send! exchange
+                                    200
+                                    "application/json"
+                                    (rpc-result (:message request)
+                                                {"resultType" "complete"
+                                                 "contents" [{"uri" "file:///a" "text" "A"}]}))))
+        {}
+        (fn [conn requests]
+          (expect (= "A"
+                     (get-in (mcp/request conn "resources/read" {"uri" "file:///a"})
+                             ["contents" 0 "text"])))
+          (let [read (first (requests-of requests "resources/read"))]
+            (expect (= ["resources/read" "file:///a"]
+                       (mapv #(get-in read [:headers %]) ["mcp-method" "mcp-name"])))))))
   (it "mirrors an annotated argument into its header, and leaves out a tool with a bad header"
       (with-http-conn
         (stateless-routes
@@ -947,3 +1034,92 @@
              (mcp/call-tool conn "grow" {})
              (expect (= ["echo" "grown"] (names)))
              (finally (mcp/close conn))))))
+
+(defn- era-routes
+  "The routes of a server that is of an older revision, with a session, until the
+   atom `modern?` is true. After that it is a stateless server."
+  [modern?]
+  (let [stateless
+        (stateless-routes [{"name" "echo"}] {"tools" {}} (text-answer "stateless"))
+
+        refuse
+        (fn [request exchange]
+          (send! exchange 400 "application/json" (rpc-refusal (:message request) -32000 nil)))]
+
+    {"server/discover" (fn [request exchange]
+                         (if @modern?
+                           ((get stateless "server/discover") request exchange)
+                           (send! exchange 404 "text/plain" "")))
+     "initialize" (fn [request ^HttpExchange exchange]
+                    (if @modern?
+                      (refuse request exchange)
+                      (do (.add (.getResponseHeaders exchange) "Mcp-Session-Id" "session-1")
+                          (send! exchange
+                                 200
+                                 "application/json"
+                                 (rpc-result (:message request)
+                                             {"protocolVersion" "2025-06-18"
+                                              "capabilities" {"tools" {}}
+                                              "serverInfo" {"name" "local" "version" "1"}})))))
+     "tools/call" (fn [request exchange]
+                    (let [stateless? (some? (get-in request [:message "params" "_meta"]))
+                          session? (some? (get-in request [:headers "mcp-session-id"]))]
+                      (cond (and @modern? stateless?) ((text-answer "stateless") request exchange)
+                            (and (not @modern?) session?) ((text-answer "legacy") request exchange)
+                            :else (refuse request exchange))))}))
+
+(defn- era-change
+  "Connect to a server of `era-routes` while it is in the era `modern-first?`, then
+   change its era. Returns whether the failure of the next call is a stale era,
+   and what a new connection answers."
+  [modern-first?]
+  (let [modern? (atom modern-first?)]
+    (with-mcp-http
+      (era-routes modern?)
+      (fn [url _]
+        (let [spec {:transport :streamable-http :url url :timeout-ms 3000}
+              conn (mcp/connect "era" spec)]
+          (try (swap! modern? not)
+               (let [stale? (try (call-text conn)
+                                 (catch clojure.lang.ExceptionInfo failure
+                                   (mcp/stale-era? conn failure)))
+                     fresh (mcp/connect "era" spec)]
+                 (try [(:modern? conn) stale? (boolean (:modern? fresh)) (call-text fresh)]
+                      (finally (mcp/close fresh))))
+               (finally (mcp/close conn))))))))
+
+(defdescribe mcp-era-change-test
+             (it "sees that a server of an older revision became stateless"
+                 (expect (= [nil true true "stateless"] (era-change false))))
+             (it "sees that a stateless server became a server of an older revision"
+                 (expect (= [true true false "legacy"] (era-change true)))))
+
+(defn- stdio-era
+  "Connect to the fake stdio server with `modes` and give `[modern? echo ms]`."
+  [modes]
+  (let [started (System/currentTimeMillis)
+        conn (mcp/connect "fake"
+                          {:transport :stdio
+                           :command (require-executable "python3")
+                           :args (into [(.getPath (io/file server-path))] modes)})]
+    (try [(boolean (:modern? conn))
+          (get-in (mcp/call-tool conn "echo" {"msg" "hi"}) ["content" 0 "text"])
+          (- (System/currentTimeMillis) started)]
+         (finally (mcp/close conn)))))
+
+(defdescribe mcp-stdio-era-test
+  (it "connects without a long wait to a server that is silent on an unknown request"
+      ;; #458: such a server got `initialize` only after five seconds of silence.
+      (let [[modern? echo ms] (stdio-era ["mute"])]
+        (expect (false? modern?))
+        (expect (= "echo: hi" echo))
+        (expect (< (long ms) 4000) (str ms " ms"))))
+  (it "finds the era of a server that starts after the client asked for both eras"
+      ;; #458: a slow server of both eras got the old handshake.
+      (with-redefs-fn {#'mcp/stdio-hedge-ms 100}
+        (fn []
+          (doseq [[modes modern?] [[["dual" "slow"] true]
+                                   [["stateless" "slow"] true]
+                                   [["slow"] false]
+                                   [["mute" "slow"] false]]]
+            (expect (= [modern? "echo: hi"] (subvec (stdio-era modes) 0 2)) (str modes)))))))

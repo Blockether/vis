@@ -1,10 +1,12 @@
 (ns com.blockether.vis.internal.gateway.wiring-test
   (:require [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
+            [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.router :as router]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -35,6 +37,7 @@
       (expect (identical? #'state/ingest-mirrored-event! (slot #'bus/deliver-fn)))
       (expect (identical? #'state/session-known? (slot #'bus/relevant-sid-fn)))
       (expect (identical? #'bus/block-started-ms (slot #'introspection/block-clock)))
+      (expect (identical? #'router/llm-text! (slot #'sampling/model)))
       (expect (identical? #'state/tracked-session-ids (slot #'bus/relevant-sids-fn))))
   (it "installs once, so a second call leaves the slots as they are"
       (wiring/install!)

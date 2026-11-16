@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.mcp.core-test
   (:require [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
@@ -1040,6 +1041,96 @@
                  (expect (= ["write_file" {"path" "p"}] @called))
                  (expect (= "ok" (get-in answer ["content" 0 "text"]))))
                (finally (reset! conns {}))))))))
+
+(defn- with-alpha
+  "Run `(f call!)` with the configured server `alpha`, where `client` maps a var of
+   the MCP client to its stand-in. `call!` is `mcp_call`."
+  [client f]
+  (let [store
+        {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo"}}}}
+
+        conns
+        @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)]
+
+    (with-redefs-fn (merge {#'config/load-global-config-raw (constantly store)
+                            #'config/load-global-yaml-config-raw (constantly store)
+                            #'client/list-tools (constantly [{"name" "write_file"}])
+                            #'client/alive? (constantly true)
+                            #'client/close (constantly nil)}
+                           client)
+      (fn []
+        (try (reset! conns {})
+             (f (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl))
+             (finally (reset! conns {})))))))
+
+(defn- era-calls
+  "Call a tool of a server that refuses each request of an older revision. The
+   connections are stateless from the connect number `modern-from`. Returns the
+   answer and the era of each connection that got the call."
+  [modern-from]
+  (let [connects
+        (atom 0)
+
+        calls
+        (atom [])]
+
+    (with-alpha {#'client/connect (fn [_ _]
+                                    {:transport :streamable-http
+                                     :tools (atom nil)
+                                     :modern? (>= (long (swap! connects inc)) (long modern-from))})
+                 #'client/call-tool (fn [conn & _]
+                                      (swap! calls conj (:modern? conn))
+                                      (if (:modern? conn)
+                                        {"content" [{"text" "ok"}]}
+                                        (throw (ex-info "HTTP 400 on tools/call"
+                                                        {:type :mcp/http-error :status 400}))))}
+                (fn [call!]
+                  [(call! {:session-id "s1"} "alpha" "write_file" {}) @calls]))))
+
+(defdescribe mcp-era-change-test
+             (it "connects again and repeats the call when the server changed its era"
+                 (let [[answer calls] (era-calls 2)]
+                   (expect (= "ok" (get-in (:result answer) ["content" 0 "text"])))
+                   (expect (= [false true] calls))))
+             (it "reports the refusal, with no second call, when the era is the same"
+                 (let [[answer calls] (era-calls 9)]
+                   (expect (str/includes? (str answer) "HTTP 400 on tools/call"))
+                   (expect (= [false] calls)))))
+
+(defdescribe
+  mcp-method-call-test
+  (it "sends an MCP request for a resource, with the roots of the session"
+      (let [sent
+            (atom nil)
+
+            root
+            (.getCanonicalPath (io/file (System/getProperty "java.io.tmpdir")))
+
+            env
+            {:session-id "s1" :workspace/root root}]
+
+        (with-alpha
+          {#'client/connect
+           (fn [_ spec]
+             {:transport :stdio :tools (atom nil) :spec spec :server-capabilities {"resources" {}}})
+           #'client/request (fn [_conn method params _timeout-ms opts]
+                              (reset! sent [method params (:roots opts)])
+                              {"resultType" "complete"
+                               "contents" [{"uri" "file:///a" "text" "A"}]})}
+          (fn [call!]
+            (expect (= ["resources/list" "resources/templates/list" "resources/read"]
+                       (get (:result (call! env "alpha")) "methods")))
+            (expect (= {"server" "alpha"
+                        "method" "resources/read"
+                        "contents" [{"uri" "file:///a" "text" "A"}]}
+                       (:result (call! env "alpha" "resources/read" {"uri" "file:///a"}))))
+            (expect (= ["resources/read" {"uri" "file:///a"} [(str "file://" root)]]
+                       (update @sent
+                               2
+                               #(mapv (fn [r]
+                                        (get r "uri"))
+                                      %))))
+            (expect (str/includes? (str (call! env "alpha" "prompts/list")) "has no prompts")))))))
 
 (defdescribe
   mcp-oauth-visibility-test

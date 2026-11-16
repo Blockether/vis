@@ -23,6 +23,8 @@
    ONE model-facing verb under alias `mcp` (flat sandbox renders `alias_name`):
      mcp__call(server, tool, args) - call a tool
      mcp__call(server)             - that server's descriptions + input schemas
+     mcp__call(server, method, params) - an MCP request for resources or prompts,
+                                         such as `resources/read`
 
    There is deliberately NO connect/disconnect verb. The daemon connects every
    enabled server, health-checks the pool on its own clock, and reaps/respawns a
@@ -34,7 +36,8 @@
    rides in ctx under `env.mcp`, keyed by server name so a change diffs per
    server. That IS the inventory: no listing verb spends a turn re-fetching what
    the session object already carries."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
@@ -44,7 +47,9 @@
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.elicitation :as elicitation]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
+            [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
   (:import (java.text Normalizer Normalizer$Form)
            (java.util Locale)))
@@ -118,12 +123,23 @@
   [auth]
   (when (map? auth) (update-keys auth #(keyword (str/replace (name %) "_" "-")))))
 
+(defn- option
+  "The value of the option `k` (a text) of the server `spec`, or `default` when
+   the spec does not have it. `runtime-config` keywordizes only the keys that it
+   knows, so an option comes under its keyword or under its text."
+  [spec k default]
+  (let [value (get spec (keyword k) (get spec k))]
+    (if (some? value) value default)))
+
 (defn- ->client-spec
   "Coerce a user spec (already `runtime-config`'d) into what `mcp/connect`
    wants: env-interpolated, `:bearer-fn` synthesised for HTTP servers without a
    static `Authorization` header, `:timeout-ms` forwarded. Every connection
    declares form elicitation. A Streamable HTTP server gets the listen channel
-   unless `listen` is false: a server sends an elicitation there.
+   unless `listen` is false: a server sends an elicitation there. The client
+   declares roots unless `roots` is false; the default is true only for a stdio
+   server, because a remote server has no use for local paths. The client
+   declares sampling only when `sampling` is true.
 
    The `WWW-Authenticate` atom is SHARED with the transport instead of staying
    private to the token provider: every HTTP server without a static header gets
@@ -157,23 +173,27 @@
           (mcp-oauth/make-bearer-fn server-name
                                     (:url s)
                                     www-auth
-                                    (when (:client-id auth) (:client-secret auth))))]
+                                    (when (:client-id auth) (:client-secret auth))
+                                    auth))]
 
-    (cond-> (assoc s
+    (cond-> (assoc (dissoc s :roots "roots" :sampling "sampling")
               :transport transport
-              :elicitation? true)
+              :elicitation? true
+              :roots? (true? (option s "roots" (= :stdio transport)))
+              :sampling? (true? (option s "sampling" false)))
       auth
       (assoc :auth auth)
 
       (:timeout_ms s)
       (assoc :timeout-ms (:timeout_ms s))
 
-      (and (= :streamable-http transport) (not (false? (:listen s))))
+      (and (= :streamable-http transport) (not (false? (option s "listen" true))))
       (assoc :listen? true)
 
       bearer-fn
       (assoc :bearer-fn
-        bearer-fn :www-auth-atom
+        bearer-fn :proof-fn
+        (mcp-oauth/make-proof-fn server-name) :www-auth-atom
         www-auth))))
 
 (defn- canonical-name
@@ -308,6 +328,16 @@
           (= :mcp/oauth-required (:type (ex-data c))) true
           :else (recur (ex-cause c)))))
 
+(defn- grant-refused?
+  "True when `t` or a cause is a token request that failed without a person in
+   it: the grant of the `auth` block was refused, or the block is incomplete. A
+   retry sends the same request, so the connect is left alone like a sign-in."
+  [^Throwable t]
+  (loop [c t]
+    (cond (nil? c) false
+          (contains? #{:mcp/oauth-token :mcp/oauth-error} (:type (ex-data c))) true
+          :else (recur (ex-cause c)))))
+
 (defn- auth-backoff?
   "Whether a connect under `k` should be skipped: a refusal is on record, its
    window has not passed, and the spec it was refused under is still the spec -
@@ -415,6 +445,7 @@
                                      :data {:server server :retry-in-ms AUTH_BACKOFF_MS}}
                                     "MCP server awaits sign-in; connect deferred"))
                       (do (when (accept?) (swap! connect-failures assoc k spec))
+                          (when (grant-refused? t) (note-auth-refusal! k spec))
                           (tel/log! {:level :warn
                                      :id ::connect-failed
                                      :data {:server server :error (ex-message t)}}
@@ -1221,6 +1252,8 @@
         (when challenged? (mcp-oauth/token-status server))]
 
     (boolean (and challenged?
+                  ;; No person can sign in for a grant that needs none.
+                  (not (mcp-oauth/machine-grant? (:auth spec)))
                   (or (not (get status "is_authorized"))
                       (and (get status "is_expired") (not (get status "has_refresh_token"))))))))
 
@@ -1254,6 +1287,15 @@
            :hint (str "Start it from Settings -> MCP Servers, or POST /v1/mcp/servers/"
                       server
                       "/actions/start"))
+      (and (mcp-oauth/machine-grant? (:auth spec))
+           (some-> ^clojure.lang.IDeref (:www-auth-atom spec)
+                   deref))
+      (err
+        :mcp/call
+        (str "MCP server '" server "' wants a token, and the grant of its `auth` block gave none.")
+        :server server
+        :hint
+        "Check the `auth` block of the server: grant, client_id, and the key, secret or assertion. The daemon tries again after one minute.")
       spec
       (err
         :mcp/call
@@ -1375,9 +1417,91 @@
                                   ", or check the server's status in session env.mcp")
                                 ".")))))
 
+(defn- roots-of
+  "The roots of the session of `env` for an MCP server: the workspace root, then
+   each filesystem root that a search covers. Each is a `file` URI with the name
+   of its directory."
+  [env]
+  (into []
+        (comp (keep identity)
+              (distinct)
+              (map (fn [root]
+                     (let [directory (io/file root)]
+                       {"uri" (str/replace (str (.toUri (.toPath directory))) #"(?<=[^/])/$" "")
+                        "name" (.getName directory)}))))
+        (cons (workspace/workspace-root env)
+              (keep #(when-not (:no-search? %) (:root %)) (workspace/env-filesystem-roots env)))))
+
+(defn- call-answers
+  "The answers of a request of `env` on `conn` to the inputs that `server` can ask
+   for: the person of the session answers an elicitation and allows a sampling
+   request, and the roots are those of the session."
+  [env server conn]
+  (let [sid
+        (:session-id env)
+
+        spec
+        (:spec conn)]
+
+    {:on-elicitation (when sid #(elicitation/ask! sid server %))
+     :on-sampling (when (and sid (:sampling? spec)) #(sampling/ask! sid server %))
+     :roots (when (:roots? spec) (roots-of env))}))
+
+(defn- with-current-era
+  "The value of `(f conn)`. A server can change its era or lose its session after
+   the connect: then it refuses the request itself (`mcp/stale-era?`), and the
+   request did not run. The pool connects again, which finds the era again, and
+   `f` runs ONE more time, but only on a connection of the other era or of a new
+   session. Any other failure is that of the first try."
+  [session-id server conn f]
+  (try (f conn)
+       (catch clojure.lang.ExceptionInfo failure
+         (when-not (mcp/stale-era? conn failure) (throw failure))
+         (disconnect! session-id server)
+         (let [fresh (ensure-connected! session-id server)]
+           (if (and fresh
+                    (or (not= (boolean (:modern? conn)) (boolean (:modern? fresh)))
+                        (and (not (:modern? conn)) (= 404 (:status (ex-data failure))))))
+             (f fresh)
+             (throw failure))))))
+
+(def ^:private mcp-methods
+  "The MCP requests that `mcp_call` sends when its `tool` names one, each with the
+   capability that the server must have."
+  (array-map "resources/list" "resources"
+             "resources/templates/list" "resources"
+             "resources/read" "resources"
+             "prompts/list" "prompts"
+             "prompts/get" "prompts"))
+
+(defn- methods-of
+  "The methods of `mcp-methods` that the server of `conn` has."
+  [conn]
+  (filterv #(contains? (:server-capabilities conn) (mcp-methods %)) (keys mcp-methods)))
+
+(defn- method-result
+  "The answer of `mcp_call` for the MCP request `method` with the params `args`:
+   the result of the server under its own keys, one page for a list."
+  [env server conn method args]
+  (if (some #{method} (methods-of conn))
+    (ok :mcp/call
+        (merge {"server" server "method" method}
+               (dissoc (mcp/request conn
+                                    method
+                                    (if (map? args) args {})
+                                    (or (:timeout-ms conn) mcp/default-timeout-ms)
+                                    (call-answers env server conn))
+                 "_meta"
+                 "resultType")))
+    (err :mcp/call (str "MCP server '" server "' has no " (mcp-methods method) ".")
+         :server server
+         :hint (str "Call `await " sandbox-verb "(server)` for what this server has."))))
+
 (defn- mcp-call-impl
   "The whole model-facing surface. `server` alone answers with that server's tools,
-   descriptions and input schemas; `server` + `tool` invokes. There is no inventory
+   descriptions and input schemas; `server` + `tool` invokes. A `tool` that names
+   an MCP request of `mcp-methods` sends that request: resources and prompts.
+   There is no inventory
    verb because the inventory - every visible server, its status, its tool NAMES -
    already rides in ctx under `env.mcp`, so a call only has to name the server.
 
@@ -1390,42 +1514,53 @@
      (try
        (if-let [conn (when (scoped/resource-enabled? env :mcp server)
                        (ensure-connected! (:session-id env) server))]
-         (let [rows (tool-rows conn)
-               row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
+         (with-current-era
+           (:session-id env)
+           server
+           conn
+           (fn [conn]
+             (let [rows (tool-rows conn)
+                   row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))
+                   methods (methods-of conn)]
 
-           (cond
-             ;; No tool named - or an args map drifted into its slot. Answer with the
-             ;; catalog rather than guessing at a call: this IS the schema lookup.
-             (or (not (string? tool)) (str/blank? tool)) (ok :mcp/call
-                                                             {"server" server "tools" rows})
-             ;; Unknown name, judged only against a catalog we actually have: a
-             ;; momentarily empty listing must never refuse a real call.
-             (and (seq rows) (nil? row))
-             (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
-                  :server server
-                  :tools (mapv #(get % "name") rows)
-                  :hint (str "Call `await "
-                             sandbox-verb
-                             "(server)` for every tool's description and input schema."))
-             :else (let [r (mcp/call-tool conn
-                                          tool
-                                          (if (map? args) args {})
-                                          (or (:timeout-ms conn) mcp/default-timeout-ms)
-                                          ;; The server can ask the person of this session.
-                                          {:on-elicitation (when-let [sid (:session-id env)]
-                                                             #(elicitation/ask! sid server %))})
-                         is-error (boolean (get r "isError"))]
+               (cond
+                 ;; No tool named - or an args map drifted into its slot. Answer with the
+                 ;; catalog rather than guessing at a call: this IS the schema lookup.
+                 (or (not (string? tool)) (str/blank? tool)) (ok :mcp/call
+                                                                 (cond-> {"server" server
+                                                                          "tools" rows}
+                                                                   (seq methods)
+                                                                   (assoc "methods" methods)))
+                 ;; A tool of the server wins over a request of the same name.
+                 (and (nil? row) (contains? mcp-methods tool))
+                 (method-result env server conn tool args)
+                 ;; Unknown name, judged only against a catalog we actually have: a
+                 ;; momentarily empty listing must never refuse a real call.
+                 (and (seq rows) (nil? row))
+                 (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
+                      :server server
+                      :tools (mapv #(get % "name") rows)
+                      :hint (str "Call `await "
+                                 sandbox-verb
+                                 "(server)` for every tool's description and input schema."))
+                 :else (let [r (mcp/call-tool conn
+                                              tool
+                                              (if (map? args) args {})
+                                              (or (:timeout-ms conn) mcp/default-timeout-ms)
+                                              ;; The server can ask the person of this session.
+                                              (call-answers env server conn))
+                             is-error (boolean (get r "isError"))]
 
-                     (ok :mcp/call
-                         (cond-> {"server" server
-                                  "tool" tool
-                                  "content" (get r "content")
-                                  "is_error" is-error}
-                           ;; A refused call is nearly always an argument mismatch, and the
-                           ;; schema is already cached: ship it WITH the refusal so the retry
-                           ;; costs no extra round trip.
-                           (and is-error row)
-                           (assoc "input_schema" (get row "input_schema")))))))
+                         (ok :mcp/call
+                             (cond-> {"server" server
+                                      "tool" tool
+                                      "content" (get r "content")
+                                      "is_error" is-error}
+                               ;; A refused call is nearly always an argument mismatch, and the
+                               ;; schema is already cached: ship it WITH the refusal so the retry
+                               ;; costs no extra round trip.
+                               (and is-error row)
+                               (assoc "input_schema" (get row "input_schema")))))))))
          (unavailable-err env server))
        (catch Throwable t (call-failed-err env server tool t))))))
 
@@ -1435,7 +1570,7 @@
 
 (def
   ^{:doc
-    "Invoke `tool` on configured MCP server `server` with `args` matching its input schema (omit or {} for none): {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"], and a refused call carries \"input_schema\" back with it. Called with `server` alone it lists that server's catalog instead: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}]}. Server names, status and tool names already ride in ctx under env.mcp; the gateway connects and heals every enabled server on its own clock, so there is no connect/disconnect verb. Config: ~/.vis/state.yml :mcp :servers."
+    "Invoke `tool` on configured MCP server `server` with `args` matching its input schema (omit or {} for none): {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"], and a refused call carries \"input_schema\" back with it. Called with `server` alone it lists that server's catalog instead: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}], \"methods\": [S]}; \"methods\" is there only for a server with resources or prompts. A `tool` that names one of these MCP requests sends it: `resources/list`, `resources/templates/list`, `resources/read` with {\"uri\": S}, `prompts/list`, `prompts/get` with {\"name\": S, \"arguments\": {...}}. The answer is {\"server\": S, \"method\": S} plus the keys of the MCP result; a list gives one page, and its \"nextCursor\" goes back as {\"cursor\": S}. Server names, status and tool names already ride in ctx under env.mcp; the gateway connects and heals every enabled server on its own clock, so there is no connect/disconnect verb. Config: ~/.vis/state.yml :mcp :servers."
     :arglists '([server] [server tool] [server tool args])}
   mcp-call
   mcp-call-impl)
@@ -1454,9 +1589,9 @@
       :symbol 'call
       :name "mcp__call"
       :result
-      "String-keyed `{op,server,tool,content,is_error,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}]}`."
+      "String-keyed `{op,server,tool,content,is_error,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}],methods?}`. With an MCP request as `tool`: `{op,server,method}` plus the keys of the MCP result."
       :description
-      "Call a tool on an MCP server. The call connects automatically. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so name them directly. Omit `tool` to get the input schemas of that server. In `python_execution`, call `await mcp_call(...)`."
+      "Call a tool on an MCP server. The call connects automatically. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so name them directly. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. In `python_execution`, call `await mcp_call(...)`."
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
       :inject-env? true
@@ -1474,6 +1609,8 @@
    emits exactly `session[\"env\"][\"mcp\"][\"servers\"][\"<name>\"][...] = ...` instead
    of re-sending the whole inventory. A list would re-send every server on any
    change.
+
+   A connected server with resources or prompts names them under `\"has\"`.
 
    Servers that are not usable are listed too, with `\"status\"`: the model must be
    able to tell \"no such server\" from \"stopped - start it again\" from \"signed
@@ -1499,7 +1636,10 @@
                 (ctx-tool-names conn)
 
                 connected?
-                (and conn (mcp/alive? conn))]
+                (and conn (mcp/alive? conn))
+
+                has
+                (when connected? (vec (distinct (map mcp-methods (methods-of conn)))))]
 
             [nm
              (cond-> {"scope" (if session? "session" "global")
@@ -1511,6 +1651,9 @@
                                      :else "disconnected")}
                connected?
                (assoc "tools" names)
+
+               (seq has)
+               (assoc "has" has)
 
                (pos? (long omitted))
                (assoc "tools_omitted" omitted))]))
@@ -1544,13 +1687,15 @@
    at `linear.save_issue(...)` - a NameError, because a server is not a module
    and a tool name is not an attribute. Naming the verb here costs one line per
    request and saves the iterations that guessing burns."
-  (str "Call MCP servers through ONE sandbox verb: `await "
-       sandbox-verb
+  (str "Call MCP servers through ONE sandbox verb: `await " sandbox-verb
        "(server, tool, args)`. `server` and `tool` are STRINGS from"
        " `session[\"env\"][\"mcp\"][\"servers\"]`, never attributes, modules or a per-server"
        " namespace. With only `server`, it returns that server's tools and their input"
        " schemas. The result text is `content[i][\"text\"]`. `doc(\"<server>/<tool>\")` reads"
-       " one tool's description without a call."))
+       " one tool's description without a call. A server with `\"has\"` in its entry also gives"
+       " resources or prompts: pass an MCP request as `tool`, such as `resources/list`,"
+       " `resources/read` with `{\"uri\": ...}`, `prompts/list` or `prompts/get` with"
+       " `{\"name\": ...}`."))
 
 (def vis-extension
   (extension/extension

@@ -554,7 +554,8 @@
 (def ^:private result-fields
   {"get_session" ["title" "goal_status" "turn_count" "model" "last_turn"]
    "list_sessions" ["title" "goal_status" "turn_count" "request_snippet" "reply_snippet"]
-   "mcp__call" ["content" "tools"]})
+   "mcp__call" ["content" "tools" "methods" "resources" "resourceTemplates" "contents" "prompts"
+                "messages"]})
 
 (defn select-result
   [fields value]
@@ -1018,7 +1019,8 @@
                                        "No goal result")
                 (= op "list_sessions")
                 (if (seq value) (counted-label (count value) "session") "No sessions found")
-                (= op "mcp__call") (summary-line [(field value "server") (field value "tool")
+                (= op "mcp__call") (summary-line [(field value "server")
+                                                  (or (field value "tool") (field value "method"))
                                                   (when (true? (field value "is_error"))
                                                     "Tool reported an error")])
                 :else (str (or (field value "summary") (field value "title") "")))

@@ -24,7 +24,10 @@
    request gets `Method not found`, and `notifications/tools/list_changed`
    invalidates the tools cache. With `:elicitation?` the client declares form
    elicitation: an `elicitation/create` of the server goes to the call that
-   waits, and the `:on-elicitation` fn of that call answers it.
+   waits, and the `:on-elicitation` fn of that call answers it. With `:sampling?`
+   the same holds for `sampling/createMessage` and `:on-sampling`. With `:roots?`
+   the client declares roots and answers `roots/list` with the `:roots` of the
+   newest request.
 
    OAuth 2.1 (spec `2025-06-18`) is supported for HTTP transports via
    `oauth.clj`: pass `:bearer-fn` (a 0/1-arg fn yielding the current Bearer
@@ -41,7 +44,7 @@
 
    A `conn` is a plain map of closures + state; the extension treats it
    opaquely. Lifecycle: `connect` (which finds the era of the server) →
-   `list-tools` / `call-tool` → `close`."
+   `list-tools` / `call-tool` / `request` → `close`."
   (:require [babashka.http-client :as http]
             [charred.api :as json]
             [clojure.java.io :as io]
@@ -67,12 +70,22 @@
 
 (def default-timeout-ms 30000)
 
-(def ^:private stdio-probe-timeout-ms
+(def ^:private stdio-hedge-ms
   "How long a stdio server can be silent on `server/discover` before it gets
-   `initialize`. A server of an older revision can ignore an unknown method."
-  5000)
+   `initialize` too. A server of an older revision can ignore an unknown method,
+   and a server that starts slowly answers nothing for some seconds."
+  1000)
+
+(def ^:private stdio-order-grace-ms
+  "How long a `server/discover` result can come after the `initialize` result of
+   the same server and still decide the era."
+  100)
 
 (def ^:private http-probe-timeout-ms 10000)
+
+(def ^:private roots-grace-ms
+  "How long a request waits for a server to read roots that changed."
+  500)
 
 (def ^:private max-input-rounds "How many times one request can come back as `input_required`." 16)
 
@@ -154,7 +167,13 @@
   [spec]
   (cond-> {}
     (:elicitation? spec)
-    (assoc "elicitation" {"form" {}})))
+    (assoc "elicitation" {"form" {}})
+
+    (:roots? spec)
+    (assoc "roots" {"listChanged" true})
+
+    (:sampling? spec)
+    (assoc "sampling" {})))
 
 (defn- request-meta
   "The `_meta` fields that each request in the stateless protocol `version` has."
@@ -260,14 +279,33 @@
        "id" (get msg "id")
        "error" {"code" -32601 "message" (str "Method not found: " (get msg "method"))}})))
 
-(defn- elicitation-request?
-  [msg]
-  (and (map? msg) (= "elicitation/create" (get msg "method")) (some? (get msg "id"))))
+(def ^:private input-capability
+  "The requests of a server for input, each with the key of the client spec that
+   declares it."
+  {"elicitation/create" :elicitation? "sampling/createMessage" :sampling? "roots/list" :roots?})
 
-(defn- cancelled
-  "The reply to the elicitation `msg` when nobody can answer it."
+(defn- declared-input
+  "The method of `msg` when `msg` is a request of the server for an input that the
+   client of `spec` declared, else nil."
+  [spec msg]
+  (when (and (map? msg) (some? (get msg "id")))
+    (let [method (get msg "method")]
+      (when (get spec (input-capability method)) method))))
+
+(defn- person-input?
+  "Whether `msg` asks for an input that only a call with a person can give."
+  [spec msg]
+  (contains? #{"elicitation/create" "sampling/createMessage"} (declared-input spec msg)))
+
+(defn- unanswered
+  "The reply to the input request `msg` when no call can answer it: a cancelled
+   elicitation, or a refused sampling request."
   [msg]
-  {"jsonrpc" "2.0" "id" (get msg "id") "result" {"action" "cancel"}})
+  (if (= "sampling/createMessage" (get msg "method"))
+    {"jsonrpc" "2.0"
+     "id" (get msg "id")
+     "error" {"code" -1 "message" "User rejected sampling request"}}
+    {"jsonrpc" "2.0" "id" (get msg "id") "result" {"action" "cancel"}}))
 
 (defn- with-defaults
   "`content` plus the default of each property of `schema` that `content` leaves
@@ -311,33 +349,68 @@
        "id" (get msg "id")
        "error" {"code" -32602 "message" (str "Unsupported elicitation mode: " mode)}})))
 
+(defn- input-reply
+  "The reply to the person input `msg` from the `answers` of one call: `:ask` for
+   an elicitation, as in `elicitation-reply`, and `:sample` for a sampling request.
+   `:sample` gets the params of `sampling/createMessage` and returns its result, or
+   nil when the person refuses the request."
+  [msg {:keys [ask sample]}]
+  (if (= "sampling/createMessage" (get msg "method"))
+    (let [result (when sample (sample (get msg "params")))]
+      (if (map? result) {"jsonrpc" "2.0" "id" (get msg "id") "result" result} (unanswered msg)))
+    (if ask (elicitation-reply msg ask) (unanswered msg))))
+
+(defn- answers-of
+  "The answers that the `opts` of one call have for the inputs of the server, or
+   nil when it has none."
+  [opts]
+  (not-empty (into {} (filter (comp some? val)) (select-keys opts [:ask :sample :roots]))))
+
 (defn- input-response
-  "The result of the client for the input request `request` of server `name`. `ask`
-   answers a form elicitation as in `elicitation-reply`; without it the answer is
-   a cancel. Vis declares no other input."
-  [name request ask]
-  (when-not (= "elicitation/create" (get request "method"))
-    (throw (ex-info
-             (str "MCP " name " asked for " (get request "method") ", which Vis does not have")
-             {:type :mcp/protocol :server name})))
-  (or (when ask
-        (try (get (elicitation-reply {"params" (get request "params")} ask) "result")
-             (catch Throwable t
-               ;; A cancelled turn ends the call; any other failure is no answer.
-               (when (cancellation/preserve-interrupt! t) (throw t)))))
-      {"action" "cancel"}))
+  "The result of the client of `spec` for the input request `request` of server
+   `name`, from the `answers` of the call. An elicitation with no answer is a
+   cancel. A refused sampling request has no result in this protocol, so it ends
+   the call. A server must not ask for an input that the client did not declare."
+  [name spec request {:keys [ask sample roots]}]
+  (let [method
+        (get request "method")
+
+        params
+        (get request "params")]
+
+    (case (when (get spec (input-capability method)) method)
+      "elicitation/create"
+      (or (when ask
+            (try (get (elicitation-reply {"params" params} ask) "result")
+                 (catch Throwable t
+                   ;; A cancelled turn ends the call; any other failure is no answer.
+                   (when (cancellation/preserve-interrupt! t) (throw t)))))
+          {"action" "cancel"})
+
+      "roots/list"
+      {"roots" (vec roots)}
+
+      "sampling/createMessage"
+      (let [result (when sample (sample params))]
+        (if (map? result)
+          result
+          (throw (ex-info (str "MCP " name " asked for a model answer, and the person refused it")
+                          {:type :mcp/input-refused :server name}))))
+
+      (throw (ex-info (str "MCP " name " asked for " method ", which Vis did not declare")
+                      {:type :mcp/protocol :server name})))))
 
 (defn- input-params
   "`params` of a request with the answer to its `input_required` result `result`:
    one response for each input request, and the state of the server only when the
    server gave one."
-  [name params result ask]
+  [name spec params result answers]
   (let [requests (get result "inputRequests")]
     (cond-> params
       (and (map? requests) (seq requests))
       (assoc "inputResponses"
         (reduce-kv (fn [responses k request]
-                     (assoc responses k (input-response name request ask)))
+                     (assoc responses k (input-response name spec request answers)))
                    {}
                    requests))
 
@@ -347,9 +420,10 @@
 (defn- modern-request-fn
   "The request fn of a connection in a stateless revision, over the request fn
    `request` of its transport. Each request gets `meta` in its `_meta`. A result of
-   the type `input_required` gets its input from the `:ask` fn of the call. Then
-   the request goes again, as a new request, with the answers and the state."
-  [name request meta]
+   the type `input_required` gets its input from the answers of the call: `:ask`,
+   `:sample` and `:roots`. Then the request goes again, as a new request, with
+   the answers and the state."
+  [name spec request meta]
   (fn modern ([method params timeout-ms] (modern method params timeout-ms nil))
     ([method params timeout-ms opts] (let [params (update (or params {}) "_meta" merge meta)]
                                        (loop [sent params
@@ -382,15 +456,15 @@
                                                               :server name
                                                               :method method}))
                                              :else (recur
-                                                     (input-params name params result (:ask opts))
+                                                     (input-params name spec params result opts)
                                                      (inc (long round))))))))))
 
 (defn- await-reply!
   "Take the reply of one call from `inbox`, or `::timeout` when nothing came for
-   `timeout-ms`. An elicitation of the server runs HERE, on the thread of the
-   caller, through `ask`: the form belongs to the turn of that thread, and the
+   `timeout-ms`. A person input of the server runs HERE, on the thread of the
+   caller, through `answers`: the form belongs to the turn of that thread, and the
    time that the person takes is no part of the deadline."
-  [^LinkedBlockingQueue inbox timeout-ms ask]
+  [^LinkedBlockingQueue inbox timeout-ms answers]
   (loop []
 
     (let [[kind value send!] (.poll inbox (long timeout-ms) TimeUnit/MILLISECONDS)]
@@ -398,31 +472,49 @@
         :reply
         value
 
-        :elicit
-        (do (send! (try (elicitation-reply value ask)
+        :input
+        (do (send! (try (input-reply value answers)
                         (catch Throwable t
                           ;; A cancelled turn ends the call; any other failure is no answer.
-                          (if (cancellation/preserve-interrupt! t) (throw t) (cancelled value)))))
+                          (if (cancellation/preserve-interrupt! t) (throw t) (unanswered value)))))
             (recur))
 
         ::timeout))))
 
 (defn- without-caller [callers inbox] (vec (remove #(identical? inbox %) callers)))
 
+(defn- input-state
+  "The state of one transport for the input requests of its server. `:callers` is
+   an atom with the calls that can answer a person input, newest last. `:roots` is
+   an atom with the roots of the connection. Each is nil when the client of `spec`
+   did not declare that input."
+  [spec]
+  {:spec spec
+   :callers (when (or (:elicitation? spec) (:sampling? spec)) (atom []))
+   :roots (when (:roots? spec) (atom {:roots (vec (:roots spec))}))})
+
 (defn- handle-incoming!
-  "Handle a message of the server that is not a reply. An elicitation goes to the
-   newest call that waits in the atom `callers`, and is a cancel when none waits;
-   `callers` is nil for a client that declared no elicitation. Any other request
-   gets its answer through `send!`, and a notification goes to the fn in the atom
+  "Handle a message of the server that is not a reply. A person input goes to the
+   newest call that waits in `inputs`, and has no answer when none waits. A
+   `roots/list` gets the roots of the connection. Any other request gets its
+   answer through `send!`, and a notification goes to the fn in the atom
    `incoming`. Never throws."
-  [msg send! incoming callers]
-  (try (cond (and callers (elicitation-request? msg)) (if-let [^LinkedBlockingQueue inbox
-                                                               (peek @callers)]
-                                                        (.put inbox [:elicit msg send!])
-                                                        (send! (cancelled msg)))
-             (server-request-reply msg) (send! (server-request-reply msg))
-             (and (map? msg) (string? (get msg "method"))) (when-let [on-notification @incoming]
-                                                             (on-notification msg)))
+  [msg send! incoming {:keys [spec callers roots]}]
+  (try (case (declared-input spec msg)
+         ("elicitation/create" "sampling/createMessage")
+         (if-let [^LinkedBlockingQueue inbox (peek @callers)]
+           (.put inbox [:input msg send!])
+           (send! (unanswered msg)))
+
+         "roots/list"
+         (let [{:keys [read] :as state} (swap! roots assoc :asked? true)]
+           (send! {"jsonrpc" "2.0" "id" (get msg "id") "result" {"roots" (:roots state)}})
+           (some-> read
+                   (deliver true)))
+
+         (cond (server-request-reply msg) (send! (server-request-reply msg))
+               (and (map? msg) (string? (get msg "method"))) (when-let [on-notification @incoming]
+                                                               (on-notification msg))))
        (catch Throwable _ nil)))
 
 (defn- duplex
@@ -430,8 +522,9 @@
    channel: stdio and legacy SSE. `write!` sends one message and `closed?` is the
    atom of the transport. The reader of the transport gives each message to
    `:receive!` and calls `:fail-pending!` when the channel ends. `:subscribe-fn`
-   sends `subscriptions/listen`: its notifications come on the channel."
-  [name write! closed? elicitation?]
+   sends `subscriptions/listen`: its notifications come on the channel. `spec` is
+   the client spec: it says which inputs the client declared."
+  [name write! closed? spec]
   (let [pending
         (ConcurrentHashMap.)
 
@@ -442,14 +535,15 @@
         incoming
         (atom nil)
 
-        callers
-        (when elicitation? (atom []))]
+        {:keys [callers] :as inputs}
+        (input-state spec)]
 
     {:incoming incoming
+     :roots-atom (:roots inputs)
      :receive! (fn [msg]
                  ;; A message with a method is no reply, whatever its id.
                  (if (and (map? msg) (contains? msg "method"))
-                   (handle-incoming! msg write! incoming callers)
+                   (handle-incoming! msg write! incoming inputs)
                    (when-let [id (get msg "id")]
                      (when-let [^LinkedBlockingQueue inbox (.remove pending id)]
                        (.put inbox [:reply msg])))))
@@ -459,31 +553,30 @@
                           (.put inbox [:reply {"error" {"message" "server stream closed"}}]))))
      :request-fn
      (fn request ([method params timeout-ms] (request method params timeout-ms nil))
-       ([method params timeout-ms {:keys [ask]}] (when @closed? (throw (ex-info
-                                                                         "MCP server not running"
-                                                                         {:type :mcp/closed
-                                                                          :server name})))
+       ([method params timeout-ms opts] (when @closed? (throw (ex-info "MCP server not running"
+                                                                {:type :mcp/closed :server name})))
         (let [id
               (str (swap! next-id inc))
 
               inbox
               (LinkedBlockingQueue.)
 
-              ask
-              (when callers ask)]
+              answers
+              (when callers (answers-of opts))]
 
           (.put pending id inbox)
-          (when ask (swap! callers conj inbox))
+          (when answers (swap! callers conj inbox))
           (try (write! (cond-> {"jsonrpc" "2.0" "id" id "method" method}
                          (some? params)
                          (assoc "params" params)))
-               (let [msg (await-reply! inbox timeout-ms ask)]
+               (let [msg (await-reply! inbox timeout-ms answers)]
                  (cond (= msg ::timeout) (throw (ex-info
                                                   (str "MCP " name " " method " timed out")
                                                   {:type :mcp/timeout :server name :method method}))
                        (get msg "error") (throw (rpc-error->ex name method (get msg "error")))
                        :else (get msg "result")))
-               (finally (.remove pending id) (when ask (swap! callers without-caller inbox)))))))
+               (finally (.remove pending id)
+                        (when answers (swap! callers without-caller inbox)))))))
      :notify-fn (fn [method params]
                   (when-not @closed?
                     (write! (cond-> {"jsonrpc" "2.0" "method" method}
@@ -544,7 +637,7 @@
 
 (defn- stdio-transport
   "Wire newline-delimited JSON-RPC around a process owned by start-stdio!."
-  [name ^Process proc elicitation?]
+  [name ^Process proc spec]
   (let [out
         (BufferedReader. (io/reader (.getInputStream proc)))
 
@@ -559,7 +652,7 @@
           (locking in (.write in (.getBytes (str (->json m) "\n") "UTF-8")) (.flush in)))
 
         {:keys [receive! fail-pending!] :as core}
-        (duplex name write! closed? elicitation?)
+        (duplex name write! closed? spec)
 
         read-loop
         (fn []
@@ -582,7 +675,7 @@
 
     (start-stderr-drain! name (.getErrorStream proc))
     (doto (Thread. ^Runnable read-loop (str "mcp-stdio-" name)) (.setDaemon true) (.start))
-    (assoc (select-keys core [:incoming :request-fn :notify-fn :subscribe-fn])
+    (assoc (select-keys core [:incoming :roots-atom :request-fn :notify-fn :subscribe-fn])
       :pid (try (.pid proc) (catch Throwable _ nil))
       :close-fn (fn []
                   (reset! closed? true)
@@ -593,7 +686,7 @@
 (defn- start-stdio!
   "Spawn `command`+`args` (with extra `env`), wire newline-delimited JSON-RPC.
    Returns `{:request-fn :notify-fn :close-fn :alive-fn :pid}`."
-  [name {:keys [command args env cwd elicitation?]}]
+  [name {:keys [command args env cwd] :as spec}]
   (let [directory
         (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) cwd)
 
@@ -609,7 +702,7 @@
                              nil
                              {:extra-environment extra-env})]
 
-    (try (stdio-transport name proc elicitation?)
+    (try (stdio-transport name proc spec)
          (catch Throwable t
            ;; Setup can fail before read-loop owns stdout or connect has a conn
            ;; to close. Reclaim the process and every available pipe ourselves.
@@ -757,42 +850,79 @@
   "The request fn of an HTTP transport for `url`. `(open! request)` sends `request`
    (`:method`, `:headers`, `:body`, `:timeout`, and `:uri` for another URL than
    `url`) with the static `headers`, the protocol version, the session id and the
-   Bearer token, and returns the response with an open body. The caller closes
-   the body. One 401 refreshes the token and sends again. The atoms `session`,
-   `protocol-version*` and `www-auth` are those of the transport."
-  [url headers bearer-fn session protocol-version* www-auth]
-  (let [send1 (fn [request bearer]
-                (let [resp (http/request
-                             (assoc request
-                               :uri (or (:uri request) url)
-                               :client @mcp-http/client
-                               :headers (cond-> (merge (apply-headers headers)
-                                                       {"MCP-Protocol-Version" @protocol-version*}
-                                                       (:headers request))
-                                          @session
-                                          (assoc "Mcp-Session-Id" @session)
+   token, and returns the response with an open body. The caller closes the body.
+   One 401 refreshes the token and sends again. The atoms `session`,
+   `protocol-version*` and `www-auth` are those of the transport.
 
-                                          bearer
-                                          (assoc "Authorization" (str "Bearer " bearer)))
-                               :throw false
-                               ;; A stream: the reply can come before the server ends the body.
-                               :as :stream))]
-                  (when-let [sid (response-header resp "mcp-session-id")]
-                    (reset! session sid))
-                  (when-let [wa (response-header resp "www-authenticate")]
-                    (reset! www-auth wa))
-                  resp))]
+   `proof-fn` gives the DPoP proof for a DPoP-bound token (RFC 9449): the request
+   then has the `DPoP` scheme and the proof, with the last nonce of the server. One
+   `use_dpop_nonce` refusal is sent again with the new nonce."
+  [url headers bearer-fn proof-fn session protocol-version* www-auth]
+  (let [nonce
+        (atom nil)
+
+        send1
+        (fn [request bearer]
+          (let [target
+                (or (:uri request) url)
+
+                proof
+                (when (and bearer proof-fn)
+                  (proof-fn (str/upper-case (name (:method request))) target bearer @nonce))
+
+                resp
+                (http/request (assoc request
+                                :uri target
+                                :client @mcp-http/client
+                                :headers (cond-> (merge (apply-headers headers)
+                                                        {"MCP-Protocol-Version" @protocol-version*}
+                                                        (:headers request))
+                                           @session
+                                           (assoc "Mcp-Session-Id" @session)
+
+                                           bearer
+                                           (assoc "Authorization"
+                                             (str (if proof "DPoP " "Bearer ") bearer))
+
+                                           proof
+                                           (assoc "DPoP" proof))
+                                :throw false
+                                ;; A stream: the reply can come before the server ends the body.
+                                :as :stream))]
+
+            (when-let [sid (response-header resp "mcp-session-id")]
+              (reset! session sid))
+            (when-let [wa (response-header resp "www-authenticate")]
+              (reset! www-auth wa))
+            (when-let [value (response-header resp "dpop-nonce")]
+              (reset! nonce value))
+            (assoc resp ::proof? (some? proof))))
+
+        send
+        (fn [request bearer]
+          (let [resp (send1 request bearer)]
+            (if (and (::proof? resp)
+                     (= 401 (:status resp))
+                     (some->> (response-header resp "www-authenticate")
+                              (re-find #"use_dpop_nonce")))
+              (do (close-body! resp) (send1 request bearer))
+              resp)))]
+
     (fn [request]
-      (let [tok (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))
-            first-resp (send1 request tok)]
+      (let [tok
+            (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))
+
+            first-resp
+            (send request tok)]
 
         (if (and (= 401 (:status first-resp)) bearer-fn)
-          ;; `bearer-fn` refuses only with the typed `:mcp/oauth-required`. It must
-          ;; escape: as a plain HTTP 401 it skipped the sign-in backoff, and every
-          ;; turn connected again (#458).
+          ;; `bearer-fn` refuses only with a typed failure: `:mcp/oauth-required`, or
+          ;; `:mcp/oauth-token` for a grant that needs no person. It must escape: as
+          ;; a plain HTTP 401 it skipped the sign-in backoff, and every turn
+          ;; connected again (#458).
           (let [fresh (try (bearer-fn tok) (catch Throwable t (close-body! first-resp) (throw t)))]
             (if (and fresh (not= fresh tok))
-              (do (close-body! first-resp) (send1 request fresh))
+              (do (close-body! first-resp) (send request fresh))
               first-resp))
           first-resp)))))
 
@@ -825,7 +955,7 @@
   "Streamable-HTTP transport against `url` with optional static `headers` and
    an optional `:bearer-fn` OAuth token provider. `:www-auth-atom`, when given, is
    the caller's atom to keep pointed at the latest `WWW-Authenticate` challenge."
-  [name {:keys [url headers bearer-fn www-auth-atom listen? elicitation?]}]
+  [name {:keys [url headers bearer-fn proof-fn www-auth-atom listen?] :as spec}]
   (let [session
         (atom nil)
 
@@ -850,9 +980,8 @@
         incoming
         (atom nil)
 
-        ;; The calls that can answer an elicitation, newest last.
-        callers
-        (when elicitation? (atom []))
+        {:keys [callers] :as inputs}
+        (input-state spec)
 
         listen-thread
         (atom nil)
@@ -862,7 +991,7 @@
         (promise)
 
         open!
-        (http-opener url headers bearer-fn session protocol-version* www-auth)
+        (http-opener url headers bearer-fn proof-fn session protocol-version* www-auth)
 
         post!
         (fn [body timeout-ms headers]
@@ -879,7 +1008,7 @@
 
         ;; Read the events of `resp` until a message for which `reply?` is true, or
         ;; until the stream ends. Returns `cursor` with the last event `:id` and
-        ;; `:retry` delay, plus `:reply` when one came. An elicitation on the stream
+        ;; `:retry` delay, plus `:reply` when one came. A person input on the stream
         ;; of a call goes to the `inbox` of that call.
         read-stream
         (fn [resp cursor reply? ^LinkedBlockingQueue inbox]
@@ -891,9 +1020,9 @@
                             (try (json-> (:data event)) (catch Throwable _ nil)))]
 
                   (cond (reply? msg) (assoc cursor :reply msg)
-                        (and inbox (elicitation-request? msg)) (do (.put inbox [:elicit msg reply!])
-                                                                   (recur cursor))
-                        :else (do (when msg (handle-incoming! msg reply! incoming callers))
+                        (and inbox (person-input? spec msg)) (do (.put inbox [:input msg reply!])
+                                                                 (recur cursor))
+                        :else (do (when msg (handle-incoming! msg reply! incoming inputs))
                                   (recur cursor))))
                 cursor))))
 
@@ -927,24 +1056,23 @@
 
     (cond-> {:request-fn
              (fn request ([method params timeout-ms] (request method params timeout-ms nil))
-               ([method params timeout-ms {:keys [ask headers]}]
-                (let [ask
-                      (when callers ask)
+               ([method params timeout-ms {:keys [headers] :as opts}]
+                (let [answers
+                      (when callers (answers-of opts))
 
                       inbox
                       (LinkedBlockingQueue.)]
 
-                  (when ask
+                  (when answers
                     (swap! callers conj inbox)
-                    ;; A server can send its elicitation on the listen channel only.
+                    ;; A server can send its person input on the listen channel only.
                     (when @listen-thread (deref listening 2000 nil)))
                   (try
                     (let [body
-                          (->json (cond-> {"jsonrpc" "2.0"
-                                           "id" (str (System/nanoTime))
-                                           "method" method}
-                                    (some? params)
-                                    (assoc "params" params)))
+                          (->json
+                            (cond-> {"jsonrpc" "2.0" "id" (str (System/nanoTime)) "method" method}
+                              (some? params)
+                              (assoc "params" params)))
 
                           ;; A stream read has no timeout of its own, so the exchange
                           ;; runs apart and this thread keeps the deadline.
@@ -960,11 +1088,11 @@
                                                                               headers)))
                                                               method
                                                               timeout-ms
-                                                              (when ask inbox))}
+                                                              (when answers inbox))}
                                               (catch Throwable t {:thrown t}))]))
 
                           outcome
-                          (try (await-reply! inbox timeout-ms ask)
+                          (try (await-reply! inbox timeout-ms answers)
                                (catch Throwable t (future-cancel exchange) (throw t)))
 
                           msg
@@ -986,7 +1114,7 @@
                                     (instance? InterruptedException t))
                         (reset! closed? true))
                       (throw t))
-                    (finally (when ask (swap! callers without-caller inbox)))))))
+                    (finally (when answers (swap! callers without-caller inbox)))))))
              :notify-fn (fn [method params]
                           (try (reply! (cond-> {"jsonrpc" "2.0" "method" method}
                                          (some? params)
@@ -996,26 +1124,14 @@
                          (reset! closed? true)
                          (some-> ^Thread @listen-thread
                                  .interrupt)
-                         (when-let [sid @session]
-                           (try (http/request
-                                  {:uri url
-                                   :method :delete
-                                   :client @mcp-http/client
-                                   :headers
-                                   (cond-> (merge (apply-headers headers)
-                                                  {"Mcp-Session-Id" sid
-                                                   "MCP-Protocol-Version" @protocol-version*})
-                                     bearer-fn
-                                     (assoc "Authorization"
-                                       (str "Bearer " (try (bearer-fn) (catch Throwable _ nil)))))
-                                   :timeout 5000
-                                   :throw false
-                                   :as :string})
+                         (when @session
+                           (try (close-body! (open! {:method :delete :timeout 5000}))
                                 (catch Throwable _ nil)))
                          (reset! session nil))
              :alive-fn (fn []
                          (not @closed?))
              :incoming incoming
+             :roots-atom (:roots inputs)
              :www-auth-atom www-auth
              :session-atom session
              :protocol-version-atom protocol-version*
@@ -1061,7 +1177,7 @@
    stream of the server. Its first event, `endpoint`, names the URL for the POST
    of each client message, on the origin of `url`; every reply comes on the
    stream. The transport is dead when the stream ends."
-  [name {:keys [url headers bearer-fn www-auth-atom elicitation? timeout-ms]}]
+  [name {:keys [url headers bearer-fn proof-fn www-auth-atom timeout-ms] :as spec}]
   (let [protocol-version*
         (atom protocol-version)
 
@@ -1072,7 +1188,7 @@
         (atom false)
 
         open!
-        (http-opener url headers bearer-fn (atom nil) protocol-version* www-auth)
+        (http-opener url headers bearer-fn proof-fn (atom nil) protocol-version* www-auth)
 
         timeout-ms
         (long (or timeout-ms default-timeout-ms))
@@ -1099,7 +1215,7 @@
               (close-body! resp))))
 
         {:keys [receive! fail-pending!] :as core}
-        (duplex name write! closed? elicitation?)
+        (duplex name write! closed? spec)
 
         origin
         (fn [^URI uri]
@@ -1128,7 +1244,7 @@
       (close-body! stream)
       (throw (ex-info (str "MCP " name " named no message endpoint on its SSE stream")
                       {:type :mcp/protocol :server name})))
-    (assoc (select-keys core [:incoming :request-fn :notify-fn])
+    (assoc (select-keys core [:incoming :roots-atom :request-fn :notify-fn])
       :close-fn (fn []
                   (reset! closed? true)
                   (close-body! stream))
@@ -1169,20 +1285,21 @@
     (throw (ex-info (str "MCP: unknown transport " (pr-str transport))
                     {:type :mcp/config :server name}))))
 
-(defn- initialize!
-  "Run the `initialize` handshake of an older revision on `conn`."
+(defn- initialize-request
+  "Send `initialize` on `conn` and return the result of the server."
   [conn]
-  (let [init
-        ((:request-fn conn)
-          "initialize"
-          {"protocolVersion" protocol-version
-           "capabilities" (client-capabilities (:spec conn))
-           "clientInfo" client-info}
-          (:timeout-ms conn))
+  ((:request-fn conn)
+    "initialize"
+    {"protocolVersion" protocol-version
+     "capabilities" (client-capabilities (:spec conn))
+     "clientInfo" client-info}
+    (:timeout-ms conn)))
 
-        negotiated-protocol-version
-        (or (get init "protocolVersion") protocol-version)]
-
+(defn- initialized!
+  "Complete the handshake of an older revision on `conn`, after the server gave
+   the result `init` of `initialize`."
+  [conn init]
+  (let [negotiated-protocol-version (or (get init "protocolVersion") protocol-version)]
     ;; Every message after `initialize` names the negotiated version: a server
     ;; refuses a version that it does not know.
     (when-let [version-atom (:protocol-version-atom conn)]
@@ -1196,11 +1313,16 @@
       :server-capabilities (get init "capabilities")
       :protocol-version negotiated-protocol-version)))
 
+(defn- initialize!
+  "Run the `initialize` handshake of an older revision on `conn`."
+  [conn]
+  (initialized! conn (initialize-request conn)))
+
 (defn- discover!
   "Ask the server of `conn` for `server/discover`, the request that only a server
    of a stateless revision knows. Returns `{:version :result}` for such a server.
-   Returns `{:legacy? true}` for a server that wants `initialize`, with `:silent?
-   true` when it gave no answer for `timeout-ms`. A stateless server that names
+   Returns `{:legacy? true}` for a server that wants `initialize`, also when it
+   gave no answer for `timeout-ms`. A stateless server that names
    its versions gets one more request, in a version that Vis speaks too. Throws
    when a stateless server refuses the client, and when the answer says nothing
    about the era: a sign-in, a server failure or a lost connection."
@@ -1232,8 +1354,7 @@
                       :else (throw failure)))
               ;; A header mismatch or a missing capability: a stateless server refused.
               (and (= :mcp/rpc-error type) (contains? #{-32020 -32021} code)) (throw failure)
-              (= :mcp/timeout type) {:legacy? true :silent? true}
-              (or (contains? #{:mcp/rpc-error :mcp/protocol} type)
+              (or (contains? #{:mcp/rpc-error :mcp/protocol :mcp/timeout} type)
                   (and (= :mcp/http-error type) (contains? #{400 404 405} status)))
               {:legacy? true}
               :else (throw failure))))))
@@ -1249,7 +1370,7 @@
 
         conn
         (assoc conn
-          :request-fn (modern-request-fn (:name conn) (:request-fn conn) meta)
+          :request-fn (modern-request-fn (:name conn) (:spec conn) (:request-fn conn) meta)
           :modern? true
           :server-info (or (get-in result ["_meta" "io.modelcontextprotocol/serverInfo"])
                            (get result "serverInfo"))
@@ -1260,6 +1381,57 @@
       (when-let [subscribe (:subscribe-fn conn)]
         (subscribe {"_meta" meta "notifications" {"toolsListChanged" true}})))
     conn))
+
+(defn- stdio-era!
+  "Find the era of the stdio server of `conn`. `server/discover` goes first. A
+   server that is silent for `stdio-hedge-ms` gets `initialize` too, and both
+   requests wait: a server of an older revision can ignore the first, and a
+   server that starts slowly reads both when it is ready. A `server/discover`
+   result means a stateless server, whatever `initialize` gets. Returns the
+   answer of `discover!`, with the result of `initialize` under `:init` when
+   the server gave one."
+  [conn timeout-ms]
+  (let [answers
+        (LinkedBlockingQueue.)
+
+        ask
+        (fn [k f]
+          (future (.put answers [k (try (f) (catch Throwable t {:failure t}))])))
+
+        answer!
+        (fn [wait-ms]
+          (.poll answers (long wait-ms) TimeUnit/MILLISECONDS))
+
+        settle
+        (fn [{:keys [failure] :as answer}]
+          (if failure (throw failure) answer))
+
+        _
+        (ask :discover #(discover! conn timeout-ms))
+
+        [_ early]
+        (answer! stdio-hedge-ms)]
+
+    (if early
+      (settle early)
+      (do (ask :initialize #(hash-map :legacy? true :init (initialize-request conn)))
+          (loop [seen {}]
+            ;; Each request ends at its own timeout, so an answer always comes.
+            (let [[k answer] (answer! (+ (long timeout-ms) (long stdio-hedge-ms) 1000))
+                  {:keys [discover initialize] :as seen} (cond-> seen
+                                                           k
+                                                           (assoc k answer))]
+
+              (cond (nil? k)
+                    (throw (ex-info (str "MCP " (:name conn) " initialize timed out")
+                                    {:type :mcp/timeout :server (:name conn) :method "initialize"}))
+                    (:version discover) discover
+                    (:failure discover) (throw (:failure discover))
+                    (and discover initialize) (settle initialize)
+                    ;; A server that answers out of order can still be stateless.
+                    (contains? initialize :init) (let [[_ late] (answer! stdio-order-grace-ms)]
+                                                   (if (:version late) late initialize))
+                    :else (recur seen))))))))
 
 (defn- connect-as
   "Connect to MCP server `name` on `transport` and find its era. With `probe?`,
@@ -1295,29 +1467,18 @@
                                (when (= "notifications/tools/list_changed" (get msg "method"))
                                  (reset! (:tools conn) nil))
                                (when user-cb (try (user-cb msg) (catch Throwable _ nil))))))
-     (try (let [answer (if probe?
-                         (do (when-let [modern (:modern-atom t)]
-                               (reset! modern true))
-                             (discover! conn
-                                        (min (long timeout-ms)
-                                             (long (if http?
-                                                     http-probe-timeout-ms
-                                                     stdio-probe-timeout-ms)))))
-                         {:legacy? true})]
+     (try (let [answer (cond (not probe?) {:legacy? true}
+                             http? (do (when-let [modern (:modern-atom t)]
+                                         (reset! modern true))
+                                       (discover! conn
+                                                  (min (long timeout-ms)
+                                                       (long http-probe-timeout-ms))))
+                             :else (stdio-era! conn timeout-ms))]
             (cond (:version answer) (modern-conn conn (:version answer) (:result answer))
                   ;; The refused request can be the end of an HTTP transport: open a new one.
                   (and probe? http?) (do ((:close-fn conn)) (connect-as name spec transport false))
-                  :else (try (initialize! conn)
-                             (catch clojure.lang.ExceptionInfo failure
-                               ;; A stateless server that started slowly was silent, and now
-                               ;; refuses `initialize`: ask it again, with the whole timeout.
-                               (let [again (when (and (:silent? answer)
-                                                      (= :mcp/rpc-error (:type (ex-data failure))))
-                                             (try (discover! conn timeout-ms)
-                                                  (catch clojure.lang.ExceptionInfo _ nil)))]
-                                 (if (:version again)
-                                   (modern-conn conn (:version again) (:result again))
-                                   (throw failure)))))))
+                  (contains? answer :init) (initialized! conn (:init answer))
+                  :else (initialize! conn)))
           (catch Throwable failure
             (try ((:close-fn conn)) (catch Throwable _ nil))
             (throw failure))))))
@@ -1335,7 +1496,8 @@
      streamable-http → `{:transport :streamable-http :url :headers :bearer-fn
                          :timeout-ms :listen? :on-notification}`
      sse             → `{:transport :sse :url :headers :bearer-fn :timeout-ms}`
-   With `:elicitation? true` the client declares form elicitation; see `call-tool`.
+   With `:elicitation? true` the client declares form elicitation, with
+   `:sampling? true` sampling and with `:roots? true` roots; see `request`.
    On stdio and Streamable HTTP the first request is `server/discover`. A server
    of a stateless revision answers it, and the conn has `:modern? true`. Any other
    server gets the `initialize` handshake.
@@ -1404,21 +1566,59 @@
       (reset! (:tools conn) tools)
       tools)))
 
+(defn- use-roots!
+  "Make `roots` the roots of `conn` for the request that follows. A server of an
+   older revision reads the roots with `roots/list` when it wants. So the client
+   says that the list changed, and a server that read the list before gets
+   `roots-grace-ms` to read it again. A connection has ONE list: with calls from
+   two workspaces at the same time, the server sees the list of the newest call."
+  [conn roots]
+  (when-let [state (:roots-atom conn)]
+    (when (and (some? roots) (not= (vec roots) (:roots @state)))
+      (let [read (promise)
+            [before _] (swap-vals! state assoc :roots (vec roots) :read read)]
+
+        (when-not (:modern? conn)
+          ((:notify-fn conn) "notifications/roots/list_changed" nil)
+          (when (:asked? before) (deref read roots-grace-ms nil)))))))
+
+(defn request
+  "Send the MCP request `method` with `params` on `conn`, and return its result
+   map. `opts` has the answers of this request to the inputs that the client
+   declared and that the server asks for, while the request waits or in an
+   `input_required` result of a stateless server:
+
+   `:on-elicitation` answers a form elicitation. It gets the params of
+   `elicitation/create`, runs on the calling thread, and returns
+   `{\"action\" \"accept\" \"content\" {...}}` or the action `decline`;
+   anything else is a cancel. The defaults of the schema fill the fields that an
+   accepted content leaves out.
+
+   `:on-sampling` answers `sampling/createMessage`. It gets the params, runs on
+   the calling thread, and returns the result map, or nil to refuse the request.
+
+   `:roots` is the vector of roots (`{\"uri\" \"name\"}`) for `roots/list`.
+
+   A server that names no call sends its request to the newest call that waits on
+   the connection."
+  ([conn method params] (request conn method params (or (:timeout-ms conn) default-timeout-ms) nil))
+  ([conn method params timeout-ms {:keys [on-elicitation on-sampling roots headers]}]
+   (use-roots! conn roots)
+   ((:request-fn conn)
+     method
+     params
+     timeout-ms
+     (cond-> {:ask on-elicitation :sample on-sampling :roots roots}
+       headers
+       (assoc :headers headers)))))
+
 (defn call-tool
   "`tools/call` `tool-name` with `arguments` (a map). Returns the result map
-   (`{\"content\" [...] \"isError\" bool}`).
-
-   `:on-elicitation` answers a form elicitation that the server sends while the
-   call waits, or that a stateless server asks for in an `input_required` result.
-   It gets the params of `elicitation/create`, runs on the calling thread, and
-   returns `{\"action\" \"accept\" \"content\" {...}}` or the action `decline`;
-   anything else is a cancel. The defaults of the schema fill the fields that an
-   accepted content leaves out. A server that names no call sends its elicitation
-   to the newest call that waits on the connection."
+   (`{\"content\" [...] \"isError\" bool}`). `opts` are those of `request`."
   ([conn tool-name arguments]
    (call-tool conn tool-name arguments (or (:timeout-ms conn) default-timeout-ms)))
   ([conn tool-name arguments timeout-ms] (call-tool conn tool-name arguments timeout-ms nil))
-  ([conn tool-name arguments timeout-ms {:keys [on-elicitation]}]
+  ([conn tool-name arguments timeout-ms opts]
    (let [arguments
          (json-safe (or arguments {}))
 
@@ -1426,13 +1626,27 @@
          (when (mirrors-headers? conn)
            (some #(when (= tool-name (get % "name")) %) (list-tools conn)))]
 
-     ((:request-fn conn)
-       "tools/call"
-       {"name" tool-name "arguments" arguments}
-       timeout-ms
-       (cond-> {:ask on-elicitation}
-         tool
-         (assoc :headers (param-headers tool arguments)))))))
+     (request conn
+              "tools/call"
+              {"name" tool-name "arguments" arguments}
+              timeout-ms
+              (cond-> (select-keys opts [:on-elicitation :on-sampling :roots])
+                tool
+                (assoc :headers (param-headers tool arguments)))))))
+
+(defn stale-era?
+  "Whether `failure` of a request on `conn` can mean that the server changed its
+   era after the connect, or lost its session: a Streamable HTTP server refused
+   the request itself, as a server of the other era does. Such a request did not
+   run. The caller connects again, which finds the era again."
+  [conn failure]
+  (let [{:keys [type status code]} (ex-data failure)]
+    (and (= :streamable-http (:transport conn))
+         (contains? #{400 404 405} status)
+         (or (= :mcp/http-error type)
+             (and (:modern? conn)
+                  (= :mcp/rpc-error type)
+                  (contains? #{-32000 -32022 -32600 -32601} code))))))
 
 (defn alive? [conn] (boolean (try ((:alive-fn conn)) (catch Throwable _ false))))
 

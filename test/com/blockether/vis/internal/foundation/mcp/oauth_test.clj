@@ -680,3 +680,97 @@
           (doseq [mode [nil "app"]]
             (expect (= [client-document false]
                        (client-of reads-documents published {:callback-mode mode}))))))))
+
+(defn- jwt-claims
+  "The payload of the compact JWT `jwt`."
+  [^String jwt]
+  (json/read-json (String. (.decode (java.util.Base64/getUrlDecoder)
+                                    ^String (second (str/split jwt #"\.")))
+                           "UTF-8")))
+
+(defn- with-token-file
+  "Call `f` with the HTTP stub `handler` and a temporary token file."
+  [handler f]
+  (let [file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]
+    (try (with-redefs-fn {#'oauth/token-file (constantly file) #'http/request handler} f)
+         (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
+
+(defdescribe machine-grant-test
+  (it "gets a token with client credentials after a refusal, with no browser"
+      ;; #458: a server for machines has no person to sign in. Vis asked for a sign-in.
+      (let [seen (atom [])
+            auth {:grant "client_credentials" :client-id "vis-test" :client-secret "s3cret"}]
+        (with-token-file
+          (authorization-server 403 seen)
+          (fn []
+            (let [bearer (oauth/make-bearer-fn "machine" "https://mcp.example.test/mcp" (atom nil)
+                                               "s3cret" auth)
+                  token-requests #(filter (fn [r] (str/ends-with? (:uri r) "/token")) @seen)]
+              (expect (= "test-access" (bearer nil)))
+              (expect (str/includes? (:body (first (token-requests)))
+                                     "grant_type=client_credentials"))
+              (expect (= "test-access" (bearer)))
+              (expect (= 1 (count (token-requests))))
+              (expect (= :mcp/oauth-error
+                         (try (oauth/start-authorization! "machine"
+                                                          "https://mcp.example.test/mcp"
+                                                          {:auth-hint auth})
+                              nil
+                              (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+  (it "names the refusal of the authorization server, and asks for no sign-in"
+      (let [discovery (authorization-server 403 (atom []))]
+        (with-token-file
+          (fn [{:keys [uri] :as request}]
+            (if (str/ends-with? uri "/token")
+              {:status 401 :body "{\"error\":\"invalid_client\"}"}
+              (discovery request)))
+          (fn []
+            (let [bearer (oauth/make-bearer-fn "machine" "https://mcp.example.test/mcp" (atom nil)
+                                               "wrong" {:grant "client_credentials"
+                                                        :client-id "vis-test"
+                                                        :client-secret "wrong"})
+                  data (try (bearer nil) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+              (expect (= :mcp/oauth-token (:type data)))
+              (expect (= "invalid_client" (:oauth-error data)))))))))
+
+(defdescribe dpop-test
+  (it "binds the token to a key, and answers the nonce that the token endpoint asks for"
+      ;; #458: a server that wants DPoP refused each token of Vis, which sent Bearer only.
+      (let [proofs (atom [])
+            documents
+            {"https://mcp.example.test/.well-known/oauth-protected-resource"
+             {"resource" "https://mcp.example.test/mcp"
+              "authorization_servers" ["https://auth.example.test"]}
+             "https://auth.example.test/.well-known/oauth-authorization-server"
+             (assoc endpoints
+               "issuer" "https://auth.example.test"
+               "dpop_signing_alg_values_supported" ["ES256"])}
+            discovery (discovery-server documents (atom []))]
+        (with-token-file
+          (fn [{:keys [uri headers] :as request}]
+            (if (str/ends-with? uri "/token")
+              (let [claims (jwt-claims (get headers "DPoP"))]
+                (swap! proofs conj claims)
+                (if (= "nonce-1" (get claims "nonce"))
+                  {:status 200
+                   :body "{\"access_token\":\"bound-access\",\"token_type\":\"DPoP\",\"expires_in\":3600}"}
+                  {:status 400
+                   :headers {"dpop-nonce" "nonce-1"}
+                   :body "{\"error\":\"use_dpop_nonce\"}"}))
+              (discovery request)))
+          (fn []
+            (let [bearer (oauth/make-bearer-fn "bound" "https://mcp.example.test/mcp"
+                                               (atom "DPoP algs=\"ES256\"") "s3cret"
+                                               {:grant "client_credentials"
+                                                :client-id "vis-test"
+                                                :client-secret "s3cret"})
+                  proof (oauth/make-proof-fn "bound")]
+              (expect (= "bound-access" (bearer nil)))
+              (expect (= [nil "nonce-1"] (mapv #(get % "nonce") @proofs)))
+              (expect (= #{"https://auth.example.test/token"} (set (map #(get % "htu") @proofs))))
+              (let [claims (jwt-claims (proof "POST" "https://mcp.example.test/mcp?a=1"
+                                              "bound-access" "nonce-2"))]
+                (expect (= ["POST" "https://mcp.example.test/mcp" "nonce-2"]
+                           (mapv claims ["htm" "htu" "nonce"])))
+                (expect (string? (get claims "ath"))))
+              (expect (nil? (proof "POST" "https://mcp.example.test/mcp" "other-token" nil)))))))))

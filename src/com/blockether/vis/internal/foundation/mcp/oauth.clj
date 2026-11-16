@@ -31,6 +31,9 @@
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.util :as util])
   (:import (java.net URI URLDecoder URLEncoder)
+           (java.security KeyFactory KeyPairGenerator PrivateKey)
+           (java.security.interfaces ECPublicKey RSAPrivateKey)
+           (java.security.spec ECGenParameterSpec InvalidKeySpecException PKCS8EncodedKeySpec)
            (java.util Base64)))
 
 (def ^:private protocol-version-header "MCP-Protocol-Version")
@@ -97,6 +100,7 @@
                             :throw false
                             :as :string})]
     {:status (:status resp)
+     :headers (:headers resp)
      :body (try (json/read-json (:body resp)) (catch Throwable _ (:body resp)))}))
 
 (defn- http-post-json
@@ -303,6 +307,150 @@
             :expires-at-ms (when expires-in (+ now (long (* 1000 (long expires-in)))))
             :saved-at-ms now})))
 
+;; DPoP (RFC 9449, SEP-1932) and signed assertions (RFC 7523)
+
+(defn- coordinate
+  "The 32 big-endian bytes of the P-256 coordinate `n`, in base64url."
+  [^java.math.BigInteger n]
+  (let [bytes
+        (.toByteArray n)
+
+        size
+        (alength bytes)
+
+        length
+        (min size 32)
+
+        output
+        (byte-array 32)]
+
+    (System/arraycopy bytes (- size length) output (- 32 length) length)
+    (util/base64url output)))
+
+(defn- new-dpop-key
+  "A new P-256 key for DPoP proofs: the private key as PKCS#8 text and the public
+   key as a JWK."
+  []
+  (let [pair
+        (.generateKeyPair (doto (KeyPairGenerator/getInstance "EC")
+                            (.initialize (ECGenParameterSpec. "secp256r1"))))
+
+        ^ECPublicKey public
+        (.getPublic pair)
+
+        point
+        (.getW public)]
+
+    {:private-key (.encodeToString (Base64/getEncoder) (.getEncoded (.getPrivate pair)))
+     :jwk {"kty" "EC"
+           "crv" "P-256"
+           "x" (coordinate (.getAffineX point))
+           "y" (coordinate (.getAffineY point))}}))
+
+(defn- private-key
+  "The EC or RSA private key of the PKCS#8 text `text`, with or without the PEM
+   lines."
+  ^PrivateKey [^String text]
+  (let [der
+        (try (.decode (Base64/getDecoder)
+                      (-> text
+                          (str/replace #"-----[^-]+-----" "")
+                          (str/replace #"\s" "")))
+             (catch IllegalArgumentException _ nil))
+
+        read-as
+        (fn [^String algorithm]
+          (try (.generatePrivate (KeyFactory/getInstance algorithm) (PKCS8EncodedKeySpec. der))
+               (catch InvalidKeySpecException _ nil)))]
+
+    (or (when der (or (read-as "EC") (read-as "RSA")))
+        (throw (ex-info "The private key is not a PKCS#8 key (`BEGIN PRIVATE KEY`)."
+                        {:type :mcp/oauth-error})))))
+
+(defn- dpop-proof
+  "The DPoP proof of the key `dpop` for one `method` request to `url`. `token`
+   binds the proof to an access token. `nonce` is the last nonce of that server."
+  [dpop method ^String url token nonce]
+  (util/compact-jws (private-key (:private-key dpop))
+                    (json/write-json-str {"typ" "dpop+jwt" "alg" "ES256" "jwk" (:jwk dpop)})
+                    (json/write-json-str (cond-> {"jti" (util/base64url (util/random-bytes 16))
+                                                  "htm" method
+                                                  ;; Without the query and the fragment (section 4.2).
+                                                  "htu" (first (str/split url #"[?#]" 2))
+                                                  "iat" (quot (long (util/now-ms)) 1000)}
+                                           token
+                                           (assoc "ath"
+                                             (util/base64url (util/sha256 (util/utf8 token))))
+
+                                           nonce
+                                           (assoc "nonce" nonce)))))
+
+(defn- dpop-bound?
+  "True when the token endpoint answer `body` has a DPoP-bound token."
+  [body]
+  (= "dpop"
+     (some-> (get body "token_type")
+             str/lower-case)))
+
+(defn- wants-dpop?
+  "Whether the sign-in asks for a DPoP-bound token. `auth.dpop` decides when it is
+   set. Else the MCP server must ask for DPoP, in its challenge or its metadata,
+   and the authorization server must accept ES256 proofs."
+  [auth-hint www-auth rmeta asmeta]
+  (let [configured (:dpop auth-hint)]
+    (if (boolean? configured)
+      configured
+      (boolean (and (some #{"ES256"} (get asmeta "dpop_signing_alg_values_supported"))
+                    (or (some->> www-auth
+                                 (re-find #"(?i)(?:^|,)\s*DPoP(?:\s|$)"))
+                        (true? (get rmeta "dpop_bound_access_tokens_required"))
+                        (seq (get rmeta "dpop_signing_alg_values_supported"))))))))
+
+(defonce ^:private dpop-nonces (atom {})) ; {token endpoint -> its last DPoP-Nonce}
+
+(defn- token-request!
+  "POST `form` to the token endpoint `url`. With the key `dpop` the request has a
+   DPoP proof, and one `use_dpop_nonce` refusal is sent again with the nonce of
+   the server (RFC 9449 section 8)."
+  [url form headers dpop]
+  (let [send
+        (fn []
+          (let [response (http-post-form
+                           url
+                           form
+                           (cond-> headers
+                             dpop
+                             (assoc "DPoP"
+                               (dpop-proof dpop "POST" url nil (get @dpop-nonces url)))))]
+            (when-let [nonce (get-in response [:headers "dpop-nonce"])]
+              (swap! dpop-nonces assoc url nonce))
+            response))
+
+        response
+        (send)]
+
+    (if (and dpop
+             (map? (:body response))
+             (= "use_dpop_nonce" (get (:body response) "error"))
+             (get-in response [:headers "dpop-nonce"]))
+      (send)
+      response)))
+
+(defn- token-failure
+  "The typed refusal of a token endpoint to `step` of `server`."
+  [server step {:keys [status body]}]
+  (let [oauth-error (when (map? body) (get body "error"))]
+    (ex-info (str "MCP " server " " step " failed: " status)
+             {:type :mcp/oauth-token
+              :server server
+              :status status
+              :oauth-error oauth-error
+              :body body
+              :refusal (str "the token endpoint answered HTTP "
+                            status
+                            (when (string? oauth-error) (str " (" oauth-error ")"))
+                            ".")})))
+
 ;; Auth-code flow (first time)
 
 (defn- with-offline-access
@@ -390,6 +538,7 @@
      :challenge (util/base64url (util/sha256 (util/utf8 verifier)))
      :state (util/base64url (util/random-bytes 16))
      :resource (get rmeta "resource")
+     :dpop? (wants-dpop? auth-hint www-auth rmeta asmeta)
      ;; The configured scope, then the scope that the server asked for, then every
      ;; scope of the resource. With none of them the request names no scope.
      :scope (or (:scope auth-hint)
@@ -528,9 +677,10 @@
 (defn- exchange-code!
   "Spend `code` at the token endpoint and PERSIST the resulting tokens. A configured
    secret is never persisted; only the method that a refresh must use again. A
-   secret that registration issued exists nowhere else, so it stays with the tokens."
-  [{:keys [server as-url asmeta verifier resource registered-secret scope]} client-id client-secret
-   code redirect-uri]
+   secret that registration issued exists nowhere else, so it stays with the tokens.
+   So does the key of a DPoP-bound token: each later request needs its proof."
+  [{:keys [server as-url asmeta verifier resource registered-secret scope dpop?]} client-id
+   client-secret code redirect-uri]
   (let [token-url
         (get asmeta "token_endpoint")
 
@@ -543,8 +693,11 @@
         [form headers]
         (client-credentials method client-id client-secret)
 
-        {:keys [status body]}
-        (http-post-form token-url
+        dpop
+        (when dpop? (new-dpop-key))
+
+        {:keys [status body] :as response}
+        (token-request! token-url
                         (cond-> (merge form
                                        {"grant_type" "authorization_code"
                                         "code" code
@@ -552,20 +705,10 @@
                                         "code_verifier" verifier})
                           resource
                           (assoc "resource" resource))
-                        headers)]
+                        headers
+                        dpop)]
 
-    (when (>= (long status) 400)
-      (let [oauth-error (when (map? body) (get body "error"))]
-        (throw (ex-info (str "MCP " server " token exchange failed: " status)
-                        {:type :mcp/oauth-token
-                         :server server
-                         :status status
-                         :oauth-error oauth-error
-                         :body body
-                         :refusal (str "the token endpoint answered HTTP "
-                                       status
-                                       (when (string? oauth-error) (str " (" oauth-error ")"))
-                                       ".")}))))
+    (when (>= (long status) 400) (throw (token-failure server "token exchange" response)))
     (write-tokens! server
                    (->tokens body
                              (cond-> {:client-id client-id
@@ -577,13 +720,16 @@
                                (assoc :client-secret registered-secret)
 
                                scope
-                               (assoc :requested-scope scope))))))
+                               (assoc :requested-scope scope)
+
+                               (and dpop (dpop-bound? body))
+                               (assoc :dpop dpop))))))
 
 (defn- refresh-exchange!
   "Spend `refresh-token` at the token endpoint of `creds` and return the new
    tokens. The server may rotate the refresh token. A confidential client sends
    `client-secret`, or the secret that registration issued, with the method that
-   the first exchange used."
+   the first exchange used. A DPoP-bound token keeps its key."
   [server-name creds client-secret refresh-token]
   (let [[form headers]
         (client-credentials (:token-auth-method creds)
@@ -591,17 +737,179 @@
                             (or client-secret (:client-secret creds)))
 
         {:keys [status body]}
-        (http-post-form (:token-endpoint creds)
+        (token-request! (:token-endpoint creds)
                         (cond-> (merge form
                                        {"grant_type" "refresh_token" "refresh_token" refresh-token})
                           (:resource creds)
                           (assoc "resource" (:resource creds)))
-                        headers)]
+                        headers
+                        (:dpop creds))]
 
     (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server-name " token refresh failed: " status)
                       {:type :mcp/oauth-refresh :server server-name :status status :body body})))
     (->tokens body creds)))
+
+;; Grants that need no person (SEP-1046, SEP-1933, SEP-990)
+
+(def ^:private jwt-bearer-grant "urn:ietf:params:oauth:grant-type:jwt-bearer")
+
+(defn machine-grant?
+  "True when `auth-hint` names a grant that needs no person: the client gets the
+   token by itself, with no browser."
+  [auth-hint]
+  (contains? #{"client_credentials" "jwt_bearer" "enterprise_managed"} (:grant auth-hint)))
+
+(defn- configured-text
+  "The text under `k` of `auth-hint`, or the text of the file under `<k>-file`. A
+   file is read for each grant: a platform replaces a workload token while Vis runs."
+  [server auth-hint k]
+  (or (get auth-hint k)
+      (some-> (get auth-hint (keyword (str (name k) "-file")))
+              slurp
+              str/trim)
+      (throw (oauth-failure :mcp/oauth-error server
+                            "configuration" (str "`auth` has no `"
+                                                 (str/replace (name k) "-" "_")
+                                                 "` for the grant `"
+                                                 (:grant auth-hint)
+                                                 "`.")))))
+
+(defn- client-assertion
+  "The signed JWT that authenticates `client-id` at the authorization server
+   `issuer` (RFC 7523 section 3). The key selects ES256 or RS256; a configured
+   `algorithm` must name the same one."
+  [server client-id issuer pem algorithm]
+  (let [key
+        (private-key pem)
+
+        alg
+        (if (instance? RSAPrivateKey key) "RS256" "ES256")
+
+        now
+        (quot (long (util/now-ms)) 1000)]
+
+    (when (and algorithm (not= algorithm alg))
+      (throw
+        (oauth-failure
+          :mcp/oauth-error server
+          "configuration"
+          (str "`auth.signing_algorithm` is " algorithm ", but the private key signs " alg "."))))
+    (util/compact-jws key
+                      (json/write-json-str {"alg" alg "typ" "JWT"})
+                      (json/write-json-str {"iss" client-id
+                                            "sub" client-id
+                                            "aud" issuer
+                                            "jti" (util/base64url (util/random-bytes 16))
+                                            "iat" now
+                                            "exp" (+ now 300)}))))
+
+(defn- id-jag!
+  "Exchange the identity token of the person at the identity provider for an
+   ID-JAG: a grant for the authorization server `issuer` and the MCP server
+   `resource` (SEP-990, RFC 8693)."
+  [server auth-hint issuer resource scope]
+  (let [endpoint
+        (or (:idp-token-endpoint auth-hint)
+            (some-> (:idp-issuer auth-hint)
+                    (str/replace #"/+$" "")
+                    (str "/.well-known/openid-configuration")
+                    http-get-json
+                    (get "token_endpoint"))
+            (throw (oauth-failure :mcp/oauth-discovery server
+                                  "discovery" "found no token endpoint of the identity provider.")))
+
+        {:keys [idp-client-id idp-client-secret]}
+        auth-hint
+
+        [form headers]
+        (if idp-client-id
+          (client-credentials (if idp-client-secret "client_secret_basic" "none")
+                              idp-client-id
+                              idp-client-secret)
+          [{} nil])
+
+        {:keys [status body] :as response}
+        (http-post-form endpoint
+                        (cond-> (merge
+                                  form
+                                  {"grant_type" "urn:ietf:params:oauth:grant-type:token-exchange"
+                                   "requested_token_type" "urn:ietf:params:oauth:token-type:id-jag"
+                                   "subject_token" (configured-text server auth-hint :idp-id-token)
+                                   "subject_token_type" "urn:ietf:params:oauth:token-type:id_token"
+                                   "audience" issuer
+                                   "resource" resource})
+                          scope
+                          (assoc "scope" scope))
+                        headers)]
+
+    (when-not (and (< (long status) 400) (map? body) (string? (get body "access_token")))
+      (throw (token-failure server "identity token exchange" response)))
+    (get body "access_token")))
+
+(defn- machine-grant!
+  "Get a token for `server-name` with the grant of `auth-hint` and PERSIST it. One
+   token request: a refusal is the answer, with no second try and no other grant."
+  [server-name server-url www-auth auth-hint]
+  (let [{:keys [as-url asmeta resource scope dpop?]}
+        (auth-context server-name server-url www-auth auth-hint)
+
+        {:keys [grant client-id client-secret]}
+        auth-hint
+
+        issuer
+        (or (get asmeta "issuer") as-url)
+
+        pem
+        (when (or (:private-key auth-hint) (:private-key-file auth-hint))
+          (configured-text server-name auth-hint :private-key))
+
+        [form headers]
+        (cond pem
+              [{"client_assertion_type" "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                "client_assertion"
+                (client-assertion server-name client-id issuer pem (:signing-algorithm auth-hint))}
+               nil]
+              client-id
+              (client-credentials (token-auth-method asmeta client-secret) client-id client-secret)
+              :else [{} nil])
+
+        grant-form
+        (case grant
+          "client_credentials"
+          {"grant_type" "client_credentials"}
+
+          "jwt_bearer"
+          {"grant_type" jwt-bearer-grant
+           "assertion" (configured-text server-name auth-hint :assertion)}
+
+          "enterprise_managed"
+          {"grant_type" jwt-bearer-grant
+           "assertion" (id-jag! server-name auth-hint issuer (or resource server-url) scope)})
+
+        dpop
+        (when dpop? (new-dpop-key))
+
+        {:keys [status body] :as response}
+        (token-request! (get asmeta "token_endpoint")
+                        (cond-> (merge form grant-form)
+                          scope
+                          (assoc "scope" scope)
+
+                          resource
+                          (assoc "resource" resource))
+                        headers
+                        dpop)]
+
+    (when-not (and (< (long status) 400) (map? body) (string? (get body "access_token")))
+      (throw (token-failure server-name "token request" response)))
+    (write-tokens!
+      server-name
+      (->tokens
+        (dissoc body "refresh_token")
+        (cond-> {:grant grant :client-id client-id :authorization-server as-url :resource resource}
+          (and dpop (dpop-bound? body))
+          (assoc :dpop dpop))))))
 
 ;; Public: a 0/1-arg `bearer-fn` for the HTTP transport
 
@@ -639,9 +947,15 @@
    refresh it throws `:mcp/oauth-required` immediately; authorizing is the
    explicit headless flow below, which hands back a URL instead of waiting for
    one. `client-secret` is the configured secret of a pre-registered client, sent
-   only when the persisted tokens came from a confidential exchange."
+   only when the persisted tokens came from a confidential exchange.
+
+   With a grant of `auth-hint` that needs no person (`machine-grant?`), the fn
+   gets the token by itself after the server refused a request: a 401 is the proof
+   that the server wants a token. A refusal of that grant is `:mcp/oauth-token`."
   ([server-name server-url www-auth-atom] (make-bearer-fn server-name server-url www-auth-atom nil))
   ([server-name server-url www-auth-atom client-secret]
+   (make-bearer-fn server-name server-url www-auth-atom client-secret nil))
+  ([server-name server-url www-auth-atom client-secret auth-hint]
    (let [required
          #(oauth-required server-name server-url @www-auth-atom %)
 
@@ -671,9 +985,33 @@
                (:token creds)
                (try (:token (refresh rejected))
                     (catch Throwable t
-                      (throw (if (= :mcp/oauth-required (:type (ex-data t))) t (required t))))))))]
+                      (throw (if (= :mcp/oauth-required (:type (ex-data t))) t (required t))))))))
 
-     (fn ([] (bearer nil)) ([rejected] (bearer rejected))))))
+         grant-lock
+         (Object.)
+
+         machine
+         (fn [rejected refused?]
+           (locking grant-lock
+             (let [creds (read-tokens server-name)]
+               (cond (and (usable? creds) (not= rejected (:token creds))) (:token creds)
+                     refused? (:token
+                                (machine-grant! server-name server-url @www-auth-atom auth-hint))
+                     :else (throw (required nil))))))]
+
+     (if (machine-grant? auth-hint)
+       (fn ([] (machine nil false)) ([rejected] (machine rejected true)))
+       (fn ([] (bearer nil)) ([rejected] (bearer rejected)))))))
+
+(defn make-proof-fn
+  "Build `(fn [method url token nonce])` for the HTTP transport of `server-name`:
+   the DPoP proof for one request with `token`, or nil when that token is not
+   DPoP-bound."
+  [server-name]
+  (fn [method url token nonce]
+    (let [creds (read-tokens server-name)]
+      (when (and (:dpop creds) (= token (:token creds)))
+        (dpop-proof (:dpop creds) method url token nonce)))))
 
 (defn token-status
   "Non-secret view of the persisted OAuth tokens for `server-name`. Never returns
@@ -773,6 +1111,13 @@
   [server-name server-url {:keys [www-auth auth-hint callback-mode]}]
   (when-not (contains? #{nil "loopback" "app"} callback-mode)
     (throw (ex-info "Unsupported OAuth callback mode" {:type :mcp/oauth-error})))
+  (when (machine-grant? auth-hint)
+    (throw (ex-info (str "MCP server '"
+                         server-name
+                         "' signs in without a browser: its `auth.grant` is "
+                         (:grant auth-hint)
+                         ".")
+                    {:type :mcp/oauth-error})))
   (mcp-view!
     (auth-flow/start!
       [:mcp server-name]
