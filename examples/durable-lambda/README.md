@@ -286,8 +286,7 @@ DURABLE_MODELS='[{"name":"<model>","context":<tokens>,"output_limit":<tokens>}]'
 
 The script is safe to run again and prints the address of the stack. Vis web and the
 Vis apps show the stack with its machine name: `DURABLE_MACHINE_NAME`, else
-`Software factory`. The fixed cost is
-about 20 USD each month, for two interface endpoints and the EFS file system. The
+`Software factory`. [Cost](#cost) gives the cost of the stack. The
 image gives its workflows only to a stack that has none: a stack with workflows keeps
 its own files.
 
@@ -314,6 +313,24 @@ of samples. The times of a call are from one computer in Europe.
 
 A worker stops after 300 s without work, so the next call pays the first answer time
 again. A run continues when its worker changes.
+
+## Cost
+
+List prices of `eu-central-1` on 2026-11-16, without tax and without a free tier. The
+model cost is the cost that Vis counts for `qwen3.8-max`: 5 USD for a million input
+tokens and 15 USD for a million output tokens. Your provider sets the real price.
+
+| Part | Cost |
+| --- | --- |
+| Stack without work | About 18 USD each month: 17.52 USD for the two interface endpoints, 0.2 to 0.9 USD for the five images in ECR and 0.1 USD for the two schedules. EFS, S3 and the logs cost less than 0.02 USD |
+| Worker | 0.19 USD for each hour that a worker lives. A call to a stack without a worker costs 0.02 USD, for the 300 s that the worker stays |
+| Run of `song_factory` | AWS 0.06 to 0.09 USD. Model 2 to 5 USD: 0.3 to 0.9 million input tokens and 17,000 to 31,000 output tokens |
+| Run of `remix_and_publish` | AWS 0.04 USD. Model 3 USD: 0.5 million input tokens and 19,000 output tokens |
+| Run of `studio_review` | AWS 0.08 USD. Model 2 USD: 0.3 million input tokens and 24,000 output tokens |
+
+The eight runs of the measurement used 3.1 million input tokens and 144,000 output
+tokens: 17.64 USD. The free tier of Lambda, 400,000 GB-seconds each month, pays for
+27 hours of the worker.
 
 ## Run it on your computer
 
