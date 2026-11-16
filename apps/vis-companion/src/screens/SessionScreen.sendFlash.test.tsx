@@ -25,6 +25,22 @@ function paintedQuestions(): string[] {
   );
 }
 
+// The screen opens with a window of turns that is one turn shorter than this history.
+const WINDOW = HISTORY - 1;
+const RAMP_STEP_MS = 250;
+const RAMP_STEPS = 60;
+
+/**
+ * Let the hydration ramp fill the window that the screen opened with. Earlier turns
+ * mount in batches, each as a transition and after one second as urgent work.
+ */
+async function rampFilled(wait: (ms: number) => Promise<unknown>): Promise<void> {
+  for (let step = 0; step < RAMP_STEPS && paintedQuestions().length < WINDOW; step += 1) {
+    await wait(RAMP_STEP_MS);
+  }
+  expect(paintedQuestions()).toHaveLength(WINDOW);
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -79,6 +95,8 @@ describe('the transcript while the turn you just sent starts', () => {
     });
 
     const box = await screen.findByLabelText('Message Vis');
+    // Earlier turns that mount later are not a remount: let them all land first.
+    await rampFilled((ms) => vi.advanceTimersByTimeAsync(ms));
     fireEvent.change(box, { target: { value: 'run the tests' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await vi.advanceTimersByTimeAsync(50);
@@ -151,8 +169,7 @@ describe('the transcript while the turn you are reading ends', () => {
     });
 
     expect(await screen.findByText('older question 8')).toBeInTheDocument();
-    // Let the hydration ramp fill the window it opened with.
-    await linger(300);
+    await rampFilled(linger);
     const painted = paintedQuestions();
     expect(painted.length).toBeGreaterThan(1);
     const oldest = screen.getByText(painted[0]);
