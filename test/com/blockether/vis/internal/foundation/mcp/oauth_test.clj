@@ -500,6 +500,39 @@
         (expect (= "configured" (scope {"scopes_supported" ["a" "b"]}
                                        {:www-auth "Bearer scope=\"files:read\""
                                         :auth-hint {:scope "configured"}})))))
+  (it "keeps the scope of the last sign-in when the server asks for one more scope"
+      ;; SEP-2350: the server names only the scope of the refused operation. Vis asked
+      ;; for that scope alone, lost the first one, and signed in again without end.
+      (let [file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")
+            discovery (discovery-server
+                        {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                         {"authorization_servers" ["https://auth.example.test"]}
+                         "https://auth.example.test/.well-known/oauth-authorization-server" endpoints}
+                        (atom []))
+            start (fn [challenge]
+                    (oauth/start-authorization! "step-up-test"
+                                                "https://mcp.example.test/v1/mcp"
+                                                {:www-auth challenge}))]
+        (try
+          (with-redefs-fn
+            {#'oauth/token-file (constantly file)
+             #'http/request
+             (fn [{:keys [uri] :as request}]
+               (if (str/ends-with? uri "/token")
+                 {:status 200 :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
+                 (discovery request)))}
+            (fn []
+              (let [flow (start "Bearer scope=\"files:read\"")
+                    state (second (re-find #"[?&]state=([^&]+)" (get flow "url")))]
+                (oauth/complete-authorization!
+                  (get flow "flow_id")
+                  (str (get flow "redirect_uri") "?code=test-code&state=" state))
+                (let [step-up (start "Bearer error=\"insufficient_scope\", scope=\"files:write\"")]
+                  (oauth/cancel-authorization! (get step-up "flow_id"))
+                  (expect (= "files:read files:write"
+                             (get (#'oauth/query-parse (second (str/split (get step-up "url") #"\?" 2)))
+                                  "scope")))))))
+          (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
   (it "asks for offline_access with the scope when the authorization server lists it"
       ;; Without it, such a server issues no refresh token: a sign-in each hour.
       (let [scope (fn [resource options]

@@ -4,10 +4,15 @@
 # The tool "ping" sends a ping to the client and reports its answer. The tool
 # "grow" adds a tool and sends notifications/tools/list_changed. The tool "ask"
 # sends a form elicitation and reports the answer of the client.
+# With the argument "stateless" it is a server of revision 2026-07-28: it has no
+# handshake, each request must name its protocol version, and it says that its
+# tools changed only on a subscription.
 import json
 import sys
 
 grown = False
+stateless = sys.argv[1:] == ["stateless"]
+subscription = None
 
 
 def send(obj):
@@ -35,7 +40,53 @@ for line in sys.stdin:
         continue
     mid = msg.get("id")
     method = msg.get("method")
-    if method == "initialize":
+    meta = (msg.get("params") or {}).get("_meta") or {}
+    if (
+        stateless
+        and mid is not None
+        and (
+            method == "initialize"
+            or "io.modelcontextprotocol/protocolVersion" not in meta
+        )
+    ):
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": "no protocol version"},
+            }
+        )
+    elif stateless and method == "server/discover":
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "result": {
+                    "resultType": "complete",
+                    "supportedVersions": ["2026-07-28"],
+                    "capabilities": {"tools": {"listChanged": True}},
+                    "_meta": {
+                        "io.modelcontextprotocol/serverInfo": {
+                            "name": "fake",
+                            "version": "1.0",
+                        }
+                    },
+                },
+            }
+        )
+    elif stateless and method == "subscriptions/listen":
+        subscription = mid
+        send(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/subscriptions/acknowledged",
+                "params": {
+                    "_meta": {"io.modelcontextprotocol/subscriptionId": mid},
+                    "notifications": {"toolsListChanged": True},
+                },
+            }
+        )
+    elif method == "initialize":
         send(
             {
                 "jsonrpc": "2.0",
@@ -117,7 +168,20 @@ for line in sys.stdin:
             text_result(mid, json.dumps(answer.get("result"), sort_keys=True))
         elif name == "grow":
             grown = True
-            send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+            if not stateless:
+                send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+            elif subscription is not None:
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/tools/list_changed",
+                        "params": {
+                            "_meta": {
+                                "io.modelcontextprotocol/subscriptionId": subscription
+                            }
+                        },
+                    }
+                )
             text_result(mid, "grown")
         else:
             send(

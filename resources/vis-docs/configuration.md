@@ -866,6 +866,11 @@ Vis connects to a server that has a URL with Streamable HTTP. When an older serv
 request, Vis uses the older HTTP+SSE transport on the same URL. To use only HTTP+SSE, set
 `transport: sse`.
 
+Vis works with both generations of the MCP specification. It first asks the server which protocol
+versions it supports. A server of revision `2026-07-28` answers, and Vis then sends each request on
+its own, without a session. Any other server gets a session, as before. You set nothing for either
+kind. A local server that does not answer the question starts about five seconds later.
+
 Vis keeps one stream open to each Streamable HTTP server. The server uses the stream to send
 changes, such as a new tool list, and its questions. To turn the stream off, set `listen: false`.
 

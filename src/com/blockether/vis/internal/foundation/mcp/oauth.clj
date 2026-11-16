@@ -314,6 +314,14 @@
     (str scope " offline_access")
     scope))
 
+(defn- with-previous-scope
+  "`scope` after the scopes of `previous` that it does not have. A server names
+   only the scope of the refused operation in a step-up (SEP-2350)."
+  [scope previous]
+  (if (seq previous)
+    (str/join " " (distinct (concat (str/split previous #"\s+") (str/split scope #"\s+"))))
+    scope))
+
 (defn- auth-context
   "Discovery (RFC 9728 → RFC 8414) plus fresh PKCE material for `server-name`.
    Shared by the loopback flow and the headless flow so both speak exactly the
@@ -366,6 +374,12 @@
                                                    ").")
                                   :upstream-url (::url asmeta)))))
 
+        ;; A step-up keeps what the last sign-in at this authorization server asked for.
+        previous-scope
+        (when (= "insufficient_scope" (challenge-param www-auth "error"))
+          (let [saved (read-tokens server-name)]
+            (when (= as-url (:authorization-server saved)) (:requested-scope saved))))
+
         verifier
         (util/base64url (util/random-bytes 32))]
 
@@ -383,6 +397,7 @@
                             (some->> (get rmeta "scopes_supported")
                                      seq
                                      (str/join " ")))
+                        (with-previous-scope previous-scope)
                         (with-offline-access asmeta)))}))
 
 (def ^:private client-document-url
@@ -514,8 +529,8 @@
   "Spend `code` at the token endpoint and PERSIST the resulting tokens. A configured
    secret is never persisted; only the method that a refresh must use again. A
    secret that registration issued exists nowhere else, so it stays with the tokens."
-  [{:keys [server as-url asmeta verifier resource registered-secret]} client-id client-secret code
-   redirect-uri]
+  [{:keys [server as-url asmeta verifier resource registered-secret scope]} client-id client-secret
+   code redirect-uri]
   (let [token-url
         (get asmeta "token_endpoint")
 
@@ -559,7 +574,10 @@
                                       :authorization-server as-url
                                       :resource resource}
                                registered-secret
-                               (assoc :client-secret registered-secret))))))
+                               (assoc :client-secret registered-secret)
+
+                               scope
+                               (assoc :requested-scope scope))))))
 
 (defn- refresh-exchange!
   "Spend `refresh-token` at the token endpoint of `creds` and return the new

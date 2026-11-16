@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Run the official MCP client conformance suite against the MCP client of Vis.
 # The suite starts its own MCP and authorization servers on loopback and starts
-# the client one time for each scenario. A failed check or a warning fails the run.
+# the client one time for each scenario. For a released version, each scenario of
+# the suite runs, and a failed check or a warning fails the run. For a draft
+# revision, its requirement set runs, and a failed check of a scenario that the
+# revision requires fails the run.
 #
-# Usage: bin/mcp-conformance [spec-version ...]   # default: each released version
+# Usage: bin/mcp-conformance [spec-version ...]   # default: each version below
 #
 #   VIS_MCP_CONFORMANCE_SUITE    the npm package of the suite, with its version
 #   VIS_MCP_CONFORMANCE_RESULTS  keep the result files of the suite in this directory
@@ -14,7 +17,8 @@ set -euo pipefail
 suite="${VIS_MCP_CONFORMANCE_SUITE:-@modelcontextprotocol/conformance@0.2.0-alpha.12}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 versions=("$@")
-[ "${#versions[@]}" -gt 0 ] || versions=(2025-03-26 2025-06-18 2025-11-25)
+[ "${#versions[@]}" -gt 0 ] || versions=(2025-03-26 2025-06-18 2025-11-25 2026-07-28)
+drafts=" 2026-07-28 "
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/vis-mcp-conformance.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -27,10 +31,15 @@ clojure -Spath -A:test > "$work/classpath"
 status=0
 for version in "${versions[@]}"; do
   echo "== MCP client conformance, specification $version"
+  if [[ "$drafts" == *" $version "* ]]; then
+    selection=(--requirements "$version")
+  else
+    selection=(--suite all --spec-version "$version")
+  fi
   # A Node option of the caller can break the suite.
   env -u NODE_OPTIONS npx --yes "$suite" client \
     --command "$root/bin/mcp-conformance-client" \
-    --suite all --spec-version "$version" --timeout 180000 \
+    "${selection[@]}" --timeout 180000 \
     -o "$results/$version" || status=1
 done
 exit "$status"

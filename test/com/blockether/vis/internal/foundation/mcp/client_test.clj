@@ -754,3 +754,196 @@
                              nil
                              (catch Exception e e))]
             (expect (= :mcp/http-error (:type (ex-data failure)))))))))
+
+;; Stateless revisions (2026-07-28): no handshake, request metadata, input rounds.
+
+(defn- rpc-refusal
+  [message code data]
+  (json/write-json-str {"jsonrpc" "2.0"
+                        "id" (get message "id")
+                        "error" (cond-> {"code" code "message" "Refused"}
+                                  data
+                                  (assoc "data" data))}))
+
+(defn- stateless-routes
+  "The routes of a server of revision 2026-07-28 that has `tools` and declares
+   `capabilities`: it refuses `initialize`, and `call` answers each `tools/call`."
+  [tools capabilities call]
+  {"initialize" (fn [request exchange]
+                  (send! exchange 400 "application/json" (rpc-refusal (:message request) -32601 nil)))
+   "server/discover"
+   (fn [request exchange]
+     (send! exchange
+            200
+            "application/json"
+            (rpc-result (:message request)
+                        {"resultType" "complete"
+                         "supportedVersions" ["2026-07-28"]
+                         "capabilities" capabilities
+                         "_meta" {"io.modelcontextprotocol/serverInfo" {"name" "stateless"
+                                                                        "version" "1"}}})))
+   "tools/list" (fn [request exchange]
+                  (send! exchange
+                         200
+                         "application/json"
+                         (rpc-result (:message request) {"resultType" "complete" "tools" tools})))
+   "tools/call" call})
+
+(defn- requests-of
+  [requests method]
+  (filterv #(= method (get-in % [:message "method"])) @requests))
+
+(defn- text-answer
+  [text]
+  (fn [request exchange]
+    (send! exchange 200 "application/json" (text-result (:message request) text))))
+
+(defdescribe
+  mcp-stateless-http-test
+  (it "calls a tool of a server that has no handshake"
+      (with-http-conn
+        (stateless-routes [{"name" "echo"}] {"tools" {}} (text-answer "stateless"))
+        {}
+        (fn [conn requests]
+          (expect (= "stateless" (get (:server-info conn) "name")))
+          (expect (= "stateless" (call-text conn)))
+          (let [call (first (requests-of requests "tools/call"))
+                meta (get-in call [:message "params" "_meta"])]
+            (expect (empty? (requests-of requests "initialize")))
+            (expect (= "2026-07-28" (get meta "io.modelcontextprotocol/protocolVersion")))
+            (expect (map? (get meta "io.modelcontextprotocol/clientCapabilities")))
+            (expect (= ["2026-07-28" "tools/call" "echo"]
+                       (mapv #(get-in call [:headers %])
+                             ["mcp-protocol-version" "mcp-method" "mcp-name"])))))))
+  (it "asks again in a version that the server names"
+      (let [asked (atom 0)
+            routes (stateless-routes [] {} nil)]
+        (with-http-conn
+          (assoc routes
+            "server/discover" (fn [request exchange]
+                                (if (= 1 (swap! asked inc))
+                                  (send! exchange
+                                         400
+                                         "application/json"
+                                         (rpc-refusal (:message request)
+                                                      -32022
+                                                      {"supported" ["2026-07-28"]
+                                                       "requested" "2026-07-28"}))
+                                  ((get routes "server/discover") request exchange))))
+          {}
+          (fn [conn _]
+            (expect (= "2026-07-28" (:protocol-version conn)))
+            (expect (= 2 @asked))))))
+  (it "answers the input that a result asks for, in a new request with the state of the server"
+      (with-http-conn
+        (stateless-routes
+          [{"name" "echo"}]
+          {"tools" {}}
+          (fn [request exchange]
+            (send! exchange
+                   200
+                   "application/json"
+                   (if (get-in request [:message "params" "inputResponses"])
+                     (text-result (:message request) "done")
+                     (rpc-result (:message request)
+                                 {"resultType" "input_required"
+                                  "inputRequests"
+                                  {"who" {"method" "elicitation/create"
+                                          "params" {"message" "Who?"
+                                                    "requestedSchema"
+                                                    {"type" "object"
+                                                     "properties" {"name" {"type" "string"
+                                                                           "default" "Ada"}}}}}}
+                                  "requestState" "state-1"})))))
+        {:elicitation? true}
+        (fn [conn requests]
+          (let [answer {:on-elicitation (constantly {"action" "accept" "content" {}})}]
+            (expect (= "done"
+                       (get-in (mcp/call-tool conn "echo" {} 3000 answer) ["content" 0 "text"])))
+            (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
+              (expect (not= (get asked "id") (get answered "id")))
+              (expect (= {"who" {"action" "accept" "content" {"name" "Ada"}}}
+                         (get-in answered ["params" "inputResponses"])))
+              (expect (= "state-1" (get-in answered ["params" "requestState"]))))
+            ;; The state of one call is no part of the next call.
+            (mcp/call-tool conn "echo" {} 3000 answer)
+            (expect (not (contains? (get-in (nth (requests-of requests "tools/call") 2)
+                                            [:message "params"])
+                                    "requestState")))))))
+  (it "mirrors an annotated argument into its header, and leaves out a tool with a bad header"
+      (with-http-conn
+        (stateless-routes
+          [{"name" "query"
+            "inputSchema" {"type" "object"
+                           "properties" {"region" {"type" "string" "x-mcp-header" "Region"}
+                                         "note" {"type" "string" "x-mcp-header" "Note"}
+                                         "limit" {"type" "integer" "x-mcp-header" "Limit"}}}}
+           {"name" "bad"
+            "inputSchema" {"type" "object"
+                           "properties" {"region" {"type" "string" "x-mcp-header" "My Region"}}}}]
+          {"tools" {}}
+          (text-answer "ok"))
+        {}
+        (fn [conn requests]
+          (expect (= ["query"] (mapv #(get % "name") (mcp/list-tools conn))))
+          (mcp/call-tool conn "query" {"region" "us-west1" "note" "zażółć" "limit" nil})
+          (let [headers (:headers (first (requests-of requests "tools/call")))]
+            (expect (= "us-west1" (get headers "mcp-param-region")))
+            (expect (= (str "=?base64?"
+                            (.encodeToString (java.util.Base64/getEncoder)
+                                             (.getBytes "zażółć" "UTF-8"))
+                            "?=")
+                       (get headers "mcp-param-note")))
+            (expect (not (contains? headers "mcp-param-limit")))))))
+  (it "keeps the connection after a refusal that comes with an HTTP error status"
+      (with-http-conn
+        (stateless-routes [{"name" "echo"}]
+                          {"tools" {}}
+                          (fn [request exchange]
+                            (send! exchange
+                                   400
+                                   "application/json"
+                                   (rpc-refusal (:message request) -32602 nil))))
+        {}
+        (fn [conn _]
+          (let [failure (try (mcp/call-tool conn "echo" {}) nil (catch Exception e e))]
+            (expect (= :mcp/rpc-error (:type (ex-data failure))))
+            (expect (true? (mcp/alive? conn)))))))
+  (it "hears that the tools changed on the stream of its subscription"
+      (let [heard (promise)
+            release (promise)]
+        (with-http-conn
+          (assoc (stateless-routes [] {"tools" {"listChanged" true}} nil)
+            "subscriptions/listen"
+            (fn [request exchange]
+              (with-open [out (open-stream! exchange)]
+                (event! out
+                        (str "data: "
+                             (json/write-json-str
+                               {"jsonrpc" "2.0"
+                                "method" "notifications/tools/list_changed"
+                                "params" {"_meta" {"io.modelcontextprotocol/subscriptionId"
+                                                   (get-in request [:message "id"])}}})
+                             "\n\n"))
+                (deref release 5000 nil))))
+          {:listen? true :on-notification #(deliver heard (get % "method"))}
+          (fn [_ requests]
+            (try (expect (= "notifications/tools/list_changed" (deref heard 2000 :silent)))
+                 (expect (= {"toolsListChanged" true}
+                            (get-in (first (requests-of requests "subscriptions/listen"))
+                                    [:message "params" "notifications"])))
+                 (finally (deliver release true))))))))
+
+(defdescribe mcp-stateless-stdio-test
+  (it "calls a tool of a stdio server that has no handshake, and hears that its tools changed"
+      (let [conn (mcp/connect "fake"
+                              {:transport :stdio
+                               :command (require-executable "python3")
+                               :args [(.getPath (io/file server-path)) "stateless"]})
+            names #(mapv (fn [tool] (get tool "name")) (mcp/list-tools conn))]
+        (try (expect (= "fake" (get (:server-info conn) "name")))
+             (expect (= ["echo"] (names)))
+             (expect (= "echo: hi" (get-in (mcp/call-tool conn "echo" {"msg" "hi"}) ["content" 0 "text"])))
+             (mcp/call-tool conn "grow" {})
+             (expect (= ["echo" "grown"] (names)))
+             (finally (mcp/close conn))))))

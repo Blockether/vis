@@ -112,6 +112,19 @@
         (= scenario "tools_call") [["add_numbers" {"a" 2 "b" 3}]]
         (= scenario "sse-retry") [["test_reconnection" {}]]
         (= scenario "elicitation-sep1034-client-defaults") [["test_client_elicitation_defaults" {}]]
+        ;; The list of the tools is the test.
+        (= scenario "request-metadata") []
+        (= scenario "sep-2322-client-request-state")
+        [["test_mrtr_echo_state" {}] ["test_mrtr_no_state" {}] ["test_mrtr_unrelated" {}]
+         ["test_mrtr_no_result_type" {}]]
+        (= scenario "http-custom-headers") (mapv (fn [call]
+                                                   [(get call "name") (get call "arguments")])
+                                                 (get (context) "toolCalls"))
+        ;; Each tool that the client lists: it must leave out a tool with a bad header.
+        (contains? #{"http-standard-headers" "http-invalid-tool-headers"} scenario)
+        (mapv (fn [tool]
+                [(get tool "name") {"region" "us-west1"}])
+              tools)
         (= scenario "json-schema-2020-12-preservation")
         (let [tool (or (some #(when (= "json_schema_2020_12_tool" (get % "name")) %) tools)
                        (throw (ex-info "json_schema_2020_12_tool was not listed" {})))]
