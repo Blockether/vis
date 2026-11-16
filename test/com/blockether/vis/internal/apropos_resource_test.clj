@@ -301,7 +301,7 @@ def __vis_harvest__(modules, names):
             (map :name entries)]
 
         (expect (= 3 (count (registered-shims))))
-        (expect (= 7 (count entries)))
+        (expect (= 6 (count entries)))
         ;; Unique ACROSS packs, not merely within one: `apropos` answers the first
         ;; record to claim a name, so two packs claiming one name would hide a symbol.
         (expect (= (count names) (count (distinct names))))

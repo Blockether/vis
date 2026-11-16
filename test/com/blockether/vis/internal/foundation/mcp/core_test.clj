@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.test-python-context :as tpc]
             [com.blockether.vis.contract.wire :as wire]
@@ -47,11 +48,9 @@
 (defdescribe
   mcp-sandbox-name-test
   "Regression: every string the MODEL reads has to name the binding it can type.
-   The wire tool is `mcp__call`; the Python global is `mcp_call`. A session that
-   copied the wire name out of `doc(\"linear/save_issue\")` spent four iterations
-   on NameErrors before `apropos(\"mcp\")` finally revealed the real name."
-  (it "advertises exactly the name the Python binding gets"
-      (expect (= (ep/sym->py-name 'mcp/call) @#'mcp/sandbox-verb)))
+   The wire tool is `mcp__call`, and a session that copied that name out of
+   `doc(\"linear/save_issue\")` spent four iterations on NameErrors. A block now
+   types the name of a server, and no name of the sandbox is `mcp` or `mcp_call`."
   (it "puts a callable form, not the wire name, on every tool entry"
       (with-redefs-fn {#'mcp/visible-servers (constantly {"linear" {}})
                        #'mcp/conn-of (fn [& _]
@@ -85,7 +84,7 @@
   mcp-call-env-injection-test
   (it
     "injects the live caller session through the Python boundary for every call shape"
-    ;; Regression: mcp_call("alpha") reached an env-first implementation without env.
+    ;; Regression: the verb with only a server reached an env-first implementation without env.
     (let [env
           (atom nil)
 
@@ -106,8 +105,8 @@
         (fn []
           (tpc/with-own
             [ctx
-             {'mcp-call (get (extension/wrap-extension-thunked mcp/vis-extension #(deref env))
-                             'call)}]
+             {(extension/sandbox-binding mcp/vis-extension 'call)
+              (get (extension/wrap-extension-thunked mcp/vis-extension #(deref env)) 'call)}]
             (doseq [sid ["caller-session" "other-session"]]
               (reset! env {:session-id sid})
               (let
@@ -115,10 +114,10 @@
                  (ep/run-python-block
                    ctx
                    (str
-                     "assert (await mcp_call('alpha'))['tools'][0]['name'] == 'read'\n"
-                     "assert (await mcp_call('alpha', 'read'))['content'][0]['text'] == 'ok'\n"
-                     "assert (await mcp_call('alpha', 'read', {'query': 'one'}))['content'][0]['text'] == 'ok'\n"
-                     "assert (await mcp_call(server='alpha', tool='read', args={'query': 'two'}))['content'][0]['text'] == 'ok'\n"
+                     "assert (await __vis_mcp_call__('alpha'))['tools'][0]['name'] == 'read'\n"
+                     "assert (await __vis_mcp_call__('alpha', 'read'))['content'][0]['text'] == 'ok'\n"
+                     "assert (await __vis_mcp_call__('alpha', 'read', {'query': 'one'}))['content'][0]['text'] == 'ok'\n"
+                     "assert (await __vis_mcp_call__(server='alpha', tool='read', args={'query': 'two'}))['content'][0]['text'] == 'ok'\n"
                      "print('mcp-ok')"))]
                 (expect (nil? (:error result)))
                 (expect (= "mcp-ok\n" (:stdout result)))))
@@ -1044,7 +1043,7 @@
 
 (defn- with-alpha
   "Run `(f call!)` with the configured server `alpha`, where `client` maps a var of
-   the MCP client to its stand-in. `call!` is `mcp_call`."
+   the MCP client to its stand-in. `call!` is the host verb."
   [client f]
   (let [store
         {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo"}}}}
@@ -1135,7 +1134,10 @@
 (def ^:private catalog-tools
   [{"name" "resolve-library-id"
     "description" "Find a library."
-    "inputSchema" {"type" "object" "properties" {"query" {}} "required" ["query"]}}])
+    "inputSchema" {"type" "object"
+                   "properties"
+                   {"query" {"type" "string"} "limit" {"type" "integer"} "page-size" {}}
+                   "required" ["query"]}}])
 
 (defn- with-catalog
   "Run `(f call!)` with the server `alpha`, which has one tool, two prompts and two
@@ -1182,6 +1184,13 @@
                                  (map (fn [server]
                                         [server {"python_name" (#'mcp/python-name server)}]))
                                  servers)}}})
+
+(defn- bind-verb!
+  "Bind the symbols of the MCP extension in `ctx`, as the engine does at each turn."
+  [ctx]
+  (loop-env/sync-active-extension-symbols!
+    {:python-context ctx :extensions (atom [mcp/vis-extension]) :active-extensions (atom [])}
+    [mcp/vis-extension]))
 
 (defdescribe
   mcp-doc-handle-test
@@ -1257,9 +1266,8 @@
         sent
         (fn [_call!]
           (tpc/with-own
-            [ctx
-             {'mcp-call (get (extension/wrap-extension-thunked mcp/vis-extension (constantly {}))
-                             'call)}]
+            [ctx {}]
+            (bind-verb! ctx)
             (ep/bind-ctx! ctx (servers-ctx "alpha"))
             (let
               [result
@@ -1272,27 +1280,33 @@
                    "print('Review it with care.' in doc(alpha.prompts.code_review))\n"
                    "print([i.name for i in apropos('find a library')])\n"
                    "print('`resolve-library-id` - Find a library.' in doc(alpha))\n"
-                   "print((await alpha.prompts['code-review']())['messages'][0]['role'])\n"))]
+                   "print((await alpha.prompts['code-review']())['messages'][0]['role'])\n"
+                   ;; No name of the sandbox is `mcp` or `mcp_call`.
+                   "print('mcp' in globals(), 'mcp_call' in globals())\n" "import inspect\n"
+                   "print(inspect.signature(alpha.resolve_library_id))\n"
+                   "print(inspect.signature(alpha.prompts.greet))\n"))]
               (expect (nil? (:error result)))
-              (expect (= (str "resolve-library-id ok /x/y\n" "# alpha.resolve_library_id\n"
-                              "True\n" "['alpha.resolve_library_id']\n"
-                              "True\n" "user\n")
+              (expect (= (str "resolve-library-id ok /x/y\n"
+                              "# alpha.resolve_library_id\n" "True\n"
+                              "['alpha.resolve_library_id']\n" "True\n"
+                              "user\n" "False False\n"
+                              "(*, query: str, limit: int = ..., **arguments) -> dict\n"
+                              "(*, who: str) -> dict\n")
                          (:stdout result)))))))))
-  (it "leaves a name to Python and to a value of the session, and reaches the server through `mcp`"
+  (it "leaves a name to Python and to a value of the session, and gives a freed name to the server"
       (with-catalog
         (atom [])
         (fn [_call!]
           (tpc/with-own
-            [ctx
-             {'mcp-call (get (extension/wrap-extension-thunked mcp/vis-extension (constantly {}))
-                             'call)}]
+            [ctx {}]
+            (bind-verb! ctx)
             (ep/run-python-block ctx "alpha = 5\n")
             (ep/bind-ctx! ctx (servers-ctx "alpha" "time"))
             (let [taken
                   (ep/run-python-block
                     ctx
-                    (str "import time\n" "print(alpha, type(time).__name__, __vis_mcp_names__)\n"
-                         "print((await mcp.alpha.resolve_library_id(query='x'))['tool'])\n"
+                    (str "import time\n"
+                         "print(alpha, type(time).__name__, __vis_mcp_names__, mcp_time)\n"
                          "del alpha\n"))
 
                   _
@@ -1304,7 +1318,8 @@
                     "print((await alpha.resolve_library_id(query='x'))['tool'])\n")]
 
               (expect (nil? (:error taken)))
-              (expect (= "5 module []\nresolve-library-id\n" (:stdout taken)))
+              (expect (= "5 module ['mcp_time'] <mcp_time: doc(mcp_time) prints its page>\n"
+                         (:stdout taken)))
               (expect (nil? (:error freed)))
               (expect (= "resolve-library-id\n" (:stdout freed))))))))
   (it "takes away the name of a server that left"
@@ -1322,9 +1337,12 @@
   mcp-python-name-test
   (it "gives a server its lower-case snake name, and leaves a taken name to its owner"
       (expect (= "figma_dev" (#'mcp/python-name "figma-dev")))
-      (expect (= "mcp.time" (#'mcp/python-name "time")))
-      (expect (= "mcp.mcp" (#'mcp/python-name "mcp")))
-      (expect (= "mcp[\"1password\"]" (#'mcp/python-name "1password"))))
+      (expect (= "mcp_time" (#'mcp/python-name "time")))
+      (expect (= "mcp_mcp" (#'mcp/python-name "mcp")))
+      (expect (= "mcp_1password" (#'mcp/python-name "1password")))
+      ;; Two servers never get one name: `mcp_time` is the server `time`.
+      (expect (= "mcp_mcp_time" (#'mcp/python-name "mcp-time")))
+      (expect (= "mcp_server_time" (#'mcp/python-name "mcp-server-time"))))
   (it
     "gives no server a name that Python or a new sandbox has"
     (tpc/with-own

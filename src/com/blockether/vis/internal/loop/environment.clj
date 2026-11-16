@@ -163,7 +163,7 @@
                 (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
 
             (let [target
-                  (extension/symbol-binding ext sym)
+                  (extension/sandbox-binding ext sym)
 
                   entry
                   (get by-sym sym)]
@@ -176,7 +176,7 @@
               ;; tool must not exist in the sandbox at all.
               (if (and (contains? active-set (:ext/name ext))
                        (extension/symbol-active? entry environment)
-                       (tool-allowed? environment ext (env/sym->py-name target)))
+                       (tool-call-allowed? environment ext sym))
                 ;; The metadata keys the bound py-name, so `doc(db_status)`, `apropos("mcp")`,
                 ;; `inspect.signature` and `typing.get_type_hints` answer with the declared
                 ;; contract. ALIASED extensions bind here (per turn), NOT at context creation.

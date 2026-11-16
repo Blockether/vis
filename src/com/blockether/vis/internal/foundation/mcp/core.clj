@@ -20,15 +20,17 @@
    static bearer transparently negotiate OAuth 2.1 on first 401 (RFC 9728
    discovery + RFC 7591 dynamic client registration + PKCE loopback).
 
-   ONE host verb under alias `mcp` (flat sandbox renders `alias_name`):
+   ONE host verb, with the wire name `mcp__call`:
      mcp__call(server, tool, args) - call a tool
      mcp__call(server)             - that server's descriptions + input schemas
      mcp__call(server, method, params) - an MCP request for resources or prompts,
                                          such as `resources/read`
 
-   A block does not type that verb. The sandbox binds each server as a name
+   A block does not type that verb: the sandbox binds it under a private name, and
+   has no `mcp` name. The sandbox binds each server as a name
    (`resources/vis-host-python/mcp.py`), the `python-name` of the server:
-   `await linear.save_issue(title=...)`. `doc` prints the page of a server, a tool
+   `await linear.save_issue(title=...)`. `inspect.signature` gives the parameters
+   of a tool or a prompt. `doc` prints the page of a server, a tool
    or a prompt, `apropos` finds them, and the resources of the servers are rows of
    `list_attachments()`.
 
@@ -209,7 +211,7 @@
   "The one spelling of an MCP server name, or nil when nothing is left: lower case,
    accents dropped, and each run of characters other than `a-z` and `0-9` (blanks,
    newlines, `_`, `.`) as one `-`. `Figma Dev` is `figma-dev`. The name keys the
-   config, the token file and `mcp_call`, so every reader and writer uses it."
+   config, the token file and the host verb, so every reader and writer uses it."
   [name]
   (let [s (some-> name
                   str
@@ -553,7 +555,7 @@
 
    The kill brake is enforced HERE, not only in `reconcile!`: a TOOL CALL is a
    connect path of its own, so checking only in the reconcile loop let the first
-   `mcp_call` after a kill respawn the very stdio child the user just stopped.
+   tool call after a kill respawn the very stdio child the user just stopped.
    The publication predicate also closes a handshake that loses a race with kill,
    disable, detach, delete, or a spec replacement. Session-scoped servers are never
    governed by the daemon-wide kill brake."
@@ -1318,14 +1320,6 @@
            "input_schema" (get t "inputSchema")})
         (mcp/list-tools conn)))
 
-(def ^:private sandbox-verb
-  "The sandbox name of the host verb, which the server handles call. The
-   wire/native tool NAME is `mcp__call` (DOUBLE underscore - see the note above
-   `mcp-symbols`), but the Python sandbox folds `alias/symbol` to ONE underscore.
-   Printing the wire name at a model that only has the sandbox sends it into a
-   NameError, which is exactly what it did."
-  "mcp_call")
-
 (defn- identifier
   "`name` as a block types it after a server: each character that a Python
    identifier cannot have becomes `_`."
@@ -1352,7 +1346,7 @@
     "nonlocal" "not" "or" "pass" "raise" "return" "try" "while" "with" "yield"})
 
 (defn- attribute?
-  "Whether a block can write `id` as an attribute of an `mcp` handle."
+  "Whether a block can write `id` as an attribute of a handle."
   [id]
   (boolean (and (re-matches #"[A-Za-z][A-Za-z0-9_]*" id) (not (python-keywords id)))))
 
@@ -1387,27 +1381,39 @@
                                       (extension/ext-sandbox-shims ext))))))
           (extension/registered-extensions))))
 
+(defn- snake
+  "The canonical name `server` with `_` for each `-`."
+  [server]
+  (str/replace (str server) "-" "_"))
+
 (defn- bare-name
-  "The canonical name `server` as the sandbox name of its handle: each `-` becomes
-   `_`. Nil when Python or one of `taken` has that name, or when it is not an
-   identifier: such a server stays a child of `mcp`."
+  "The `snake` name of `server` as the sandbox name of its handle. Nil when it is
+   not an identifier, when Python or one of `taken` has that name, and when it is
+   the `mcp_` name of a server that has no bare name."
   [server taken]
-  (let [id (str/replace (str server) "-" "_")]
-    (when (and (re-matches #"[a-z][a-z0-9_]*" id) (not (python-names/words id)) (not (taken id)))
+  (let [id
+        (snake server)
+
+        [_ inner]
+        (re-matches #"mcp_(.+)" id)]
+
+    (when (and (re-matches #"[a-z][a-z0-9_]*" id)
+               (not (python-names/words id))
+               (not (taken id))
+               (or (nil? inner) (bare-name inner taken)))
       id)))
 
 (defn- python-name
-  "What a block types for `server`: its `bare-name`, else the child of `mcp`."
+  "What a block types for `server`, always an identifier: its `bare-name`, else
+   its `snake` name after `mcp_`. No two servers get one name."
   ([server] (python-name server (sandbox-names)))
-  ([server taken] (or (bare-name server taken) (child-form "mcp" server))))
+  ([server taken] (or (bare-name server taken) (str "mcp_" (snake server)))))
 
 (defn- handle
   "The `doc` handle of `server`, or of its tool or its prompt that `names` gives:
    what a block types, with an identifier for each name."
   [taken server & names]
-  (str/join "."
-            (cons (or (bare-name server taken) (str "mcp." (identifier server)))
-                  (map identifier names))))
+  (str/join "." (cons (python-name server taken) (map identifier names))))
 
 (defn- arguments-form
   "The arguments of a call as a block writes them: each name of `required` with a
@@ -1807,8 +1813,8 @@
        (catch Throwable t (call-failed-err env server tool t))))))
 
 ;; Public vars retain developer examples and fallback docs. Native symbols
-;; below own compact model-facing semantics and exact schemas. Under alias
-;; `mcp` the Python names use one underscore; direct native names use two.
+;; below own compact model-facing semantics and exact schemas. The wire name
+;; has two underscores; the sandbox binds the verb under a private name.
 
 (def
   ^{:doc
@@ -1847,9 +1853,9 @@
          (catch Throwable failure (str "The server gave no messages: " (ex-message failure))))))
 
 (defn- handle-parts
-  "`[server rest bare?]` of the handle `target`: `mcp.<server>` with what follows
-   its next `.`, the older `<server>/<tool>`, or a bare name with what follows its
-   first `.`. Nil for any other text."
+  "`[name rest bare?]` of the handle `target`: a bare name with what follows its
+   first `.`, or one of the older forms, `mcp.<server>` with what follows its next
+   `.` and `<server>/<tool>`. Nil for any other text."
   [target]
   (let [target (str/trim (str target))]
     (or (when-let [[_ server rest] (re-matches #"mcp\.([^.\s]+)(?:\.(.+))?" target)]
@@ -1864,15 +1870,18 @@
    its tools or one of its prompts. It connects the server and reads its lists
    when that is necessary, so `doc` has a page before the first call. A prompt
    that needs no argument comes with its messages. A name that the server does
-   not have gives the page of the server. Nil for a handle of no visible server,
-   and for a bare name that is not the sandbox name of its server: `doc(\"time\")`
-   is the module of Python."
+   not have gives the page of the server. Nil for a handle of no visible server:
+   a bare name is the `python-name` of its server, so `doc(\"time\")` is the
+   module of Python."
   [target]
   (when-let [[typed rest bare?] (handle-parts target)]
     (let [sid (:session-id extension/*current-environment*)
-          server (canonical-name typed)
-          spec (get (visible-servers sid) server)
-          taken (when spec (sandbox-names))
+          visible (visible-servers sid)
+          taken (when (seq visible) (sandbox-names))
+          server (if bare?
+                   (some #(when (= typed (python-name % taken)) %) (keys visible))
+                   (canonical-name typed))
+          spec (get visible server)
           down (fn [note]
                  (cond-> (server-entry taken
                                        server
@@ -1883,7 +1892,7 @@
                    note
                    (update :text str "\n\n" note)))]
 
-      (when (and spec (or (not bare?) (= typed (bare-name server taken))))
+      (when spec
         (try
           (if-let [conn (ensure-connected! sid server)]
             (with-current-era
@@ -1922,6 +1931,75 @@
             (down (str "The server gave no answer: " (ex-message failure)))))))))
 
 (doc-corpus/register-resolver! :mcp #'doc-entry)
+
+(defn- parameters
+  "The parameters of the tool or the prompt that `parts` names, for
+   `inspect.signature`: `[server tool]` or `[server \"prompts\" prompt]`, as a
+   block typed them. Each is `{name, type, required}`. `type` is the JSON type of
+   a tool argument when its schema gives one word; an argument of a prompt is a
+   string. It connects the server when that is necessary, and throws when the
+   server or the name is not there."
+  [[server & names]]
+  (let [sid
+        (:session-id extension/*current-environment*)
+
+        prompt?
+        (= "prompts" (first names))
+
+        kind
+        (if prompt? "prompt" "tool")
+
+        wanted
+        (if prompt? (second names) (first names))
+
+        conn
+        (when (get (visible-servers sid) server) (ensure-connected! sid server))]
+
+    (when-not conn
+      (throw (ex-info (str "MCP server '" server "' is not available.") {:type :mcp/unavailable})))
+    (with-current-era
+      sid
+      server
+      conn
+      (fn [conn]
+        (let [rows
+              (cond (not prompt?) (mcp/list-tools conn)
+                    (contains? (:server-capabilities conn) "prompts") (mcp/list-all conn
+                                                                                    "prompts/list"))
+
+              named
+              (match-name (map #(get % "name") rows) wanted)
+
+              row
+              (first (filter #(= named (get % "name")) rows))
+
+              required
+              (set (get-in row ["inputSchema" "required"]))]
+
+          (cond (nil? row) (throw (ex-info
+                                    (str "MCP server '" server "' has no " kind " '" wanted "'.")
+                                    {:type :mcp/unknown-name}))
+                prompt? (mapv (fn [argument]
+                                {"name" (get argument "name")
+                                 "type" "string"
+                                 "required" (boolean (get argument "required"))})
+                              (get row "arguments"))
+                :else (mapv (fn [[nm property]]
+                              {"name" nm
+                               "type" (let [word (get property "type")]
+                                        (when (string? word) word))
+                               "required" (contains? required nm)})
+                            (get-in row ["inputSchema" "properties"]))))))))
+
+(defn- bridge-bindings
+  "The host calls of the sandbox shim that cannot wait: `inspect.signature` is not
+   a coroutine. Each takes JSON and gives JSON."
+  []
+  {"__vis_mcp_parameters__" (fn [parts-json]
+                              (json/write-json-str
+                                (try {"parameters" (parameters (json/read-json (str parts-json)))}
+                                     (catch Throwable failure
+                                       {"error" (or (ex-message failure) (str failure))}))))})
 
 (def ^:private resource-source
   "The `:source` of the attachment descriptor of an MCP resource."
@@ -2050,14 +2128,14 @@
      #'mcp-call
      {:activity (presenter/for-tool :mcp__call)
       :symbol 'call
+      ;; A block calls a server by its name. The handles of the shim call this.
+      :binding '__vis_mcp_call__
+      :hidden? true
       :name "mcp__call"
       :result
       "String-keyed `{op,server,tool,content,is_error,structured_content?,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}],methods?}`. With an MCP request as `tool`: `{op,server,method}` plus the keys of the MCP result."
       :description
-      (str
-        "Call a tool on an MCP server, with the names as strings. The call connects automatically. In `python_execution`, each server is a name of the sandbox, the `python_name` of its row in `session[\"env\"][\"mcp\"][\"servers\"]`: write `await <python_name>.<tool>(**arguments)`. `await "
-        sandbox-verb
-        "(server, tool, args)` is the same call. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. A tool name also matches when it has `_` for each character that an identifier cannot have.")
+      "Call a tool on an MCP server, with the names as strings. The call connects automatically. In `python_execution`, each server is a name of the sandbox, the `python_name` of its row in `session[\"env\"][\"mcp\"][\"servers\"]`: write `await <python_name>.<tool>(**arguments)`. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. A tool name also matches when it has `_` for each character that an identifier cannot have."
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
       :inject-env? true
@@ -2144,7 +2222,7 @@
      :ext/ctx-fn contribute
      :ext/prompt-fn mcp-prompt
      :ext/sandbox-shims
-     [{:shim/name "mcp" :shim/globals ["mcp"] :shim/source "vis-host-python/mcp.py"}]
+     [{:shim/name "mcp" :shim/bindings bridge-bindings :shim/source "vis-host-python/mcp.py"}]
      :ext/kind "foundation"}))
 
 (defn register! [] (extension/register-extension! vis-extension))

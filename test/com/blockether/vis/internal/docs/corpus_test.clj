@@ -212,8 +212,9 @@ Whole skill body."}
                  ;; Regression: the index listed the MCP verb by its WIRE name,
                  ;; `mcp__call`. `index-text` keeps only curated names that exist
                  ;; and sandbox entries are keyed by the Python binding, so the
-                 ;; whole MCP surface silently vanished from `doc()`.
-                 (expect (contains? (set dc/curated) "mcp_call"))
+                 ;; whole MCP surface silently vanished from `doc()`. A block now
+                 ;; calls a server by its name, so the index has the page `mcp`.
+                 (expect (contains? (set dc/curated) "mcp"))
                  (doseq [nm dc/curated]
                    (expect (not (str/includes? nm "__")) nm))))
 

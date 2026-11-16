@@ -426,6 +426,7 @@
     (optional-field? x :ext.symbol/contract #(contract-document/valid-json? "symbol" "callable" %))
     (optional-field? x :ext.symbol/raw? boolean?)
     (optional-field? x :ext.symbol/hidden? boolean?)
+    (optional-field? x :ext.symbol/binding symbol?)
     (optional-field? x :ext.symbol/tag op-tags)
     (optional-field? x :ext.symbol/presenter keyword?)
     (optional-field? x
@@ -656,6 +657,15 @@
       (clojure.core/symbol (str alias "/" (name sym)))
       sym)))
 
+(defn sandbox-binding
+  "The name that `python_execution` binds `sym` of `ext` under: the
+   `:ext.symbol/binding` of the symbol when it declares one, else its
+   [[symbol-binding]]. A symbol declares a name for a door that only its sandbox
+   shim calls. Tool lists and operations keep the `symbol-binding`."
+  [ext sym]
+  (or (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/binding %)) (ext-symbols ext))
+      (symbol-binding ext sym)))
+
 (defn ext-builtin? [ext] (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
 
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))
@@ -798,6 +808,9 @@
 
           (:hidden? opts)
           (assoc :ext.symbol/hidden? true)
+
+          (:binding opts)
+          (assoc :ext.symbol/binding (:binding opts))
 
           (:contract opts)
           (assoc :ext.symbol/contract (:contract opts))
