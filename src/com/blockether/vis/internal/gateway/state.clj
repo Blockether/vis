@@ -6330,15 +6330,27 @@
                                   :display-request display-request})
             {:turn turn}))))))
 
+(defn- latest-turn-failed?
+  "True when the latest turn of registry `entry` failed."
+  [entry]
+  (= "failed"
+     (:status (some->> (:turn-order entry)
+                       peek
+                       (get (:turns entry))))))
+
 (defn council-wake-eligible?
   "True when `sid` exists and Council may wake it: it already holds a Council
-   activation, or it is idle - no current or foreign live turn and an unpaused queue."
+   activation, or it is idle - no current or foreign live turn and an unpaused queue.
+   The session of a person is not idle after its latest turn failed. Only the person
+   starts its next turn, so one provider failure does not repeat for each notification.
+   A managed subagent stays eligible: the ping of its parent is its follow-up task."
   [db sid]
   (let [entry (session-entry sid)]
     (and (persistance/db-get-session db sid)
          (or (:council entry)
              (and (not (:current-turn entry))
                   (not (:queue-paused entry))
+                  (not (and (latest-turn-failed? entry) (nil? (agents/info db sid))))
                   ;; Local terminal state precedes journal cleanup and its cached marker.
                   (let [live-tid (get (bus/live-turns) (str sid))]
                     (or (nil? live-tid)

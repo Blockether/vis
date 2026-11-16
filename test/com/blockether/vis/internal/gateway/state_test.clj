@@ -4290,6 +4290,27 @@
                          #'bus/live-turns (constantly {"peer" "ended"})}
           #(expect (false? (#'state/council-wake-eligible? ::db "peer")) held)))))
 
+;; Regression, reported in Vis session 74b502e2: a 429 failed the leader turn. Then each of its
+;; four subagent results started one more leader turn, and each one failed with the same error.
+(defdescribe council-wake-after-failed-turn-test
+             (let [eligible? (fn [status agent]
+                               (with-redefs-fn {#'state/registry
+                                                (atom {"lead" {:turns {"first" {:status "completed"}
+                                                                       "last" {:status status}}
+                                                               :turn-order ["first" "last"]}})
+                                                #'persistance/db-get-session (constantly {:id
+                                                                                          "lead"})
+                                                #'persistance/db-agent-info (constantly agent)
+                                                #'bus/live-turns (constantly {})}
+                                 #(#'state/council-wake-eligible? ::db "lead")))]
+               (it "does not wake the session of a person after its latest turn failed"
+                   (expect (false? (eligible? "failed" nil))))
+               (it "wakes that session when its latest turn did not fail"
+                   (doseq [status ["completed" "cancelled" "suspended"]]
+                     (expect (true? (eligible? status nil)) status)))
+               (it "still wakes a managed subagent after its latest turn failed"
+                   (expect (true? (eligible? "failed" {:status "failed"}))))))
+
 ;; Regression, reported in this Vis session ("dalej wisi a jesteśmy przy 1h już"): the
 ;; stall watchdog failed a turn, the registry recorded `turn.failed`, but the journal
 ;; write carrying it was lost and the machine-wide liveness marker stayed. `soul`

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the theme `auto` in Settings follows the color scheme of the terminal. The TUI asks the terminal for its color scheme (`CSI ? 996 n`) and for its background color (`OSC 11`). A terminal with mode 2031 also reports each change, and the TUI changes with it. When the terminal reports nothing, the TUI reads `COLORFGBG`, then the appearance of macOS, the desktop portal of Linux or the application mode of Windows through WSL. `auto` is the default. A theme that you chose stays. The TUI uses Lanterna 3.1.5-vis.63.
 
 ### Fixed
+- Council: after a turn of your session fails, a Council notification does not start a new turn in that session. Before, each subagent result started one more turn, so one provider error, such as a 429, showed one time for each subagent. The results stay in Council, and `council.wait` gives them in your next turn. A subagent still takes a follow-up task after a failed turn.
 - Sandbox: a `next(...)` call that finds no item at the top level of a block fails with `StopIteration`, and the error shows the line of the call. Before, the error was `RuntimeError: coroutine raised StopIteration` and showed no line. The Python runtime is now at commit cea960d.
 - Gateway: a cached list is fetched one time when two readers find it old at the same moment. Before, the later reader could start a second fetch.
 - Gateway: a client that connects while another Vis process runs a turn gets each event of that turn one time. Before, the start of the turn could arrive two times.
