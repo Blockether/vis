@@ -22,14 +22,21 @@
       by `paintStoredTheme()` a moment later.
     -->
     <script>
+      var pref = null;
       try {
-        var pref = localStorage.getItem('vis.themePref');
-        if (pref === 'light') pref = 'blockether-light';
-        else if (pref === 'dark') pref = 'blockether-dark';
-        if (pref && pref.trim()) document.documentElement.dataset.theme = pref.trim();
+        pref = localStorage.getItem('vis.themePref');
       } catch (e) {
-        /* Private mode / storage disabled: the default palette is the answer. */
+        /* Private mode / storage disabled: no stored choice, so `auto` is the answer. */
       }
+      if (pref === 'light') pref = 'blockether-light';
+      else if (pref === 'dark') pref = 'blockether-dark';
+      pref = pref ? pref.trim() : '';
+      // No choice and `auto` follow the color scheme of the system (`theme.ts` does the same).
+      if (!pref || pref === 'auto') {
+        var isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        pref = isDark ? 'blockether-dark' : 'blockether-light';
+      }
+      document.documentElement.dataset.theme = pref;
       // The theme of a white label is the only palette. The gateway brand (the
       // saved copy, `brand.ts`) comes before the build brand (`window.__VIS_BRAND__`).
       try {

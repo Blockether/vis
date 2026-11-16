@@ -7,6 +7,7 @@
 import { Preferences } from '@capacitor/preferences';
 import { bridged } from './bridge';
 import { forgetNotifyVerdict } from './notify-verdict';
+import { AUTO_THEME_PREF } from './themes.generated';
 import type { GatewayConn, SpeechPrefs, ThemePref } from './types';
 
 const CONNS_KEY = 'vis.connections';
@@ -15,7 +16,8 @@ const PRIMARY_KEY = 'vis.primaryConnection';
 const THEME_PREF_KEY = 'vis.themePref';
 
 // Appearance belongs to this application installation, never a gateway.
-const DEFAULT_THEME_PREF: ThemePref = 'blockether-light';
+// With no stored choice, the app follows the color scheme of the system.
+const DEFAULT_THEME_PREF: ThemePref = AUTO_THEME_PREF;
 
 function localGet(key: string): string | null {
   try {

@@ -833,7 +833,7 @@ export interface AuthVerdict {
   instructions?: string[];
 }
 
-/** App-local appearance choice: the id of one shipped palette (`themes.generated.ts`). */
+/** App-local appearance choice: `auto`, or the id of one shipped palette (`themes.generated.ts`). */
 export type ThemePref = string;
 
 export interface VoiceModelState {

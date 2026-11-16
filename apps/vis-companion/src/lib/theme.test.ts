@@ -2,12 +2,31 @@
 // The document itself is the artifact under test: the stamp has to be IN the
 // page that ships, not in a module that loads after it.
 import html from '../../index.html?raw';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { paintStoredTheme, resolveTheme } from './theme';
-import { DEFAULT_THEME, THEMES } from './themes.generated';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { followSystemTheme, paintStoredTheme, paintThemePref, resolveTheme } from './theme';
+import { AUTO_THEMES, DEFAULT_THEME, THEMES } from './themes.generated';
 
 /** The key `storage.ts` mirrors into localStorage beside the durable Preferences copy. */
 const THEME_PREF_KEY = 'vis.themePref';
+
+/** A system color scheme that the test controls. `set` sends the `change` event of the media query. */
+function systemScheme(isDark: boolean) {
+  const listeners = new Set<() => void>();
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    get matches() {
+      return isDark && query.includes('prefers-color-scheme: dark');
+    },
+    media: query,
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+  }));
+  return {
+    set(next: boolean) {
+      isDark = next;
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
 
 // Theming used to be a GATEWAY call: every launch read `/v1/theme` off whichever
 // machine this device happened to be paired with, and six machines answered six
@@ -52,6 +71,43 @@ describe('painting the stored palette before React renders', () => {
   });
 });
 
+// The request: the theme follows the system unless the person chose one.
+describe('the auto theme', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    delete document.documentElement.dataset.theme;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('paints the palette of the system when no theme is stored', () => {
+    systemScheme(true);
+    expect(paintStoredTheme()).toEqual(AUTO_THEMES.dark);
+    expect(document.documentElement.style.colorScheme).toBe('dark');
+  });
+
+  it('paints again when the system changes, and stops for an explicit theme', () => {
+    const system = systemScheme(false);
+    const stop = followSystemTheme();
+    const root = document.documentElement;
+    try {
+      paintThemePref('auto');
+      expect(root.dataset.theme).toBe(AUTO_THEMES.light.id);
+      system.set(true);
+      expect(root.dataset.theme).toBe(AUTO_THEMES.dark.id);
+
+      const chosen = THEMES.find((theme) => theme.id === 'solarized-light')!;
+      paintThemePref(chosen.id);
+      system.set(false);
+      system.set(true);
+      expect(root.dataset.theme).toBe(chosen.id);
+    } finally {
+      stop();
+    }
+  });
+});
+
 // The bundle still has to load and evaluate before `paintStoredTheme()` runs, so
 // the FIRST frame is stamped by an inline script in `index.html`. It reads the
 // same mirrored key; this pins the two together, because a rename on either side
@@ -67,5 +123,17 @@ describe('the boot stamp in index.html', () => {
     new Function('document', 'localStorage', inline)(document, localStorage);
 
     expect(document.documentElement.dataset.theme).toBe(dark.id);
+  });
+
+  it('stamps the palette of the system when no theme is stored', () => {
+    delete document.documentElement.dataset.theme;
+    localStorage.clear();
+    systemScheme(true);
+    try {
+      new Function('document', 'localStorage', inline)(document, localStorage);
+      expect(document.documentElement.dataset.theme).toBe(AUTO_THEMES.dark.id);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

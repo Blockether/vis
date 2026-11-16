@@ -1,9 +1,27 @@
 import { currentBrand } from './brand';
 import { loadThemePrefSync } from './storage';
-import { DEFAULT_THEME, THEMES, type ThemeChoice } from './themes.generated';
+import {
+  AUTO_THEME_PREF,
+  AUTO_THEMES,
+  DEFAULT_THEME,
+  THEMES,
+  type ThemeChoice,
+} from './themes.generated';
+
+/** The web standard for the color scheme of the system: browser, desktop shell and mobile webview. */
+const DARK_SCHEME = '(prefers-color-scheme: dark)';
 
 /** The variables that the brand theme put on the root: a later paint without them removes them. */
 let brandColors: string[] = [];
+
+/** The preference of the last paint. A change of the system paints again only for `auto`. */
+let paintedPref: string | null = null;
+
+/** The palette for the color scheme that the system reports now. */
+function systemTheme(): ThemeChoice {
+  const isDark = globalThis.matchMedia?.(DARK_SCHEME).matches ?? false;
+  return AUTO_THEMES[isDark ? 'dark' : 'light'];
+}
 
 /**
  * Painting a theme is setting ONE attribute.
@@ -31,13 +49,39 @@ export function applyTheme(theme: ThemeChoice): void {
 
 /**
  * The palette a stored preference names, or the default when it names none of them.
+ * `auto` names the palette for the color scheme of the system.
  * A brand theme is the only palette: the preference does not count while it exists.
  */
 export function resolveTheme(pref: string): ThemeChoice {
   const brand = currentBrand().theme;
   const id = brand?.base ?? pref;
-  const theme = THEMES.find((choice) => choice.id === id) ?? DEFAULT_THEME;
+  const theme =
+    id === AUTO_THEME_PREF
+      ? systemTheme()
+      : (THEMES.find((choice) => choice.id === id) ?? DEFAULT_THEME);
   return brand?.label ? { ...theme, label: brand.label } : theme;
+}
+
+/** Paint the palette of a preference, and remember the preference for `followSystemTheme`. */
+export function paintThemePref(pref: string): ThemeChoice {
+  paintedPref = pref;
+  const theme = resolveTheme(pref);
+  applyTheme(theme);
+  return theme;
+}
+
+/**
+ * Paint again when the system changes its color scheme while the preference is `auto`.
+ * The media query sends the change, so nothing polls. Returns the function that stops it.
+ */
+export function followSystemTheme(): () => void {
+  const query = globalThis.matchMedia?.(DARK_SCHEME);
+  if (!query) return () => {};
+  const repaint = () => {
+    if (paintedPref === AUTO_THEME_PREF) paintThemePref(paintedPref);
+  };
+  query.addEventListener?.('change', repaint);
+  return () => query.removeEventListener?.('change', repaint);
 }
 
 /**
@@ -49,7 +93,5 @@ export function resolveTheme(pref: string): ThemeChoice {
  * default, and the colour scheme and the browser chrome follow it here.
  */
 export function paintStoredTheme(): ThemeChoice {
-  const theme = resolveTheme(loadThemePrefSync());
-  applyTheme(theme);
-  return theme;
+  return paintThemePref(loadThemePrefSync());
 }

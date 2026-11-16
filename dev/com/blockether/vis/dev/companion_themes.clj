@@ -140,7 +140,17 @@
       (str/join (map (fn [id]
                        (str "  " (entry id) ",\n"))
                      rest-ids))
-      "];\n")))
+      "];\n\n"
+      "/** The preference that follows the color scheme of the system. It names no palette. */\n"
+      "export const AUTO_THEME_PREF = '"
+      theme/auto-theme-id
+      "';\n\n"
+      "/** The palette that `AUTO_THEME_PREF` paints for each color scheme of the system. */\n"
+      "export const AUTO_THEMES: Readonly<Record<ThemeChoice['mode'], ThemeChoice>> = {\n"
+      (str/join (map (fn [mode]
+                       (str "  " (name mode) ": " (entry (get theme/auto-theme-ids mode)) ",\n"))
+                     [:light :dark]))
+      "};\n")))
 
 (defn group-colors-module
   "The session-group palette as TypeScript: the gateway contract's tokens in the

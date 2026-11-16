@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayConn, SpeechPrefs, ThemePref, Toggle } from '../lib/types';
 import { GatewayClient } from '../lib/gateway';
 import { useBrand } from '../lib/brand';
-import { applyTheme } from '../lib/theme';
+import { paintThemePref } from '../lib/theme';
 import {
   setPythonCodeShown,
   setStepsSummarized,
@@ -16,7 +16,7 @@ import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from
 import { speechOutput } from '../lib/speech';
 import { MinusIcon, PlusIcon } from '../components/icons';
 import { ZenPictureChoice } from '../components/ZenPictures';
-import { DEFAULT_THEME, THEMES, type ThemeChoice } from '../lib/themes.generated';
+import { AUTO_THEME_PREF, THEMES } from '../lib/themes.generated';
 import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
 import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
@@ -92,7 +92,7 @@ export function SettingsDialog({
   const showPythonCode = usePythonCodeShown();
   const summarizeSteps = useStepsSummarized();
   const zen = useZenMode();
-  const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
+  const [pref, setPref] = useState<ThemePref>(AUTO_THEME_PREF);
   // A white label with a theme has one palette, so there is nothing to choose.
   const hasBrandTheme = useBrand().theme !== undefined;
   const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
@@ -138,12 +138,12 @@ export function SettingsDialog({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAdding, onClose]);
 
-  async function chooseTheme(next: ThemeChoice) {
-    setPending(`theme:${next.id}`);
+  async function chooseTheme(next: ThemePref) {
+    setPending(`theme:${next}`);
     try {
-      await setThemePref(next.id);
-      setPref(next.id);
-      applyTheme(next);
+      await setThemePref(next);
+      setPref(next);
+      paintThemePref(next);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -414,6 +414,15 @@ export function SettingsDialog({
                   {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized
                       Dark`, `Vis Light`, so a trailing `light`/`dark` restated the last word
                       of its own row six times down the list. The name is the whole answer. */}
+                  <ChoiceCell
+                    title="Auto"
+                    sub="Follows the system"
+                    variant="list"
+                    isSelected={pref === AUTO_THEME_PREF}
+                    isLeaf
+                    disabled={pending?.startsWith('theme:') ?? false}
+                    onClick={() => void chooseTheme(AUTO_THEME_PREF)}
+                  />
                   {THEMES.map((choice) => (
                     <ChoiceCell
                       key={choice.id}
@@ -422,7 +431,7 @@ export function SettingsDialog({
                       isSelected={pref === choice.id}
                       isLeaf
                       disabled={pending?.startsWith('theme:') ?? false}
-                      onClick={() => void chooseTheme(choice)}
+                      onClick={() => void chooseTheme(choice.id)}
                     />
                   ))}
                 </div>

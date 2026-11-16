@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Companion: the theme **Auto** in Settings follows the color scheme of the system and changes with it. It uses the web standard `prefers-color-scheme`, so it works in a browser, in the desktop app on macOS, Windows and Linux, and on iOS and Android. **Auto** is the default. A theme that you chose stays.
+- TUI: the theme `auto` in Settings follows the color scheme of the terminal. The TUI asks the terminal for its color scheme (`CSI ? 996 n`) and for its background color (`OSC 11`). A terminal with mode 2031 also reports each change, and the TUI changes with it. When the terminal reports nothing, the TUI reads `COLORFGBG`, then the appearance of macOS, the desktop portal of Linux or the application mode of Windows through WSL. `auto` is the default. A theme that you chose stays. The TUI uses Lanterna 3.1.5-vis.63.
+
 ### Fixed
 - Sandbox: a `next(...)` call that finds no item at the top level of a block fails with `StopIteration`, and the error shows the line of the call. Before, the error was `RuntimeError: coroutine raised StopIteration` and showed no line. The Python runtime is now at commit cea960d.
 - Gateway: a cached list is fetched one time when two readers find it old at the same moment. Before, the later reader could start a second fetch.

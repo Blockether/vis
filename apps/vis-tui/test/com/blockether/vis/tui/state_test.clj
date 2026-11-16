@@ -669,6 +669,44 @@
            (expect (= [:vis-dark] @notices))
            (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))
            (finally (reset! state/app-db saved-db) (theme/apply-theme! saved-theme)))))
+  (it
+    "follows the color scheme of the system with the auto theme, and saves nothing"
+    (let [saved-db
+          @state/app-db
+
+          saved-theme
+          @theme/active-theme-id
+
+          saves
+          (atom 0)]
+
+      (try (with-redefs [vis/update-machine-config!
+                         (fn [_]
+                           (swap! saves inc))
+
+                         input/set-default-bg!
+                         (fn [& _]
+                           nil)
+
+                         ;; In tmux the auto theme gives the default background back.
+                         input/reset-default-bg!
+                         (fn [& _]
+                           nil)]
+
+             (reset! state/app-db {:settings {:theme-name :auto} :render-version 0})
+             (state/dispatch [:set-system-color-scheme :dark])
+             (expect (= "blockether-dark" @theme/active-theme-id))
+             (state/dispatch [:set-system-color-scheme :light])
+             (expect (= "blockether-light" @theme/active-theme-id))
+             ;; A theme that the person chose does not follow the system.
+             (theme/apply-theme! :vis-light)
+             (reset! state/app-db {:settings {:theme-name :vis-light} :render-version 0})
+             (state/dispatch [:set-system-color-scheme :dark])
+             (expect (= "vis-light" @theme/active-theme-id))
+             (expect (zero? @saves)))
+           (finally (reset! state/app-db saved-db)
+                    (theme/set-system-color-scheme! :light)
+                    (theme/apply-theme! saved-theme)))))
   (it "keeps balanced when the config holds a machine reasoning level"
       ;; The gateway keeps `reasoning_level` for each session, so a saved machine
       ;; value never reaches the `:settings` projection or the footer.

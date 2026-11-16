@@ -6,6 +6,25 @@
 
 (def active-theme-id (atom theme/default-theme-id))
 
+(def system-color-scheme
+  "The color scheme of the system, `:light` or `:dark`, that the `auto` theme follows.
+   `set-system-color-scheme!` is its only writer."
+  (atom :light))
+
+(defn set-system-color-scheme!
+  "Record the color scheme of the system. `apply-theme!` reads it for the `auto` theme."
+  [scheme]
+  (reset! system-color-scheme (if (= :dark scheme) :dark :light)))
+
+(defn- resolve-theme-id
+  "The theme id that the preference `theme-id` names. The `auto` preference names the
+   theme for the color scheme of the system."
+  [theme-id]
+  (let [id (or (some-> theme-id
+                       name)
+               theme/default-theme-id)]
+    (if (= theme/auto-theme-id id) (get theme/auto-theme-ids @system-color-scheme) id)))
+
 (def default-theme (theme/theme @active-theme-id))
 
 (def default-palette (:palette default-theme))
@@ -494,13 +513,11 @@
 (defn apply-theme!
   "Apply registered theme id to the TUI adapter vars. Future paints use the
    updated Lanterna colors/widths/spacing without requiring channels to ship
-   their own theme declaration."
+   their own theme declaration. The `auto` id applies the theme for the color
+   scheme of the system."
   [theme-id]
-  (let [theme-id
-        (or theme-id theme/default-theme-id)
-
-        theme-map
-        (theme/theme theme-id)
+  (let [theme-map
+        (theme/theme (resolve-theme-id theme-id))
 
         widths
         (:widths theme-map)

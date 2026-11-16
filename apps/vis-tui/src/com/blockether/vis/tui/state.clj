@@ -858,7 +858,7 @@
   (let [s (cond (keyword? v) (name v)
                 (string? v) (str/trim v)
                 :else nil)]
-    (keyword (if (str/blank? s) shared-theme/default-theme-id s))))
+    (keyword (if (str/blank? s) shared-theme/auto-theme-id s))))
 
 (defn- normalize-picture-path [v] (when (string? v) (not-empty (str/trim v))))
 
@@ -891,7 +891,7 @@
 
 (def default-settings
   "Per-user terminal preferences stored by the standalone app."
-  {:theme-name (keyword shared-theme/default-theme-id)
+  {:theme-name (keyword shared-theme/auto-theme-id)
    :show-python-code true
    :summarize-steps true
    :zen-mode false
@@ -933,15 +933,36 @@
              :level
              :warn)))))
 
+(defn sync-terminal-background!
+  "Give the padding of the emulator the background of the applied theme (OSC 11).
+   With the `auto` theme in tmux, give the default background back instead. tmux
+   derives the color scheme of a pane from that background, so an override there
+   hides each later change of the system."
+  [theme-name]
+  (try (if (and (= (keyword shared-theme/auto-theme-id) theme-name) (seq (System/getenv "TMUX")))
+         (input/reset-default-bg! @vis/tty-out)
+         (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
+           (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))))
+       (catch Throwable _ nil)))
+
+(defn- paint-theme!
+  "Apply the theme of the preference `theme-name` to the next paints."
+  [theme-name]
+  (render/invalidate-cache!)
+  (tui-theme/apply-theme! theme-name)
+  ;; Refresh the emulator's padding as well as the painted cells.
+  (sync-terminal-background! theme-name))
+
 (reg-fx :apply-settings
         (fn [settings]
-          (render/invalidate-cache!)
-          (tui-theme/apply-theme! (:theme-name settings))
-          ;; Refresh the emulator's padding as well as the painted cells.
-          (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
-            (try (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))
-                 (catch Throwable _ nil)))
+          (paint-theme! (:theme-name settings))
           (persist-settings! settings)))
+
+(reg-fx :apply-system-color-scheme
+        (fn [[scheme theme-name]]
+          (tui-theme/set-system-color-scheme! scheme)
+          ;; An explicit theme does not follow the system.
+          (when (= (keyword shared-theme/auto-theme-id) theme-name) (paint-theme! theme-name))))
 
 (defn- model-entry
   [provider model]
@@ -1458,6 +1479,12 @@
 (reg-event-db :set-dialog-open
               (fn [db [_ open?]]
                 (assoc db :dialog-open? (boolean open?))))
+
+(reg-event-fx :set-system-color-scheme
+              ;; The terminal or the operating system reported `:light` or `:dark`.
+              (fn [db [_ scheme]]
+                {:db db
+                 :fx [[:apply-system-color-scheme [scheme (get-in db [:settings :theme-name])]]]}))
 
 (reg-event-fx :update-settings
               (fn [db [_ new-settings]]

@@ -10,6 +10,14 @@
   "The built-in theme id used when config has no explicit theme."
   "blockether-light")
 
+(def auto-theme-id
+  "The theme preference that follows the color scheme of the system. It names no palette."
+  "auto")
+
+(def auto-theme-ids
+  "The built-in theme that `auto-theme-id` selects for each color scheme of the system."
+  {:light "blockether-light" :dark "blockether-dark"})
+
 (defn- byte? [x] (and (int? x) (<= 0 x 255)))
 
 (defn rgb?

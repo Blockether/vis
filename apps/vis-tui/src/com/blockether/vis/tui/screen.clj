@@ -38,6 +38,7 @@
     [com.blockether.vis.tui.selection :as selection]
     [com.blockether.vis.tui.session-export :as session-export]
     [com.blockether.vis.tui.state :as state]
+    [com.blockether.vis.tui.system-theme :as system-theme]
     [com.blockether.vis.tui.terminal-image :as timg]
     [com.blockether.vis.tui.transient :as tr]
     [com.blockether.vis.tui.theme :as t]
@@ -61,7 +62,7 @@
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi ANSITerminal TerminalCapabilities
-            UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
+            TerminalCapabilities$ColorScheme UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
            [com.googlecode.lanterna.terminal.html HtmlMedia HtmlMedia$Kind HtmlTerminal]
            [java.io PrintWriter StringWriter]
            [java.lang.management GarbageCollectorMXBean ManagementFactory]
@@ -9062,6 +9063,30 @@
            (.setTerminalCapabilities terminal (TerminalCapabilities. ^java.util.Map env))
            (catch Throwable _ nil)))))
 
+(defn- follow-system-color-scheme!
+  "Give the `auto` theme the color scheme of the system, on a real terminal. The
+   terminal comes first: it reports its scheme at the start and, with mode 2031, each
+   later change. When the terminal reports nothing, `system-theme/detect` asks the
+   environment and the operating system. Without an answer, the scheme is light."
+  [terminal env]
+  (when-let [^TerminalCapabilities capabilities (when (instance? ANSITerminal terminal)
+                                                  (.getTerminalCapabilities ^ANSITerminal
+                                                                            terminal))]
+    (let [scheme (fn [reported]
+                   (if (= TerminalCapabilities$ColorScheme/DARK reported) :dark :light))]
+      (.setColorSchemeListener capabilities
+                               (reify
+                                 java.util.function.Consumer
+                                   (accept [_ reported]
+                                     (state/dispatch [:set-system-color-scheme (scheme reported)])
+                                     ;; The theme changes after the event. Paint with it.
+                                     (state/dispatch [:bump-render-version :full-frame]))))
+      (state/dispatch [:set-system-color-scheme
+                       (or (some-> (.getColorScheme capabilities)
+                                   scheme)
+                           (system-theme/detect env)
+                           :light)]))))
+
 (defn- probe-terminal-cell-size!
   "Ask a GRAPHICAL terminal for its REAL cell pixel size and feed it into
    `timg/set-cell-dimensions!`, so an inline-image box reserves the EXACT rows x
@@ -9121,8 +9146,7 @@
 (defn- enable-terminal-state!
   [opts]
   (when-not (:html? opts)
-    (let [^com.googlecode.lanterna.TextColor$RGB c t/terminal-bg]
-      (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c)))))
+    (state/sync-terminal-background! (get-in @state/app-db [:settings :theme-name]))))
 
 (defn- disable-terminal-state!
   [opts]
@@ -11255,6 +11279,7 @@
            (volatile! nil)]
 
        (.startScreen screen)
+       (follow-system-color-scheme! terminal (System/getenv))
        (mark-startup! :screen)
        (vreset! toggle-listener-dispose
                 (vis/toggle-add-listener!

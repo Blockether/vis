@@ -3643,10 +3643,11 @@
 
 (defn- theme-choice-order
   []
-  (try (mapv keyword (shared-theme/available-theme-ids))
-       (catch Throwable t
-         (tel/log! :warn ["dialogs: available-theme-ids failed" (ex-message t)])
-         [(keyword shared-theme/default-theme-id)])))
+  (try
+    (into [(keyword shared-theme/auto-theme-id)] (map keyword) (shared-theme/available-theme-ids))
+    (catch Throwable t
+      (tel/log! :warn ["dialogs: available-theme-ids failed" (ex-message t)])
+      [(keyword shared-theme/default-theme-id)])))
 
 (defonce ^:private thinking-modes-setting
   ;; The gateway row of `simplified_thinking_modes`. Settings shows it under View at
@@ -3681,7 +3682,7 @@
         :choices (theme-choice-order)
         :label "Theme"
         :description
-        "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}
+        "Auto follows the color scheme of the terminal or the system. The other themes come from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}
        {:key :show-python-code
         :type :toggle
         :label "Code mode"
@@ -4864,12 +4865,16 @@
 
 (defn- theme-display-label
   [theme-id]
-  (let [theme-map (shared-theme/theme theme-id)]
-    (or (:display-name theme-map)
-        (some-> theme-id
-                name
-                titleize-label)
-        (str theme-id))))
+  (if (= shared-theme/auto-theme-id
+         (some-> theme-id
+                 name))
+    "Auto"
+    (let [theme-map (shared-theme/theme theme-id)]
+      (or (:display-name theme-map)
+          (some-> theme-id
+                  name
+                  titleize-label)
+          (str theme-id)))))
 
 (defn- theme-picker-items
   [choices]

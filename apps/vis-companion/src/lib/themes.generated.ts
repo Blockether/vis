@@ -26,3 +26,12 @@ export const THEMES: readonly ThemeChoice[] = [
   { id: 'vis-dark', label: 'Vis Dark', mode: 'dark', chrome: '#0c0e12' },
   { id: 'vis-light', label: 'Vis Light', mode: 'light', chrome: '#ffffff' },
 ];
+
+/** The preference that follows the color scheme of the system. It names no palette. */
+export const AUTO_THEME_PREF = 'auto';
+
+/** The palette that `AUTO_THEME_PREF` paints for each color scheme of the system. */
+export const AUTO_THEMES: Readonly<Record<ThemeChoice['mode'], ThemeChoice>> = {
+  light: { id: 'blockether-light', label: 'Blockether Light', mode: 'light', chrome: '#faf3eb' },
+  dark: { id: 'blockether-dark', label: 'Blockether Dark', mode: 'dark', chrome: '#0f1117' },
+};

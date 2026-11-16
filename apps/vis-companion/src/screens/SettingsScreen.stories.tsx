@@ -4,7 +4,7 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { STORY_GATEWAYS, storySettingsFetch } from '../dev/story-data';
 import { getThemePref, setThemePref } from '../lib/storage';
 import { resolveTheme } from '../lib/theme';
-import { THEMES } from '../lib/themes.generated';
+import { AUTO_THEME_PREF, THEMES } from '../lib/themes.generated';
 import { SettingsDialog } from './SettingsScreen';
 import { OpenBands } from '../dev/OpenBands';
 
@@ -82,7 +82,8 @@ export const Appearance: Story = {
     const choices = within(panel)
       .getAllByRole('button')
       .filter((button) => !button.hasAttribute('aria-expanded'));
-    await expect(choices).toHaveLength(THEMES.length);
+    // `Auto` leads the palettes.
+    await expect(choices).toHaveLength(THEMES.length + 1);
     const alternative = THEMES.find(
       (choice) => choice.id !== resolveTheme(String(globals.theme)).id,
     )!;
@@ -91,11 +92,17 @@ export const Appearance: Story = {
     await waitFor(() => expect(next).toHaveAttribute('aria-pressed', 'true'));
     await expect(theme).toHaveAttribute('aria-pressed', 'false');
     await expect(getThemePref()).resolves.toBe(alternative.id);
+    // `Auto` is a choice of its own: it stores the preference, not the palette it paints.
+    const auto = within(panel).getByRole('button', { name: /^Auto/ });
+    await userEvent.click(auto);
+    await waitFor(() => expect(auto).toHaveAttribute('aria-pressed', 'true'));
+    await expect(next).toHaveAttribute('aria-pressed', 'false');
+    await expect(getThemePref()).resolves.toBe(AUTO_THEME_PREF);
     // Keyboard selection keeps the original theme and its persisted preference in sync.
     theme.focus();
     await userEvent.keyboard('{Enter}');
     await waitFor(() => expect(theme).toHaveAttribute('aria-pressed', 'true'));
-    await expect(next).toHaveAttribute('aria-pressed', 'false');
+    await expect(auto).toHaveAttribute('aria-pressed', 'false');
     await expect(getThemePref()).resolves.toBe(resolveTheme(String(globals.theme)).id);
   },
 };

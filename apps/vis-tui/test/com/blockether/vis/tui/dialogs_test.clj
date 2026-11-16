@@ -1165,7 +1165,7 @@
   (it "shows every choice and the current one without saving on open or Escape"
       (doseq [width [40 100]]
         (let [{:keys [requests frames value]} (exercise-enum-picker [:enter :esc :esc]
-                                                                       {:width width})]
+                                                                    {:width width})]
           (expect (empty? requests))
           (expect (= "fast" value))
           (expect (some (fn [frame]
@@ -1458,8 +1458,8 @@
                                   (keep :key rows)))))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
-          ;; vis-dark/light are pinned to the TOP; every other built-in follows by id.
-          (expect (= [:vis-light :vis-dark :blockether-dark :blockether-light :solarized-dark
+          ;; Auto leads. vis-dark/light are pinned next; every other built-in follows by id.
+          (expect (= [:auto :vis-light :vis-dark :blockether-dark :blockether-light :solarized-dark
                       :solarized-light :tokyonight-day :tokyonight-moon :tokyonight-night
                       :tokyonight-storm]
                      (:choices (first (filter #(= :theme-name (:key %)) rows)))))

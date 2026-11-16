@@ -8,7 +8,7 @@ import { captureContextMenu, captureLinkClicks } from './lib/desktop';
 import { installDiagnostics } from './lib/diagnostics';
 import { loadHost, stampShellHost } from './lib/host';
 import { perfActive } from './lib/perf';
-import { paintStoredTheme } from './lib/theme';
+import { followSystemTheme, paintStoredTheme } from './lib/theme';
 import { takeWebLaunch } from './lib/web-launch';
 import './index.css';
 
@@ -29,6 +29,8 @@ stampShellHost();
 // backgrounded webview. `index.html` already stamped the raw stored id during
 // parse; this settles it against the shipped catalog.
 paintStoredTheme();
+// The `auto` preference follows each later change of the system color scheme.
+followSystemTheme();
 // The gateway that serves this page can carry a white label. Its saved copy painted
 // the frame above; a changed answer paints the brand theme again.
 void loadBrand().then((isChanged) => {

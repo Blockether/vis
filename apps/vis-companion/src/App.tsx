@@ -75,7 +75,7 @@ import {
 } from './lib/share-intake';
 import { discardSharedFiles } from './lib/share-files';
 import { connectWebLaunch, type WebLaunch } from './lib/web-launch';
-import { applyTheme, resolveTheme } from './lib/theme';
+import { paintThemePref } from './lib/theme';
 import { getThemePref } from './lib/storage';
 import { IconButton, IconLink } from './components/ui';
 import { BrandLogo } from './components/BrandLogo';
@@ -830,7 +830,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // reset wiped the localStorage mirror. It repaints nothing when they agree.
   useEffect(() => {
     void getThemePref().then((pref) => {
-      applyTheme(resolveTheme(pref));
+      paintThemePref(pref);
     });
   }, []);
 
