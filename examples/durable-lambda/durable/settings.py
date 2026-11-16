@@ -29,10 +29,9 @@ SYNC_FUNCTION = ENV.get("VIS_SYNC_FUNCTION", "")
 # The address of the Lambda Runtime API. Lambda sets it.
 RUNTIME_API = ENV.get("AWS_LAMBDA_RUNTIME_API", "")
 
-# -- S3, the queue and the secrets ---------------------------------------------------
+# -- S3 and the secrets --------------------------------------------------------------
 
 BUCKET = ENV.get("VIS_BUCKET", "")
-QUEUE = ENV.get("VIS_QUEUE_URL", "")
 # The S3 object that names the one live worker of the shard `main` and its last checkpoint.
 LEASE = "lease.json"
 # The shard of the sessions of people. Each other shard has the sessions of one workflow run (see `shards.py`).
@@ -120,6 +119,8 @@ GATEWAY_URL = f"http://{LOOPBACK}:{GATEWAY_PORT}"
 TOKEN_FILE = f"{WORKER_DIR}/gateway.token"
 # The time that the gateway has to start.
 GATEWAY_START_S = 60
+# The S3 object with the state that each worker shares (see `vis/machine.py`).
+MACHINE = "machine"
 # The session group of the workflow runs, and the group of the sessions that a
 # person starts. The two groups keep each session in the one project.
 RUNS_GROUP, PEOPLE_GROUP = "Workflows", "Sessions"
@@ -134,17 +135,44 @@ RUN_GROUP = ENV.get("DURABLE_GROUP", "")
 MARGIN = int(ENV.get("VIS_HANDOFF_MARGIN_S", "90"))
 LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - MARGIN
 # A worker without work stops after IDLE_S.
-IDLE_S = int(ENV.get("VIS_IDLE_S", "300"))
-# A worker of a run that only answered reads stops after READ_IDLE_S: Vis web reads the first sessions of its list at each load.
-READ_IDLE_S = min(IDLE_S, 60)
-# At its end a worker records the answers to at most SEEN reads that a tab repeats, each of at most SEEN_LIMIT bytes (see `shards.py`).
-SEEN, SEEN_LIMIT = 100, 500_000
+IDLE_S = int(ENV.get("VIS_IDLE_S", "60"))
+# The reads that a tab of Vis web makes when a person opens a session. At its end a worker records their answers
+# for each of its sessions (see `shards.py`), so a look at a session starts no worker.
+OPENED = (
+    "/v1/sessions/{id}?include=queued",
+    "/v1/sessions/{id}/transcript?limit=24&iteration_limit=8",
+    "/v1/sessions/{id}/views/input",
+    "/v1/sessions/{id}/views/live",
+    "/v1/sessions/{id}/views/live?placement=attachment",
+    "/v1/sessions/{id}/model",
+    "/v1/sessions/{id}/slashes",
+    "/v1/sessions/{id}/artifacts",
+    *(f"/v1/settings/{key}?scope=session&target_id={{id}}" for key in ("reasoning_level", "verbosity", "codex_fast_mode", "thinking_summary", "reasoning_effort")),
+)
+# The reads of the machine that a tab of Vis web makes when it loads and when a person opens a session. At its end the
+# worker of `main` records their answers, so a tab starts no worker.
+LOADED = (
+    "/healthz",
+    "/v1/web/brand",
+    "/v1/capabilities",
+    "/v1/apps",
+    "/v1/devices",
+    "/v1/automations",
+    "/v1/router?probe=changed",
+    "/v1/mcp/servers?scope=global",
+    "/v1/settings?channel=all&scope=global",
+    "/v1/settings/simplified_thinking_modes?scope=global",
+)
+# The record has a call with a body only when the body has at most NAME_LIMIT bytes: the body is a part of its name.
+NAME_LIMIT = 4_000
 # A worker starts, or stays alive, when an automation is due in DUE_S.
 DUE_S = 120
+# A worker that fails starts the next worker of its shard, at most RESTARTS times in a row. After that the schedule starts it.
+RESTARTS = 2
 # A worker that stops without a release loses the lease after LEASE_TTL.
-LEASE_TTL = 90
+LEASE_TTL = 30
 # The worker renews the lease each RENEW_S and looks for state to save each SAVE_S.
-RENEW_S, SAVE_S = 30, 15
+RENEW_S, SAVE_S = 10, 15
 # At its end the gateway gets at most DRAIN_S to park the running turns, and a turn
 # gets DRAIN_GRACE_S to end by itself. LAST_SAVE_S stay for the last checkpoint.
 DRAIN_S, DRAIN_GRACE_S, LAST_SAVE_S = 45, 10, 40
@@ -168,6 +196,8 @@ JOIN_S = 10
 COLLECT_S, PAUSE_S = 0.2, 0.15
 # The front starts the worker of a shard at most each WAKE_S.
 WAKE_S = 5
+# The shards that get a call for many sessions at the same time.
+SPREAD = 16
 # A caller asks S3 again for the shard of a session after ROUTE_S, and a worker
 # publishes the new sessions of its shard each ROUTE_S.
 ROUTE_S = 2
@@ -177,7 +207,7 @@ INBOX_S, INBOX_LIST_S = 0.2, 10
 START_S = 90
 # The worker knows an answered call for ANSWERED_S, so a repeated message gets no second answer.
 ANSWERED_S = 1200
-# A larger body of a call goes in its own S3 object: an SQS message has a size limit.
+# A larger body of a call goes in its own S3 object, so the worker reads the calls of its inbox fast.
 MESSAGE_LIMIT = 150_000
 # The bytes of one read of a streamed answer.
 CHUNK = 65536
@@ -211,5 +241,5 @@ WORKFLOW_LIMIT, ATTACHED_LIMIT = 200_000, 2_000_000
 COMMENT_LIMIT = 4_000
 # The worker keeps the directory of a session for HOME_S before it asks the gateway again.
 HOME_S = 60
-# The search of the front reads the last TEXT_TURNS turns of a session of a run, and TEXT_LIMIT characters of each request and reply.
-TEXT_TURNS, TEXT_LIMIT = 100, 4_000
+# For the search of the front a worker reads the transcript of a session in pages of TEXT_TURNS turns, each turn with at most TEXT_STEPS iterations.
+TEXT_TURNS, TEXT_STEPS = 100, 10_000

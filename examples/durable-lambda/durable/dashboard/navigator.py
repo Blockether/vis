@@ -5,8 +5,7 @@ that each other shard recorded in S3 (`shards.show`), so a look at the list star
 Each page gets the rows that have their place in it, in the order of the gateway and in
 the archive view of the call. A search finds such a session by its title, and by the
 requests and the replies that its shard recorded (`shards.tell`).
-Each home has its own ids: a row gets the project of `main` that has the same directory
-and the group of `main` that has the same name.
+A recorded row has the ids that `main` gave to its project and to its group (see `vis/machine.py`).
 """
 
 from __future__ import annotations
@@ -32,13 +31,11 @@ MARK = "front."
 # The function that gives the place of a row in the order of the gateway.
 Rank = Callable[[dict[str, Any]], tuple[int, float, str]]
 # A word of a text, the rank of a hit by its side as in the gateway, and the hits of one session in an answer.
-WORD, RANK, HITS = re.compile(r"\w+"), {"request": 1, "reply": 2}, 6
+WORD, RANK, HITS = re.compile(r"\w+"), {"request": 1, "reply": 2, "thinking": 3}, 6
 # The words of a snippet, and the words of it that come before the first word of the search.
 SNIPPET, LEAD = 20, 5
-# A project of `main` gets a new read of its groups, for a name that it did not have, only after GROUPS_S.
-GROUPS_S = 60
-# The time of the last read of the groups of each project directory of `main`, and the id of each group by its name.
-_groups: dict[str, tuple[float, dict[str, str]]] = {}
+# The front asks `main` for a project directory that it does not know at most each PROJECTS_S.
+PROJECTS_S = 60
 # The project of `main` for each project directory, and the time of the last read for a directory that was not known.
 _projects: dict[str, dict[str, Any]] = {}
 _asked = 0.0
@@ -97,39 +94,38 @@ def joined(request: Request, raw: bytes, ask: Callable[[str, str], bytes | None]
     fields, path = dict(urllib.parse.parse_qsl(request.query)), request.path.rstrip("/")
     if not isinstance(answer, dict) or not (rows or position(fields.get("after"))):
         return raw
-    active = [row for row in rows if not row.get("archived_at")]
+    active, archived = filed(rows)
     if path == GROUPS:
         return json.dumps(counted(fields["root"], answer, active)).encode()
     # The view of the archive: the active sessions, the archived sessions or both.
     view = (fields.get("archived") or "exclude").lower()
-    seen = rows if view == "include" else active if view == "exclude" else [row for row in rows if row.get("archived_at")]
+    seen = active + archived if view == "include" else active if view == "exclude" else archived
     if path == SEARCH:
         return json.dumps(found(fields, answer, seen, ask)).encode()
     return json.dumps(listed(fields, answer, active, seen, ask)).encode()
 
 
-def known(root: str, answer: dict[str, Any]) -> dict[str, str]:
-    """Record the groups of a project of `main` from an answer. Return the id of each group by its name."""
-    at, found = _groups.get(root, (0.0, {}))
-    found = {**found, **{group["name"]: group["id"] for group in answer.get("groups") or []}}
-    _groups[root] = (at, found)
-    return found
+def filed(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return the active rows and the archived rows of the other shards, each in a group that `main` has.
 
-
-def group(root: str, name: str | None, ask: Callable[[str, str], bytes | None]) -> str | None:
-    """Return the id of the group of `main` that has a name, or None."""
-    at, found = _groups.get(root, (0.0, {}))
-    if name and name not in found and time.time() - at > GROUPS_S:
-        raw = ask(GROUPS, urllib.parse.urlencode({"root": root, "archived": "include"}))
-        _groups[root] = (time.time(), found)
-        found = known(root, json.loads(raw)) if raw else found
-    return found.get(name) if name else None
+    `main` is the writer of the groups (see `vis/machine.py`). As in the gateway, an archived group
+    archives its sessions without a change of them, and a session of a deleted group has no group.
+    """
+    groups = shards.shared().get("groups") or {}
+    active: list[dict[str, Any]] = []
+    archived: list[dict[str, Any]] = []
+    for row in rows:
+        group = groups.get(row.get("group_id"))
+        if group is None and row.get("group_id"):
+            row = {**row, "group_id": None}
+        (archived if row.get("archived_at") or (group and group["is_archived"]) else active).append(row)
+    return active, archived
 
 
 def project(root: str | None, ask: Callable[[str, str], bytes | None]) -> dict[str, Any] | None:
     """Return the project of `main` that has a directory, or None."""
     global _asked
-    if root not in _projects and time.time() - _asked > GROUPS_S:
+    if root not in _projects and time.time() - _asked > PROJECTS_S:
         _asked, raw = time.time(), ask(LIST, "limit=1")
         recorded((json.loads(raw).get("overview") or {}) if raw else {})
     return _projects.get(root or "")
@@ -142,18 +138,15 @@ def recorded(overview: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return projects
 
 
-def placed(row: dict[str, Any], home: dict[str, Any], ask: Callable[[str, str], bytes | None]) -> dict[str, Any]:
-    """Return the row of a session of another shard with the project and the group of `main`."""
-    own = {name: value for name, value in row.items() if name not in ("project_root", "group")}
-    own.update(project_id=home["project_id"], project_name=home["name"], group_id=group(home["root"], row.get("group"), ask))
-    return own
+def placed(row: dict[str, Any], home: dict[str, Any]) -> dict[str, Any]:
+    """Return the row of a session of another shard with the name that the project has in `main`. Its ids are those of `main` (see `vis/machine.py`)."""
+    return {**{name: value for name, value in row.items() if name != "project_root"}, "project_id": home["project_id"], "project_name": home["name"]}
 
 
 def counted(root: str, answer: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Add the sessions of the other shards to the counts of the groups of a project."""
-    known(root, answer)
     for one in answer.get("groups") or []:
-        inside = [row for row in rows if row.get("project_root") == root and row.get("group") == one["name"]]
+        inside = [row for row in rows if row.get("project_root") == root and row.get("group_id") == one["id"]]
         one["session_count"] = one.get("session_count", 0) + len(inside)
         one["active_at"] = max([one.get("active_at") or 0, *(row.get("modified_at") or 0 for row in inside)])
         answer["session_total"] = answer.get("session_total", 0) + len(inside)
@@ -248,7 +241,7 @@ def listed(fields: dict[str, str], answer: dict[str, Any], active: list[dict[str
         home = projects.get(row.get("project_root")) or project(row.get("project_root"), ask)
         if home is None or fields.get("root") not in (None, home["root"]) or (ids is not None and row["id"] not in ids):
             continue
-        own = placed(row, home, ask)
+        own = placed(row, home)
         if fields.get("group_id") not in (None, own["group_id"]):
             continue
         (filed if fields.get("grouped") == "aside" and own["group_id"] else loose).append(own)
@@ -295,9 +288,9 @@ def hit(query: str, title: str, texts: list[list[Any]]) -> dict[str, Any] | None
         "is_in_title": is_named,
         "is_in_request": bool(first["request"]),
         "is_in_reply": bool(first["reply"]),
-        "is_in_thinking": False,
+        "is_in_thinking": bool(first["thinking"]),
         "request_snippet": first["request"],
-        "reply_snippet": first["reply"],
+        "reply_snippet": first["reply"] or first["thinking"],
         "hits": hits[:HITS],
     }
 
@@ -316,7 +309,7 @@ def found(fields: dict[str, str], answer: dict[str, Any], seen: list[dict[str, A
         if home is None or fields.get("root") not in (None, home["root"]) or fields.get("project_id") not in (None, home["project_id"]):
             continue
         match = hit(query, row.get("title") or "", texts.get(row["id"]) or []) if query else None
-        own = placed(row, home, ask)
+        own = placed(row, home)
         if (query and match is None) or (groups is not None and own["group_id"] not in groups):
             continue
         more.append({**own, **({"match": match} if query else {})})

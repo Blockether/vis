@@ -35,11 +35,12 @@ from durable.settings import (
     GIT_NAME,
     HOME,
     LOOPBACK,
+    MAIN,
     MODELS,
     PRIVATE_TMP,
     PROVIDER,
     RUNS_GROUP,
-    TEXT_LIMIT,
+    TEXT_STEPS,
     TEXT_TURNS,
     TOKEN_FILE,
     VIS_BINARY,
@@ -48,6 +49,8 @@ from durable.settings import (
 )
 from durable.worktree import RELEASE_DIR, RUN_DIR
 
+# The ids of the sessions of this home: the list of the gateway does not have a session without a turn or a subagent.
+SESSIONS = os.path.join(HOME, ".vis", "durable-sessions.json")
 # The variables that the gateway and the tools of a session get. No AWS credentials.
 PASSED = ("PATH", "LANG", "LC_ALL", "TZ", "VIS_EXTENSIONS_DIR", "VIS_PYTHON_PYCACHE_PREFIX", "VIS_PYTHON", "VIS_WEB_DIR", "VIS_SPEECH_MODELS_DIR", "VIS_MACHINE_NAME")
 
@@ -96,14 +99,18 @@ class Gateway:
         self.process: subprocess.Popen[bytes] | None = None
         # The SDK client of each thread: one client serves one thread.
         self._clients = threading.local()
-        # The sessions whose shard this worker recorded.
+        # The sessions whose shard this worker recorded. One thread at a time records.
         self._published: set[str] = set()
+        self._lock = threading.RLock()
         self._teams: dict[str, int] = {}
         # The list rows that this worker recorded last.
         self._shown = ""
-        # The texts of each session that this worker recorded, and the last turn that they have.
+        # The texts of each session that this worker recorded, the texts of each of its turns, and the last turn that they have.
         self._texts: dict[str, list[list[Any]]] = {}
+        self._turns: dict[str, dict[int, list[list[Any]]]] = {}
         self._told: dict[str, tuple[Any, Any]] = {}
+        # The ids that `main` gave to the project and to its groups, each with the id of this home (see `vis/machine.py`).
+        self.ids: list[tuple[bytes, bytes]] = []
 
     def start(self) -> None:
         """Write the configuration and the token, start the process and wait for its extensions."""
@@ -160,6 +167,18 @@ class Gateway:
         finally:
             connection.close()
 
+    def inward(self, data: bytes) -> bytes:
+        """Return a call with the ids of this home in the place of the ids of `main`."""
+        for known, local in self.ids:
+            data = data.replace(known, local)
+        return data
+
+    def outward(self, data: bytes) -> bytes:
+        """Return an answer with the ids of `main` in the place of the ids of this home."""
+        for known, local in self.ids:
+            data = data.replace(local, known)
+        return data
+
     def call(self, method: str, path: str, body: Any = None, timeout: float = 30) -> tuple[int, Any]:
         """Call a route that the SDK does not have. Return the status and the JSON answer."""
         status, _, raw = self.read(method, path, body, timeout)
@@ -182,67 +201,108 @@ class Gateway:
                 return list(rows.values())
             query["after"] = page["next_cursor"]
 
-    def publish(self, shard: str) -> None:
-        """Record the shard of each session that the gateway got. The front sends the calls of a session to its shard."""
-        try:
-            rows = self.sessions()
-        except GatewayError as failure:
-            return log("no list of the sessions", repr(failure))
-        for row in rows:
-            self.route(row["id"], shard)
-            total = (row.get("team") or {}).get("total", 0)
-            if total > self._teams.get(row["id"], 0):
-                try:
-                    children = self.children(row["id"])
-                except GatewayError as failure:
-                    log("no transcript of the leader", row["id"], repr(failure))
-                    continue
-                for child in children:
-                    self.route(child, shard)
-                self._teams[row["id"]] = total
-        self.show(shard, rows)
-        self.tell(shard, rows)
+    def publish(self, shard: str, is_full: bool = True) -> None:
+        """Record the shard and the list row of each session that the gateway got. `is_full` also records the texts.
+
+        The front sends the calls of a session to its shard, and shows and searches the sessions without a worker.
+        """
+        with self._lock:
+            try:
+                rows = self.sessions()
+            except (GatewayError, OSError) as failure:
+                return log("no list of the sessions", repr(failure))
+            for row in rows:
+                self.route(row["id"], shard)
+                total = (row.get("team") or {}).get("total", 0)
+                if total > self._teams.get(row["id"], 0):
+                    try:
+                        children = self.children(row["id"])
+                    except GatewayError as failure:
+                        log("no transcript of the leader", row["id"], repr(failure))
+                        continue
+                    for child in children:
+                        self.route(child, shard)
+                    self._teams[row["id"]] = total
+            self.show(shard, rows)
+            if is_full:
+                self.tell(shard, rows)
 
     def show(self, shard: str, rows: list[dict[str, Any]]) -> None:
-        """Record the list rows of the sessions when they changed. Each row gets the directory of the project and the name of its group."""
+        """Record the list rows of the sessions when they changed. Each row gets the directory of the project, and the ids that `main` gave."""
         state = json.dumps([{name: value for name, value in row.items() if name != "server_time_ms"} for row in rows], sort_keys=True)
         if state == self._shown:
             return
-        try:
-            listed = self.client().get_session_groups(query={"archived": "include", "root": self.project})
-        except GatewayError as failure:
-            return log("no list of the groups", repr(failure))
-        names = {group["id"]: group["name"] for group in (listed or {}).get("groups") or []}
-        shards.show(shard, [{**row, "project_root": self.project, "group": names.get(row.get("group_id"))} for row in rows])
+        shards.show(shard, json.loads(self.outward(json.dumps([{**row, "project_root": self.project} for row in rows]).encode())))
         self._shown = state
 
     def tell(self, shard: str, rows: list[dict[str, Any]]) -> None:
-        """Record the requests and the replies of each session whose last turn changed. The search of the front reads them."""
+        """Record the requests, the replies and the thinking of each session whose last turn changed. The search of the front reads them."""
         changed = bool(set(self._texts) - {row["id"] for row in rows})
         for row in rows:
             mark = (row.get("modified_at"), row.get("turn_count"))
             if self._told.get(row["id"]) == mark or row.get("status") == "running":
                 continue
             try:
-                turns = self.client().get_session_transcript(row["id"], query={"limit": TEXT_TURNS, "iteration_limit": 1}).get("turns") or []
+                turns = self.turns(row["id"], len(self._turns.get(row["id"]) or ()))
             except GatewayError as failure:
                 log("no transcript of the session", row["id"], repr(failure))
                 continue
-            texts: list[list[Any]] = []
+            held = self._turns.setdefault(row["id"], {})
             for turn in turns:
                 reply = "\n".join(block.get("markdown") or "" for block in turn.get("content") or [] if block.get("type") == "prose")
-                answered = ((turn.get("iterations") or [{}])[-1]).get("created_at") or turn.get("created_at")
-                texts += [[side, at, text[:TEXT_LIMIT]] for side, at, text in (("request", turn.get("created_at"), turn.get("request") or ""), ("reply", answered, reply)) if text.strip()]
-            self._texts[row["id"]], self._told[row["id"]], changed = texts, mark, True
+                steps = turn.get("iterations") or [{}]
+                sides = [("request", turn.get("created_at"), turn.get("request") or ""), ("reply", steps[-1].get("created_at") or turn.get("created_at"), reply)]
+                sides += [("thinking", step.get("created_at"), step.get("thinking") or "") for step in steps]
+                held[turn["position"]] = [[side, at, text] for side, at, text in sides if text.strip()]
+            self._texts[row["id"]] = [text for position in sorted(held) for text in held[position]]
+            self._told[row["id"]], changed = mark, True
         if changed:
             self._texts = {row["id"]: self._texts[row["id"]] for row in rows if row["id"] in self._texts}
             shards.tell(shard, self._texts)
 
+    def turns(self, session: str, known: int) -> list[dict[str, Any]]:
+        """Return the turns of a session after its first `known` turns, each with each of its iterations.
+
+        The gateway gives the newest turns first and can give fewer turns than a call asks for.
+        The last known turn comes again: it can have a new reply.
+        """
+        found: list[dict[str, Any]] = []
+        end, first = None, max(0, known - 1)
+        while end is None or end > first:
+            window = {} if end is None else {"offset": max(first, end - TEXT_TURNS), "limit": end - max(first, end - TEXT_TURNS)}
+            page = self.client().get_session_transcript(session, query={"limit": TEXT_TURNS, "iteration_limit": TEXT_STEPS, **window})
+            if not page.get("turns"):
+                break
+            found, end = page["turns"] + found, page.get("offset") or 0
+        return [turn for turn in found if turn.get("position", 0) > first]
+
     def route(self, session: str, shard: str) -> None:
-        """Record the shard of a session one time."""
-        if session not in self._published:
+        """Record the shard of a session one time. The home of another shard than `main` keeps the id of the session."""
+        with self._lock:
+            if session in self._published:
+                return
             shards.assign(session, shard)
             self._published.add(session)
+            known = self.mine()
+            if shard != MAIN and session not in known:
+                with open(SESSIONS, "w", encoding="utf-8") as file:
+                    json.dump(sorted(known | {session}), file)
+
+    def mine(self) -> set[str]:
+        """Return the id of each session that a worker of this home recorded."""
+        try:
+            with open(SESSIONS, encoding="utf-8") as file:
+                return set(json.load(file))
+        except FileNotFoundError:
+            return set()
+
+    def vacant(self) -> bool:
+        """Return True when the gateway says that it has no session: its list is empty and each recorded session is gone."""
+        try:
+            return not self.sessions() and all(self.is_gone(session) for session in self.mine())
+        except (GatewayError, OSError) as failure:
+            log("no look at the sessions", repr(failure))
+            return False
 
     def children(self, leader: str) -> list[str]:
         """Return the subagent sessions of a leader. The list of the sessions does not have them."""

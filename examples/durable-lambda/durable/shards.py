@@ -8,49 +8,55 @@ lease.json                the lease of `main`
 shards/<shard>/lease.json the lease of another shard
 routes/<id>               the shard of a session or of a run. Without it, the shard is `main`
 pending/<shard>           a shard that can have work: the schedule starts its worker again
-calls/<shard>/<id>        a call for the worker of a shard. `main` gets its calls from the queue
+calls/<shard>/<id>        a call for the worker of a shard
 bells/<shard>             the id of the last call of a shard
 lists/<shard>             the list rows of the sessions of a shard: the front shows them and starts no worker
 texts/<shard>             the requests and the replies of the sessions of a shard: the front searches them and starts no worker
-seen/<shard>              the answers of the last worker of a shard to the reads that a tab repeats: the front gives them and starts no worker
+seen/<shard>/             the record of the last worker of a shard: the calls that a tab repeats (`record`) and one object for each answer; the front gives them and starts no worker
 
-A queue for each shard would stay in the account after its run, so the calls of a
+A queue for each shard would stay in the account after its last session, so the calls of a
 shard are S3 objects. The worker reads the one bell object, which costs less than a list.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from durable import aws, wire
 from durable.domain import SESSION, Answer
 from durable.helpers import log
-from durable.settings import ANSWER_S, HOLD_S, INBOX_LIST_S, INBOX_S, LEASE, MAIN, QUEUE, ROUTE_S, WAKE_S, WORKER_FUNCTION
+from durable.settings import ANSWER_S, HOLD_S, INBOX_LIST_S, INBOX_S, LEASE, MACHINE, MAIN, NAME_LIMIT, ROUTE_S, WAKE_S, WORKER_FUNCTION
 
 # The form of the name of a shard that is not `main`.
 SHARD = re.compile(r"[0-9a-f]{32}")
-# The reads that a tab of Vis web makes without a person, at its load, when its event stream starts again and each 30 s:
-# the health, the list, its groups, one session with its views and its model, the settings and the parts of the machine.
+# The reads that a tab of Vis web makes without a person, at its load, when its event stream starts again, each 30 s
+# and when a person opens a session: the health, the list, its groups, one session with its transcript, its views,
+# its model, its commands and its files, the settings and the parts of the machine.
 QUIET = re.compile(
     r"/healthz|/v1/(?:sessions|session-groups|settings(?:/[a-z_]+)?|apps|router|mcp/servers|devices|automations|capabilities|web/brand)/?"
-    rf"|/v1/sessions/{SESSION.pattern}(?:/views/[a-z]+|/model)?/?"
+    rf"|/v1/sessions/{SESSION.pattern}(?:/views/[a-z]+|/model|/transcript|/slashes|/artifacts)?/?"
 )
+# The call of a tab that tells the gateway that a person saw a session. It changes nothing when the person saw each answer.
+LOOKED = re.compile(rf"/v1/sessions/({SESSION.pattern})/read/?")
+# The call of a tab that gives the gateway the machines that it knows, at each load. The same machines change nothing.
+ORDER = "/v1/machines/order"
 # The time of the gateway in an answer.
 CLOCK = re.compile(rb'("server_time_ms":\s*)\d+')
 # The shard of each id that S3 named, the time of each id that S3 did not name and the time of the last start of each worker.
 _routes: dict[str, str] = {}
 _missed: dict[str, float] = {}
 _woke: dict[str, float] = {}
-# For the list rows and for the texts: the object of each shard with its version, and the time of the last look at S3.
-_shown: dict[str, dict[str, tuple[Any, Any]]] = {"lists/": {}, "texts/": {}}
+# For the list rows, for the texts and for the state of the machine: each object with its version, and the time of the last look at S3.
+_shown: dict[str, dict[str, tuple[Any, Any]]] = {"lists/": {}, "texts/": {}, MACHINE: {}}
 _looked: dict[str, float] = {}
 _lock = threading.Lock()
 
@@ -132,6 +138,16 @@ def forget(name: str) -> None:
         _routes.pop(name, None)
 
 
+def drop(shard: str, sessions: set[str], lease_key: str, state: str | None) -> None:
+    """Remove each object of a shard that has no session. `sessions` are the sessions that it had and `state` is its checkpoint.
+
+    The lease goes last: until then no other worker of the shard starts.
+    """
+    keys = [f"routes/{session}" for session in sessions] + [item["Key"] for prefix in (f"calls/{shard}/", f"seen/{shard}") for item in aws.keys(prefix)]
+    for key in [*keys, f"lists/{shard}", f"texts/{shard}", f"bells/{shard}", f"pending/{shard}", *([state] if state else []), lease_key]:
+        aws.delete(key)
+
+
 # -- the list rows of the sessions of a shard ----------------------------------------
 
 
@@ -146,7 +162,7 @@ def tell(shard: str, texts: dict[str, list[list[Any]]]) -> None:
 
 
 def recorded(prefix: str) -> list[Any]:
-    """Return the object of each shard below `lists/` or `texts/`. S3 gives only the objects that changed."""
+    """Return each object below `lists/` or `texts/`, or the state of the machine. S3 gives only the objects that changed."""
     known = _shown[prefix]
     with _lock:
         if time.time() - _looked.get(prefix, 0.0) < ROUTE_S:
@@ -164,6 +180,17 @@ def recorded(prefix: str) -> list[Any]:
         return [value for _, value in known.values()]
 
 
+def changed() -> None:
+    """Make the next look at the rows and at the texts ask S3: a worker answered a call that can change them."""
+    with _lock:
+        _looked.clear()
+
+
+def shared() -> dict[str, Any]:
+    """Return the state that `main` recorded for each worker: the machine store, the project and its groups (see `vis/machine.py`)."""
+    return next(iter(recorded(MACHINE)), None) or {}
+
+
 def shown() -> list[dict[str, Any]]:
     """Return the list rows of the sessions of each shard that is not `main`."""
     return [row for rows in recorded("lists/") for row in rows or []]
@@ -177,37 +204,63 @@ def told() -> dict[str, list[list[Any]]]:
 # -- the reads that a tab repeats ----------------------------------------------------
 
 
-def quiet(method: str, target: str) -> bool:
-    """Return True for a read that a tab makes without a person. Such a read does not keep a worker, and does not start one when the record has its answer."""
-    return method == "GET" and bool(QUIET.fullmatch(target.partition("?")[0]))
+def quiet(method: str, target: str, body: bytes = b"") -> str | None:
+    """Return the name of a call in the record of a shard, or None for a call that the record cannot answer.
 
-
-def keep(shard: str, answers: dict[str, list[Any]]) -> None:
-    """Record the answers of a worker that stops: for each read, its head and its body.
-
-    Without a worker nothing changes the sessions of a shard, so the record stays true.
-    The next worker starts with an empty record and with the reads of this record (see `reads`).
+    The record has the reads that a tab makes without a person, and two calls that change nothing when a tab
+    repeats them: the call that says that a person saw a session, and the machines of a tab, by their body.
+    Such a call does not keep a worker, and does not start one when the record has its answer.
     """
-    aws.put(f"seen/{shard}", json.dumps(answers).encode())
+    path = target.partition("?")[0]
+    if method == "GET" and QUIET.fullmatch(path):
+        return target
+    if method == "POST" and path.rstrip("/") == ORDER and len(body) <= NAME_LIMIT:
+        return f"POST {ORDER} {body.decode(errors='replace')}"
+    return f"PUT {path.rstrip('/')}" if method == "PUT" and LOOKED.fullmatch(path) else None
+
+
+def keep(shard: str, answers: dict[str, list[Any]] | None, names: Sequence[str] = ()) -> None:
+    """Record the answers of a worker that stops: for each call of the record, its head and its body.
+
+    Without a worker nothing changes the sessions of a shard, so the record stays true. Each answer is one
+    object below `seen/<shard>/<version>/`, and the object `seen/<shard>/record` names the version and the calls.
+    A worker that starts gives None: the record then has no answer, and it keeps the names for the next record.
+    The answers of an older record go when the next record is complete.
+    """
+    if answers is None:
+        aws.put(f"seen/{shard}/record", json.dumps({"version": "", "reads": list(names)}).encode())
+        return
+    version = uuid.uuid4().hex
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda item: aws.put(f"seen/{shard}/{version}/{digest(item[0])}", json.dumps(item[1]).encode()), answers.items()))
+        aws.put(f"seen/{shard}/record", json.dumps({"version": version, "reads": list(answers)}).encode())
+        list(pool.map(aws.delete, [item["Key"] for item in aws.keys(f"seen/{shard}/") if not item["Key"].startswith((f"seen/{shard}/{version}/", f"seen/{shard}/record"))]))
+
+
+def digest(name: str) -> str:
+    """Return the key part of a call of the record."""
+    return hashlib.sha256(name.encode()).hexdigest()
 
 
 def reads(shard: str) -> list[str]:
-    """Return the reads of the record of a shard, the newest last.
+    """Return the names of the calls of the record of a shard.
 
     A tab asks most of them only when its event stream starts again, which is when a
     worker stops. So the next worker must record them too, although no tab asked it.
     """
-    raw, _ = aws.get(f"seen/{shard}")
-    return list(json.loads(raw)) if raw else []
+    raw, _ = aws.get(f"seen/{shard}/record")
+    return list(json.loads(raw)["reads"]) if raw else []
 
 
-def kept(shard: str, target: str) -> bytes | None:
-    """Return the recorded answer to a read as part 0 of an answer, with the time of now, or None."""
-    raw, _ = aws.get(f"seen/{shard}")
-    found = json.loads(raw).get(target) if raw else None
-    if not found:
+def kept(shard: str, name: str) -> bytes | None:
+    """Return the recorded answer to a call as part 0 of an answer, with the time of now, or None."""
+    raw, _ = aws.get(f"seen/{shard}/record")
+    version = json.loads(raw).get("version") if raw else None
+    raw, _ = aws.get(f"seen/{shard}/{version}/{digest(name)}") if version else (None, None)
+    if not raw:
         return None
-    return wire.frame(found[0], CLOCK.sub(rb"\g<1>%d" % int(time.time() * 1000), base64.b64decode(found[1])))
+    head, body = json.loads(raw)
+    return wire.frame(head, CLOCK.sub(rb"\g<1>%d" % int(time.time() * 1000), base64.b64decode(body)))
 
 
 # -- the calls of a shard ------------------------------------------------------------
@@ -215,12 +268,9 @@ def kept(shard: str, target: str) -> bytes | None:
 
 def send(shard: str, message: dict[str, Any]) -> None:
     """Give a call to the worker of a shard."""
-    if shard == MAIN:
-        aws.client("sqs").send_message(QueueUrl=QUEUE, MessageBody=json.dumps(message))
-    else:
-        aws.put(f"calls/{shard}/{message['id']}", json.dumps(message).encode())
-        # The bell comes after the call, so a worker that hears it finds the call.
-        aws.put(f"bells/{shard}", message["id"].encode())
+    aws.put(f"calls/{shard}/{message['id']}", json.dumps(message).encode())
+    # The bell comes after the call, so a worker that hears it finds the call.
+    aws.put(f"bells/{shard}", message["id"].encode())
 
 
 def live(shard: str) -> bool:
@@ -228,15 +278,26 @@ def live(shard: str) -> bool:
     return aws.alive(lease(shard)[0])
 
 
-def wake(shard: str) -> None:
-    """Start the worker of a shard when no live worker holds its lease, at most each WAKE_S."""
+def wake(shard: str, read: str | None = None) -> bytes | None:
+    """Start the worker of a shard when no live worker holds its lease, at most each WAKE_S.
+
+    `read` is the name of a call that the record can answer. A worker that stops writes its record before it
+    releases the lease. Thus a read that came to a stopping worker gets the recorded answer, and no worker starts.
+    """
     with _lock:
         if time.time() - _woke.get(shard, 0.0) < WAKE_S:
-            return
+            return None
         _woke[shard] = time.time()
-    if not live(shard):
-        log("waking worker", shard)
-        aws.start(WORKER_FUNCTION, kind="wake", shard=shard)
+    if live(shard):
+        return None
+    found = kept(shard, read) if read else None
+    if found:
+        with _lock:
+            _woke.pop(shard, None)
+        return found
+    log("waking worker", shard)
+    aws.start(WORKER_FUNCTION, kind="wake", shard=shard)
+    return None
 
 
 def parts(rid: str, deadline: float, shard: str, wakes: bool = True, patience: float = ANSWER_S, read: str | None = None) -> Iterator[tuple[bytes, bool]]:
@@ -258,8 +319,10 @@ def parts(rid: str, deadline: float, shard: str, wakes: bool = True, patience: f
                     if found:
                         yield found, True
                         return
-                if wakes:
-                    wake(shard)
+                found = wake(shard, read) if wakes else None
+                if found:
+                    yield found, True
+                    return
             time.sleep(wait)
             wait = min(wait * 1.5, 0.25)
             continue
@@ -295,8 +358,6 @@ class Inbox:
 
     def receive(self) -> list[dict[str, str]]:
         """Wait about one second for calls. Return each new call as its body and its receipt."""
-        if self.shard == MAIN:
-            return aws.client("sqs").receive_message(QueueUrl=QUEUE, MaxNumberOfMessages=10, WaitTimeSeconds=1).get("Messages", [])
         end = time.time() + 1
         while True:
             bell, _ = aws.get(f"bells/{self.shard}")
@@ -316,8 +377,5 @@ class Inbox:
 
     def delete(self, receipt: str) -> None:
         """Remove an answered call."""
-        if self.shard == MAIN:
-            aws.client("sqs").delete_message(QueueUrl=QUEUE, ReceiptHandle=receipt)
-        else:
-            aws.delete(receipt)
-            self.seen.discard(receipt)
+        aws.delete(receipt)
+        self.seen.discard(receipt)

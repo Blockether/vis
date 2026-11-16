@@ -42,10 +42,10 @@ def get(key: str) -> tuple[bytes | None, str | None]:
 
 
 def head(key: str) -> dict[str, Any] | None:
-    """Return the size and the metadata of an S3 object without its bytes, or None when there is no object."""
+    """Return the size, the ETag and the metadata of an S3 object without its bytes, or None when there is no object."""
     try:
         answer = client("s3").head_object(Bucket=BUCKET, Key=key)
-        return {"size": answer["ContentLength"], "metadata": answer.get("Metadata") or {}}
+        return {"size": answer["ContentLength"], "etag": answer["ETag"], "metadata": answer.get("Metadata") or {}}
     except ClientError as error:
         if absent(error):
             return None

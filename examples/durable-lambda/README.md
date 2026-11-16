@@ -35,8 +35,7 @@ flowchart LR
     efs[(EFS<br>releases, work)]
   end
   s3[(S3<br>state, runs, files, work)]
-  queue[[SQS]]
-  front --> queue --> worker
+  front -->|start| worker
   worker <--> s3
   front <--> s3
   worker -->|model calls| llm --> provider([Model provider])
@@ -51,19 +50,23 @@ Lambda base image.
 
 | Function | Holds | Work |
 | --- | --- | --- |
-| `front` | the webhook secret | Serves the pages and Vis web. Sends each call to the worker of its session, through SQS or S3, and streams the answer from S3. |
-| `worker` | no secret, no internet | Runs a Vis gateway and the workflow runs: one worker for the sessions of the people and one for each run. Saves its Vis home directory and the work of each session to S3. |
+| `front` | the webhook secret | Serves the pages and Vis web. Sends each call to the worker of its session as an object in S3, and streams the answer from S3. Joins the sessions of all the workers into one list and one search. |
+| `worker` | no secret, no internet | Runs a Vis gateway and the workflow runs: one worker for each session, with its forks and its subagents. Saves its Vis home directory and the work of each session to S3. |
 | `llm` | the provider key | Adds the key to a model call of the gateway. It is the only way from the worker to the provider. |
 | `repo` | the GitHub deploy key | Copies `main` to S3 and pushes the commits of a session. It never uses force. It keeps the workflows of S3 the same as the files `workflows/*.py` of `main`. |
 | `sync` | no secret | Puts a snapshot of `main` on EFS as the current release. |
 
-- **One worker for the people and one for each run.** A worker takes its lease in S3
-  with a conditional write and saves checkpoints of its Vis home directory. Before the
-  Lambda time limit, it gives its work to a new worker. Without work, it stops: nothing
-  runs when nobody uses the stack. A run that makes its own session gets its own worker,
-  so a run does not wait for another run. Vis web shows all the sessions in one list
-  and searches their titles, requests and replies. An open tab of Vis web that nobody
-  uses keeps no worker: `front` answers its reads from the record of the last worker.
+- **One worker for each session.** A worker takes its lease in S3 with a conditional
+  write and saves checkpoints of its Vis home directory. Before the Lambda time limit,
+  it gives its work to a new worker. Without work, it stops: nothing runs when nobody
+  uses the stack. A session does not wait for another session, and only the Lambda
+  quota of the account limits the number of workers. The worker `main` owns the
+  machine: its settings, the project and the groups. Each other worker copies them, so
+  a setting of the machine, of the project or of a group applies to each session. Vis
+  web shows all the sessions in one list and searches their titles, requests, replies
+  and thinking. An open tab of Vis web that nobody uses keeps no worker: `front`
+  answers its reads, and the reads of a session that a person opens, from the record
+  of the last worker.
 - **A commit on `main` becomes a release.** A new session and a new run get a clone of
   the newest release. `durable.resync()` puts the work of a session on a newer release.
 - **A session publishes with `durable.publish(message)`.** The push goes to `main` when
@@ -303,14 +306,16 @@ of samples. The times of a call are from one computer in Europe.
 | --- | --- |
 | Image in ECR | 1.58 GB compressed, 3.64 GB on disk. The speech model is 0.49 GB of the compressed size |
 | Cold start of a function (`Init Duration`) | `front` 0.3 to 0.4 s, `worker` 0.6 to 1.2 s, `llm` 0.4 to 0.6 s, `repo` 0.4 s, `sync` 0.7 s. The first start after a new image: 1.4 s |
-| Worker start, from the invocation to a ready gateway | 1.9 to 2.1 s: state from S3 0.1 s, project 0.1 s, Vis gateway 1.7 to 1.9 s |
-| First answer when no worker runs | 3.3 s for `GET /dashboard/api/status` through `front`, SQS, `worker` and S3 |
+| Worker start, from the invocation to a ready gateway | 1.4 to 4.2 s: state from S3 0.1 to 0.2 s, project 0.1 s, Vis gateway 1.2 to 4.0 s |
+| First answer when no worker runs | 2.7 to 3.3 s for `GET /dashboard/api/status` through `front`, S3 and `worker` |
+| New session | 5.8 to 7.8 s: a new worker makes a new Vis home directory |
 | Answer when a worker runs | 0.3 s for the same call and for `GET /healthz` |
 | Read of an open tab of Vis web when no worker runs | 0.2 s from the record of the last worker. No worker starts |
-| Four runs that start at the same time | Each run has its own worker. The first step of each run starts 7 to 8 s after the start |
+| A person opens a session whose worker stopped | 0.2 s for each read, from the record. No worker starts |
+| Four runs that start at the same time | Each run has its own worker, as each session has. The first step of each run starts 7 to 8 s after the start |
 | First answer from the session of a run whose worker stopped | 3.2 s, then 0.4 s |
 | Decision at a gate when the worker of the run stopped | The answer comes in 1.9 s. The run continues from its checkpoint in S3 |
-| Session list of Vis web | 0.6 s. `front` adds the sessions of the runs from S3 and starts no worker for them |
+| Session list of Vis web | 0.3 s. `front` makes the list from S3 and starts no worker |
 | Page `/dashboard` | 0.2 to 0.3 s. `front` serves a page without the worker |
 | Memory in use | `front` 86 MB, `llm` 81 MB, `repo` 104 MB, `sync` 69 MB. `worker` 634 MB with an idle gateway, 2953 MB with the speech model and two runs. The worker of one run: 604 MB for a read, 850 to 1190 MB for the run |
 | Dictation of 6.4 s of speech | 7.5 s for the first recording, which loads the model, then 0.6 s |
@@ -320,9 +325,8 @@ of samples. The times of a call are from one computer in Europe.
 | Save or Delete in the editor, from the press to the message | 8 to 10 s: the commit is on GitHub after 3 to 4 s, then `repo` reads `main` again |
 | Save that the repository refuses, because `main` has another version | 3 s |
 
-A worker stops after 300 s without work, so the next call pays the first answer time
-again. The worker of a run that only answered reads stops after 60 s. A run continues
-when its worker changes.
+A worker stops after 60 s without work, so the next call that needs the worker pays
+the first answer time again. A run continues when its worker changes.
 
 ## Cost
 
@@ -332,8 +336,8 @@ tokens and 15 USD for a million output tokens. Your provider sets the real price
 
 | Part | Cost |
 | --- | --- |
-| Stack without work | About 18 USD each month: 17.52 USD for the two interface endpoints, 0.2 to 0.9 USD for the five images in ECR and 0.1 USD for the two schedules. EFS, S3 and the logs cost less than 0.02 USD |
-| Worker | 0.19 USD for each hour that a worker lives. Each run has its own worker. A call to a stack without a worker costs 0.02 USD, for the 300 s that the worker stays. A read of the session of a run whose worker stopped costs 0.003 USD, for 60 s. An open tab of Vis web that nobody uses starts no worker |
+| Stack without work | About 9 USD each month: 8.76 USD for the interface endpoint of Lambda, 0.2 to 0.9 USD for the five images in ECR and 0.1 USD for the two schedules. EFS, S3 and the logs cost less than 0.02 USD |
+| Worker | 0.19 USD for each hour that a worker lives. Each session has its own worker. A call to a session without a worker costs 0.004 USD, for the 60 s that the worker stays. An open tab of Vis web that nobody uses starts no worker, and a person who reads a session starts none |
 | Run of `song_factory` | AWS 0.06 to 0.09 USD. Model 2 to 5 USD: 0.3 to 0.9 million input tokens and 17,000 to 31,000 output tokens |
 | Run of `remix_and_publish` | AWS 0.04 USD. Model 3 USD: 0.5 million input tokens and 19,000 output tokens |
 | Run of `studio_review` | AWS 0.08 USD. Model 2 USD: 0.3 million input tokens and 24,000 output tokens |

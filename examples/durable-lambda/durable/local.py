@@ -1,8 +1,8 @@
 """Run all of Software factory on one machine, without AWS: `python -m durable.local`.
 
 The front function, the relay, the worker, the llm function, the repo function, the
-sync function run as they are. Only the AWS services have a replacement: S3 and the
-queue are directories, a parameter is an environment variable and an invocation is a
+sync function run as they are. Only the AWS services have a replacement: S3 is a
+directory, a parameter is an environment variable and an invocation is a
 function call. The worker of each shard that is not `main` is its own process, with
 its own home directory and gateway port. GitHub is a bare repository in a directory.
 
@@ -38,7 +38,6 @@ PORT = int(os.environ.get("PORT", "8080"))
 # The variables that `template.yaml` sets in a stack.
 SETTINGS = {
     "VIS_BUCKET": "local",
-    "VIS_QUEUE_URL": "local",
     "VIS_WORKER_FUNCTION": "worker",
     "VIS_LLM_FUNCTION": "llm",
     "VIS_REPO_FUNCTION": "repo",
@@ -98,14 +97,15 @@ class Bucket:
         return {"Body": io.BytesIO(data), "ETag": '"' + hashlib.md5(data).hexdigest() + '"'}  # noqa: S324 - an ETag, as in S3
 
     def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
-        """Return the size and the metadata of an object."""
-        if self.tag(Key) is None:
+        """Return the size, the ETag and the metadata of an object."""
+        tag = self.tag(Key)
+        if tag is None:
             raise refusal("404", "HeadObject")
         try:
             with open(os.path.join(self.meta, Key), encoding="utf-8") as file:
-                return {"ContentLength": os.path.getsize(self.path(Key)), "Metadata": json.load(file)}
+                return {"ContentLength": os.path.getsize(self.path(Key)), "ETag": tag, "Metadata": json.load(file)}
         except OSError:
-            return {"ContentLength": os.path.getsize(self.path(Key)), "Metadata": {}}
+            return {"ContentLength": os.path.getsize(self.path(Key)), "ETag": tag, "Metadata": {}}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, **options: Any) -> dict[str, Any]:  # noqa: N803
         """Write an object with one rename. `IfMatch` and `IfNoneMatch` make the write conditional."""
@@ -149,39 +149,6 @@ class Bucket:
                     except OSError:
                         pass  # another process removed the object
         return [{"Contents": sorted(found, key=lambda item: item["Key"])}]
-
-
-class Queue:
-    """SQS as a directory: each process of the local run sends to it."""
-
-    def __init__(self) -> None:
-        """Use the directory `queue` of the local run."""
-        self.root = f"{ROOT}/queue"
-
-    def send_message(self, QueueUrl: str, MessageBody: str) -> None:  # noqa: N803
-        """Add a message with one rename."""
-        os.makedirs(self.root, exist_ok=True)
-        name = f"{time.time_ns()}-{uuid.uuid4().hex}"
-        with open(f"{ROOT}/incoming-{name}", "w", encoding="utf-8") as file:
-            file.write(MessageBody)
-        os.replace(f"{ROOT}/incoming-{name}", f"{self.root}/{name}")
-
-    def receive_message(self, QueueUrl: str, MaxNumberOfMessages: int, WaitTimeSeconds: int) -> dict[str, Any]:  # noqa: N803
-        """Wait for messages and return them, or return no message. A received message leaves the directory."""
-        end = time.time() + WaitTimeSeconds
-        while True:
-            found = []
-            for name in sorted(os.listdir(self.root) if os.path.isdir(self.root) else [])[:MaxNumberOfMessages]:
-                with open(f"{self.root}/{name}", encoding="utf-8") as file:
-                    found.append({"Body": file.read(), "ReceiptHandle": name})
-                os.remove(f"{self.root}/{name}")
-            if found or time.time() > end:
-                return {"Messages": found} if found else {}
-            time.sleep(0.05)
-
-    def delete_message(self, QueueUrl: str, ReceiptHandle: str) -> None:  # noqa: N803
-        """Do nothing: a received message is not in the directory."""
-        pass
 
 
 class Parameters:
@@ -238,7 +205,7 @@ class Functions:
 
 
 # Each module asks `aws.client` for a service, so one replacement here serves the whole package.
-SERVICES = {"s3": Bucket(), "sqs": Queue(), "ssm": Parameters(), "lambda": Functions()}
+SERVICES = {"s3": Bucket(), "ssm": Parameters(), "lambda": Functions()}
 aws.client = lambda name: SERVICES[name]  # type: ignore[assignment]
 
 

@@ -20,14 +20,16 @@ the standard library. It supports plain answers and streamed answers.
 | Key | Content | Kept for |
 | --- | --- | --- |
 | `lease.json` | The active worker of the shard `main`, its last checkpoint and the work that waits | permanent |
-| `shards/<shard>/lease.json` | The same for the shard of a run | permanent |
+| `shards/<shard>/lease.json` | The same for another shard | until the last session of the shard is deleted |
+| `machine` | The machine of `main`: its settings, the project and the groups with their settings and MCP servers. Each other worker copies it | permanent |
 | `routes/<id>` | The shard of a session or of a run. An id without this object is in `main` | permanent for a run; for a session, until a person deletes it |
 | `pending/<shard>` | A shard that can have work. The schedule starts its worker again | until the work ends |
-| `calls/<shard>/<id>` | A call for the worker of a shard. `main` gets its calls from SQS | 1 day |
-| `bells/<shard>` | The id of the last call of a shard | permanent |
-| `lists/<shard>` | The list rows of the sessions of a shard, for the session list of Vis web | permanent |
-| `texts/<shard>` | The requests and the replies of the sessions of a shard, for the search of Vis web | permanent |
-| `seen/<shard>` | The answers of the last worker of a shard to the reads of an open tab. Empty while a worker runs | permanent |
+| `calls/<shard>/<id>` | A call for the worker of a shard | 1 day |
+| `bells/<shard>` | The id of the last call of a shard | until the last session of the shard is deleted |
+| `lists/<shard>` | The list rows of the sessions of a shard, for the session list of Vis web | the same |
+| `texts/<shard>` | The requests, the replies and the thinking of the sessions of a shard, for the search of Vis web | the same |
+| `seen/<shard>/record` | The names of the reads that the last worker of a shard recorded. Without names while a worker runs | the same |
+| `seen/<shard>/<version>/<hash>` | The answer to one recorded read | until the next record |
 | `state/<worker>/<n>.tar.gz` | A checkpoint of the Vis home directory of a shard: sessions, transcripts, attached files, settings | the last one of each shard; a checkpoint of a failed worker stays |
 | `workflows/<name>.py` | The source of a workflow: a copy of the file `workflows/<name>.py` on `main` of the repository. Only `repo` writes it | permanent |
 | `runs/index.json` | One line for each of the 300 newest runs | permanent |
@@ -55,33 +57,39 @@ checkpoint in `state/`. The template has no lifecycle rule for `state/`: a rule 
 remove the only checkpoint of a stack that nobody used for some days. The lease names
 the checkpoint that counts. You can delete each other object in `state/`.
 
-## Each run has its own worker
+## Each session has its own worker
 
-A shard is one Vis home directory with its own worker, lease and checkpoint. The shard
-`main` has the sessions that people start. A workflow run that makes its own session
-gets a new shard, and the forks and the subagents of that session stay in it. A run in
-an existing session stays in the shard of that session. Thus a run does not wait for
-another run, and a run does not slow the sessions of people.
+A shard is one Vis home directory with its own worker, lease and checkpoint. Each
+session that a person starts gets a new shard, and each workflow run that makes its
+own session gets one. The forks and the subagents of a session stay in its shard, and
+a run in an existing session stays in the shard of that session. Thus a session does
+not wait for another session. The shard `main` owns the machine: its settings, the
+project, the groups, the automations and the devices. It also has the sessions that
+an earlier version of the stack made.
 
-- `front` reads `routes/<id>` for the session or the run of a call and sends the call to the worker of that shard. `main` gets its calls from SQS. Another shard gets its calls as objects in `calls/`, because a queue for each run would stay in the account.
+- `front` reads `routes/<id>` for the session or the run of a call and sends the call to the worker of that shard, as an object in `calls/`. A call that makes a session goes to a new shard. A repeated call with the same `idempotency_key` goes to the same shard.
+- Only `main` changes the machine. After each change, it writes the settings of the machine, the project and the groups, with the settings and the MCP servers of each group, to the object `machine`. Each other worker copies this object before it answers a call, so a setting of the machine or of a group applies to each session. The settings of a project are a file in the project directory on EFS, which all the workers read. A group has another id in each home directory: the worker changes the ids at its border, so each client sees the ids of `main`.
 - A call for the settings or the MCP servers of a session, or for a reload of its extensions, goes to the worker of that session. `main` answers for the machine, a project and a group.
-- `front` adds the rows of `lists/` to each page of the session list and of a search of `main`, so the list starts no worker. A row gets the project and the group that `main` has for the same directory and the same group name. The rows are in the order of the gateway, and the cursor of a page names the place in `main` and in the other shards.
-- A search finds a run session by its title, and by a request or a reply. Each worker records these texts in `texts/`, and `front` searches them with the rules of the gateway.
-- `front` joins the event streams of the shards whose sessions a browser follows. An event stream does not start and does not keep a worker: `front` holds the stream while a shard has no worker, and joins the worker when a call starts one. When a worker stops, the stream ends and Vis web connects again.
-- Vis web reads the list, the session that a tab shows, its settings and the parts of the machine again each 30 s and when its event stream starts again. Such a read does not keep a worker. A worker that stops records its answers to these reads in `seen/`, and `front` answers from the record while the shard has no worker. Thus an open tab that nobody uses keeps no worker and starts none.
-- The worker of a run stops after 300 s without work, and after 60 s when it only answered reads. A call to its session, a decision at its gate or the schedule starts a new worker from the checkpoint.
+- `front` makes each page of the session list and of a search from the rows of `lists/` and the rows of `main`, so the list starts no worker. It counts the sessions of each group, and it shows the sessions of an archived group as archived. The rows are in the order of the gateway, and the cursor of a page names the place in `main` and in the other shards.
+- A search finds a session by its title, and by each request, each reply and the thinking of each turn. Each worker records these texts in `texts/`, and `front` searches them with the rules of the gateway.
+- The archive of all the sessions of a project or of a search, and the delete of a group with its sessions, go to each shard that has one of the sessions, 16 shards at a time, and then to `main`. `front` joins the answers.
+- `front` joins the event streams of the shards whose sessions a browser follows, and the fleet feed of each shard that has a worker. An event stream does not start and does not keep a worker: `front` holds the stream while a shard has no worker, and joins the worker when a call starts one. When a worker stops, the stream ends and Vis web connects again.
+- Vis web reads the list, the session that a tab shows, its settings and the parts of the machine again each 30 s and when its event stream starts again. Such a read does not keep a worker. A worker that stops records its answers to these reads in `seen/`, together with the reads that Vis web makes when a person opens a session: the transcript, the views, the model and the settings. `front` answers from the record while the shard has no worker. Thus an open tab that nobody uses keeps no worker and starts none, and a person can read a session without a worker.
+- A worker stops after 60 s without work. A call to its session, a decision at a gate or the schedule starts a new worker from the checkpoint.
+- A worker that fails saves its home directory, releases its lease and starts the next worker at once, two times at most. When the platform stops a worker, its lease ends after 30 s, and the next call or the schedule starts a new worker.
+- When the last session of a shard is deleted, its worker deletes the lease, the checkpoint, the list, the texts and the record of the shard.
 
 The limits:
 
-- All workers use the one `worker` function with 4096 MB. Its reserved concurrency, 20, is the largest number of workers at the same time.
-- A session that a person starts does not get its own shard. Vis keeps the project, the groups and the settings in each home directory, and `front` joins them only for the session list.
-- The settings of the machine, of a project and of a group apply to the sessions of `main`. A run session has only its own session settings.
-- A run session stays in the group of its workflow: a move to another group gives `unknown session group`. The archive of all the sessions of a project or of a search does not archive a run session: archive it by itself.
-- The lease, the last checkpoint, the list, the texts and the record of the reads of a shard stay in the bucket after the run.
-- The search of the texts of a run session uses the last 100 turns, the first 4,000 characters of each request and of each reply, and no thinking text. The fleet feed of the event stream has only the sessions of `main`.
-- The record has at most 100 reads, and only reads that a worker of the shard answered before. Each other read starts the worker, for example the transcript of a session that a person opens.
-- Vis web shows a new run session at its next read of the list, 30 s at most. The status of a run session in the list is the last one that its worker recorded.
-- After a failure of a worker, the schedule starts a new worker in about 160 s.
+- All workers use the one `worker` function with 4096 MB. The function has no reserved concurrency: the Lambda quota of the account is the largest number of workers at the same time. `front` has 50 instances, and each call and each open event stream uses one.
+- Council and the read of another session work only in one shard: a session, its forks and its subagents. A session cannot send a message to the session of another shard.
+- The first time that a person opens a session with a new answer, Vis web marks the answer as seen. This is a write: the worker of that session runs for about 60 s. A read that no tab made before, for example an older page of a long transcript, also starts the worker one time.
+- A session without a turn is in no list, and its shard stays in the bucket until a person deletes the session.
+- A change of the status of a session is in the fleet feed only after `front` joined the worker, 10 s at most after its start. The list read of Vis web, each 30 s, shows the status then.
+- When the platform stops a worker, the work after its last checkpoint is lost: 15 s at most. Without a call, the schedule starts the new worker in about 90 s.
+- In a group, the switch of an MCP server that the group does not define applies only to the sessions of `main`.
+- A session that a client makes with a `workspace_id` is in `main`. A list call with `group_limit` or `group_offset` has only the sessions of `main`.
+- `front` holds the search texts of all the shards in memory. Its 512 MB are the limit of the search.
 
 ## A commit becomes the project of the next worker
 
@@ -332,7 +340,7 @@ and a gateway of the same Vis version. `ctx.document` uses them.
 
 Runs and workflows:
 
-- A run that makes its own session starts at once in its own worker. 20 workers can live at the same time.
+- A run that makes its own session starts at once in its own worker. The Lambda quota of the account limits the workers that live at the same time.
 - Of the runs in the sessions of one worker, 3 work at the same time. The other runs wait in the queue. A waiting run uses no place.
 - A run can work for 8 hours (`VIS_RUN_LIMIT_S`), which is 36 processes. Each worker change and each decision at a gate starts a new process.
 - A run can have at most 1000 workflow activities.
@@ -358,7 +366,7 @@ Time:
 
 - The `front` function waits 55 seconds for the first part of an answer. Then it answers 504.
 - An event stream ends after 870 seconds. The client connects again.
-- A worker without work stops after 300 seconds. A worker with work gives the work to a new worker after 810 seconds.
+- A worker without work stops after 60 seconds. A worker with work gives the work to a new worker after 810 seconds.
 - `sync` keeps the 5 newest releases on EFS.
 - The worker removes from EFS a work directory that nothing changed for 14 days. The copy in S3 stays, and the next turn of the session makes the directory again. The directory `work/main` stays.
 - CloudWatch keeps the log of each function for 14 days. [S3 is the database](#s3-is-the-database) gives the time for each S3 key.
@@ -399,7 +407,7 @@ one, add it to the `Environment` of the function in `template.yaml`.
 
 | Variable | Default | Function | Use |
 | --- | --- | --- | --- |
-| `VIS_IDLE_S` | `300` | `worker` | The seconds without work after which a worker stops |
+| `VIS_IDLE_S` | `60` | `worker` | The seconds without work after which a worker stops |
 | `VIS_LIFETIME_S` | `900` | `worker`, `front` | The Lambda time limit of the worker. It must be equal to the `Timeout` of the worker in the template |
 | `VIS_HANDOFF_MARGIN_S` | `90` | `worker`, `front` | The seconds before the time limit at which a worker gives its work to a new worker |
 | `VIS_STREAM_S` | `870` | `front` | The seconds after which an event stream ends |
@@ -444,7 +452,7 @@ route to the internet and no key.
 | [`settings.py`](../durable/settings.py) | Each setting of the stack: the environment, the paths, the limits, the times and the names |
 | [`helpers.py`](../durable/helpers.py) | The log, private files and the filter of an archive |
 | [`domain.py`](../durable/domain.py) | The rules of the API: the names, the limits, the statuses of a run and the refusals |
-| [`aws.py`](../durable/aws.py) | Each call to S3, SQS, the Parameter Store and Lambda |
+| [`aws.py`](../durable/aws.py) | Each call to S3, the Parameter Store and Lambda |
 | [`wire.py`](../durable/wire.py) | The form of an answer that goes through S3 |
 | [`core.py`](../durable/core.py) | The lease and the checkpoints of the Vis home |
 | [`shards.py`](../durable/shards.py) | The shards: the worker of a session or of a run, its calls and its list rows |
@@ -454,6 +462,6 @@ route to the internet and no key.
 | [`worker.py`](../durable/worker.py) | The `worker` function: the loop of the live worker of one shard |
 | [`app.py`](../durable/app.py) | The routes of the Software factory API |
 | [`dashboard/`](../durable/dashboard) | The `front` function: `front.py` has the pages and the webhook, `relay.py` sends a call to the worker of its shard, `navigator.py` makes the session list of all the shards, `web.py` has the request and the answer |
-| [`vis/`](../durable/vis) | What the worker does with Vis: `gateway.py` runs the gateway and calls it with the Vis SDK, `relay.py` answers the calls of the queue, `broker.py` sends the model calls of the gateway to the `llm` function, `sessions.py` gives each session its work directory, `files.py` copies the files of a session, `registry.py` registers the project, the groups and the apps, `liveapps/` has the Workflows app |
+| [`vis/`](../durable/vis) | What the worker does with Vis: `gateway.py` runs the gateway and calls it with the Vis SDK, `relay.py` answers the calls of a shard, `machine.py` writes the machine of `main` and copies it to each other worker, `broker.py` sends the model calls of the gateway to the `llm` function, `sessions.py` gives each session its work directory, `files.py` copies the files of a session, `registry.py` registers the project, the groups and the apps, `liveapps/` has the Workflows app |
 | [`workflows/`](../durable/workflows) | The workflows: `sdk.py` has `@workflow` and `@activity`, `source.py` reads a workflow file, `runs.py` keeps the runs, `process.py` is the process of one run, `client.py` calls the API from that process |
 | [`local.py`](../durable/local.py) | All the functions on one computer, without AWS |

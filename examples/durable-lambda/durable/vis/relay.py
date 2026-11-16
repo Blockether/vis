@@ -15,14 +15,18 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+
+from blockether.vis.engine import GatewayError
 
 from durable import aws, shards, wire
 from durable.app import Api
 from durable.domain import SESSION
 from durable.helpers import log
-from durable.settings import ANSWERED_S, CHUNK, COLLECT_S, GATEWAY_PORT, LOOPBACK, MAIN, PAUSE_S, SEEN, SEEN_LIMIT
+from durable.settings import ANSWERED_S, CHUNK, COLLECT_S, GATEWAY_PORT, LOADED, LOOPBACK, MAIN, OPENED, PAUSE_S
 from durable.vis.gateway import Gateway
+from durable.vis.machine import CHANGES, Machine
 
 # The gateway calls that make a session and start a turn, and the calls that delete one session or many sessions.
 CREATE, TURN = re.compile(r"/v1/sessions/?"), re.compile(r"/v1/sessions/([0-9a-f-]{36})/turns/?")
@@ -39,18 +43,20 @@ def reply(rid: str, head: dict[str, Any], body: bytes) -> None:
 class Relay:
     """The calls that this worker answers, and their messages in the inbox."""
 
-    def __init__(self, gateway: Gateway, api: Api, inbox: shards.Inbox, reads: list[str]) -> None:
-        """Start without an open call. `gateway` gets the calls of Vis, `api` gets the calls of `/dashboard/api/`, `inbox` has the messages and `reads` are the reads of the last record."""
-        self.gateway, self.api, self.inbox = gateway, api, inbox
+    def __init__(self, gateway: Gateway, api: Api, inbox: shards.Inbox, reads: list[str], machine: Machine) -> None:
+        """Start without an open call.
+
+        `gateway` gets the calls of Vis, `api` gets the calls of `/dashboard/api/`, `inbox` has the messages,
+        `reads` are the reads of the last record and `machine` is the state that each worker shares.
+        """
+        self.gateway, self.api, self.inbox, self.machine = gateway, api, inbox, machine
         self.inflight, self.last = 0, time.time()
         # The open event streams: they are a part of `inflight`.
         self.streams = 0
-        # True after a call that is not a read.
-        self.wrote = False
         # True when the worker stops: each open event stream then ends.
         self.closing = False
-        # The reads that a tab makes without a person: those of the last record, then those that this worker answered, the newest last.
-        self.reads: dict[str, None] = dict.fromkeys(reads)
+        # The reads that a tab makes without a person: those of the last record, then those that this worker answered.
+        self.reads: dict[str, None] = dict.fromkeys(read for read in reads if not read.startswith("PUT "))
         self._lock = threading.Lock()
         self._receipts: dict[str, str] = {}
         self._answered: dict[str, float] = {}
@@ -67,6 +73,8 @@ class Relay:
                 self._delete(rid)
             for old in [key for key, at in self._answered.items() if now - at > ANSWERED_S]:
                 del self._answered[old]
+            # The call is open from this point, so the worker does not stop between the message and its answer.
+            self.inflight += not known
         return None if known else call
 
     def _delete(self, rid: str) -> None:
@@ -78,6 +86,12 @@ class Relay:
                 self.inbox.delete(receipt)
             except aws.ClientError as failure:
                 log("delete message failed", repr(failure))
+
+    def calm(self, timeout_s: float) -> None:
+        """Wait until each open call that is not an event stream has its answer."""
+        end = time.time() + timeout_s
+        while self.open() and time.time() < end:
+            time.sleep(0.05)
 
     def settle(self, timeout_s: float) -> None:
         """End each open event stream and wait until each call wrote its last part."""
@@ -92,17 +106,34 @@ class Relay:
             return self.inflight - self.streams
 
     def record(self) -> None:
-        """Ask the gateway again for each read that a tab makes without a person and record the answers for the front (see `shards.keep`)."""
-        answers: dict[str, list[Any]] = {}
+        """Record for the front the answer of the gateway to each call that a tab makes without a person (see `shards.keep`).
+
+        The calls are the reads that a tab made, in `main` the reads of the machine, the reads of a tab that opens a
+        session, for each session of this worker, and the call that says that a person saw a session, for each session
+        that the person saw to its end.
+        """
         with self._lock:
-            reads = list(self.reads)[-SEEN:]
+            names = dict.fromkeys([*self.reads, *(LOADED if self.machine.is_main else ())])
         try:
-            for target in reads:
-                status, headers, data = self.gateway.read("GET", target)
-                if status == 200 and len(data) <= SEEN_LIMIT:
-                    answers[target] = [{"status": status, "headers": [pair for pair in headers if pair[0].lower() not in wire.HOP]}, base64.b64encode(data).decode()]
+            for row in self.gateway.sessions():
+                if row.get("archived_at"):
+                    continue
+                names.update(dict.fromkeys(target.format(id=row["id"]) for target in OPENED))
+                if not row.get("is_unread"):
+                    names[f"PUT /v1/sessions/{row['id']}/read"] = None
+
+            def ask(name: str) -> list[Any] | None:
+                """Return the head and the body of the answer to one call, or None for a call that the gateway refused."""
+                method, target, body = [*name.split(" ", 2), "{}"][:3] if name.startswith(("PUT ", "POST ")) else ("GET", name, None)
+                status, headers, data = self.gateway.read(method, self.gateway.inward(target.encode()).decode(), body and json.loads(body))
+                if status != 200:
+                    return None
+                return [{"status": status, "headers": [pair for pair in headers if pair[0].lower() not in wire.HOP]}, base64.b64encode(self.gateway.outward(data)).decode()]
+
+            with ThreadPoolExecutor(8) as pool:
+                answers = {name: found for name, found in zip(names, pool.map(ask, names), strict=True) if found}
             shards.keep(self.api.shard, answers)
-        except (OSError, http.client.HTTPException, aws.ClientError) as failure:
+        except (GatewayError, OSError, http.client.HTTPException, aws.ClientError) as failure:
             log("no record of the reads", repr(failure))
 
     def done(self, rid: str) -> None:
@@ -111,11 +142,8 @@ class Relay:
             self._delete(rid)
 
     def handle(self, call: dict[str, Any]) -> None:
-        """Answer one call. A failure becomes a 502 answer."""
-        with self._lock:
-            self.inflight += 1
-            self.wrote = self.wrote or call["method"] != "GET"
-        rid, is_stream, is_quiet = call["id"], False, shards.quiet(call["method"], call["path"])
+        """Answer one call that `accept` gave. A failure becomes a 502 answer."""
+        rid, is_stream, is_quiet = call["id"], False, bool(shards.quiet(call["method"], call["path"]))
         try:
             is_stream = self.answer(call)
         except Exception as failure:  # the browser gets a plain answer, the log gets the cause
@@ -129,12 +157,12 @@ class Relay:
                 if not (is_stream or is_quiet):
                     self.last = time.time()
 
-    def forked(self, status: int, data: bytes) -> None:
-        """Record the shard of a fork. The front must know it before a client asks for the fork."""
+    def assigned(self, status: int, data: bytes) -> None:
+        """Record the shard of a session that a call made. The front must know it before a client asks for the session."""
         made = json.loads(data) if status < 300 else {}
         found = (made.get("id") or (made.get("session") or {}).get("id")) if isinstance(made, dict) else None
         if isinstance(found, str) and SESSION.fullmatch(found):
-            shards.assign(found, self.api.shard)
+            self.gateway.route(found, self.api.shard)
 
     def body(self, call: dict[str, Any]) -> bytes:
         """Return the body of a call. A large body comes in its own S3 object."""
@@ -155,6 +183,9 @@ class Relay:
             status, headers, data = self.api.handle(call["method"], call["path"], body)
             reply(rid, {"status": status, "headers": headers}, data)
             return False
+        if not self.machine.is_main:
+            self.machine.follow()
+        sent, body, target = body, self.gateway.inward(body), self.gateway.inward(call["path"].encode()).decode()
         headers = {**call["headers"], **self.gateway.headers(), "host": f"{LOOPBACK}:{GATEWAY_PORT}"}
         if "content-type" in call["headers"]:  # the gateway headers name JSON: the type of the call wins
             headers["content-type"] = call["headers"]["content-type"]
@@ -166,8 +197,7 @@ class Relay:
             body, made = self.api.sessions.place(body)
             # The body has a new length: the connection counts it.
             headers = {name: value for name, value in headers.items() if name.lower() != "content-length"}
-            if made:
-                after = lambda status, data: self.api.sessions.placed(made, status, data)  # noqa: E731
+            after = lambda status, data: (self.assigned(status, data), made and self.api.sessions.placed(made, status, data))  # noqa: E731
         elif method == "POST" and turn:
             self.api.sessions.touch(turn.group(1))
         elif method == "DELETE" and one:
@@ -176,21 +206,27 @@ class Relay:
         elif method == "DELETE" and MANY.fullmatch(path):
             after = lambda status, data: status < 300 and self.api.sessions.reap(None)  # noqa: E731
         elif method == "POST" and self.api.shard != MAIN and FORK.fullmatch(path):
-            after = self.forked
+            after = self.assigned
         # The call goes to the gateway as it is: the SDK does not relay the call of another client.
         connection = http.client.HTTPConnection(LOOPBACK, GATEWAY_PORT, timeout=max(5.0, call["deadline"] - time.time()))
         try:
-            connection.request(call["method"], call["path"], body or None, headers)
+            connection.request(call["method"], target, body or None, headers)
             answer = connection.getresponse()
             head = {"status": answer.status, "headers": [[k, v] for k, v in answer.getheaders() if k.lower() not in wire.HOP]}
             if "text/event-stream" not in (answer.getheader("content-type") or ""):
-                data = answer.read()
+                data = self.gateway.outward(answer.read())
+                if self.machine.is_main and method != "GET":
+                    # The front gives the answer after the record, so the next call of another shard has the change.
+                    self.machine.record(bool(CHANGES.fullmatch(path)))
+                elif method != "GET":
+                    # The list of the front has the change before the client reads the list again.
+                    self.gateway.publish(self.api.shard, is_full=False)
                 # A 304 counts: the record then has the complete answer.
-                if answer.status in (200, 304) and shards.quiet(method, call["path"]):
+                name = shards.quiet(method, call["path"], sent)
+                # The record gets the call of a session that a person saw from the list rows, not from here (see `record`).
+                if answer.status in (200, 304) and name and method != "PUT":
                     with self._lock:
-                        # The read moves to the end: the record keeps the newest reads.
-                        self.reads.pop(call["path"], None)
-                        self.reads[call["path"]] = None
+                        self.reads[name] = None
                 if after:
                     try:
                         after(answer.status, data)
@@ -224,7 +260,7 @@ class Relay:
             chunks.put(None)
 
         threading.Thread(target=read, daemon=True).start()
-        index, last, pending = 0, False, wire.frame(head)
+        index, last, pending, held = 0, False, wire.frame(head), b""
         while not last:
             started = time.time()
             last = self.closing or started > call["deadline"] - 2
@@ -234,10 +270,13 @@ class Relay:
                     if chunk is None:
                         last = True
                         break
-                    pending += chunk
+                    held += chunk
                     chunk = chunks.get(timeout=max(0.0, COLLECT_S - (time.time() - started)))
             except queue.Empty:
                 pass
+            # An id can be in two chunks, so only the complete lines go out.
+            ready, end, held = (held, b"", b"") if last else held.rpartition(b"\n")
+            pending += self.gateway.outward(ready + end)
             if pending or last:
                 aws.put(f"relay/{rid}/{index}", (wire.LAST if last else wire.MORE) + pending)
                 if index == 0:

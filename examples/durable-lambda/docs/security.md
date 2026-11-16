@@ -19,10 +19,10 @@ What a session of [Software factory](../README.md) can and cannot get.
 | A person that you do not know calls the stack | Nothing stops this person: the stack has no sign-in. Each person who has the address can start sessions and runs, use the provider key through `llm` and publish commits to the repository. Give the address only to people that you trust. For a stack that other people can find, put a sign-in before `front`. |
 | A person decides at a gate of another person | Nothing stops this person: a gate has no sign-in. A gate is a step of a workflow, not a security control. |
 | A false webhook | `front` checks the `X-Hub-Signature-256` of GitHub. |
-| The credentials of the worker role leave the function | Each S3, SQS and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
-| A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `tmp/`, `work/`, `routes/`, `pending/` and `calls/`. |
+| The credentials of the worker role leave the function | Each S3 and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
+| A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `tmp/`, `work/`, `routes/`, `pending/`, `calls/`, `shards/`, `bells/`, `lists/`, `texts/` and `seen/`. |
 | A stored answer or a stored file runs script in the browser | Each relayed answer has a `sandbox` content security policy, and `front` passes only a fixed list of answer headers. The API sends each attached file and each temporary file as plain text and as a download. |
-| A flood of requests makes a large bill | The functions have a concurrency limit: 50 for `front`, 5 for `worker`, 20 for `llm`, 1 for `repo` and 1 for `sync`. A call cannot ask for more output tokens than the limit of the model. |
+| A flood of requests makes a large bill | `front` has a concurrency limit of 50, and `repo` and `sync` have 1. `worker` and `llm` have no limit of their own, so each session can have its worker: the Lambda quota of the account is their limit. To set a lower limit, give the two functions a `ReservedConcurrentExecutions` in the template. A call cannot ask for more output tokens than the limit of the model. |
 
 ## The limit that you must know
 
@@ -32,9 +32,9 @@ without it. The gateway and the tools of a session have no AWS credentials in th
 environment. But the code of a session runs as the user of the worker. It can read
 the temporary credentials of the worker role from the worker process. It can call the
 Lambda Runtime API of the worker. It can read and change the data of the other
-sessions of the stack. For this reason:
+sessions of the stack, and the object `machine` that each worker copies. For this reason:
 
-- the worker role permits only the bucket prefixes, the queue and the three functions that the worker needs;
+- the worker role permits only the bucket prefixes and the three functions that the worker needs;
 - each secret is in a function that does not run the code of a session;
 - one stack is for one team that shares its sessions. Give each tenant its own stack;
 - the provider key has no spending limit in this stack. Set a budget for the key at the provider.

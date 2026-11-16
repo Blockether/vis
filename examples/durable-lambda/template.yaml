@@ -73,13 +73,6 @@ Resources:
             Resource: [!GetAtt Bucket.Arn, !Sub "${Bucket.Arn}/*"]
             Condition: {Bool: {aws:SecureTransport: "false"}}
 
-  Queue:
-    Type: AWS::SQS::Queue
-    Properties:
-      SqsManagedSseEnabled: true
-      MessageRetentionPeriod: 300
-      VisibilityTimeout: 60
-
   FileSystem:
     Type: AWS::EFS::FileSystem
     Properties:
@@ -222,25 +215,6 @@ Resources:
             Resource: [!GetAtt Bucket.Arn, !Sub "${Bucket.Arn}/*"]
             Condition: {StringEquals: {aws:PrincipalAccount: !Ref AWS::AccountId}}
 
-  QueueEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref Vpc
-      VpcEndpointType: Interface
-      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sqs"
-      SubnetIds: [!Ref PrivateSubnet]
-      SecurityGroupIds: [!Ref EndpointGroup]
-      PrivateDnsEnabled: true
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal: "*"
-            # The worker of a run sends a call to the worker of the people when that worker owns the session of the call.
-            Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:SendMessage]
-            Resource: !GetAtt Queue.Arn
-            Condition: {StringEquals: {aws:PrincipalAccount: !Ref AWS::AccountId}}
-
   LambdaEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -309,11 +283,10 @@ Resources:
               - Effect: Allow
                 Action: ssm:GetParameter
                 Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/webhook-secret"
-              - {Effect: Allow, Action: sqs:SendMessage, Resource: !GetAtt Queue.Arn}
-              # The lease of each shard, the shard of a session or of a run and the answers of the workers (see `durable/shards.py`).
+              # The lease of each shard, the state of the machine, the shard of a session or of a run and the answers of the workers (see `durable/shards.py`).
               - Effect: Allow
                 Action: s3:GetObject
-                Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/shards/*", !Sub "${Bucket.Arn}/routes/*", !Sub "${Bucket.Arn}/lists/*", !Sub "${Bucket.Arn}/texts/*", !Sub "${Bucket.Arn}/seen/*", !Sub "${Bucket.Arn}/relay/*"]
+                Resource: [!Sub "${Bucket.Arn}/lease.json", !Sub "${Bucket.Arn}/machine", !Sub "${Bucket.Arn}/shards/*", !Sub "${Bucket.Arn}/routes/*", !Sub "${Bucket.Arn}/lists/*", !Sub "${Bucket.Arn}/texts/*", !Sub "${Bucket.Arn}/seen/*", !Sub "${Bucket.Arn}/relay/*"]
               # The calls for the worker of a shard, and their bell.
               - Effect: Allow
                 Action: s3:PutObject
@@ -323,7 +296,7 @@ Resources:
               - Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
-                Condition: {StringLike: {s3:prefix: [lease.json, relay/*, shards/*, routes/*, lists/*, texts/*, seen/*, pending/*]}}
+                Condition: {StringLike: {s3:prefix: [lease.json, machine, relay/*, shards/*, routes/*, lists/*, texts/*, seen/*, pending/*]}}
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
@@ -347,7 +320,6 @@ Resources:
         Variables:
           VIS_ROLE: front
           VIS_BUCKET: !Ref Bucket
-          VIS_QUEUE_URL: !Ref Queue
           VIS_WORKER_FUNCTION: !Sub "${AWS::StackName}-worker"
           VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
           VIS_WEBHOOK_PARAMETER: !Sub "/${AWS::StackName}/webhook-secret"
@@ -416,6 +388,8 @@ Resources:
                 Action: [s3:GetObject, s3:PutObject]
                 Resource:
                   - !Sub "${Bucket.Arn}/lease.json"
+                  # The state that the worker of `main` writes and each other worker copies: see `durable/vis/machine.py`.
+                  - !Sub "${Bucket.Arn}/machine"
                   - !Sub "${Bucket.Arn}/state/*"
                   - !Sub "${Bucket.Arn}/relay/*"
                   - !Sub "${Bucket.Arn}/runs/*"
@@ -447,6 +421,12 @@ Resources:
                   - !Sub "${Bucket.Arn}/routes/*"
                   - !Sub "${Bucket.Arn}/pending/*"
                   - !Sub "${Bucket.Arn}/calls/*"
+                  # A shard whose last session is deleted removes each of its objects.
+                  - !Sub "${Bucket.Arn}/shards/*"
+                  - !Sub "${Bucket.Arn}/bells/*"
+                  - !Sub "${Bucket.Arn}/lists/*"
+                  - !Sub "${Bucket.Arn}/texts/*"
+                  - !Sub "${Bucket.Arn}/seen/*"
                 Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
                 Action: s3:PutObject
@@ -457,12 +437,8 @@ Resources:
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
                 Condition:
-                  StringLike: {s3:prefix: [lease.json, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*, work/*, shards/*, routes/*, pending/*, calls/*, bells/*, lists/*, texts/*, seen/*]}
+                  StringLike: {s3:prefix: [lease.json, machine, state/*, relay/*, runs/*, workflows/*, attached/*, tmp/*, work/*, shards/*, routes/*, pending/*, calls/*, bells/*, lists/*, texts/*, seen/*]}
                   StringEquals: {aws:SourceVpc: !Ref Vpc}
-              - Effect: Allow
-                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:SendMessage]
-                Resource: !GetAtt Queue.Arn
-                Condition: {StringEquals: {aws:SourceVpc: !Ref Vpc}}
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
@@ -494,7 +470,7 @@ Resources:
 
   Worker:
     Type: AWS::Lambda::Function
-    DependsOn: [MountTarget, S3Endpoint, QueueEndpoint, LambdaEndpoint]
+    DependsOn: [MountTarget, S3Endpoint, LambdaEndpoint]
     Properties:
       FunctionName: !Sub "${AWS::StackName}-worker"
       PackageType: Image
@@ -506,9 +482,8 @@ Resources:
       # `VIS_LIFETIME_S` of `durable/settings.py` has the same value. Change the two together.
       Timeout: 900
       EphemeralStorage: {Size: 4096}
-      # One worker holds the lease of each shard: one for the people and one for each run that works.
-      # The others are a handoff or a start that ends at once. A run that gets no instance waits for one.
-      ReservedConcurrentExecutions: 20
+      # One worker holds the lease of each shard that works: one for each session and one for `main`.
+      # The function has no reserved concurrency: only the quota of the account limits the number of workers.
       LoggingConfig: {LogGroup: !Ref WorkerLog}
       VpcConfig: {SubnetIds: [!Ref PrivateSubnet], SecurityGroupIds: [!Ref FunctionGroup]}
       FileSystemConfigs: [{Arn: !GetAtt WorkerAccess.Arn, LocalMountPath: /mnt/efs}]
@@ -516,7 +491,6 @@ Resources:
         Variables:
           VIS_ROLE: worker
           VIS_BUCKET: !Ref Bucket
-          VIS_QUEUE_URL: !Ref Queue
           VIS_WORKER_FUNCTION: !Sub "${AWS::StackName}-worker"
           VIS_LLM_FUNCTION: !Sub "${AWS::StackName}-llm"
           VIS_REPO_FUNCTION: !Sub "${AWS::StackName}-repo"
@@ -564,8 +538,7 @@ Resources:
       Role: !GetAtt LlmRole.Arn
       MemorySize: 256
       Timeout: 900
-      # Each model call holds one instance. The limit is also a limit of the provider cost.
-      ReservedConcurrentExecutions: 20
+      # Each model call holds one instance. As for the worker, only the quota of the account limits their number.
       LoggingConfig: {LogGroup: !Ref LlmLog}
       Environment:
         Variables:

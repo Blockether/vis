@@ -1,7 +1,6 @@
 """The wire format between the front function and the worker.
 
-A call goes to the worker of `main` as one SQS message and to the worker of another
-shard as one S3 object. The answer comes back as S3 objects
+A call goes to the worker of its shard as one S3 object. The answer comes back as S3 objects
 `relay/<id>/<index>`. The first byte of each object is `E` for the last part or `M`
 when more parts follow. Part 0 starts with a frame: the length of a JSON head in 4 bytes,
 the head `{status, headers}`, then the first bytes of the body.

@@ -56,7 +56,8 @@ class Sessions:
 
     def places(self) -> list[tuple[str, str]]:
         """Return the id and the title of each session that a run can work in: a session with a turn in a clone of the repository."""
-        rows = self.engine.sessions() if self.engine else []
+        # A session of a person has its own shard, and a session of a run is in the group of the runs.
+        rows = [*(self.engine.sessions() if self.engine else []), *(row for row in shards.shown() if row.get("group_id") != self.runs.group)]
         found = [row for row in rows if os.path.dirname(os.path.realpath((row.get("workspace") or {}).get("root") or "/")) == os.path.realpath(WORK)]
         return [(row["id"], f"{row.get('title') or 'Untitled session'} · {row['id'][:8]}") for row in found[:PLACES]]
 
