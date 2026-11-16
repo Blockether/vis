@@ -273,6 +273,13 @@ function KeyLegend({
 }
 
 /**
+ * The app icon in a dark dialog band. The band stretches its cells to its height, so the
+ * icon centres itself and keeps the band's leading inset (user report: it stood in the
+ * top-left corner, half out of the dialog).
+ */
+const BAND_ICON = 'ml-3 size-4 shrink-0 self-center sm:ml-4';
+
+/**
  * The opened app: its title in a band and its nodes in the shared renderer.
  * In the transcript it opens in place of its row (`isInline`); the Artifacts
  * sheet opens it in the session dialog.
@@ -588,7 +595,7 @@ export function AppSurface({
             title={title}
             isTitleTruncated
             subtitle={subtitle}
-            leading={<>{backButton}<AppIcon name={view?.icon} className="mx-1 size-4 shrink-0" /></>}
+            leading={<>{backButton}<AppIcon name={view?.icon} className={BAND_ICON} /></>}
             actions={bandActions}
             {...closeWith(backLabel ? undefined : onClose, leave)}
           />
@@ -614,7 +621,7 @@ export function AppSurface({
   return (
     <RunDialog
       title={title}
-      leading={<AppIcon name={view?.icon} className="size-4 shrink-0" />}
+      leading={<AppIcon name={view?.icon} className={BAND_ICON} />}
       subtitle={subtitle}
       footer={footer}
       closeLabel={closeLabel}
