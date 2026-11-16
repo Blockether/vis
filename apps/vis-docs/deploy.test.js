@@ -56,6 +56,7 @@ const paths = [
   '/extending.md',
   '/vis.webmanifest',
   '/schema/view.json',
+  '/oauth/mcp-client.json',
   '/favicon.ico',
   '/vis-icon.ico',
   '/vis-icon-16.png',

@@ -375,6 +375,7 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
       '/llms.txt',
       '/llms-full.txt',
       '/extending.md',
+      '/oauth/mcp-client.json',
     ]) {
       const response = await site.fetch(path, { redirect: 'manual' });
       expect(response.status, path).toBe(200);
@@ -392,6 +393,9 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
         expect(response.headers.get('content-type')).toMatch(/(?:application|text)\/xml/);
       if (path.endsWith('.txt'))
         expect(response.headers.get('content-type')).toContain('text/plain');
+      // An authorization server reads the OAuth client document as JSON.
+      if (path.endsWith('.json'))
+        expect(response.headers.get('content-type')).toContain('application/json');
     }
     for (const method of ['GET', 'HEAD']) {
       for (const [path, target] of [

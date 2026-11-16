@@ -19,6 +19,7 @@ on:
       - 'packages/**/deps.edn'
       - 'packages/vis-agent/**'
       - 'packages/vis-contract/resources/vis-contract/schema/**'
+      - 'packages/vis-contract/resources/vis-contract/oauth/**'
       - '.graalvm-version'
       - '.github/actions/setup-graalvm-25/**'
       - '.github/workflows/docs.yml'

@@ -63,6 +63,7 @@ export async function verifyDeployment(hostname) {
         ['/extending.md', '# Extending Vis'],
         ['/vis.webmanifest', '"icons"'],
         ['/schema/view.json', '"title": "View contract"'],
+        ['/oauth/mcp-client.json', '"token_endpoint_auth_method": "none"'],
       ]) {
         const response = await fetch(new URL(path, origin), {
           signal: AbortSignal.timeout(20000),

@@ -88,6 +88,15 @@ test('every contract schema is served at its $id', () => {
   }
 });
 
+test('the OAuth client document is served at its client_id', () => {
+  const source = '../../packages/vis-contract/resources/vis-contract/oauth/mcp-client.json';
+  const client = JSON.parse(readFileSync(source, 'utf8'));
+  expect(client.client_id).toBe(origin + '/oauth/mcp-client.json');
+  expect(read('oauth/mcp-client.json')).toBe(readFileSync(source, 'utf8'));
+  // The logo that the consent screen shows is an icon that the build makes.
+  expect(readdirSync('dist')).toContain(client.logo_uri.slice(origin.length + 1));
+});
+
 test.each([16, 32, 48, 180, 192, 512])(
   'site icon %i reuses the transparent Companion artwork',
   async (size) => {

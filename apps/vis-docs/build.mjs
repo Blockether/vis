@@ -133,6 +133,13 @@ await cp(
   new URL('schema/', dist),
   { recursive: true },
 );
+// The OAuth client of Vis has its public URL as its `client_id`: an authorization
+// server reads the document there.
+await cp(
+  new URL('../../packages/vis-contract/resources/vis-contract/oauth/', import.meta.url),
+  new URL('oauth/', dist),
+  { recursive: true },
+);
 await build({
   entryPoints: [fileURLToPath(new URL('./web/main.js', import.meta.url))],
   outfile: fileURLToPath(new URL('assets/app.js', dist)),
