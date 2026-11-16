@@ -1506,18 +1506,24 @@
 
           ;; Linux `ps` gives `pcpu` as an average over the life of the process, so
           ;; the CPU that the command used before the wait hid the note there.
-          (doseq [[command settle-secs]
-                  [["sleep 30" 0]
-                   ["i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; sleep 30" 3]]]
+          (doseq [[command ^java.io.File worked]
+                  [["sleep 30" nil]
+                   (let [marker (io/file (System/getProperty "java.io.tmpdir")
+                                         (str "vis-shell-quiet-" (System/nanoTime)))]
+                     [(str "i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; : > '"
+                           marker
+                           "'; sleep 30") marker])]]
             (try (shell* env {"command" command "id" "quiet" "timeout_secs" 1})
-                 ;; The first wait lets the work end; the second one sees only the sleep.
-                 (when (pos? settle-secs) (wait* env "quiet" settle-secs))
+                 ;; The marker says that the work ended, so the wait sees only the sleep.
+                 (when worked (poll #(.isFile worked) true? 100))
                  (with-redefs-fn {#'shell/quiet-note-ms 500}
                    (fn []
                      (let [r (wait* env "quiet" 2)]
                        (expect (true? (get r "timed_out")))
                        (expect (str/includes? (str (get r "note")) "No output") command))))
-                 (finally (resources/stop-all! sid))))))))
+                 (finally (resources/stop-all! sid)
+                          (some-> worked
+                                  .delete))))))))
 
 (defdescribe
   shell-bg-lifecycle-op-test

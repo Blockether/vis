@@ -23,23 +23,50 @@
   (doseq [^File file (reverse (file-seq dir))]
     (.delete file)))
 
-(defn- shared-uv-program
-  "The program that `-main` runs for `python --shared uv ARGS`, without loading the engine."
+(defn- shared-uv-form
+  "The form that `-main` runs for `python --shared uv ARGS`, without loading the engine.
+   `args` is a form that gives the arguments."
   [args]
-  (pr-str `(do (require 'com.blockether.vis.internal.python.runtime)
-               (System/exit (try ((resolve 'com.blockether.vis.internal.python.runtime/uv-command!)
-                                   ~(vec args)
-                                   {:shared? true})
-                                 (catch Throwable t#
-                                   (binding [*out* *err*]
-                                     (println (.getMessage t#)))
-                                   1))))))
+  `(do (require 'com.blockether.vis.internal.python.runtime)
+       (System/exit (try ((resolve 'com.blockether.vis.internal.python.runtime/uv-command!)
+                           ~args
+                           {:shared? true})
+                         (catch Throwable t#
+                           (binding [*out* *err*]
+                             (println (.getMessage t#)))
+                           1)))))
+
+(defn- gated-program
+  "The program of a child that loads its code, waits for the file `gate` and then runs the
+   arguments in that file: `python ARGS` through `-main`, or `--shared uv ARGS` without
+   the engine when `runtime-only?`. The child ends when this test process is gone."
+  [^File gate runtime-only?]
+  (let [path
+        (.getPath gate)
+
+        parent
+        (.pid (java.lang.ProcessHandle/current))]
+
+    (pr-str
+      `(do
+         (require '~(if
+                     runtime-only?
+                     'com.blockether.vis.internal.python.runtime
+                     'com.blockether.vis.core))
+         (while (not (.isFile (File. ~path)))
+           (when-not (.isPresent (java.lang.ProcessHandle/of ~parent)) (System/exit 1))
+           (Thread/sleep 5))
+         (let [~'args (read-string (slurp ~path))]
+           ~(if runtime-only?
+              (shared-uv-form '(vec (drop 2 args)))
+              '(apply (resolve 'com.blockether.vis.core/-main) "python" args)))))))
 
 (defn- start-cli!
   "Start `vis-agent python` from source like the launcher: the process runs in `dir`
    and an :invocation-dir travels in user.dir. :input is written to its stdin.
-   :runtime-only? runs a `--shared uv` invocation without the engine load of `-main`."
-  [^File dir environment args {:keys [invocation-dir jvm-opts ^String input runtime-only?]}]
+   :runtime-only? runs a `--shared uv` invocation without the engine load of `-main`.
+   :gated? ignores `args`: the child loads its code and then waits for the :gate file."
+  [^File dir environment args {:keys [invocation-dir jvm-opts ^String input runtime-only? gated?]}]
   (let [classpath
         (str/join File/pathSeparator
                   (map (fn [entry]
@@ -48,6 +75,12 @@
                        (str/split (System/getProperty "java.class.path")
                                   (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))))
 
+        log
+        (str "cli-" (java.util.UUID/randomUUID))
+
+        gate
+        (io/file dir (str log ".gate"))
+
         command
         (into (cond-> (into [(str (io/file (System/getProperty "java.home") "bin/java"))
                              "--enable-native-access=ALL-UNNAMED" "--enable-preview"]
@@ -55,15 +88,16 @@
                 invocation-dir
                 (conj (str "-Duser.dir=" (.getCanonicalPath ^File invocation-dir)))
 
-                runtime-only?
-                (into ["-cp" classpath "clojure.main" "-e" (shared-uv-program (drop 2 args))])
+                gated?
+                (into ["-cp" classpath "clojure.main" "-e" (gated-program gate runtime-only?)])
 
-                (not runtime-only?)
+                (and runtime-only? (not gated?))
+                (into ["-cp" classpath "clojure.main" "-e"
+                       (pr-str (shared-uv-form (vec (drop 2 args))))])
+
+                (not (or runtime-only? gated?))
                 (into ["-cp" classpath "clojure.main" "-m" "com.blockether.vis.core" "python"]))
-              (when-not runtime-only? args))
-
-        log
-        (str "cli-" (java.util.UUID/randomUUID))
+              (when-not (or runtime-only? gated?) args))
 
         output
         (io/file dir (str log ".log"))
@@ -87,7 +121,7 @@
     (let [process (.start builder)]
       (with-open [stdin (.getOutputStream process)]
         (when input (.write stdin (.getBytes input "UTF-8"))))
-      {:process process :output output :errors errors})))
+      {:process process :output output :errors errors :gate gate})))
 
 (defn- await-cli!
   "Wait for a started CLI. :output joins stdout and stderr for messages; :stderr omits
@@ -114,18 +148,76 @@
 ;; C1 and the serial collector roughly halve the CPU of each short-lived JVM.
 (def ^:private child-jvm-opts ["-XX:TieredStopAtLevel=1" "-XX:+UseSerialGC"])
 
-(defn- run-cli
-  [dir environment args]
-  (await-cli! (start-cli! dir environment args {:jvm-opts child-jvm-opts}) 90))
-
 (defn- run-uv-cli
   "Run a `--shared uv` invocation in a clean process without the engine load of `-main`.
-   Each test sends its first invocation through `run-cli`, which proves the real dispatch."
+   python-cli-shared-sync-test proves the real dispatch of such an invocation."
   [dir environment args]
   (await-cli! (start-cli! dir environment args {:runtime-only? true :jvm-opts child-jvm-opts}) 90))
 
+(def ^:private child-limit
+  "The number of child JVMs that live at once: half of the CPU cores, and three at the least."
+  (max 3 (quot (.availableProcessors (Runtime/getRuntime)) 2)))
+
+(defn- cli-queue
+  "Start the child of each slot before its turn, so that the code of a child loads while
+   an earlier invocation runs. A slot is a map of :dir, :environment and the :options and
+   :input of `start-cli!`. At most `child-limit` children live at once. `:invoke!` gives
+   its arguments to the next child and waits for the result: the invocations still run
+   one after another, each in a clean process. `:stop!` ends the children that did not run."
+  [slots]
+  (let [waiting
+        (atom (seq slots))
+
+        ready
+        (atom clojure.lang.PersistentQueue/EMPTY)
+
+        start-next!
+        (fn []
+          (when-let [{:keys [dir environment options input]} (first @waiting)]
+            (swap! waiting next)
+            (swap! ready conj
+              (start-cli! dir
+                          environment
+                          nil
+                          (assoc options
+                            :input input
+                            :jvm-opts child-jvm-opts
+                            :gated? true)))))]
+
+    (dotimes [_ child-limit]
+      (start-next!))
+    {:invoke! (fn [args]
+                (let [child
+                      (or (peek @ready) (throw (ex-info "No Python CLI child is left" {})))
+
+                      ^File gate
+                      (:gate child)
+
+                      draft
+                      (io/file (str gate ".new"))]
+
+                  (swap! ready pop)
+                  (spit draft (pr-str (vec args)))
+                  ;; The child reads the gate when it exists, so it must appear complete.
+                  (Files/move (.toPath draft)
+                              (.toPath gate)
+                              (into-array java.nio.file.CopyOption
+                                          [java.nio.file.StandardCopyOption/ATOMIC_MOVE]))
+                  (try (await-cli! child 240) (finally (start-next!)))))
+     :stop! (fn []
+              (reset! waiting nil)
+              (doseq [{:keys [^Process process]} @ready]
+                (doseq [^java.lang.ProcessHandle child (-> process
+                                                           .toHandle
+                                                           .descendants
+                                                           .toList)]
+                  (.destroyForcibly child))
+                (.destroyForcibly process)
+                (.waitFor process 10 TimeUnit/SECONDS))
+              (reset! ready clojure.lang.PersistentQueue/EMPTY))}))
+
 (defn- run-cli-together
-  "Run independent invocations, at most three at once, so that the test does not
+  "Run independent invocations, at most `child-limit` at once, so that the test does not
    use all CPU cores. Answer the results in the order of `invocations`."
   [dir invocations]
   (into []
@@ -139,7 +231,7 @@
                                                       :jvm-opts child-jvm-opts)))
                                       batch)]
                     (mapv #(await-cli! % 240) started))))
-        (partition-all 3 invocations)))
+        (partition-all child-limit invocations)))
 
 (defn- shared-fixture-wheel!
   "Write a wheel of one module. With `script`, the wheel declares that console script, which
@@ -350,17 +442,22 @@
            "UV_PROJECT_ENVIRONMENT" "untouched-environment"
            "UV_PYTHON" "not-the-embedded-python"}
 
+          ;; The first sync goes through the real `-main` dispatch; the seven later syncs
+          ;; skip its engine load. The last child is the import probe, in the project.
+          {:keys [invoke! stop!]}
+          (cli-queue (concat
+                       [{:dir dir :environment environment}]
+                       (repeat 7 {:dir dir :environment environment :options {:runtime-only? true}})
+                       [{:dir project :environment environment}]))
+
           sync!
-          ;; A plain sync goes through the real `-main` dispatch; the variants skip its engine load.
           (fn [& args]
-            ((if (empty? args) run-cli run-uv-cli)
-              dir
-              environment
-              (into ["--shared" "uv" "sync" "--project" (.getPath project) "--offline"] args)))
+            (invoke! (into ["--shared" "uv" "sync" "--project" (.getPath project) "--offline"]
+                           args)))
 
           probe!
           (fn [code]
-            (run-cli project environment ["--shared" "--no-network" "-c" code]))]
+            (invoke! ["--shared" "--no-network" "-c" code]))]
 
       (try
         (spit
@@ -405,11 +502,7 @@
         (let [result (sync! "--check")]
           (expect (= 1 (:exit result)) (:output result))
           (expect (str/includes? (:output result) "shared-base") (:output result)))
-        ;; The first plain sync proved the `-main` dispatch; this repair skips its engine load.
-        (let [result (run-uv-cli dir
-                                 environment
-                                 ["--shared" "uv" "sync" "--project" (.getPath project)
-                                  "--offline"])]
+        (let [result (sync!)]
           (expect (= 0 (:exit result)) (:output result)))
         (let [result (sync! "--check")]
           (expect (= 0 (:exit result)) (:output result)))
@@ -431,7 +524,7 @@
           (expect (str/includes? (:output result) "RETAINED 8 42 42 kept") (:output result)))
         (expect (not-any? #(re-find #"^(requirements.*|pylock.*)\.(txt|toml)$" (.getName ^File %))
                           (.listFiles project)))
-        (finally (delete-tree! dir))))))
+        (finally (stop!) (delete-tree! dir))))))
 
 (defdescribe
   python-cli-shared-workspace-sync-test
@@ -453,14 +546,15 @@
           environment
           {"VIS_PYTHON_PACKAGES" (str shared)}
 
-          sync!
           ;; python-cli-shared-sync-test proves the `-main` dispatch; skip its engine load here.
+          {:keys [invoke! stop!]}
+          (cli-queue (repeat 2 {:dir dir :environment environment :options {:runtime-only? true}}))
+
+          sync!
           (fn [& options]
-            (run-uv-cli dir
-                        environment
-                        (into ["--shared" "uv" "sync" "--directory" (str member) "--package=member"
-                               "--offline"]
-                              options)))]
+            (invoke! (into ["--shared" "uv" "sync" "--directory" (str member) "--package=member"
+                            "--offline"]
+                           options)))]
 
       (try (shared-fixture-wheel! project "shared_base")
            (spit
@@ -481,7 +575,7 @@
              (expect (= 0 (:exit result)) (:output result)))
            (expect (.isFile (io/file shared "shared_base.py")))
            (expect (not-any? #(str/starts-with? (.getName ^File %) "pylock.") (file-seq project)))
-           (finally (delete-tree! dir))))))
+           (finally (stop!) (delete-tree! dir))))))
 
 (defdescribe
   python-cli-shared-index-sync-test
@@ -601,9 +695,13 @@
           wheel
           (str (shared-fixture-wheel! dir "shared_base" "shared-base-tool"))
 
+          ;; Seven invocations, each through the real `-main` dispatch.
+          {:keys [invoke! stop!]}
+          (cli-queue (repeat 7 {:dir dir :environment environment}))
+
           pip!
           (fn [& args]
-            (run-cli dir environment (into ["--shared" "-m" "pip"] args)))]
+            (invoke! (into ["--shared" "-m" "pip"] args)))]
 
       (try
         ;; The uninstall also runs after a failure: a wrong install must not stay in the runtime.
@@ -612,9 +710,7 @@
                (expect (.isFile (io/file shared "shared_base.py")) (:output result))
                ;; The program owns each argument after its code. Its child process imports
                ;; shared packages, and so does the installed script when it runs by itself.
-               (let [result (run-cli dir
-                                     environment
-                                     ["--shared" "-c"
+               (let [result (invoke! ["--shared" "-c"
                                       (str "import subprocess, sys\n"
                                            "print('argv', sys.argv[1:], flush=True)\n"
                                            "sys.exit(subprocess.call([sys.executable, '-c',"
@@ -626,9 +722,7 @@
                (let [tool (shell/sh (str (io/file shared "bin" "shared-base-tool")) "direct")]
                  (expect (= [5 "script ['direct']\n"] [(:exit tool) (:out tool)]) (:err tool)))
                ;; Regression #481: the pip of a child process also removes a shared package.
-               (let [result (run-cli dir
-                                     environment
-                                     ["--shared" "-c"
+               (let [result (invoke! ["--shared" "-c"
                                       (str "import subprocess, sys\n"
                                            "sys.exit(subprocess.call([sys.executable, '-m', 'pip',"
                                            " 'uninstall', '-y', 'shared-base']))")])]
@@ -647,7 +741,7 @@
         ;; `list` can be the value of --log, so `install` can be the command.
         (let [result (pip! "--log" "list" "install" "--dry-run" "pip")]
           (expect (= 1 (:exit result)) (:output result)))
-        (finally (delete-tree! dir))))))
+        (finally (stop!) (delete-tree! dir))))))
 
 (defdescribe
   python-cli-shared-uv-test
@@ -670,22 +764,25 @@
           (fn [module]
             (str (shared-fixture-wheel! project module)))
 
+          lock
+          (io/file project "uv.lock")
+
+          ;; The first invocation goes through the real `-main` dispatch; the eight later
+          ;; invocations skip its engine load.
+          {:keys [invoke! stop!]}
+          (cli-queue
+            (cons {:dir dir :environment environment}
+                  (repeat 8 {:dir dir :environment environment :options {:runtime-only? true}})))
+
           uv!
           (fn [& args]
-            (run-uv-cli dir environment (into ["--shared" "uv"] args)))
-
-          lock
-          (io/file project "uv.lock")]
+            (invoke! (into ["--shared" "uv"] args)))]
 
       (try
         (spit (io/file project "pyproject.toml")
               (str "[project]\nname = 'shared-edit-project'\nversion = '0.1.0'\n"
                    "requires-python = '>=3.12'\ndependencies = []\n"))
-        ;; The first invocation goes through the real `-main` dispatch.
-        (let [result (run-cli dir
-                              environment
-                              ["--shared" "uv" "add" "--project" (str project) "--offline"
-                               (wheel "shared_base")])]
+        (let [result (uv! "add" "--project" (str project) "--offline" (wheel "shared_base"))]
           (expect (= 0 (:exit result)) (:output result)))
         (expect (str/includes? (slurp lock) "name = \"shared-base\""))
         (expect (.isFile (io/file shared "shared_base.py")))
@@ -733,7 +830,7 @@
         (expect (str/includes? (slurp (io/file project "pyproject.toml")) "shared-frozen"))
         (expect (not (.exists (io/file shared "shared_frozen.py"))))
         (expect (not (.exists (io/file project ".venv"))))
-        (finally (delete-tree! dir))))))
+        (finally (stop!) (delete-tree! dir))))))
 
 (defdescribe
   python-cli-shared-run-test
@@ -750,7 +847,13 @@
           (io/file dir "shared")
 
           environment
-          {"VIS_PYTHON_PACKAGES" (str shared) "UV_PYTHON" "not-the-embedded-python"}]
+          {"VIS_PYTHON_PACKAGES" (str shared) "UV_PYTHON" "not-the-embedded-python"}
+
+          ;; Each invocation goes through the real `-main` dispatch: the first in `dir`,
+          ;; the five later invocations in the project.
+          {:keys [invoke! stop!]}
+          (cli-queue (cons {:dir dir :environment environment}
+                           (repeat 5 {:dir project :environment environment})))]
 
       (try (shared-fixture-wheel! project "shared_run" "shared-run-tool")
            (spit (io/file project "pyproject.toml")
@@ -762,22 +865,17 @@
                  "import shared_run, sys\nprint('file', shared_run.VALUE, sys.argv[1:])\n")
            (spit (io/file project "uv") "import sys\nprint('uv file', sys.argv[1:])\n")
            ;; The sync before the run installs the project; the script gets each later token.
-           (let [result (run-cli dir
-                                 environment
-                                 ["--shared" "uv" "run" "--project" (str project) "--offline"
+           (let [result (invoke! ["--shared" "uv" "run" "--project" (str project) "--offline"
                                   "shared-run-tool" "--help" "-V"])]
              (expect (= 5 (:exit result)) (:output result))
              (expect (= "script ['--help', '-V']\n" (:stdout result)) (:output result)))
            (expect (.isFile (io/file shared "shared_run.py")))
            (let [[module program python child script]
-                 (run-cli-together
-                   project
-                   (for [args [["-m" "shared_run" "--help"] ["program.py" "-v" "--gateway="]
-                               ["--no-sync" "python" "-c" "import shared_run, sys; sys.exit(3)"]
-                               ["--no-sync" "shared-run-tool-program" "--help"]
-                               ["--no-sync" "--script" "uv" "--help"]]]
-                     {:environment environment
-                      :args (into ["--shared" "uv" "run" "--offline"] args)}))]
+                 (mapv #(invoke! (into ["--shared" "uv" "run" "--offline"] %))
+                       [["-m" "shared_run" "--help"] ["program.py" "-v" "--gateway="]
+                        ["--no-sync" "python" "-c" "import shared_run, sys; sys.exit(3)"]
+                        ["--no-sync" "shared-run-tool-program" "--help"]
+                        ["--no-sync" "--script" "uv" "--help"]])]
              (expect (= [0 "module ['--help']\n"] [(:exit module) (:stdout module)])
                      (:output module))
              ;; A sync that changes nothing prints nothing.
@@ -793,4 +891,4 @@
              (expect (= [0 "uv file ['--help']\n"] [(:exit script) (:stdout script)])
                      (:output script)))
            (expect (not (.exists (io/file project ".venv"))))
-           (finally (delete-tree! dir))))))
+           (finally (stop!) (delete-tree! dir))))))

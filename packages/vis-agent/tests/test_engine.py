@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from itertools import count
 from pathlib import Path
@@ -284,6 +284,89 @@ def real_client(transport, command, work, *, on_process=None):
         assert process.poll() is not None
 
 
+def engine_command(patch, home):
+    """Point this process and the engines that it starts at `home`. Return the argv."""
+    raw = os.environ.get("VIS_TEST_LOCAL_COMMAND")
+    if not raw:
+        pytest.skip("set VIS_TEST_LOCAL_COMMAND to the actual engine argv")
+    patch.setenv("HOME", str(home))
+    patch.setenv("JAVA_TOOL_OPTIONS", f"-Duser.home={home}")
+    patch.delenv("VIS_GATEWAY_URL", raising=False)
+    command = shlex.split(raw)
+    if len(command) == 1:
+        command.append(f"-Duser.home={home}")
+    return command
+
+
+def write_config(home, transport, *, council=False, subagents=False):
+    """Write the global configuration of an engine that is not started yet."""
+    config = home / ".vis"
+    config.mkdir(parents=True)
+    (config / "config.yml").write_text(
+        json.dumps(
+            {
+                "providers": [] if transport == "http" else [{"id": "sdk-fixture"}],
+                "toggles": {"council": council, "subagents": subagents},
+                "default_provider": "sdk-fixture",
+                "default_model": "sdk-test",
+            }
+        )
+    )
+
+
+# An idle engine keeps its memory, and a test with its own engine adds to that.
+# The snapshot test uses two shared engines at the same time.
+SHARED_ENGINES = 2
+
+
+@pytest.fixture(scope="module")
+def engines(tmp_path_factory):
+    """Engines that the tests of this module share.
+
+    An engine start is most of the time of a test. Each pair of transport and Council
+    toggle has one engine with its own home, started at its first use. A test still
+    has its own project, model endpoint and sessions. At most `SHARED_ENGINES` run:
+    a new one stops the engine that was idle for the longest time. The tests of one
+    toggle stand together, so a run in file order starts each engine one time.
+    """
+    started = {}
+    with ExitStack() as stack:
+
+        def engine(transport, council):
+            key = transport, council
+            if key in started:
+                home, client, process, stop = started.pop(key)
+                if process.poll() is None and not client._closed:
+                    started[key] = home, client, process, stop
+                    return home, client
+                # This engine stopped: the next test gets a new one. The checks of
+                # its stop still run, so a gateway that died by itself fails here.
+                stop.close()
+            if len(started) == SHARED_ENGINES:
+                started.pop(next(iter(started)))[-1].close()
+            home = tmp_path_factory.mktemp("home") / "home"
+            processes = []
+            stop = stack.enter_context(ExitStack())
+            with pytest.MonkeyPatch.context() as patch:
+                command = engine_command(patch, home)
+                # An engine keeps the environment of its start: give it no
+                # directory of the test that started it.
+                patch.setenv("VIS_OUTSIDE_HOME", str(home.parent / "outside"))
+                write_config(home, transport, council=council)
+                client = stop.enter_context(
+                    real_client(
+                        transport,
+                        command,
+                        tmp_path_factory.mktemp("engine"),
+                        on_process=processes.append,
+                    )
+                )
+            started[key] = home, client, processes[0], stop
+            return home, client
+
+        yield engine
+
+
 @contextmanager
 def sdk_fixture(
     tmp_path,
@@ -298,22 +381,29 @@ def sdk_fixture(
     project_extensions=None,
     on_process=None,
     stall=None,
+    engines=None,
 ):
-    raw = os.environ.get("VIS_TEST_LOCAL_COMMAND")
-    if not raw:
-        pytest.skip("set VIS_TEST_LOCAL_COMMAND to the actual engine argv")
-    home = tmp_path / "home"
-    config = home / ".vis"
-    config.mkdir(parents=True)
+    """Yield a client, a project and the model requests of one test.
+
+    With `engines`, the client is the shared engine of this transport and Council
+    toggle. Without it, the test starts and stops its own engine.
+    """
+    if engines is None:
+        home = tmp_path / "home"
+        command = engine_command(monkeypatch, home)
+        write_config(home, transport, council=council, subagents=subagents)
+    else:
+        assert not subagents and on_process is None, (
+            "a shared engine has no such option"
+        )
+        home, client = engines(transport, council)
+        engine_command(monkeypatch, home)
     work = tmp_path / "project"
     extensions = work / ".vis" / "extensions"
     extensions.mkdir(parents=True)
     (extensions / "fixture.py").write_text(EXTENSION)
     for name, source in (project_extensions or {}).items():
         (extensions / name).write_text(source)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("JAVA_TOOL_OPTIONS", f"-Duser.home={home}")
-    monkeypatch.delenv("VIS_GATEWAY_URL", raising=False)
     with model_endpoint(
         tool_code=tool_code, before_reply=before_reply, refuse=refuse, stall=stall
     ) as (
@@ -329,26 +419,16 @@ def sdk_fixture(
                 repr(None if managed else {"X-SDK-Credential": "kept"}),
             )
         )
-        (config / "config.yml").write_text(
-            json.dumps(
-                {
-                    "providers": [] if managed else [{"id": "sdk-fixture"}],
-                    "toggles": {"council": council, "subagents": subagents},
-                    "default_provider": "sdk-fixture",
-                    "default_model": "sdk-test",
-                }
-            )
-        )
-        command = shlex.split(raw)
-        if len(command) == 1:
-            command.append(f"-Duser.home={home}")
+        if engines is not None:
+            yield client, work, requests
+            return
         with real_client(transport, command, work, on_process=on_process) as client:
             yield client, work, requests
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
 def test_real_agent_tool_view_activity_and_cancellation(
-    tmp_path, monkeypatch, transport
+    tmp_path, monkeypatch, transport, engines
 ):
     # This fixture has no user data; diagnose unsolicited stdout without allowing it.
     decode = json.loads
@@ -370,7 +450,11 @@ def test_real_agent_tool_view_activity_and_cancellation(
 
     monkeypatch.setattr(Event, "from_wire", checked_event)
     managed = transport == "http"
-    with sdk_fixture(tmp_path, monkeypatch, transport) as (client, work, requests):
+    with sdk_fixture(tmp_path, monkeypatch, transport, engines=engines) as (
+        client,
+        work,
+        requests,
+    ):
         session = client.create_session(
             title="SDK fixture", root=str(work), channel="app"
         )
@@ -482,11 +566,13 @@ def test_real_agent_tool_view_activity_and_cancellation(
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
 def test_real_agent_cancellation_reclaims_native_extension_wait(
-    tmp_path, monkeypatch, transport
+    tmp_path, monkeypatch, transport, engines
 ):
     marker = tmp_path / "extension-worker.pid"
     code = f"print(await sdk_native_wait({str(marker)!r}))"
-    with sdk_fixture(tmp_path, monkeypatch, transport, tool_code=code) as (
+    with sdk_fixture(
+        tmp_path, monkeypatch, transport, tool_code=code, engines=engines
+    ) as (
         client,
         work,
         _,
@@ -587,7 +673,309 @@ def test_real_cancel_during_stream_keeps_extension_hooks(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
+def test_real_council_disabled(tmp_path, monkeypatch, transport, engines):
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        transport,
+        # Subagents are also off, so the sandbox binds no Council name at all.
+        tool_code=(
+            "assert 'council' not in session\n"
+            "try:\n"
+            "    council\n"
+            "except NameError:\n"
+            "    print('Council tools are unavailable')\n"
+        ),
+        engines=engines,
+    ) as (client, work, requests):
+        session = client.create_session(
+            title="Council disabled", root=str(work), channel="app"
+        )
+        assert (
+            session.send("Verify the default").wait(timeout=30)["status"] == "completed"
+        )
+        team = session.council()
+        assert team.wait(timeout_secs=1) == ()
+        with pytest.raises(GatewayError) as disabled:
+            team.members()
+        assert disabled.value.status == 409
+        assert len(requests) == 2
+        assert all(
+            "## Council: session conversation" not in str(message.get("content", ""))
+            for request in requests
+            for message in request["messages"]
+            if message["role"] == "system"
+        )
+        (turn,) = json.loads(session.transcript().content)["turns"]
+        forms = [form for row in turn["iterations"] for form in row.get("forms", ())]
+        assert [(form.get("error"), form.get("stdout")) for form in forms] == [
+            (None, "Council tools are unavailable\n")
+        ]
+        session.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+@pytest.mark.parametrize("respond", [True, False], ids=["handshake", "timeout"])
+def test_real_mcp_stdio_probe_reclaims_process(
+    tmp_path, monkeypatch, transport, respond, engines
+):
+    python = shutil.which("python3")
+    if not python:
+        pytest.skip("python3 is required for the stdio MCP fixture")
+    server = (
+        Path(__file__).resolve().parents[3] / "test/resources/mcp/fake_mcp_server.py"
+    )
+    with sdk_fixture(tmp_path, monkeypatch, transport, engines=engines) as (
+        client,
+        work,
+        requests,
+    ):
+        marker = work / "mcp.pid"
+        program = (
+            "import os, pathlib, runpy, sys, time; "
+            "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
+            + (
+                "runpy.run_path(sys.argv[2], run_name='__main__')"
+                if respond
+                else "time.sleep(60)"
+            )
+        )
+        try:
+            candidate = {
+                "name": "sdk-process-cleanup",
+                "server": {
+                    "transport": "stdio",
+                    "command": python,
+                    "args": ["-c", program, str(marker), str(server)],
+                    "timeout_ms": 1000,
+                },
+            }
+            # This isolated fixture has no user data. Keep response diagnostics
+            # here without weakening GatewayError's production redaction.
+            errors = []
+            gateway_error = _client._gateway_error
+
+            def capture_error(status, content, token=None):
+                detail = content.decode("utf-8", errors="replace")
+                errors.append(detail.replace(token, "[redacted]") if token else detail)
+                return gateway_error(status, content, token)
+
+            monkeypatch.setattr(_client, "_gateway_error", capture_error)
+            monkeypatch.setattr(_local, "_gateway_error", capture_error)
+            if respond:
+                try:
+                    result = client.post_mcp_servers_test(body=candidate)
+                except GatewayError:
+                    pytest.fail(f"MCP handshake failed: {errors}")
+                assert result["is_connected"] is True
+                assert [tool["name"] for tool in result["tools"]] == ["echo"]
+            else:
+                with pytest.raises(GatewayError) as failure:
+                    client.post_mcp_servers_test(body=candidate)
+                assert failure.value.code == "timeout", errors
+            assert marker.is_file(), "MCP fixture never started"
+            pid = int(marker.read_text())
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                assert time.monotonic() < deadline, "MCP probe left its child alive"
+                time.sleep(0.01)
+            assert not requests
+            assert not client.get_mcp_servers()["servers"], (
+                "Probe must not save a server"
+            )
+        finally:
+            # Also reap a child when transport setup fails before returning a connection.
+            deadline = time.monotonic() + 2
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if marker.exists():
+                try:
+                    os.kill(int(marker.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+
+def test_real_concurrent_sessions_keep_repeated_turns_isolated(
+    tmp_path, monkeypatch, engines
+):
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        "http",
+        tool_code="print(sum(range(1000)))",
+        engines=engines,
+    ) as (client, work, requests):
+        # SDK clients belong to one calling thread. Share only the fixture origin.
+        url = client._url
+        markers = [f"isolated-sdk-project-{index}" for index in range(4)]
+        ready = threading.Barrier(len(markers), timeout=30)
+
+        def exercise(index):
+            with GatewayClient(url, token="sdk-fixture-token", timeout=60) as peer:
+                session = peer.create_session(root=str(work), channel="app")
+                try:
+                    ready.wait()
+                    for turn_index in range(3):
+                        turn = session.send(
+                            f"{markers[index]} turn {turn_index}: compute sum"
+                        )
+                        if index % 2 == 0:
+                            with session.events(
+                                cursor=turn.cursor, reconnects=0
+                            ) as events:
+                                for event in events:
+                                    assert event.type != "iteration.error", event.data
+                                    if event.type in {
+                                        "turn.completed",
+                                        "turn.failed",
+                                        "turn.cancelled",
+                                    }:
+                                        assert event.type == "turn.completed", (
+                                            event.data
+                                        )
+                                        break
+                        assert turn.wait(timeout=60)["status"] == "completed"
+                    transcript = str(session.transcript().content)
+                    assert "499500" in transcript
+                    assert all(
+                        f"{markers[index]} turn {turn_index}" in transcript
+                        for turn_index in range(3)
+                    )
+                    assert all(
+                        marker not in transcript
+                        for other, marker in enumerate(markers)
+                        if other != index
+                    )
+                finally:
+                    session.delete()
+
+        with ThreadPoolExecutor(max_workers=len(markers)) as executor:
+            list(executor.map(exercise, range(len(markers))))
+        assert len(requests) == 24
+
+
+def _last_user(body):
+    """The text of the newest user message in a model request."""
+    users = [m for m in body["messages"] if m["role"] == "user"]
+    return json.dumps(users[-1]["content"]) if users else ""
+
+
+def _asked_with(requests, request, marker):
+    """True when the model request for `request` carried `marker` in its messages."""
+    return any(
+        request in _last_user(body) and marker in json.dumps(body["messages"])
+        for body in requests
+    )
+
+
+def _finish(session, request, *, cancel=False, during=None):
+    """Send `request` and return its status. Once a block runs, call `during`, then
+    cancel the turn when `cancel` is true."""
+    turn = session.send(request)
+    if cancel:
+        with session.events(cursor=turn.cursor, reconnects=0) as events:
+            for event in events:
+                if event.type.startswith("block."):
+                    if during is not None:
+                        during()
+                    turn.cancel()
+                    break
+    return turn.wait(timeout=60)["status"]
+
+
+def test_real_snapshot_continues_on_another_engine(tmp_path, monkeypatch, engines):
+    # Two engines with their own homes, databases and model endpoints stand for two
+    # computers (#405). A runs over HTTP, B over stdio.
+    seen = {}
+
+    def code(_position):
+        if "slow-turn" in _last_user(seen["now"][-1]):
+            return "import asyncio\nawait asyncio.sleep(120)"
+        return "print('noted')"
+
+    def refuse(body):
+        return "broken-turn" in _last_user(body)
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    with (
+        sdk_fixture(
+            tmp_path / "a",
+            monkeypatch,
+            "http",
+            tool_code=code,
+            refuse=refuse,
+            engines=engines,
+        ) as (a, a_work, a_requests),
+        sdk_fixture(
+            tmp_path / "b",
+            monkeypatch,
+            "stdio",
+            tool_code="print('noted')",
+            engines=engines,
+        ) as (b, b_work, b_requests),
+    ):
+        seen["now"] = a_requests
+        original = a.create_session(title="Durable talk", root=str(a_work))
+        assert _finish(original, "remember the word ORCA-4127") == "completed"
+        running = []
+        assert (
+            _finish(
+                original,
+                "slow-turn: wait",
+                cancel=True,
+                during=lambda: running.append(original.export()),
+            )
+            == "cancelled"
+        )
+        assert _finish(original, "broken-turn: fail") == "failed"
+        snapshot = tmp_path / "talk.vissnap"
+        snapshot.write_bytes(original.export())
+        data = snapshot.read_bytes()
+        assert GatewayClient.snapshot_info(data)["counts"]["turns"] == 3
+
+        restored = b.restore_session(data, root=str(b_work))
+        listed = [row["id"] for row in b.list_sessions(limit=20)["sessions"]]
+        assert restored.id in listed
+        assert restored.id != original.id
+        assert [t["status"] for t in restored.turns()] == [
+            "completed",
+            "cancelled",
+            "failed",
+        ]
+        assert restored.set_model("sdk-fixture", "sdk-test").model == "sdk-test"
+        assert _finish(restored, "follow-up-on-b: which word?") == "completed"
+        assert _asked_with(b_requests, "follow-up-on-b", "ORCA-4127")
+
+        # A snapshot taken while a turn ran restores that turn as stopped and continues.
+        paused = b.restore_session(running[0], root=str(b_work))
+        assert [t["status"] for t in paused.turns()] == ["completed", "cancelled"]
+        assert _finish(paused, "follow-up-on-paused: which word?") == "completed"
+        assert _asked_with(b_requests, "follow-up-on-paused", "ORCA-4127")
+
+        # The same file restores again as a second session; a key restores it once.
+        again = b.restore_session(data, root=str(b_work))
+        assert again.id != restored.id
+        keyed = b.restore_session(data, root=str(b_work), key="talk-1")
+        assert b.restore_session(data, root=str(b_work), key="talk-1").id == keyed.id
+
+        # Reimport: the session that B continued goes back to A and continues there.
+        back = a.restore_session(restored.export(), root=str(a_work))
+        seen["now"] = a_requests
+        assert len(back.turns()) == 4
+        assert _finish(back, "follow-up-on-a: which word?") == "completed"
+        assert _asked_with(a_requests, "follow-up-on-a", "ORCA-4127")
+        assert _asked_with(a_requests, "follow-up-on-a", "follow-up-on-b")
+        for session in (original, restored, paused, again, keyed, back):
+            session.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_council_roundtrip(tmp_path, monkeypatch, transport, engines):
     # Real engine, SQLite and transports; the model barrier is the only scheduling double.
     ready, release = threading.Event(), threading.Event()
 
@@ -607,6 +995,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
             "print(session['council'])"
         ),
         before_reply=before_reply,
+        engines=engines,
     ) as (client, work, requests):
         session = client.create_session(
             title="Council SDK", root=str(work), channel="app"
@@ -744,11 +1133,12 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
         )
         assert len(session.turns()) == 2
         session.delete()
+        client.delete_project(project["id"])
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
 def test_real_council_explicit_ping_wakes_an_idle_peer(
-    tmp_path, monkeypatch, transport
+    tmp_path, monkeypatch, transport, engines
 ):
     ready, release = threading.Event(), threading.Event()
 
@@ -775,6 +1165,7 @@ def test_real_council_explicit_ping_wakes_an_idle_peer(
         council=True,
         tool_code="print('Council fixture')",
         before_reply=before_reply,
+        engines=engines,
     ) as (client, work, requests):
         author = client.create_session(
             title="Council author", root=str(work), channel="app"
@@ -818,7 +1209,7 @@ def test_real_council_explicit_ping_wakes_an_idle_peer(
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
 def test_real_council_reply_after_author_finishes_wakes_it(
-    tmp_path, monkeypatch, transport
+    tmp_path, monkeypatch, transport, engines
 ):
     author_ready, peer_ready = threading.Event(), threading.Event()
     release_author, release_peer = threading.Event(), threading.Event()
@@ -849,6 +1240,7 @@ def test_real_council_reply_after_author_finishes_wakes_it(
         council=True,
         tool_code="print('Council fixture')",
         before_reply=before_reply,
+        engines=engines,
     ) as (client, work, requests):
         author = client.create_session(
             title="Council author", root=str(work), channel="app"
@@ -965,282 +1357,3 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
         assert active.wait(timeout=30)["status"] == "completed"
         child.delete()
         parent.delete()
-
-
-@pytest.mark.parametrize("transport", ["stdio", "http"])
-def test_real_council_disabled(tmp_path, monkeypatch, transport):
-    with sdk_fixture(
-        tmp_path,
-        monkeypatch,
-        transport,
-        # Subagents are also off, so the sandbox binds no Council name at all.
-        tool_code=(
-            "assert 'council' not in session\n"
-            "try:\n"
-            "    council\n"
-            "except NameError:\n"
-            "    print('Council tools are unavailable')\n"
-        ),
-    ) as (client, work, requests):
-        session = client.create_session(
-            title="Council disabled", root=str(work), channel="app"
-        )
-        assert (
-            session.send("Verify the default").wait(timeout=30)["status"] == "completed"
-        )
-        team = session.council()
-        assert team.wait(timeout_secs=1) == ()
-        with pytest.raises(GatewayError) as disabled:
-            team.members()
-        assert disabled.value.status == 409
-        assert len(requests) == 2
-        assert all(
-            "## Council: session conversation" not in str(message.get("content", ""))
-            for request in requests
-            for message in request["messages"]
-            if message["role"] == "system"
-        )
-        (turn,) = json.loads(session.transcript().content)["turns"]
-        forms = [form for row in turn["iterations"] for form in row.get("forms", ())]
-        assert [(form.get("error"), form.get("stdout")) for form in forms] == [
-            (None, "Council tools are unavailable\n")
-        ]
-        session.delete()
-
-
-@pytest.mark.parametrize("transport", ["stdio", "http"])
-@pytest.mark.parametrize("respond", [True, False], ids=["handshake", "timeout"])
-def test_real_mcp_stdio_probe_reclaims_process(
-    tmp_path, monkeypatch, transport, respond
-):
-    python = shutil.which("python3")
-    if not python:
-        pytest.skip("python3 is required for the stdio MCP fixture")
-    server = (
-        Path(__file__).resolve().parents[3] / "test/resources/mcp/fake_mcp_server.py"
-    )
-    with sdk_fixture(tmp_path, monkeypatch, transport) as (client, work, requests):
-        marker = work / "mcp.pid"
-        program = (
-            "import os, pathlib, runpy, sys, time; "
-            "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
-            + (
-                "runpy.run_path(sys.argv[2], run_name='__main__')"
-                if respond
-                else "time.sleep(60)"
-            )
-        )
-        try:
-            candidate = {
-                "name": "sdk-process-cleanup",
-                "server": {
-                    "transport": "stdio",
-                    "command": python,
-                    "args": ["-c", program, str(marker), str(server)],
-                    "timeout_ms": 1000,
-                },
-            }
-            # This isolated fixture has no user data. Keep response diagnostics
-            # here without weakening GatewayError's production redaction.
-            errors = []
-            gateway_error = _client._gateway_error
-
-            def capture_error(status, content, token=None):
-                detail = content.decode("utf-8", errors="replace")
-                errors.append(detail.replace(token, "[redacted]") if token else detail)
-                return gateway_error(status, content, token)
-
-            monkeypatch.setattr(_client, "_gateway_error", capture_error)
-            monkeypatch.setattr(_local, "_gateway_error", capture_error)
-            if respond:
-                try:
-                    result = client.post_mcp_servers_test(body=candidate)
-                except GatewayError:
-                    pytest.fail(f"MCP handshake failed: {errors}")
-                assert result["is_connected"] is True
-                assert [tool["name"] for tool in result["tools"]] == ["echo"]
-            else:
-                with pytest.raises(GatewayError) as failure:
-                    client.post_mcp_servers_test(body=candidate)
-                assert failure.value.code == "timeout", errors
-            assert marker.is_file(), "MCP fixture never started"
-            pid = int(marker.read_text())
-            deadline = time.monotonic() + 5
-            while True:
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
-                    break
-                assert time.monotonic() < deadline, "MCP probe left its child alive"
-                time.sleep(0.01)
-            assert not requests
-            assert not client.get_mcp_servers()["servers"], (
-                "Probe must not save a server"
-            )
-        finally:
-            # Also reap a child when transport setup fails before returning a connection.
-            deadline = time.monotonic() + 2
-            while not marker.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            if marker.exists():
-                try:
-                    os.kill(int(marker.read_text()), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-
-
-def test_real_concurrent_sessions_keep_repeated_turns_isolated(tmp_path, monkeypatch):
-    with sdk_fixture(
-        tmp_path, monkeypatch, "http", tool_code="print(sum(range(1000)))"
-    ) as (client, work, requests):
-        # SDK clients belong to one calling thread. Share only the fixture origin.
-        url = client._url
-        markers = [f"isolated-sdk-project-{index}" for index in range(4)]
-        ready = threading.Barrier(len(markers), timeout=30)
-
-        def exercise(index):
-            with GatewayClient(url, token="sdk-fixture-token", timeout=60) as peer:
-                session = peer.create_session(root=str(work), channel="app")
-                try:
-                    ready.wait()
-                    for turn_index in range(3):
-                        turn = session.send(
-                            f"{markers[index]} turn {turn_index}: compute sum"
-                        )
-                        if index % 2 == 0:
-                            with session.events(
-                                cursor=turn.cursor, reconnects=0
-                            ) as events:
-                                for event in events:
-                                    assert event.type != "iteration.error", event.data
-                                    if event.type in {
-                                        "turn.completed",
-                                        "turn.failed",
-                                        "turn.cancelled",
-                                    }:
-                                        assert event.type == "turn.completed", (
-                                            event.data
-                                        )
-                                        break
-                        assert turn.wait(timeout=60)["status"] == "completed"
-                    transcript = str(session.transcript().content)
-                    assert "499500" in transcript
-                    assert all(
-                        f"{markers[index]} turn {turn_index}" in transcript
-                        for turn_index in range(3)
-                    )
-                    assert all(
-                        marker not in transcript
-                        for other, marker in enumerate(markers)
-                        if other != index
-                    )
-                finally:
-                    session.delete()
-
-        with ThreadPoolExecutor(max_workers=len(markers)) as executor:
-            list(executor.map(exercise, range(len(markers))))
-        assert len(requests) == 24
-
-
-def _last_user(body):
-    """The text of the newest user message in a model request."""
-    users = [m for m in body["messages"] if m["role"] == "user"]
-    return json.dumps(users[-1]["content"]) if users else ""
-
-
-def _asked_with(requests, request, marker):
-    """True when the model request for `request` carried `marker` in its messages."""
-    return any(
-        request in _last_user(body) and marker in json.dumps(body["messages"])
-        for body in requests
-    )
-
-
-def _finish(session, request, *, cancel=False, during=None):
-    """Send `request` and return its status. Once a block runs, call `during`, then
-    cancel the turn when `cancel` is true."""
-    turn = session.send(request)
-    if cancel:
-        with session.events(cursor=turn.cursor, reconnects=0) as events:
-            for event in events:
-                if event.type.startswith("block."):
-                    if during is not None:
-                        during()
-                    turn.cancel()
-                    break
-    return turn.wait(timeout=60)["status"]
-
-
-def test_real_snapshot_continues_on_another_engine(tmp_path, monkeypatch):
-    # Two engines with their own homes, databases and model endpoints stand for two
-    # computers (#405). A runs over HTTP, B over stdio.
-    seen = {}
-
-    def code(_position):
-        if "slow-turn" in _last_user(seen["now"][-1]):
-            return "import asyncio\nawait asyncio.sleep(120)"
-        return "print('noted')"
-
-    def refuse(body):
-        return "broken-turn" in _last_user(body)
-
-    (tmp_path / "a").mkdir()
-    (tmp_path / "b").mkdir()
-    with (
-        sdk_fixture(
-            tmp_path / "a", monkeypatch, "http", tool_code=code, refuse=refuse
-        ) as (a, a_work, a_requests),
-        sdk_fixture(
-            tmp_path / "b", monkeypatch, "stdio", tool_code="print('noted')"
-        ) as (b, b_work, b_requests),
-    ):
-        seen["now"] = a_requests
-        original = a.create_session(title="Durable talk", root=str(a_work))
-        assert _finish(original, "remember the word ORCA-4127") == "completed"
-        running = []
-        assert (
-            _finish(
-                original,
-                "slow-turn: wait",
-                cancel=True,
-                during=lambda: running.append(original.export()),
-            )
-            == "cancelled"
-        )
-        assert _finish(original, "broken-turn: fail") == "failed"
-        snapshot = tmp_path / "talk.vissnap"
-        snapshot.write_bytes(original.export())
-        data = snapshot.read_bytes()
-        assert GatewayClient.snapshot_info(data)["counts"]["turns"] == 3
-
-        restored = b.restore_session(data, root=str(b_work))
-        listed = [row["id"] for row in b.list_sessions(limit=20)["sessions"]]
-        assert restored.id in listed
-        assert restored.id != original.id
-        assert [t["status"] for t in restored.turns()] == [
-            "completed",
-            "cancelled",
-            "failed",
-        ]
-        assert restored.set_model("sdk-fixture", "sdk-test").model == "sdk-test"
-        assert _finish(restored, "follow-up-on-b: which word?") == "completed"
-        assert _asked_with(b_requests, "follow-up-on-b", "ORCA-4127")
-
-        # A snapshot taken while a turn ran restores that turn as stopped and continues.
-        paused = b.restore_session(running[0], root=str(b_work))
-        assert [t["status"] for t in paused.turns()] == ["completed", "cancelled"]
-        assert _finish(paused, "follow-up-on-paused: which word?") == "completed"
-        assert _asked_with(b_requests, "follow-up-on-paused", "ORCA-4127")
-
-        # The same file restores again as a second session; a key restores it once.
-        assert b.restore_session(data, root=str(b_work)).id != restored.id
-        keyed = b.restore_session(data, root=str(b_work), key="talk-1")
-        assert b.restore_session(data, root=str(b_work), key="talk-1").id == keyed.id
-
-        # Reimport: the session that B continued goes back to A and continues there.
-        back = a.restore_session(restored.export(), root=str(a_work))
-        seen["now"] = a_requests
-        assert len(back.turns()) == 4
-        assert _finish(back, "follow-up-on-a: which word?") == "completed"
-        assert _asked_with(a_requests, "follow-up-on-a", "ORCA-4127")
-        assert _asked_with(a_requests, "follow-up-on-a", "follow-up-on-b")

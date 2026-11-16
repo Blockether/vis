@@ -10576,28 +10576,43 @@ vis.register_extension(vis.Extension(
                    (expect (not (:timeout? result)))
                    (expect (not (str/includes? (or (:stdout result) "") "must not resume"))))
                  (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil)))))))
-  (it "refuses the next turn while the extension worker holds its GIL (#472)"
-      (with-watchdog-extension
-        (fn [ctx _]
-          (let [extension-key
-                (worker/extension-worker-key ctx)
+  (it
+    "refuses the next turn while the extension worker holds its GIL (#472)"
+    (with-watchdog-extension
+      (fn [ctx _]
+        (let [extension-key
+              (worker/extension-worker-key ctx)
 
-                local-ctx
-                (some (fn [[[k _] row]]
-                        (when (= ctx k) (:context row)))
-                      @@#'pyx/session-contexts)]
+              local-ctx
+              (some (fn [[[k _] row]]
+                      (when (= ctx k) (:context row)))
+                    @@#'pyx/session-contexts)]
 
-            (expect (true? (ep/context-enterable? {:python-context ctx})))
-            ;; The thread waits until exec replies, then holds the GIL in one C call.
-            (worker/exec! extension-key
-                          local-ctx
-                          (str
-                            "import threading, time\n"
-                            "threading.Thread(target=lambda: (time.sleep(0.2), sum(range(10**12))),"
-                            " daemon=True).start()"))
-            (Thread/sleep 1000)
-            (expect (worker/worker-live? extension-key))
-            (expect (false? (ep/context-enterable? {:python-context ctx})))))))
+          (expect (true? (ep/context-enterable? {:python-context ctx})))
+          ;; The thread waits until exec replies, then holds the GIL in one C call.
+          (worker/exec! extension-key
+                        local-ctx
+                        (str
+                          "import threading, time\n"
+                          "threading.Thread(target=lambda: (time.sleep(0.2), sum(range(10**12))),"
+                          " daemon=True).start()"))
+          ;; The thread takes the GIL 0.2 s after the reply, so ask until the answer is no.
+          ;; The C call does not end during the test; a short reply limit makes the refusal fast.
+          (with-redefs-fn {#'worker/READY_REPLY_MS 1000}
+            (fn []
+              (let [deadline
+                    (+ (System/nanoTime) 10000000000)
+
+                    enterable?
+                    (loop []
+
+                      (let [answer (ep/context-enterable? {:python-context ctx})]
+                        (if (and answer (< (System/nanoTime) deadline))
+                          (do (Thread/sleep 50) (recur))
+                          answer)))]
+
+                (expect (worker/worker-live? extension-key))
+                (expect (false? enterable?)))))))))
   (it "surfaces a terminated extension worker instead of waiting forever"
       (with-watchdog-extension
         (fn [ctx env]
