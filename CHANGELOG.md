@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.19] - 2026-11-16
+
 ### Added
 - Gateway: a machine can have a name. Set the environment variable `VIS_MACHINE_NAME` or the key `machine_name` in the global configuration, or change **Machine name** in Settings → General. The variable wins over the saved name. The gateway reports the name as `machine_name` in `GET /healthz`, `GET /readyz`, the admin status and the web launch grant.
 - Companion: a machine shows the name that its gateway reports, not the host of its address. A name that you give the machine with **Rename** on your device wins.
