@@ -14,10 +14,21 @@ vi.mock('@capacitor/filesystem', () => ({
 vi.mock('@capacitor/share', () => ({ Share: { share } }));
 
 import { GatewayError, type GatewayClient } from './gateway';
-import { exportFailure, exportSession, sessionExportFilename } from './session-export';
+import {
+  exportFailure,
+  exportWays,
+  keepExport,
+  readExport,
+  sessionExportFilename,
+  type SessionExportFormat,
+} from './session-export';
 
 const session = { id: '123e4567-e89b-12d3-a456-426614174000', title: 'Fix the Stalled  Stream!' };
 const bytes = new Uint8Array([86, 73, 83, 0, 255]);
+
+/** Export `format` and keep the file in the usual way of the host. */
+const exportSession = async (client: GatewayClient, format: SessionExportFormat) =>
+  keepExport(await readExport(client, session, format), session, format, exportWays(session, format)[0]!);
 
 /** A gateway that answers each export route with its own body. */
 const gateway = () =>
@@ -53,7 +64,7 @@ describe('a session export on each host', () => {
     const path = '/home/ada/Downloads/Vis Artifacts/1/fix-the-stalled-stream-123e4567.vissnap';
     const invoke = vi.fn(async () => ({ revealed: true, path }));
     vi.stubGlobal('__TAURI__', { core: { invoke } });
-    expect(await exportSession(gateway(), session, 'vissnap')).toEqual({ text: `Snapshot saved to ${path}.`, path });
+    expect(await exportSession(gateway(), 'vissnap')).toEqual({ text: `Snapshot saved to ${path}.`, path });
     expect(invoke).toHaveBeenCalledExactlyOnceWith('reveal_artifact', {
       filename: 'fix-the-stalled-stream-123e4567.vissnap',
       data: Array.from(bytes),
@@ -62,7 +73,7 @@ describe('a session export on each host', () => {
 
   it.each(['iOS', 'Android'])('opens the %s share sheet with the Markdown file', async () => {
     native.value = true;
-    expect(await exportSession(gateway(), session, 'md')).toEqual({ text: 'Markdown file shared.' });
+    expect(await exportSession(gateway(), 'md')).toEqual({ text: 'Markdown file shared.' });
     expect(writeFile.mock.calls[0]).toEqual([
       expect.objectContaining({
         path: expect.stringMatching(/^shared\/\d+\/fix-the-stalled-stream-123e4567\.md$/),
@@ -77,16 +88,42 @@ describe('a session export on each host', () => {
   it('says nothing when the person closes the share sheet', async () => {
     native.value = true;
     share.mockRejectedValue(new Error('Share canceled'));
-    expect(await exportSession(gateway(), session, 'html')).toEqual({ text: '' });
+    expect(await exportSession(gateway(), 'html')).toEqual({ text: '' });
   });
 
   it('downloads the HTML page in a browser', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:export');
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    expect(await exportSession(gateway(), session, 'html')).toEqual({ text: 'HTML page downloaded.' });
+    expect(await exportSession(gateway(), 'html')).toEqual({ text: 'HTML page downloaded.' });
     expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe(
       'fix-the-stalled-stream-123e4567.html',
     );
+  });
+});
+
+describe('the ways to keep an export', () => {
+  const canShare = () => vi.stubGlobal('navigator', { ...navigator, share: vi.fn(async () => {}), canShare: () => true });
+
+  it('offers the share sheet next to the usual way where the host can share a file', () => {
+    expect(exportWays(session, 'md')).toEqual(['Download']);
+    canShare();
+    expect(exportWays(session, 'md')).toEqual(['Download', 'Share']);
+    vi.stubGlobal('__TAURI__', { core: { invoke: vi.fn() } });
+    expect(exportWays(session, 'md')).toEqual(['Save', 'Share']);
+  });
+
+  it('gives a phone only its share sheet', () => {
+    native.value = true;
+    expect(exportWays(session, 'vissnap')).toEqual(['Share']);
+  });
+
+  it('shares the snapshot file from a browser', async () => {
+    canShare();
+    const blob = await readExport(gateway(), session, 'vissnap');
+    expect(await keepExport(blob, session, 'vissnap', 'Share')).toEqual({ text: 'Snapshot shared.' });
+    const [{ files }] = vi.mocked(navigator.share).mock.calls[0] as [{ files: File[] }];
+    expect(files[0]!.name).toBe('fix-the-stalled-stream-123e4567.vissnap');
+    expect(files[0]!.size).toBe(bytes.length);
   });
 });
 

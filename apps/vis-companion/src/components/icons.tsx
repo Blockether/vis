@@ -66,6 +66,7 @@ import {
   Copy,
   Crop,
   Download,
+  Upload,
   Ellipsis,
   EllipsisVertical,
   Eraser,
@@ -273,6 +274,10 @@ export function KeyArrowIcon({
 /** Bring one not-yet-local thing down onto this machine. */
 export function DownloadIcon({ className }: { className?: string }) {
   return <Mark icon={Download} className={className} />;
+}
+
+export function UploadIcon({ className }: { className?: string }) {
+  return <Mark icon={Upload} className={className} />;
 }
 
 /** Out of here — a citation, a link, a thing that opens elsewhere. */

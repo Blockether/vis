@@ -134,7 +134,7 @@ function mount(
   rows: Session[] = ROWS,
   actions?: ProjectActions,
 ) {
-  const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}) };
+  const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}), importSnapshot: vi.fn() };
   const open = vi.fn();
   // The rows this MACHINE is holding — its own window of the fleet. A poll that lands
   // hands the project a new one (`hold`), which is how a row arrives carrying an answer
@@ -446,12 +446,24 @@ describe('ProjectGroup groups', () => {
     const { user } = mount(machine(), {
       state: { at: `https://story.example.com\u0000${ROOT}\u0000${WALLET}`, label: 'Creating...' },
       start: vi.fn(async () => {}),
+      importSnapshot: vi.fn(),
     });
     await user.click(await screen.findByRole('button', { name: 'Actions for Wallet work' }));
     expect(within(sheet(`Groups in ${ROOT}`)).getByText('New session').closest('button')).toBeDisabled();
     await user.click(document.body);
     await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
     expect(within(sheet(`Sessions in ${ROOT}`)).getByText('New session').closest('button')).toBeEnabled();
+  });
+
+  it('imports a snapshot into the group of its menu, and into the project from the sessions menu', async () => {
+    const importSnapshot = vi.fn();
+    const { user } = mount(machine(), { state: null, start: vi.fn(async () => {}), importSnapshot });
+    await user.click(await screen.findByRole('button', { name: 'Actions for Wallet work' }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Import snapshot…' }));
+    expect(importSnapshot).toHaveBeenLastCalledWith(conn, ROOT, WALLET);
+    await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
+    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByRole('button', { name: 'Import snapshot…' }));
+    expect(importSnapshot).toHaveBeenLastCalledWith(conn, ROOT);
   });
 
   it('opens project and group settings from cog-marked actions near the menu bottom', async () => {

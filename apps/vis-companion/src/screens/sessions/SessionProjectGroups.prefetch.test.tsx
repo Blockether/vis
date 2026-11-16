@@ -86,7 +86,7 @@ async function project(name: string) {
           deletion: { target: null, isBusy: false, error: null, confirm: vi.fn(), cancel: vi.fn() },
         } }}
       reading={{ pageSize: 10, isVisible: true }}
-      creation={{ state: null, start: vi.fn(async () => {}) }}
+      creation={{ state: null, start: vi.fn(async () => {}), importSnapshot: vi.fn() }}
       initiallyOpen
     />,
   );

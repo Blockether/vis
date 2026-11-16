@@ -5122,22 +5122,27 @@ export class GatewayClient {
   }
 
   /**
-   * One whole export file as a Blob. An export has no deadline: a long session takes the time
-   * that it needs. A refusal carries the words of the gateway.
+   * One request that carries a whole session file. It has no deadline: a long session takes
+   * the time that it needs. A refusal carries the words of the gateway.
    */
-  private async exportBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  private async sessionFile(path: string, init: RequestInit = {}): Promise<Response> {
     let response: Response;
     try {
-      response = await fetch(`${this.base}${path}`, { headers: this.headers(), signal });
+      response = await fetch(`${this.base}${path}`, { ...init, headers: this.headers(init.headers) });
     } catch (cause) {
-      if (signal?.aborted) throw cause;
+      if (init.signal?.aborted) throw cause;
       throw new GatewayError(0, `network error: ${errorOfDiagnostic(cause)}`);
     }
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => undefined);
       throw new GatewayError(response.status, errorText(body, response.status), body);
     }
-    return response.blob();
+    return response;
+  }
+
+  /** One whole export file as a Blob. */
+  private async exportBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+    return (await this.sessionFile(path, { signal })).blob();
   }
 
   /** The session as one HTML page that opens in a browser without a gateway. */
@@ -5153,6 +5158,22 @@ export class GatewayClient {
   /** The `.vissnap` bytes of the session, which Vis imports as a new session. */
   sessionSnapshot(sid: string, signal?: AbortSignal): Promise<Blob> {
     return this.exportBlob(`/v1/sessions/${encodeURIComponent(sid)}/snapshot`, signal);
+  }
+
+  /**
+   * Import the `.vissnap` bytes as a new session and answer its row. `root` is the project
+   * folder of the new session, and `groupId` puts it in that session group.
+   */
+  async importSession(snapshot: Blob, to: { root?: string; groupId?: string } = {}): Promise<Session> {
+    const query = new URLSearchParams();
+    if (to.root) query.set('root', to.root);
+    if (to.groupId) query.set('group_id', to.groupId);
+    const response = await this.sessionFile(`/v1/sessions/actions/import?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: snapshot,
+    });
+    return (await response.json()) as Session;
   }
 
   /** How much of `sid`'s transcript we hold, and how much older history exists. */

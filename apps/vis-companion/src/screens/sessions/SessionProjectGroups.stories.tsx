@@ -52,7 +52,7 @@ const meta = {
       pageSize: 10,
       isVisible: true,
     },
-    creation: { state: null, start: fn(async () => {}) },
+    creation: { state: null, start: fn(async () => {}), importSnapshot: fn() },
     initiallyOpen: true,
   },
   render: function Render(args) {

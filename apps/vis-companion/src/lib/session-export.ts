@@ -1,12 +1,15 @@
 import { keepFile, type KeptFile } from './artifact-open';
+import { fileHost } from './artifact-save';
+import { canShareArtifactFiles, shareArtifact } from './artifact-share';
 import { GatewayError, type GatewayClient } from './gateway';
 
 /**
  * EXPORT ONE SESSION AS A FILE.
  *
  * The gateway makes the file. This host keeps it: the desktop app saves it and shows it in the
- * file manager, a phone opens the share sheet, a browser downloads it. The TUI offers the same
- * three formats and gives the file the same name.
+ * file manager, a phone opens the share sheet, a browser downloads it. A desktop app or a
+ * browser that can share a file lets the person choose between that and the share sheet. The
+ * TUI offers the same three formats and gives the file the same name.
  */
 export type SessionExportFormat = 'html' | 'md' | 'vissnap';
 
@@ -44,27 +47,43 @@ export function sessionExportFilename(session: ExportedSession, format: SessionE
   return `${slug || 'vis-session'}-${session.id.slice(0, 8)}.${format}`;
 }
 
-async function exportBytes(client: GatewayClient, sid: string, format: SessionExportFormat): Promise<Blob> {
-  if (format === 'html') return client.transcriptHtml(sid);
-  if (format === 'vissnap') return client.sessionSnapshot(sid);
-  return client.transcriptMarkdown(sid);
+/** The bytes of `session` in `format`, from the gateway. */
+export function readExport(client: GatewayClient, session: ExportedSession, format: SessionExportFormat): Promise<Blob> {
+  if (format === 'html') return client.transcriptHtml(session.id);
+  if (format === 'vissnap') return client.sessionSnapshot(session.id);
+  return client.transcriptMarkdown(session.id);
+}
+
+/** One way to keep an export on this host. */
+export type ExportWay = 'Save' | 'Download' | 'Share';
+
+/**
+ * The ways this host can keep an export; the first one is the usual way. A phone has only
+ * its share sheet, which holds Save to Files.
+ */
+export function exportWays(session: ExportedSession, format: SessionExportFormat): ExportWay[] {
+  const host = fileHost();
+  if (host === 'phone') return ['Share'];
+  const keep: ExportWay = host === 'desktop' ? 'Save' : 'Download';
+  const { mediaType } = SESSION_EXPORT_FORMATS.find((row) => row.id === format)!;
+  return canShareArtifactFiles(sessionExportFilename(session, format), mediaType) ? [keep, 'Share'] : [keep];
 }
 
 /**
- * Export `session` and keep the file on this host. The answer says what happened, and its
- * text is '' when the person closed the share sheet.
+ * Keep the exported bytes of `session` in the chosen way. The answer says what happened, and
+ * its text is '' when the person closed the share sheet.
  */
-export async function exportSession(
-  client: GatewayClient,
+export async function keepExport(
+  blob: Blob,
   session: ExportedSession,
   format: SessionExportFormat,
+  way: ExportWay,
 ): Promise<KeptFile> {
   const { mediaType, noun, title } = SESSION_EXPORT_FORMATS.find((row) => row.id === format)!;
-  const blob = await exportBytes(client, session.id, format);
-  return keepFile(blob, sessionExportFilename(session, format), mediaType, {
-    noun,
-    dialogTitle: `Save the ${title} export`,
-  });
+  const name = sessionExportFilename(session, format);
+  if (way === 'Share' && fileHost() !== 'phone')
+    return { text: await shareArtifact(blob, name, mediaType, { dialogTitle: `Share the ${title} export`, noun }) };
+  return keepFile(blob, name, mediaType, { noun, dialogTitle: `Save the ${title} export` });
 }
 
 /** The words of a failed export, for a toast. */

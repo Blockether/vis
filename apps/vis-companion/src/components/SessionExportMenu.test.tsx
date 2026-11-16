@@ -107,6 +107,27 @@ describe('the export choice of a session', () => {
     expect(within(screen.getByRole('status')).queryByRole('button', { name: /Markdown/ })).toBeNull();
   });
 
+  it('asks how to keep the file where the host can also share it, and shares it on that pick', async () => {
+    const share = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { ...navigator, share, canShare: () => true });
+    const client = { transcriptMarkdown: vi.fn(async () => new Blob(['# Turn 1'])) } as unknown as GatewayClient;
+    render(<Screen client={client} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    fireEvent.click(formats().getByRole('button', { name: /^Markdown/ }));
+
+    const ways = within(await screen.findByRole('dialog', { name: 'Keep the export' }));
+    expect(ways.getAllByRole('button').map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Download'),
+      expect.stringContaining('Share'),
+    ]);
+    expect(share).not.toHaveBeenCalled();
+    fireEvent.click(ways.getByRole('button', { name: /^Share/ }));
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Markdown file shared.'));
+    expect((share.mock.calls[0] as unknown as [{ files: File[] }])[0].files[0]!.name).toBe('stalled-stream-123e4567.md');
+    expect(screen.queryByRole('dialog', { name: 'Keep the export' })).toBeNull();
+  });
+
   it('shows why an export failed', async () => {
     const client = {
       sessionSnapshot: vi.fn(async () => {

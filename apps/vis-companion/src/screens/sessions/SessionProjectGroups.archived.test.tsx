@@ -180,7 +180,7 @@ function mount(
   archive?: SessionRowCommands['archive'],
   needle = '',
 ) {
-  const creation: ProjectCreation = { state: null, start: vi.fn(async () => {}) };
+  const creation: ProjectCreation = { state: null, start: vi.fn(async () => {}), importSnapshot: vi.fn() };
   const view = render(
     <ProjectGroup
       group={{

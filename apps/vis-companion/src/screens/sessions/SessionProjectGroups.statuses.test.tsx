@@ -82,7 +82,7 @@ function mount(initialRows = statusRows()) {
       machine={{ conn, sessions: [] }}
       context={context}
       reading={{ pageSize: 10, isVisible: true, revision }}
-      creation={{ state: null, start: vi.fn(async () => {}) }}
+      creation={{ state: null, start: vi.fn(async () => {}), importSnapshot: vi.fn() }}
       initiallyOpen
     />
   );

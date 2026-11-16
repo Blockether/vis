@@ -48,6 +48,7 @@ import {
   ProjectsIcon,
   SettingsIcon,
   TrashIcon,
+  UploadIcon,
 } from '../../components/icons';
 import { Button, IconButton, Input, LoadMore, TextButton } from '../../components/ui';
 import { menuPosition, pointerAnchor, type AnchorBox, type MenuPosition } from '../../lib/anchored-menu';
@@ -651,6 +652,8 @@ export type ProjectCreation = {
   state: { at: string | null; label: string } | null;
   /** `groupId` starts the session inside that group, not loose in the project. */
   start: (conn: GatewayConn, root: string, groupId?: string) => Promise<void>;
+  /** Ask for a `.vissnap` file and import it as a new session of `root`, in `groupId` if given. */
+  importSnapshot: (conn: GatewayConn, root: string, groupId?: string) => void;
 };
 
 /**
@@ -724,7 +727,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const nudge = nudges?.get(root) ?? 0;
   const revision = (reading.revision ?? 0) + nudge;
   const reads = (reading.reads ?? 0) + nudge;
-  const { state: creating, start: onNewSession } = creation;
+  const { state: creating, start: onNewSession, importSnapshot } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
     rowActions.deletion.target && machineKey(rowActions.deletion.target.conn) === machineKey(conn)
@@ -2380,6 +2383,14 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }}
                   />
                   <MenuItem
+                    title="Import snapshot…"
+                    icon={<UploadIcon className="size-3.5" />}
+                    onSelect={() => {
+                      setMenu(null);
+                      importSnapshot(conn, root);
+                    }}
+                  />
+                  <MenuItem
                     title={isSessionRevealed ? 'Hide archived sessions' : 'Show archived sessions'}
                     icon={<ArchiveIcon className="size-3.5" />}
                     onSelect={() => {
@@ -2603,6 +2614,16 @@ export const ProjectGroup = memo(function ProjectGroup({
                     onSelect={() => {
                       setMenu(null);
                       void onNewSession(conn, root, band.id);
+                    }}
+                  />
+                )}
+                {!bandArchived && (
+                  <MenuItem
+                    title="Import snapshot…"
+                    icon={<UploadIcon className="size-3.5" />}
+                    onSelect={() => {
+                      setMenu(null);
+                      importSnapshot(conn, root, band.id);
                     }}
                   />
                 )}

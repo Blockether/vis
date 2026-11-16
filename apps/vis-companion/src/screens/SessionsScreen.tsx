@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Banner, LoadMore, overlayLayer } from '../components/ui';
 import { NoticeToast } from '../components/NoticeToast';
 import { useSessionExport } from '../components/SessionExportMenu';
+import { useSessionImport } from '../components/SessionImport';
 import { useNotices } from '../lib/use-notices';
 import {
   MachineGap,
@@ -1855,9 +1856,20 @@ export function SessionsScreen({
     }),
     [rowCommands, deleting, actionBusy, actionError, confirmDelete, cancelDelete],
   );
+  // The import of a snapshot: the file picker, then the new session opens as a created one does.
+  const sessionImport = useSessionImport(notices);
+  const openImport = sessionImport.open;
+  const importSnapshot = useCallback(
+    (conn: GatewayConn, root: string, groupId?: string) =>
+      openImport(clientFor(conn), { root, groupId }, (session) => {
+        if (session.id) void onOpen(conn, session.id, true);
+        void load();
+      }),
+    [openImport, onOpen, load],
+  );
   const projectCreation = useMemo<ProjectCreation>(
-    () => ({ state: creating, start: createSession }),
-    [creating, createSession],
+    () => ({ state: creating, start: createSession, importSnapshot }),
+    [creating, createSession, importSnapshot],
   );
 
   const pageSize = useSessionsPerPage();
@@ -2311,6 +2323,7 @@ export function SessionsScreen({
             for the length of every stroke. */}
         {createPortal(<PullToSearchHint phase={pullPhase} ref={hintRef} />, overlayLayer().host)}
         {sessionExport.menu}
+      {sessionImport.input}
         {/* The export toast hangs in the overlay layer too, so it shows above the session
             search, whose rows have the same export action. */}
         {notices.page &&
