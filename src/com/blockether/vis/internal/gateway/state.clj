@@ -1188,7 +1188,8 @@
   (when (claim-hydrate! sid)
     (try (when-not (some #(= (str sid) (str (:session-id %)))
                          (remove bus/stamp-alive? (resumable-parked-rows (lp/db-info))))
-           (bus/hydrate! sid))
+           ;; The tailer can mirror the turn after the claim: `bus/hydrate!` asks again under its lock.
+           (bus/hydrate! sid #(some? (:current-turn (session-entry sid)))))
          (finally (update-existing-session! sid
                                             (fn [entry]
                                               (dissoc entry :is-hydrating)))))))

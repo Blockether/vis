@@ -1334,75 +1334,81 @@
 
    Runs under the sid's [[tail-lock]] and moves this process's tail cursor past
    the COMPLETE lines it read, so neither the background tailer nor a concurrent
-   hydrate re-delivers what we hand over here. Never throws."
-  [sid]
-  (try
-    (when-let [f (session-file sid)]
-      ;; A finished turn is the common case and its answer sits in the last few
-      ;; lines: settle it from the tail before reading megabytes under the lock.
-      (when (and (.exists f) (not (terminal-tail? f)))
-        #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-        (locking (tail-lock sid)
-          (let [raw (Files/readAllBytes (.toPath f))
-                ;; ONE read serves parsing, the cursor claim AND the generation
-                ;; head: re-opening the file for the head would fingerprint a
-                ;; LATER generation than the bytes we actually handed over.
-                whole (whole-bytes raw)
-                text (String. ^bytes raw 0 (int whole) StandardCharsets/UTF_8)
-                ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
-                ;; THIS process) means the turn is done — don't re-stream it. Asked
-                ;; first, so a finished turn never parses the whole journal.
-                terminal? (terminal-line? text)
-                foreign (when-not terminal?
-                          (->> (str/split-lines text)
-                               (remove str/blank?)
-                               (keep wire/parse-json)
-                               (remove #(= (gateway-contract/journal-producer %) (producer-id)))))]
+   hydrate re-delivers what we hand over here. Never throws.
 
-            (when (and (not terminal?) (seq foreign))
-              ;; Claim the COMPLETE lines we just read, pinned to their
-              ;; generation, so neither the tailer nor a later hydrate
-              ;; re-delivers them.
-              (set-tail! sid whole (head-of raw))
-              ;; The turn this journal is about. `turn.started` is its first line,
-              ;; but read the LAST foreign event when it isn't there, so ONE anchor
-              ;; answers both "whose pid?" and "which turn_id?".
-              (let [anchor (or (some #(when (= "turn.started" (get % "type")) %) foreign)
-                               (last foreign))]
-                (if (producer-alive? (gateway-contract/journal-pid anchor))
-                  ;; Live sibling: mirror its in-flight turn into the registry.
-                  (when-let [f' @deliver-fn]
-                    (doseq [ev foreign]
-                      (try (f' sid
-                               (gateway-contract/journal-stored? ev)
-                               (gateway-contract/strip-journal-metadata ev))
-                           (catch Throwable t
-                             (tel/log! :debug
-                                       ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
-                  ;; Orphan: producer process is gone. Reap it terminally.
-                  (when-let [tid (get anchor "turn_id")]
-                    ;; CAS-claim the reap BEFORE publishing: `publish!` lands the
-                    ;; terminal ASYNCHRONOUSLY, so two hydrates inside that write
-                    ;; window would each read `terminal? = false` and each emit
-                    ;; its own `turn.failed` for the same turn.
-                    (when (claim-reap! sid tid)
-                      (let [term {"schema" 1
-                                  "type" "turn.failed"
-                                  "session_id" (str sid)
-                                  "turn_id" tid
-                                  "status" "interrupted"
-                                  "error" "gateway producer exited before the turn finished"}]
-                        ;; Durable + cross-process: appended (no truncate), so any
-                        ;; process hydrating later sees `terminal?` and skips.
-                        (publish! sid term {:store? true})
-                        (when-let [f' @deliver-fn]
-                          (try (f' sid true term)
-                               (catch Throwable t
-                                 (tel/log! :debug
-                                           ["gateway-bus: orphan-reap deliver failed"
-                                            (ex-message t)]))))))))))))))
-    (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
-  nil)
+   `mirrored?` is a no-argument fn that tells if this process already tracks the
+   turn. The tailer can deliver the head of the journal after the caller decided
+   to hydrate and before this fn has the lock. Then `mirrored?` is true under the
+   lock, and this fn delivers nothing and leaves the cursor to the tailer."
+  ([sid] (hydrate! sid (constantly false)))
+  ([sid mirrored?]
+   (try
+     (when-let [f (session-file sid)]
+       ;; A finished turn is the common case and its answer sits in the last few
+       ;; lines: settle it from the tail before reading megabytes under the lock.
+       (when (and (.exists f) (not (terminal-tail? f)))
+         #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+         (locking (tail-lock sid)
+           (let [raw (Files/readAllBytes (.toPath f))
+                 ;; ONE read serves parsing, the cursor claim AND the generation
+                 ;; head: re-opening the file for the head would fingerprint a
+                 ;; LATER generation than the bytes we actually handed over.
+                 whole (whole-bytes raw)
+                 text (String. ^bytes raw 0 (int whole) StandardCharsets/UTF_8)
+                 ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
+                 ;; THIS process) means the turn is done — don't re-stream it. Asked
+                 ;; first, so a finished turn never parses the whole journal.
+                 terminal? (terminal-line? text)
+                 foreign (when-not terminal?
+                           (->> (str/split-lines text)
+                                (remove str/blank?)
+                                (keep wire/parse-json)
+                                (remove #(= (gateway-contract/journal-producer %) (producer-id)))))]
+
+             (when (and (not terminal?) (seq foreign) (not (mirrored?)))
+               ;; Claim the COMPLETE lines we just read, pinned to their
+               ;; generation, so neither the tailer nor a later hydrate
+               ;; re-delivers them.
+               (set-tail! sid whole (head-of raw))
+               ;; The turn this journal is about. `turn.started` is its first line,
+               ;; but read the LAST foreign event when it isn't there, so ONE anchor
+               ;; answers both "whose pid?" and "which turn_id?".
+               (let [anchor (or (some #(when (= "turn.started" (get % "type")) %) foreign)
+                                (last foreign))]
+                 (if (producer-alive? (gateway-contract/journal-pid anchor))
+                   ;; Live sibling: mirror its in-flight turn into the registry.
+                   (when-let [f' @deliver-fn]
+                     (doseq [ev foreign]
+                       (try (f' sid
+                                (gateway-contract/journal-stored? ev)
+                                (gateway-contract/strip-journal-metadata ev))
+                            (catch Throwable t
+                              (tel/log! :debug
+                                        ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
+                   ;; Orphan: producer process is gone. Reap it terminally.
+                   (when-let [tid (get anchor "turn_id")]
+                     ;; CAS-claim the reap BEFORE publishing: `publish!` lands the
+                     ;; terminal ASYNCHRONOUSLY, so two hydrates inside that write
+                     ;; window would each read `terminal? = false` and each emit
+                     ;; its own `turn.failed` for the same turn.
+                     (when (claim-reap! sid tid)
+                       (let [term {"schema" 1
+                                   "type" "turn.failed"
+                                   "session_id" (str sid)
+                                   "turn_id" tid
+                                   "status" "interrupted"
+                                   "error" "gateway producer exited before the turn finished"}]
+                         ;; Durable + cross-process: appended (no truncate), so any
+                         ;; process hydrating later sees `terminal?` and skips.
+                         (publish! sid term {:store? true})
+                         (when-let [f' @deliver-fn]
+                           (try (f' sid true term)
+                                (catch Throwable t
+                                  (tel/log! :debug
+                                            ["gateway-bus: orphan-reap deliver failed"
+                                             (ex-message t)]))))))))))))))
+     (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
+   nil))
 
 (defn- sweep!
   "Delete journals untouched for `RETAIN_MS` — the crashed / kill-9'd / restarted

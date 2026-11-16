@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Gateway: a cached list is fetched one time when two readers find it old at the same moment. Before, the later reader could start a second fetch.
+- Gateway: a client that connects while another Vis process runs a turn gets each event of that turn one time. Before, the start of the turn could arrive two times.
 
 ## [v0.5.19] - 2026-11-16
 

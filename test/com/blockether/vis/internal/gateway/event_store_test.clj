@@ -172,7 +172,7 @@
                        ;; Forget can win between hydration and the locked replay/live handoff.
                        ;; Recreating the entry must preserve the durable journal's cursor floor.
                        (with-redefs [bus/journal-high-water-seq (constantly 40)
-                                     bus/hydrate! (fn [_]
+                                     bus/hydrate! (fn [_ _]
                                                     (#'state/drop-session! sid))]
 
                          (expect (empty? (state/subscribe! sid "sink" #(swap! observed conj %) 40)))

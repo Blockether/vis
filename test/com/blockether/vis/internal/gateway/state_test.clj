@@ -6089,6 +6089,48 @@
              (expect
                (= 1 (count (filter #(= "turn.started" (get % "type")) (:events (get @reg sid))))))
              (expect (= "T-race" (:current-turn (get @reg sid))))
+             (finally (swap! reg dissoc sid) (.delete (#'bus/session-file sid)))))))
+  (it
+    "does not mirror again a turn that the tailer delivered after the claim"
+    (let [tmp
+          (java.nio.file.Files/createTempDirectory "hydrate-tailer"
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+
+          sid
+          (str "hydrate-tailer-" (java.util.UUID/randomUUID))
+
+          reg
+          @#'state/registry]
+
+      (with-redefs [bus/events-dir
+                    (fn []
+                      tmp)
+
+                    ;; The step between the claim and `bus/hydrate!`: one tailer tick runs here.
+                    state/resumable-parked-rows
+                    (fn [_]
+                      (#'bus/drain-file! sid (#'bus/session-file sid))
+                      [])]
+
+        (try (spit (#'bus/session-file sid)
+                   (str (wire/json-str {:_producer (str (java.util.UUID/randomUUID))
+                                        :_pid (bus/producer-pid)
+                                        :_store true
+                                        :schema 1
+                                        :seq 5
+                                        :type "turn.started"
+                                        :turn_id "T-tailer"
+                                        :session_id sid
+                                        :request "hi"})
+                        "\n"))
+             (state/subscribe! sid
+                               "sub"
+                               (fn [_])
+                               0)
+             (expect
+               (= 1 (count (filter #(= "turn.started" (get % "type")) (:events (get @reg sid))))))
+             (expect (= "T-tailer" (:current-turn (get @reg sid))))
              (finally (swap! reg dissoc sid) (.delete (#'bus/session-file sid))))))))
 
 (defdescribe transcript-byte-budget-test
