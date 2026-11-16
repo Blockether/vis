@@ -226,7 +226,8 @@
                       {:status 401
                        :headers {"www-authenticate"
                                  "Bearer resource_metadata=\"https://gateway.example.com/oauth\""}
-                       :body "Unauthorized"})]
+                       ;; The transport reads the body as a stream.
+                       :body (java.io.ByteArrayInputStream. (.getBytes "Unauthorized" "UTF-8"))})]
 
         (expect (= {"name" "remote" "is_connected" false "tools" []}
                    (mcp/test-gateway-server! "remote"
@@ -1128,6 +1129,16 @@
                                    "not authorized"))
             (expect (str/includes? (msg (call-failed-err env "down" "x" (ex-info "boom" {})))
                                    "boom"))
+            ;; The server asked for more scope: only a new sign-in grants it.
+            (reset! (:www-auth-atom (get (configured-servers) "signed-out"))
+              "Bearer error=\"insufficient_scope\", scope=\"files:write\"")
+            (let [refusal (call-failed-err env
+                                           "signed-out"
+                                           "x"
+                                           (ex-info "MCP signed-out HTTP 403 on tools/call"
+                                                    {:type :mcp/http-error :status 403}))]
+              (expect (str/includes? (msg refusal) "files:write"))
+              (expect (str/includes? (hint refusal) "/auth/start")))
             (finally (reset! conns {}) (reset! killed #{}))))))))
 
 (defdescribe

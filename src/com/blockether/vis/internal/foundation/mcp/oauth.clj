@@ -124,21 +124,61 @@
 
 ;; Discovery (RFC 9728 + RFC 8414 fallbacks)
 
-(defn- parse-www-authenticate
-  "Extract `resource_metadata` URL from a `WWW-Authenticate: Bearer …` header."
-  [h]
+(defn challenge-param
+  "The value of parameter `k` in a `WWW-Authenticate: Bearer …` header, quoted or
+   not (RFC 6750 section 3)."
+  [h k]
   (when (seq h)
-    (some->> (re-find #"(?i)resource_metadata\s*=\s*\"([^\"]+)\"" h)
-             second)))
+    (some->> (re-find (re-pattern (str "(?i)(?:^|[\\s,])" k "\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))"))
+                      h)
+             rest
+             (some not-empty))))
 
 (defn- origin-of
   [^String url]
   (let [u (URI/create url)]
     (str (.getScheme u) "://" (.getAuthority u))))
 
+(defn- path-of
+  "The path of `url` without a trailing slash; empty for a bare origin."
+  [^String url]
+  (str/replace (or (.getRawPath (URI/create url)) "") #"/+$" ""))
+
+(defn- well-known
+  "The well-known URL of `suffix` for `url`. The suffix goes between the origin and
+   the path (RFC 8414 section 3.1, RFC 9728 section 3.1)."
+  [url suffix]
+  (str (origin-of url) "/.well-known/" suffix (path-of url)))
+
+(defn- same-resource?
+  "True when `resource`, from the protected-resource metadata, is `server-url` or a
+   parent path of it on the same origin (RFC 9728 section 3.3). A token for another
+   resource can go to another party."
+  [server-url resource]
+  (try (let [server-path
+             (path-of server-url)
+
+             path
+             (path-of resource)]
+
+         (and (= (str/lower-case (origin-of server-url)) (str/lower-case (origin-of resource)))
+              (or (= path server-path) (str/starts-with? server-path (str path "/")))))
+       (catch Exception _ false)))
+
+(defn- same-issuer?
+  "True when the metadata `issuer` is the issuer `as-url` that gave its URL (RFC 8414
+   section 3.3). Only a trailing slash can differ: some servers publish one in the
+   resource metadata and not in the issuer."
+  [as-url issuer]
+  (= (str/replace (str as-url) #"/+$" "") (str/replace (str issuer) #"/+$" "")))
+
 (defn- discover-protected-resource
+  "The protected-resource metadata of `server-url` (RFC 9728). The URL that the
+   server names in its challenge comes first, then the URL for the path of the
+   server, then the URL for its host."
   [server-url www-auth]
-  (let [candidates (->> [(parse-www-authenticate www-auth)
+  (let [candidates (->> [(challenge-param www-auth "resource_metadata")
+                         (well-known server-url "oauth-protected-resource")
                          (str (origin-of server-url) "/.well-known/oauth-protected-resource")]
                         (remove str/blank?)
                         distinct)]
@@ -148,29 +188,49 @@
           candidates)))
 
 (defn- discover-authorization-server
+  "The metadata of the authorization server `as-url` (RFC 8414, OpenID Connect
+   Discovery). An issuer with a path never gets the URLs of its bare host: another
+   tenant can answer there."
   [as-url]
-  (let [candidates [(str as-url "/.well-known/oauth-authorization-server")
-                    (str as-url "/.well-known/openid-configuration")]]
+  (let [issuer
+        (str (origin-of as-url) (path-of as-url))
+
+        candidates
+        (distinct [(well-known as-url "oauth-authorization-server")
+                   (well-known as-url "openid-configuration")
+                   (str issuer "/.well-known/openid-configuration")
+                   (str issuer "/.well-known/oauth-authorization-server")])]
+
     (some (fn [u]
             (some-> (http-get-json u)
                     (assoc ::url u)))
           candidates)))
+
+(defn- default-endpoints
+  "The endpoints of protocol 2025-03-26 for a server that publishes no metadata at
+   all: fixed paths on the host of the MCP server."
+  [origin]
+  {"authorization_endpoint" (str origin "/authorize")
+   "token_endpoint" (str origin "/token")
+   "registration_endpoint" (str origin "/register")
+   ::assumed? true})
 
 ;; Dynamic Client Registration (RFC 7591)
 
 (defn- register-client!
   "Register a public client with the configured name (RFC 7591), or throw the
    typed refusal with the upstream status."
-  [server {registration-url "registration_endpoint"} redirect-uri client-name]
+  [server {registration-url "registration_endpoint"} redirect-uri client-name scope]
   (when registration-url
     (let [{:keys [status body]}
           (http-post-json registration-url
-                          {"client_name" (or client-name "Claude Code")
-                           "redirect_uris" [redirect-uri]
-                           "grant_types" ["authorization_code" "refresh_token"]
-                           "response_types" ["code"]
-                           "token_endpoint_auth_method" "none"
-                           "scope" "openid profile offline_access"})
+                          (cond-> {"client_name" (or client-name "Claude Code")
+                                   "redirect_uris" [redirect-uri]
+                                   "grant_types" ["authorization_code" "refresh_token"]
+                                   "response_types" ["code"]
+                                   "token_endpoint_auth_method" "none"}
+                            scope
+                            (assoc "scope" scope)))
 
           status
           (long status)]
@@ -243,6 +303,15 @@
 
 ;; Auth-code flow (first time)
 
+(defn- with-offline-access
+  "`scope` with `offline_access` added when the authorization server lists that scope
+   (SEP-2207). Many servers issue a refresh token only for it."
+  [scope asmeta]
+  (if (and (some #{"offline_access"} (get asmeta "scopes_supported"))
+           (not (some #{"offline_access"} (str/split scope #"\s+"))))
+    (str scope " offline_access")
+    scope))
+
 (defn- auth-context
   "Discovery (RFC 9728 → RFC 8414) plus fresh PKCE material for `server-name`.
    Shared by the loopback flow and the headless flow so both speak exactly the
@@ -251,30 +320,49 @@
    well-known URL). `auth-hint` is optional user config:
    `{:client-id :scope :authorization-timeout-ms}`."
   [server-name server-url www-auth auth-hint]
-  (let [well-known
-        (str (origin-of server-url) "/.well-known/oauth-protected-resource")
+  (let [rmeta
+        (discover-protected-resource server-url www-auth)
 
-        rmeta
-        (or (discover-protected-resource server-url www-auth)
-            (throw (oauth-failure :mcp/oauth-discovery server-name
-                                  "discovery" (str "found no OAuth protected-resource metadata at "
-                                                   well-known
-                                                   ".")
-                                  :upstream-url well-known)))
+        _
+        (when-let [resource (get rmeta "resource")]
+          (when-not (same-resource? server-url resource)
+            (throw (oauth-failure
+                     :mcp/oauth-discovery server-name
+                     "discovery"
+                     (str "the protected-resource metadata is for another resource (" resource ").")
+                     :upstream-url (::url rmeta)))))
 
+        ;; Protocol 2025-03-26 has no resource metadata: the host of the MCP server
+        ;; is the authorization server, with fixed endpoints when it publishes none.
         as-url
-        (or (first (get rmeta "authorization_servers"))
-            (throw (oauth-failure :mcp/oauth-discovery server-name
-                                  "discovery"
-                                  "the protected-resource metadata names no authorization server."
-                                  :upstream-url (::url rmeta))))
+        (cond (nil? rmeta) (origin-of server-url)
+              (first (get rmeta "authorization_servers")) (first (get rmeta
+                                                                      "authorization_servers"))
+              :else (throw (oauth-failure
+                             :mcp/oauth-discovery server-name
+                             "discovery"
+                             "the protected-resource metadata names no authorization server."
+                             :upstream-url (::url rmeta))))
 
         asmeta
         (or (discover-authorization-server as-url)
+            (when-not rmeta (default-endpoints as-url))
             (throw (oauth-failure :mcp/oauth-discovery server-name
                                   "discovery"
                                   (str "found no authorization server metadata at " as-url ".")
                                   :upstream-url as-url)))
+
+        ;; Protocol 2025-03-26 servers often publish the metadata of another host.
+        _
+        (when-let [issuer (and rmeta (get asmeta "issuer"))]
+          (when-not (same-issuer? as-url issuer)
+            (throw (oauth-failure :mcp/oauth-discovery server-name
+                                  "discovery" (str "the authorization server metadata of "
+                                                   as-url
+                                                   " names another issuer ("
+                                                   issuer
+                                                   ").")
+                                  :upstream-url (::url asmeta)))))
 
         verifier
         (util/base64url (util/random-bytes 32))]
@@ -286,11 +374,14 @@
      :challenge (util/base64url (util/sha256 (util/utf8 verifier)))
      :state (util/base64url (util/random-bytes 16))
      :resource (get rmeta "resource")
+     ;; The configured scope, then the scope that the server asked for, then every
+     ;; scope of the resource. With none of them the request names no scope.
      :scope (or (:scope auth-hint)
-                (some->> (get rmeta "scopes_supported")
-                         seq
-                         (str/join " "))
-                "openid profile offline_access")}))
+                (some-> (or (challenge-param www-auth "scope")
+                            (some->> (get rmeta "scopes_supported")
+                                     seq
+                                     (str/join " ")))
+                        (with-offline-access asmeta)))}))
 
 (defn- authorize-url
   "The authorization-endpoint URL for `ctx` at `redirect-uri`, plus the `client_id`
@@ -301,7 +392,18 @@
   [{:keys [asmeta challenge state resource scope server]} auth-hint redirect-uri]
   (let [reg
         (when-not (:client-id auth-hint)
-          (register-client! server asmeta redirect-uri (:client-name auth-hint)))
+          (try (register-client! server asmeta redirect-uri (:client-name auth-hint) scope)
+               (catch clojure.lang.ExceptionInfo e
+                 ;; Nothing said that this host is an authorization server at all.
+                 (throw (if (::assumed? asmeta)
+                          (oauth-failure :mcp/oauth-discovery server
+                                         "discovery" (str "found no OAuth metadata for the server, "
+                                                          "and no authorization server at "
+                                                          (get asmeta "registration_endpoint")
+                                                          ".")
+                                         :upstream-status (:upstream-status (ex-data e))
+                                         :upstream-url (get asmeta "registration_endpoint"))
+                          e)))))
 
         client-id
         (or (:client-id auth-hint) (get reg "client_id"))
@@ -327,8 +429,10 @@
                  "redirect_uri" redirect-uri
                  "state" state
                  "code_challenge" challenge
-                 "code_challenge_method" "S256"
-                 "scope" scope}
+                 "code_challenge_method" "S256"}
+          scope
+          (assoc "scope" scope)
+
           resource
           (assoc "resource" resource))]
 
@@ -537,6 +641,43 @@
     (:message flow)
     (assoc "error" (:message flow))))
 
+(defn- callback-query
+  "The query parameters of the redirect URL `input`, or nil for a bare code."
+  [input]
+  (let [s (str/trim (str input))]
+    (when (str/includes? s "?") (query-parse (subs s (inc (long (str/index-of s "?"))))))))
+
+(defn- check-issuer!
+  "Refuse an authorization response that another authorization server sent: the
+   mix-up attack (RFC 9207). The `iss` parameter must be the exact `issuer` of the
+   metadata, and must be there when the metadata says that the server sends it. A
+   bare pasted code names no issuer and passes."
+  [{:keys [asmeta as-url server]} input]
+  (let [q
+        (callback-query input)
+
+        iss
+        (get q "iss")
+
+        issuer
+        (or (get asmeta "issuer") as-url)
+
+        refusal
+        (cond
+          (and iss (not= iss issuer)) (str "the authorization response came from another issuer ("
+                                           iss
+                                           "), not from "
+                                           issuer
+                                           ".")
+          (and q (nil? iss) (true? (get asmeta "authorization_response_iss_parameter_supported")))
+          (str "the authorization response names no issuer, but "
+               issuer
+               " says that it sends one."))]
+
+    (when refusal
+      (throw (ex-info (str "MCP server '" server "': " refusal)
+                      {:type :mcp/oauth-error :server server})))))
+
 (defn- code-of
   "The authorization code inside `input`: a bare code, or the whole redirect URL
    the browser landed on (which is all a user on another device can hand back).
@@ -546,7 +687,7 @@
         (str/trim (str input))
 
         q
-        (when (str/includes? s "?") (query-parse (subs s (inc (long (str/index-of s "?"))))))]
+        (callback-query input)]
 
     (when-let [err (get q "error")]
       (throw (ex-info
@@ -594,6 +735,7 @@
        :complete (fn [ctx input]
                    ;; A configured secret belongs to the configured client id, never to a
                    ;; client that dynamic registration made.
+                   (check-issuer! ctx input)
                    (exchange-code! ctx
                                    (:client-id ctx)
                                    (when (:client-id auth-hint) (:client-secret auth-hint))

@@ -3,11 +3,16 @@
    tiny fake server (test/resources/mcp/fake_mcp_server.py). Python 3 and POSIX
    process utilities are required; missing prerequisites must fail verification."
   (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
+           (java.io OutputStream)
+           (java.net InetSocketAddress)
+           (java.util.concurrent Executors)))
 
 (def ^:private server-path "test/resources/mcp/fake_mcp_server.py")
 
@@ -61,6 +66,28 @@
                      (let [r (mcp/call-tool conn "nope" {})]
                        (expect (true? (boolean (get r "isError")))))
                      (finally (mcp/close conn) (expect (false? (mcp/alive? conn))))))))
+
+(defn- with-stdio-conn
+  "Run `(f conn)` with a connection to the fake stdio server."
+  [f]
+  (let [conn (mcp/connect "fake"
+                          {:transport :stdio
+                           :command (require-executable "python3")
+                           :args [(.getPath (io/file server-path))]})]
+    (try (f conn) (finally (mcp/close conn)))))
+
+(defdescribe mcp-stdio-server-message-test
+             (it "answers a ping that the server sends before its reply"
+                 (with-stdio-conn (fn [conn]
+                                    (expect (= "pong"
+                                               (get-in (mcp/call-tool conn "ping" {} 3000)
+                                                       ["content" 0 "text"]))))))
+             (it "lists the tools again after the server says that they changed"
+                 (with-stdio-conn
+                   (fn [conn]
+                     (expect (= ["echo"] (mapv #(get % "name") (mcp/list-tools conn))))
+                     (mcp/call-tool conn "grow" {})
+                     (expect (= ["echo" "grown"] (mapv #(get % "name") (mcp/list-tools conn))))))))
 
 (defdescribe mcp-stdio-kill-tree-test
              (it "closing a server kills its whole process tree, not just the launcher"
@@ -274,7 +301,13 @@
             "{\"jsonrpc\":\"2.0\",\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"serverInfo\":{\"name\":\"fake\",\"version\":\"1\"}}}"})]
         (with-redefs [http/request (fn [_]
                                      (let [r @reply]
-                                       (if (instance? Throwable r) (throw r) r)))]
+                                       (if (instance? Throwable r)
+                                         (throw r)
+                                         ;; The transport reads the body as a stream.
+                                         (update r
+                                                 :body
+                                                 #(java.io.ByteArrayInputStream.
+                                                    (.getBytes ^String % "UTF-8"))))))]
           (let [conn (mcp/connect "fake"
                                   {:transport :streamable-http
                                    :url "https://gateway.example.com/mcp"})]
@@ -284,3 +317,242 @@
                    (expect (or (instance? Throwable result) (true? (get result "isError"))))
                    (expect (= connected? (mcp/alive? conn))))
                  (finally (mcp/close conn)))))))))
+
+;; Streamable HTTP transport, against a local server.
+
+(defn- send!
+  [^HttpExchange exchange status content-type ^String body]
+  (let [bytes (.getBytes body "UTF-8")]
+    (.add (.getResponseHeaders exchange) "Content-Type" content-type)
+    (.sendResponseHeaders exchange (int status) (if (zero? (alength bytes)) -1 (alength bytes)))
+    (when (pos? (alength bytes)) (.write (.getResponseBody exchange) bytes))
+    (.close exchange)))
+
+(defn- open-stream!
+  "Start an SSE response and return its stream. The caller closes it."
+  ^OutputStream [^HttpExchange exchange]
+  (.add (.getResponseHeaders exchange) "Content-Type" "text/event-stream")
+  (.sendResponseHeaders exchange 200 0)
+  (.getResponseBody exchange))
+
+(defn- event! [^OutputStream out ^String text] (.write out (.getBytes text "UTF-8")) (.flush out))
+
+(defn- rpc-result
+  [message value]
+  (json/write-json-str {"jsonrpc" "2.0" "id" (get message "id") "result" value}))
+
+(defn- text-result [message text] (rpc-result message {"content" [{"type" "text" "text" text}]}))
+
+(defn- with-mcp-http
+  "Run `(f url requests)` against a local Streamable HTTP server. `routes` maps a
+   JSON-RPC method, `:reply` (a reply of the client) or `:get` to
+   `(fn [request exchange])`. `initialize`, a notification and `tools/list` have
+   default answers. `requests` collects `{:method :headers :message}`."
+  [routes f]
+  (let [requests
+        (atom [])
+
+        pool
+        (Executors/newCachedThreadPool)
+
+        server
+        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
+
+        serve
+        (fn [^HttpExchange exchange]
+          (let [message
+                (when (= "POST" (.getRequestMethod exchange))
+                  (json/read-json (slurp (.getRequestBody exchange))))
+
+                request
+                {:method (.getRequestMethod exchange)
+                 :headers (into {}
+                                (map (fn [[k v]]
+                                       [(str/lower-case k) (first v)]))
+                                (.getRequestHeaders exchange))
+                 :message message}
+
+                route
+                (get routes (if message (get message "method" :reply) :get))]
+
+            (swap! requests conj request)
+            (cond route (route request exchange)
+                  (nil? message) (send! exchange 405 "text/plain" "")
+                  (= "initialize" (get message "method"))
+                  (send! exchange
+                         200
+                         "application/json"
+                         (rpc-result message
+                                     {"protocolVersion" "2025-06-18"
+                                      "capabilities" {"tools" {}}
+                                      "serverInfo" {"name" "local" "version" "1"}}))
+                  (nil? (get message "id")) (send! exchange 202 "text/plain" "")
+                  (= "tools/list" (get message "method"))
+                  (send! exchange
+                         200
+                         "application/json"
+                         (rpc-result message {"tools" [{"name" "echo"}]}))
+                  :else (send! exchange 404 "text/plain" ""))))]
+
+    (.createContext server
+                    "/mcp"
+                    (reify
+                      HttpHandler
+                        (handle [_ exchange]
+                          (try (serve exchange) (catch Throwable _ (.close exchange))))))
+    (.setExecutor server pool)
+    (.start server)
+    (try (f (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/mcp") requests)
+         (finally (.stop server 0) (.shutdownNow pool)))))
+
+(defn- with-http-conn
+  "Run `(f conn requests)` with a connection to a server of `routes`."
+  [routes options f]
+  (with-mcp-http routes
+                 (fn [url requests]
+                   (let [conn (mcp/connect "http-test"
+                                           (merge
+                                             {:transport :streamable-http :url url :timeout-ms 3000}
+                                             options))]
+                     (try (f conn requests) (finally (mcp/close conn)))))))
+
+(defn- call-text [conn] (get-in (mcp/call-tool conn "echo" {}) ["content" 0 "text"]))
+
+(defdescribe
+  mcp-http-reply-test
+  (it "reads a JSON reply whose text has the SSE field name in it"
+      (with-http-conn {"tools/call" (fn [request exchange]
+                                      (send! exchange
+                                             200
+                                             "application/json"
+                                             (text-result (:message request) "metadata: none")))}
+                      {}
+                      (fn [conn _]
+                        (expect (= "metadata: none" (call-text conn))))))
+  (it "sends the negotiated protocol version from the first message after initialize"
+      (with-http-conn {}
+                      {}
+                      (fn [_ requests]
+                        (let [initialized (first (filter #(= "notifications/initialized"
+                                                             (get-in % [:message "method"]))
+                                                         @requests))]
+                          (expect (= "2025-06-18"
+                                     (get-in initialized [:headers "mcp-protocol-version"])))))))
+  (it "lists the tools of every page"
+      (with-http-conn
+        {"tools/list" (fn [request exchange]
+                        (send! exchange
+                               200
+                               "application/json"
+                               (rpc-result (:message request)
+                                           (if (= "page-2"
+                                                  (get-in request [:message "params" "cursor"]))
+                                             {"tools" [{"name" "second"}]}
+                                             {"tools" [{"name" "first"}] "nextCursor" "page-2"}))))}
+        {}
+        (fn [conn _]
+          (expect (= ["first" "second"] (mapv #(get % "name") (mcp/list-tools conn))))))))
+
+(defdescribe
+  mcp-http-stream-test
+  (it
+    "continues on a new stream after the server closes the first one"
+    (let [call
+          (atom nil)
+
+          closed-at
+          (atom nil)
+
+          resumed
+          (atom nil)
+
+          release
+          (promise)]
+
+      (with-http-conn
+        {"tools/call" (fn [request exchange]
+                        (reset! call (:message request))
+                        (with-open [out (open-stream! exchange)]
+                          (event! out "id: event-1\nretry: 200\ndata: \n\n"))
+                        (reset! closed-at (System/nanoTime)))
+         :get (fn [request exchange]
+                (reset! resumed {:at (System/nanoTime)
+                                 :last-event-id (get-in request [:headers "last-event-id"])})
+                (with-open [out (open-stream! exchange)]
+                  (event! out
+                          (str "event: message\nid: event-2\ndata: "
+                               (text-result @call "resumed")
+                               "\n\n"))
+                  ;; The stream stays open after the reply.
+                  (deref release 5000 nil)))}
+        {}
+        (fn [conn _]
+          (try (expect (= "resumed" (call-text conn)))
+               (expect (= "event-1" (:last-event-id @resumed)))
+               ;; The server asked for 200 ms before the next request.
+               (expect (<= 150 (quot (- (long (:at @resumed)) (long @closed-at)) 1000000)))
+               (finally (deliver release true)))))))
+  (it "answers a ping that the server sends before its reply"
+      (let [pong (promise)]
+        (with-http-conn
+          {"tools/call" (fn [request exchange]
+                          (with-open [out (open-stream! exchange)]
+                            (event! out
+                                    (str "data: "
+                                         (json/write-json-str
+                                           {"jsonrpc" "2.0" "id" "server-1" "method" "ping"})
+                                         "\n\n"))
+                            (event! out
+                                    (str "data: "
+                                         (text-result (:message request)
+                                                      (if (deref pong 2000 nil) "pong" "silence"))
+                                         "\n\n"))))
+           :reply (fn [request exchange]
+                    (deliver pong (:message request))
+                    (send! exchange 202 "text/plain" ""))}
+          {}
+          (fn [conn _]
+            (expect (= "pong" (call-text conn)))
+            (expect (= {"jsonrpc" "2.0" "id" "server-1" "result" {}} (deref pong 0 nil)))))))
+  (it "stops at the timeout when the server holds the stream open without a reply"
+      (let [release (promise)]
+        (with-http-conn {"tools/call" (fn [_ exchange]
+                                        (with-open [out (open-stream! exchange)]
+                                          (event! out ": waiting\n\n")
+                                          (deref release 8000 nil)))}
+                        {:timeout-ms 500}
+                        (fn [conn _]
+                          (let [outcome (deref (future (try (call-text conn)
+                                                            (catch clojure.lang.ExceptionInfo e
+                                                              (:type (ex-data e)))))
+                                               4000
+                                               :hung)]
+                            (deliver release true)
+                            (expect (= :mcp/timeout outcome)))))))
+  (it "stays connected to a server that has no listen channel"
+      (with-http-conn {}
+                      {:listen? true}
+                      (fn [conn _]
+                        ;; The default GET answer is HTTP 405.
+                        (Thread/sleep 300)
+                        (expect (true? (mcp/alive? conn))))))
+  (it "hears a notification while the listen stream stays open"
+      (let [heard
+            (promise)
+
+            release
+            (promise)]
+
+        (with-http-conn
+          {:get (fn [_ exchange]
+                  (with-open [out (open-stream! exchange)]
+                    (event! out
+                            (str "data: "
+                                 (json/write-json-str {"jsonrpc" "2.0"
+                                                       "method" "notifications/tools/list_changed"})
+                                 "\n\n"))
+                    (deref release 5000 nil)))}
+          {:listen? true :on-notification #(deliver heard (get % "method"))}
+          (fn [_ _]
+            (try (expect (= "notifications/tools/list_changed" (deref heard 2000 :silent)))
+                 (finally (deliver release true))))))))

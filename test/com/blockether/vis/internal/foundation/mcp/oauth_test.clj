@@ -36,10 +36,12 @@
                (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))))
 
 (defn- with-browser-flow
-  [f]
-  (let [exchanges (atom [])]
+  ([f] (with-browser-flow {} f))
+  ([context f]
+   (let [exchanges (atom [])]
     (with-redefs-fn {#'oauth/auth-context (fn [& _]
-                                            {:state "test-state" :code-verifier "test-verifier"})
+                                            (merge {:state "test-state" :code-verifier "test-verifier"}
+                                                   context))
                      #'oauth/authorize-url
                      (fn [_ _ redirect]
                        {:url (str "https://gateway.example.com/authorize?redirect_uri=" redirect)
@@ -48,7 +50,7 @@
                                               (swap! exchanges conj [code redirect]))}
       (fn []
         (let [flow (oauth/start-authorization! "test" "https://gateway.example.com/mcp" {})]
-          (try (f flow exchanges) (finally (oauth/cancel-authorization! (get flow "flow_id")))))))))
+          (try (f flow exchanges) (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
 
 (defn- await-verdict
   [id]
@@ -403,3 +405,173 @@
                      (expect (not (str/includes? (:body token) "s3cret")))
                      (expect (not (str/includes? (slurp file) "s3cret")))))))
              (finally (.delete file))))))
+
+(defn- discovery-server
+  "HTTP stub that answers only the metadata URLs in `documents` (URL to body map), a
+   registration and a token request. Every requested URL lands in `seen`."
+  [documents seen]
+  (fn [{:keys [uri]}]
+    (swap! seen conj uri)
+    (cond (contains? documents uri) {:status 200 :body (json/write-json-str (get documents uri))}
+          (str/ends-with? uri "/register") {:status 201 :body "{\"client_id\":\"registered-client\"}"}
+          :else {:status 404 :body "Not Found"})))
+
+(defn- authorization-query
+  "The query parameters of the authorization URL that sign-in gives for `documents`."
+  [documents seen options]
+  (with-redefs [http/request (discovery-server documents seen)]
+    (let [flow (oauth/start-authorization! "discovery-test" "https://mcp.example.test/v1/mcp" options)]
+      (oauth/cancel-authorization! (get flow "flow_id"))
+      (assoc (#'oauth/query-parse (second (str/split (get flow "url") #"\?" 2)))
+        ::endpoint (first (str/split (get flow "url") #"\?"))))))
+
+(def ^:private endpoints
+  {"authorization_endpoint" "https://auth.example.test/authorize"
+   "token_endpoint" "https://auth.example.test/token"
+   "registration_endpoint" "https://auth.example.test/register"})
+
+(defdescribe metadata-discovery-test
+  (it "reads the metadata URL that the server names in its challenge, and no other"
+      (let [seen (atom [])
+            query (authorization-query
+                    {"https://mcp.example.test/custom/metadata.json"
+                     {"resource" "https://mcp.example.test/v1/mcp"
+                      "authorization_servers" ["https://auth.example.test"]}
+                     "https://auth.example.test/.well-known/oauth-authorization-server" endpoints}
+                    seen
+                    {:www-auth (str "Bearer resource_metadata="
+                                    "\"https://mcp.example.test/custom/metadata.json\"")})]
+        (expect (= "https://auth.example.test/authorize" (::endpoint query)))
+        (expect (not-any? #(str/includes? % "oauth-protected-resource") @seen))))
+  (it "finds the metadata of a server with a path before the metadata of its host"
+      (let [seen (atom [])]
+        (authorization-query
+          {"https://mcp.example.test/.well-known/oauth-protected-resource/v1/mcp"
+           {"authorization_servers" ["https://auth.example.test"]}
+           "https://auth.example.test/.well-known/openid-configuration" endpoints}
+          seen
+          {})
+        (expect (not-any? #{"https://mcp.example.test/.well-known/oauth-protected-resource"} @seen))))
+  (it "finds an authorization server that has a path in its issuer"
+      (doseq [location ["https://auth.example.test/.well-known/oauth-authorization-server/tenant1"
+                        "https://auth.example.test/.well-known/openid-configuration/tenant1"
+                        "https://auth.example.test/tenant1/.well-known/openid-configuration"]]
+        (let [seen (atom [])
+              query (authorization-query
+                      {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                       {"authorization_servers" ["https://auth.example.test/tenant1"]}
+                       location endpoints}
+                      seen
+                      {})]
+          (expect (= "https://auth.example.test/authorize" (::endpoint query)))
+          ;; The host can serve another tenant there.
+          (expect (not-any? #{"https://auth.example.test/.well-known/oauth-authorization-server"}
+                            @seen)))))
+  (it "signs in to a server of protocol 2025-03-26, which has no resource metadata"
+      (let [query (authorization-query
+                    {"https://mcp.example.test/.well-known/oauth-authorization-server"
+                     (assoc endpoints "authorization_endpoint" "https://mcp.example.test/oauth/start")}
+                    (atom [])
+                    {})]
+        (expect (= "https://mcp.example.test/oauth/start" (::endpoint query))))
+      (let [seen (atom [])
+            query (authorization-query {} seen {})]
+        (expect (= "https://mcp.example.test/authorize" (::endpoint query)))
+        (expect (some #{"https://mcp.example.test/register"} @seen)))))
+
+(defdescribe authorization-scope-test
+  (it "asks for the scope of the challenge, then the scopes of the resource, then none"
+      (let [documents (fn [resource]
+                        {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                         (merge {"authorization_servers" ["https://auth.example.test"]} resource)
+                         "https://auth.example.test/.well-known/oauth-authorization-server" endpoints})
+            scope (fn [resource options]
+                    (get (authorization-query (documents resource) (atom []) options) "scope" ::none))]
+        (expect (= "files:read"
+                   (scope {"scopes_supported" ["a" "b"]}
+                          {:www-auth "Bearer error=\"insufficient_scope\", scope=\"files:read\""})))
+        (expect (= "a b" (scope {"scopes_supported" ["a" "b"]} {})))
+        (expect (= ::none (scope {} {})))
+        (expect (= "configured" (scope {"scopes_supported" ["a" "b"]}
+                                       {:www-auth "Bearer scope=\"files:read\""
+                                        :auth-hint {:scope "configured"}})))))
+  (it "asks for offline_access with the scope when the authorization server lists it"
+      ;; Without it, such a server issues no refresh token: a sign-in each hour.
+      (let [scope (fn [resource options]
+                    (get (authorization-query
+                           {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                            (merge {"authorization_servers" ["https://auth.example.test"]} resource)
+                            "https://auth.example.test/.well-known/oauth-authorization-server"
+                            (assoc endpoints "scopes_supported" ["a" "offline_access"])}
+                           (atom [])
+                           options)
+                         "scope"
+                         ::none))]
+        (expect (= "a b offline_access" (scope {"scopes_supported" ["a" "b"]} {})))
+        (expect (= "files:read offline_access"
+                   (scope {} {:www-auth "Bearer scope=\"files:read\""})))
+        (expect (= "a offline_access" (scope {"scopes_supported" ["a" "offline_access"]} {})))
+        (expect (= ::none (scope {} {})))
+        (expect (= "configured" (scope {} {:auth-hint {:scope "configured"}}))))))
+
+(defn- sign-in-refusal
+  "The data of the refusal that sign-in gives for `documents`, or nil when it starts."
+  [documents]
+  (try (authorization-query documents (atom []) {})
+       nil
+       (catch clojure.lang.ExceptionInfo e (assoc (ex-data e) :message (ex-message e)))))
+
+(defdescribe metadata-validation-test
+  (it "refuses resource metadata that is for another resource"
+      (let [refusal (fn [resource]
+                      (sign-in-refusal
+                        {"https://mcp.example.test/.well-known/oauth-protected-resource/v1/mcp"
+                         {"resource" resource "authorization_servers" ["https://auth.example.test"]}
+                         "https://auth.example.test/.well-known/oauth-authorization-server" endpoints}))]
+        (doseq [resource ["https://mcp.example.test/v1/mcp" "https://mcp.example.test/v1/mcp/"
+                          "https://mcp.example.test/v1" "https://mcp.example.test"
+                          "https://MCP.example.test/"]]
+          (expect (nil? (refusal resource))))
+        (doseq [resource ["https://other.example.test/v1/mcp" "http://mcp.example.test/v1/mcp"
+                          "https://mcp.example.test/v2" "https://mcp.example.test/v1/mcp/admin"
+                          "https://mcp.example.test/v"]]
+          (let [data (refusal resource)]
+            (expect (= :mcp/oauth-discovery (:type data)))
+            (expect (str/includes? (str (:message data)) resource))))))
+  (it "refuses authorization server metadata that names another issuer"
+      (let [refusal (fn [issuer]
+                      (sign-in-refusal
+                        {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                         {"authorization_servers" ["https://auth.example.test"]}
+                         "https://auth.example.test/.well-known/oauth-authorization-server"
+                         (assoc endpoints "issuer" issuer)}))]
+        (expect (nil? (refusal "https://auth.example.test")))
+        ;; Box publishes its issuer with another trailing slash than its resource metadata.
+        (expect (nil? (refusal "https://auth.example.test/")))
+        (let [data (refusal "https://attacker.example.test")]
+          (expect (= :mcp/oauth-discovery (:type data)))
+          (expect (str/includes? (str (:message data)) "https://attacker.example.test"))))))
+
+(defdescribe authorization-response-issuer-test
+  (let [completes? (fn [context query]
+                     (with-browser-flow
+                       context
+                       (fn [flow exchanges]
+                         (try (oauth/complete-authorization!
+                                (get flow "flow_id")
+                                (str (get flow "redirect_uri") "?code=test-code&state=test-state" query))
+                              (catch clojure.lang.ExceptionInfo _ nil))
+                         (= 1 (count @exchanges)))))
+        issuer "https://auth.example.test"
+        sends-issuer {:as-url issuer
+                      :asmeta {"issuer" issuer "authorization_response_iss_parameter_supported" true}}]
+    (it "exchanges the code only when the response comes from the authorization server"
+        (expect (completes? sends-issuer "&iss=https%3A%2F%2Fauth.example.test"))
+        (expect (not (completes? sends-issuer "&iss=https%3A%2F%2Fattacker.example.test")))
+        (expect (not (completes? sends-issuer "&iss=https%3A%2F%2Fauth.example.test%2F")))
+        (expect (not (completes? sends-issuer "")))
+        (expect (completes? {:as-url issuer :asmeta {"issuer" issuer}} ""))
+        (expect (not (completes? {:as-url issuer :asmeta {"issuer" issuer}}
+                                 "&iss=https%3A%2F%2Fattacker.example.test")))
+        (expect (not (completes? {:as-url issuer :asmeta {}}
+                                 "&iss=https%3A%2F%2Fattacker.example.test"))))))

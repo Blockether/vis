@@ -1065,9 +1065,13 @@
                                  ref
                                  "}, which the gateway environment does not set.")
                             {:type :mcp/oauth-client :server name :step "registration"})))
+          ;; The live challenge names the metadata URL and the scope to ask for.
           (mcp-oauth/start-authorization! name
                                           (:url spec)
-                                          {:auth-hint auth :callback-mode callback-mode})
+                                          {:www-auth (some-> (:www-auth-atom spec)
+                                                             deref)
+                                           :auth-hint auth
+                                           :callback-mode callback-mode})
           (catch Throwable t
             (tel/log! {:level :warn
                        :id ::auth-start-failed
@@ -1311,6 +1315,17 @@
 
 (doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
 
+(defn- missing-scope
+  "The scope that `server` asked for when it refused `t` with HTTP 403 and an
+   `insufficient_scope` challenge, or nil. Empty when the challenge names none."
+  [session-id server ^Throwable t]
+  (when (and (= :mcp/http-error (:type (ex-data t))) (= 403 (:status (ex-data t))))
+    (let [challenge (some-> ^clojure.lang.IDeref
+                            (:www-auth-atom (get (visible-servers session-id) server))
+                            deref)]
+      (when (= "insufficient_scope" (mcp-oauth/challenge-param challenge "error"))
+        (or (mcp-oauth/challenge-param challenge "scope") "")))))
+
 (defn- call-failed-err
   "Turn anything thrown below this point into a typed refusal. A tool call
    crosses a process boundary or a network, so it fails in ways no argument check
@@ -1319,22 +1334,33 @@
    raw exception - a throwing extension ends the turn, while an error envelope
    leaves the model free to fix its arguments or the user free to sign in."
   [env server tool ^Throwable t]
-  (if (= :mcp/oauth-required (:type (ex-data t)))
-    (err :mcp/call
-         (str "MCP server '" server "' is not authorized - its OAuth token is missing or expired.")
-         :server server
-         :hint (authorize-hint server))
-    (err :mcp/call (str "MCP call to '" server
-                        "'" (when (string? tool) (str " tool '" tool "'"))
-                        " failed: " (or (ex-message t) (str t)))
-         :server server
-         :tool (when (string? tool) tool)
-         :hint (str "Call `await "
-                    sandbox-verb
-                    "(server)` to re-read the tool's input schema"
-                    (when-not (needs-auth? (:session-id env) server)
-                      ", or check the server's status in session env.mcp")
-                    "."))))
+  (let [scope (missing-scope (:session-id env) server t)]
+    (cond (= :mcp/oauth-required (:type (ex-data t)))
+          (err :mcp/call (str "MCP server '"
+                              server
+                              "' is not authorized - its OAuth token is missing or expired.")
+               :server server
+               :hint (authorize-hint server))
+          ;; A new sign-in asks for the scope of this challenge.
+          scope (err :mcp/call (str "MCP server '"
+                                    server
+                                    "' refused the call: the sign-in does not grant "
+                                    (if (seq scope) (str "the scope '" scope "'") "enough access")
+                                    ". Sign in again.")
+                     :server server
+                     :tool (when (string? tool) tool)
+                     :hint (authorize-hint server))
+          :else (err :mcp/call (str "MCP call to '" server
+                                    "'" (when (string? tool) (str " tool '" tool "'"))
+                                    " failed: " (or (ex-message t) (str t)))
+                     :server server
+                     :tool (when (string? tool) tool)
+                     :hint (str "Call `await "
+                                sandbox-verb
+                                "(server)` to re-read the tool's input schema"
+                                (when-not (needs-auth? (:session-id env) server)
+                                  ", or check the server's status in session env.mcp")
+                                ".")))))
 
 (defn- mcp-call-impl
   "The whole model-facing surface. `server` alone answers with that server's tools,
