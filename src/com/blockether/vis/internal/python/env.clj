@@ -871,7 +871,8 @@
 (def ^:private context-bindings-python
   "# The defaults keep the builtins of the definition time, so a block global `set` cannot break a refresh.
 def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, set=set,
-                     sorted=sorted, builtin_names=frozenset(dir(__import__('builtins')))):
+                     sorted=sorted, tuple=tuple,
+                     builtin_names=frozenset(dir(__import__('builtins')))):
     # The host shortened these paths with its own home, which can differ from the worker HOME.
     def expand(text):
         return Path(home + text[1:]) if text == '~' or text.startswith('~/') else Path(text)
@@ -895,6 +896,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     g['session'] = __vis_typed_result__(data)
     g['__vis_path_names__'] = sorted(names)
     g['__vis_protected_names__'] = sorted((protected - old) | names)
+    # A shim that binds names from the context keeps one hook here, under its own name.
+    for hook in tuple((g.get('__vis_ctx_hooks__') or {}).values()):
+        hook(g, data)
 ")
 
 (defn bind-ctx!

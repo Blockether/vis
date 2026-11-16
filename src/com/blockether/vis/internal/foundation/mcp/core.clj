@@ -20,16 +20,17 @@
    static bearer transparently negotiate OAuth 2.1 on first 401 (RFC 9728
    discovery + RFC 7591 dynamic client registration + PKCE loopback).
 
-   ONE model-facing verb under alias `mcp` (flat sandbox renders `alias_name`):
+   ONE host verb under alias `mcp` (flat sandbox renders `alias_name`):
      mcp__call(server, tool, args) - call a tool
      mcp__call(server)             - that server's descriptions + input schemas
      mcp__call(server, method, params) - an MCP request for resources or prompts,
                                          such as `resources/read`
 
-   The sandbox also has the handle `mcp` (`resources/vis-host-python/mcp.py`):
-   `await mcp.<server>.<tool>(**arguments)` is `mcp__call` with the names as
-   attributes. `doc` prints the page of a server, a tool or a prompt, and the
-   resources of the servers are rows of `list_attachments()`.
+   A block does not type that verb. The sandbox binds each server as a name
+   (`resources/vis-host-python/mcp.py`), the `python-name` of the server:
+   `await linear.save_issue(title=...)`. `doc` prints the page of a server, a tool
+   or a prompt, `apropos` finds them, and the resources of the servers are rows of
+   `list_attachments()`.
 
    There is deliberately NO connect/disconnect verb. The daemon connects every
    enabled server, health-checks the pool on its own clock, and reaps/respawns a
@@ -37,11 +38,11 @@
    server is a human admin action on the gateway API (save/enable/kill/start),
    never something one session does to a resource every other session shares.
 
-   Every visible server - its status and the NAMES of the tools it exposes -
-   rides in ctx under `env.mcp`, keyed by server name so a change diffs per
-   server. That IS the inventory: no listing verb spends a turn re-fetching what
-   the session object already carries."
-  (:require [clojure.java.io :as io]
+   Every visible server rides in ctx under `env.mcp` with its sandbox name and its
+   status, keyed by server name so a change diffs per server. Its tools and its
+   prompts are not in ctx: `apropos` and `doc` give them."
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.config.core :as config]
@@ -52,6 +53,7 @@
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.elicitation :as elicitation]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
+            [com.blockether.vis.internal.foundation.mcp.python-names :as python-names]
             [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [com.blockether.vis.internal.util :as util]
@@ -768,8 +770,7 @@
    `mcp/list-tools` CACHES into the conn, so the first read pays one RPC and every
    later read is free. Reading the raw `:tools` atom instead reports NOTHING for a
    freshly connected server — that cache is only filled on demand — which is what
-   made a healthy gateway server look empty in the Companion inventory and in the
-   model's own `env.mcp` view. Never throws: a failed listing closes the stale
+   made a healthy gateway server look empty in the Companion inventory. Never throws: a failed listing closes the stale
    connection so this snapshot reports it disconnected and reconciliation can retry."
   [conn]
   (if-not (and conn (mcp/alive? conn))
@@ -783,28 +784,6 @@
   "How many tools `conn` exposes; 0 when it is not connected."
   [conn]
   (count (conn-tools conn)))
-
-(def ^:private max-ctx-tools
-  "Cap on the tool NAMES listed per server in ctx, so one enormous server cannot
-   eat the context budget. The full catalog - descriptions and input schemas -
-   stays one `mcp__call` (server alone, no tool) away."
-  40)
-
-(defn- ctx-tool-names
-  "`{:names [...] :omitted n}` — the SORTED, capped tool names of `conn` for the
-   ctx block. Sorted on purpose: ctx is diffed structurally, so a stable order is
-   what lets an unchanged server re-render with no delta at all."
-  [conn]
-  (let [cap
-        (long max-ctx-tools)
-
-        names
-        (sort (keep #(get % "name") (conn-tools conn)))
-
-        n
-        (long (count names))]
-
-    {:names (vec (take cap names)) :omitted (max 0 (- n cap))}))
 
 (defn- server-summary
   "One sanitized inventory row. STRING-KEYED, snake_case — exactly what a client
@@ -1340,16 +1319,15 @@
         (mcp/list-tools conn)))
 
 (def ^:private sandbox-verb
-  "What the MODEL actually types. The wire/native tool NAME is `mcp__call`
-   (DOUBLE underscore - see the note above `mcp-symbols`), but the Python
-   sandbox folds `alias/symbol` to ONE underscore, so every model-facing string
-   - doc-corpus entry, error hint, prompt fragment - has to say `mcp_call`.
+  "The sandbox name of the host verb, which the server handles call. The
+   wire/native tool NAME is `mcp__call` (DOUBLE underscore - see the note above
+   `mcp-symbols`), but the Python sandbox folds `alias/symbol` to ONE underscore.
    Printing the wire name at a model that only has the sandbox sends it into a
    NameError, which is exactly what it did."
   "mcp_call")
 
 (defn- identifier
-  "`name` as the model types it after `mcp.`: each character that a Python
+  "`name` as a block types it after a server: each character that a Python
    identifier cannot have becomes `_`."
   [name]
   (str/replace (str name) #"[^A-Za-z0-9_]" "_"))
@@ -1361,6 +1339,11 @@
   (or (some #{wanted} names)
       (let [same (into [] (comp (filter #(= (identifier wanted) (identifier %))) (distinct)) names)]
         (when (= 1 (count same)) (first same)))))
+
+(def ^:private engine-names
+  "The sandbox names that the engine binds itself, with no extension."
+  #{"apropos" "defs" "doc" "gather" "network_filter" "network_probe" "package_paths" "print"
+    "println" "project_root_path" "session" "vis_introspection" "vis_results" "vis_runtime"})
 
 (def ^:private python-keywords
   "The words that Python does not let a block write as an attribute."
@@ -1384,10 +1367,47 @@
        (str parent "." id)
        (str parent "[" (pr-str (str name)) "]")))))
 
+(defn- sandbox-names
+  "The sandbox names that Vis has: those that the engine binds itself, then for
+   each registered extension its alias, its symbols, its shim globals and its shim
+   modules."
+  []
+  (let [snake (comp extension/sym->py-name name)]
+    (into engine-names
+          (mapcat (fn [ext]
+                    (let [alias (some-> (extension/ext-alias-symbol ext)
+                                        snake)
+                          symbols (keep #(some-> (:ext.symbol/symbol %)
+                                                 snake)
+                                        (extension/ext-symbols ext))]
+
+                      (concat symbols
+                              (when alias (cons alias (map #(str alias "_" %) symbols)))
+                              (mapcat #(concat (:shim/imports %) (:shim/globals %))
+                                      (extension/ext-sandbox-shims ext))))))
+          (extension/registered-extensions))))
+
+(defn- bare-name
+  "The canonical name `server` as the sandbox name of its handle: each `-` becomes
+   `_`. Nil when Python or one of `taken` has that name, or when it is not an
+   identifier: such a server stays a child of `mcp`."
+  [server taken]
+  (let [id (str/replace (str server) "-" "_")]
+    (when (and (re-matches #"[a-z][a-z0-9_]*" id) (not (python-names/words id)) (not (taken id)))
+      id)))
+
+(defn- python-name
+  "What a block types for `server`: its `bare-name`, else the child of `mcp`."
+  ([server] (python-name server (sandbox-names)))
+  ([server taken] (or (bare-name server taken) (child-form "mcp" server))))
+
 (defn- handle
-  "The `doc` handle of the server, tool or prompt that `names` gives."
-  [& names]
-  (str/join "." (cons "mcp" (map identifier names))))
+  "The `doc` handle of `server`, or of its tool or its prompt that `names` gives:
+   what a block types, with an identifier for each name."
+  [taken server & names]
+  (str/join "."
+            (cons (or (bare-name server taken) (str "mcp." (identifier server)))
+                  (map identifier names))))
 
 (defn- arguments-form
   "The arguments of a call as a block writes them: each name of `required` with a
@@ -1404,37 +1424,40 @@
   (str "`" call "` - " (or description about) (when description (str "\n\n" about))))
 
 (defn- tool-entry
-  "The tool `t` of `server` as a `doc-corpus` entry, or nil for a tool with no name."
-  [server t]
+  "The tool `t` of `server` as a `doc-corpus` entry, or nil for a tool with no
+   name. `taken` is the names that the sandbox has."
+  [taken server t]
   (when-let [nm (not-empty (str (get t "name")))]
     (let [schema (get t "inputSchema")
           call (str "await "
-                    (child-form (child-form "mcp" server) nm #{"prompts"})
+                    (child-form (python-name server taken) nm #{"prompts"})
                     (arguments-form (get schema "required") (seq (get schema "properties"))))
           ;; The server's own words open the row, after the call form, so
           ;; `apropos` finds the tool by what it does.
           description (not-empty (str/trim (str (get t "description"))))]
 
-      {:name (handle server nm)
+      {:name (handle taken server nm)
        :kind "tool"
        :call call
        :text (str (described call (str "MCP tool `" nm "` on server `" server "`.") description)
-                  (when schema (str "\n\nInput schema: " (pr-str schema))))})))
+                  ;; JSON, as the server gave it: a block reads no EDN.
+                  (when schema (str "\n\nInput schema: " (json/write-json-str schema))))})))
 
 (defn- prompt-entry
   "The prompt `prompt` of `server` as a `doc-corpus` entry, or nil for a prompt
-   with no name. `body` is the text of its messages, when the caller has it."
-  ([server prompt] (prompt-entry server prompt nil))
-  ([server prompt body]
+   with no name. `body` is the text of its messages, when the caller has it.
+   `taken` is the names that the sandbox has."
+  ([taken server prompt] (prompt-entry taken server prompt nil))
+  ([taken server prompt body]
    (when-let [nm (not-empty (str (get prompt "name")))]
      (let [arguments (get prompt "arguments")
            call (str "await "
-                     (child-form (str (child-form "mcp" server) ".prompts") nm)
+                     (child-form (str (python-name server taken) ".prompts") nm)
                      (arguments-form (keep #(when (get % "required") (get % "name")) arguments)
                                      (seq arguments)))
            description (some #(not-empty (str/trim (str (get prompt %)))) ["description" "title"])]
 
-       {:name (handle server "prompts" nm)
+       {:name (handle taken server "prompts" nm)
         :kind "prompt"
         :call call
         :text (str (described call (str "MCP prompt `" nm "` on server `" server "`.") description)
@@ -1476,10 +1499,11 @@
 
 (defn- server-entry
   "`server` as a `doc-corpus` entry: its `status`, and the names of the `tools`
-   and `prompts` that the caller has. `resources?` says that it gives resources."
-  [server status tools prompts resources?]
-  (let [mine (child-form "mcp" server)]
-    {:name (handle server)
+   and `prompts` that the caller has. `resources?` says that it gives resources.
+   `taken` is the names that the sandbox has."
+  [taken server status tools prompts resources?]
+  (let [mine (python-name server taken)]
+    {:name (handle taken server)
      :kind "module"
      :call (str "await " mine ".<tool>(**arguments)")
      :text (str "MCP server `"
@@ -1491,12 +1515,7 @@
                   ".")
                 (if (= "connected" status)
                   (str " `doc(" mine ".<tool>)` prints the input schema of one tool.")
-                  (str " `doc("
-                       mine
-                       ")` connects it and prints its tools."
-                       " `await "
-                       mine
-                       "()` gives the cause when it cannot connect."))
+                  (str " `await " mine "()` gives the cause when it cannot connect."))
                 (when (seq tools) (str "\n\nTools:\n" (named-rows tools)))
                 (when (seq prompts)
                   (str "\n\nPrompts, each at `" mine ".prompts.<name>`:\n" (named-rows prompts)))
@@ -1510,33 +1529,62 @@
           deref
           (get method)))
 
+(defn- connect-idle!
+  "Connect each server of `servers` that `session-id` sees as `disconnected`, all
+   at one time. So the first `apropos` of a session has the tools of a server
+   that no reconcile connected yet. A server that does not connect becomes
+   `unhealthy`, and the next search leaves it alone."
+  [session-id servers]
+  (->> servers
+       (filterv (fn [[server spec]]
+                  (= "disconnected"
+                     (server-status session-id server spec (conn-of session-id server)))))
+       (mapv (fn [[server _]]
+               (future (try (ensure-connected! session-id server) (catch Throwable _ nil)))))
+       (run! deref)))
+
 (defn- doc-corpus-entries
   "Every VISIBLE MCP server, each of its tools and each of its prompts as a
-   `doc-corpus` entry, under the handle that a block types: `mcp.<server>`,
-   `mcp.<server>.<tool>` and `mcp.<server>.prompts.<name>`. So `apropos(\"jira\")`
+   `doc-corpus` entry, under the handle that a block types: `linear`,
+   `linear.save_issue` and `linear.prompts.<name>`. So `apropos(\"jira\")`
    reaches a server-supplied description — the only place that text survives now
    that `mcp__call` carries no schema.
 
-   Reads the conn's CACHED listings ONLY: assembling the corpus must never cost
-   an RPC, so a server nobody has listed yet gives only its own entry. `doc`
-   reaches such a server through `doc-entry`."
+   Reads the lists that a connection keeps from its connect: a connected server
+   costs no RPC. `connect-idle!` connects a server that nobody tried."
   []
-  (let [sid (:session-id extension/*current-environment*)]
-    (into []
-          (mapcat (fn [[server spec]]
-                    (let [conn (conn-of sid server)
-                          tools (some-> (:tools conn)
-                                        deref)
-                          prompts (cached-list conn "prompts/list")]
+  (let [sid
+        (:session-id extension/*current-environment*)
 
-                      (concat [(server-entry server
-                                             (server-status sid server spec conn)
-                                             tools
-                                             prompts
-                                             (contains? (:server-capabilities conn) "resources"))]
-                              (keep #(tool-entry server %) tools)
-                              (keep #(prompt-entry server %) prompts)))))
-          (visible-servers sid))))
+        servers
+        (visible-servers sid)
+
+        taken
+        (sandbox-names)]
+
+    (connect-idle! sid servers)
+    (into []
+          (mapcat
+            (fn [[server spec]]
+              (let [conn
+                    (conn-of sid server)
+
+                    tools
+                    (some-> (:tools conn)
+                            deref)
+
+                    prompts
+                    (cached-list conn "prompts/list")]
+
+                (concat [(server-entry taken
+                                       server
+                                       (server-status sid server spec conn)
+                                       tools
+                                       prompts
+                                       (contains? (:server-capabilities conn) "resources"))]
+                        (keep #(tool-entry taken server %) tools)
+                        (keep #(prompt-entry taken server %) prompts)))))
+          servers)))
 
 (doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
 
@@ -1580,11 +1628,11 @@
                                     " failed: " (or (ex-message t) (str t)))
                      :server server
                      :tool (when (string? tool) tool)
-                     :hint (str "Call `await "
-                                sandbox-verb
-                                "(server)` to re-read the tool's input schema"
+                     :hint (str "`doc("
+                                (python-name server)
+                                ")` prints the tools of the server"
                                 (when-not (needs-auth? (:session-id env) server)
-                                  ", or check the server's status in session env.mcp")
+                                  ", and `session[\"env\"][\"mcp\"]` has its status")
                                 ".")))))
 
 (defn- roots-of
@@ -1676,15 +1724,14 @@
                  "resultType")))
     (err :mcp/call (str "MCP server '" server "' has no " (mcp-methods method) ".")
          :server server
-         :hint (str "Call `await " sandbox-verb "(server)` for what this server has."))))
+         :hint (str "`doc(" (python-name server) ")` prints what this server has."))))
 
 (defn- mcp-call-impl
   "The whole model-facing surface. `server` alone answers with that server's tools,
    descriptions and input schemas; `server` + `tool` invokes. A `tool` that names
    an MCP request of `mcp-methods` sends that request: resources and prompts.
-   There is no inventory
-   verb because the inventory - every visible server, its status, its tool NAMES -
-   already rides in ctx under `env.mcp`, so a call only has to name the server.
+   There is no inventory verb: each visible server rides in ctx under `env.mcp`
+   with its status, so a call only has to name the server.
 
    Every failure leaves here as an error envelope, never as a throw: connecting,
    listing and calling all reach a remote peer."
@@ -1702,7 +1749,7 @@
            (fn [conn]
              (let [rows (tool-rows conn)
                    names (map #(get % "name") rows)
-                   ;; The name as a block types it after `mcp.` also finds the tool.
+                   ;; The name as a block types it after the server also finds the tool.
                    ;; An MCP request keeps its name for a tool with that exact name.
                    named
                    (when (string? tool)
@@ -1728,9 +1775,12 @@
                  (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
                       :server server
                       :tools (mapv #(get % "name") rows)
-                      :hint (str "Call `await "
-                                 sandbox-verb
-                                 "(server)` for every tool's description and input schema."))
+                      :hint (let [mine (python-name server)]
+                              (str "`doc("
+                                   mine
+                                   ")` lists the tools, and `doc("
+                                   mine
+                                   ".<tool>)` prints the input schema of one.")))
                  :else (let [r (mcp/call-tool conn
                                               tool
                                               (if (map? args) args {})
@@ -1744,6 +1794,10 @@
                                       "tool" tool
                                       "content" (get r "content")
                                       "is_error" is-error}
+                               ;; The typed result of a tool with an output schema.
+                               (contains? r "structuredContent")
+                               (assoc "structured_content" (get r "structuredContent"))
+
                                ;; A refused call is nearly always an argument mismatch, and the
                                ;; schema is already cached: ship it WITH the refusal so the retry
                                ;; costs no extra round trip.
@@ -1758,7 +1812,7 @@
 
 (def
   ^{:doc
-    "Invoke `tool` on configured MCP server `server` with `args` matching its input schema (omit or {} for none): {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"], and a refused call carries \"input_schema\" back with it. Called with `server` alone it lists that server's catalog instead: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}], \"methods\": [S]}; \"methods\" is there only for a server with resources or prompts. A `tool` that names one of these MCP requests sends it: `resources/list`, `resources/templates/list`, `resources/read` with {\"uri\": S}, `prompts/list`, `prompts/get` with {\"name\": S, \"arguments\": {...}}. The answer is {\"server\": S, \"method\": S} plus the keys of the MCP result; a list gives one page, and its \"nextCursor\" goes back as {\"cursor\": S}. Server names, status and tool names already ride in ctx under env.mcp; the gateway connects and heals every enabled server on its own clock, so there is no connect/disconnect verb. Config: ~/.vis/state.yml :mcp :servers."
+    "Invoke `tool` on configured MCP server `server` with `args` matching its input schema (omit or {} for none): {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"], a tool with an output schema adds \"structured_content\", and a refused call carries \"input_schema\" back with it. Called with `server` alone it lists that server's catalog instead: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}], \"methods\": [S]}; \"methods\" is there only for a server with resources or prompts. A `tool` that names one of these MCP requests sends it: `resources/list`, `resources/templates/list`, `resources/read` with {\"uri\": S}, `prompts/list`, `prompts/get` with {\"name\": S, \"arguments\": {...}}. The answer is {\"server\": S, \"method\": S} plus the keys of the MCP result; a list gives one page, and its \"nextCursor\" goes back as {\"cursor\": S}. Server names and status ride in ctx under env.mcp; the gateway connects and heals every enabled server on its own clock, so there is no connect/disconnect verb. Config: ~/.vis/state.yml :mcp :servers."
     :arglists '([server] [server tool] [server tool args])}
   mcp-call
   mcp-call-impl)
@@ -1793,28 +1847,35 @@
          (catch Throwable failure (str "The server gave no messages: " (ex-message failure))))))
 
 (defn- handle-parts
-  "`[server rest]` of the handle `target`: `mcp.<server>` with what follows its
-   next `.`, or the older `<server>/<tool>`. Nil for any other text."
+  "`[server rest bare?]` of the handle `target`: `mcp.<server>` with what follows
+   its next `.`, the older `<server>/<tool>`, or a bare name with what follows its
+   first `.`. Nil for any other text."
   [target]
   (let [target (str/trim (str target))]
     (or (when-let [[_ server rest] (re-matches #"mcp\.([^.\s]+)(?:\.(.+))?" target)]
-          [server rest])
+          [server rest false])
         (when-let [[_ server tool] (re-matches #"([^/\s]+)/(.+)" target)]
-          [server tool]))))
+          [server tool false])
+        (when-let [[_ server rest] (re-matches #"([a-z][a-z0-9_]*)(?:\.(.+))?" target)]
+          [server rest true]))))
 
 (defn- doc-entry
   "The `doc-corpus` entry of the handle `target`, for `doc` only: a server, one of
    its tools or one of its prompts. It connects the server and reads its lists
    when that is necessary, so `doc` has a page before the first call. A prompt
    that needs no argument comes with its messages. A name that the server does
-   not have gives the page of the server. Nil for a handle of no visible server."
+   not have gives the page of the server. Nil for a handle of no visible server,
+   and for a bare name that is not the sandbox name of its server: `doc(\"time\")`
+   is the module of Python."
   [target]
-  (when-let [[typed rest] (handle-parts target)]
+  (when-let [[typed rest bare?] (handle-parts target)]
     (let [sid (:session-id extension/*current-environment*)
           server (canonical-name typed)
           spec (get (visible-servers sid) server)
+          taken (when spec (sandbox-names))
           down (fn [note]
-                 (cond-> (server-entry server
+                 (cond-> (server-entry taken
+                                       server
                                        (server-status sid server spec (conn-of sid server))
                                        nil
                                        nil
@@ -1822,7 +1883,7 @@
                    note
                    (update :text str "\n\n" note)))]
 
-      (when spec
+      (when (and spec (or (not bare?) (= typed (bare-name server taken))))
         (try
           (if-let [conn (ensure-connected! sid server)]
             (with-current-era
@@ -1835,7 +1896,8 @@
                       prompts (when (contains? capabilities "prompts")
                                 (mcp/list-all conn "prompts/list"))
                       page (fn [note]
-                             (cond-> (server-entry server
+                             (cond-> (server-entry taken
+                                                   server
                                                    "connected"
                                                    tools
                                                    prompts
@@ -1850,10 +1912,10 @@
                   (cond (or (nil? rest) (= "prompts" rest)) (page nil)
                         prompt-name
                         (if-let [prompt (found prompts prompt-name)]
-                          (prompt-entry server prompt (prompt-body conn prompt))
+                          (prompt-entry taken server prompt (prompt-body conn prompt))
                           (page (str "MCP server `" server "` has no prompt `" prompt-name "`.")))
                         :else (if-let [tool (found tools rest)]
-                                (tool-entry server tool)
+                                (tool-entry taken server tool)
                                 (page (str "MCP server `" server "` has no tool `" rest "`.")))))))
             (down nil))
           (catch Throwable failure
@@ -1990,9 +2052,12 @@
       :symbol 'call
       :name "mcp__call"
       :result
-      "String-keyed `{op,server,tool,content,is_error,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}],methods?}`. With an MCP request as `tool`: `{op,server,method}` plus the keys of the MCP result."
+      "String-keyed `{op,server,tool,content,is_error,structured_content?,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}],methods?}`. With an MCP request as `tool`: `{op,server,method}` plus the keys of the MCP result."
       :description
-      "Call a tool on an MCP server. The call connects automatically. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so name them directly. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. In `python_execution`, call `await mcp_call(...)` or `await mcp.<server>.<tool>(**arguments)`. A tool name also matches when it has `_` for each character that an identifier cannot have."
+      (str
+        "Call a tool on an MCP server, with the names as strings. The call connects automatically. In `python_execution`, each server is a name of the sandbox, the `python_name` of its row in `session[\"env\"][\"mcp\"][\"servers\"]`: write `await <python_name>.<tool>(**arguments)`. `await "
+        sandbox-verb
+        "(server, tool, args)` is the same call. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. A tool name also matches when it has `_` for each character that an identifier cannot have.")
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
       :inject-env? true
@@ -2000,18 +2065,17 @@
 
 (defn- contribute
   "`:ext/ctx-fn` - proactively reconcile the daemon-wide MCP pool, then surface
-   every VISIBLE server and the tool NAMES it exposes at
-   `session[\"env\"][\"mcp\"][\"servers\"]`. This IS the MCP inventory: with it in the
-   session object there is no listing verb, and `mcp__call` only ever has to name
-   a server (and, to invoke, a tool).
+   every VISIBLE server at `session[\"env\"][\"mcp\"][\"servers\"]`: its
+   `\"python_name\"`, which is what a block types and what the sandbox binds, its
+   scope, its transport and its status. The tools and the prompts stay out of
+   ctx: `apropos` and `doc` give them, so a server with hundreds of tools costs
+   one row.
 
    Keyed BY SERVER NAME (a sorted map, never a list) on purpose: the ctx delta is
-   a recursive structural diff, so one server connecting, dying, or gaining a tool
-   emits exactly `session[\"env\"][\"mcp\"][\"servers\"][\"<name>\"][...] = ...` instead
-   of re-sending the whole inventory. A list would re-send every server on any
+   a recursive structural diff, so one server connecting or dying emits exactly
+   `session[\"env\"][\"mcp\"][\"servers\"][\"<name>\"][...] = ...` instead of
+   re-sending the whole inventory. A list would re-send every server on any
    change.
-
-   A connected server with resources or prompts names them under `\"has\"`.
 
    Servers that are not usable are listed too, with `\"status\"`: the model must be
    able to tell \"no such server\" from \"stopped - start it again\" from \"signed
@@ -2025,38 +2089,16 @@
   (let [sid
         (:session-id env)
 
+        taken
+        (sandbox-names)
+
         entry
         (fn [[nm spec]]
-          (let [session?
-                (some? (session-spec-of sid nm))
-
-                conn
-                (conn-of sid nm)
-
-                {:keys [names omitted]}
-                (ctx-tool-names conn)
-
-                status
-                (server-status sid nm spec conn)
-
-                connected?
-                (= "connected" status)
-
-                has
-                (when connected? (vec (distinct (map mcp-methods (methods-of conn)))))]
-
-            [nm
-             (cond-> {"scope" (if session? "session" "global")
-                      "transport" (wire-transport spec)
-                      "status" status}
-               connected?
-               (assoc "tools" names)
-
-               (seq has)
-               (assoc "has" has)
-
-               (pos? (long omitted))
-               (assoc "tools_omitted" omitted))]))
+          [nm
+           {"python_name" (python-name nm taken)
+            "scope" (if (session-spec-of sid nm) "session" "global")
+            "transport" (wire-transport spec)
+            "status" (server-status sid nm spec (conn-of sid nm))}])
 
         rows
         (into (sorted-map) (map entry) (visible-servers sid))]
@@ -2080,30 +2122,19 @@
                                      (reconcile!))))
 
 (def ^:private mcp-prompt
-  "The one thing the ctx inventory cannot say: what to TYPE.
-
-   `env.mcp` lists servers and tool names, so a model that has never called MCP
-   reads `session[\"env\"][\"mcp\"][\"servers\"][\"linear\"][\"tools\"]` and then guesses
-   at `linear.save_issue(...)` - a NameError, because the server is a child of the
-   handle `mcp`. Naming the form here costs one line per request and saves the
-   iterations that guessing burns."
-  (str "Call a tool of an MCP server with `await mcp.<server>.<tool>(**arguments)`. The"
-       " servers and their tool names are in `session[\"env\"][\"mcp\"][\"servers\"]`. In a"
-       " name, write `_` for each character that an identifier cannot have, or use"
-       " `mcp[\"<server>\"][\"<tool>\"]`. The result text is `content[i][\"text\"]`."
-       " `doc(mcp.<server>.<tool>)` prints the description and the input schema of one tool"
-       " without a call, and `doc(mcp.<server>)` prints what a server has. A server with"
-       " `\"has\"` in its entry also gives prompts or resources. `doc(mcp.<server>.prompts.<name>)`"
-       " prints one prompt. The resources are rows of `list_attachments()` with `source`"
-       " `\"mcp\"`: read one with `read_attachment(id)`. `await "
-       sandbox-verb
-       "(server, tool, args)` is the same call with the names as strings."))
+  "The one thing the ctx inventory cannot say: what to TYPE. Short on purpose: the
+   request carries it each time, and `apropos` and `doc` have the rest."
+  (str "Each MCP server is a name of the sandbox: the `python_name` of its row in"
+       " `session[\"env\"][\"mcp\"][\"servers\"]`. Call a tool with"
+       " `await <python_name>.<tool>(**arguments)`; the result text is `content[i][\"text\"]`."
+       " `apropos(pattern)` finds the tools and the prompts, and `doc(<python_name>.<tool>)`"
+       " prints the input schema of one tool."))
 
 (def vis-extension
   (extension/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "MCP client. One pool in the gateway connects each enabled MCP server (`mcp.servers` in config.yml), stdio or Streamable HTTP. It checks their health and reconnects them on `/reload`. Each session calls them with one verb, `mcp_call`; a call with only a server name lists its tools. In the sandbox, `mcp.<server>.<tool>(...)` is the same call with the names as attributes, `doc` prints a server, a tool or a prompt, and `list_attachments()` lists the resources. It supports remote OAuth 2.1 sign-in with PKCE. It is active when servers are configured."
+     "MCP client. One pool in the gateway connects each enabled MCP server (`mcp.servers` in config.yml), stdio or Streamable HTTP. It checks their health and reconnects them on `/reload`. In the sandbox each server is a name, its lower-case snake name: `await linear.save_issue(...)` calls a tool. `apropos` finds the tools and the prompts, `doc` prints a server, a tool or a prompt, and `list_attachments()` lists the resources. It supports remote OAuth 2.1 sign-in with PKCE. It is active when servers are configured."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

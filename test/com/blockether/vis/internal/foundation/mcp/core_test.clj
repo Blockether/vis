@@ -35,8 +35,8 @@
                (let [names (set (map :ext.symbol/name
                                      (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
                  (expect (= #{"mcp__call"} names))
-                 ;; Server names, status and tool names ride in `env.mcp`, so a listing
-                 ;; verb would only re-fetch what the session object already carries.
+                 ;; Server names and status ride in `env.mcp`, and `apropos` and `doc`
+                 ;; give the tools: a listing verb would only fetch them again.
                  (expect (not (contains? names "mcp__servers")))
                  (expect (not (contains? names "mcp__tools")))
                  ;; A session must not be able to yank a connection every other session is
@@ -59,13 +59,13 @@
                                                        "description" "File one."}])})}
         (fn []
           (let [[server entry] (#'mcp/doc-corpus-entries)]
-            (expect (= "mcp.linear" (:name server)))
-            (expect (= "mcp.linear.save_issue" (:name entry)))
-            (expect (= "await mcp.linear.save_issue()" (:call entry)))
+            (expect (= "linear" (:name server)))
+            (expect (= "linear.save_issue" (:name entry)))
+            (expect (= "await linear.save_issue()" (:call entry)))
             ;; The FIRST line is what `apropos` prints as the row's body, so the
             ;; call form has to live there and not below the description.
             (expect (str/includes? (first (str/split-lines (:text entry)))
-                                   "await mcp.linear.save_issue()"))
+                                   "await linear.save_issue()"))
             (expect (not (str/includes? (str (:call entry) (:text entry)) "mcp__call")))))))
   (it "lets apropos find a tool by the server's description"
       ;; #466: the server's description sat below a template that every MCP tool
@@ -78,8 +78,8 @@
                                                        "description" "List teams."}])})}
         (fn []
           (let [es (#'mcp/doc-corpus-entries)]
-            (expect (= ["mcp.linear.save_issue"] (mapv :name (doc-corpus/search es "ticket"))))
-            (expect (= ["mcp.linear"] (mapv :name (doc-corpus/search es "server")))))))))
+            (expect (= ["linear.save_issue"] (mapv :name (doc-corpus/search es "ticket"))))
+            (expect (= ["linear"] (mapv :name (doc-corpus/search es "server")))))))))
 
 (defdescribe
   mcp-call-env-injection-test
@@ -176,8 +176,7 @@
         (with-redefs [client/connect (constantly conn)]
           (#'mcp/ensure-in-pool! pool "remote" "remote" {:transport :stdio} (constantly true)))
         (expect (= ["tools/list"] @requests))
-        (expect (= {:names ["read"] :omitted 0}
-                   (#'mcp/ctx-tool-names (get-in @pool ["remote" :conn]))))
+        (expect (= [{"name" "read"}] (#'mcp/conn-tools (get-in @pool ["remote" :conn]))))
         (expect (= ["tools/list"] @requests)))))
 
 (defdescribe
@@ -957,32 +956,31 @@
                        #'client/close (constantly nil)
                        reconcile-async! (constantly nil)}
         (fn []
-          (try (reset! conns {})
-               (reset! killed #{})
-               (reconcile!)
-               (let [before (block (contribute {:session-id "s1"}))]
-                 ;; A MAP keyed by server name, not a list: the ctx delta is a
-                 ;; structural diff, so a list would re-send every server on any change.
-                 (expect (= ["alpha" "beta"] (vec (keys before))))
-                 ;; NAMES, sorted — the whole point is answering "what can I call?"
-                 ;; without spending a listing round trip first.
-                 (expect (= ["read_file" "write_file"] (get-in before ["alpha" "tools"])))
-                 (expect (= "connected" (get-in before ["alpha" "status"])))
-                 (expect (= "global" (get-in before ["alpha" "scope"])))
-                 (expect (= "stdio" (get-in before ["alpha" "transport"])))
-                 (mcp/kill-gateway-server! "beta")
-                 (let [after (block (contribute {:session-id "s1"}))
-                       delta (renderer/render-ctx-delta {"env" {"mcp" {"servers" before}}}
-                                                        {"env" {"mcp" {"servers" after}}})]
+          (try
+            (reset! conns {})
+            (reset! killed #{})
+            (reconcile!)
+            (let [before (block (contribute {:session-id "s1"}))]
+              ;; A MAP keyed by server name, not a list: the ctx delta is a
+              ;; structural diff, so a list would re-send every server on any change.
+              (expect (= ["alpha" "beta"] (vec (keys before))))
+              ;; One row for each server, with the name that a block types. The
+              ;; tools stay out: `apropos` and `doc` give them.
+              (expect
+                (= {"python_name" "alpha" "scope" "global" "transport" "stdio" "status" "connected"}
+                   (get before "alpha")))
+              (mcp/kill-gateway-server! "beta")
+              (let [after (block (contribute {:session-id "s1"}))
+                    delta (renderer/render-ctx-delta {"env" {"mcp" {"servers" before}}}
+                                                     {"env" {"mcp" {"servers" after}}})]
 
-                   ;; A stopped server stays VISIBLE with a status: "no such server"
-                   ;; and "stopped, start it again" are different answers.
-                   (expect (= "killed" (get-in after ["beta" "status"])))
-                   (expect (nil? (get-in after ["beta" "tools"])))
-                   ;; Minimal diff: only the server that moved is re-sent.
-                   (expect (str/includes? delta "session[\"env\"][\"mcp\"][\"servers\"][\"beta\"]"))
-                   (expect (not (str/includes? delta "alpha")))))
-               (finally (reset! conns {}) (reset! killed #{}))))))))
+                ;; A stopped server stays VISIBLE with a status: "no such server"
+                ;; and "stopped, start it again" are different answers.
+                (expect (= "killed" (get-in after ["beta" "status"])))
+                ;; Minimal diff: only the server that moved is re-sent.
+                (expect (str/includes? delta "session[\"env\"][\"mcp\"][\"servers\"][\"beta\"]"))
+                (expect (not (str/includes? delta "alpha")))))
+            (finally (reset! conns {}) (reset! killed #{}))))))))
 
 (defdescribe
   mcp-call-two-shapes-test
@@ -1153,7 +1151,8 @@
      #'client/list-tools (constantly catalog-tools)
      #'client/call-tool (fn [_ tool args & _]
                           (swap! sent conj ["tools/call" {"name" tool "arguments" args}])
-                          {"content" [{"type" "text" "text" "ok"}]})
+                          {"content" [{"type" "text" "text" "ok"}]
+                           "structuredContent" {"library" "/x/y"}})
      #'client/request
      (fn [_conn method params & _]
        (swap! sent conj [method params])
@@ -1175,37 +1174,50 @@
                         {"uri" (get params "uri") "text" "zażółć"})]}))}
     f))
 
+(defn- servers-ctx
+  "The context of a session that sees `servers`, each with the name that the host
+   gives it."
+  [& servers]
+  {"env" {"mcp" {"servers" (into {}
+                                 (map (fn [server]
+                                        [server {"python_name" (#'mcp/python-name server)}]))
+                                 servers)}}})
+
 (defdescribe
   mcp-doc-handle-test
   (it "prints the page of a tool before a call listed it, by the name that a block types"
       (with-catalog (atom [])
                     (fn [_call!]
-                      (let [entry (doc-corpus/resolve-entry "mcp.alpha.resolve_library_id")]
-                        (expect (= "mcp.alpha.resolve_library_id" (:name entry)))
-                        (expect (= "await mcp.alpha.resolve_library_id(query=...)" (:call entry)))
+                      (let [entry (doc-corpus/resolve-entry "alpha.resolve_library_id")]
+                        (expect (= "alpha.resolve_library_id" (:name entry)))
+                        (expect (= "await alpha.resolve_library_id(query=...)" (:call entry)))
                         (expect (str/includes? (:text entry) "Find a library."))
-                        ;; The handle of an older page still has its page.
+                        ;; The schema is JSON, as a block reads it.
+                        (expect (str/includes? (:text entry) "\"required\":[\"query\"]"))
+                        ;; The handles of the older pages still have their page.
+                        (expect (= entry (doc-corpus/resolve-entry "mcp.alpha.resolve_library_id")))
                         (expect (= entry (doc-corpus/resolve-entry "alpha/resolve-library-id")))))))
   (it "prints a prompt with its messages, and asks no messages of a prompt that needs an argument"
       (let [sent (atom [])]
         (with-catalog sent
                       (fn [_call!]
-                        (let [review (doc-corpus/resolve-entry "mcp.alpha.prompts.code_review")
-                              greet (doc-corpus/resolve-entry "mcp.alpha.prompts.greet")]
+                        (let [review (doc-corpus/resolve-entry "alpha.prompts.code_review")
+                              greet (doc-corpus/resolve-entry "alpha.prompts.greet")]
 
                           (expect (= "prompt" (:kind review)))
                           (expect (str/includes? (:text review) "Review it with care."))
-                          (expect (= "await mcp.alpha.prompts.greet(who=...)" (:call greet)))
+                          (expect (= "await alpha.prompts.greet(who=...)" (:call greet)))
                           (expect (str/includes? (:text greet) "`who` (required)"))
                           (expect (= [["prompts/get" {"name" "code-review"}]]
                                      (filterv #(= "prompts/get" (first %)) @sent))))))))
   (it "prints the server for a name that it does not have, and nothing for an unknown server"
       (with-catalog (atom [])
                     (fn [_call!]
-                      (let [page (:text (doc-corpus/resolve-entry "mcp.alpha.nope"))]
+                      (let [page (:text (doc-corpus/resolve-entry "alpha.nope"))]
                         (expect (str/includes? page "has no tool `nope`"))
                         (expect (str/includes? page "`resolve-library-id` - Find a library."))
                         (expect (str/includes? page "`code-review` - Review a change."))
+                        (expect (nil? (doc-corpus/resolve-entry "beta.read")))
                         (expect (nil? (doc-corpus/resolve-entry "mcp.beta.read")))))))
   (it "lists the server, its tools and its prompts for apropos without a request"
       (let [sent (atom [])]
@@ -1213,10 +1225,15 @@
                       (fn [call!]
                         (call! {} "alpha")
                         (reset! sent [])
-                        (expect (= ["mcp.alpha" "mcp.alpha.resolve_library_id"
-                                    "mcp.alpha.prompts.code_review" "mcp.alpha.prompts.greet"]
+                        (expect (= ["alpha" "alpha.resolve_library_id" "alpha.prompts.code_review"
+                                    "alpha.prompts.greet"]
                                    (mapv :name (#'mcp/doc-corpus-entries))))
-                        (expect (empty? @sent)))))))
+                        (expect (empty? @sent))))))
+  (it "connects a server that nobody tried, so the first apropos has its tools"
+      (with-catalog (atom [])
+                    (fn [_call!]
+                      (expect (some #{"alpha.resolve_library_id"}
+                                    (map :name (#'mcp/doc-corpus-entries))))))))
 
 (defdescribe
   mcp-identifier-name-test
@@ -1227,12 +1244,14 @@
           (fn [call!]
             (let [answer (:result (call! {} "alpha" "resolve_library_id" {"query" "x"}))]
               (expect (= "resolve-library-id" (get answer "tool")))
+              ;; The typed result of the tool comes with its content.
+              (expect (= {"library" "/x/y"} (get answer "structured_content")))
               (call! {} "alpha" "prompts/get" {"name" "code_review"})
               (expect (= [["tools/call" {"name" "resolve-library-id" "arguments" {"query" "x"}}]
                           ["prompts/get" {"name" "code-review"}]]
                          (filterv #(#{"tools/call" "prompts/get"} (first %)) @sent))))))))
   (it
-    "calls a tool, reads its page and finds it through the handle `mcp` of the sandbox"
+    "calls a tool, reads its page and finds it through the name of the server in the sandbox"
     (let [sent (atom [])]
       (with-catalog
         sent
@@ -1241,22 +1260,88 @@
             [ctx
              {'mcp-call (get (extension/wrap-extension-thunked mcp/vis-extension (constantly {}))
                              'call)}]
+            (ep/bind-ctx! ctx (servers-ctx "alpha"))
             (let
               [result
                (ep/run-python-block
                  ctx
                  (str
-                   "r = await mcp.alpha.resolve_library_id(query='x')\n"
-                   "print(r['tool'], r['content'][0]['text'])\n"
-                   "print(doc(mcp.alpha.resolve_library_id).splitlines()[0])\n"
-                   "print('Review it with care.' in doc(mcp.alpha.prompts.code_review))\n"
+                   "r = await alpha.resolve_library_id(query='x')\n"
+                   "print(r['tool'], r['content'][0]['text'], r['structured_content']['library'])\n"
+                   "print(doc(alpha.resolve_library_id).splitlines()[0])\n"
+                   "print('Review it with care.' in doc(alpha.prompts.code_review))\n"
                    "print([i.name for i in apropos('find a library')])\n"
-                   "print((await mcp['alpha'].prompts['code-review']())['messages'][0]['role'])\n"))]
+                   "print('`resolve-library-id` - Find a library.' in doc(alpha))\n"
+                   "print((await alpha.prompts['code-review']())['messages'][0]['role'])\n"))]
               (expect (nil? (:error result)))
-              (expect (= (str "resolve-library-id ok\n"
-                              "# mcp.alpha.resolve_library_id\n" "True\n"
-                              "['mcp.alpha.resolve_library_id']\n" "user\n")
-                         (:stdout result))))))))))
+              (expect (= (str "resolve-library-id ok /x/y\n" "# alpha.resolve_library_id\n"
+                              "True\n" "['alpha.resolve_library_id']\n"
+                              "True\n" "user\n")
+                         (:stdout result)))))))))
+  (it "leaves a name to Python and to a value of the session, and reaches the server through `mcp`"
+      (with-catalog
+        (atom [])
+        (fn [_call!]
+          (tpc/with-own
+            [ctx
+             {'mcp-call (get (extension/wrap-extension-thunked mcp/vis-extension (constantly {}))
+                             'call)}]
+            (ep/run-python-block ctx "alpha = 5\n")
+            (ep/bind-ctx! ctx (servers-ctx "alpha" "time"))
+            (let [taken
+                  (ep/run-python-block
+                    ctx
+                    (str "import time\n" "print(alpha, type(time).__name__, __vis_mcp_names__)\n"
+                         "print((await mcp.alpha.resolve_library_id(query='x'))['tool'])\n"
+                         "del alpha\n"))
+
+                  _
+                  (ep/bind-ctx! ctx (servers-ctx "alpha" "time"))
+
+                  freed
+                  (ep/run-python-block
+                    ctx
+                    "print((await alpha.resolve_library_id(query='x'))['tool'])\n")]
+
+              (expect (nil? (:error taken)))
+              (expect (= "5 module []\nresolve-library-id\n" (:stdout taken)))
+              (expect (nil? (:error freed)))
+              (expect (= "resolve-library-id\n" (:stdout freed))))))))
+  (it "takes away the name of a server that left"
+      (tpc/with-own [ctx {}]
+                    (ep/bind-ctx! ctx (servers-ctx "alpha" "figma-dev"))
+                    (ep/bind-ctx! ctx (servers-ctx "figma-dev"))
+                    (let [result (ep/run-python-block
+                                   ctx
+                                   "print('alpha' in globals(), figma_dev, __vis_mcp_names__)\n")]
+                      (expect (nil? (:error result)))
+                      (expect (= "False <figma_dev: doc(figma_dev) prints its page> ['figma_dev']\n"
+                                 (:stdout result)))))))
+
+(defdescribe
+  mcp-python-name-test
+  (it "gives a server its lower-case snake name, and leaves a taken name to its owner"
+      (expect (= "figma_dev" (#'mcp/python-name "figma-dev")))
+      (expect (= "mcp.time" (#'mcp/python-name "time")))
+      (expect (= "mcp.mcp" (#'mcp/python-name "mcp")))
+      (expect (= "mcp[\"1password\"]" (#'mcp/python-name "1password"))))
+  (it
+    "gives no server a name that Python or a new sandbox has"
+    (tpc/with-own
+      [ctx {}]
+      (let
+        [result
+         (ep/run-python-block
+           ctx
+           (str
+             "import builtins, keyword, re, sys\n"
+             "names = set(sys.stdlib_module_names) | set(dir(builtins)) | set(globals())\n"
+             "names |= set(keyword.kwlist) | set(keyword.softkwlist)\n"
+             "print(' '.join(sorted(n for n in names if re.fullmatch('[a-z][a-z0-9_]*', n))))\n"))]
+        (expect (nil? (:error result)))
+        (expect (= []
+                   (filterv #(= % (#'mcp/python-name %))
+                     (str/split (str/trim (:stdout result)) #" "))))))))
 
 (defdescribe
   mcp-resource-attachment-test
