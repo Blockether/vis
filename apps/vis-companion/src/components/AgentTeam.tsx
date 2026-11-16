@@ -619,12 +619,12 @@ function WideAgentTable(props: TableProps) {
 }
 
 // The leader row on a wide screen, in the columns of an agent row: no title, so its newest line takes the title cell too, its
-// time with the part that it waited for its agents, and its status. It opens nothing: the leader
-// is this session.
+// time with the part that it waited for its agents, and its status. A hairline under it divides it from its agents. It opens
+// nothing: the leader is this session.
 function WideLeaderRow({ leader, now }: { leader: LeaderLane; now: number }) {
   const times = leaderTimes(leader, now);
   return (
-    <li className={`py-1 ${WIDE_ROW}`} data-leader-row data-hover-note-frame>
+    <li className={`border-b border-dialog-edge py-1 ${WIDE_ROW}`} data-leader-row data-hover-note-frame>
       <span className={`font-bold uppercase ${CELL_RULE} ${LEADER_INK}`}>{LEADER_ROLE}</span>
       <HoverNote className={`col-span-2 min-w-0 ${CELL_RULE}`} note={leader.note}>
         <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
