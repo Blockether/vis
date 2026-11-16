@@ -1,10 +1,9 @@
 import type { Session, SessionUsage, Subagent, TranscriptTurn } from './types';
 
 /**
- * WHAT AN HTML EXPORT CARRIES.
+ * WHAT AN HTML EXPORT CARRIES FOR ONE SESSION.
  *
- * The engine writes one JSON document into the export page (`transcript-export.html`). The
- * gateway's own transcript rows go in unchanged, so the export draws them with the same
+ * The gateway's own transcript rows go in unchanged, so the export draws them with the same
  * components as the session screen. `child_session_ids` names this session's subagents, whose
  * wakes the screen hides too. `agents` holds their team rows, which each turn that started them
  * shows. `attachments` holds the bytes of each artifact that the steps
@@ -12,13 +11,25 @@ import type { Session, SessionUsage, Subagent, TranscriptTurn } from './types';
  * the session's usage rollup, as `GET /v1/sessions/:sid/usage` returns it, or `null` before the
  * first measured call.
  */
-export interface TranscriptExport {
+export interface SessionExport {
   session: Pick<Session, 'id' | 'title' | 'agent_name' | 'workspace' | 'model' | 'model_pref'>;
   usage: SessionUsage | null;
   turns: TranscriptTurn[];
   child_session_ids: string[];
   agents: Subagent[];
   attachments: Record<string, ExportAttachment>;
+}
+
+/**
+ * WHAT AN HTML EXPORT CARRIES.
+ *
+ * The engine writes one JSON document into the export page (`transcript-export.html`): the
+ * document of the exported session, and under `descendants` the document of each subagent
+ * session below it, at any depth, keyed by session id. A row of a subagent opens its document.
+ * An export from before `descendants` holds only the exported session.
+ */
+export interface TranscriptExport extends SessionExport {
+  descendants: Record<string, SessionExport>;
 }
 
 /** The stored bytes of one artifact, in base64. */
@@ -36,8 +47,21 @@ export const TRANSCRIPT_EXPORT_DATA_ID = 'vis-transcript-data';
  */
 export function parseTranscriptExport(text: string | null | undefined): TranscriptExport {
   const value: unknown = JSON.parse(text?.trim() || 'null');
+  const root = sessionExport(value);
+  const descendants = (value as Partial<TranscriptExport>).descendants;
+  return {
+    ...root,
+    descendants:
+      descendants && typeof descendants === 'object'
+        ? Object.fromEntries(Object.entries(descendants).map(([sid, doc]) => [sid, sessionExport(doc)]))
+        : {},
+  };
+}
+
+/** The document of one session from `value`, with each absent list or map empty. */
+function sessionExport(value: unknown): SessionExport {
   if (!value || typeof value !== 'object') throw new Error('This page holds no transcript.');
-  const doc = value as Partial<TranscriptExport>;
+  const doc = value as Partial<SessionExport>;
   if (!doc.session || typeof doc.session.id !== 'string') throw new Error('The transcript names no session.');
   if (!Array.isArray(doc.turns)) throw new Error('The transcript has no turns.');
   return {
@@ -105,12 +129,16 @@ const ATTACHMENT_PATH = /^\/v1\/sessions\/[^/]+\/iterations\/([^/]+)\/attachment
 
 /**
  * The answer of the export to one request for `url`: the stored bytes of an artifact, else a
- * 404, as a gateway answers an unknown artifact. A request to another address gets `null`.
+ * 404, as a gateway answers an unknown artifact. A request to another address gets `null`. An
+ * iteration id names one step of one session, so the session that holds the artifact answers.
  */
 export function snapshotResponse(data: TranscriptExport, url: string): Response | null {
   if (!url.startsWith(`${SNAPSHOT_GATEWAY}/`)) return null;
   const match = ATTACHMENT_PATH.exec(new URL(url).pathname);
-  const stored = match ? data.attachments[`${decodeURIComponent(match[1])}/${match[2]}`] : undefined;
+  const key = match ? `${decodeURIComponent(match[1])}/${match[2]}` : undefined;
+  const stored = key
+    ? [data, ...Object.values(data.descendants)].map((doc) => doc.attachments[key]).find(Boolean)
+    : undefined;
   if (!stored) {
     return new Response(JSON.stringify({ error: 'not_in_export' }), {
       status: 404,

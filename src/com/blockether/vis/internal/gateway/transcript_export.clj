@@ -7,7 +7,9 @@
    and writes the session's JSON into that element: the gateway's own transcript rows
    (`state/transcript-page`), the session title, agent name and workspace, the ids of the
    session's subagents, the team rows of the turns that started them and the bytes of each
-   artifact that the steps name. The page needs no gateway and no network when it opens.
+   artifact that the steps name. Under `descendants`, the JSON holds the same document for each
+   subagent session below the session, so a subagent row of the page opens its conversation.
+   The page needs no gateway and no network when it opens.
 
    The bundle is found through `VIS_WEB_DIR` ([[web/configured-root]]), the folder the
    gateway serves the web app from. Without it, an export fails with a message that says how
@@ -84,8 +86,9 @@
                       [iid idx])))))
 
 (defn export-data
-  "The JSON document of the export page for session `sid`, or nil when no session has that id.
-   The turns are the complete rows of the session screen: no window and no step limit."
+  "The JSON document of session `sid` for an export, or nil when no session has that id. The
+   turns are the complete rows of the session screen: no window and no step limit. The agents
+   are the team rows of those turns."
   [sid]
   (when-let [soul (state/soul sid)]
     (let [turns (:turns (state/transcript-page sid {}))]
@@ -93,11 +96,31 @@
        "usage" (state/session-usage-info sid)
        "turns" turns
        "child_session_ids" (into []
-                                 (keep #(some-> (or (:session-id %) (:id %))
+                                 (keep #(some-> (:session_id %)
                                                 str))
                                  (persistance/db-agent-list (lp/db-info) sid))
-       "agents" (wire/canonical (state/agent-rows sid))
+       "agents" (into [] (mapcat #(get % "agents")) turns)
        "attachments" (attachment-files turns)})))
+
+(defn- subagent-documents
+  "The [[export-data]] of each subagent session below the session of `data`, at any depth, keyed
+   by session id. A subagent session that the store does not hold is left out, and the page
+   says that the export does not hold its conversation."
+  [data]
+  (loop [found
+         {}
+
+         pending
+         (get data "child_session_ids")]
+
+    (if-let [sid (first pending)]
+      (let [doc (when-not (or (contains? found sid) (= sid (get-in data ["session" "id"])))
+                  (export-data sid))]
+        (recur (cond-> found
+                 doc
+                 (assoc sid doc))
+               (concat (rest pending) (get doc "child_session_ids"))))
+      found)))
 
 (defn html
   "The standalone HTML export of session `sid`, or nil when no session has that id. Throws
@@ -111,7 +134,7 @@
                                       ". Build it in apps/vis-companion with: npm run build:web")
                                  {:type :transcript-export/no-template})))]
     (when-let [data (export-data sid)]
-      (fill (slurp file) data))))
+      (fill (slurp file) (assoc data "descendants" (subagent-documents data))))))
 
 (defn- strip-ansi
   "`s` without terminal escape sequences, which tool output can carry."

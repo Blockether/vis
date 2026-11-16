@@ -1,0 +1,139 @@
+{
+  "description": "The JSON document of an HTML transcript export (gateway/transcript_export.clj): a leader, its subagent and the subagent of that subagent. The engine writes these keys and the Companion export page reads them.",
+  "export": {
+    "session": {
+      "id": "lead",
+      "title": "lead session"
+    },
+    "usage": null,
+    "turns": [
+      {
+        "turn_id": "lead-turn",
+        "request": "ship the parser",
+        "status": "completed",
+        "created_at": 1794819600000,
+        "iterations": [
+          {
+            "position": 0,
+            "answer": "The parser ships."
+          }
+        ],
+        "agents": [
+          {
+            "session_id": "child",
+            "parent_id": "lead",
+            "leader_id": "lead",
+            "team_id": "lead-turn",
+            "title": "Fix the parser",
+            "task": "Fix the parser",
+            "status": "completed",
+            "iteration_budget": 4,
+            "iterations_used": 1,
+            "created_at": 1794819600000,
+            "finished_at": 1794819601000
+          }
+        ]
+      }
+    ],
+    "child_session_ids": [
+      "child"
+    ],
+    "agents": [
+      {
+        "session_id": "child",
+        "parent_id": "lead",
+        "leader_id": "lead",
+        "team_id": "lead-turn",
+        "title": "Fix the parser",
+        "task": "Fix the parser",
+        "status": "completed",
+        "iteration_budget": 4,
+        "iterations_used": 1,
+        "created_at": 1794819600000,
+        "finished_at": 1794819601000
+      }
+    ],
+    "attachments": {},
+    "descendants": {
+      "child": {
+        "session": {
+          "id": "child",
+          "title": "child session"
+        },
+        "usage": null,
+        "turns": [
+          {
+            "turn_id": "child-turn",
+            "request": "fix the parser",
+            "status": "completed",
+            "created_at": 1794819600000,
+            "iterations": [
+              {
+                "position": 0,
+                "answer": "The parser is fixed."
+              }
+            ],
+            "agents": [
+              {
+                "session_id": "grand",
+                "parent_id": "child",
+                "leader_id": "child",
+                "team_id": "child-turn",
+                "title": "Read the logs",
+                "task": "Read the logs",
+                "status": "completed",
+                "iteration_budget": 4,
+                "iterations_used": 1,
+                "created_at": 1794819600000,
+                "finished_at": 1794819601000
+              }
+            ]
+          }
+        ],
+        "child_session_ids": [
+          "grand"
+        ],
+        "agents": [
+          {
+            "session_id": "grand",
+            "parent_id": "child",
+            "leader_id": "child",
+            "team_id": "child-turn",
+            "title": "Read the logs",
+            "task": "Read the logs",
+            "status": "completed",
+            "iteration_budget": 4,
+            "iterations_used": 1,
+            "created_at": 1794819600000,
+            "finished_at": 1794819601000
+          }
+        ],
+        "attachments": {}
+      },
+      "grand": {
+        "session": {
+          "id": "grand",
+          "title": "grand session"
+        },
+        "usage": null,
+        "turns": [
+          {
+            "turn_id": "grand-turn",
+            "request": "read the logs",
+            "status": "completed",
+            "created_at": 1794819600000,
+            "iterations": [
+              {
+                "position": 0,
+                "answer": "The logs are clean."
+              }
+            ]
+          }
+        ],
+        "child_session_ids": [],
+        "agents": [],
+        "attachments": {}
+      }
+    }
+  }
+}

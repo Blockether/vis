@@ -7,12 +7,30 @@ export type AgentStep = Readonly<{ role?: Readonly<{ text: string; ink: string }
 /** The header path of a subagent session, `LEADER → IMPLEMENT | Fix parser`, and the session it opens. */
 export type AgentPath = Readonly<{ parentId: string; parent: AgentStep; self: AgentStep }>;
 
-const LEADER: AgentStep = { role: { text: LEADER_ROLE, ink: LEADER_INK } };
+/** The step of the leader. */
+export const LEADER_STEP: AgentStep = { role: { text: LEADER_ROLE, ink: LEADER_INK } };
 
-const stepOf = (agent: Subagent, agents: readonly Subagent[]): AgentStep => ({
+/** The step of `agent`, a row of the team `agents`. */
+export const agentStep = (agent: Subagent, agents: readonly Subagent[]): AgentStep => ({
   role: agentRole(agent),
   label: agentLabel(agent, agents),
 });
+
+/** One step of the path: the role word, then `|` and the name, like `IMPLEMENT | Fix parser`. */
+export function PathStep({ step }: { step: AgentStep }) {
+  return (
+    <>
+      {step.role && <span className={`uppercase ${step.role.ink}`}>{step.role.text}</span>}
+      {step.role && step.label && (
+        <>
+          {' '}
+          <span className="text-dialog-hint">|</span>{' '}
+        </>
+      )}
+      {step.label}
+    </>
+  );
+}
 
 /**
  * The header path of subagent session `sid`, like the TUI breadcrumb. A parent that is a known
@@ -32,7 +50,7 @@ export function agentPath(
   const parent = parentId === agent.leader_id ? undefined : agents.find((row) => row.session_id === parentId);
   return {
     parentId,
-    parent: parent ? stepOf(parent, agents) : LEADER,
-    self: self ? stepOf(self, agents) : { label: title },
+    parent: parent ? agentStep(parent, agents) : LEADER_STEP,
+    self: self ? agentStep(self, agents) : { label: title },
   };
 }

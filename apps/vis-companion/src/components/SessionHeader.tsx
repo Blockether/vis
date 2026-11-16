@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
-import type { AgentPath, AgentStep } from './AgentCrumb';
+import { PathStep, type AgentPath } from './AgentCrumb';
 import { menuPosition, type AnchorBox, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
@@ -104,22 +104,6 @@ export type SessionHeaderCommands = Readonly<{
   /** Open the session that started this subagent session. */
   openParent?: (sid: string) => void;
 }>;
-
-/** One step of the path: the role word, then `|` and the name, like `IMPLEMENT | Fix parser`. */
-function PathStep({ step }: { step: AgentStep }) {
-  return (
-    <>
-      {step.role && <span className={`uppercase ${step.role.ink}`}>{step.role.text}</span>}
-      {step.role && step.label && (
-        <>
-          {' '}
-          <span className="text-dialog-hint">|</span>{' '}
-        </>
-      )}
-      {step.label}
-    </>
-  );
-}
 
 /**
  * The session's navigation and connection state. What this session IS — its id — and

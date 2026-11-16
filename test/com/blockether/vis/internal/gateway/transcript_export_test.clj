@@ -1,7 +1,12 @@
 (ns com.blockether.vis.internal.gateway.transcript-export-test
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.transcript-export :as transcript-export]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
+            [com.blockether.vis.test-temp :as test-temp]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private template
@@ -38,6 +43,103 @@
                      (try (transcript-export/fill (str template transcript-export/data-element) {})
                           nil
                           (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+
+(defn- spawn!
+  "Store a subagent session of `parent` that its turn `turn` started, and answer its id."
+  [db parent turn task]
+  (str (h/fork-session-at-turn! db
+                                parent
+                                {:through-turn-id turn
+                                 :title task
+                                 :agent {:parent_id parent
+                                         :leader_id parent
+                                         :team_id (str turn)
+                                         :task task
+                                         :status "completed"
+                                         :iteration_budget 4
+                                         :spawn_key (str (random-uuid))
+                                         :spawn_fingerprint "f"
+                                         :checkpoint [{:role :user :content "Context"}]}})))
+
+;; Issue #483: the page held only the conversation of the leader, so a subagent row of the page
+;; had nothing to open.
+(defdescribe
+  subagent-conversations-test
+  (it
+    "puts the conversation of each subagent session below the leader into the page, at any depth"
+    (let [db
+          (ps/db-create-connection! :memory)
+
+          page
+          (io/file (test-temp/temp-dir "transcript-export") transcript-export/page-name)]
+
+      (try
+        (spit page template)
+        (with-redefs [lp/db-info
+                      (constantly db)
+
+                      transcript-export/template-file
+                      (constantly page)]
+
+          (let [turn!
+                (fn [sid request]
+                  (ps/db-store-session-turn! db {:parent-session-id sid :user-request request}))
+
+                leader
+                (str (h/store-session! db {:channel :api}))
+
+                child
+                (spawn! db leader (turn! leader "Ship the parser") "Fix the parser")
+
+                child-turn
+                (turn! child "Fix the parser")
+
+                iteration
+                (h/store-iteration! db
+                                    {:session-turn-id child-turn
+                                     :status :done
+                                     :code "attach(png, 'chart.png')"
+                                     :attachments [{:tool-call-id "call_A"
+                                                    :media-type "image/png"
+                                                    :base64 "AQID"
+                                                    :filename "chart.png"
+                                                    :size 3}]})
+
+                grandchild
+                (spawn! db child child-turn "Read the logs")
+
+                _
+                (turn! grandchild "Read the logs")
+
+                data
+                (wire/parse-json (data-json (transcript-export/html leader)))
+
+                documents
+                (get data "descendants")
+
+                ;; Contract fixture `transcript-export.json`: the document that the Companion
+                ;; suite draws. The page reads these keys.
+                fixture
+                (get (wire/parse-json (slurp (io/resource
+                                               "vis-contract/fixtures/transcript-export.json")))
+                     "export")
+
+                last-request
+                (fn [sid]
+                  (get (peek (get-in documents [sid "turns"])) "request"))]
+
+            (expect (= (set (keys fixture)) (set (keys data))))
+            (expect (= #{(set (keys (get-in fixture ["descendants" "child"])))}
+                       (into #{} (map (comp set keys)) (vals documents))))
+            (expect (= #{child grandchild} (set (keys documents))))
+            (expect (= "Fix the parser" (last-request child)))
+            (expect (= "Read the logs" (last-request grandchild)))
+            ;; The page draws the row of the nested subagent from the document of its parent.
+            (expect (= [grandchild]
+                       (mapv #(get % "session_id") (get-in documents [child "agents"]))))
+            (expect (= {"media_type" "image/png" "base64" "AQID"}
+                       (get-in documents [child "attachments" (str iteration "/0")])))))
+        (finally (ps/db-dispose-connection! db))))))
 
 (defn- form
   "A form of a finished step with Activity rows of `signals` in `state`."

@@ -396,8 +396,10 @@ vis-agent sessions export 3a7b2c1d > session.md
 
 ### HTML
 
-Use `--html` for a self-contained page you can open in a browser. Vis creates
-missing directories and adds `.html` if the output path has no extension:
+Use `--html` for a self-contained page you can open in a browser. The page also holds the
+conversation of each subagent. Select a subagent row to open its conversation, then use the
+path at the top of the page to go back. Vis creates missing directories and adds `.html` if
+the output path has no extension:
 
 ```bash
 vis-agent sessions export 3a7b2c1d --html report.html

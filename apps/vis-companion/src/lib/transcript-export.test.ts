@@ -37,6 +37,13 @@ const DATA: TranscriptExport = parseTranscriptExport(
     session: { id: 's 1' },
     turns: [],
     attachments: { 'i/1/3': { media_type: 'image/png', base64: btoa(String.fromCharCode(...BYTES)) } },
+    descendants: {
+      child: {
+        session: { id: 'child' },
+        turns: [],
+        attachments: { 'c/1/0': { media_type: 'image/png', base64: btoa(String.fromCharCode(...BYTES)) } },
+      },
+    },
   }),
 );
 
@@ -64,6 +71,15 @@ describe('an export answers the artifact requests of its page', () => {
 
     expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual(BYTES);
     expect(blob.type).toBe('image/png');
+    expect(passed).toEqual([]);
+  });
+
+  // Issue #483: an export holds the conversations of its subagents, with their artifacts.
+  it('gives the client the stored bytes of an artifact of a subagent session', async () => {
+    const client = new GatewayClient({ url: SNAPSHOT_GATEWAY });
+    const blob = await client.attachmentBlob('child', 'c/1', 0);
+
+    expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual(BYTES);
     expect(passed).toEqual([]);
   });
 

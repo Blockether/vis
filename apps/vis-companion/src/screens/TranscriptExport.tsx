@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { agentStep, LEADER_STEP, PathStep, type AgentStep } from '../components/AgentCrumb';
 import { agentsByTurn, storedLeaderLane, TurnAgents } from '../components/AgentTeam';
 import { SessionStatsPanel } from '../components/SessionList';
 import {
@@ -10,27 +11,124 @@ import {
 } from '../components/TranscriptRows';
 import { TranscriptOutline } from '../components/TranscriptOutline';
 import { SyntaxCodeBlock } from '../components/ChatContent';
-import { Disclosure } from '../components/ui';
+import { ChevronIcon } from '../components/icons';
+import { BAND_EDGE_CLASS, Disclosure } from '../components/ui';
 import type { GatewayClient } from '../lib/gateway';
-import { failedToolCalls, type TranscriptExport as TranscriptExportData } from '../lib/transcript-export';
+import {
+  failedToolCalls,
+  type SessionExport,
+  type TranscriptExport as TranscriptExportData,
+} from '../lib/transcript-export';
 import { JUMP_MARGIN, outlineEntry } from '../lib/transcript-outline';
 import { WorkspaceRootsContext } from '../lib/workspace-roots';
+
+/** One opened subagent session of an export, and the scroll offset of its parent at the click. */
+type OpenedAgent = Readonly<{ sid: string; parentTop: number }>;
+
+/**
+ * An HTML export: the transcript of the exported session, and of each subagent session below it.
+ * A subagent row opens the transcript of its session from the export, so the page needs no
+ * gateway. Above an opened subagent, a band shows its path from the leader. The arrow of the band
+ * opens the parent, and each earlier step of the path opens its session. A session comes back at
+ * the scroll offset that it had. An export that does not hold the session of a row says so in
+ * place of the transcript, with the same band.
+ */
+export function TranscriptExport({ data, client }: { data: TranscriptExportData; client: GatewayClient }) {
+  // The opened subagent sessions, from a child of the leader down, and the offset to restore.
+  const [view, setView] = useState<{ opened: readonly OpenedAgent[]; top: number }>({ opened: [], top: 0 });
+  const { opened } = view;
+  const documentAt = (depth: number): SessionExport | undefined =>
+    depth === 0 ? data : data.descendants[opened[depth - 1].sid];
+  const doc = documentAt(opened.length);
+  const steps = opened.map(({ sid }, index): AgentStep => {
+    const team = documentAt(index)?.agents ?? [];
+    const agent = team.find((row) => row.session_id === sid);
+    return agent ? agentStep(agent, team) : { label: data.descendants[sid]?.session.title || sid };
+  });
+  const openDepth = (depth: number) => setView({ opened: opened.slice(0, depth), top: opened[depth].parentTop });
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-ink">
+      {opened.length > 0 && (
+        <nav
+          aria-label="Subagent path"
+          className="flex min-h-13 shrink-0 items-stretch border-b border-dialog-edge bg-panel-2"
+        >
+          <button
+            type="button"
+            aria-label="Back to the parent session"
+            className={BAND_EDGE_CLASS}
+            onClick={() => openDepth(opened.length - 1)}
+          >
+            <ChevronIcon back className="size-4" aria-hidden />
+          </button>
+          <ol className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 self-center py-1.5 pr-4 text-title font-semibold text-white mouse:text-body">
+            {[LEADER_STEP, ...steps].map((step, depth) => (
+              <li key={depth} className="flex min-w-0 items-center gap-x-2">
+                {depth > 0 && <span aria-hidden="true">→</span>}
+                {depth < opened.length ? (
+                  <button
+                    type="button"
+                    className="min-w-0 truncate rounded-none text-left hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onClick={() => openDepth(depth)}
+                  >
+                    <PathStep step={step} />
+                  </button>
+                ) : (
+                  <span aria-current="page" className="min-w-0 truncate">
+                    <PathStep step={step} />
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </nav>
+      )}
+      {doc ? (
+        <SessionTranscript
+          key={doc.session.id}
+          data={doc}
+          client={client}
+          top={view.top}
+          onOpen={(sid, parentTop) => setView({ opened: [...opened, { sid, parentTop }], top: 0 })}
+        />
+      ) : (
+        <div className={`${TRANSCRIPT_SCROLLER_CLASS} bg-ink`} role="region" aria-label="Transcript">
+          <div className={transcriptColumnClass({ zen: false, outline: false, empty: true })}>
+            <p className="text-body text-dialog-hint">
+              This export does not hold the conversation of this subagent. To get it, export the leader session
+              again with the current Vis.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * A session transcript as an HTML export draws it: the session screen's reading column, its
  * scroller, its turn rows and its outline rail. `client` reads the artifacts that the export
  * stores, so the rows show them as the screen does. A turn shows the subagents that it started,
- * but a row of them opens nothing, because the export holds only this session. A wake from a subagent of this session stays
+ * and a row of them calls `onOpen` with its session and the scroll offset of this transcript. The
+ * transcript opens at the offset `top`. A wake from a subagent of this session stays
  * hidden, as on the screen. The rows are complete, so every trace mounts whole and the outline
  * holds every turn. The session's metrics panel, as the session list shows it, stands above the
  * first turn, closed under a METRICS row and as wide as the column when it opens. A closed FAILED
  * TOOLS row under it lists each failed tool call with its error and its code; the step of a call
  * jumps to its turn.
  */
-export function TranscriptExport({ data, client }: { data: TranscriptExportData; client: GatewayClient }) {
+function SessionTranscript({ data, client, top, onOpen }: {
+  data: SessionExport;
+  client: GatewayClient;
+  top: number;
+  onOpen: (sid: string, parentTop: number) => void;
+}) {
   const { session, turns } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = top;
+  }, [top]);
   const children = useMemo(() => new Set(data.child_session_ids), [data.child_session_ids]);
   const roots = useMemo(
     () => [session.workspace?.root],
@@ -53,7 +151,7 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
   };
   return (
     <WorkspaceRootsContext.Provider value={roots}>
-      <div className="relative flex h-full min-h-0 flex-col bg-ink">
+      <div className="relative flex min-h-0 flex-1 flex-col bg-ink">
         <div ref={scrollRef} className={`${TRANSCRIPT_SCROLLER_CLASS} bg-ink`} role="region" aria-label="Transcript">
           <div
             ref={columnRef}
@@ -129,7 +227,11 @@ export function TranscriptExport({ data, client }: { data: TranscriptExportData;
                 sid={session.id}
                 team={
                   teams.has(turn.turn_id) ? (
-                    <TurnAgents agents={teams.get(turn.turn_id)!} onOpen={() => {}} leader={storedLeaderLane(turn)} />
+                    <TurnAgents
+                      agents={teams.get(turn.turn_id)!}
+                      onOpen={(sid) => onOpen(sid, scrollRef.current?.scrollTop ?? 0)}
+                      leader={storedLeaderLane(turn)}
+                    />
                   ) : undefined
                 }
               />
