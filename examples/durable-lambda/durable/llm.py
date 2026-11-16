@@ -64,7 +64,7 @@ def checked(method: str, path: str, body: bytes) -> tuple[str | None, bytes]:
     Thus the two cannot read different model names from one request.
     """
     if (method, path) not in ALLOWED:
-        return f"Durable Lambda does not allow {method} {path}", b""
+        return f"Software factory does not allow {method} {path}", b""
     if len(body) > REQUEST_LIMIT:
         return "the request is too large", b""
     if method != "POST":
@@ -76,9 +76,9 @@ def checked(method: str, path: str, body: bytes) -> tuple[str | None, bytes]:
         return "the request is not a JSON object", b""
     limits = {m["name"]: m["output_limit"] for m in MODELS}
     if not isinstance(model, str) or model not in limits:
-        return f"Durable Lambda does not allow the model {model!r}", b""
+        return f"Software factory does not allow the model {model!r}", b""
     if request.get("n", 1) != 1:
-        return "Durable Lambda allows one answer for each call", b""
+        return "Software factory allows one answer for each call", b""
     # A call cannot ask for more output than the model of the stack has.
     for field in ("max_tokens", "max_completion_tokens"):
         if field in request:

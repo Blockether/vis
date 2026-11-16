@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Durable Lambda. Vis is the custom Lambda runtime of five functions from one image.
+  Software factory. Vis is the custom Lambda runtime of five functions from one image.
   S3 is the database. EFS holds the repository. The worker has no route to the internet.
 
 Parameters:
@@ -688,7 +688,7 @@ Resources:
 
 Outputs:
   Url:
-    Description: The address of Durable Lambda.
+    Description: The address of Software factory.
     Value: !GetAtt FrontUrl.FunctionUrl
   Bucket:
     Description: The bucket. It stays when you delete the stack.

@@ -1,6 +1,6 @@
 """The front function: the only public entry of the stack.
 
-It answers the Function URL. It serves the Vis web app and the Durable Lambda pages,
+It answers the Function URL. It serves the Vis web app and the Software factory pages,
 and relays every API call to the live worker (see `relay.py`). It has no sign-in: each
 caller of the address can use the stack. It also takes the webhook of GitHub and the
 tick of the schedule. The front function has no network path to the worker or the
@@ -22,7 +22,7 @@ from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
 from durable.settings import DUE_S, PAGES_WEB, REPO_FUNCTION, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
 
-# The pages of Durable Lambda, by path.
+# The pages of Software factory, by path.
 PAGES = {"/dashboard": "workflows.html", "/dashboard/factory": "factory.html"}
 # The path of the Vis web app. Its files stay at the root, where its page asks for them.
 VIS_PAGE = "/dashboard/vis"

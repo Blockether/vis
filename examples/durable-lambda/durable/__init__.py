@@ -1,1 +1,1 @@
-"""Durable Lambda on AWS Lambda."""
+"""Software factory on AWS Lambda."""

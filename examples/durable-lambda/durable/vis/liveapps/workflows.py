@@ -264,7 +264,7 @@ class Workflows(threading.Thread):
             "Workflows",
             tabs(self.tab),
             self.run_tab(),
-            description="Start a workflow of Durable Lambda, decide at its gates and see the runs.",
+            description="Start a workflow of Software factory, decide at its gates and see the runs.",
             key="workflows",
             scope="global",
             # The worker opens the app at each start, so a gateway restart can drop it.

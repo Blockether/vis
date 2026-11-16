@@ -47,7 +47,7 @@ WEBHOOK_PARAMETER = ENV.get("VIS_WEBHOOK_PARAMETER", "")
 
 VIS_BINARY = "/opt/vis/vis-agent-native"
 VIS_PYTHON_NATIVE = "/opt/vis/vis-agent-python/libvispython.so"
-# The Vis web app, the Durable Lambda pages and the pinned files of other projects.
+# The Vis web app, the Software factory pages and the pinned files of other projects.
 VIS_WEB, PAGES_WEB, VENDOR = ENV.get("VIS_WEB_DIR", "/opt/vis-web"), "/opt/durable/web", "/opt/durable/vendor"
 # The workflows that a new stack starts with.
 SAMPLES = "/opt/durable/workflows"
@@ -83,7 +83,7 @@ PROJECT_NAME = REPO.rpartition("/")[2] or "durable"
 # GitHub runs the workflow files of this directory with internet access, so a session cannot change it.
 GUARDED = ".github"
 # The author of each commit that the stack makes.
-GIT_NAME, GIT_EMAIL = "Durable Lambda", "durable-lambda@blockether.com"
+GIT_NAME, GIT_EMAIL = "Software factory", "durable-lambda@blockether.com"
 # The time that one Git command can take.
 GIT_S = 240
 # The largest Git bundle of a workspace or of a publication, in bytes.
@@ -172,7 +172,7 @@ STEPS = 1000
 # process works for at most the lifetime of a worker.
 RUN_LIMIT_S = int(ENV.get("VIS_RUN_LIMIT_S", "28800"))
 STARTS = -(-RUN_LIMIT_S // LIFETIME)
-# The time that one turn of a run can take, and one call of the Durable Lambda API.
+# The time that one turn of a run can take, and one call of the Software factory API.
 TURN_S, API_S = 900, 120
 # The correction requests that a session gets for an answer that does not fit its model.
 CORRECTIONS = 2

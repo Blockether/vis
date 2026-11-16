@@ -1,4 +1,4 @@
-"""A client of the Durable Lambda API, for the code that runs next to the gateway.
+"""A client of the Software factory API, for the code that runs next to the gateway.
 
 The broker of the worker serves the API on the loopback interface. The worker gives
 its address to each run process (`BROKER` of `settings.py`). The workflow runs use
@@ -16,11 +16,11 @@ from durable.settings import API_S, BROKER
 
 
 class DurableError(RuntimeError):
-    """The Durable Lambda API refused a call."""
+    """The Software factory API refused a call."""
 
 
 class Durable:
-    """The Durable Lambda API at the address of the broker."""
+    """The Software factory API at the address of the broker."""
 
     def __init__(self, base: str | None = None) -> None:
         """Use the address `base`, or the broker of the worker that started this process."""

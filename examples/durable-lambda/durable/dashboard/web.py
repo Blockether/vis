@@ -18,7 +18,7 @@ SECURITY = {
     "referrer-policy": "no-referrer",
     "x-frame-options": "DENY",
 }
-# The Durable Lambda pages load only their own files.
+# The Software factory pages load only their own files.
 PAGE_POLICY = (
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
     "script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; "

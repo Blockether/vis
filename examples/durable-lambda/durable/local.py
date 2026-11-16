@@ -1,4 +1,4 @@
-"""Run all of Durable Lambda on one machine, without AWS: `python -m durable.local`.
+"""Run all of Software factory on one machine, without AWS: `python -m durable.local`.
 
 The front function, the relay, the worker, the llm function, the repo function, the
 sync function run as they are. Only the AWS services have a replacement: S3 is a
@@ -269,7 +269,7 @@ def main() -> None:
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Page)  # noqa: S104 - a container port
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"Durable Lambda on http://localhost:{PORT}", flush=True)
+    print(f"Software factory on http://localhost:{PORT}", flush=True)
     while True:
         # The schedule of the stack: a tick each minute, and a worker when one is wanted.
         if Functions.wake.wait(timeout=60):

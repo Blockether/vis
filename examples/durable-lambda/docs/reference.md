@@ -1,6 +1,6 @@
 # Reference
 
-The details of [Durable Lambda](../README.md): the data, the addresses, the limits and the variables.
+The details of [Software factory](../README.md): the data, the addresses, the limits and the variables.
 
 ## The custom runtime
 
@@ -175,9 +175,9 @@ call. Only the webhook checks its caller.
 | `GET /dashboard/vis` | Vis web |
 | `GET /` | Goes to `/dashboard` |
 | `/v1/*` | The Vis gateway: sessions, turns, events, attached files |
-| `/dashboard/api/*` | The Durable Lambda API of the worker |
+| `/dashboard/api/*` | The Software factory API of the worker |
 
-The Durable Lambda API has these addresses below `/dashboard/api/`. A body and an answer are JSON.
+The Software factory API has these addresses below `/dashboard/api/`. A body and an answer are JSON.
 
 | Method and address | Body | Result |
 | --- | --- | --- |
@@ -319,7 +319,7 @@ Time:
 | `DURABLE_LLM_KEY` | none; necessary at the first run | The key of the provider |
 | `DURABLE_MODELS` | `glm-5.3`, `gpt-oss-120b`, `qwen3.8-max` | A JSON list of `{name, context, output_limit}`. Set it for each other provider: `llm` refuses a model that is not in the list |
 | `STACK` | `durable-lambda` | The name of the stack and the prefix of each resource |
-| `DURABLE_MACHINE_NAME` | the name of the stack | The machine name of the gateway, 1 to 64 characters. Vis web and the Vis apps show it for this stack. The worker gets it as `VIS_MACHINE_NAME` |
+| `DURABLE_MACHINE_NAME` | `Software factory` | The machine name of the gateway, 1 to 64 characters. Vis web and the Vis apps show it for this stack. The worker gets it as `VIS_MACHINE_NAME` |
 | `AWS_REGION` | `eu-central-1` | The region |
 | `ENGINE` | `docker` | `docker` or `podman`. The stack of this example was made with `podman` |
 
@@ -389,7 +389,7 @@ route to the internet and no key.
 | [`worktree.py`](../durable/worktree.py) | The `sync` function and the directories on EFS: the releases, the work directories and their copy in S3 |
 | [`llm.py`](../durable/llm.py) | The `llm` function: it adds the provider key to a model call of the gateway and streams the answer |
 | [`worker.py`](../durable/worker.py) | The `worker` function: the loop of the one live worker |
-| [`app.py`](../durable/app.py) | The routes of the Durable Lambda API |
+| [`app.py`](../durable/app.py) | The routes of the Software factory API |
 | [`dashboard/`](../durable/dashboard) | The `front` function: `front.py` has the pages and the webhook, `relay.py` sends a call to the worker, `web.py` has the request and the answer |
 | [`vis/`](../durable/vis) | What the worker does with Vis: `gateway.py` runs the gateway and calls it with the Vis SDK, `relay.py` answers the calls of the queue, `broker.py` sends the model calls of the gateway to the `llm` function, `sessions.py` gives each session its work directory, `files.py` copies the files of a session, `registry.py` registers the project, the groups and the apps, `liveapps/` has the Workflows app |
 | [`workflows/`](../durable/workflows) | The workflows: `sdk.py` has `@workflow` and `@activity`, `source.py` reads a workflow file, `runs.py` keeps the runs, `process.py` is the process of one run, `client.py` calls the API from that process |

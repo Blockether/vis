@@ -1,4 +1,4 @@
-// Shared parts of the Durable Lambda pages: DOM builder, API calls, Markdown, Vis activities and page parts.
+// Shared parts of the Software factory pages: DOM builder, API calls, Markdown, Vis activities and page parts.
 // The pages never put text in innerHTML, so the text of a model cannot become markup.
 
 const ICONS = {

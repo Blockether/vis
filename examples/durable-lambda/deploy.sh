@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy Durable Lambda: the image, the secrets, the stack and the GitHub hooks.
+# Deploy Software factory: the image, the secrets, the stack and the GitHub hooks.
 # The script is safe to run again. It keeps each secret that exists: to change one,
 # write its parameter with `aws ssm put-parameter --overwrite`.
 #
@@ -12,7 +12,7 @@ REGION=${AWS_REGION:-eu-central-1}
 REPOSITORY=${REPOSITORY:?set REPOSITORY to owner/name}
 ENGINE=${ENGINE:-docker}
 MODELS=${DURABLE_MODELS:-}
-MACHINE_NAME=${DURABLE_MACHINE_NAME:-$STACK}
+MACHINE_NAME=${DURABLE_MACHINE_NAME:-Software factory}
 export AWS_REGION=$REGION AWS_DEFAULT_REGION=$REGION AWS_PAGER=
 
 account=$(aws sts get-caller-identity --query Account --output text)
@@ -98,4 +98,4 @@ echo
 aws lambda invoke --function-name "$STACK-worker" --invocation-type Event --cli-binary-format raw-in-base64-out \
   --payload '{"kind":"wake"}' /dev/null >/dev/null
 curl --silent --output /dev/null --max-time 30 "$url" || true
-echo "Durable Lambda: $url"
+echo "Software factory: $url"

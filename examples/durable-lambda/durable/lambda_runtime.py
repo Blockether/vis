@@ -1,4 +1,4 @@
-"""The AWS Lambda custom runtime of Durable Lambda, in plain Python.
+"""The AWS Lambda custom runtime of Software factory, in plain Python.
 
 The image starts `python3 -m durable` with the Python that Vis embeds. This module
 is a client of the Lambda Runtime API: it gets one invocation, calls the handler and

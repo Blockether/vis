@@ -5,7 +5,7 @@ and no route to the internet. The broker is their only way out. It has two parts
 
     /v1/         the model provider of the gateway. The broker sends each call to the
                  llm function (see `llm.py`), which holds the provider key.
-    /dashboard/api/   the Durable Lambda API, for the workflow runs and the Vis extension.
+    /dashboard/api/   the Software factory API, for the workflow runs and the Vis extension.
 
 The address of the broker is in the Vis configuration as the one provider, so each
 session gets its models from Vis and no code of a session sees the key.

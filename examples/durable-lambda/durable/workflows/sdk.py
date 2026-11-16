@@ -407,7 +407,7 @@ class Context:
     """The run that a workflow function works in."""
 
     def __init__(self, run: Run, session: Session, api: Durable, fresh: Callable[[], Session] | None = None, activities: Sequence[Around] = (), requests: Sequence[Through] = ()) -> None:
-        """Keep the run, its Vis session and the client of the Durable Lambda API.
+        """Keep the run, its Vis session and the client of the Software factory API.
 
         `fresh` makes a new session for the run. `activities` and `requests` are the middleware of the workflow.
         """
@@ -688,7 +688,7 @@ class Context:
         is the file to read first. Use each key one time in a run.
 
         The run process ends while the run waits, so a waiting run holds no worker.
-        When the person decides, Durable Lambda starts the run again. This call then
+        When the person decides, Software factory starts the run again. This call then
         sends the decision to the session as one turn, so the transcript has it, and
         returns the decision. The workflow selects what a rejection does.
 

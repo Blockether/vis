@@ -1,6 +1,6 @@
 # Security
 
-What a session of [Durable Lambda](../README.md) can and cannot get.
+What a session of [Software factory](../README.md) can and cannot get.
 
 | Threat | Control |
 | --- | --- |

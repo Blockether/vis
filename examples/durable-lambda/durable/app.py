@@ -1,4 +1,4 @@
-"""The Durable Lambda API: workflows, runs, attached files, temporary files and publishing.
+"""The Software factory API: workflows, runs, attached files, temporary files and publishing.
 
 The browser reaches it through the front function and the relay. The workflow runs
 and the Vis extension reach it through the broker. This module has the routes. Each
@@ -147,7 +147,7 @@ class Api:
             return self.runs.create(name, text, about, given)
         root = self.sessions.home(session)
         if os.path.dirname(os.path.realpath(root)) != os.path.realpath(WORK):
-            raise Refused(400, "the session does not work in a directory of Durable Lambda")
+            raise Refused(400, "the session does not work in a directory of Software factory")
         return self.runs.create(name, text, about, given, session, root)
 
     def show(self, run_id: str, **_: Any) -> dict[str, Any]:

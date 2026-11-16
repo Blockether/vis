@@ -1,4 +1,4 @@
-"""The rules of the Durable Lambda API: the form of its names, the statuses of a run and its refusals.
+"""The rules of the Software factory API: the form of its names, the statuses of a run and its refusals.
 
 The limits of the API are settings: see `settings.py`.
 """

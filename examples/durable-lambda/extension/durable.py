@@ -1,6 +1,6 @@
-"""Vis entrypoint of the Durable Lambda extension.
+"""Vis entrypoint of the Software factory extension.
 
-It gives every session of Durable Lambda three things:
+It gives every session of Software factory three things:
 
 - A copy in S3 of each file that a step wrote in the work directory or in `/tmp`.
   The copy is temporary: S3 removes it after 7 days. Each step also tells the worker
@@ -11,7 +11,7 @@ It gives every session of Durable Lambda three things:
   the worker owns it (`durable/vis/liveapps/workflows.py`), because a global app belongs to no session.
 
 The extension has no AWS credentials in its environment (code of a session can read
-those of the worker process: see the README). It calls the Durable Lambda API of the worker on
+those of the worker process: see the README). It calls the Software factory API of the worker on
 the loopback interface. The file needs only the standard library and the Vis SDK.
 
 A document of a session is a native Vis attachment: the model calls `attach`. The
@@ -42,7 +42,7 @@ _lock = threading.Lock()
 
 
 def call(method, path, body=None, timeout=120):
-    """Call the Durable Lambda API and return the bytes of the answer.
+    """Call the Software factory API and return the bytes of the answer.
 
     The gateway loads this file alone, without the `durable` package of the worker.
     Thus it cannot share this call with `durable/workflows/client.py`.
@@ -64,7 +64,7 @@ def call(method, path, body=None, timeout=120):
 
 
 def api(method, path, body=None, timeout=120):
-    """Call the Durable Lambda API and return the JSON answer."""
+    """Call the Software factory API and return the JSON answer."""
     return json.loads(call(method, path, body, timeout) or b"null")
 
 
@@ -199,7 +199,7 @@ def render_workflows(phase, args, kwargs, result, error):
         return None
     rows = [(flow["name"], flow["title"], ", ".join(step["title"] for step in flow["activities"])) for flow in result]
     table = vis.ActivityTable(("Name", "Title", "Activities"), tuple(rows)) if rows else vis.ActivityText("No workflows.")
-    return _present("List workflows", f"{len(result)} workflows in Durable Lambda", table)
+    return _present("List workflows", f"{len(result)} workflows in Software factory", table)
 
 
 def render_run(phase, args, kwargs, result, error):
@@ -255,11 +255,11 @@ def render_publish(phase, args, kwargs, result, error):
 
 
 class Durable:
-    """The tools of Durable Lambda. The sandbox has them as `durable.<name>`."""
+    """The tools of Software factory. The sandbox has them as `durable.<name>`."""
 
     @vis.method(activity=vis.Activity(label="List workflows", render=render_workflows, show_start=False))
     def workflows(self) -> list:
-        """List the workflows of Durable Lambda with their inputs and activities."""
+        """List the workflows of Software factory with their inputs and activities."""
         return api("GET", "workflows")["workflows"]
 
     @vis.method(tag="mutation", activity=vis.Activity(label="Start workflow", render=render_run))
@@ -297,7 +297,7 @@ class Durable:
 
     @vis.method(tag="external", activity=vis.Activity(label="Publish to GitHub", render=render_publish))
     def publish(self, message: str) -> dict:
-        """Commit the work in the directory of this session and push it to the GitHub repository of Durable Lambda.
+        """Commit the work in the directory of this session and push it to the GitHub repository of Software factory.
 
         The push goes to the main branch. When main moved, it goes to a new branch
         `durable/<id>`. The result names the branch, the commit and its URL.
@@ -321,9 +321,9 @@ def start_workflow(ctx):
     return vis.ok(f"Run {run['id'][:8]} of {run['title']} started", "Open **Workflows** with the global apps button in the header of Vis to follow it.", {"run_id": run["id"]})
 
 
-PROMPT = """Durable Lambda runs on AWS Lambda. The work directory of this session is its own clone of the GitHub repository of Durable Lambda. S3 keeps a copy of its Git work.
+PROMPT = """Software factory runs on AWS Lambda. The work directory of this session is its own clone of the GitHub repository of Software factory. S3 keeps a copy of its Git work.
 - There is no internet access. Do not install packages.
-- `attach(text.encode(), "SPEC.md")` saves a document. Use it for each document that a person asks for. Durable Lambda shows each attached file on its pages.
+- `attach(text.encode(), "SPEC.md")` saves a document. Use it for each document that a person asks for. Software factory shows each attached file on its pages.
 - `list_attachments()` lists the documents of the session and `read_attachment(name)` returns the bytes of one. Attach a new version with the same name.
 - `durable.publish(message)` commits the work and pushes it to GitHub. Use it only when a person asks to publish.
 - `durable.workspace()` shows if the directory is behind the newest release. `durable.resync()` puts the work on the newest release.
@@ -335,11 +335,11 @@ STEPS = ["python_execution", "patch", "shell"]
 vis.register_extension(
     vis.Extension(
         name="durable",
-        description="Durable Lambda on AWS Lambda: workflows, a work directory for each session with a copy in S3, and publishing to GitHub.",
+        description="Software factory on AWS Lambda: workflows, a work directory for each session with a copy in S3, and publishing to GitHub.",
         alias="durable",
         prompt=PROMPT,
         symbols=[vis.Symbol(Durable(), name="durable")],
-        slash_commands=[vis.SlashCommand("workflows", start_workflow, doc="Start a workflow of Durable Lambda, or list the workflows.", usage="/workflows [name] [input]")],
+        slash_commands=[vis.SlashCommand("workflows", start_workflow, doc="Start a workflow of Software factory, or list the workflows.", usage="/workflows [name] [input]")],
         op_hooks=[vis.OpHook(STEPS, before_step), vis.OpHook(STEPS, after_step, phase="after")],
     )
 )

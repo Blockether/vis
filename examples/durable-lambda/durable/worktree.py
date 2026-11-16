@@ -492,10 +492,10 @@ class Workspaces:
         """Commit the work of a project directory and give it to the repo function."""
         root = os.path.realpath(root)
         if os.path.dirname(root) != os.path.realpath(WORK) or not os.path.isfile(f"{root}/.git/durable-base"):
-            raise Refused(400, "the directory is not a project of Durable Lambda")
+            raise Refused(400, "the directory is not a project of Software factory")
         self.mark(root)
         base = self.base(root)
-        message = " ".join((message or "Changes from Durable Lambda").split())[:200]
+        message = " ".join((message or "Changes from Software factory").split())[:200]
         self.git(root, "add", "--all")
         if self.git(root, "status", "--porcelain"):
             self.git(root, "commit", "--quiet", "--message", message)

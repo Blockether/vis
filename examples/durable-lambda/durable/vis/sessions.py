@@ -125,7 +125,7 @@ class Sessions:
             log("no work directory", session, repr(failure))
             is_ready = False
         if not is_ready:
-            raise Refused(409, "the session has no work directory of Durable Lambda")
+            raise Refused(409, "the session has no work directory of Software factory")
         return root
 
     def workspace(self, session: str, **_: Any) -> dict[str, Any]:

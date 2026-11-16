@@ -1,7 +1,7 @@
 """The relay of the worker: it answers the calls that the front function sends.
 
 A call arrives as one SQS message. The worker sends it to the gateway, or to the
-Durable Lambda API for `/dashboard/api/`, and writes the answer as S3 objects (see `wire.py`).
+Software factory API for `/dashboard/api/`, and writes the answer as S3 objects (see `wire.py`).
 An event stream becomes a series of objects, so the browser gets each event at once.
 """
 

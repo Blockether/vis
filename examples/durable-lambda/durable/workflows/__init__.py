@@ -1,4 +1,4 @@
-"""The workflows of Durable Lambda.
+"""The workflows of Software factory.
 
 A workflow file imports its names from this package: `from durable.workflows import
 activity, workflow`. `sdk.py` has those names, `source.py` reads a workflow file,

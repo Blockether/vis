@@ -1,7 +1,7 @@
 """One workflow run: `python -m durable.workflows.process <run id>`.
 
 The worker starts this process next to the gateway. Its environment has no AWS
-credentials. It talks to the gateway with the Vis SDK and to the Durable Lambda API.
+credentials. It talks to the gateway with the Vis SDK and to the Software factory API.
 """
 
 from __future__ import annotations

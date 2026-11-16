@@ -1,4 +1,4 @@
-# Durable Lambda: Vis on AWS Lambda
+# Software factory: Vis on AWS Lambda
 
 This example runs Vis as a service on AWS Lambda. Amazon S3 is the database. A GitHub
 repository on Amazon EFS is the project, and each session works in its own clone of it.
@@ -285,8 +285,8 @@ DURABLE_MODELS='[{"name":"<model>","context":<tokens>,"output_limit":<tokens>}]'
 ```
 
 The script is safe to run again and prints the address of the stack. Vis web and the
-Vis apps show the stack with its machine name: `DURABLE_MACHINE_NAME`, else the name of
-the stack. The fixed cost is
+Vis apps show the stack with its machine name: `DURABLE_MACHINE_NAME`, else
+`Software factory`. The fixed cost is
 about 20 USD each month, for two interface endpoints and the EFS file system. The
 image gives its workflows only to a stack that has none: a stack with workflows keeps
 its own files.
