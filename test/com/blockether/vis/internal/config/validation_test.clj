@@ -5,6 +5,16 @@
             [com.blockether.vis.internal.config.validation :as config-validation]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe mcp-oauth-client-name-test
+  (it "accepts a nonblank OAuth client name and rejects invalid names"
+      (doseq [[client-name accepted?] [["Claude Code" true] ["vis MCP client" true]
+                                      ["" false] ["   " false] [42 false]]]
+        (expect (= accepted?
+                   (config-validation/valid?
+                     {"mcp" {"servers" {"figma" {"transport" "streamable_http"
+                                                "url" "https://mcp.figma.com/mcp"
+                                                "auth" {"client_name" client-name}}}}}))))))
+
 (defdescribe workspace-python-name-test
              (it "accepts explicit snake_case Path names and rejects invalid Python identifiers"
                  (doseq [[alias accepted?] [["engine_path" true] ["library_v2_path" true]

@@ -159,13 +159,13 @@
 ;; Dynamic Client Registration (RFC 7591)
 
 (defn- register-client!
-  "Register Vis as a public client under its own name (RFC 7591), or throw the typed
-   refusal with the upstream status. Vis never borrows another product's client id."
-  [server {registration-url "registration_endpoint"} redirect-uri]
+  "Register a public client with the configured name (RFC 7591), or throw the
+   typed refusal with the upstream status."
+  [server {registration-url "registration_endpoint"} redirect-uri client-name]
   (when registration-url
     (let [{:keys [status body]}
           (http-post-json registration-url
-                          {"client_name" "vis MCP client"
+                          {"client_name" (or client-name "vis MCP client")
                            "redirect_uris" [redirect-uri]
                            "grant_types" ["authorization_code" "refresh_token"]
                            "response_types" ["code"]
@@ -299,7 +299,8 @@
    client, which the authorization server then rejects the code for."
   [{:keys [asmeta challenge state resource scope server]} auth-hint redirect-uri]
   (let [reg
-        (when-not (:client-id auth-hint) (register-client! server asmeta redirect-uri))
+        (when-not (:client-id auth-hint)
+          (register-client! server asmeta redirect-uri (:client-name auth-hint)))
 
         client-id
         (or (:client-id auth-hint) (get reg "client_id"))

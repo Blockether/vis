@@ -106,8 +106,7 @@
     (if (nil? e) true (boolean e))))
 
 (defn- auth-hint
-  "The `auth` block of a server spec as the OAuth client reads it:
-   `{:client-id :client-secret :scope :authorization-timeout-ms}`. `runtime-config`
+  "The `auth` block with keyword keys for the OAuth client. `runtime-config`
    keywordizes only the keys that it knows, so this block arrives string-keyed."
   [auth]
   (when (map? auth) (update-keys auth #(keyword (str/replace (name %) "_" "-")))))

@@ -857,6 +857,11 @@
     "mcpAuth": {
       "type": "object",
       "properties": {
+        "client_name": {
+          "type": "string",
+          "pattern": ".*\\S.*",
+          "description": "Client name sent during OAuth registration. Defaults to vis MCP client. Does not change the MCP handshake name."
+        },
         "client_id": {
           "type": "string",
           "pattern": ".*\\S.*"

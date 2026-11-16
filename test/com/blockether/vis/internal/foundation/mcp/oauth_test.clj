@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.mcp.oauth-test
   (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
             [lazytest.core :refer [defdescribe expect it]]
@@ -284,6 +285,27 @@
                                      :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
       :else {:status 404 :body ""})))
 
+(defdescribe oauth-client-name-test
+  (it "sends each server's OAuth name without changing the default for other servers"
+      (doseq [[hint expected] [[{:client-name "Claude Code"} "Claude Code"]
+                              [{} "vis MCP client"]]]
+        (let [seen (atom [])
+              request (authorization-server 403 seen)]
+          (with-redefs [http/request
+                        (fn [{:keys [uri] :as req}]
+                          (let [response (request req)]
+                            (if (str/ends-with? uri "/register")
+                              {:status 201 :body "{\"client_id\":\"registered-client\"}"}
+                              response)))]
+            (let [flow (oauth/start-authorization! "client-name-test"
+                                                  "https://mcp.example.test/mcp"
+                                                  {:auth-hint hint})]
+              (try
+                (let [registration (first (filter #(str/ends-with? (:uri %) "/register") @seen))]
+                  (expect (= expected (get (json/read-json (:body registration)) "client_name")))
+                  (expect (str/includes? (get flow "url") "client_id=registered-client")))
+                (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
+
 (defdescribe
   sign-in-refusal-test
   (it "names a refused client registration with its step, status and URL"
@@ -312,7 +334,8 @@
                  (let [flow
                        (oauth/start-authorization! "figma"
                                                    "https://mcp.example.test/mcp"
-                                                   {:auth-hint {:client-id "vis-test"
+                                                   {:auth-hint {:client-name "Claude Code"
+                                                                 :client-id "vis-test"
                                                                 :client-secret "s3cret"}})
 
                        state

@@ -880,14 +880,30 @@ vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp \
   --headers "Authorization=Bearer <TOKEN>"
 ```
 
-Vis signs in as its own client, `vis MCP client`. Some servers, such as Figma, refuse clients that
-they did not register. For these servers, register a client with the provider. Then give its
-identifier, and its secret as an environment reference:
+Vis uses `vis MCP client` as its OAuth registration name by default. Set `auth.client_name`
+to send a different name for one server. For example, Pi documents this configuration for Figma:
 
 ```yaml
 mcp:
   servers:
     figma:
+      transport: streamable_http
+      url: https://mcp.figma.com/mcp
+      auth:
+        client_name: Claude Code
+```
+
+This changes only the OAuth registration name, not the MCP handshake name. If you are signed in,
+sign out and sign in again to register with the new name. The server can still refuse registration.
+
+If the provider gives you a registered client, set its identifier and secret below. With
+`auth.client_id`, Vis skips registration and does not send `auth.client_name`:
+
+```yaml
+mcp:
+  servers:
+    figma:
+      transport: streamable_http
       url: https://mcp.figma.com/mcp
       auth:
         client_id: <CLIENT_ID>
