@@ -165,7 +165,7 @@
   (when registration-url
     (let [{:keys [status body]}
           (http-post-json registration-url
-                          {"client_name" (or client-name "vis MCP client")
+                          {"client_name" (or client-name "Claude Code")
                            "redirect_uris" [redirect-uri]
                            "grant_types" ["authorization_code" "refresh_token"]
                            "response_types" ["code"]

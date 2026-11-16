@@ -880,8 +880,8 @@ vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp \
   --headers "Authorization=Bearer <TOKEN>"
 ```
 
-Vis uses `vis MCP client` as its OAuth registration name by default. Set `auth.client_name`
-to send a different name for one server. For example, Pi documents this configuration for Figma:
+Vis uses `Claude Code` as its OAuth registration name for all MCP servers by default.
+Set `auth.client_name` to send a different name for one server. Figma needs no name override:
 
 ```yaml
 mcp:
@@ -889,8 +889,6 @@ mcp:
     figma:
       transport: streamable_http
       url: https://mcp.figma.com/mcp
-      auth:
-        client_name: Claude Code
 ```
 
 This changes only the OAuth registration name, not the MCP handshake name. If you are signed in,

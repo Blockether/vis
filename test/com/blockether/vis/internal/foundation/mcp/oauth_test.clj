@@ -287,8 +287,8 @@
 
 (defdescribe oauth-client-name-test
   (it "sends each server's OAuth name without changing the default for other servers"
-      (doseq [[hint expected] [[{:client-name "Claude Code"} "Claude Code"]
-                              [{} "vis MCP client"]]]
+      (doseq [[hint expected] [[{:client-name "vis MCP client"} "vis MCP client"]
+                              [{} "Claude Code"]]]
         (let [seen (atom [])
               request (authorization-server 403 seen)]
           (with-redefs [http/request

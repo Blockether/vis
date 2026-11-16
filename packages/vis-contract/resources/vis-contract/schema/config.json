@@ -860,7 +860,7 @@
         "client_name": {
           "type": "string",
           "pattern": ".*\\S.*",
-          "description": "Client name sent during OAuth registration. Defaults to vis MCP client. Does not change the MCP handshake name."
+          "description": "Client name sent during OAuth registration. Defaults to Claude Code. Does not change the MCP handshake name."
         },
         "client_id": {
           "type": "string",
