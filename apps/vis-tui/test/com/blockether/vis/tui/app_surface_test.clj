@@ -296,7 +296,34 @@
                          :seq 9)])
       (expect (false? (get-in @state/app-db [:app-views "app-1" :is-gap])))
       (state/dispatch [:live-view-close "app-1" {:reason :completed}])
-      (expect (= :closed (model/status (get-in @state/app-db [:app-views "app-1" :view]))))))
+      (expect (= :closed (model/status (get-in @state/app-db [:app-views "app-1" :view])))))
+  ;; Report: the terminal got each large patch of an app whole on its stream. The
+  ;; stream now leaves such a patch out and names the seq of the view.
+  (it "marks an app behind an elided frame, also for a frame that came during the read"
+      (let [gap?
+            #(get-in @state/app-db [:app-views "app-1" :is-gap])
+
+            loaded
+            #(state/dispatch [:app-view-loaded
+                              (assoc view
+                                :session-id "s1"
+                                :seq %)])]
+
+        (reset! state/app-db
+          {:session {:id "s1"} :tabs [] :live-views [] :app-views {} :render-version 0})
+        (state/dispatch [:live-view-open (assoc view :session-id "s1")])
+        ;; A replayed frame is not news.
+        (state/dispatch [:app-view-behind "app-1" 4])
+        (expect (false? (gap?)))
+        (state/dispatch [:app-view-behind "app-1" 6])
+        (expect (true? (gap?)))
+        (state/dispatch [:app-view-behind "app-1" 8])
+        (loaded 6)
+        (expect (true? (gap?)))
+        (loaded 8)
+        (expect (false? (gap?)))
+        (state/dispatch [:app-view-behind "other" 3])
+        (expect (= ["app-1"] (keys (:app-views @state/app-db)))))))
 
 ;; Report: an open review read its whole view again after each change of one file.
 (defdescribe
@@ -345,7 +372,39 @@
           (expect (= [["s1" "live-one" 1]] calls)))
         (let [[read calls] (asked nil #(read-app "s1" "live-one" nil))]
           (expect (= 9 (:seq read)))
-          (expect (= [["s1" "live-one" nil]] calls))))))
+          (expect (= [["s1" "live-one" nil]] calls))))
+    ;; Report: the transcript shows an app, but only an open surface read its gap.
+    (it "reads an app of the tab that is behind, without an open surface and one time"
+        (let [held-in-tab
+              #(get-in @state/app-db [:app-views "live-one"])
+
+              behind!
+              (fn []
+                (reset! @#'surface/reads* {})
+                (reset! state/app-db
+                  {:session {:id "s1"} :tabs [] :live-views [] :app-views {} :render-version 0})
+                (state/dispatch [:app-view-loaded held])
+                (state/dispatch [:app-view-behind "live-one" (get patch "seq")]))]
+
+          (with-redefs [vis/worker-future (fn [_ f]
+                                            (f))]
+            (behind!)
+            (let [[_ calls] (asked {"patches" [frame]}
+                                   #(do (surface/refresh-gaps! "s1") (surface/refresh-gaps! "s1")))]
+              (expect (= [["s1" "live-one" 1]] calls))
+              (expect (= {:view (live/apply-patch held (view-model/live-patch<-wire patch))
+                          :is-gap false}
+                         (held-in-tab))))
+            ;; A read that fails does not run again at each tick.
+            (behind!)
+            (let [calls (atom 0)]
+              (with-redefs [vis/gateway-app-read (fn [& _]
+                                                   (swap! calls inc)
+                                                   (throw (ex-info "gateway down" {})))]
+                (surface/refresh-gaps! "s1")
+                (surface/refresh-gaps! "s1"))
+              (expect (= 1 @calls))
+              (expect (true? (:is-gap (held-in-tab))))))))))
 
 (def ^:private game
   "A small app with controls, a selectable table, an input and shortcuts."

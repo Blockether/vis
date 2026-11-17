@@ -1449,9 +1449,14 @@
 
       "view.patch"
       (when (= :live (wire-view-kind event))
-        {:phase :live-view-patch
-         :patch (event-get event :patch)
-         :first-seq (event-get event :first-seq)})
+        ;; The gateway leaves out a large patch of an app: the app is behind `last_seq`.
+        (if (event-get event :elided?)
+          {:phase :app-view-behind
+           :view-id (str (event-get event :view-id))
+           :last-seq (event-get event :last-seq)}
+          {:phase :live-view-patch
+           :patch (event-get event :patch)
+           :first-seq (event-get event :first-seq)}))
 
       "view.close"
       (case (wire-view-kind event)

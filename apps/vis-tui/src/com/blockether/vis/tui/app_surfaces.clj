@@ -104,6 +104,7 @@
   "What fleet frame `event` does to the global apps. A frame of a global app has no
    `session_id`. The stream keeps no replay, so a new connection reads the list again.
    Returns `[:refetch]`, `[:open wire-view]`, `[:patch wire-patch first-seq]`,
+   `[:behind view-id last-seq]` for a patch that the gateway left out,
    `[:close view-id]` or nil."
   [event]
   (let [type (get event "type")]
@@ -112,8 +113,10 @@
           (not= "live" (get event "kind")) nil
           (= "view.open" type) (when-let [view (get event "view")]
                                  [:open view])
-          (= "view.patch" type) (when-let [patch (get event "patch")]
-                                  [:patch patch (get event "first_seq")])
+          (= "view.patch" type) (if (get event "is_elided")
+                                  [:behind (str (get event "view_id")) (get event "last_seq")]
+                                  (when-let [patch (get event "patch")]
+                                    [:patch patch (get event "first_seq")]))
           (= "view.close" type) (let [id (str (get event "view_id"))]
                                   (when-not (str/blank? id) [:close id])))))
 

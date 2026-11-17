@@ -19,10 +19,11 @@
             [com.blockether.vis.tui.tty :as tty]
             [com.blockether.vis.tui.util :as util]
             [taoensso.telemere :as tel])
-  (:import (java.io BufferedReader File FileOutputStream InputStream InputStreamReader)
-           (java.lang ProcessHandle)
-           (java.net URI URLEncoder)
-           (java.nio.charset StandardCharsets)))
+  (:import
+    (java.io BufferedReader File FileOutputStream FilterInputStream InputStream InputStreamReader)
+    (java.lang ProcessHandle)
+    (java.net URI URLEncoder)
+    (java.nio.charset StandardCharsets)))
 
 (def ^:private default-host "127.0.0.1")
 
@@ -227,18 +228,19 @@
                   :timeout timeout-ms
                   :throw false
                   :as as
-                  :headers (cond-> (merge (protocol-headers)
-                                          headers
-                                          {"Accept" (if (= as :stream)
-                                                      "text/event-stream"
-                                                      "application/json")})
+                  :headers (cond-> (merge
+                                     (protocol-headers)
+                                     headers
+                                     {"Accept"
+                                      (if (= as :stream) "text/event-stream" "application/json")
+                                      ;; Bytes cost only on a network. The gateway that
+                                      ;; this terminal started answers on loopback, where
+                                      ;; compression only costs time.
+                                      "Accept-Encoding" (if (:local? entry) "identity" "gzip")})
                              (seq (str secret))
                              (assoc "Authorization"
                                (str "Bearer " secret) "X-Vis-Gateway-Secret"
                                (str secret))
-
-                             (= as :stream)
-                             (assoc "Accept-Encoding" "identity")
 
                              (:local? entry)
                              (assoc "X-Vis-Client-Pid" (str (.pid (ProcessHandle/current)))))}
@@ -1860,6 +1862,12 @@
   [event fallback-turn-id]
   (gateway-contract/terminal-turn-result event fallback-turn-id get-turn))
 
+(def ^:private elided-app-patches
+  "The stream option that leaves out a large patch of an app (view.json `patch_event`
+   `is_elided`). The terminal then reads only the changed part of an app that it
+   shows. An older gateway ignores the option and sends every patch."
+  "&app_patches=elided")
+
 (defn- sse-response!
   "Open the gateway SSE stream for `sid` resuming at `cursor`. Returns the
    babashka.http-client response map whose `:body` is a live `InputStream`.
@@ -1873,7 +1881,7 @@
   (let [entry (target!)]
     (gw-send! entry
               "GET"
-              (str "/v1/events?sids=" (enc sid) ":" (long (or cursor 0)))
+              (str "/v1/events?sids=" (enc sid) ":" (long (or cursor 0)) elided-app-patches)
               {:as :stream})))
 
 (def ^:private sse-idle-timeout-ms
@@ -1935,6 +1943,13 @@
     (let [rest' (subs line 5)]
       (if (str/starts-with? rest' " ") (subs rest' 1) rest'))))
 
+(defn- as-it-arrives
+  "Stream `in` for a line reader that gives each line when it arrives. A gzip stream
+   always says that a byte waits; a line reader then blocks until its buffer is full,
+   and a small frame comes late. This stream says that no byte waits."
+  ^InputStream [^InputStream in]
+  (proxy [FilterInputStream] [in] (available [] 0)))
+
 (defn- read-sse-frames!
   "Drive the raw `data:`-line/blank-line frame parser over `in` — the ONE place
    this client parses an SSE stream. Every parsed event is handed to `handle`; a
@@ -1948,7 +1963,7 @@
    state for this stream only, so a compact Activity receipt reaches `handle` whole.
    Returns `[:closed]` on EOF (or an idle/close-driven read failure)."
   [^InputStream in handle stop?]
-  (with-open [rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
+  (with-open [rdr (BufferedReader. (InputStreamReader. (as-it-arrives in) StandardCharsets/UTF_8))]
     (let [last-line-ns* (atom (System/nanoTime))
           alive?* (atom true)
           forms (volatile! {})
@@ -2266,7 +2281,10 @@
         (ensure-client! entry)
 
         response
-        (gw-send! entry "GET" (str "/v1/events?sids=" (mux-sids-param (:subs @mux))) {:as :stream})]
+        (gw-send! entry
+                  "GET"
+                  (str "/v1/events?sids=" (mux-sids-param (:subs @mux)) elided-app-patches)
+                  {:as :stream})]
 
     (when-not (= 200 (:status response))
       (throw (ex-info (str "gateway mux SSE HTTP " (:status response))
@@ -2415,8 +2433,11 @@
                 (let [dropped?
                       (try (let [entry (target!)
                                  _ (ensure-client! entry)
-                                 response
-                                 (gw-send! entry "GET" "/v1/events?scope=fleet" {:as :stream})]
+                                 response (gw-send! entry
+                                                    "GET"
+                                                    (str "/v1/events?scope=fleet"
+                                                         elided-app-patches)
+                                                    {:as :stream})]
 
                              (when-not (= 200 (:status response))
                                (throw (ex-info (str "gateway fleet SSE HTTP " (:status response))

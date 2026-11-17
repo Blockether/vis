@@ -581,6 +581,14 @@
                             "view_id" "live-one"
                             "first_seq" 1
                             "patch" patch})))
+          ;; The gateway left out a large patch of an app (view.json `patch_event`).
+          (expect (= {:phase :app-view-behind :view-id "live-one" :last-seq 7}
+                     (g->c {"type" "view.patch"
+                            "kind" "live"
+                            "view_id" "live-one"
+                            "first_seq" 7
+                            "is_elided" true
+                            "last_seq" 7})))
           (expect (= {:phase :human-input-close :request-id "input-one" :reason "submitted"}
                      (g->c
                        {"type" "view.close" "kind" "input" "view_id" "input-one" "result" answer})))

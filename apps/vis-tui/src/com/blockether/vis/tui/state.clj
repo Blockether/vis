@@ -211,7 +211,8 @@
    :live-views []
    :live-viewer-id nil
    :live-viewer-search nil
-   ;; App attachments by view id: `{:view v :is-gap bool}`. They never join the
+   ;; App attachments by view id: `{:view v :is-gap bool}`, with `:behind-seq` (the
+   ;; newest seq that the stream named) while `:is-gap`. They never join the
    ;; live band; the app surface reads them from here.
    :app-views {}
    :live-panel nil
@@ -4236,12 +4237,30 @@
     (fn [held]
       (if (and held (> (long (or (get-in held [:view :seq]) 0)) (long (or (:seq view) 0))))
         (update held :view #(if (:is-stale view) (assoc % :is-stale true) (dissoc % :is-stale)))
-        {:view view :is-gap false}))))
+        ;; A frame that came during the read can be newer than the copy that was read.
+        {:view view :is-gap (< (long (or (:seq view) 0)) (long (or (:behind-seq held) 0)))}))))
+
+(defn- behind-app-view
+  "Mark held app `view-id` for a read when its copy is behind `seq`."
+  [workspace view-id seq]
+  (let [newest
+        (long (or seq 0))
+
+        held
+        (get-in workspace [:app-views view-id])]
+
+    (if (and held (< (long (or (get-in held [:view :seq]) 0)) newest))
+      (assoc-in workspace
+        [:app-views view-id]
+        (assoc held
+          :is-gap true
+          :behind-seq (max newest (long (or (:behind-seq held) 0)))))
+      workspace)))
 
 (defn- patch-app-view
   "Apply `patch` to a held app view. A frame carries the patches `first-seq` to
    its `:seq`, so only a frame that starts past the next seq is a gap, and a gap
-   marks the copy for a full read."
+   marks the copy for a read."
   [workspace patch first-seq]
   (if-let [held (get-in workspace [:app-views (:view-id patch)])]
     (let [current (long (or (get-in held [:view :seq]) 0))
@@ -4249,7 +4268,7 @@
 
       (cond (<= next-seq current) workspace
             (> (long (or first-seq next-seq)) (inc current))
-            (assoc-in workspace [:app-views (:view-id patch) :is-gap] true)
+            (behind-app-view workspace (:view-id patch) next-seq)
             :else (assoc-in workspace
                     [:app-views (:view-id patch) :view]
                     (:view (lv/patched (lv/opened (:view held)) patch)))))
@@ -4297,6 +4316,11 @@
                     (fn [panes]
                       (mapv #(if (= (:view-id patch) (lv/view-id %)) next-pane %) panes))))
           workspace)))))
+
+(reg-event-db :app-view-behind
+              ;; An elided `view.patch`: the gateway left out a large patch of an app.
+              (fn [db [_ view-id last-seq]]
+                (across-tabs db #(behind-app-view % view-id last-seq))))
 
 (reg-event-db :live-view-close
               ;; The verdict is the RUN's answer, not the pane's: the extension reads
@@ -4363,6 +4387,10 @@
 (reg-event-db :global-app-patch
               (fn [db [_ patch first-seq]]
                 (on-global-apps db patch-app-view patch first-seq)))
+
+(reg-event-db :global-app-behind
+              (fn [db [_ view-id last-seq]]
+                (on-global-apps db behind-app-view view-id last-seq)))
 
 (reg-event-db :global-app-close
               (fn [db [_ view-id]]

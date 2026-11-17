@@ -1952,22 +1952,40 @@
           (view-model/live-view<-wire (get answer "view"))))
       (whole))))
 
+(defonce ^:private reads*
+  ;; `[session-id view-id]` -> `:running`, or the time in ms of a failed read.
+  (atom {}))
+
+(def ^:private read-retry-ms "The wait before a failed read of a gap runs again." 2000)
+
+(defn- gap-read-due?
+  "True when no read of the app runs and the last one did not fail a moment ago."
+  [session-id view-id]
+  (let [state (get @reads* [session-id view-id])]
+    (not (or (= :running state)
+             (and state (< (- (System/currentTimeMillis) (long state)) (long read-retry-ms)))))))
+
 (defn- read-view!
-  "Read the current state of the app and give it to the session state. With
-   `whole?`, the read ignores the held copy and takes the whole view."
+  "Read the current state of the app and give it to the session state, and to `box`
+   when a surface shows the app. One read of an app runs at a time. With `whole?`,
+   the read ignores the held copy and takes the whole view."
   [box session-id view-id & [whole?]]
-  (when (compare-and-set! (:reading box) false true)
-    (vis/worker-future
-      "vis-app-read"
-      (fn []
-        (try (when-let [view (read-app session-id
-                                       view-id
-                                       (when-not whole? (:view (held-view session-id view-id))))]
-               (swap! (:view box) newer view)
-               (state/dispatch [(if session-id :app-view-loaded :global-app-open) view]))
-             (catch Throwable e
-               (tel/log! {:level :warn :id ::app-read-failed :error e :data {:view-id view-id}}))
-             (finally (reset! (:reading box) false)))))))
+  (let [app [session-id view-id]]
+    (when (not= :running (get (first (swap-vals! reads* assoc app :running)) app))
+      (vis/worker-future
+        "vis-app-read"
+        (fn []
+          (try (when-let [view (read-app session-id
+                                         view-id
+                                         (when-not whole? (:view (held-view session-id view-id))))]
+                 (some-> (:view box)
+                         (swap! newer view))
+                 (state/dispatch [(if session-id :app-view-loaded :global-app-open) view]))
+               (swap! reads* dissoc app)
+               (catch Throwable e
+                 (swap! reads* assoc app (System/currentTimeMillis))
+                 (tel/log!
+                   {:level :warn :id ::app-read-failed :error e :data {:view-id view-id}}))))))))
 
 (defn- run-action!
   "Post `action` on a worker and hand the outcome to `on-outcome`."
@@ -2114,7 +2132,22 @@
 
 (defn- refresh-gap!
   [box session-id view-id]
-  (when (:is-gap (held-view session-id view-id)) (read-view! box session-id view-id)))
+  (when (and (:is-gap (held-view session-id view-id)) (gap-read-due? session-id view-id))
+    (read-view! box session-id view-id)))
+
+(defn refresh-gaps!
+  "Read each app of the tab in front that is behind the gateway, also without an open
+   surface: the transcript shows these apps, and the event stream leaves out a large
+   patch of an app. `session-id` is the session of the tab."
+  [session-id]
+  (doseq [[view-id held]
+          (:app-views @state/app-db)
+
+          :let [sid
+                (or (:session-id (:view held)) session-id)]
+          :when (and sid (:is-gap held))]
+
+    (refresh-gap! nil sid view-id)))
 
 (defn- idle-paint! [] (Thread/sleep (if (lv/scene-moving?) 12 40)) nil)
 
@@ -2147,10 +2180,7 @@
 
 (defn- component-box
   [first-view on-change]
-  {:view (atom first-view)
-   :outcomes (atom [])
-   :reading (atom false)
-   :on-change (or on-change (constantly nil))})
+  {:view (atom first-view) :outcomes (atom []) :on-change (or on-change (constantly nil))})
 
 (defn- current-app-view
   [box session-id view-id]

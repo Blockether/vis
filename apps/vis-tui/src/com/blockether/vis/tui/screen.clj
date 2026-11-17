@@ -3112,6 +3112,9 @@
       (when-let [patch (hi/live-patch<-wire a)]
         (state/dispatch [:global-app-patch patch b]))
 
+      :behind
+      (state/dispatch [:global-app-behind a b])
+
       :close
       (state/dispatch [:global-app-close a]))
     (state/dispatch [:bump-render-version])
@@ -7012,6 +7015,9 @@
                   :live-view-patch
                   (when-let [patch (hi/live-patch<-wire (:patch chunk))]
                     (state/dispatch [:live-view-patch patch (:first-seq chunk)]))
+
+                  :app-view-behind
+                  (state/dispatch [:app-view-behind (:view-id chunk) (:last-seq chunk)])
 
                   :live-view-close
                   (when-let [view-id (:view-id chunk)]
@@ -11108,6 +11114,8 @@
     (hydrate-pending-tab!)
     ;; A press of a node with `reveals` shows its app once that app is open.
     (reveal-app! screen)
+    ;; The transcript shows the apps of this tab, so read each one that is behind.
+    (app-surface/refresh-gaps! (current-session-id))
     ;; Layout fields are populated by the render thread after the first paint. Until
     ;; then, scroll handlers fall back to safe defaults and act as a no-op. Pure
     ;; poll - no rendering on this thread anymore. The

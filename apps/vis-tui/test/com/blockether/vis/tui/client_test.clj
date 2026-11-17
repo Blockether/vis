@@ -1019,6 +1019,34 @@
                      nil)
                    (expect (= events @seen)))))
 
+(defdescribe compressed-stream-frames-arrive-at-once
+             ;; Report: over a gzip stream the TUI got each small frame late, and the idle
+             ;; watchdog then dropped the stream. A gzip stream always says that a byte waits.
+             (it "gives a frame of a gzip stream before the stream has more data"
+                 (let [source
+                       (java.io.PipedOutputStream.)
+
+                       sink
+                       (java.io.PipedInputStream. source 65536)
+
+                       out
+                       (java.util.zip.GZIPOutputStream. source true)
+
+                       seen
+                       (promise)]
+
+                   (.write out (.getBytes "data: {\"type\":\"view.patch\",\"seq\":7}\n\n" "UTF-8"))
+                   (.flush out)
+                   (let [reader (future ((rv 'read-sse-frames!)
+                                          (java.util.zip.GZIPInputStream. sink)
+                                          (fn [event]
+                                            (deliver seen event)
+                                            nil)
+                                          nil))]
+                     (expect (= 7 (get (deref seen 3000 nil) "seq")))
+                     (.close out)
+                     (expect (= [:closed] (deref reader 5000 nil)))))))
+
 (defdescribe provider-entries-cache-test
              ;; Footer painters read the providers five times in each full frame. Each read converted
              ;; every router row and model again: 73 us a read with a 450-model catalog.

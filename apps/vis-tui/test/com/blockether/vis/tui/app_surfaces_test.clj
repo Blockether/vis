@@ -88,6 +88,13 @@
         (expect (= [:patch {"seq" 3} 2]
                    (app-surfaces/fleet-app-frame
                      {"type" "view.patch" "kind" "live" "patch" {"seq" 3} "first_seq" 2})))
+        (expect (= [:behind "g" 3]
+                   (app-surfaces/fleet-app-frame {"type" "view.patch"
+                                                  "kind" "live"
+                                                  "view_id" "g"
+                                                  "first_seq" 3
+                                                  "is_elided" true
+                                                  "last_seq" 3})))
         (expect (= [:close "g"]
                    (app-surfaces/fleet-app-frame
                      {"type" "view.close" "kind" "live" "view_id" "g"})))
@@ -117,6 +124,11 @@
         (state/dispatch [:global-apps-loaded [(app "g1" "Clock" nil :seq 6)]])
         (expect (= ["g1"] (keys (:global-apps @state/app-db))))
         (expect (false? (get-in @state/app-db [:global-apps "g1" :is-gap])))
+        ;; An elided frame names only the seq of the app.
+        (state/dispatch [:global-app-behind "g1" 6])
+        (expect (false? (get-in @state/app-db [:global-apps "g1" :is-gap])))
+        (state/dispatch [:global-app-behind "g1" 7])
+        (expect (true? (get-in @state/app-db [:global-apps "g1" :is-gap])))
         (state/dispatch [:global-apps-loaded []])
         (expect (false? (keymap/verb-available? @state/app-db {:show-when :has-global-apps}))))))
 
