@@ -125,7 +125,9 @@
 (defn ask!
   "Show the form elicitation `params` of MCP server `server` to the person of
    `session-id`. Returns the result of the reply: `accept` with the content,
-   `decline` when the person refused, `cancel` when nobody answered."
+   `decline` when the person refused, `cancel` when nobody answered. An `accept`
+   has `\"fields\"`, the names of the fields that the form showed: the client
+   puts no default back into a field that the person saw and left empty."
   [session-id server params]
   (let [schema
         (get params "requestedSchema")
@@ -155,6 +157,8 @@
                          (and (seq properties) (not (str/blank? message)))
                          (assoc :description message)))]
 
-    (cond (:is-submitted answer) {"action" "accept" "content" (content properties (:values answer))}
+    (cond (:is-submitted answer) {"action" "accept"
+                                  "content" (content properties (:values answer))
+                                  "fields" (mapv key properties)}
           (= "cancelled" (:reason answer)) {"action" "decline"}
           :else {"action" "cancel"})))

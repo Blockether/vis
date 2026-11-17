@@ -309,21 +309,30 @@
 
 (defn- with-defaults
   "`content` plus the default of each property of `schema` that `content` leaves
-   out (SEP-1034)."
-  [schema content]
-  (let [properties (get schema "properties")]
-    (reduce-kv
-      (fn [content field property]
-        (if (and (map? property) (contains? property "default") (not (contains? content field)))
-          (assoc content field (get property "default"))
-          content))
-      (if (map? content) content {})
-      (if (map? properties) properties {}))))
+   out (SEP-1034). A property in `shown` gets no default: the asker showed that
+   field with its default, and the person left it empty."
+  [schema content shown]
+  (let [properties
+        (get schema "properties")
+
+        shown
+        (set shown)]
+
+    (reduce-kv (fn [content field property]
+                 (if (and (map? property)
+                          (contains? property "default")
+                          (not (contains? content field))
+                          (not (contains? shown field)))
+                   (assoc content field (get property "default"))
+                   content))
+               (if (map? content) content {})
+               (if (map? properties) properties {}))))
 
 (defn- elicitation-reply
   "The reply to the elicitation `msg`. `ask` gets the params of the request and
    returns `{\"action\" \"accept\" \"content\" {...}}` or the action `decline`; any
-   other answer is a cancel. Vis declares the form mode only."
+   other answer is a cancel. An asker that shows a form adds `\"fields\"`, the
+   names of the fields that the person saw. Vis declares the form mode only."
   [msg ask]
   (let [params
         (get msg "params")
@@ -339,7 +348,8 @@
                     "accept"
                     {"action" "accept"
                      "content" (with-defaults (get params "requestedSchema")
-                                              (get answer "content"))}
+                                              (get answer "content")
+                                              (get answer "fields"))}
 
                     "decline"
                     {"action" "decline"}

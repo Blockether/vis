@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.mcp.elicitation-test
-  (:require [com.blockether.vis.internal.foundation.mcp.elicitation :as elicitation]
+  (:require [com.blockether.vis.internal.foundation.mcp.client :as mcp]
+            [com.blockether.vis.internal.foundation.mcp.elicitation :as elicitation]
             [com.blockether.vis.internal.view.core :as view]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -21,11 +22,15 @@
         {:is-submitted false :reason "invalid" :errors (:errors checked)}))))
 
 (defn- ask
-  "The reply to a form elicitation with `schema` when the person submits `typed`."
+  "The reply to a form elicitation with `schema` when the person submits `typed`,
+   as the server gets it: action and content."
   ([schema typed] (ask schema typed (atom nil)))
   ([schema typed seen]
    (with-redefs [view/request! (person seen typed)]
-     (elicitation/ask! "session-1" "tracker" {"message" "Fill it in" "requestedSchema" schema}))))
+     (dissoc (elicitation/ask! "session-1"
+                               "tracker"
+                               {"message" "Fill it in" "requestedSchema" schema})
+       "fields"))))
 
 (defdescribe
   form-elicitation-test
@@ -78,6 +83,28 @@
              {}
              seen)
         (expect (= fields (mapv :name (:nodes @seen))))))
+  (it "does not put back a default that the person cleared"
+      ;; The form shows each default, so a blank optional answer is the choice of the person.
+      (let [schema
+            {"type" "object"
+             "properties" (array-map "name" {"type" "string"}
+                                     "zone" {"type" "string" "default" "UTC"}
+                                     "age" {"type" "integer" "default" 30})
+             "required" ["name"]}
+
+            reply
+            (fn [typed]
+              (get (#'mcp/elicitation-reply
+                    {"id" 1 "params" {"message" "Fill it in" "requestedSchema" schema}}
+                    (fn [params]
+                      (with-redefs [view/request! (person (atom nil) typed)]
+                        (elicitation/ask! "session-1" "tracker" params))))
+                   "result"))]
+
+        (expect (= {"action" "accept" "content" {"name" "Ada"}}
+                   (reply {"name" "Ada" "zone" "" "age" ""})))
+        (expect (= {"action" "accept" "content" {"name" "Ada" "zone" "UTC" "age" 30}}
+                   (reply {"name" "Ada" "zone" "UTC" "age" "30"})))))
   (it "asks a schema with no field as one question"
       (expect (= {"action" "accept" "content" {}} (ask {"type" "object" "properties" {}} {}))))
   (it "declines when the person refuses and cancels when nobody answers"
