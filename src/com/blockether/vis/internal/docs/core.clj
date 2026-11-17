@@ -18,12 +18,13 @@
        carries no `#` at all.
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
-     * The `:nav` of `vis-docs/site.edn` is the reading order, in modules: `Intro`
-       (Rationale, Getting started, Running a gateway and Reporting a bug, the
-       `:intro?` module), `Concepts` (one page for each feature), `Programmatic
-       access` (the `Basics` and `Feature APIs` groups), `Extensions` and
-       `Reference`. A Concepts page `X` that a program can drive has one page
-       `X-api` in `Feature APIs`, and `X` links it. On the public site, the
+     * The `:nav` of `vis-docs/site.edn` is the reading order: `Intro`, `Config`,
+       `CLI`, `Companion`, `TUI`, `Extensions & SDK`, and `References`. Only
+       `Intro` has `:intro?`. Extension guides, SDK basics, and Feature APIs
+       belong to `Extensions & SDK`. A feature page `X` that a program can
+       drive has one page `X-api` in `Feature APIs`, and `X` links it.
+       Shared client workflows have one owner page, with links from the other
+       client section. On the public site, the
        Extension Center link ends the module that `:extension-center` names.
      * PAIRED VARIANTS: an `X-api` page gives each example twice. A
        `<div data-variant=\"python\">` block comes first, and a

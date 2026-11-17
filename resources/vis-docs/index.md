@@ -284,42 +284,80 @@ use Vis from your own code, read [Python SDK basics](python-sdk.md) or
 <span id="keep-useful-work-when-you-return"></span>
 <span id="why-vis"></span>
 
+<span id="concepts"></span>
+<span id="programmatic-access"></span>
+<span id="extensions"></span>
+<span id="reference"></span>
+<span id="put-your-expertise-into-code"></span>
+<span id="combine-steps-in-python"></span>
+<span id="updating-vis"></span>
+<span id="native-vs-jvm"></span>
+
 ### Intro
 
 | Page | Read it to |
 | --- | --- |
 | [Rationale](rationale.md) | Learn the reasons behind the design of Vis. |
-| [Running a gateway](gateway-service.md) | Install and operate a shared agent service. |
+| [Getting started](index.md) | Install Vis and connect your first client. |
 | [Reporting a bug](reporting-bugs.md) | Report a problem without exposing private data. |
 
-### Concepts
+### Config
 
-Each concept page explains one feature: what it does, when to use it, and how to start.
+| Page | Read it to |
+| --- | --- |
+| [Configuration](configuration.md) | Choose providers and models, and save project settings. |
+| [Project instructions](project-instructions.md) | Tell the agent how your codebase works. |
+| [Skills](skills.md) | Give Vis reusable instructions for a task. |
+| [Process jail and network policy](jail.md) | Set the rules for child processes. |
+| [Python sandbox](python-sandbox.md) | Learn where Python runs, which packages it has, and what it can access. |
+
+### CLI
+
+| Page | Read it to |
+| --- | --- |
+| [Runtime distributions](distributions.md) | Compare installation methods and update Vis. |
+| [Running a gateway](gateway-service.md) | Install and operate a shared agent service. |
+
+### Companion
+
+These workflows work in the Companion app. Shared features also work in the terminal.
 
 | Page | Read it to |
 | --- | --- |
 | [Sessions](sessions.md) | Continue, stop, or find your work. |
 | [Context management](context-management.md) | Learn how filters and summaries keep a long conversation usable. |
-| [Project instructions](project-instructions.md) | Tell the agent how your codebase works. |
-| [Skills](skills.md) | Give Vis reusable instructions for a task. |
 | [Council](council.md) | Ask another session for help or a second review. |
 | [Automations](automations.md) | Run a prompt on a schedule or from a webhook. |
 | [Siri and Shortcuts](shortcuts.md) | Talk to Vis with the Action Button and use answers in shortcuts. |
-| [Evaluations](evals.md) | Score benchmark rounds, find failure causes, and compare runs. |
-| [Forms and user input](human-input.md) | Ask for a choice, a credential, or a confirmation. |
-| [Live views](live-views.md) | Show progress that a person can watch and stop. |
 | [Speech and voices](speech.md) | Speak text, transcribe recordings, and add your own voices. |
 | [Sounds](sounds.md) | Hear a sound when a turn finishes, waits for you, or fails. |
 | [White label](white-label.md) | Give the web app your own name, logo, links, and theme. |
-| [Python sandbox](python-sandbox.md) | Learn where Python runs, which packages it has, and what it can access. |
-| [Configuration](configuration.md) | Choose providers and models, and save project settings. |
+
+### TUI
+
+For shared session workflows, read [Sessions](sessions.md).
+
+| Page | Read it to |
+| --- | --- |
+| [Keyboard shortcuts](keyboard-shortcuts.md) | Look up the keys of the terminal app. |
+
+### Extensions & SDK
+
+**Guides**
+
+| Page | Read it to |
+| --- | --- |
+| [Extending Vis](extending.md) | Choose a capability and build your first tool. |
+| [Extension design](extension-design.md) | Design and test typed tools. |
+| [Installing and sharing extensions](extension-packages.md) | Add an extension or share your own. |
+| [Using an existing Python project](extension-development.md) | Prepare editable uv packages for Vis. |
+| [Native builds for Java and Clojure extensions](jvm-native-image.md) | Add Java or Clojure tools to Vis. |
+| [Extension troubleshooting](extension-troubleshooting.md) | Diagnose loading errors and call errors. |
+| [Provider extensions](provider-extensions.md) | Register an LLM provider from an extension. |
+| [Forms and user input](human-input.md) | Ask for a choice, a credential, or a confirmation. |
+| [Live views](live-views.md) | Show progress that a person can watch and stop. |
+| [Evaluations](evals.md) | Score benchmark rounds, find failure causes, and compare runs. |
 | [Decision models](decision-models.md) | Download Laya, train it, and publish FP32 versions. |
-
-### Programmatic access
-
-Use these pages to control the same features from your own code. Start with the basics page for
-Python or for HTTP. Then read the API page of the feature. Each API page shows the Python examples.
-To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 
 **Basics**
 
@@ -344,30 +382,9 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 | [White label API](white-label-api.md) | Read and set the brand of the web app. |
 | [Configuration API](configuration-api.md) | Change settings and reload extensions. |
 
-<span id="put-your-expertise-into-code"></span>
-<span id="combine-steps-in-python"></span>
-
-### Extensions
+### References
 
 | Page | Read it to |
 | --- | --- |
-| [Extending Vis](extending.md) | Choose a capability and build your first tool. |
-| [Extension design](extension-design.md) | Design and test typed tools. |
-| [Installing and sharing extensions](extension-packages.md) | Add an extension or share your own. |
-| [Using an existing Python project](extension-development.md) | Prepare editable uv packages for Vis. |
-| [Native builds for Java and Clojure extensions](jvm-native-image.md) | Add Java or Clojure tools to Vis. |
-| [Extension troubleshooting](extension-troubleshooting.md) | Diagnose loading errors and call errors. |
-| [Provider extensions](provider-extensions.md) | Register an LLM provider from an extension. |
-
-<span id="updating-vis"></span>
-<span id="native-vs-jvm"></span>
-
-### Reference
-
-| Page | Read it to |
-| --- | --- |
-| [Keyboard shortcuts](keyboard-shortcuts.md) | Look up the keys of the terminal app. |
-| [Process jail and network policy](jail.md) | Set the rules for child processes. |
-| [Runtime distributions](distributions.md) | Compare installation methods and update Vis. |
 | [Logs and diagnostics](logging.md) | Find log files, formats, and retention, and learn what to share. |
 | [Components](components.md) | Look up every component of forms and live views. |

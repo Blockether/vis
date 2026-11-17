@@ -10,14 +10,41 @@
      :page "index"
      :title "Getting started"}
     {:blurb
-     "Install and secure a shared Vis gateway, connect your clients, and keep the gateway running as a Linux service."
-     :page "gateway-service"
-     :title "Running a gateway"}
-    {:blurb
      "Report a problem with useful evidence, and keep credentials and private code out of the report."
      :page "reporting-bugs"
      :title "Reporting a bug"}]
    :section "Intro"}
+  {:pages
+   [{:blurb
+     "Choose providers and models, and save settings for yourself, a project, or every gateway client."
+     :page "configuration"
+     :title "Configuration"}
+    {:blurb
+     "Tell Vis how your project works, write reusable prompts, and set a goal for a longer task."
+     :page "project-instructions"
+     :title "Project instructions"}
+    {:blurb
+     "Give Vis reusable instructions for reviews, releases, and other tasks, with scripts and templates."
+     :page "skills"
+     :title "Skills"}
+    {:blurb
+     "Limit file access, environment variables, and network connections for the commands that Vis runs."
+     :page "jail"
+     :title "Process jail and network policy"}
+    {:blurb "Learn where the agent runs Python, which packages it uses, and what it can access."
+     :page "python-sandbox"
+     :title "Python sandbox"}]
+   :section "Config"}
+  {:pages
+   [{:blurb
+     "Install or update Vis, choose a release track, and compare native releases with JVM source builds."
+     :page "distributions"
+     :title "Runtime distributions"}
+    {:blurb
+     "Install and secure a shared Vis gateway, connect your clients, and keep the gateway running as a Linux service."
+     :page "gateway-service"
+     :title "Running a gateway"}]
+   :section "CLI"}
   {:pages
    [{:blurb
      "Send a follow-up or cancel a task while Vis works, and find, fork, organize, or export saved sessions."
@@ -28,64 +55,82 @@
      :page "context-management"
      :title "Context management"}
     {:blurb
-     "Tell Vis how your project works, write reusable prompts, and set a goal for a longer task."
-     :page "project-instructions"
-     :title "Project instructions"}
-    {:blurb
-     "Give Vis reusable instructions for reviews, releases, and other tasks, with scripts and templates."
-     :page "skills"
-     :title "Skills"}
-    {:blurb
      "Ask another session for help, get a second review, or share findings without a repeat of the research."
      :page "council"
      :title "Council"}
     {:blurb
      "Run a prompt on a schedule or from a webhook, and get each result in a session, on your phone, or at your address."
      :page "automations"
-      :title "Automations"}
-     {:blurb
-      "Talk to Vis with the Action Button, ask Vis with Siri, and get text or JSON answers in your shortcuts."
-      :page "shortcuts"
-      :title "Siri and Shortcuts"}
-     {:blurb
-      "Score a Harbor benchmark round, find why tasks fail, and check if a change makes the agent better."
-      :page "evals"
-      :title "Evaluations"}
+     :title "Automations"}
     {:blurb
-     "Build a form that asks for a choice, a credential, or a confirmation, and handle the answer."
-     :page "human-input"
-     :title "Forms and user input"}
+     "Talk to Vis with the Action Button, ask Vis with Siri, and get text or JSON answers in your shortcuts."
+     :page "shortcuts"
+     :title "Siri and Shortcuts"}
+    {:blurb "Speak text, transcribe recordings, and add your own voices from a short recording."
+     :page "speech"
+     :title "Speech and voices"}
     {:blurb
-     "Show progress and controls while an extension watches a build or other ongoing work."
-     :page "live-views"
-     :title "Live views"}
-     {:blurb
-      "Speak text, transcribe recordings, and add your own voices from a short recording."
-      :page "speech"
-      :title "Speech and voices"}
-     {:blurb
-      "Hear a sound when a turn finishes, when Vis waits for your answer, and when a turn fails."
-      :page "sounds"
-      :title "Sounds"}
-     {:blurb
-      "Give the web app your own name, logo, header links, and theme, on a gateway or in your own build."
-      :page "white-label"
-      :title "White label"}
+     "Hear a sound when a turn finishes, when Vis waits for your answer, and when a turn fails."
+     :page "sounds"
+     :title "Sounds"}
     {:blurb
-     "Learn where the agent runs Python, which packages it uses, and what it can access."
-     :page "python-sandbox"
-     :title "Python sandbox"}
-    {:blurb
-     "Choose providers and models, and save settings for yourself, a project, or every gateway client."
-     :page "configuration"
-     :title "Configuration"}
-    {:blurb
-     "Download Laya decision bundles, train both heads, publish a verified FP32 version, and select it by name."
-     :page "decision-models"
-     :title "Decision models"}]
-   :section "Concepts"}
+     "Give the web app your own name, logo, header links, and theme, on a gateway or in your own build."
+     :page "white-label"
+     :title "White label"}]
+   :section "Companion"}
+  {:pages
+   [{:blurb
+     "Find the keys to send, start a new line, run commands, and edit a message, and set up Shift+Enter in your terminal."
+     :page "keyboard-shortcuts"
+     :title "Keyboard shortcuts"}]
+   :section "TUI"}
   {:groups
-   [{:group "Basics"
+   [{:group "Guides"
+     :pages
+     [{:blurb
+       "Write a Python tool in one file, load it into Vis, call it in a session, and check an edit."
+       :page "extending"
+       :title "Extending Vis"}
+      {:blurb
+       "Choose useful operations, explain their inputs and results, and test both the Python code and the Vis integration."
+       :page "extension-design"
+       :title "Extension design"}
+      {:blurb
+       "Install an extension for one project or for all your projects, reload edits, or package the extension to share it."
+       :page "extension-packages"
+       :title "Installing and sharing extensions"}
+      {:blurb
+       "Connect an existing uv project to Vis, and keep its implementation editable in your checkout."
+       :page "extension-development"
+       :title "Using an existing Python project"}
+      {:blurb
+       "Add Java or Clojure capabilities to Vis, then build, test, and package a native engine that contains your code."
+       :page "jvm-native-image"
+       :title "Native builds for Java and Clojure extensions"}
+      {:blurb
+       "Find why your extension does not load, why a tool is missing, or why old code still runs after an edit."
+       :page "extension-troubleshooting"
+       :title "Extension troubleshooting"}
+      {:blurb
+       "Connect an LLM service to Vis with custom sign-in, model discovery, and credential management."
+       :page "provider-extensions"
+       :title "Provider extensions"}
+      {:blurb
+       "Build a form that asks for a choice, a credential, or a confirmation, and handle the answer."
+       :page "human-input"
+       :title "Forms and user input"}
+      {:blurb "Show progress and controls while an extension watches a build or other ongoing work."
+       :page "live-views"
+       :title "Live views"}
+      {:blurb
+       "Score a Harbor benchmark round, find why tasks fail, and check if a change makes the agent better."
+       :page "evals"
+       :title "Evaluations"}
+      {:blurb
+       "Download Laya decision bundles, train both heads, publish a verified FP32 version, and select it by name."
+       :page "decision-models"
+       :title "Decision models"}]}
+    {:group "Basics"
      :pages
      [{:blurb
        "Install the SDK, run a private agent in your project, connect to a gateway, and handle its errors."
@@ -127,77 +172,35 @@
        "Create, change, start, and delete automations, and read their runs from Python or with HTTP requests."
        :label "Automations"
        :page "automations-api"
-        :title "Automations API"}
-       {:blurb
-        "Summarize, score, diagnose, and compare benchmark rounds from Python or with HTTP requests."
-        :label "Evaluations"
-        :page "evals-api"
-        :title "Evaluations API"}
-       {:blurb
-        "Speak text, transcribe audio, and add, change, or remove your own voices from Python or with HTTP requests."
-        :label "Speech"
-        :page "speech-api"
-        :title "Speech API"}
-       {:blurb
-        "Turn the sounds on or off, and choose your own sound files from Python or with HTTP requests."
-        :label "Sounds"
-        :page "sounds-api"
-        :title "Sounds API"}
-       {:blurb
-        "Read, set, and remove the brand of the web app that a gateway serves from Python or with HTTP requests."
-        :label "White label"
-        :page "white-label-api"
-        :title "White label API"}
+       :title "Automations API"}
+      {:blurb
+       "Summarize, score, diagnose, and compare benchmark rounds from Python or with HTTP requests."
+       :label "Evaluations"
+       :page "evals-api"
+       :title "Evaluations API"}
+      {:blurb
+       "Speak text, transcribe audio, and add, change, or remove your own voices from Python or with HTTP requests."
+       :label "Speech"
+       :page "speech-api"
+       :title "Speech API"}
+      {:blurb
+       "Turn the sounds on or off, and choose your own sound files from Python or with HTTP requests."
+       :label "Sounds"
+       :page "sounds-api"
+       :title "Sounds API"}
+      {:blurb
+       "Read, set, and remove the brand of the web app that a gateway serves from Python or with HTTP requests."
+       :label "White label"
+       :page "white-label-api"
+       :title "White label API"}
       {:blurb
        "Read and change settings for the gateway, a project, a group, or a session from Python or with HTTP requests."
        :label "Configuration"
        :page "configuration-api"
        :title "Configuration API"}]}]
-   :section "Programmatic access"}
+   :section "Extensions & SDK"}
   {:pages
    [{:blurb
-     "Write a Python tool in one file, load it into Vis, call it in a session, and check an edit."
-     :page "extending"
-     :title "Extending Vis"}
-    {:blurb
-     "Choose useful operations, explain their inputs and results, and test both the Python code and the Vis integration."
-     :page "extension-design"
-     :title "Extension design"}
-    {:blurb
-     "Install an extension for one project or for all your projects, reload edits, or package the extension to share it."
-     :page "extension-packages"
-     :title "Installing and sharing extensions"}
-    {:blurb
-     "Connect an existing uv project to Vis, and keep its implementation editable in your checkout."
-     :page "extension-development"
-     :title "Using an existing Python project"}
-    {:blurb
-     "Add Java or Clojure capabilities to Vis, then build, test, and package a native engine that contains your code."
-     :page "jvm-native-image"
-     :title "Native builds for Java and Clojure extensions"}
-    {:blurb
-     "Find why your extension does not load, why a tool is missing, or why old code still runs after an edit."
-     :page "extension-troubleshooting"
-     :title "Extension troubleshooting"}
-    {:blurb
-     "Connect an LLM service to Vis with custom sign-in, model discovery, and credential management."
-     :page "provider-extensions"
-      :title "Provider extensions"}]
-   :section "Extensions"}
-  {:pages
-   [{:blurb
-     "Find the keys to send, start a new line, run commands, and edit a message, and set up Shift+Enter in your terminal."
-     :page "keyboard-shortcuts"
-     :title "Keyboard shortcuts"}
-    {:blurb
-     "Limit file access, environment variables, and network connections for the commands that Vis runs."
-     :page "jail"
-     :title "Process jail and network policy"}
-    {:blurb
-     "Install or update Vis, choose a release track, and compare native releases with JVM source builds."
-     :page "distributions"
-     :title "Runtime distributions"}
-    {:blurb
      "Find diagnostic logs, command output, and hang reports, learn the retention, and review files before you share them."
      :page "logging"
      :title "Logs and diagnostics"}
@@ -205,8 +208,8 @@
      "Look up each component that forms and live views use: text, state, data, inputs, buttons, and groups."
      :page "components"
      :title "Components"}]
-   :section "Reference"}]
- :site {:extension-center {:section "Extensions" :title "Extension Center"}
+   :section "References"}]
+ :site {:extension-center {:section "Extensions & SDK" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"
         :tagline "Explore a project, change code, and run checks."
         :title "Vis"}}

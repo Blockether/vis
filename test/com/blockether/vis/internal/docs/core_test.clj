@@ -556,8 +556,7 @@
 
 (defdescribe
   docs-modules-test
-  "The manual reads in modules: the intro, the concepts, the programmatic access to
-   those concepts, the extensions and the reference. A Feature API page gives each
+  "The manual groups pages by reader task and client. A Feature API page gives each
    example in Python and as HTTP requests, so a reader changes between them with
    one switch."
   (it "gives each concept that a program drives one API page with both variants"
@@ -565,7 +564,7 @@
             (docs/collect)
 
             concept-md
-            (into {} (comp (filter #(= "Concepts" (:section %))) (map (juxt :slug :md))) pages)
+            (into {} (map (juxt :slug :md)) pages)
 
             api-pages
             (filter #(= "Feature APIs" (:group %)) pages)]
