@@ -446,6 +446,23 @@ def test_a_block_leaves_out_a_change_that_another_session_recorded_first(tmp_pat
     assert mine.store.get(mine.state["theirs.py"]) == b"t1\n"
 
 
+def test_a_step_keeps_a_new_file_that_it_shows_it_wrote(tmp_path):
+    # Two blocks ran together. The other session ended first and recorded both new
+    # files as its own, so "This session" lost the file that the session made.
+    mine, theirs = journal(tmp_path, "s1"), journal(tmp_path, "s2")
+    write(mine, "base.py", "b\n")
+    mine.checkpoint()
+    theirs.checkpoint()
+    write(mine, "mine_new.py", "m1\n")
+    write(theirs, "theirs.py", "t1\n")
+    theirs.checkpoint("block", "ended first")
+    entry = mine.checkpoint(
+        "block", "a long block", wrote=lambda rel: rel == "mine_new.py"
+    )
+    assert (entry.kind, set(entry.files)) == ("block", {"mine_new.py"})
+    assert [d.path for d in mine.own_diff()] == ["mine_new.py"]
+
+
 def test_a_session_keeps_a_file_that_it_changed_before(tmp_path):
     # Two blocks ran together and the other one ended first: an own file stays own.
     mine, theirs = journal(tmp_path, "s1"), journal(tmp_path, "s2")

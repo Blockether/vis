@@ -9,6 +9,7 @@ each root of a session has its own journal.
 from __future__ import annotations
 
 import os
+import re
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
@@ -21,11 +22,24 @@ from vis_review.journal import Entry, Journal
 MOST_LABEL = 80
 
 
+def _block_code(args) -> str:
+    first = args[0] if isinstance(args, (list, tuple)) and args else args
+    return str((first.get("code") if isinstance(first, Mapping) else first) or "")
+
+
+def _patch_path(args, root: str) -> str | None:
+    """The path that a patch wrote, under `root`; None when the call does not name it."""
+    if not isinstance(args, (list, tuple)) or not args or not isinstance(args[0], str):
+        return None
+    path = os.path.expanduser(args[0])
+    if os.path.isabs(path):
+        path = os.path.relpath(os.path.realpath(path), root)
+    return path
+
+
 def block_label(args) -> str:
     """The label of a block checkpoint: the first line of code that is not a comment."""
-    first = args[0] if isinstance(args, (list, tuple)) and args else args
-    code = first.get("code") if isinstance(first, Mapping) else first
-    for line in str(code or "").splitlines():
+    for line in _block_code(args).splitlines():
         text = line.strip()
         if text and not text.startswith("#"):
             return text[:MOST_LABEL]
@@ -34,12 +48,30 @@ def block_label(args) -> str:
 
 def patch_label(args, root: str) -> str:
     """The label of a patch checkpoint: the path that the patch wrote, under `root`."""
-    if not isinstance(args, (list, tuple)) or not args or not isinstance(args[0], str):
-        return "Patch"
-    path = os.path.expanduser(args[0])
-    if os.path.isabs(path):
-        path = os.path.relpath(os.path.realpath(path), root)
-    return "Patch " + path
+    path = _patch_path(args, root)
+    return "Patch" if path is None else "Patch " + path
+
+
+def block_wrote(args) -> Callable[[str], bool]:
+    """True for a path whose file name is in the code of the block.
+
+    Code does not declare the files that it writes. A name in the code is the only
+    sign, so a file that the block made through another program has none.
+    """
+    code = _block_code(args)
+
+    def wrote(rel: str) -> bool:
+        name = re.escape(os.path.basename(rel))
+        return bool(name and re.search(rf"(?<![\w.-]){name}(?![\w-])", code))
+
+    return wrote
+
+
+def patch_wrote(args, root: str) -> Callable[[str], bool]:
+    """True for the path that the patch wrote."""
+    path = _patch_path(args, root)
+    named = None if path is None else path.replace(os.sep, "/")
+    return lambda rel: rel == named
 
 
 class Recorder:
@@ -62,14 +94,22 @@ class Recorder:
                 self._journals[(key, real)] = found
             return found
 
-    def record(self, key: str, root, kind: str, label: str) -> Entry | None:
+    def record(
+        self,
+        key: str,
+        root,
+        kind: str,
+        label: str,
+        wrote: Callable[[str], bool] | None = None,
+    ) -> Entry | None:
         """Record what changed under `root`. Repaint the open app when files changed.
 
         A commit or a push changes no file and still changes what the app shows, so
-        an app that is behind git gets a paint too.
+        an app that is behind git gets a paint too. `wrote` is true for a path that
+        the step shows it wrote; the journal then keeps that path as an own change.
         """
         journal = self.journal(key, root)
-        entry = journal.checkpoint(kind, label)
+        entry = journal.checkpoint(kind, label, wrote)
         app = self.app(key, journal.root)
         if app is not None and (entry is not None or app.is_behind()):
             app.refresh()

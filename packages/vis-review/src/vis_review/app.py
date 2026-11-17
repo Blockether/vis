@@ -174,6 +174,8 @@ class ReviewApp:
         # The stamp of the git refs at the last paint: a later stamp can show other changes.
         self._refs: tuple = ()
         self.findings: list[checks.Finding] = []
+        # The date of each finding that the last paint showed: the time of its first paint.
+        self._found_at: dict[checks.Finding, int] = {}
         self.ai_summary = ""
         self.notice = ("Ready", "idle")
         self.view = None
@@ -335,7 +337,9 @@ class ReviewApp:
         patch, cut = _patch_of(diffs)
         shown = {d.path for d in diffs if d.patch and d.path not in cut}
         newest = self.journal.entries[-1].at if self.journal.entries else 0
-        threads, left = _threads(findings, shown, int(newest * 1000) or 1)
+        now = int(newest * 1000) or 1
+        self._found_at = {f: self._found_at.get(f, now) for f in findings}
+        threads, left = _threads(findings, shown, self._found_at)
         notice = self._notice([*_left_out(cut, left), *_off_lines(findings, shown)])
         return [
             self._diff(patch, threads, diffs, diffs_all, end),
@@ -982,12 +986,12 @@ def _off_lines(findings, shown: set[str]) -> list[str]:
     ]
 
 
-def _threads(findings, paths, now: int) -> tuple[list[dict], int]:
-    """One thread for each finding on a line of a shown file, dated by the newest checkpoint,
-    and the count of findings that the bound leaves out. Errors come first, then warnings.
+def _threads(findings, paths, dates) -> tuple[list[dict], int]:
+    """One thread for each finding on a line of a shown file, dated by `dates`, and
+    the count of findings that the bound leaves out. Errors come first, then warnings.
 
-    A date that stays the same keeps the diff node the same, so a paint keeps the
-    comments a person is writing.
+    A finding keeps the date of its first paint. A date that stays the same keeps
+    the diff node the same, so a paint keeps the comments a person is writing.
     """
     on_lines = [
         (n, finding)
@@ -1006,7 +1010,7 @@ def _threads(findings, paths, now: int) -> tuple[list[dict], int]:
                     {
                         "id": f"finding-{n}-1",
                         "author": _AUTHOR,
-                        "created_at": now,
+                        "created_at": dates[finding],
                         "body": f"{finding.level} {finding.check}: {finding.message}"[
                             :20000
                         ],
@@ -1048,7 +1052,7 @@ def _steps(
     again as a whole node. None when the group of the nodes must come as a new node: a
     new first node has no node to stand after, a node of `known` comes from another
     group, or the nodes changed their order. The top list has no group: its new first
-    node goes to the end, and the first paint is the only one that has such a node.
+    node goes to the end, so each node after it comes again, after it.
     """
     held = {node["id"]: node for node in painted}
     kept = [node["id"] for node in nodes if node["id"] in held]
@@ -1056,14 +1060,16 @@ def _steps(
         return None
     steps: list[tuple] = [("drop", i) for i in held if i not in set(kept)]
     before = None
+    is_behind = False
     for node in nodes:
         old = held.get(node["id"])
-        if old != node:
-            inner = None if old is None else _node_steps(old, node, known)
+        if old != node or is_behind:
+            inner = None if old is None or is_behind else _node_steps(old, node, known)
             if inner is None:
                 is_moved = old is None and bool(_ids([node]) & known)
                 if not is_top and (before is None or is_moved):
                     return None
+                is_behind = is_behind or before is None
                 drop = [] if old is None else [("drop", node["id"])]
                 inner = [*drop, ("add", node, before)]
             steps += inner

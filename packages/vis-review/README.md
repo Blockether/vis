@@ -65,6 +65,7 @@ An undo records a checkpoint first, so you can undo the undo. A repeated undo ch
 - When the base branch is old, the view shows more files, never fewer.
 - Without Git, the view shows every change of the session.
 - A step can also bring changes of others: a pull, or an edit of a session that runs beside it. They go to a separate checkpoint, **Changes of others during a step**, and stay out.
+- When two sessions run a step at the same time, the journal does not know which session made a new file. The session whose step ends first keeps the file. The other session keeps it only when its step names the file: the path of a patch, or the file name in the code of a block. **All changes** shows the file in each session.
 
 ## Checks
 

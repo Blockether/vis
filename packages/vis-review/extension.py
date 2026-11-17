@@ -14,7 +14,13 @@ import logging
 import blockether.vis.extension as vis
 
 from vis_review.app import ReviewApp, extension_opener
-from vis_review.recorder import Recorder, block_label, patch_label
+from vis_review.recorder import (
+    Recorder,
+    block_label,
+    block_wrote,
+    patch_label,
+    patch_wrote,
+)
 
 LOG = logging.getLogger("vis_review")
 RECORDER = Recorder()
@@ -28,12 +34,13 @@ def _session_id():
         return None
 
 
-def _record(kind, label_of):
+def _record(kind, label_of, wrote_of=None):
     session_id = _session_id()
     if not session_id:
         return
     root = vis.workspace_root()
-    RECORDER.record(session_id, root, kind, label_of(str(root)))
+    wrote = wrote_of(str(root)) if wrote_of else None
+    RECORDER.record(session_id, root, kind, label_of(str(root)), wrote)
     # The first step opens the app, so a person sees it without `/review`.
     journal = RECORDER.journal(session_id, root)
     if RECORDER.app(session_id, journal.root) is None:
@@ -53,9 +60,17 @@ def after_step(call):
     try:
         if call.get("op") == "patch":
             if call.get("result") is not None:
-                _record("patch", lambda root: patch_label(call.get("args"), root))
+                _record(
+                    "patch",
+                    lambda root: patch_label(call.get("args"), root),
+                    lambda root: patch_wrote(call.get("args"), root),
+                )
         else:
-            _record("block", lambda _root: block_label(call.get("args")))
+            _record(
+                "block",
+                lambda _root: block_label(call.get("args")),
+                lambda _root: block_wrote(call.get("args")),
+            )
     except Exception:  # noqa: BLE001 - a journal error must never stop a block
         LOG.exception("vis-review: after %s", call.get("op"))
 

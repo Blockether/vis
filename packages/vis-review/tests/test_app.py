@@ -661,6 +661,38 @@ def test_an_idle_app_shows_only_the_diff(tmp_path, recorder):
     assert recorder.ids() == ["diff"]
 
 
+def test_a_diff_that_comes_as_a_new_node_stays_above_the_notice(tmp_path, recorder):
+    # Release review 2026-11-17: a second finding on a shown line put the diff under
+    # the notice, where it stayed until the notice changed.
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 2  \n")
+    journal.checkpoint("block")
+    app.refresh(("Checks: 1 finding", "warn"))
+    assert recorder.ids() == ["diff", "notice"]
+    assert len(recorder.node("diff")["threads"]) == 1
+    edit(root, "a.py", "a = 2  \nb = 3  \n")
+    journal.checkpoint("block")
+    app.refresh()
+    assert len(recorder.node("diff")["threads"]) == 2
+    assert recorder.ids() == ["diff", "notice"]
+
+
+def test_a_finding_keeps_its_date_through_a_new_checkpoint(tmp_path, recorder):
+    # Release review 2026-11-17: each checkpoint gave each finding a new date, so each
+    # edit of the agent sent the whole diff again as a new node.
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 2  \n")
+    journal.checkpoint("block")
+    app.refresh()
+    threads = recorder.node("diff")["threads"]
+    assert len(threads) == 1
+    time.sleep(0.005)
+    edit(root, "b.py", "b = 1\n")
+    journal.checkpoint("block")
+    app.refresh()
+    assert recorder.node("diff")["threads"] == threads
+
+
 def test_an_added_picture_shows_no_status_row(tmp_path, recorder):
     # User report 2026-11-09: an added picture gave a "Waiting / Ready / info binary-file"
     # row under the diff. The file list and the image already show the new file.

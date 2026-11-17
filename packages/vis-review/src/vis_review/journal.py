@@ -205,11 +205,17 @@ class Journal:
 
     # Writing -----------------------------------------------------------------
 
-    def checkpoint(self, kind: str = "manual", label: str = "") -> Entry | None:
+    def checkpoint(
+        self,
+        kind: str = "manual",
+        label: str = "",
+        wrote: Callable[[str], bool] | None = None,
+    ) -> Entry | None:
         """Record the files that changed since the newest checkpoint.
 
         The first checkpoint is the baseline and records every file. Later ones
-        answer None when nothing changed.
+        answer None when nothing changed. `wrote` is true for a path that the step
+        shows it wrote; see `_of_others`.
         """
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
@@ -223,7 +229,7 @@ class Journal:
             if not delta:
                 return None
             if kind in STEP_KINDS:
-                theirs = self._of_others(delta, since, head)
+                theirs = self._of_others(delta, since, head, wrote)
                 if theirs:
                     other = self._append(
                         "outside",
@@ -279,14 +285,20 @@ class Journal:
         return tuple(_file_stamp(path) for path in paths)
 
     def _of_others(
-        self, delta: Mapping[str, str | None], since: float | None, head: str | None
+        self,
+        delta: Mapping[str, str | None],
+        since: float | None,
+        head: str | None,
+        wrote: Callable[[str], bool] | None = None,
     ) -> set[str]:
         """The paths of `delta` that the step did not write itself.
 
         Git brought a file when HEAD moved to a commit that has the file as it is
         now, and no commit made during the step changed it. Another session wrote
         a file when its journal recorded the same content as its own change
-        during the step. A session keeps a file that it changed before.
+        during the step. Two steps that run together both see such a file, and
+        the journals do not name its writer. So a session keeps a file that it
+        changed before, and a file that the step shows it wrote (`wrote`).
         """
         if since is None:
             since = self.entries[-1].at
@@ -294,11 +306,14 @@ class Journal:
         claimed = self._peer_claims(since)
         contested = {rel for rel in delta if (rel, delta[rel]) in claimed} - theirs
         if contested:
-            theirs |= contested - {
+            before = {
                 rel
                 for entry in self.entries
                 if entry.kind in OWN_KINDS
                 for rel in entry.files
+            }
+            theirs |= {
+                rel for rel in contested - before if wrote is None or not wrote(rel)
             }
         return theirs
 
