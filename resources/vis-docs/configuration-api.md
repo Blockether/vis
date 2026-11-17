@@ -43,8 +43,6 @@ examples use it.
 
 <div data-variant="python">
 
-`GatewayClient` has one method for each settings route.
-
 | Task | Method |
 |---|---|
 | Read the settings of a target | `get_settings(query=...)` |
@@ -85,9 +83,9 @@ A request names its target with `scope` and `target_id`. The `scope` is `global`
 `group`, or `session`, and each scope except `global` needs a `target_id`. Without a `scope`, a
 request uses the global settings, never the session that you see.
 
-The catalog of a target has a `revision` and `groups`. The `revision` is a hash of the saved values
-of the target. Each group has `toggles`, which are the setting rows. A row has `scopes`, `scope`,
-`source`, and `is_override`. A boolean row has `enabled`, and each other row has `value`.
+The catalog of a target has `groups` and a `revision`, a hash of its saved values. Each group has
+`toggles`, which are the setting rows. A row has `scopes`, `scope`, `source`, and `is_override`. A
+boolean row has `enabled`, and each other row has `value`.
 
 A row can have `children`, the rows that belong under it, in display order. A child row has
 `parent` with the `id` of its parent row, and rows nest at any depth. The row of a one-setting read
@@ -96,8 +94,7 @@ or write has no `children`, so keep the cached children when you replace a row.
 To mark the rows that a more specific scope decides for a session, add `context_session_id` to a
 read. A marked row has `overridden_by` with the deciding `scope` and its `enabled` or `value`. An
 unknown session, or a session outside the target, marks no rows. Vis accepts a write to a marked
-row, because the global value still applies to other projects. Clients lock the row only for the
-open session.
+row. Clients lock the row only for the open session.
 
 An extension group has `extension` with `name`, `origin`, and `status`. The `origin` is `built_in`,
 `global`, or `project`. The `status` is `loaded`, `stale`, or `failed`. A `global` or `project`
@@ -273,8 +270,7 @@ client.set_agent_name("Acme", locked=False)
 Without `locked`, the call is a rename, and the lock does not change. The gateway refuses the
 rename of a locked name with `GatewayError`, status 409.
 
-Each call returns the name in effect. Both calls use `get_setting` and `post_settings` with the
-setting `agent_name`.
+Each call returns the name in effect.
 
 </div>
 
@@ -296,9 +292,6 @@ The row of a fixed name has `lock_reason`, a sentence that tells a person why th
 change.
 
 </div>
-
-A locked name is the only name of the agent. No project changes it, and no client can rename the
-agent.
 
 When `VIS_AGENT_NAME` is set on the gateway, that variable gives the name in effect, and the
 gateway refuses each change with 409. Read [One fixed name](configuration.md#one-fixed-name).
@@ -324,13 +317,11 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/extensions/reload" -H 'content-type: applic
 
 </div>
 
-Vis runs the extension files of the target again. A global target reloads only machine extensions.
-A read of the catalog never runs extension code.
+A global target reloads only machine extensions. A read of the catalog never runs extension code.
 
-The answer has the totals `loaded` and `failed`, and a `scopes` list with one entry for each
-scanned scope. An entry has `scope`, which is `global` or `project`, the scanned `dirs`, and
-`loaded` and `failed` for that scope. Its `extensions` list names the loaded extensions. A scope
-with no loaded and no failed extensions found nothing in its directories.
+The answer has the totals `loaded` and `failed`, and a `scopes` list with one entry for each scanned
+scope. An entry has `scope`, which is `global` or `project`, the scanned `dirs`, and `loaded` and
+`failed` for that scope. Its `extensions` list names the loaded extensions.
 
 ## See also
 

@@ -29,7 +29,7 @@ task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The examples use `clie
 <div data-variant="http">
 
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
-examples use it. They also use `SESSION_ID` for the ID of a session that you created or found.
+examples also use `SESSION_ID`, the ID of a session that you created or found.
 
 </div>
 
@@ -78,11 +78,12 @@ print(council.group_id)
 ```
 
 The handle uses the default Council group of the session. A `LocalEngine` session has the same
-handle. To publish, get the handle while the session is active. The handle stays bound to that
-group and to the active run. Get a new handle for a later run. A read needs no active run.
+handle. To publish, get the handle while the session is active. The handle stays bound to that group
+and to the active run. A read needs no active run.
 
 If Council is off, or the session has no available group, `group_id` and every call raise the
-captured error. Get a new handle after you change the Council settings or the session group.
+captured error. Get a new handle for a later run, and after you change the Council settings or the
+session group.
 
 </div>
 
@@ -122,8 +123,7 @@ The answer is a list with `session_id`, `title`, and `state` for each active ses
 
 </div>
 
-The list is a snapshot of the active sessions in the group. The `state` is `running`, `queued`, or
-`held`.
+The list is a snapshot. The `state` is `running`, `queued`, or `held`.
 
 ## Publish a message
 
@@ -159,8 +159,7 @@ The answer is the new entry with `entry_id`, `thread_id`, and `replies`. To ask 
 
 These fields set the thread and the recipients:
 
-- `thread_id` continues a thread. Without it, the message starts a new thread with the optional
-  `title`.
+- `thread_id` continues a thread. Without it, `title` names the new thread.
 - `ping` with the string `"all"` notifies every active session in the group.
 - `reply_to` with the ID of a request answers that request.
 
@@ -269,8 +268,7 @@ A failed call raises `GatewayError` with the HTTP `status` and the error `code`.
 
 <div data-variant="http">
 
-A failed request returns an HTTP status and an error body. The `error.type` field of the body has
-the code.
+The `error.type` field of the error body has the code.
 
 </div>
 

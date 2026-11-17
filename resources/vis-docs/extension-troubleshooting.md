@@ -2,7 +2,7 @@
 
 If your extension does not load, a tool is missing, or an edit has no effect, run
 `vis-agent doctor` in the terminal of your project. In most cases, its load message names the
-stage that failed. Then find your symptom below.
+stage that failed.
 
 ## When to use
 
@@ -25,27 +25,24 @@ If Vis fails and not your extension, read [Reporting a bug](reporting-bugs.md).
 
 1. Run `vis-agent extension list` and `vis-agent doctor` in the project where the tool must
    load. The entry must be in a [loaded location](extension-packages.md#where-extensions-load).
-   A project extension with the same name overrides the global one.
 2. Run `/reload`, then look for the tool on the next turn. `Symbol.name` sets the public tool
    name. `Extension.alias` does not prefix it.
-3. Search for the public name, for example `apropos(r"^greet\.")`. `apropos()` also searches the
-   first docstring sentence, which its row shows, and nothing after it.
+3. Search for the public name, for example `apropos(r"^greet\.")`.
+   [Discovery](extension-api.md#prompts-and-discovery) explains what `apropos()` matches.
 4. Check `is_hidden` and the `activation` callback of the extension.
 5. If the agent sees the tool but does not choose it, name the tool in your request and read
    `doc(name)`. Improve its first-line summary and its [short
    prompt](extension-api.md#prompts-and-discovery). Do not add a second schema or a longer list
    of signatures.
 
-A prompt is instruction text, not a callable and not a startup hook. A skill describes a
-procedure, and nothing runs when you install or read it. To run Python, register the operation
-with `Symbol`.
+A prompt is instruction text, and a skill describes a procedure. Neither runs code. To run
+Python, register the operation with `Symbol`.
 
 ## Old code or documentation after an edit
 
-Run `/reload`, call the tool on the next turn, and read the load result. A failed reload keeps
-the last good code, contracts, docs, and package skills, and marks them **stale**. The reload
-result, `vis-agent doctor`, and the assistant context report the source fingerprints and the
-failure. A successful retry clears the warning at the next turn boundary.
+Run `/reload`, call the tool on the next turn, and read the load result. After a [failed
+reload](extension-packages.md#reload-update-or-remove), Vis keeps the last good code and marks
+it **stale**. A successful retry clears the warning at the next turn boundary.
 
 Check the origin of the import:
 
@@ -56,8 +53,8 @@ Check the origin of the import:
 - A call that is in flight may finish with the old imports.
 
 A guide such as `doc("extending")` ships with the running Vis build. An edit to the website or
-to a Markdown file does not change it, and `/reload` does not either. If `doc()` differs from
-the website, check the Vis version before you suspect your extension.
+to a Markdown file does not change it, nor does `/reload`. If `doc()` differs from the website,
+check the Vis version before you suspect your extension.
 
 ## Already registered
 
@@ -77,7 +74,7 @@ to hide a collision. Read [entrypoint design](extension-design.md#keep-the-entry
 | Missing package | Check the build backend, the dependency mode, and `package.__file__`. A project extension uses the environment that uv selects. |
 | Missing or stale uv environment | Project admission and `/reload` prepare it. Read the uv diagnostic, fix the dependency or the lockfile, then retry. |
 | Automatic package preparation fails | Read the uv phase and diagnostics. Vis bundles uv. If its executable is missing, install the runtime again. |
-| PEP 723 dependency has no wheel | This mode installs only wheels. It does not build from source. |
+| PEP 723 dependency has no wheel | This mode installs only wheels. |
 | Import works in a project environment but not in Vis | Point `tool.vis.project` at that project. Check that the interpreter is compatible, then reload. |
 | Import works in the extension but not in the sandbox | Project dependencies belong to the environment of the extension, not to the shared sandbox packages. An installation does not widen [filesystem access](jail.md#filesystem-access). |
 
@@ -91,9 +88,9 @@ that mode. A plain reload or import does not prepare a manual uv project.
 | --- | --- |
 | `parameter=...` in `doc()` | The parameter is optional. Omit it to get its real default, not `Ellipsis`. |
 | No text on what an omitted argument does | Fix the docstring or the `Annotated` description of the tool. Document each public default. |
-| A quoted string such as `'Results'` in `__annotations__`, or `NameError` from `get_type_hints()` | Record, opaque, and unresolved types stay forward-reference strings on the proxy. Read `.contract` for their fields, or pass `localns` to `get_type_hints()`. |
+| A quoted string such as `'Results'` in `__annotations__`, or `NameError` from `get_type_hints()` | Read `.contract` for their fields, or pass `localns` to `get_type_hints()`. |
 | `Name (unresolved)` | Keep result classes at module scope. Add `from __future__ import annotations` to each helper or package module that defines tools. Check the decorator metadata. |
-| `Name (opaque)` | Vis knows the class but has no description of its structure. If callers need fields, use an annotated dataclass. |
+| `Name (opaque)` | If callers need fields, use an annotated dataclass. |
 | Missing docstring or invalid public name | Fix the callable that the error names. The declaration rejects it. |
 
 Vis does not evaluate annotation expressions to find types. The [contract and introspection
@@ -103,24 +100,21 @@ annotations.
 ## Package skill missing
 
 A declared skill path must contain `SKILL.md` inside the selected package. Find its qualified
-name, for example with `apropos("vis-greeter/")` and `doc("vis-greeter/greeting")`. A duplicate
-path or name, an invalid name, or a resource that escapes the package fails the load. Vis does
-not overwrite another skill.
+name, for example with `apropos("vis-greeter/")`, and reload after each edit. [Bundled
+skills](extension-packages.md#bundled-skills) lists what fails the load. Vis does not overwrite another skill.
 
-Reload after each edit. A failed reload keeps the last good skills and code together. An
-ordinary local skill with the same qualified name wins. Read [bundled
-skills](extension-packages.md#bundled-skills).
+A [local skill](skills.md#where-vis-looks) with the same qualified name wins.
 
 ## Registration works but the call fails
 
-Read `doc(name)`, then call the tool. A successful registration is not an integration test.
-Dependencies and native libraries must work in the trusted session worker. Success in the
-registration worker or in your development environment does not prove that. Read the returned
-error and the [execution boundary](extension-api.md#filesystem-and-processes).
+Read `doc(name)`, then call the tool. Dependencies and native libraries must work in the trusted
+session worker. Success in the registration worker or in your development environment does not
+prove that. Read the returned error and the [execution
+boundary](extension-api.md#filesystem-and-processes).
 
-Forms and live views need a calling session in Vis. Do not open them from registration or from a
-passive provider callback. Test a cancellation, an unavailable UI, and a successful response.
-Read [forms](human-input.md) and [live views](live-views.md).
+[Forms](human-input.md) and [live views](live-views.md) need a calling session in Vis. Do not
+open them from registration or from a passive provider callback. Test a cancellation, an
+unavailable UI, and a successful response.
 
 ## Live-view updates
 

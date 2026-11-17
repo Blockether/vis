@@ -13,9 +13,8 @@ writes task folders, runs them with Harbor, and reads the Harbor job folders.
 
 <div data-variant="http">
 
-The gateway routes score, diagnose, and compare a round summary that you send. They run the same
-Python code as the SDK, on the gateway. They save nothing, and each answer comes from the
-request body only.
+The gateway routes score, diagnose, and compare a round summary that you send. They save nothing,
+and each answer comes from the request body only.
 
 </div>
 
@@ -58,10 +57,9 @@ before it.
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
 examples use it. Each request sends a JSON file with `--data @file.json`.
 
-The routes need a round summary, and only the Python SDK makes one. The summary comes from the
-Harbor job folders, which are on the computer that ran Harbor. So you need the Python SDK there,
-also when another program sends the requests. Keep the summary and the answers yourself, because
-the gateway does not store them.
+The routes need a round summary, and only the Python SDK makes one, from the Harbor job folders. So
+you need the Python SDK on the computer that ran Harbor, also when another program sends the
+requests. Keep the summary and the answers yourself.
 
 </div>
 
@@ -91,8 +89,8 @@ work, for example from a computer without the job folders.
 
 <div data-variant="http">
 
-Each route takes a JSON object and gives a JSON object. No route writes tasks, runs tasks, or
-reads job folders. Do these steps with the Python SDK or the `harbor` command.
+Each route takes a JSON object and gives a JSON object. To write tasks, run tasks, or read job
+folders, use the Python SDK or the `harbor` command.
 
 | Task | Method and path |
 |---|---|
@@ -140,9 +138,8 @@ raises `ValueError` for an unknown key in `checks`, with the nearest known key.
 
 <div data-variant="http">
 
-Harbor reads the task folder on the computer that runs it, so no route writes a task. Write the
-files of [a task](evals.md#step-2-write-a-task) yourself, or run the Python example on that
-computer:
+Write the files of [a task](evals.md#step-2-write-a-task) yourself, or run the Python example on the
+computer that runs Harbor:
 
 ```bash
 python3 - <<'EOF'
@@ -265,8 +262,7 @@ attempt of another model does not count.
 
 <div data-variant="http">
 
-The gateway can run on another computer, so no route reads job folders. Build the summary with
-the Python SDK, then send it:
+Build the summary with the Python SDK, then send it:
 
 ```bash
 python3 - <<'EOF'

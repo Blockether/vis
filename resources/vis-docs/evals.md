@@ -35,8 +35,6 @@ compare two runs.
   [Import MRCR](#import-mrcr).
 - **You want to know if one prompt rule helps on the same tasks.** [Add a rule to the system
   prompt](#add-a-rule-to-the-system-prompt).
-- **You want to know how Vis and Harbor share the work.** Read [Vis and
-  Harbor](#vis-and-harbor).
 - **Your own program must do these steps.** Read [Evaluations API](evals-api.md).
 
 To watch one session while it runs, use [Sessions](sessions.md). To run a prompt on a schedule, use
@@ -58,26 +56,24 @@ tool does a different part of the work:
 The Vis setup differs from the Harbor defaults in three ways:
 
 - **No containers.** Harbor runs each trial in Docker by default. `HostEnvironment` runs each trial
-  in a new git repository on your computer, inside the [process jail](jail.md). [How a trial is
-  isolated](#how-a-trial-is-isolated) lists what the agent can and cannot reach.
+  in a new git repository on your computer, with the limits of [How a trial is
+  isolated](#how-a-trial-is-isolated).
 - **A Vis grader.** A standard Harbor verifier runs tests, for example `pytest`, and writes a
-  reward. The Vis grader also reads the agent trajectory. It checks the files, the answer, the
-  tools that the agent used, and the errors of the agent.
-- **Scores for every agent.** The analysis reads only standard Harbor files. It scores a job of
-  any Harbor agent, for example Claude Code or Codex, in the same way.
+  reward. The Vis grader also reads the agent trajectory, as [Choose the checks](#choose-the-checks)
+  shows.
+- **Scores for every agent.** The analysis reads only standard Harbor files, so it scores a job of
+  any Harbor agent, for example Claude Code or Codex.
 
 For the Harbor concepts, read the Harbor [core concepts](https://docs.harborframework.com/core-concepts)
 and the [task overview](https://docs.harborframework.com/tasks/overview).
-
-The steps pass these files from one to the next:
 
 [![You write and check the tasks, run them with Harbor into a job folder, and report the round into vis-report.json. Labels and judge samples check the failure causes.](assets/diagrams/evals-steps.svg)](assets/diagrams/evals-steps.svg)
 
 ## Step 1: Install the tools
 
-You need Python 3.12 or later, and a provider and a model that
-[Configuration](configuration.md) explains how to set. Each trial makes paid model calls. A task
-with one attempt costs one agent run.
+You need Python 3.12 or later, and a provider and a model that [Configuration](configuration.md)
+explains how to set. Each trial makes paid model calls, and a task with one attempt costs one agent
+run.
 
 Install the SDK. It installs Harbor 0.24.0 with it:
 
@@ -176,17 +172,14 @@ A trial passes only when all its checks pass. Most tasks need these checks:
 file gets the answer on its standard input. Exit code 0 accepts the answer. Any other exit code
 fails the check, and the last line of the error output becomes the failure detail.
 
-The grader refuses a key that it does not know, for example `want_tool` for `want_tools`. A
-misspelled key would check nothing, and the trial would pass without that check.
+The grader refuses a key that it does not know, for example `want_tool` for `want_tools`.
 
 The grader always checks that the agent finished without an error. For more examples, read the 44
 tasks in the `e2e/` folder of the Vis repository.
 
 ### Grade with the rules of the task
 
-Use `verify` for a rule that belongs to one task. An example is "each call in the mock record
-has a matching tool call". The rule then stays in the task folder, and the shared grader does not
-change. Name the file in `tests/checks.json`:
+Use `verify` for a rule that belongs to one task. Name the file in `tests/checks.json`:
 
 ```json
 {
@@ -230,19 +223,16 @@ guide [Create a task](https://docs.harborframework.com/tutorials/create-a-task).
 
 ### Write a fair task
 
-A task that tells the agent the answer measures the instruction, not the agent. Use these rules
-for each task. They follow the Anthropic guides in [References](#references).
+Use these rules for each task. They follow the Anthropic guides in [References](#references).
 
 - **Describe the goal, not the solution.** Give the result and the limits that a person needs.
   Copy the texts of `want` into the instruction only when the exact format is a requirement.
 - **Make the task unambiguous.** Two experts who read the instruction must agree on pass or fail.
-  Each check must follow from the instruction. A check on a file that the instruction does not
-  name fails good agents.
+  Each check must follow from the instruction.
 - **Prove that the task can be solved.** Write a reference solution and check that it passes all
-  checks. A task that nobody can solve gives 0% for every agent.
-- **Test both directions.** Add tasks where the correct action is to change nothing, for example
-  a file that must stay the same. Check it with `wantnot`. A set of only "change it" tasks
-  rewards an agent that always changes files.
+  checks.
+- **Test both directions.** Add tasks where the correct action is to change nothing, and check them
+  with `wantnot`.
 - **Grade the result, not the path.** Check the files and the answer. Use `want_tools` and
   `forbid_tools` only when the tool is a requirement, as in the [mock
   example](#replace-an-extension-with-a-mock).
@@ -255,13 +245,13 @@ for each task. They follow the Anthropic guides in [References](#references).
 - **Replace tasks that every run solves.** A task that always passes cannot show a change.
 
 After each change of the tasks, read some passed and some failed trajectories. Some broken tasks
-show only there, for example a check that passes for the wrong reason.
+show only there.
 
 ### Replace an extension with a mock
 
 A task can test an agent that uses a function of your own extension, for example
-`mylib.send_some_huge_payload`. In an evaluation, the real function must not send data. Put a mock
-extension in the seed files. The mock returns a made-up answer and writes one line for each call.
+`mylib.send_some_huge_payload`, without a call of the real function. Put a mock extension in the
+seed files. The mock returns a made-up answer and writes one line for each call.
 
 Vis loads the extensions of the project from `.vis/extensions/` in the workspace. A project
 extension replaces a global extension with the same `name`, so the agent calls the mock and the
@@ -336,8 +326,8 @@ Save it as `environment/workspace/.vis/extensions/mylib.py`. Then check the call
 - To compare the record with the tool calls of the trajectory, add a [`verify`
   file](#grade-with-the-rules-of-the-task).
 
-The workspace of a trial is temporary, so the record must also stay after the trial. Name it in
-`artifacts` at the start of `task.toml`, before the first table:
+To keep the record after the trial, name it in `artifacts` at the start of `task.toml`, before the
+first table:
 
 ```toml
 artifacts = [".vis/calls/payload-calls.jsonl"]
@@ -352,9 +342,8 @@ missing. A missing file does not change the reward. `write_task` writes this lin
 
 ### Write a task with several turns
 
-People seldom give a whole request in one message. They add a detail or a follow-up question
-after the first answer. Each message is a turn. A task with several turns tests if the agent still
-follows the conversation after the first message.
+Each message of the user is a turn. A task with several turns tests if the agent still follows the
+conversation after the first message.
 
 Write the messages in `instruction.md`. Put a line with only `<!-- vis:turn -->` between two
 messages:
@@ -391,10 +380,9 @@ a test that calls `total([])`.
 The Vis agent runs the task in these steps:
 
 1. It starts one Vis session, sends the first message, and waits until the answer is complete.
-2. It sends the next message to the same session. The agent sees the earlier messages, its own
+2. It sends each next message to the same session. The agent sees the earlier messages, its own
    answers, and its tool results, as in a chat in the app.
-3. It repeats step 2 for each remaining message.
-4. After the last message, Harbor runs the checks once. They grade the last answer and the files in
+3. After the last message, Harbor runs the checks once. They grade the last answer and the files in
    the workspace.
 
 | Event | Result |
@@ -421,8 +409,7 @@ each fact that it omits. To measure what the notes keep, [import LongMemEval](#i
 
 ## Step 3: Check the tasks
 
-A bad task gives wrong scores, for example when its instruction does not name a file that its
-checks need. First check the files of each task. This check makes no model calls:
+A bad task gives wrong scores. First check the files of each task. This check makes no model calls:
 
 ```bash
 python -m blockether.vis.evals.check tasks --static
@@ -532,14 +519,13 @@ The parts come in a fixed order, not from a simulated user as in the original be
 turn also says that all details are given. Compare your scores with each other, not with the
 published scores.
 
-These conversations have a few thousand tokens. They test if the agent combines the parts of a
-request. They do not test what the agent keeps when the conversation becomes too long.
+These conversations have a few thousand tokens, so they do not test what the agent keeps in a long
+conversation.
 
 ### Import LongMemEval
 
 [LongMemEval](https://github.com/xiaowu0162/LongMemEval) tests if an assistant remembers facts from
-a long chat history. A user gave facts in earlier chats, for example the degree they graduated
-with. Later the user asks "What degree did I graduate with?". The correct answer needs a fact from
+a long chat history. For example, the user asks "What degree did I graduate with?". The answer is in
 an earlier chat, far from the question in most tasks.
 
 Each task pastes the earlier chats into user turns of about 10,000 tokens. The first message asks
@@ -607,16 +593,15 @@ of your model, start with `--limit 1`. These runs used `anthropic-coding-plan`:
 |---|---|---|---|
 | Long, 35 turns | `claude-opus-5-5` | $5.91 | 9 minutes |
 | Long, 36 turns | `claude-haiku-4-5` | About $2 | 22 minutes |
-| Oracle | Either model | A few cents | Less than a minute |
+| Oracle | Either model | A few cents | Less than 40 seconds |
 
 To read the result, compare each question in the two runs:
 
 - **Both runs pass.** The agent kept the fact through its folds.
 - **The oracle task passes and the long task gives a wrong answer.** The agent lost the fact, in a
-  fold note in most cases. Search `agent/trajectory.json` for `fold_session` and read what the
-  agent kept. A fold that covers an earlier fold replaces its note, so check that the new note
-  keeps the old facts. If the agent never called `fold_session`, Vis dropped old turns, and their
-  facts are lost.
+  fold note in most cases. Search `agent/trajectory.json` for `fold_session` and read what the agent
+  kept. A fold that covers an earlier fold replaces its note, so check that the new note keeps the
+  old facts. If the agent never called `fold_session`, Vis dropped the old turns.
 - **The long task fails before the last turn.** The agent did not fold in time, or its fold removed
   too little. `agent/run.json` lists one exit code for each turn that ran, so its last entry is the
   turn that failed.
@@ -629,7 +614,7 @@ These test runs on `anthropic-coding-plan` show each case:
   tokens. That is more than its budget of 250,000 but less than its window, so the run measured
   recall in a long context.
 - **`claude-haiku-4-5` answered correctly after two folds.** It folded at turns 14 and 23, and each
-  fold removed about 90,000 tokens. Its window is 150,000 tokens.
+  fold removed about 90,000 tokens.
 - **`claude-haiku-4-5` failed another task at turn 18.** It folded only the first turn, which
   removed 7,000 tokens. The next request was larger than the window.
 - **`claude-haiku-4-5` answered correctly after four folds.** It used the keys from the hint, for
@@ -686,9 +671,9 @@ grader. The answer must start with the random string, and the rest must match at
 expected text. MRCR reports the mean match, so compare your runs with each other, not with published
 scores.
 
-MRCR and LongMemEval measure different things. A LongMemEval answer needs one short fact, and a fold
-note can keep it. An MRCR answer needs a whole earlier answer word for word, and a fold note seldom
-keeps that. So a model that folds can pass LongMemEval and fail MRCR.
+A LongMemEval answer needs one short fact, and a fold note can keep it. An MRCR answer needs a whole
+earlier answer word for word, and a fold note seldom keeps that. So a model that folds can pass
+LongMemEval and fail MRCR.
 
 ## Step 5: Read the results
 
@@ -809,8 +794,7 @@ a log line, or a credential, so you can share a summary without the trial folder
 An attempt is **scored** when Harbor verified it and the agent did real work:
 
 - The trajectory names the model that you pinned for the round.
-- The model gave output tokens. An attempt where the provider refused every call measures the
-  runner, not the agent.
+- The model gave output tokens.
 - An attempt that reached the agent time limit is scored, also without a trajectory.
 
 Each task counts once, by its latest scored attempt. A task without a scored attempt is in
@@ -820,8 +804,8 @@ Each task counts once, by its latest scored attempt. A task without a scored att
 
 ## How a trial is isolated
 
-The agent must solve the task with the tools of the session. It must not read the answer from
-the grader or change the evidence. `HostEnvironment` gives each trial these limits:
+`HostEnvironment` gives each trial these limits, so the agent cannot read the answer from the grader
+or change the evidence:
 
 - **The jail is on.** Each trial runs inside the [process jail](jail.md). The agent can read and
   write the workspace and the trial folders of Harbor. It cannot read your home folder or other
@@ -831,9 +815,9 @@ the grader or change the evidence. `HostEnvironment` gives each trial these limi
   the jail, so they can still read `.vis/extensions/` and write `.vis/calls/`.
 - **Git does not show `.vis/`.** `HostEnvironment` adds `/.vis/` to `.git/info/exclude` before the
   first commit. `git show` and `git log` then cannot give the agent a mock or a record.
-- **Only the project configuration applies.** The agent sets `VIS_SOURCES=project`. From
-  `~/.vis` the trial then gets only the providers and their sign-in. It does not get your
-  toggles, rules, MCP servers, or extensions, so another computer gives the same setup.
+- **Only the project configuration applies.** The agent sets `VIS_SOURCES=project`. From `~/.vis`
+  the trial then gets only the providers and their sign-in. It does not get your toggles, rules, MCP
+  servers, or extensions.
 
 `HostEnvironment` owns `.vis/config.yml`, so a task must not put its own copy in the workspace.
 [Step 3](#step-3-check-the-tasks) refuses such a task.
@@ -858,14 +842,13 @@ The report gives three pass rates:
 
 Each rate has a 95% interval. A small round has a wide interval. The report also gives
 `detectable_change_points`. A second round of the same size, on other tasks, detects a rise or a
-fall of this size with about 80% power. A smaller change can stay hidden. A comparison on the
-same tasks detects a smaller change, as [Plan the number of tasks](#plan-the-number-of-tasks)
-shows.
+fall of this size with about 80% power. A comparison on the same tasks detects a smaller change, as
+[Plan the number of tasks](#plan-the-number-of-tasks) shows.
 
 The attempts of one task are not independent, so the attempt interval uses clustered standard
-errors. More attempts make each task result less noisy. They do not replace more tasks.
+errors. More attempts make each task result less noisy, but they do not replace more tasks.
 
-Cost values use metered API prices. They are not subscription charges.
+Cost values use metered API prices, not subscription charges.
 
 ### Repeated attempts
 
@@ -891,8 +874,8 @@ of 4 attempts has pass@2 = 1 - 1/6 = 83% and pass^2 = 1/6 = 17%.
 - At k = 1, both rates are c / n.
 - pass@k goes up with k, and pass^k goes down. A large gap shows an agent that is not
   consistent.
-- Use pass@k when one success is enough, for example when a person picks the best result.
-- Use pass^k when each run must succeed, for example in an automation.
+- To choose between the two rates, read [Choose the number for your
+  question](#choose-the-number-for-your-question).
 
 `unstable_tasks` lists the tasks with both solved and failed attempts. Read them first.
 
@@ -982,9 +965,9 @@ model. The comparison gives the difference in points with a 95% interval and a v
 - `better` or `worse` when the interval excludes zero.
 - `no measurable difference` in all other cases.
 
-A result without a clear change has two possible reasons. The runs are the same, or the round is
-too small to show a change. To tell them apart, give `margin_points`, the smallest change that
-matters to you. The verdict then compares the interval with the margin:
+A result without a clear change means that the runs are the same, or that the round is too small to
+show a change. To tell the two apart, give `margin_points`, the smallest change that matters to you.
+The verdict then compares the interval with the margin:
 
 | Verdict | The 95% interval | What it means |
 |---|---|---|
@@ -1026,8 +1009,6 @@ position also lists caveats, for example when the board rows ran more trials for
 
 ## Decide from the results
 
-A round gives many numbers, and each number answers a different question.
-
 ### Choose the number for your question
 
 | Your question | Use | Do not use |
@@ -1057,15 +1038,12 @@ A round gives many numbers, and each number answers a different question.
   hard tasks.
 - **Many tasks are unscored.** The pass rate then counts fewer tasks than you think. Use the strict
   pass rate, and find why the attempts were not scored.
-- **The kappa is below 0.6, or fewer than 30 labels exist.** Do not choose a fix from the failure
-  causes.
 - **You changed the agent while you read the failures of the same tasks.** The tasks then measure
   your fixes, not the agent. Confirm the change on tasks that you did not read.
 - **You compared many candidates and kept the best one.** By chance, about 1 of 20 candidates
   without a real change passes the 5% level. Run the best candidate again on new tasks.
 - **The two rounds used a different checkout, model version, or task version.** Pin these before
   both rounds.
-- **You compare cost with a subscription.** The cost uses metered API prices.
 
 ### Decide on a change
 
@@ -1138,14 +1116,11 @@ in `packages/vis-agent/tests/test_evals_stats.py` and `test_evals_compare.py`.
 | A candidate that is worse by the margin is rarely `not worse`. | 2% to 4% of comparisons with 60 and 200 tasks. |
 | Benjamini-Hochberg q-values control the false discoveries. | 8% false discoveries at q ≤ 0.1. |
 
-`detectable_change_points` uses a normal approximation. The report check sums the exact binomial
-distribution of a two-proportion z-test. It shows where the approximation gives less power.
+`detectable_change_points` uses a normal approximation, and the report check shows where the
+approximation gives less power. The value is the larger change of a rise and a fall. With the
+smaller change, a fall at a pass rate of 75% showed with only 58% power.
 
-These checks found one error, which is now corrected. The report used the smaller change of a
-rise and a fall as `detectable_change_points`. At a pass rate of 75%, a fall of that size showed
-with only 58% power. The report now gives the larger change.
-
-The failure causes, the near-miss limit, and the judge rubric are rules, not statistics. No
+The failure causes, the near-miss limit, and the judge rubric are rules, not statistics, so no
 simulation proves them. Check them on your own tasks with [labels](#check-the-causes-with-labels).
 
 ### Example: decide on 12 tasks
@@ -1173,11 +1148,10 @@ Read the result in this order:
 
 1. Only the agent differs as a route part. Other settings, such as the output budget, were not
    identical. So the result points to the agent setup, not to the agent alone.
-2. The interval excludes zero, so the verdict is `better`. The exact test does not confirm it.
-3. The gain can be as small as 7 points, which is below the margin.
-4. codex costs 1.9 times more on the same tasks. The table says to adopt it only when a 7-point
-   gain is worth 2.64 USD more for each 12 tasks.
-5. The exact test does not confirm the verdict, and only a change of 41 points or more shows
+2. The gain can be as small as 7 points, which is below the margin.
+3. codex costs 1.9 times more on the same tasks. The table says to adopt it only when a 7-point gain
+   is worth 2.64 USD more for each 12 tasks.
+4. The exact test does not confirm the verdict, and only a change of 41 points or more shows
    reliably on 12 tasks. Run a second, larger round before you adopt codex.
 
 ## Improve an agent with evaluations

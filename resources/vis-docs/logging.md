@@ -55,9 +55,8 @@ process log, such as `20260914T153000Z`, identifies the run.
 
 ## Search the logs
 
-A process log rotates each day and when it reaches its size limit. Vis compresses each rotated
-part with gzip. The active file is `<name>.log`. The rotated parts are
-`<name>.log-<YYYY-MM-DD>d.<N>.gz`, and part `1` is the newest.
+Vis compresses each rotated part of a process log with gzip. The active file is `<name>.log`. The
+rotated parts are `<name>.log-<YYYY-MM-DD>d.<N>.gz`, and part `1` is the newest.
 
 Use `zgrep`, which reads plain and compressed files. `grep` finds no text in the `.gz` parts. Put
 `*` after `.log` to include the rotated parts, and search all date directories.
@@ -69,8 +68,8 @@ zgrep -h -B 2 '<session-id>' ~/.vis/logs/*/gateway-*.log*
 ```
 
 A text entry starts with a line that has the UTC time, the level, and the signal name. A `data:`
-line and a `ctx:` line can follow it. The `ctx:` line holds the session and turn IDs, so `-B 2`
-also prints the first two lines of the entry.
+line and a `ctx:` line can follow. The `ctx:` line holds the session and turn IDs, so `-B 2` also
+prints the first two lines of the entry.
 
 To read one compressed part, run `zless <file>.gz`.
 
@@ -128,15 +127,13 @@ summarize the failed steps of a session. For a past turn, search the problem log
 
 ## Python runtime
 
-Session sandboxes and trusted Python extensions run in separate worker processes. A session has
-one sandbox worker and one worker for all its extensions. Each worker writes its output to
-`pyext-<worker-id>/worker.log` while it runs. When a worker stops and its files are all empty, Vis
-deletes its directory. Python `print()` output comes back with the execution result. Extension
-`vis.log` messages go to the gateway log.
+A session has one sandbox worker process and one worker process for all its trusted Python
+extensions. Each worker writes its output to `pyext-<worker-id>/worker.log` while it runs. When a
+worker stops and its files are all empty, Vis deletes its directory. Python `print()` output comes
+back with the execution result. Extension `vis.log` messages go to the gateway log.
 
 A source build without a packaged Python worker runs the worker on the JVM. That worker writes its
-fatal-error reports next to `worker.log`, and heap dumps if you enable them. The operating system
-keeps its own crash reports by its own policy.
+fatal-error reports next to `worker.log`, and heap dumps if you enable them.
 
 ## Hang reports
 
@@ -205,10 +202,9 @@ hang reports only, not to each file in the log tree.
 
 ## Session state is separate
 
-`~/.vis/gateway/events/<session-id>.ndjson` is the permanent event journal of the gateway. Vis
-replays a session from it. The journal holds conversation and tool data, and log cleanup does not
-remove it. Configuration, credentials, and session databases are
-also outside the log tree.
+`~/.vis/gateway/events/<session-id>.ndjson` is the permanent event journal of the gateway. The
+journal holds conversation and tool data, and log cleanup does not remove it. Configuration,
+credentials, and session databases are also outside the log tree.
 
 When a bug report needs transcript context, use a reviewed
 [session export](sessions.md#export-a-session). Do not share raw event journals, databases, or

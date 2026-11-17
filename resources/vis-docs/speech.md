@@ -20,8 +20,7 @@ settings in the Companion app, read [Machine settings](configuration.md#machine-
 
 ## Speech engines
 
-Each engine runs on the gateway computer. The first use of an engine downloads its model, and the
-download can take some minutes.
+The first use of an engine downloads its model, and the download can take some minutes.
 
 | Engine | Use | Voices |
 |---|---|---|
@@ -38,8 +37,8 @@ The `qwen3-tts-local` model is 3.7 GB. On a CPU, it speaks at about the speed of
 
 ## Memory use
 
-A loaded model stays in the memory of the gateway, so the next request does not wait for it. Three
-settings in the **General** section control this memory.
+A loaded model stays in the memory of the gateway. Three settings in the **General** section
+control this memory.
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -56,8 +55,8 @@ Send the text, with an optional voice and an optional engine. Short text comes b
 text runs as a job, and the client waits for the audio. The audio is a mono WAV file, at 24 kHz for
 most engines.
 
-`vibevoice-local` and `qwen3-tts-local` sample noise. Give a `seed` to get the same take again.
-Give another seed to get a different take of the same text.
+`vibevoice-local` and `qwen3-tts-local` give a different take each time. Give a `seed` to get the
+same take again.
 
 ## Add your own voice
 
@@ -72,8 +71,8 @@ Record only people who agree to the use of their voice.
 scripts and settings use this ID. Vis keeps the voices that you add in `~/.vis/voices` on the
 gateway computer. Every program that uses this gateway can use them.
 
-`qwen3-tts-local` also speaks the voices that you add. For these voices, Vis downloads a second
-model of about 1.8 GB on first use. On a CPU, one second of speech takes about 1 to 2 seconds.
+For the voices that you add, `qwen3-tts-local` downloads a second model of about 1.8 GB on first
+use. On a CPU, one second of speech takes about 1 to 2 seconds.
 
 For the best copy of a voice with `qwen3-tts-local`, do these steps:
 
@@ -86,8 +85,7 @@ For the best copy of a voice with `qwen3-tts-local`, do these steps:
 ## Change or remove a voice
 
 You can change the name, the language, and the transcript of a voice that you added. The ID stays
-the same, so scripts that use the voice continue to work. To replace the audio, add a new recording
-with the same name.
+the same. To replace the audio, add a new recording with the same name.
 
 When you remove a voice, Vis deletes its recording. You cannot remove a built-in voice.
 

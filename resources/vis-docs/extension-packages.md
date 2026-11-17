@@ -37,8 +37,7 @@ follow [Using an existing Python project](extension-development.md).
 | Package to install or share, with or without skills | [`pyproject.toml` and `extension.py`](#package-manifest) | Automatic uv preparation at load and reload |
 | Existing uv project with an editable implementation | Entry file that declares `tool.vis.project` | Automatic preparation on project admission or reload. Read [Using an existing Python project](extension-development.md) |
 
-Choose one dependency mode for each entrypoint. A package needs no skill, a provider needs no
-tools, and a small tool needs no package.
+Choose one dependency mode for each entrypoint.
 
 ## Where extensions load
 
@@ -48,10 +47,10 @@ tools, and a small tool needs no package.
 | `<project>/.vis/extensions/` | That project |
 
 A project extension overrides the global extension with the same registered name, only in that
-project. Each top-level `.py` file is an entry. An installed package is at `.vis/extensions/<name>/<version>/`, with its
-source files directly in the version directory. A `current` link in `<name>/` selects the active
-version, and Vis loads only the `extension.py` of that version. Test files (`test_*.py` and
-`*_test.py`) are not entries.
+project. Each top-level `.py` file is an entry. An installed package is at
+`.vis/extensions/<name>/<version>/`. A `current` link in `<name>/` selects the active version, and
+Vis loads only the `extension.py` of that version. Test files (`test_*.py` and `*_test.py`) are not
+entries.
 
 For example, an installation of `vis-greeter` version `1.0.0` creates:
 
@@ -66,7 +65,7 @@ For example, an installation of `vis-greeter` version `1.0.0` creates:
 ```
 
 A GitHub version holds copied source and an installation receipt. A local version links to your
-development checkout, so edits stay in that checkout. The installer adds Git ignore rules for
+development checkout. The installer adds Git ignore rules for
 installed package directories and its private metadata. Loose `.py` extensions stay visible to Git.
 Commit package declarations in `vis.yml`, not downloaded sources or installation receipts.
 
@@ -106,8 +105,7 @@ Replace the example repository and version with a reviewed, approved release. A 
 - A local path is relative to the YAML file that declares it, not to the working directory of the
   shell.
 
-Reading the configuration never installs a package. Preparation happens when you add or open a
-project, when you reload, and when you run sync.
+Vis installs a declared package only when you add or open a project, reload, or run sync.
 
 ### What Vis does when you open a project
 
@@ -124,15 +122,13 @@ loading fails, Vis reports the failure and does not open a session with incomple
 declaration or the dependency problem and try again.
 
 One gateway can serve several projects at once. Each session resolves tools, providers, environment
-values, and toggles from its own project, not from the directory where the gateway started. Another
-project that you open does not replace those tools.
+values, and toggles from its own project, not from the directory where the gateway started.
 
 Each extension has its own package environment or declared uv project environment. PEP 723 wheels
 and shared sync installs go to `~/.vis/python/packages`, which every project on the gateway shares.
 
 To adopt later changes to configuration or source, run `/reload` in a project session. It reloads
-that project and the shared global extensions, not the local catalogs of other projects. An
-admitted project reuses its loaded code when you open it again.
+that project and the shared global extensions, not the local catalogs of other projects.
 
 ### Sync packages from the command line
 
@@ -160,8 +156,8 @@ Sync works as follows:
 - A dry run writes nothing. It does not fetch sources, install dependencies, or run extension code.
 
 Dependencies use `uv sync --check --offline` first, and a normal `uv sync` only when preparation is
-needed. `uv` owns its lockfile, environment, and download cache. [Reload after
-changes](extension-development.md#reload-after-changes) says when Vis skips uv.
+needed. [Reload after changes](extension-development.md#reload-after-changes) says when Vis skips
+uv.
 
 ### Which version sync installs
 
@@ -187,8 +183,7 @@ that a running Vis process still uses. The output shows each removed version as 
 run shows it as `would-prune`.
 
 Sync never adopts or replaces a link that you installed manually or that changed outside sync. Keep
-the link and resolve the conflict before you sync. Do not edit the private `.sync.json` receipt. Do
-not run a manual update or rollback on a package that sync owns. Change its declaration.
+the link and resolve the conflict before you sync. Do not edit the private `.sync.json` receipt.
 
 When you copy or move a project, sync reuses the unchanged GitHub versions in its `.vis/extensions`
 directory. If sync refuses a package, the error names the package directory. Keep your local edits
@@ -208,7 +203,7 @@ extensions:
     source: ./packages/*
 ```
 
-Vis expands each glob when it loads extensions and again at each `/reload`. The key, such as
+Vis expands each glob at each load and each `/reload`. The key, such as
 `repositories`, only names the declaration in error reports. The glob gives these results:
 
 - A matched `.py` file loads as a single-file extension. Test files are not entries.
@@ -219,8 +214,8 @@ directory level, and Vis refuses `**`. A pattern matches a hidden name only when
 starts with `.`, as `.vis` does above. A glob declaration accepts only `source`. Vis loads matches
 in place and never installs them, so `extension sync` ignores them.
 
-Each match loads on its own. A file that fails to load, or a glob that Vis refuses, appears in the
-load report and in `vis-agent doctor`. The other matches still load. Each extension needs its own
+A file that fails to load, or a glob that Vis refuses, appears in the load report and in
+`vis-agent doctor`. The other matches still load. Each extension needs its own
 registered name. If a matched file uses the name of a loaded extension, the matched file fails with
 an error that names both files.
 
@@ -229,10 +224,9 @@ Each extension also gets its own project root, the nearest directory above its f
 with [`vis.project_root()`](extension-api.md#project-root). So the same file works in the workspace
 and in a session that opens the repository directly.
 
-The rules of a nested project also apply to its extensions. When such an extension is active, the
-project rules of the session list the `AGENTS.md` or `CLAUDE.md` file of its project. The model
-reads that file before it uses the tools of the project or works in the project. Vis does not copy
-the file into each request, so many nested projects do not make the prompt larger.
+When a nested extension is active, the project rules of the session list the `AGENTS.md` or
+`CLAUDE.md` file of its project. The model reads that file before it uses the tools of the project
+or works in the project. Vis does not copy the file into each request.
 
 ## Install a package
 
@@ -253,11 +247,11 @@ either flag, the installation is global, even when the current directory contain
      --trust
    ```
 
-   Vis links the local checkout and does not copy it. You can also pass its `pyproject.toml`.
+   You can also pass its `pyproject.toml`.
    Prefix a relative checkout path with `./` when it can look like `owner/repository`. A bare
    repository slug always selects GitHub, even if a local directory has the same name.
 
-2. Start Vis there, or run `/reload`. Vis prepares dependencies before registration.
+2. Start Vis there, or run `/reload`.
 3. On the next turn, ask Vis to inspect `doc("greet.hello")` and call `await greet.hello("Ada")`.
    The `.text` of the result is `Hello, Ada!`. `vis-agent extension list` checks registration, not
    execution.
@@ -275,9 +269,8 @@ vis-agent extension install example/greeting \
   --trust
 ```
 
-The key is the package name from `pyproject.toml`. An approved GitHub release saves an exact
-version, and `--revision` saves the reviewed commit. A local source saves a path relative to the
-project configuration.
+An approved GitHub release saves an exact version, and `--revision` saves the reviewed commit. A
+local source saves a path relative to the project configuration.
 
 With `--global --save`, Vis writes to its global machine store, `~/.vis/state.yml`. It does not
 rewrite the global configuration that you wrote by hand.
@@ -293,8 +286,8 @@ you already installed, run the same install command again with `--save`.
 ### Install an approved GitHub Release
 
 The [Extension Center](https://vis.blockether.com/extensions/) lists approved releases of public
-GitHub projects. An extension does not need PyPI. Before you install, review the source, the
-manifest, and the dependencies of the selected version.
+GitHub projects. Before you install, review the source, the manifest, and the dependencies of the
+selected version.
 
 For one project, run this command from that project:
 
@@ -323,8 +316,8 @@ vis-agent extension install example/extensions/tools/greeting \
   --trust
 ```
 
-Replace the example repository and version with an approved listing. In the Extension Center,
-choose **Version** and the **Global** or **Project** scope, then copy the install command. Older
+In the Extension Center, choose **Version** and the **Global** or **Project** scope, then copy the
+install command. Older
 approved releases stay selectable and linkable. `vis-agent extension versions example/greeting`
 lists them in your terminal.
 
@@ -335,9 +328,9 @@ Vis selects the version as follows:
 - A prerelease requires an explicit `--version`.
 - An unknown, pending, or rejected version fails. Vis does not fall back to another version, tag,
   or branch.
-- The catalog resolves the version to its approved full SHA. Git fetches that commit, and the
-  installer checks the manifest identity and the runtime requirements again.
-- A moved or deleted GitHub tag cannot change the SHA of an approved version.
+- The catalog resolves the version to its approved full SHA. A moved or deleted GitHub tag cannot
+  change that SHA.
+- The installer checks the manifest identity and the runtime requirements again.
 
 Name the extension in one of these ways:
 
@@ -349,9 +342,9 @@ Do not use a file URL or a tree URL. Source that is not listed installs from [a 
 pin](#install-source-that-is-not-in-the-catalog).
 
 A GitHub installation stages and validates only the selected project, then activates a source
-snapshot atomically. The catalog stores no source distributions. Vis does not fetch submodules or
-Git LFS, and it refuses symlinks. Keep required source and portable dependency paths inside the
-selected project, within 4096 entries and 64 MiB.
+snapshot atomically. Vis does not fetch submodules or Git
+LFS, and it refuses symlinks. Keep required source and portable dependency paths inside the selected
+project, within 4096 entries and 64 MiB.
 
 ### Install source that is not in the catalog
 
@@ -367,7 +360,7 @@ vis-agent extension install example/greeting \
 ```
 
 Copy the SHA from the commit on GitHub, or read it with `git ls-remote`. It must be the full,
-lowercase 40-character commit SHA. Vis refuses branch and tag names because they can move.
+lowercase 40-character commit SHA. Vis refuses branch and tag names.
 `--subdirectory` names the package folder in a repository. `--save` records the commit in your
 configuration for [`extension sync`](#declare-packages-in-configuration).
 
@@ -398,9 +391,9 @@ vis-agent extension rollback example/greeting --version 1.1.0 --project --trust
 ```
 
 Vis finds the installed repository in the selected global or project scope. If you installed
-several extensions from that repository, name the folder in the identifier to select one, because
-Vis refuses to guess. `--subdirectory .` selects the root project. Before installation, `versions`
-needs the folder that the catalog shows, for example:
+several extensions from that repository, name the folder in the identifier to select one.
+`--subdirectory .` selects the root project. Before installation, `versions` needs the folder that
+the catalog shows, for example:
 
 ```bash
 vis-agent extension versions example/extensions/tools/greeting
@@ -425,10 +418,6 @@ prepare dependencies and activate the code in running sessions. A source rollbac
 extension state, external side effects, or dependency changes that a build backend already made.
 Review the release notes before you change versions.
 
-The Python manifest name and the normalized version determine the installation path. Vis has no
-separate version store and no nested project directory. An update changes the `current` link
-atomically and keeps previous version directories for rollback.
-
 Do not edit receipts or delete versions that you still need. `update` and `rollback` never replace
 a local development link or an unmanaged directory. Use the source workflow of that directory. Vis
 does not load or migrate old installation layouts. Save your local edits before you remove an old
@@ -443,8 +432,7 @@ installation.
 
 The Extension Center counts each network address one time for each extension in one UTC day. It
 does not store the address. It keeps a private code for that day only, to prevent repeated counts.
-Several computers on one network count as one download on that day. Vis does not report a version
-that is already on your computer, a pinned commit, or a local folder.
+Vis does not report a version that is already on your computer, a pinned commit, or a local folder.
 
 To stop these reports, set `DO_NOT_TRACK=1` in your environment:
 
@@ -486,12 +474,10 @@ A catalog release uses canonical `MAJOR.MINOR.PATCH`, with an optional `aN`, `bN
 for example `1.3.0rc1`. Mark a prerelease on GitHub too. Local package validation still uses the PEP
 440 rules of the SDK. Put changelogs, breaking changes, and supported runtime versions in the GitHub
 Release notes. You need no release asset, wheel, PyPI account, or publisher credential in Vis.
-Declared dependencies can still use PyPI.
 
 Discovery runs every five minutes. Each run checks one registered listing and one page of up to 20
-releases, and inspects at most five new releases. Its cursor resumes within a page and rotates
-across listings and older pages. So detection is not immediate, and it depends on the catalog size
-and on GitHub availability.
+releases, and inspects at most five new releases. So detection is not immediate, and it depends on
+the catalog size and on GitHub availability.
 
 Only approved versions are public. Vis keeps each rejection, so the same release does not go into
 the queue again. The commit of a version cannot be replaced. To fix a rejected release or a release
@@ -502,15 +488,14 @@ A listing checks metadata and required files. It is not a code audit or an endor
 Vis catalog maintainers can use the [Publish reviewed extension
 workflow](https://github.com/Blockether/vis/actions/workflows/extension-publish.yml) after they
 review the source and the dependencies. The workflow requires access to the Vis repository and its
-`docs` environment. It is not an automatic approval path for publishers. The [operator
+`docs` environment. The [operator
 guide](https://github.com/Blockether/vis/blob/main/apps/vis-docs/README.md) documents its inputs,
 authenticated moderation, and verification.
 
 A published or approved release does not install itself or update installed copies. Project
 admission and `/reload` reconcile [configuration declarations](#declare-packages-in-configuration).
-An unchanged pinned declaration keeps its installed revision, and `version: latest` can fetch a
-newer approved release. For an existing managed installation, use [the update and rollback
-commands](#check-for-updates-and-roll-back). A local source link follows its development workflow.
+For an existing managed installation, use [the update and rollback
+commands](#check-for-updates-and-roll-back).
 
 ## Reload, update, or remove
 
@@ -524,9 +509,8 @@ commands](#check-for-updates-and-roll-back). A local source link follows its dev
 | Uninstall | Remove the `current` link of the package, then `/reload`. Keep the version directories or remove them separately. Do not delete a linked development checkout |
 
 An install never overwrites an existing destination. `/reload` reconciles configured packages and
-rebuilds extension contexts from the selected source. An unchanged pin does not fetch a newer
-revision. Live sessions switch at the next turn boundary, as [Reload after
-changes](extension-development.md#reload-after-changes) describes.
+rebuilds extension contexts from the selected source. Live sessions switch at the next turn
+boundary, as [Reload after changes](extension-development.md#reload-after-changes) describes.
 
 If a package cannot prepare or load, Vis reports its name, location, and error. Other extensions
 and the core tools stay available, so you can open the project and use Vis to repair the files or
@@ -534,8 +518,8 @@ the configuration. `vis-agent doctor` shows the failures. After the repair, run 
 successful retry clears the warning without a restart of Vis.
 
 A failed `/reload` shows the affected files and causes in chat. The report stays in the transcript
-and enters the next model request, so the agent can repair the extension. Current failures stay in
-the context of the agent until recovery.
+and enters the next model request, so the agent can repair the extension. Current failures stay in the context of the agent
+until recovery.
 
 `vis.state` survives a reload and a restart. A failed reload keeps the last working code,
 contracts, docs, and package skills. It marks them stale with the failure reason and the loaded and
@@ -663,10 +647,10 @@ category = "tools"
 skills = [{ path = "skills/browser", settings = false }, "skills/greeting"]
 ```
 
-Settings then show no switch for `skills/browser`. The skill follows the Auto, On, or Off choice of
-the extension. Off removes the skill, and Auto or On keep it. A value saved earlier for the skill no
-longer applies. The other entry keeps its own switch. Vis versions without this option reject the
-table form.
+Settings then show no switch for `skills/browser`. The skill follows the [choice of the
+extension](skills.md#control-availability). Off removes the skill, and Auto or On keep it. A value
+saved earlier for the skill no longer applies. The other entry keeps its own switch. Vis versions
+without this option reject the table form.
 
 ## Standalone scripts
 
@@ -715,9 +699,8 @@ network response keeps `show_start=True`. Every tool needs an [Activity
 presentation](extension-api.md#activity-presentation) that people can read, whatever the package
 layout.
 
-`status` needs a docstring, like any exported tool. Vis parses the metadata and does not run the
-entry. It validates the metadata, snapshots the source files, and installs the dependencies. Then
-it evaluates the entry and registers its tools.
+`status` needs a docstring, like any exported tool. Vis validates the metadata, snapshots the source
+files, and installs the dependencies before it runs the entry.
 
 - `source_paths` names import roots. An import root is a directory that contains the packages or
   modules that you import, not a package directory. Vis resolves a relative path against the
@@ -737,11 +720,11 @@ it evaluates the entry and registers its tools.
   to satisfy it.
 - `/reload` takes new source snapshots and resolves declared dependencies again for each extension
   that changed or failed. `/reload --all` does so for every extension. An unchanged loader scan
-  does neither. Existing tools use source edits only after a reload.
+  does neither.
 
 Both embedded workers import shared installed dependencies, and a tool call does not install them
-again. Each process has its own module cache. After package changes, reload to rebuild the session
-workers. A call that already runs can keep its old imports.
+again. After package changes, reload to rebuild the session workers. Read
+[Reload after changes](extension-development.md#reload-after-changes) for calls that are already running.
 
 ## See also
 

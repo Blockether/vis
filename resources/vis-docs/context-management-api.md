@@ -12,10 +12,8 @@ requests, select **HTTP** at the top of the page.
   [Read the context of a session](#read-the-context-of-a-session) and compare the measured input
   with the budgets.
 - **You must know what a long session costs.**
-  [Read usage and cache health](#read-usage-and-cache-health) for the tokens, the cache reuse, and
-  the cost.
-- **A long session must continue with less context.** [Fold settled work](#fold-settled-work) with
-  a message to the session.
+  [Read usage and cache health](#read-usage-and-cache-health).
+- **A long session must continue with less context.** [Fold settled work](#fold-settled-work).
 
 To learn how Vis keeps the context small, read [Context management](context-management.md).
 

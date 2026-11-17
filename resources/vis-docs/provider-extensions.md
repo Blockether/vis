@@ -25,8 +25,7 @@ with a service that you are authorized to use.
 
 ## Declare and load a provider
 
-1. Save this entry as `.vis/extensions/example_provider.py` in your project. The entry reads
-   `EXAMPLE_API_KEY` only when a callback runs, not when it declares the provider.
+1. Save this entry as `.vis/extensions/example_provider.py` in your project.
 
 ```python
 import os
@@ -70,10 +69,6 @@ vis.register_extension(vis.Extension(
 4. Add `example` through **Add provider** or the `providers` configuration. Select the real
    model name. Send a request to check the connection.
 
-The preset supplies the endpoint and the model defaults, and the callbacks supply the credential
-and the status. Registration, like a positive local status, does not prove that the service
-accepts the key. The example defines no interactive login.
-
 ## Records
 
 | Record | Fields |
@@ -86,8 +81,7 @@ accepts the key. The example defines no interactive login.
 
 `api_style` accepts the values that configuration accepts: `anthropic`, `openai`,
 `openai-responses`, `gemini`, and their aliases. Configuration overrides the credential, and the
-credential overrides the preset. So a credential can supply an endpoint that sign-in found, and
-the user can still override it. A header map replaces the whole field at each level.
+credential overrides the preset. A header map replaces the whole field at each level.
 
 A model can use a different wire format from its provider. For example, a gateway can serve
 Claude models on `/messages` and other models on the Responses API. Put `api_style` in the
@@ -150,7 +144,7 @@ at declaration. An error in a passive callback is logged and gives no result. An
 error goes to the caller.
 
 Startup, status probes, and limits polling run without a session. `vis.shell` and
-`vis.jailed_shell` work there. `vis.ask` does not.
+`vis.jailed_shell` work there, and `vis.ask` does not.
 
 Report usage with the limits contract:
 
@@ -223,7 +217,7 @@ extension loses the new token, the next renewal fails and the person must sign i
 Save each token file with `vis.write_private_file(path, text)`:
 
 - Only the owner of the file can read it.
-- The text replaces the old file in one atomic step, so a reader never sees a half-written file.
+- The text replaces the old file in one atomic step.
 - If the write fails, the old file stays and the call raises the error.
 - The call creates missing parent directories.
 

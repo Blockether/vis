@@ -248,8 +248,7 @@ tool call runs. Background work of an extension can list voices, speak, and tran
 
 <div data-variant="http">
 
-An extension uses the Python `vis.speech` object. It sends the same requests as the HTTP examples
-on this page.
+An extension uses the Python `vis.speech` object.
 
 </div>
 

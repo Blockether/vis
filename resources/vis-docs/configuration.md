@@ -75,7 +75,7 @@ API](configuration-api.md#change-one-setting).
 ### One fixed name
 
 When you serve Vis under your own name, fix the agent name, so that no project and no client can
-change it. Use the environment variable or the lock.
+change it.
 
 **The environment variable.** Set `VIS_AGENT_NAME` before the gateway starts:
 
@@ -107,9 +107,8 @@ it.
 
 ## Machine name
 
-A client shows each gateway as one machine. Without a name, the client shows the host of the
-gateway address, which can be long for a server. To give the gateway a name, put this key in your
-global `~/.vis/config.yml`:
+A client shows each gateway as one machine, by default under the host of the gateway address. To
+give the gateway a name, put this key in your global `~/.vis/config.yml`:
 
 ```yaml
 machine_name: Studio Mac
@@ -126,9 +125,9 @@ and a later source in this list wins:
 A name has at most 64 characters. The other rules are those of the agent name. Vis ignores a
 `VIS_MACHINE_NAME` value that breaks them.
 
-A saved name shows in connected Companion apps immediately. To change the name in one client only,
-rename the machine there. In the Companion app, a name that you give with **Rename** wins over the
-gateway name. To show the gateway name again, select **Rename** and clear the field.
+A saved name shows in connected Companion apps immediately. In the Companion app, a name that you
+give with **Rename** wins over the gateway name in that client only. To show the gateway name again,
+select **Rename** and clear the field.
 
 ## Configuration files
 
@@ -145,10 +144,9 @@ scalar or a list replaces the earlier value.
 Two keys do not follow that order:
 
 - The gateway-wide `agent_name` in `state.yml` overrides the project files.
-- `extensions` merges by package name. Each complete declaration replaces the earlier one, so Vis
-  never mixes source and version fields from two files. For the global and project installation
-  scopes and `vis-agent extension sync --trust`, read [Declare packages in
-  configuration](extension-packages.md#declare-packages-in-configuration).
+- `extensions` merges by package name. Each complete declaration replaces the earlier one. For the
+  global and project installation scopes and `vis-agent extension sync --trust`, read [Declare
+  packages in configuration](extension-packages.md#declare-packages-in-configuration).
 
 The project is the directory where you start `vis-agent`. `~/.vis` accepts `config.yml`,
 `config.yaml`, `vis.yml`, or `vis.yaml`. The project root accepts `vis.yml` or `vis.yaml`. The
@@ -198,8 +196,7 @@ vis-agent tui --extensions none           # no optional extension
 | `--no-project` | `vis.yml`, `.vis/config.yml`, `.vis/extensions/`, `AGENTS.md` files and `.vis/skills` |
 | `--vanilla` | Both of the rows above |
 
-Providers, sign-in data, and your default and fallback models always stay, because a session needs
-a model.
+Providers, sign-in data, and your default and fallback models always stay.
 
 The same flags work for a one-shot run, also with `--json-schema`:
 
@@ -219,8 +216,8 @@ refuses an unknown name before the session starts. A part of Vis without an **Au
 For scripts, set `VIS_SOURCES` to `global`, `project`, or `none`, and set `VIS_EXTENSIONS` to an
 extension list. A flag wins over its variable.
 
-A session cannot change the files of a tier that it leaves out. Vis refuses the change with a 409
-error. To start such a session from a program, read [Create a
+A session cannot change the files of a tier that it leaves out, and Vis refuses the change with a
+409 error. To start such a session from a program, read [Create a
 session](sessions-api.md#create-a-session).
 
 ### Choose single tools
@@ -234,13 +231,13 @@ vis-agent tui --tools 'py.repl_*'                 # only the REPL tools of py
 ```
 
 A tool name is the name that the agent calls, such as `py.lint_code`. A `*` matches any part of a
-name, as in `py.repl_*`. A list of names limits only the extensions that the names belong to, and
-other extensions keep all of their tools. Do not mix names and `-names` in one list.
+name, as in `py.repl_*`. A list of names limits only
+the extensions that the names belong to, and other extensions keep all of their tools. Do not mix
+names and `-names` in one list.
 
 For a tool list, each MCP server is an extension of its own, and its tools have names such as
 `linear.get_issue`. So `-linear.*` turns off each tool and prompt of `linear`, and no tool of
-another server. Vis learns the tools of a server only when it connects, so it checks only the name
-of the server.
+another server. Vis checks only the name of the server.
 
 Vis refuses an unknown name before the session starts, and the error lists the tools of that
 extension. For scripts, set `VIS_TOOLS` to a tool list for new sessions. The `--tools` flag wins
@@ -340,12 +337,11 @@ providers:
 A provider with managed sign-in, such as Copilot or a coding plan, needs no `api_key`. Set the
 limits of a model to make the context checks and the output cap accurate.
 
-Vis also reads the old names `is_tool_call` and `is_image_input`. When a file has both names, the
-new name wins. Vis writes only the new names.
+Vis also reads the old names `is_tool_call` and `is_image_input`. The new name wins, and Vis writes
+only the new names.
 
 Vis offers the models in the order that you list them, then the models that the provider reports.
-Vis does not offer or save image, video, speech, or embedding models, because they cannot answer a
-turn.
+Vis does not offer or save image, video, speech, or embedding models.
 
 To add another provider, read [Provider extensions](provider-extensions.md).
 
@@ -372,10 +368,10 @@ providers:
 Your values replace the discovered values of that model only. Keep the output limit below the
 context. Keep the input limit at or below the context.
 
-When the live model list gives no valid limits, the gateway log gets a `model-metadata-unavailable`
-warning. The warning shows the limit fields of the provider entry for the model, or similar model
-IDs if no entry matches. It contains no credentials, so you can attach it to a bug report. For the
-log location, read [Logs and diagnostics](logging.md).
+When the live model list gives no valid limits, the [gateway log](logging.md) gets a
+`model-metadata-unavailable` warning. The warning shows the limit fields of the provider entry for
+the model, or similar model IDs if no entry matches. It contains no credentials, so you can attach
+it to a bug report.
 
 ### Reduce latency with Anthropic threads
 
@@ -393,9 +389,9 @@ providers:
       thread: null
 ```
 
-Vis keeps the full history locally and sends only new messages while a thread is available. After
-five idle minutes, or after compaction, Svar creates a new thread from that history. Prompt caching
-stays active and does not depend on threads. Token prices and rate limits do not change.
+Vis sends only new messages while a thread is available. After five idle minutes, or after
+compaction, Vis creates a new thread from the full history. Prompt caching stays active. Token
+prices and rate limits do not change.
 
 Threads work with the direct Anthropic API, not with coding-plan OAuth or compatible proxies. Read
 [Anthropic's Message Threads
@@ -444,8 +440,8 @@ fallback_model: claude-sonnet-5
 Vis tries the fallback provider immediately after the default. Other providers follow in the
 configured order. When you log out of a provider, Vis clears its pair.
 
-Both pairs belong to one user. In a committed `<project>/vis.yml`, Vis ignores them with a warning.
-Put them in `~/.vis/config.yml`, `~/.vis/state.yml`, or the gitignored `<project>/.vis/config.yml`.
+In a committed `<project>/vis.yml`, Vis ignores both pairs with a warning. Put them in
+`~/.vis/config.yml`, `~/.vis/state.yml`, or the gitignored `<project>/.vis/config.yml`.
 
 On the command line, `--model provider/model` selects both for one run and saves nothing. The
 provider needs no configuration if it has a built-in preset with managed sign-in:
@@ -457,16 +453,16 @@ vis-agent --model glm-5.3 "task"          # on the active provider
 
 ### Default thinking level
 
-Each provider can have its own default thinking level. Sessions on that provider start with it. Set
-it in the menu of the provider:
+Sessions on a provider start with its default thinking level. Set the level in the menu of the
+provider:
 
 - In the Companion app, open **Settings**, then the row actions of the provider, and select
   **Default thinking**.
 - In the terminal, open the provider list and select **Set Thinking Level...**.
 
-The menu lists quick, balanced, and deep. With **Simplified thinking modes** off, it lists the
-exact levels that the models of the provider offer. **Use the built-in level** removes the default,
-and Vis then uses its built-in level. Vis writes the choice to the entry of the provider:
+The menu lists quick, balanced, and deep. With **Simplified thinking modes** off, it lists the exact
+levels that the models of the provider offer. **Use the built-in level** removes the default. Vis
+writes the choice to the entry of the provider:
 
 ```yaml
 providers:
@@ -507,10 +503,7 @@ providers:
         is_vision_supported: false    # gets a text description of each picture
 ```
 
-- With `true`, Vis sends the pictures. Use it for a local or private model that the catalog does
-  not know.
-- With `false`, Vis sends a text description of each picture.
-- With no value, the model catalog decides.
+Use `true` for a local or private model that the catalog does not know.
 
 `is_vision_supported: false` on a provider blocks images for all its models, also when a model says
 `true`. A provider extension sets the same value with `ProviderModel(is_vision_supported=...)`.
@@ -553,8 +546,8 @@ files](project-instructions.md#system-prompt-files).
 ## Environment
 
 Vis loads the `.env` and `.env.local` files of the project for the shells, REPLs, test runners, and
-extensions that it starts. `.env` wins over `.env.local`. The parser accepts `NAME=value`,
-`export NAME=value`, quotes, and comments.
+extensions that it starts. The parser accepts `NAME=value`, `export NAME=value`, quotes, and
+comments.
 
 `environment:` declares variables that a dotenv file cannot, and it never holds a secret value:
 
@@ -714,11 +707,11 @@ python:
   tls_strict: false
 ```
 
-`false` clears only `ssl.VERIFY_X509_STRICT` when Python SSL contexts get their verification flags.
-Python still verifies the trust chain, the certificate signature, the expiry, and the host name.
-The setting adds no trusted certificate and does not retry a failed handshake without verification.
-STRICT covers several X.509 requirements, so `false` is a security trade-off, not a certificate
-repair. Prefer a correctly issued CA when your administrator can provide one.
+`false` clears only `ssl.VERIFY_X509_STRICT`. Python still verifies the trust chain, the certificate
+signature, the expiry, and the host name. The setting adds no trusted certificate and does not retry
+a failed handshake without verification. STRICT covers several X.509 requirements, so `false` is a
+security trade-off, not a certificate repair. Prefer a correctly issued CA when your administrator
+can provide one.
 
 The merged value applies to `python_execution`, trusted Python extensions, and `vis-agent python`,
 with or without `--shared`. Language extension REPLs that run `vis-agent python` get it too. It
@@ -726,11 +719,10 @@ affects the `ssl` contexts of Python, also those that stdlib clients and librari
 `ssl.SSLContext`. It does not affect JVM TLS, `gh`, `curl`, uv, external Python processes, or
 libraries with a different TLS implementation.
 
-Vis reads the value when a worker starts and each time `vis-agent python` starts. It also sets
-`VIS_PYTHON_TLS_STRICT` to `true` or `false` in the environment of that Python program. After you
-change the value, run `/reload` to rebuild the session workers. If the gateway already runs a
-worker that registers extensions, restart Vis. Existing connections do not change. Use the YAML
-boolean `false`, not the string `"false"`.
+Vis also sets `VIS_PYTHON_TLS_STRICT` to `true` or `false` in the environment of that Python
+program. After you change the value, run `/reload` to rebuild the session workers. If the gateway
+already runs a worker that registers extensions, restart Vis. Existing connections do not change.
+Use the YAML boolean `false`, not the string `"false"`.
 
 ## Python package index
 
@@ -741,8 +733,8 @@ python:
   index_url: https://gateway.example.com/simple
 ```
 
-The setting applies to pip installs that Vis manages, to `vis-agent python uv`, and to the
-automatic preparation of extension projects. Vis reads the merged value for each subprocess.
+The setting applies to pip installs that Vis manages, to `vis-agent python uv`, and to the automatic
+preparation of extension projects.
 
 - **pip.** `index_url` overrides the primary index from `PIP_INDEX_URL` or `pip.conf`.
 - **uv.** Vis sets `UV_DEFAULT_INDEX` when neither `UV_DEFAULT_INDEX` nor `UV_INDEX_URL` is set.
@@ -776,8 +768,9 @@ environment:
   `PYTHONPATH` still applies.
 
 `UV_PROJECT_ENVIRONMENT` selects another project environment. A relative path starts at the current
-directory. On startup, the CLI does not search parent directories, create an environment, or sync
-dependencies. A `pyproject.toml` with no prepared environment reports a sync error.
+directory. On startup, the CLI does
+not search parent directories, create an environment, or sync dependencies. A `pyproject.toml` with
+no prepared environment reports a sync error.
 
 The CLI uses the embedded Python of Vis, so the environment must match its Python version and
 platform. If the matching site-packages directory is missing, the CLI reports a diagnostic. In
@@ -802,10 +795,10 @@ python:
 ```
 
 `PYTHONPATH` comes first, then the configured paths, then the inferred paths. All these roots come
-before the packages of the selected environment. Vis does not merge project and shared packages. An
-[editable package install](extension-development.md) supplies its own import roots through `.pth`
-files or backend hooks, so it needs no layout override. Import roots do not grant filesystem
-permissions or install dependencies.
+before the packages of the selected environment. An [editable package
+install](extension-development.md) supplies its own import roots through `.pth` files or backend
+hooks, so it needs no layout override. Import roots do not grant filesystem permissions or install
+dependencies.
 
 ## Python extension environment
 
@@ -819,18 +812,13 @@ python:
   environment: shared
 ```
 
-The value is `project`, the default, or `shared`. With `shared`, these rules apply:
+The value is `project`, the default, or `shared`. With `shared`, the workers of the project
+extensions import `~/.vis/python/packages`. `py.run_tests` and `py.repl_start` then run project
+Python with `vis-agent python --shared`, and they do not use the `.venv` of the project.
 
-- Vis prepares the extension projects inside the project directory like
-  `vis-agent python --shared uv sync`.
-- Their workers import `~/.vis/python/packages`. Vis does not create or read `.venv` for them.
-- `py.run_tests` and `py.repl_start` run project Python with `vis-agent python --shared`, and they
-  do not use the `.venv` of the project.
-
-Installed extension packages and global extensions keep their own environments. Run `/reload` after
-you change the value. Extensions read the value with
-[`vis.python_environment()`](extension-api.md#python-environment). For the steps, read [Use shared
-packages for project
+Run `/reload` after you change the value. Extensions read the value with
+[`vis.python_environment()`](extension-api.md#python-environment). For the steps and the limits,
+read [Use shared packages for project
 extensions](extension-development.md#use-shared-packages-for-project-extensions).
 
 All extensions of a session run in one Python worker. Each extension imports its own environment
@@ -862,8 +850,8 @@ does not answer within one second also gets the older start request.
 If a server changes its generation while Vis runs, for example after an upgrade, Vis connects again
 and sends the refused request one more time.
 
-Vis keeps one stream open to each Streamable HTTP server. The server uses the stream to send
-changes, such as a new tool list, and its questions. To turn the stream off, set `listen: false`.
+Vis keeps one stream open to each Streamable HTTP server. The server sends changes, such as a new
+tool list, and its questions on it. To turn the stream off, set `listen: false`.
 
 ### Questions, roots, and sampling
 
@@ -872,8 +860,8 @@ the terminal and in the Companion app, and the tool call waits. Select **Send** 
 **Decline** to refuse. For how forms work, read [Forms and user input](human-input.md).
 
 A local server gets the folders of your session as MCP roots: the workspace, and each other folder
-that the session can search. A filesystem server uses them to limit what it reads. A server at a
-URL does not get them. To change this for one server, set `roots: true` or `roots: false`.
+that the session can search. A server at a URL does not get them. To change this for one server, set
+`roots: true` or `roots: false`.
 
 A server can also ask a model for an answer. MCP calls this request sampling, and it is off by
 default. Set `sampling: true` for a server that you trust:
@@ -903,8 +891,8 @@ plain words, for example: "Read the resource `file:///logs/app.log` of the serve
 - The agent sees the resources of each connected server in its list of attachments. It reads a
   resource as it reads a file that you attached.
 
-The agent can read the help page of a tool before the server is connected. Vis connects the server
-for that.
+The agent can read the help page of a tool before the server is connected, and Vis then connects the
+server.
 
 ### Sign in to a server
 
@@ -999,9 +987,9 @@ mcp:
 ```
 
 With a private key, Vis signs in with a signed assertion and sends no secret. The key selects the
-algorithm, `ES256` or `RS256`. Vis reads a token file again for each token request, because a
-platform replaces the file. For `enterprise_managed`, also set `idp_client_id` and
-`idp_client_secret` when the identity provider needs a client.
+algorithm, `ES256` or `RS256`. Vis reads a token file again for each token request. For
+`enterprise_managed`, also set `idp_client_id` and `idp_client_secret` when the identity provider
+needs a client.
 
 Each of `private_key`, `assertion`, `idp_client_secret`, and `idp_id_token` takes only an
 environment reference, such as `${REPORTS_KEY}`. When the server refuses the grant, the server
@@ -1066,14 +1054,12 @@ the override at the scope that you opened.
 
 Vis resolves each setting in the order global, project, group, session. A more specific value wins,
 and a scope with no value does not count. `false` is an explicit value, not inheritance. So a
-session that turns on a setting keeps it when its group turns the setting off. To make the session
-follow the group again, select **Use inherited value** in the session.
+session that turns on a setting keeps it when its group turns the setting off.
 
-When a more specific scope decides a row for the open session, Settings locks that row and names
-the scope. For example, the `vis.yml` of your project sets `toggles.shell: false`. While a session
-of that project is open, the global **Shell commands** row is locked in the terminal and in the
-Companion app. Turn the row on in **Project settings**. From a session outside that project, you
-can still edit the global row.
+When a more specific scope decides a row for the open session, Settings locks that row and names the
+scope. For example, the `vis.yml` of your project sets `toggles.shell: false`. While a session of
+that project is open, the global **Shell commands** row is locked. Turn the row on in **Project
+settings**.
 
 Each scope saves its changes in its own place:
 
@@ -1083,8 +1069,7 @@ Each scope saves its changes in its own place:
 - **Group and session** overrides go to the gateway database.
 
 A session that you move keeps its own values and follows its new ancestors. New sessions and forks
-inherit from their ancestors, not from the overrides of the source session. A session without a
-group skips the group layer.
+inherit from their ancestors, not from the overrides of the source session.
 
 Provider setup, credentials, OAuth, and the start and stop of shared MCP servers stay global. The
 theme and other device preferences stay local to the Companion app or the terminal. Project access
@@ -1119,13 +1104,12 @@ level](#default-thinking-level) of its provider.
 
 Optional tool extensions have an engine setting. **Auto** uses the applicability check of the
 extension. **On** keeps the extension active. **Off** hides its tools and rejects new calls, also
-through saved handles. The setting activates an extension, and it does not route models. You cannot
-switch core, provider, or channel infrastructure here.
+through saved handles. You cannot switch core, provider, or channel infrastructure here.
 
-The catalog of a scope shows only the settings that are declared for that scope, with one
-exception. An extension setting that a wider scope decides shows as read-only. Its row names that
-scope and opens its settings, for example Machine settings. Machine settings also name the project
-extensions of the current session. Reload them in Project settings.
+The catalog of a scope shows only the settings that are declared for that scope, with one exception.
+An extension setting that a wider scope decides shows as read-only. Its row names that scope and
+opens its settings. Machine settings also name the project extensions of the current session. Reload
+them in Project settings.
 
 ### Scoped MCP servers
 
@@ -1156,8 +1140,8 @@ only.
 
 The **Extensions** part of the **Tools** section holds the settings of all extensions. Each
 extension with settings has its own group under its name. The `project` tag marks an extension of
-the current project. The `global` tag marks a machine extension. Extensions that ship with Vis have
-no tag.
+the current project, and the `global` tag marks a machine extension. Extensions that ship with Vis
+have no tag.
 
 Settings never runs extension code when it opens. After you add, change, or remove an extension
 file, reload the extensions:
@@ -1166,17 +1150,17 @@ file, reload the extensions:
 - In the Companion app, select the round arrows next to the **Extensions** heading.
 
 Vis runs the extension files again, then reads the settings list again. In global settings, the
-reload covers machine extensions, and Vis tells you to use project settings or `/reload` for
-project extensions. In project, group, or session settings, the reload also covers the extensions
-of that project. Vis then shows each scope with its directory and how many extensions loaded and
-failed there. If a directory has no extensions, Vis says that it found none there.
+reload covers machine extensions, and Vis tells you to use project settings or `/reload` for project
+extensions. In project, group, or session settings, the reload also covers the extensions of that
+project. Vis then shows each scope with its directory and how many extensions loaded and failed
+there. If a directory has no extensions, Vis says that it found none there.
 
 If an extension fails to load, its group stays in the list and shows the error. If a reload fails
 after an earlier load, Vis keeps the earlier version, and the group says so. Your stored values do
 not change when an extension fails, goes away, or loads again.
 
-Some extensions ask for a password or an access token, for example for a hosted service. Settings
-shows such a secret setting only as **Saved** or **Not set**, never its value:
+Some extensions ask for a password or an access token. Settings shows such a secret setting only as
+**Saved** or **Not set**, never its value:
 
 - To save or change the value, select **Set** or **Replace**, type the value, and save.
 - To delete the saved value, select **Remove** and confirm.
@@ -1242,7 +1226,7 @@ The `include_gitignored_paths` and `always_exclude` lists use `.gitignore` patte
 `always_exclude` to use the defaults. The defaults are `.git/`, `node_modules/`, `target/`,
 `build/`, `dist/`, `__pycache__/`, `.venv/`, `.gradle/`, `vendor/`, `.next/`, `out/`, `.m2/`,
 `.shadow-cljs/`, `cljs-runtime/`, `.cpcache/`, `.clj-kondo/`, `.calva/`, and `.lsp/`. If you set
-`always_exclude`, it replaces that list. It does not add to it. Run `/reload` after you edit these
+`always_exclude`, it replaces that list and does not add to it. Run `/reload` after you edit these
 lists.
 
 ## See also

@@ -1,8 +1,7 @@
 # Sounds API
 
-This API reads and changes the sound settings of the gateway. It turns sounds on, chooses a preset,
-saves your own presets, and previews a sound. The values are the settings of the **Sounds** section in the
-Companion app and the TUI.
+This API reads and changes the sound settings of the gateway. The values are the settings of the
+**Sounds** section in the Companion app and the TUI.
 
 The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
@@ -61,8 +60,8 @@ examples use it.
 
 </div>
 
-A preset has one value for each slot: `finish`, `input`, and `error`. The `input` slot holds the
-question sound. A slot value is one of these:
+A preset has one value for each slot: `finish`, `input` for the question sound, and `error`. A slot
+value is one of these:
 
 - An empty value, for no sound.
 - The name of a built-in preset, for the sound of that preset. The built-in presets are `classic`,
@@ -160,8 +159,7 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/jso
 </div>
 
 The gateway checks each file path when you save. For a path that names no file, the gateway returns
-an error with a message and saves nothing. A path can start with `~`. The gateway expands `~` on
-its own computer.
+an error with a message and saves nothing. The gateway expands a leading `~` on its own computer.
 
 ## Preview a sound
 

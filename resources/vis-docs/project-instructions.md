@@ -11,10 +11,9 @@ templates into slash commands. A change to a file applies on the next turn, with
 
 ## When to use
 
-- **Vis keeps missing a project convention.** Write it in [`AGENTS.md`](#project-rules-agents-md),
-  for example how to run the tests or which files must not change.
+- **Vis keeps missing a project convention.** Write it in [`AGENTS.md`](#project-rules-agents-md).
 - **You type the same request again and again.** Save it as a
-  [prompt template](#prompt-templates-name) and run it with `/name`.
+  [prompt template](#prompt-templates-name).
 - **A task must continue until the result is verified.** Set a [goal](#explicit-goals-goal) with
   an iteration budget.
 - **A project needs different or extra system instructions.** Add
@@ -73,7 +72,7 @@ While a task runs, Vis writes short progress notes:
 - When a finding, a decision, or a blocker changes the next step, Vis writes a note.
 - Each note has one or two sentences of useful facts. Routine reads and searches get no note.
 
-The last reply starts with the answer. You can read it without the progress notes.
+The last reply starts with the answer, and you can read it without the progress notes.
 
 ### The language of a reply
 
@@ -146,7 +145,7 @@ goal. A goal gives Vis no extra permissions, and your newer messages win over it
 ```
 
 The Companion header and the TUI show the goal as a **Goal: <status> - <time>** button. The button
-does not show the objective, because the conversation holds it. Open the button to see the status,
+does not show the objective. Open the button to see the status,
 the iterations used with their limit, and the elapsed time. When the goal is complete, the button
 goes away.
 
@@ -155,11 +154,10 @@ toggle.
 
 ### Pause, resume, and cancel a goal
 
-The pause, resume, and cancel commands wait in the normal message queue. To interrupt the work at once, use **Stop**. An
-interrupted or failed goal turn pauses the goal.
+The pause, resume, and cancel commands wait in the normal message queue. To interrupt the work at once, use **Stop**.
 
-A new message resumes a paused or blocked goal that has budget left. The goal keeps its objective
-and its usage. To resume without new instructions, send `/goal --resume`.
+A resumed goal keeps its objective and its usage. To resume without new instructions, send
+`/goal --resume`.
 
 Completed, cancelled, cleared, and budget-limited goals stay stopped. Command-only turns and
 Council notifications do not resume a goal, and no background scheduler restarts one. Vis keeps
@@ -168,7 +166,7 @@ no goal history. The conversation holds each goal that you set and each reply ab
 ### Forget a goal
 
 You cannot undo `/goal --clear`. Use it when Vis must no longer see the current goal. The command
-stops the goal work, and the apps no longer show the goal.
+stops the goal work.
 
 ### Iteration budget
 
@@ -182,11 +180,9 @@ later `--budget` included.
 ### How a goal ends
 
 Vis marks a goal complete only when it has evidence, such as passing tests. If Vis cannot
-continue, it marks the goal blocked. The goal records only the status. The final reply then gives
-the evidence or the blocker.
+continue, it marks the goal blocked.
 
-A progress reply does not end the goal, and Vis continues the work in the same turn. The word
-"done" in a reply does not complete a goal.
+A progress reply does not end the goal, and Vis continues the work in the same turn.
 
 ### Goal states
 
@@ -195,7 +191,7 @@ A progress reply does not end the goal, and Vis continues the work in the same t
 | `active` | Vis works on the goal |
 | `paused` | You paused it, or a turn failed or was stopped. A new message resumes it |
 | `blocked` | Vis cannot continue. Its reply names the blocker. A new message resumes it if budget remains |
-| `budget_limited` | The iteration budget is used up. The apps show "iteration-limit reached". Set a new goal to continue |
+| `budget_limited` | The iteration budget is used up. Set a new goal to continue |
 | `complete` | Vis verified the work. Its reply gives the evidence |
 | `cancelled` | You cancelled it |
 | `cleared` | You forgot it with `--clear`. The apps show no goal |
@@ -205,8 +201,8 @@ program, read [Project instructions API](project-instructions-api.md#set-a-goal)
 
 ## Skills: /skill:name
 
-Each [skill](skills.md) is available as `/skill:<name> [task]`. The first `/` list does not show
-skills. They appear when you search by name.
+Each [skill](skills.md) is available as `/skill:<name> [task]`. The `/` list shows
+skills only when you search by name.
 
 ## Shell shortcuts: ! and !&
 

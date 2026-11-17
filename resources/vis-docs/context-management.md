@@ -36,8 +36,8 @@ prompt cache.
 ## Reuse another session's findings
 
 Ask Vis to [consult the other session](council.md#ask-vis-to-consult-another-session). Vis brings
-back the relevant findings and checks them against the current code. It does not copy the
-transcript. A consultation can cost model charges, and it does not guarantee a lower cost.
+back the relevant findings, not the transcript, and checks them against the current code. A
+consultation can cost model charges, and it does not guarantee a lower cost.
 
 ## Reuse and refine session helpers
 
@@ -61,9 +61,6 @@ On your request, a useful helper can become an [extension](extending.md), after 
 dependencies, preconditions, and tests.
 
 ## How Vis keeps the context small
-
-For a task such as "find a function, change it, and test it", Vis keeps the file reads short. It
-reuses intermediate results and can fold the investigation before the edit.
 
 ### One tool, many functions
 
@@ -103,8 +100,7 @@ Commas join separate ranges. You cannot fold the live step. Without `gist`, the 
 active context and no summary replaces them. The history stays saved. A fold has no inline undo.
 
 A turn key, or a range that covers a whole turn, also removes the request and the answer of that
-turn. The turn must be before the current turn. A chat turn without tool calls folds the same way,
-so a long conversation of pasted text can fold too.
+turn. The turn must be before the current turn. A chat turn without tool calls folds the same way.
 
 Iteration numbers start again in each turn. `fold_session` refuses a range that ends at an
 iteration that an earlier turn does not have. For example, it refuses `"-t1/i16"` when turn 1 has
@@ -132,8 +128,8 @@ earlier fold replaces its gist.
 | GPT | 230k tokens |
 | Other models, or an unknown input limit | 200k tokens |
 
-The soft budget is never more than 90% of a known input limit, so a smaller window gets a lower
-budget. For example, a 204k input limit gives a GPT model a budget of 183,600 tokens.
+The soft budget is never more than 90% of a known input limit. For example, a 204k input limit
+gives a GPT model a budget of 183,600 tokens.
 
 ### Fold measurement
 
@@ -146,12 +142,8 @@ Request health records `fold_measurement` with `status: "measured"`, `before_inp
 input, and a negative value means growth. All folds between two requests share one measurement and
 its `fold_count`.
 
-The status is `pending` until the response arrives. It is `unavailable`, with a `reason`, in these
-cases:
-
-- Usage is missing.
-- The provider or the model is unknown or changed.
-- The turn changes.
+The status is `pending` until the response arrives. It is `unavailable`, with a `reason`, when
+usage is missing, the turn changes, or the provider or the model is unknown or changed.
 
 The detailed metrics are in the session diagnostics, not in every model request.
 
@@ -167,7 +159,7 @@ print(defs("summarize_rows", details=True))
 
 - `defs()` lists up to 20 helpers in alphabetical order, each with a call hint and a docstring
   gist. A call hint has at most 120 characters and no annotations. It shows the type of a default
-  (`=<int>`), not its value. A hint is not source. Your variables follow, with type and size but
+  (`=<int>`), not its value. Your variables follow, with type and size but
   never values. A row marks a restored helper and a value that is not saved.
 - Match counts appear only when a pattern or a page hides rows.
 - `defs(pattern="summar|count", limit=10, offset=0)` matches a case-sensitive regex against names,

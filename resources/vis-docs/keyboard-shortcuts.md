@@ -1,7 +1,6 @@
 # Keyboard shortcuts
 
-This page lists the keyboard shortcuts, also called keybindings, of the Vis terminal app. They
-send a message, start a new line, run commands, move through a session, and edit your text. The
+This page lists the keyboard shortcuts, also called keybindings, of the Vis terminal app. The
 desktop and phone app uses [the same Ctrl+X keys](#in-the-desktop-or-phone-app) for the commands
 that it has.
 
@@ -43,7 +42,7 @@ Ghostty, kitty, iTerm2, WezTerm, Alacritty, foot, xterm, Konsole, and Windows Te
 Shift+Enter with no setup. Windows Terminal does so with WSL too. In Windows Terminal, Alt+Enter
 switches to full screen, so use Shift+Enter there.
 
-Other terminals need a setting or a different key. Vis cannot change these terminal limits.
+Other terminals need a setting or a different key.
 
 - **GNOME Terminal and other VTE-based terminals.** Shift+Enter sends the same code as Enter. Use
   Alt+Enter.
@@ -61,8 +60,8 @@ Other terminals need a setting or a different key. Vis cannot change these termi
 
 Most commands use **Ctrl+X**, a group key, and a command key. For example, press **Ctrl+X**, then
 **s** for the session group, then **n** to start a new session. After **Ctrl+X**, Vis shows the
-groups. After the group key, Vis shows the commands of that group. A command that needs something
-first, such as a turn to fork, appears when it can act.
+groups, and after the group key, the commands of that group. A command that needs something first,
+such as a turn to fork, appears when it can act.
 
 | Keys | Group or command |
 |---|---|
@@ -90,8 +89,8 @@ can open a `Release` group, and the next key runs one of its commands.
 A key from an extension does one of two things:
 
 - It runs a command as if you typed the command and pressed Enter. Your draft stays as it is.
-- It runs a function of the extension, for example a deploy. The key adds no message to the
-  transcript. When the function ends, Vis shows its result as a notice.
+- It runs a function of the extension. The key adds no message to the transcript. When the
+  function ends, Vis shows its result as a notice.
 
 Vis applies these rules to the keys:
 
@@ -222,24 +221,20 @@ the same as the key.
 
 ## View pictures
 
-Vis shows the pictures of a message in one table, like a list of attached files. Each row has a
-small preview, the name, the type, the size, and an **Open externally** button. The button opens
-the picture in the picture app of your computer. kitty, Ghostty, WezTerm, Warp, and iTerm2 show
-the previews. Other terminals show the same table without previews.
+Vis shows the pictures of a message in one table. Each row has a small preview, the name, the type,
+the size, and an **Open externally** button. The button opens the picture in the picture app of
+your computer. kitty, Ghostty, WezTerm, Warp, and iTerm2 show the previews. Other terminals show
+the same table without previews.
 
-- To open the newest picture in your picture app, press **Ctrl+X a o**. This key works in every
-  terminal.
 - To see one picture larger, click its preview.
 - To see every picture of the session, press **Ctrl+X a v**. The picture viewer opens and fills
   most of the window.
-- To list the attachments of the session, press **Ctrl+X a i**.
 
 A terminal that cannot show pictures has no picture viewer. There, use **Ctrl+X a o** or the
 **Open externally** buttons.
 
-To see a detail, zoom in. Turn the mouse wheel over the picture to zoom at the pointer, or press
-**+** and **-**. The header shows the zoom, for example `250%`. To move a zoomed picture, drag it
-or press the arrow keys. Press **0** to see the whole picture again.
+To zoom at the pointer, turn the mouse wheel over the picture. The header shows the zoom, for
+example `250%`. To move a zoomed picture, drag it or press the arrow keys.
 
 | Keys | What they do |
 |---|---|
@@ -255,11 +250,10 @@ or press the arrow keys. Press **0** to see the whole picture again.
 
 ## Use an app
 
-An app is a screen that the agent or an extension attaches to a session. Examples are a diff to
-review, a form, and a game. To open an app, click its row in the transcript. Or press
-**Ctrl+X a i**, select the app, and press Enter. In an app, you press buttons, fill in fields, and
-select rows. In a review app, you write comments on lines and in threads, save them as drafts, and
-send them together.
+An app is a screen that the agent or an extension attaches to a session, such as a diff to review.
+To open an app, click its row in the transcript. Or press **Ctrl+X a i**, select the app, and press
+Enter. In a review app, you write comments on lines and in threads, save them as drafts, and send
+them together.
 
 | Keys | What they do |
 |---|---|
@@ -300,7 +294,7 @@ message.
 
 Vis first tries Java Sound. If Java Sound cannot capture, macOS can use SoX or FFmpeg. Vis looks
 for them on `PATH` and in both standard Homebrew locations, `/opt/homebrew/bin` and
-`/usr/local/bin`. Vis does not install these programs. If neither is installed, install one:
+`/usr/local/bin`. If neither is installed, install one:
 
 ```bash
 brew install sox
@@ -363,8 +357,8 @@ Press **Ctrl+X b w** to open **Projects**. While it has the focus, these keys ac
 row.
 
 Press **?** or **Ctrl+H** to open the sidebar menu. It lists every key below, and the list is the
-same on every row. Choose an entry to run it on the selected row. A right-click on a row opens the
-same menu for that row.
+same on every row. Choose an entry to run it on the selected row. Read
+[In the terminal](sessions.md#in-the-terminal) for mouse controls.
 
 | Keys | What they do |
 |---|---|
@@ -431,9 +425,8 @@ keeps `/goal`, but no other command such as `/reload`. It does not keep messages
 sessions send through Council. On a phone with no keyboard, Return starts a new line, and the send
 button sends the message.
 
-The app uses the same **Ctrl+X** keys as the terminal app. For example, **Ctrl+X s s** searches
-your sessions, also when the cursor is in the message box. After **Ctrl+X**, a band at the bottom
-of the window shows the keys that you can press next.
+The app uses the same **Ctrl+X** keys as the terminal app, also when the cursor is in the message
+box. After **Ctrl+X**, a band at the bottom of the window shows the keys that you can press next.
 
 | Keys | What they do |
 |---|---|

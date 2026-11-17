@@ -2,7 +2,7 @@
 
 Vis saves each conversation as a session, so you can close it and continue later. This page shows
 how to control a session while Vis works, and how to find, fork, organize, export, and move saved
-sessions. It covers the terminal, the desktop and phone apps, and the command line.
+sessions.
 
 ## When to use
 
@@ -11,12 +11,11 @@ sessions. It covers the terminal, the desktop and phone apps, and the command li
 - **Vis must read your correction before the turn ends.**
   [Send the queued message now](#send-a-queued-message-now).
 - **Vis is going in the wrong direction and you want to stop it.**
-  [Cancel the turn](#cancel-a-turn). Your queued messages return to the composer.
+  [Cancel the turn](#cancel-a-turn).
 - **You want to leave the session.** [Quit](#quit) lists what **Ctrl+C** does in each state.
 - **The session must work in another directory.**
   [Change the directory of the session](#change-the-directory-of-a-session).
-- **You need a conversation from last week.** [Find the session](#find-a-saved-session) by its
-  title or by something said in it.
+- **You need a conversation from last week.** [Find the session](#find-a-saved-session).
 - **Your program must create sessions, send messages, or find saved sessions.** Read
   [Sessions API](sessions-api.md).
 - **You want to try another approach without losing this conversation.**
@@ -27,9 +26,9 @@ sessions. It covers the terminal, the desktop and phone apps, and the command li
   [Put them into groups](#organize-sessions-into-groups), star the ones that you use most, and
   [archive](#rename-star-archive-or-delete-a-session) the finished ones.
 - **You want to share a conversation or keep a readable transcript.**
-  [Export the session](#export-a-session) as an HTML page, or as Markdown with every tool call.
+  [Export the session](#export-a-session).
 - **You want to continue a conversation on another computer.**
-  [Move the session](#move-a-session-to-another-computer) with a snapshot file.
+  [Move the session](#move-a-session-to-another-computer).
 - **A bug report needs the conversation that shows the problem.** Export it, then remove private
   details as [Reporting a bug](reporting-bugs.md#sharing-a-transcript) describes.
 - **You want another session to help or to review the work.** Read [Council](council.md).
@@ -60,12 +59,10 @@ that directory, the session leaves its project and its group.
 
 ## Control a running session
 
-While Vis works, you can queue a message, cancel the turn, or quit the session.
-
 ### Follow progress
 
 Vis adds short notes while it works. Under each note, one digest row sums up the steps after the
-note, for example `1 mutation · 3 observations`. The row counts the calls by kind. It also shows
+note, for example `1 mutation · 3 observations`. The row counts the calls by kind, and it shows
 running, failed, and cancelled calls, and the time that the steps took. A step that you stop
 counts as a failure, so the row turns red.
 
@@ -87,9 +84,8 @@ newest recording.
 To see each step as a separate Activity, turn off **Compact mode** in Settings. The terminal and
 each app keep their own choice.
 
-In the desktop or phone app, a large turn first shows only its newest steps, so the session opens
-faster. The app loads the older steps when you scroll near them, and then shows every step, as the
-terminal does. If the load fails, the app shows the error and a **Try again** button.
+In the desktop or phone app, a large turn first shows only its newest steps. The app
+loads the older steps when you scroll near them. If the load fails, the app shows the error and a **Try again** button.
 
 ### Queue a message
 
@@ -106,8 +102,7 @@ To edit a queued message:
 
 ### Send a queued message now
 
-A queued message waits for the end of the turn. Send it now when the running turn must read it
-first, for example a correction.
+Send a queued message now when the running turn must read it first.
 
 - In the terminal, press **Ctrl+X q s** to send the whole queue. To send one message, click
   **Send it now** at the end of its row, or press **Ctrl+X q** and its row number.
@@ -121,8 +116,8 @@ The running turn reads the sent messages, in queue order, when it starts its nex
 conversation then shows each one as a normal **You** message under a
 **Queued · sent now · iter N** header. N is the iteration that the message reached.
 
-Images attached to a sent message go to the running turn with it. Vis keeps them with that turn,
-so the desktop and phone apps show them, also after a reload.
+Images attached to a sent message go to the running turn with it. The desktop and phone apps show
+them, also after a reload.
 
 Two cases have a different order:
 
@@ -157,11 +152,12 @@ and its status, such as `IDLE`, `NEW`, or `LIVE`.
 Project and group filters apply to recent sessions and to text searches. A selection of several
 groups searches any of them. A project and a group selection narrow the search together.
 
-The terminal switcher and the search dialog of the apps always have two sides with a border
-between them. One side lists the recent sessions or the sessions that match. The other side shows
-messages of the selected session, so you always see a part of its conversation. Before you type,
-and when no message matches, you see the newest messages. When messages match, you see them with
-your search words highlighted.
+The terminal switcher and the search dialog of the apps have two sides. The left side lists the
+recent sessions or the sessions that match. The right side shows messages of the selected session.
+On a phone or in a narrow app window, the messages are below the list.
+
+Before you type, and when no message matches, you see the newest messages. When messages match,
+you see them with your search words highlighted.
 
 ### In the terminal
 
@@ -250,8 +246,8 @@ folder, the project keeps its sessions, and Vis does not move your files.
 A fork is a new session that starts with a copy of the conversation of another session. The
 original does not change. You can fork a session after its first turn.
 
-A fork does not copy or restore your project files. The changes that Vis made in later turns stay
-in place, so a fork from an earlier turn does not undo them.
+A fork does not copy or restore your project files, so a fork from an earlier turn does not undo
+the changes of later turns.
 
 ### Fork the whole conversation
 
@@ -310,7 +306,7 @@ project or deletes a group or a session.
   rename it, **f** to star it, **A** to archive it, and **D** to delete it. Press **v** to show
   archived sessions and **V** to show archived groups.
 
-Stars are shared, so a session that you star in the terminal is also starred in the apps.
+A session that you star in the terminal is also starred in the apps.
 Archived sessions leave the usual lists until you show them.
 
 ## Manage sessions from the command line
@@ -358,15 +354,13 @@ If the desktop app or the browser can share a file, Vis asks you to keep the fil
 
 ### Export from the command line
 
-Use a session id from `vis-agent sessions list`:
-
 ```bash
 vis-agent sessions export <SESSION-ID> [--md | --html PATH | --snapshot PATH]
 ```
 
 ### Markdown
 
-Markdown is the default format. The command prints the transcript, tool calls included, to stdout:
+Markdown is the default format. The command prints the transcript to stdout:
 
 ```bash
 vis-agent sessions export 3a7b2c1d > session.md
@@ -427,7 +421,7 @@ The imported session uses the folder where you run the command. These options ch
 |---|---|
 | `--root DIR` | Use `DIR` as the project folder. |
 | `--group ID` | Put the session in this session group. Without `--root`, use the project folder of the group. |
-| `--key KEY` | Import only once. A second import with the same key prints the first session and creates nothing. |
+| `--key KEY` | Import only once. A second import with the same key prints the first session. |
 
 The permissions on the new computer come from its own policy, not from the snapshot. The
 **Session snapshot limit** setting sets the largest snapshot, and its default is 1 GiB. A program
@@ -436,8 +430,7 @@ can do the same steps with the
 
 ## See also
 
-- For every terminal key, the session commands on this page included, read
-  [Keyboard shortcuts](keyboard-shortcuts.md).
+- For every terminal key, read [Keyboard shortcuts](keyboard-shortcuts.md).
 - To follow and control the same session from another device, read
   [Desktop and mobile setup](index.md#connect-an-app).
 - To ask another session for help or a second review, read [Council](council.md).

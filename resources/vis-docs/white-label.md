@@ -8,8 +8,7 @@ Vis to your team or your customers under your own brand.
 - **You want your logo and your name in the web app.** Write [a brand](#what-a-brand-has), then
   choose [where to set it](#where-to-set-the-brand).
 - **You want links to your own pages in the header.** Add [icon links](#icon-links).
-- **You want one fixed look.** Give the brand [one theme](#one-theme). The web app then shows no
-  theme choice.
+- **You want one fixed look.** Give the brand [one theme](#one-theme).
 - **You build the web app yourself.** Read [Put the brand in the
   build](#put-the-brand-in-the-build).
 
@@ -39,7 +38,7 @@ A brand is one JSON object. Each key is optional, and a key that you omit keeps 
 
 | Key | Result |
 |---|---|
-| `name` | The name beside the logo and in the page title. It has at most 24 characters. |
+| `name` | The name beside the logo and in the page title, at most 24 characters. |
 | `logo` | The picture in the header, on the start screens, and on the browser tab. |
 | `href` | The address that the logo opens in a new tab. It starts with `http://` or `https://`. |
 | `links` | Up to six [icon links](#icon-links) in the header. |
@@ -67,11 +66,8 @@ holds it.
 The brand shows in the web app that a gateway serves at its own address. The Companion app on a
 phone, the terminal, and an HTML transcript export keep the Vis look.
 
-The brand replaces the name only in the header and in the page title. Other messages of the web app
-still use the name Vis.
-
-The brand does not rename the coding agent. To give the agent one name that nobody can change, read
-[One fixed name](configuration.md#one-fixed-name).
+Other messages of the web app still use the name Vis. The brand does not rename the coding agent.
+To fix the agent name, read [One fixed name](configuration.md#one-fixed-name).
 
 ## Icon links
 
@@ -80,7 +76,7 @@ Each link needs all three of these keys:
 | Key | Value |
 |---|---|
 | `icon` | One of the icon names below. |
-| `label` | The name of the link, at most 40 characters. It is the tooltip and the name for a screen reader. |
+| `label` | The tooltip and the name for a screen reader, at most 40 characters. |
 | `href` | The address, which starts with `http://` or `https://`. It opens in a new tab. |
 
 The links stand before the search control, in the order of the list. A window narrower than 640
@@ -108,10 +104,9 @@ The values of `base` are `blockether-light`, `blockether-dark`, `high-contrast-d
 `solarized-dark`, `solarized-light`, `tokyonight-day`, `tokyonight-moon`, `tokyonight-night`,
 `tokyonight-storm`, `vis-dark`, and `vis-light`.
 
-Each key of `colors` is a variable of the base theme, for example `--bg`, `--fg`, `--primary`,
-`--accent`, or `--link-fg`. The file `apps/vis-companion/src/lib/themes.generated.css` in the Vis
-repository lists all variables of each theme. The `--bg` color is also the color of the browser bar
-on a phone.
+Some variables are `--bg`, `--fg`, `--primary`, `--accent`, and `--link-fg`. The file
+`apps/vis-companion/src/lib/themes.generated.css` in the Vis repository lists all variables of each
+theme. The `--bg` color is also the color of the browser bar on a phone.
 
 While the brand has a theme, the web app has no other theme. The settings show no **Theme**
 section, and the theme that a person chose before does not apply. When you remove the theme from
@@ -154,10 +149,8 @@ the build, and the message names the key.
 
 ## Troubleshooting
 
-- **The page still shows the old brand.** Reload the page. An open page reads the brand only when
-  it loads.
-- **The build stops with a `VIS_WEB_BRAND` message.** Correct the key that the message names. The
-  tables on this page give the rule of each key.
+- **The page still shows the old brand.** Reload the page.
+- **The build stops with a `VIS_WEB_BRAND` message.** Correct the key that the message names.
 - **The gateway refuses the theme.** The `base` is not a theme that Vis ships, or a key of `colors`
   is not a variable of that theme.
 - **The header shows no icon links.** Make the window wider than 640 pixels.

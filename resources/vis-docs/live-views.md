@@ -18,7 +18,6 @@ and a person can stop it at any time.
 - **Your extension needs a view that stays open between tool calls, such as a board.** Open it in
   the [side panel](#choose-a-placement).
 - **People must review a change or answer you after your code returns.** Attach an [app](#apps).
-  People save drafts and send them when they are ready.
 - **You must know why your app failed or what it did.** Write to the [app
   log](#write-to-the-app-log).
 - **Vis shows an error card in place of a node.** [Stay inside the
@@ -47,7 +46,7 @@ external job can continue.
 
 ## In the terminal
 
-This live view updates one pane as jobs finish. Select an image to see it at full size.
+This live view updates one pane as jobs finish.
 
 [![Vis live view showing CI run 42, one of three jobs complete and a job status table](assets/screenshots/live-running.png)](assets/screenshots/live-running.png)
 
@@ -61,9 +60,8 @@ Press Escape to open the stop confirmation, which [Interruption](#interruption) 
 Put this code in a trusted extension module, and register `watch_run` with `vis.Symbol` to call it
 from Vis. It needs the GitHub CLI, a signed-in account, and a working directory inside the target
 repository. `run_id` is the numeric ID of an Actions run. The function returns the final receipt of
-the view, not a GitHub run object. For a full integration with typed results and error handling,
-read the [GitHub extension of the
-repository](https://github.com/Blockether/vis/blob/main/.vis/extensions/gh.py).
+the view, not a GitHub run object. For a full integration with typed results and error handling, read the [GitHub extension
+of the repository](https://github.com/Blockether/vis/blob/main/.vis/extensions/gh.py).
 
 ```python
 import json
@@ -123,16 +121,14 @@ def watch_run(run_id: int) -> dict:
 
 GitHub can return a run before it publishes the jobs. While the job count is unknown, declare the
 progress without a `total`, because `total=0` is invalid. When jobs show, set both `done` and
-`total`, and update the total if GitHub adds jobs. The example keeps the last known counts through
-later empty polls.
+`total`, and update the total if GitHub adds jobs.
 
 ## Monitor a fixed build set
 
 To watch several builds that are **already selected**, use one synchronous tool and one live view.
-The coordinator below runs at most two read-only requests at one time. It uses each finished read
-without a wait for a slower read, and it keeps the last observation of each build. It does not
-start deployments, schedule dependencies, or cancel remote jobs. The model needs no general shell
-access.
+The coordinator below runs at most two read-only requests at one time, and it keeps the last
+observation of each build. It does not start deployments, schedule dependencies, or cancel remote
+jobs. The model needs no general shell access.
 
 Supply a domain adapter `read_once(build, *, deadline, stop)` that returns `"running"`,
 `"succeeded"`, or `"failed"` for that exact environment and build ID. The adapter is the code of
@@ -286,10 +282,9 @@ vis.register_extension(vis.Extension(
 ))
 ```
 
-**A fast failure does not skip cleanup.** When a finished read reports a failure, the coordinator
-schedules no new work, and the view closes before the coordinator joins the slower readers. The
-caller returns only after those readers finish their bounded cleanup. `Future.cancel()` cannot kill
-a request that already runs.
+**A fast failure does not skip cleanup.** When a read reports a failure, the view closes, but the
+caller returns only after the slower readers finish their bounded cleanup. `Future.cancel()` cannot
+kill a request that already runs.
 
 Do not use `shutdown(wait=False)` in its place, because work then continues after the return with
 no sign of it. The snapshots are the last observations before the stop, and late results during
@@ -297,9 +292,10 @@ cleanup do not change them. `unobserved` does not mean running or successful.
 
 **The recipe is not durable background execution.** An open live view suspends only the normal
 wall-time limit of the block that called it. Network deadlines and the overall timeout of the
-recipe still apply. A synchronous call also keeps its caller busy, so the model cannot call a
-second "stop" tool during that call. Use the UI or an independent SDK client. Monitoring ends at
-the return, and it does not recover after a worker restart or a gateway restart.
+recipe still apply. A synchronous call keeps its caller busy, so
+the model cannot call a second "stop" tool during that call. Use the UI or an independent SDK
+client. Monitoring ends at the return, and it does not recover after a worker restart or a gateway
+restart.
 
 Before you ship your adapter, test these cases:
 
@@ -342,8 +338,8 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | A column that collapses | Children update by their own IDs. |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
 
-`vis.ui.output(...)` builds a `log` node. Its name is `output` so that it never shadows `vis.log`,
-which writes a line to the engine log.
+`vis.ui.output(...)` builds a `log` node. The `output` name differs from `vis.log`, which writes
+a line to the engine log.
 
 To update a status and keep its detail, omit `detail`. To remove the detail line, pass `detail=""`:
 
@@ -362,14 +358,13 @@ layout of an open view, read [Layout and text](#layout-and-text).
 
 ### Read and search a log
 
-Each log starts collapsed and has its own expanded state, so one open log never opens another. A
-patch keeps the choice of the reader. `default_expanded=True` changes only the first state of an
-active view. A completed receipt starts collapsed again and keeps its saved output.
+Each log starts collapsed and has its own expanded state. A patch keeps the choice of the reader.
+`default_expanded=True` changes only the first state of an active view. A completed receipt starts
+collapsed again and keeps its saved output.
 
 A live view shows the whole log. When you open a log, the Companion app and the terminal read the
-record back to its first line. So you also read the output from before the client attached.
-`window_lines` sets only the size of the tail that the model reads and of the tail that a client
-gets when it attaches. It never hides output from you.
+record back to its first line. This includes output from before the client attached. `window_lines` sets
+only the size of the tail that the model reads and of the tail that a client gets when it attaches.
 
 While the earlier lines load, one line says so. The same line reports a failed read. Search reaches
 the record in both cases.
@@ -378,8 +373,7 @@ An expanded log has **Search** in the Companion app, and **Search log** in the t
 F3 controls or the pointer. Search ignores case and finds a literal substring in the whole saved
 record, also in lines outside `window_lines` and in closed views. Results have the original line
 numbers, which start at 1, and come in pages of 200. They are a snapshot, and **Refresh results**
-adds new output. After code clears a log, search no longer finds the earlier lines. Search never
-sends an action to the producer.
+adds new output. After code clears a log, search no longer finds the earlier lines.
 
 In the Companion app, **Clear search** or Escape in the search field brings back the normal output.
 `/` moves the focus from the output to search. Without a record loader, the panel says that search
@@ -391,15 +385,15 @@ API](sessions-api.md#watch-live-views). A request names the log node and takes `
 `limit`. `from` is a match offset that starts at 0, and an empty query matches all lines.
 
 The response has `lines`, `line_numbers`, `matched`, and `total`. The gateway limits a page to the
-default size of the log window. It streams the record and keeps only the requested page. A styled
-page also has `line_tones`, aligned with `lines`, where `null` means plain text.
+default size of the log window. A styled page also has `line_tones`, aligned with `lines`, where
+`null` means plain text.
 
 ### Add severity to streaming output
 
-A build log mixes compiler failures, warnings, and successful steps, so it is not one source
-language. To tell them apart, write with a tone, as in `view["log"].write(..., tone="error")`. The
-typed `vis.LogTone` values are `"idle"`, `"running"`, `"ok"`, `"warn"`, and `"error"`. Without
-`tone`, the lines are plain text. A tone applies to all lines of one call, not to later calls.
+To tell failures, warnings, and successful steps apart in a log, write with a tone, as in
+`view["log"].write(..., tone="error")`. The typed `vis.LogTone` values are `"idle"`, `"running"`,
+`"ok"`, `"warn"`, and `"error"`. Without `tone`, the lines are plain text. A tone applies to all
+lines of one call, not to later calls.
 
 ```python
 with vis.live("Build output", [vis.ui.output("log", label="Build log")]) as view:
@@ -416,9 +410,9 @@ dialogs of the terminal show plain text. A completed receipt keeps the style met
 original line numbers.
 
 Redact secrets **before** you call `write` or seed `lines`. The presentation redaction of the
-engine is an extra safeguard, and it does not detect every kind of secret. Styles are separate
-metadata. They never split, hide, or replace text before redaction, search, or copy. HTML and URLs
-in output stay literal, with no links and no markup that runs.
+engine is an extra safeguard, and it does not detect every kind of secret. Styles never split,
+hide, or replace text before redaction, search, or copy. HTML and URLs in output stay literal, with
+no links and no markup that runs.
 
 ANSI is not a styling API. C0 and C1 controls other than tab and newline show as visible `\uXXXX`
 text, so Escape shows as `\u001b`. Vis never runs cursor moves, OSC links, clipboard escapes, or
@@ -429,9 +423,8 @@ adapter, decode and join partial lines before you redact and append them. Append
 clear the log and write a snapshot again.
 
 Each batch keeps its own tone, also when Vis merges updates. Styles do not change `window_lines`,
-retention, or search pages. The earlier pages that a client reads back keep their tones. For a
-separate snippet in a known language, use `vis.ui.code(..., language=...)`, but not for the mixed
-log.
+retention, or search pages. The earlier pages that a client reads back keep their tones. For a separate snippet in a known
+language, use `vis.ui.code(..., language=...)`, but not for the mixed log.
 
 For raw wire clients, an `append` operation can have `tone` only for a log node. A log snapshot can
 have `line_tones`, with one tone or `null` for each line. Clojure uses `:tone` on log append
@@ -444,9 +437,8 @@ The spinner variants are `braille`, `dots`, `line`, and `pulse`. `is_active=Fals
 and keeps its text. A completed receipt never animates, and the Companion app obeys the
 reduced-motion preference.
 
-A button is a real action, not a link or a serialized callback. An accepted press adds 1 to the
-`clicks` of that node in the shared state and wakes `view.sleep(...)`. Read the count with
-`view.state()`, and let the producer decide what to do. Disabled buttons and completed receipts
+An accepted press adds 1 to the `clicks` of that node in the shared state and wakes
+`view.sleep(...)`. Read the count with `view.state()`. Disabled buttons and completed receipts
 refuse a press. Treat a network request without confirmation as uncertain, and check the state
 before you repeat an action with consequences.
 
@@ -482,8 +474,8 @@ two positional arguments, they declare live nodes with IDs.
 
 A table takes `order="insertion"`, which is the default, `"newest-first"`, or a map such as
 `{"by": "duration", "dir": "desc"}`. Rows with the same `parent="tests"` show under one group that
-collapses. The group stays closed until the reader opens it. Each client shows the group in the
-same way, with its name and its row count. So keep the name stable and let Vis count.
+collapses. The group stays closed until the reader opens it. Each client shows the group with its
+name and its row count, so keep the name stable and let Vis count.
 
 A group that you do not declare takes its ID as its name. It sorts after the declared groups, in
 the order in which its first row arrived.
@@ -498,9 +490,9 @@ the choice of the reader applies. Vis does not show a declared group with no row
 
 With `is_selectable=True`, people can select rows. Read the selection with `view.state()`.
 
-To show a new set of rows, for example after a filter changes, call `.replace(rows)`. It sets all
-rows in one step. A selected row that is in the new set stays selected. A row that is not in the
-new set goes away with its selection. `.clear()` and then `.upsert(...)` drops the whole selection.
+To show a new set of rows, call `.replace(rows)`. It sets all rows in one step. A selected row that is in the new set stays
+selected. A row that is not in the new set goes away with its selection. `.clear()` and then
+`.upsert(...)` drops the whole selection.
 
 ```python
 view["chats"].replace([vis.ui.table_row(chat.id, [chat.title, chat.category])
@@ -512,9 +504,8 @@ set.
 
 ### Draw a 3D scene
 
-A `scene` node shows a small 3D world, such as a game board or a model of a machine. Your Python
-code keeps all the logic and sends only shapes, places, turns, and colors. The clients draw them,
-and no code of yours runs in the Companion app or the terminal.
+A `scene` node shows a small 3D world, such as a game board. Your Python code keeps all the logic
+and sends only shapes, places, turns, and colors. No code of yours runs in a client.
 
 ```python
 field = vis.ui.scene(
@@ -548,13 +539,13 @@ app["field"].remove("rock-1")
 object needs `mesh`. `.objects` returns the objects as Vis holds them, by ID. `.set(...)` changes
 `background`, `fov`, `is_wrapping`, or `tick_ms`.
 
-Send one update for each tick of your loop. The Companion app draws the scene with WebGL. It moves
-each object smoothly from its last place to its new place in `tick_ms`, at the frame rate of the
-screen. With `is_wrapping=True`, an object that leaves at one edge moves in smoothly at the
-opposite edge. To move an object without the smooth motion, give it a new ID.
+Send one update for each tick of your loop. The Companion app draws the scene with WebGL and moves
+each object smoothly from its last place to its new place in `tick_ms`. With `is_wrapping=True`, an
+object that leaves at one edge moves in smoothly at the opposite edge. To move an object without
+the smooth motion, give it a new ID.
 
-The terminal draws the same scene with its own renderer. Each character shows two pixels with the
-`▀` half block in true color.
+The terminal draws the same scene in true color, and each character shows two pixels with the `▀`
+half block.
 
 ## Layout and text
 

@@ -21,7 +21,7 @@ API](sessions-api.md). To run a prompt on a schedule, use [Automations](automati
 ## Before you start
 
 - Install the Vis app on an iPhone with iOS 16 or later.
-- Pair the app with at least one machine. The actions use the machines that the app knows.
+- Pair the app with at least one machine.
 
 Most actions have an optional **Machine** parameter. An empty **Machine** means your primary
 machine.
@@ -51,8 +51,7 @@ action, for example **Create Note** or **Send Message**.
 ## Get a structured answer
 
 Put a JSON Schema in the **Response schema** parameter of **Ask Vis**. Vis then returns JSON that
-matches the schema, not free text. The parameter works like `response_schema` in the [Python
-SDK](python-sdk.md).
+matches the schema. The parameter works like `response_schema` in the [Python SDK](python-sdk.md).
 
 This schema asks for a city and a temperature:
 
@@ -67,9 +66,8 @@ This schema asks for a city and a temperature:
 }
 ```
 
-Vis checks each answer against the schema. If the answer does not match, Vis asks the model to
-correct it. **Max corrections** sets the number of tries, 2 by default. If no answer matches, the
-action stops with an error.
+If the answer does not match the schema, Vis asks the model to correct it. **Max corrections** sets
+the number of tries, 2 by default. If no answer matches, the action stops with an error.
 
 To read each field in the shortcut, use **Get Dictionary from Input** on the result.
 
@@ -98,10 +96,8 @@ Each model has the properties **Provider**, **Name**, **Label**, **Billing**, **
 
 ## Send now and wait later
 
-Use this pattern when a task takes longer than a shortcut can wait.
-
-1. Add **Send Vis Request**. It gives the request to Vis and returns the turn at once.
-2. Let the shortcut continue. Vis works on the request in the meantime.
+1. Add **Send Vis Request**. It returns the turn at once.
+2. Let the shortcut continue while Vis works on the request.
 3. Give the turn to **Wait for Vis Answer**. It returns the final answer as text.
 
 ## Share text or a link

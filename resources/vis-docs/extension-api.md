@@ -521,8 +521,7 @@ Iteration never fetches another page. A record with no received items is false. 
 `json.dump(result, file)` writes `{}` for it, while `json.dumps(result)` writes its fields.
 
 The declaration adds metadata to your class, not methods. Keep the methods that you need when
-you call the class outside the sandbox. Vis builds the sequence operations locally over the
-received field.
+you call the class outside the sandbox.
 
 Each type must opt in explicitly, subclasses included. An existing `__iter__` method or a field
 named `results` does not opt in. To adapt a third-party value without a change to its type, copy
@@ -667,9 +666,8 @@ bytes. Use a stable, non-secret value that is unique to the operation. Do not us
 the arguments, and do not reuse the value for unrelated work. Omit it for a standalone call. It
 identifies a receipt and does not replace tool arguments or results.
 
-The engine stores the handle on each Activity row, not in the displayed content. It keeps the
-newest outcome current, keeps the earlier distinct details and errors, and counts and saves
-every call in history. Shell handles use the same grouping, with command-specific output and
+The engine keeps the newest outcome current, keeps the earlier distinct details and errors,
+and counts and saves every call in history. Shell handles use the same grouping, with command-specific output and
 exit reconciliation.
 
 To make summary links clickable in the app and the terminal, pass `summary_format="markdown"` to
@@ -721,8 +719,7 @@ your own program, use the [Sessions API](sessions-api.md#read-activity-history).
 
 The `tag` of a tool tells Vis what kind of work each call did. Each Activity counts its steps in
 one line, such as `1 mutation · 6 observations · 2 verifications`. Short summaries use `ver` for
-verification. The tag decides where Vis counts a call:
-
+verification.
 | Tag | Use it for |
 |---|---|
 | `observation` | Reads that change nothing, such as searches and status queries. |
@@ -732,8 +729,7 @@ verification. The tag decides where Vis counts a call:
 
 A tag describes the operation. It grants no permission and enforces no policy.
 
-A check can finish without an error and still find problems. A test run that reports two
-failures did its job. Set `verdict` on the top-level `ActivityPresentation` to say what the
+A check can finish without an error and still find problems. Set `verdict` on the top-level `ActivityPresentation` to say what the
 check found:
 
 ```python
@@ -828,8 +824,7 @@ that local dictionary changes neither the declared tool nor its permissions.
 | Namespace | `version`, `name`, `members` with full public member names |
 | Parameter | Name, parameter kind, `required`, `has_default`, `default_is_none`, `default_source`, and type description |
 
-The registered signature and the resolved type metadata decide the shape of a call. `doc()`
-renders the same contract: signature, parameter kinds, required or default status, return type
+`doc()` renders the contract: signature, parameter kinds, required or default status, return type
 and fields, mutation tag, and description. The `signature` text is the full Python signature,
 for example `(name: str, /, *, loud: bool = False) -> 'Results'`. A method with no arguments has
 the signature `()`, and no metadata is missing.
@@ -917,8 +912,8 @@ variadic arguments included. The remote tool schemas of MCP stay separate from t
 `tool`, and `args` parameters of the dispatcher.
 
 The host classes and their identity do not cross the sandbox boundary. A type name describes a
-host annotation. A record that sandbox code passes back becomes an instance of the tool's own
-class again, as in [Accept records as arguments](#accept-records-as-arguments).
+host annotation. For records passed back to tools, read [Accept records as
+arguments](#accept-records-as-arguments).
 
 Sandbox sequences are list-like. Use `len()`, an index, or iteration, not
 `isinstance(value, tuple)`. The `.contract` of a callable is a dictionary. To find types, select
@@ -987,8 +982,7 @@ class Tools:
 ```
 
 `vis.Symbol(Tools(), name="tools").contract` expands `Result.text` below the variadic tuple. A
-call without `text` uses the public string `"ready"`. The example inspects a contract and
-registers nothing. When you bind `Tools.read`, declare its Activity in the entrypoint, as in the
+call without `text` uses the public string `"ready"`. When you bind `Tools.read`, declare its Activity in the entrypoint, as in the
 [greeter example](extension-design.md#keep-the-entrypoint-small). This local operation can use
 `show_start=False`.
 
@@ -1011,8 +1005,7 @@ group words. `raw` is the full text of the command, with its `/`. For example,
 Vis runs `run` in the session that sent the command, as it does for a tool call. In `run`,
 [`vis.workspace_root()`](#workspace-root) returns the directory of that session.
 
-Set `saveable=True` when the command text is real prompt content, such as a goal. A person may
-want to run such a command again. The terminal then keeps the full command in its prompt
+Set `saveable=True` when the command text is real prompt content, such as a goal. The terminal then keeps the full command in its prompt
 history, so **↑** recalls it. The default is `False`. Vis does not save a control command, such
 as `/reload`, unless its definition sets the flag. The built-in `/goal` command is saveable.
 
@@ -1095,7 +1088,7 @@ load. A deleted automation comes back at the next load while the extension decla
 vis.Keybinding(key, command=None, action=None, label=None, group=None, run=None)
 ```
 
-A key binding gives your extension a key in the terminal. The person presses Ctrl+X, a group
+The person presses Ctrl+X, a group
 key, then your key. By default, the key is in the extensions group, so the person presses Ctrl+X
 e, then the key. Declare the bindings in `vis.Extension(keybindings=[...])`.
 
@@ -1128,8 +1121,6 @@ The arguments of `vis.Keybinding` have these rules:
   `group`, a `command` or `run` binding uses `Extensions`.
 - Any other `group` name makes a group of your own under Ctrl+X e. Its key is the first free
   letter of its name. Names that differ only in case share one group.
-
-In the example, Ctrl+X e R starts a release and Ctrl+X s N starts a new session.
 
 ```python
 keybindings=[
@@ -1165,7 +1156,7 @@ vis.Extension(
 )
 ```
 
-Here Ctrl+X e D calls `deploy`. The terminal stays free while the function runs. The function
+The terminal stays free while `deploy` runs. The function
 follows these rules:
 
 - The function gets one dict with `key`, `group`, `channel`, `session_id`, `workspace_root`, and
@@ -1672,7 +1663,7 @@ read shows no Activity. Each change shows its own Activity under your tool's Act
 
 ## Call other session tools
 
-`vis.tools` calls a tool that the session already has, so that you do not write it again. Name
+`vis.tools` calls a tool that the session already has. Name
 the tool as the model calls it in `python_execution`:
 
 ```python
@@ -1706,8 +1697,7 @@ A result has the shape that the model sees:
   `sh.wait()`, `sh.logs()`, and `sh.stop()` control the process.
 
 The record is a copy in your extension's process, not an instance of the other extension's
-class. So check its fields, not `isinstance` with that class. Vis builds these records in the
-same way for `python_execution` and for your extension.
+class. So check its fields, not `isinstance` with that class.
 
 Pass JSON-compatible arguments: strings, numbers, booleans, `None`, lists, and dicts. Vis sends
 a dataclass argument as a dict of its public fields, and also a record that `vis.tools`
@@ -1719,7 +1709,7 @@ such as `ValueError: no browser available`. An unknown name raises the same erro
 active tools with similar names.
 
 Vis refuses a call back into your own extension, or into another extension that waits on the
-current call. Such a call would never return. Call your own functions directly. Outside a Vis
+current call. Call your own functions directly. Outside a Vis
 session, for example in plain unit tests, `vis.tools` raises an error. There, import and call
 the other package directly.
 
@@ -1760,8 +1750,7 @@ Without `media_type`, Vis detects the type in this order:
 
 The sandbox `attach` uses the same rule.
 
-The same code runs in the sandbox, so the arguments are the same. These limits and differences
-apply:
+These limits and differences apply:
 
 - `vis.attach` accepts the near-miss keywords of the sandbox, such as `name=` for `filename` and
   `title=` for `label`.
@@ -1778,8 +1767,7 @@ a stored image to the model for the next request only.
 If no `python_execution` block runs your code, for example in a slash command, these functions
 raise an error.
 
-Outside Vis, for example in plain unit tests, the functions keep the files in process memory. A
-test can then attach a file and read it back. Some answers differ from the answers of Vis:
+Outside Vis, for example in plain unit tests, the functions keep the files in process memory. Some answers differ from the answers of Vis:
 
 - No size limit and no reference exist. The functions read each file whole.
 - The bytes do not name the media type. The filename or `media_type` names it by the rule of

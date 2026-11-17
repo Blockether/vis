@@ -17,8 +17,7 @@ distribution. Write the extension yourself, or ask Vis to build it.
   extension](#ask-vis-to-build-an-extension) from a description of the task.
 
 If Vis needs only instructions and no code, write a [skill](skills.md) or add the rule to
-[`AGENTS.md`](project-instructions.md#project-rules-agents-md). [Choose what you
-need](#choose-what-you-need) compares the options.
+[`AGENTS.md`](project-instructions.md#project-rules-agents-md).
 
 ## Choose what you need
 
@@ -37,11 +36,8 @@ need](#choose-what-you-need) compares the options.
 A tool does work. A prompt or a skill explains when and how to use the tool. Instructions do not
 register a callable, run a procedure, or authorize its side effects.
 
-Put a check that must run every time in a domain function or a hook. A before hook can refuse a
-call. An after hook inspects the outcome and can give context for the next step, but it does not
-undo completed work. The [post-edit complexity
-check](extension-design.md#check-code-complexity-after-edits) is a tested example for patches and
-plain Python writes.
+A before hook can refuse a call. An after hook inspects the outcome and can give context for the
+next step, but it does not undo completed work.
 
 ## Your first extension
 
@@ -101,16 +97,13 @@ vis.register_extension(
 )
 ```
 
-The filename identifies the entry file, and `name` identifies the extension. `Symbol(hello)` exposes
-the callable as `hello`. `alias` does not add a prefix. Give an entry file a name that differs from
-each package that it imports.
+`name` identifies the extension. `Symbol(hello)` exposes the callable as `hello`. `alias` does not
+add a prefix. Give an entry file a name that differs from each package that it imports.
 
-Declare an Activity next to every tool binding. A person reads the Activity, so write its label as
-clear English in sentence case, not as a Python identifier or a serialized object. The callback
-shows the greeting and a character count. The return value stays available to Python.
+Declare an Activity next to every tool binding. Write its label as clear English in sentence case,
+not as a Python identifier or a serialized object.
 
-The greeting is fast, so `show_start=False` shows only its end result. Keep `show_start=True` for
-slow work and network requests. [Design the Activity with the
+The greeting is fast, so `show_start=False` shows only its end result. [Design the Activity with the
 tool](extension-design.md#design-the-activity-with-the-tool) has the rules. [Activity
 presentation](extension-api.md#activity-presentation) covers summaries, object methods, intermediate
 updates, limits, and tests.
@@ -138,9 +131,8 @@ first sentence of each docstring. `doc()` shows the signature, the types, and th
 your docstring, so the docstring does not repeat them. `hello.contract` gives the same data as a
 structure.
 
-A default shown as `...` is a withheld value, not `Ellipsis`. Omit the argument to use its real
-default. The docstring states the result, here that capitalization is preserved. Read [Document
-default behavior](extension-design.md#document-default-behavior).
+A default shown as `...` is a withheld value, not `Ellipsis`. To use the real default, omit the
+argument, as [Document default behavior](extension-design.md#document-default-behavior) explains.
 
 ### 4. Check an edit
 

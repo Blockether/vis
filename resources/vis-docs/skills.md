@@ -10,7 +10,7 @@ Skills written for Claude Code, pi, opencode, or the
 ## When to use
 
 - **You explain the same workflow to Vis for every release, review, or migration.**
-  [Write it once as a skill](#write-a-skill), with its scripts and templates.
+  [Write it once as a skill](#write-a-skill).
 - **The procedure is too long for `AGENTS.md`.** Vis includes `AGENTS.md` in every turn. For a
   skill, Vis lists only the name and the description until a task needs the full instructions.
 - **You already use skills with Claude Code, pi, or opencode.** Vis searches
@@ -49,9 +49,6 @@ description: Use when the user requests a release. Verifies, tags and publishes.
 Vis reads `name` and `description` from the frontmatter. In `description`, state when to use the
 skill. The model selects a skill by its description. If `name` is missing, Vis uses the folder name.
 
-When Vis uses the skill, it reads the bundled scripts, templates, and references with the ordinary
-file tools.
-
 ## Where Vis looks
 
 Vis searches these sources in order and uses the first skill with a given name.
@@ -73,8 +70,7 @@ Vis searches these sources in order and uses the first skill with a given name.
 
 Vis also searches the project locations in each parent directory up to the Git root. At the Git
 root, Vis skips nested projects that Git ignores. It also skips projects in dependency directories,
-such as `.venv`, `venv`, `site-packages`, and `node_modules`. Vis does not load skills that
-installed packages ship.
+such as `.venv`, `venv`, `site-packages`, and `node_modules`.
 
 Vis loads changes to local skills without a restart. Skills that an extension bundles update when
 you run `/reload`. If the reload fails, Vis keeps the last version that worked. A local skill with
@@ -103,8 +99,8 @@ prompt inventories, and slash expansion. To follow the parent scope again, choos
 **Use inherited value**. The global switch applies to each session that has no more specific
 override.
 
-A skill that an extension bundles has no switch of its own. The skill follows the Auto, On, or Off
-choice of the extension. To remove the skill, switch the extension off.
+A skill that an extension bundles follows the Auto, On, or Off choice of the extension. To remove
+the skill, switch the extension off.
 
 A switch does not erase instructions that are already in the conversation, and it is not a
 filesystem permission. For inheritance, read

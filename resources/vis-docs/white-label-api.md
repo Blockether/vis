@@ -13,8 +13,7 @@ requests, select **HTTP** at the top of the page.
   and set the brand again.
 - **You must go back to the Vis look.** Read [Remove the brand](#remove-the-brand).
 
-To learn what each key does and where the brand shows, read [White label](white-label.md). That
-page also explains how to put a brand in your own build of the web app.
+To learn what each key does and where the brand shows, read [White label](white-label.md).
 
 ## Before you start
 
@@ -54,8 +53,7 @@ examples use it.
 
 </div>
 
-A set replaces the whole brand. A key that you omit goes back to the Vis default. An open page
-shows the new brand after a reload.
+A set replaces the whole brand. A key that you omit goes back to the Vis default.
 
 ## Set the brand
 
@@ -101,8 +99,8 @@ The answer is the saved brand. A value that breaks a rule gives status 400 with 
 
 </div>
 
-The gateway also checks the theme. It refuses a `base` that Vis does not ship and a color variable
-that the base theme does not have.
+The gateway also refuses a theme `base` that Vis does not ship and a color variable that the base
+theme does not have.
 
 ## Read the brand
 
@@ -125,8 +123,7 @@ Vis look.
 curl -s "$VIS_GATEWAY_URL/v1/web/brand"
 ```
 
-The answer has only the keys that are set. `{}` means the Vis look. This request needs no token,
-because the web app reads the brand before it connects.
+The answer has only the keys that are set. `{}` means the Vis look. This request needs no token.
 
 </div>
 

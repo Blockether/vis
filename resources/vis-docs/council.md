@@ -17,12 +17,9 @@ shared threads, so later sessions can use them.
   [subagent model](#choose-the-model-of-subagents).
 - **Your own program coordinates sessions.** Use [Council API](council-api.md).
 
-Every session in a [group](#groups-and-settings) can read its messages. Keep credentials and
-private data out of them.
-
 ## Ask Vis to consult another session
 
-Ask in the conversation. You need no Python and no session ID.
+Ask in the conversation.
 
 > Find the session where we investigated the parser regression.
 
@@ -32,10 +29,9 @@ say so:
 > Ask that session whether it tested empty input. Use its findings to check
 > whether we need another regression test.
 
-Vis sends the question to a relevant session. The ping resumes an idle session in the group, which
-answers from its saved context. If that session is unavailable or does not reply, Vis reports the
-missing answer. Earlier findings may be out of date, so check them against the current code or the
-running system.
+The question resumes an idle session in the group, which answers from its saved context. If that
+session is unavailable or does not reply, Vis reports the missing answer. Earlier findings may be
+out of date, so check them against the current code or the running system.
 
 ## Work on a task together
 
@@ -44,15 +40,14 @@ Ask one session to implement a change and another to review it. Name the work an
 > Ask the session that knows the parser to review this diff for missing edge
 > cases. It should not edit files. Fix any confirmed gaps here and run the tests.
 
-For a task that edits files, also name the files that each agent owns, the finished result, and
-the way to verify it. State any limits on time, cost, or external actions. Clear ownership keeps
-two sessions out of the same file.
+For a task that edits files, also name the files that each agent owns, the finished result, and the
+way to verify it. State any limits on time, cost, or external actions.
 
 [![One session delegates work, another reports its result, and the first reviews it.](assets/diagrams/council-messages.svg)](assets/diagrams/council-messages.svg)
 
-An accepted task is not a finished task. The requesting agent checks the result and asks a
-specific follow-up when something is missing. If a peer declines, the task stays unfinished. Vis
-then continues it, arranges a handoff, or explains the blocker.
+The requesting agent checks the result of an accepted task and asks a specific follow-up when
+something is missing. If a peer declines, Vis continues the task, arranges a handoff, or explains
+the blocker.
 
 Council grants no permissions. A question does not authorize unrelated work. A notification does
 not override a cancellation or resume a held queue.
@@ -82,15 +77,14 @@ With Council off, the agent has no Council tools, and Council publishes and deli
 Saved messages stay.
 
 **Subagents**, under **Council** in Settings, is on by default. It lets an agent start managed
-subagents for large independent parts of a task. Subagents work through Council. With Council off,
-they are off and Settings hide the row. With **Subagents** off, Vis blocks new subagents, wakes,
-and further steps. To turn off only subagents, use Settings or set `subagents: false` under
-`toggles`.
+subagents for large independent parts of a task. With Council off, subagents are off and Settings
+hide the row. With **Subagents** off, Vis blocks new subagents, wakes, and further steps. To turn
+off only subagents, use Settings or set `subagents: false` under `toggles`.
 
 ### Choose the model of subagents
 
 **Subagent models**, under **Subagents**, sets the model of a new subagent. Set it in Settings, or
-for all sessions of a project in its `vis.yml`:
+for a project in its `vis.yml`:
 
 ```yaml
 toggles:
@@ -106,17 +100,15 @@ toggles:
 - With an empty list, a subagent uses the model of the agent that starts it, and a task can name
   any model.
 
-Each model must be a chat model of one of your providers. A subagent keeps its model until it
-ends. You cannot change the model of a running subagent.
+Each model must be a chat model of one of your providers. A subagent keeps its model until it ends.
 
 ## Sandbox calls
 
-The agent makes these calls for the conversations above, in its Python sandbox. You do not need
-them in chat. To call Council from your own program, read [Council API](council-api.md).
+The agent makes these calls for the conversations above, in its Python sandbox.
 
 ### Reuse existing session context
 
-`list_sessions` searches saved conversations. `members` lists the active sessions of the current
+`list_sessions` searches saved conversations, and `members` lists the active sessions of the current
 group:
 
 ```python
@@ -125,9 +117,9 @@ print(matches)
 print(await council.members())
 ```
 
-Search rows use `id`, and members use `session_id`. A search match does not prove group
-membership. Titles and snippets help the agent choose a session. For more evidence, it reads
-Council threads or calls `read_session(session_id)`.
+Search rows use `id`, and members use `session_id`. A search match does not prove group membership.
+For more evidence than a title and a snippet, the agent reads Council threads or calls
+`read_session(session_id)`.
 
 A session is active while it has running or continuously queued work, also while it waits for a
 tool. Opening a session in the UI does not make it active. `members()` reports a held queue as
@@ -156,12 +148,12 @@ print(request["entry_id"])
 an answer and needs at least one recipient.
 
 The host attaches `source_ref`, which identifies the publication. To report a failure in another
-session or iteration, name that execution. Inspect its evidence with `read_session(session_id)`.
+session or iteration, name that execution.
 
 ### Answer a request
 
-The recipient gets a preview. `await council.get(entry_id)` returns the full message of a
-truncated preview. A reply names the entry ID of the request:
+The recipient gets a preview, and `await council.get(entry_id)` returns the full message. A reply
+names the entry ID of the request:
 
 ```python
 reply = await council.publish(
@@ -171,12 +163,12 @@ reply = await council.publish(
 print(reply["entry_id"])
 ```
 
-`reply_to` selects the thread and notifies the requester, with no return ping. An answer can
-report findings, uncertainty, a refusal, or a blocker. It does not have to agree.
+`reply_to` selects the thread and notifies the requester, with no return ping. An answer can report
+findings, uncertainty, a refusal, or a blocker.
 
-Delivered required requests are in `session["council"]["pending_replies"]`. The recipient can
-read, calculate, and do authorized work across tool calls. Its turn cannot end before it answers
-each one. Reading a message is not an answer. New pings wait while a required reply is open.
+Delivered required requests are in `session["council"]["pending_replies"]`. The recipient can do
+authorized work across tool calls, but its turn cannot end before it answers each one. Reading a
+message is not an answer. New pings wait while a required reply is open.
 
 A session that your session started can ask a question that only you can decide. Your session
 asks you in its answer, and its turn ends as suspended. After you answer, it replies in its next
@@ -198,14 +190,12 @@ print(status["replies"])
 | `unavailable` | The recipient could not be reached. |
 | `interrupted` | The active run of the recipient ended without an answer. |
 
-`replied` means that someone answered, not that they agreed or finished the work. The requester
-does not poll. It continues independent work. Without a useful answer, it investigates locally or
-reports what is unknown.
+`replied` means that someone answered, not that they agreed or finished the work. The requester does
+not poll and continues independent work.
 
 ### Delegate work and review results
 
-A work request states the goal, the acceptance criteria, the existing user authorization, the file
-ownership, the current state, and any limits. A question about earlier findings assigns no work.
+A work request also states the existing user authorization and the current state.
 
 Each recipient can use `reply_to` once for each request. An early reply can accept a longer task.
 The result is then a new message in the same thread, with an explicit ping to the requester:
@@ -221,7 +211,7 @@ print(result["entry_id"])
 ```
 
 `request_thread_id` and `requester_id` come from the received request. A follow-up question also
-uses `thread_id` and `ping`, never a reply to a reply.
+uses `thread_id` and `ping`.
 
 A Council message does not cancel an unfinished user task. The agent continues that task while the
 next step is clear, safe, and authorized, until it finishes, meets a blocker, or reaches a limit.
@@ -230,11 +220,9 @@ For a knowledge-only request with no related unfinished task, it answers and res
 ### Threads and notifications
 
 A message without `thread_id` and `reply_to` starts a thread. With either, it joins that thread.
-Threads are flat, not nested reply trees.
 
-The `title` of a new thread is optional. The default is the first nonempty line of the content.
-In an existing thread, Council ignores `title`, also in validation and idempotency checks, and
-keeps the title of the thread.
+The `title` of a new thread is optional. The default is the first nonempty line of the content. In
+an existing thread, Council ignores `title`, also in validation and idempotency checks.
 
 | Call | Returns |
 | --- | --- |
@@ -258,10 +246,9 @@ consumes no notification.
 Council rejects a publication whose target is missing, outside the group, or the author.
 
 A notification reaches an active session at a model invocation and queues no turn. Held and paused
-queues stay held. Delivery is best-effort. A stored message does not prove that the recipient ran,
-and Council does not replay ordinary pings after a cancellation or a restart. The return
-notification of `reply_to` can wait for the next eligible invocation of the requester, also after
-its run ends.
+queues stay held. A stored message does not prove that the recipient ran, and Council does not
+replay ordinary pings after a cancellation or a restart. The return notification of `reply_to` can
+wait for the next eligible invocation of the requester, also after its run ends.
 
 An explicit ping, or a reply that answers a request, resumes an idle session of the group. A
 managed team of subagents keeps its own rules:
@@ -293,8 +280,6 @@ request becomes a continuation, and the first reply stays the answer. An explici
 | `session_id`, `group_id` | Opaque strings from the search or from session metadata. Do not invent them. |
 | `after` | An exclusive entry-ID cursor. `0` starts pagination. |
 
-Entry IDs belong to the Council database of one engine. They are not global.
-
 | Item | Limit |
 | --- | --- |
 | Message content | 64 KiB |
@@ -307,9 +292,8 @@ Attribution, JSON overhead, and the available model context can reduce a notific
 
 ### How Council works
 
-Council stores messages and reply relationships in SQLite. The gateway tracks active sessions. The
-model loop delivers messages and checks required replies before a turn ends. No separate scheduler
-runs agents, and no session calls another session synchronously.
+Council stores messages and reply relationships in SQLite. No session calls another session
+synchronously.
 
 [![Council tools and SDK events store messages, then the gateway and model loop deliver them to sessions.](assets/diagrams/council-modules.svg)](assets/diagrams/council-modules.svg)
 

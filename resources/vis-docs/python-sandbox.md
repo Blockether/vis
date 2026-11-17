@@ -26,22 +26,16 @@ To limit what the commands of the agent can reach, turn on the [process jail](ja
 ## Running Python
 
 Each session has its own Python state. The sandbox and the trusted Python extensions use separate
-namespaces. Tools such as `grep`, `ls`, and `shell` are Python functions. The agent reads and
-writes files with plain Python. `apropos` and `doc` show the available functions.
+namespaces. Tools such as `grep`, `ls`, and `shell` are Python functions. `apropos` and `doc` show
+the available functions.
 
 ### Unbalanced quotes and brackets
 
-The agent can write a block that Python cannot parse, because a quote or a bracket does not
-balance:
-
-- A string never closes.
-- A quote in a string ends the string too early.
-- The wrong character closes a bracket, or nothing closes it.
-
-Literal braces in an f-string, and a backslash escape that Python rejects, stop a block in the
-same way. Vis repairs such a block with parinferish and runs the repaired code only when Python
-can parse it. The output then starts with a note of the Python error and each fix, and Vis marks
-the block as repaired. The agent reads the same note, so it can check the repaired code.
+The agent can write a block that Python cannot parse, because a quote or a bracket does not balance.
+Literal braces in an f-string, and a backslash escape that Python rejects, stop a block in the same
+way. Vis repairs such a block and runs the repaired code only when Python can parse it. The output
+then starts with a note of the Python error and each fix, and Vis marks the block as repaired. The
+agent reads the same note.
 
 If the repair cannot make the block parse, the block does not run. The error shows the message of
 Python, the first wrong quote, bracket, or escape, and the line that holds it.
@@ -53,9 +47,8 @@ files. They can repair invalid files and
 report the corrections in the next context. These checks do not intercept a write and do not roll
 back a block.
 
-The Clojure extension checks and repairs files in Python, without a JVM. A Python port of the
-Clojure reader must accept each repair. The Clojure and Python formatters change layout, not
-program structure.
+The Clojure extension checks and repairs files in Python, without a JVM. The Clojure and Python
+formatters change layout, not program structure.
 
 ## Sandbox state after a restart
 
@@ -123,12 +116,10 @@ In the sandbox, you can inspect public types, validate declarations, and call yo
 functions. You cannot install a tool:
 
 - `sdk.register_extension(...)` and host operations such as `sdk.state`, `sdk.shell(...)`, and
-  `sdk.notify(...)` raise `RuntimeError`. The message says that they are unavailable in
-  `python_execution`.
+  `sdk.notify(...)` raise `RuntimeError`.
 - Native filesystem helpers such as `sdk.fs.read(...)` are for trusted extensions only. They raise
   `PermissionError` in the sandbox.
-- An import of the SDK does not relax the filesystem, process, or network restrictions. It does
-  not initialize the standalone SDK host.
+- An import of the SDK does not relax the filesystem, process, or network restrictions.
 
 ### What the sandbox does not provide
 
@@ -145,9 +136,8 @@ which drives Vis from your own program. Install `vis-agent` and run that code in
 interpreter.
 
 A name in the bundled module that starts with `_` is internal. No extension registers in
-`python_execution`, so the registration record of the module stays empty. That is also true when
-you run an extension entry file yourself. `importlib` runs the file, and the file stops at its
-first host operation while it declares itself:
+`python_execution`, also when you run an extension entry file yourself with `importlib`. The file
+stops at its first host operation while it declares itself:
 
 ```text
 RuntimeError: Extension host operation 'declare_env' is unavailable in
@@ -217,9 +207,9 @@ included, is under `transcript["turns"]`, then `iterations`, then `blocks`. Each
 ## What the sandbox may do
 
 The limits in the table come from the process jail, which is off by default. With the jail off,
-sandbox code reaches the same files and hosts as your account, and
-`session["access"]["is_jailed"]` is `false`. With the jail on, a CPython audit hook checks
-filesystem, process, and network operations, also those of imported libraries.
+sandbox code reaches the same files and hosts as your account, and `session["access"]["is_jailed"]`
+is `false`. With the jail on, Vis checks filesystem, process, and network operations, also those of
+imported libraries.
 
 | Capability | Policy with the jail enabled |
 | --- | --- |
@@ -232,10 +222,8 @@ filesystem, process, and network operations, also those of imported libraries.
 | Wall-clock time | Each block has a timeout, which does not apply while a live view is open. Also without the jail |
 | Open files and sockets | Limited by `VIS_PY_MAX_OPEN_FILES`. A full table stops `shell` from starting processes. Also without the jail |
 
-Host functions from Clojure always apply their own permission checks. For example,
-`sdk.fs.read(...)` raises `PermissionError` in `python_execution`, with or without the jail. To
-turn the jail on and to read the complete policy, go to
-[Process jail and network policy](jail.md).
+Host functions always apply their own permission checks, with or without the jail. To turn the jail
+on and to read the complete policy, go to [Process jail and network policy](jail.md).
 
 ## Packages
 
@@ -249,8 +237,8 @@ Imports do not install packages. A missing import raises `ModuleNotFoundError`.
 | An extension without a declared uv project | The same shared directory. Every project on the gateway shares it |
 | An extension package or a declared uv project | Its own uv environment, which Vis prepares when it loads the extension. No fallback to shared packages |
 
-An extension with its own environment runs in a separate trusted worker. Its dependencies do not
-become available in `python_execution`.
+The dependencies of an extension with its own environment do not become available in
+`python_execution`.
 
 ### Install shared packages
 
@@ -259,8 +247,8 @@ Install from a terminal, not from a block:
 - `vis-agent python --shared -m pip install <package>` installs a shared sandbox package.
 - `vis-agent python --shared -m <module>` runs a shared tool, also from a project directory.
 
-After you update shared packages, run `/reload` to build the session workers again. Shared files
-do not relax the sandbox restrictions. A package that needs a refused native operation may work
+After you update shared packages, run `/reload` to build the session workers again. Shared packages
+do not relax the sandbox restrictions, so a package that needs a refused native operation may work
 only in an extension.
 
 ### Run programs with `vis-agent python`
@@ -275,12 +263,11 @@ options, such as `-u` or `-X`, are not supported.
 Each word after the program goes to the program, also `--help` and `-v`. Put the options of Vis
 before the program: `vis-agent python --no-network script.py --help`.
 
-- Without a project, the CLI uses the shared packages.
 - `vis-agent python uv sync --project PATH` is upstream uv. It prepares the environment of the
   project, normally `.venv`, not the shared sandbox packages.
 - From that project, `vis-agent python -m <module>` uses that environment with the embedded Python
-  of Vis. It does not use the shared packages or their startup hooks. A missing or incompatible
-  environment reports an error, with no fallback to the shared packages.
+  of Vis. A missing or incompatible environment reports an error, with no fallback to the shared
+  packages.
 - To use the interpreter of the project, run
   `vis-agent python uv run --project PATH --no-sync python -m <module>`.
 
@@ -300,11 +287,10 @@ source, `/reload` refreshes the editable imports and the extension tools, with n
 gateway restart. A change to dependencies or packaging metadata needs a new sync. The
 [editable-project guide](extension-development.md) has the steps.
 
-Editable source is not a frozen snapshot. An imported module can keep old code until a reload, and
-a running call can still use old bindings. Native extension libraries do not reload. The source
-paths of an editable install must stay in the allowed filesystem roots of the sandbox. An
-installed package gets no extra access. To check that your package resolves to the checkout,
-import it and run `print(package.__file__)`.
+An imported module can keep old code until a reload, and a running call can still use old bindings.
+Native extension libraries do not reload. The source paths of an editable install must stay in the
+allowed filesystem roots of the sandbox. An installed package gets no extra access. To check that
+your package resolves to the checkout, import it and run `print(package.__file__)`.
 
 ## Attachments
 
@@ -352,8 +338,8 @@ active RPC, the last completed RPC, and limited JVM stacks. When the runtime sup
 `python-stacks.log` holds the Python frames, also when native code holds the GIL. The report
 records if that capture succeeded, failed, or timed out.
 
-Collection adds at most 500 ms before the worker stops, and a failed diagnostic does not prevent
-the stop. Successful readiness checks and ordinary session cleanup dump no stacks.
+Collection adds at most 500 ms before the worker stops, and a failed diagnostic does not prevent the
+stop.
 
 Both files are private to your OS account. They omit Python source, arguments, return values, and
 local variables. Stack frames can still hold file paths and function names. Review and redact the

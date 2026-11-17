@@ -313,8 +313,8 @@ The answer has the status 200 and the session. A value that is not a list return
 
 </div>
 
-The new list replaces the saved list, also while a turn runs. An idle session gets the new tools
-at once, and a busy session gets them at its next step. Resumed sessions keep the new list. To
+The new list replaces the saved list. An idle session gets the new tools at once, and a busy
+session gets them at its next step. Resumed sessions keep the new list. To
 turn every tool on again, send `["*"]`.
 
 The gateway refuses an unknown tool, or a list that mixes the two forms, with 400. The old list
@@ -332,8 +332,7 @@ for binding in client.session(session_id).keybindings():
     print(binding["key"], binding.get("command") or binding.get("action"), binding["extension"])
 ```
 
-`keybindings()` returns dicts, and `get_session_keybindings(session_id)` returns the same JSON. A
-`command` or `run` binding without a `group` has the group `Extensions`.
+`keybindings()` returns dicts, and `get_session_keybindings(session_id)` returns the same JSON.
 
 </div>
 
@@ -399,16 +398,13 @@ print(session.model())
 ```
 
 `models()` returns `Model` records. `provider` keeps only the models of one provider, and
-`is_available=True` keeps the models of providers that are signed in. `get_models()` sends the
-same request and returns the JSON answer.
+`is_available=True` keeps the models of providers that are signed in.
 
-`client.model_limits(provider)` reads a new limits report, as `get_provider_limits(provider_id)`
-does. A failed read gives an error report, not an exception.
+`client.model_limits(provider)` reads a new limits report. A failed read gives an error report, not an exception.
 
 `set_model(provider, model)` pins the model of the next turns, and `set_model(None, None)` removes
 the pin. `model()` returns a `SessionModel` with `provider`, `model`, `is_pinned`,
-`default_provider`, and `default_model`. `get_session_model(sid)` and
-`patch_session_model(sid, body=...)` send the same requests.
+`default_provider`, and `default_model`.
 
 </div>
 
@@ -470,8 +466,7 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/workspace/root" \
 
 </div>
 
-The example first reads the directory where the session works. It then moves the session to
-another directory and gets the new `workspace`. The `workspace` object has the `root` of the
+The `workspace` object has the `root` of the
 session and the `git` state of that directory. The change does the same as `/cd` in a
 conversation. For its effects, read
 [Change the directory of a session](sessions.md#change-the-directory-of-a-session).
@@ -576,7 +571,7 @@ spec = turn.attachments()[0].text()
 ```
 
 `turn.attachments()` lists the files that the agent attached in that turn. `session.attachments()`
-lists the files of the whole conversation, oldest turn first. Give it turns to select a part:
+lists the files oldest turn first. Give it turns to select a part:
 
 | Call | Files |
 |---|---|
@@ -589,7 +584,7 @@ An integer is an index into `session.turns()`: 0 is the first turn and -1 is the
 record has `filename`, `media_type`, `kind`, `size`, `version`, `turn_id`, `iteration_id`, and
 `index`. The list has no file content. `read()` downloads the bytes and `text()` decodes them.
 
-A typed answer and files go together. Call `session.run()` with a `response_model`, then read
+For a typed answer with files, call `session.run()` with a `response_model`, then read
 `session.attachments(-1)`.
 
 </div>
@@ -643,8 +638,7 @@ By default, requests use the configured provider and model of the engine. Both `
 <div data-variant="http">
 
 An `Agent` is a Python SDK record. Over HTTP, send the next message to the same session, as in
-[Send a message and wait](#send-a-message-and-wait). The session keeps the earlier turns, so the
-model sees the whole conversation.
+[Send a message and wait](#send-a-message-and-wait).
 
 </div>
 
@@ -726,7 +720,7 @@ work.
 <div data-variant="python">
 
 `event.activity` is an Activity receipt with immutable rows, outcome counts, and evidence. It
-always holds the whole receipt, because the SDK rebuilds the compact receipts of the stream. Its
+always holds the whole receipt. Its
 `groups` property groups invocations by operation, and `argument_groups` groups calls with
 identical arguments. These two properties leave `rows` and serialization unchanged.
 
@@ -739,12 +733,12 @@ session. For a Python extension example, read
 A receipt can be one page of history. Check `history` before you treat the receipt as complete.
 
 `event.view` decodes view lifecycle events. The records describe input forms, live interfaces,
-patches, and closure results. They are not Python UI widgets. To create an interface, follow
+patches, and closure results. To create an interface, follow
 [Forms and user input](human-input.md) or [Live views](live-views.md).
 
 For saved JSON and not an event, use the `from_wire()` method of the record. It validates the data
 and makes nested values immutable. `to_wire()` returns a new JSON-compatible copy. This example
-reads a completed live-view receipt. It does not start Vis, open a view, or make a model call:
+reads a completed live-view receipt without a call to Vis:
 
 ```python
 # view_receipt.py
@@ -774,7 +768,7 @@ engine IDs, sequence numbers, timeouts, or terminal outcomes.
 <div data-variant="http">
 
 Over HTTP, Activity receipts and view lifecycle records arrive as JSON events in the stream from
-[Follow progress](#follow-progress). The Python records in this section validate the same JSON.
+[Follow progress](#follow-progress).
 The gateway schema in [Get the OpenAPI document](http-api.md#get-the-openapi-document) describes
 each field.
 
@@ -804,8 +798,7 @@ for form in session.input_views():
 ```
 
 `input_views()` returns typed `InputView` records. To close a form without values, call
-`session.view_action(form.id, "cancel")`. `get_session_views_input(sid)` and
-`post_session_view(sid, view_id, body=...)` send the same requests and return JSON.
+`session.view_action(form.id, "cancel")`.
 
 </div>
 
@@ -828,7 +821,7 @@ The values are keyed by the field `name`, as in [The answer](human-input.md#the-
 ## Queue and cancel messages
 
 A message that you send while a turn runs waits in a queue. Queued messages run in the order that
-you sent them. The gateway stores the queue, so the queue stays after a gateway restart.
+you sent them. The queue stays after a gateway restart.
 
 <div data-variant="python">
 
@@ -909,7 +902,7 @@ The rows have the same fields as the rows of `GET /v1/sessions`.
 
 </div>
 
-The terminal and the apps use the same search. The answer lists session rows in order of recent
+The answer lists session rows in order of recent
 activity, the most recent first. With an empty `q`, the answer lists your recent sessions. With
 words in `q`, it lists the sessions whose title or conversation text matches. Each of those rows
 also has a `match` object. It tells where the words matched and gives short text around each
@@ -940,7 +933,6 @@ print(fork.id)
 ```
 
 `get_session_forks()` lists the turns, and `fork()` returns the handle of the new session.
-`post_session_forks(sid, body=...)` sends the same request as `fork()`.
 
 </div>
 
@@ -956,8 +948,8 @@ The first answer has `turns`. The second answer has `session`, the new session.
 
 </div>
 
-The turns come oldest first, each with `turn_id` and `request`. The fork keeps the turn that you
-name and every turn before it. Without `through_turn_id`, the fork keeps all turns.
+The turns come oldest first, each with `turn_id` and `request`. The fork keeps the turns through
+`through_turn_id`. Without `through_turn_id`, the fork keeps all turns.
 [What a fork keeps](sessions.md#what-a-fork-keeps) describes the copy.
 
 The gateway refuses a session without turns, or a turn of another session, with 409.
@@ -1025,8 +1017,7 @@ session.update(is_favorite=True)
 session.update(archived=True)
 ```
 
-`session.delete()` deletes the session. `patch_session(sid, body=...)` and `delete_session(sid)`
-send the same requests.
+`session.delete()` deletes the session.
 
 </div>
 
@@ -1074,16 +1065,16 @@ returns 400.
 </div>
 
 Name the sessions with `root`, `project_id`, or `ids`. A blank `root` names the sessions outside a
-project. With `loose` set to true, sessions in a group stay. The gateway never archives a session
-that is still working. It lists that session under `working`.
+project. With `loose` set to true, sessions in a group stay. The gateway does not archive a session
+that is still working, and it lists that session under `working`.
 
 With `dry_run` set to true, nothing changes, and `archived` lists the sessions that a real request
 archives.
 
 ## Export a session
 
-Vis does not remove private data from an export. Read an export before you share it. To remove
-private details, follow [Reporting a bug](reporting-bugs.md#sharing-a-transcript).
+Vis does not remove private data from an export. Before you share one, read
+[Export a session](sessions.md#export-a-session).
 
 <div data-variant="python">
 
@@ -1094,8 +1085,7 @@ Path("session.md").write_bytes(session.transcript(format="markdown").content)
 ```
 
 `format` is `json`, `markdown`, or `html`, and the default is `json`. The answer keeps the bytes
-and the headers of the gateway. `get_session_transcript(sid)`, `get_session_transcript_md(sid)`,
-and `get_session_transcript_html(sid)` send the same requests.
+and the headers of the gateway.
 
 </div>
 
@@ -1113,8 +1103,7 @@ self-contained HTML page.
 ## Save and restore a session snapshot
 
 A snapshot is one `.vissnap` file with a session, the child sessions that it manages, and their
-Council messages. Use it to move a session to another gateway or to keep a full backup. A
-transcript is for people to read. A snapshot is for a restore, after which you continue the work.
+Council messages. Use it to move a session to another gateway or to keep a full backup.
 
 A snapshot holds the whole conversation, also its private data. Keep it as safe as the session.
 
@@ -1139,8 +1128,7 @@ and `sizes`. `snapshot_info()` raises `ValueError` when the bytes are not a snap
 `restore_session()` creates a new session tree and returns the handle of its root session. `root`
 sets the project folder, and `group_id` sets the session group.
 
-`get_session_snapshot(sid)` and `post_sessions_import(query=..., content=...)` send the same
-requests. A refused request raises `GatewayError` with the status and the code of the table below.
+A refused request raises `GatewayError` with the status and the code of the table below.
 
 </div>
 
@@ -1153,8 +1141,8 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/actions/import" \
   -H 'content-type: application/octet-stream' --data-binary @release.vissnap
 ```
 
-The snapshot answer is binary, with the type `application/octet-stream`. The import body is the
-snapshot file. The query takes the optional `root`, `group_id`, and `key`. The import answer has
+The snapshot answer and the import body are binary, with the type `application/octet-stream`.
+The query takes the optional `root`, `group_id`, and `key`. The import answer has
 the status 201 and the new root session, with its `id`.
 
 </div>
@@ -1242,7 +1230,7 @@ frames are not shorter than the app. A `since` that is not a whole number return
 
 </div>
 
-A list is a copy of the views at one moment. It does not follow later updates. `placement` keeps
+A list is a copy of the views at one moment. `placement` keeps
 only the `inline`, `panel`, or `attachment` views, and
 [Choose a placement](live-views.md#choose-a-placement) explains each one. Without `placement`,
 you get every view of the session except the archived apps. With `archived` set to true, you get
@@ -1253,8 +1241,7 @@ saved state of a view after a gateway restart, until its extension loads again.
 
 ### Change an input or press a button
 
-A person changes the inputs of a view in the terminal or the app. A program can send the same
-actions.
+A program can send the actions of a person who uses a view in the terminal or the app.
 
 <div data-variant="python">
 
@@ -1265,7 +1252,6 @@ session.view_action(view_id, "activate", node_id="refresh")
 session.view_action(view_id, "submit", node_id="deploy", values={"env": "staging"})
 ```
 
-`submit` sends the `values` of the inputs in the group of the button.
 `session.view_action(app_id, "shortcut", key="n")` presses an `action` shortcut of an
 [app](live-views.md#add-shortcuts-to-an-app). For a `node_id` shortcut, send `activate` for that
 node. A closed or disconnected app raises `GatewayError` with `status` 409, and `code` names the
@@ -1292,7 +1278,7 @@ shortcut of an [app](live-views.md#add-shortcuts-to-an-app). A closed app return
 |---|---|
 | `change` | Sets the `value` of one input |
 | `activate` | Presses a button or a selectable card |
-| `submit` | Presses a submit button |
+| `submit` | Presses a submit button. [Collect input in a view](live-views.md#collect-input-in-a-view) lists the `values` that it sends |
 | `shortcut` | Presses a shortcut. An accepted press answers the `shortcut` id. A key without a shortcut answers `is_accepted` false and `reason` `unbound` |
 
 ### Run an app from a program
@@ -1378,9 +1364,6 @@ key returns the open app.
 - `client.apps()` lists the global apps, and `client.app(view_id)` reads one.
 - `client.app_action(view_id, action, ...)` sends an operator action, as `session.view_action`
   does.
-
-The generated methods are `post_apps(body=...)`, `get_apps(query=...)`, `get_app(view_id)`, and
-`post_app_actions(view_id, body=...)`.
 
 </div>
 

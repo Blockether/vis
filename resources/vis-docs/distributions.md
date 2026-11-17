@@ -50,8 +50,8 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 The installer downloads the latest complete stable native release. It puts the engine, the bundled
 Python worker, and the matching TUI in `~/.local/bin`, and adds that directory to your shell
 profile if needed. `--install-dir PATH` changes the directory. A native installation needs `curl`
-and `tar`, not Java or Git. A missing or incomplete native package fails the installation. No JVM
-fallback exists.
+and `tar`, not Java or Git. A missing or incomplete native package fails the installation, with no
+JVM fallback.
 
 The installer accepts the same tracks as `vis-agent update`:
 
@@ -60,10 +60,9 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --track dev
 ```
 
-The bootstrap scripts refresh after each successful CI run on `main`, independently of stable
-releases. They are GitHub release assets, because some networks block
-`raw.githubusercontent.com`. A native installation still uses the launcher of its selected
-release. `bin/install-vis-agent` from a clone also works.
+The bootstrap scripts are GitHub release assets, not files on `raw.githubusercontent.com`. They
+refresh after each successful CI run on `main`. A native installation still uses the launcher of
+its selected release. `bin/install-vis-agent` from a clone also works.
 
 ### Pin an exact version
 
@@ -77,8 +76,8 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 
 Write `0.2.46` or `v0.2.46`. The installer takes the `vis-agent` command from that release and
 runs `vis-agent update v0.2.46`. If the release does not exist, or has no bundle for your
-platform, the installation stops. It never falls back to the latest release. A stable version
-selects the release track, so you cannot add `--track beta` or `--track dev`.
+platform, the installation stops. A stable version selects the release track, so you cannot add
+`--track beta` or `--track dev`.
 
 To pin a tested beta, give its full tag: `beta-` and the 40-character commit.
 `vis-agent switch list` shows the published beta tags.
@@ -89,9 +88,9 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 
 A beta tag selects the beta track, so you cannot add `--track release` or `--track dev`. The
 installer runs `vis-agent update beta-<commit>`. The update takes the engine, Python, the TUI, and
-the web app from that beta. It checks each download against the `SHA256SUMS` of the beta. The
-installation stops if the beta does not exist, has no `SHA256SUMS`, or lacks a selected part. It
-never falls back to the latest beta, and the installed build and track stay the same.
+the web app from that beta. The installation stops if the beta does not exist, has no `SHA256SUMS`,
+or lacks a selected part. It never falls back to the latest beta, and the installed build and track
+stay the same.
 
 ### Choose what to install
 
@@ -141,8 +140,7 @@ bash install-vis-agent --version "$tag" --sha256 "<vis-agent hash>"
 With a stable `--version` or a beta tag, the command comes from that release, so its hash does not
 change. The `SHA256SUMS` of the release lists the command. Older betas have no separate command.
 For them, the installer uses the command of the rolling installer assets, and that hash changes
-when the assets refresh. The update then installs the command from the beta bundle. A different
-command stops the installation before it runs.
+when the assets refresh. A different command stops the installation before it runs.
 
 To check release assets by hand, download them and `SHA256SUMS` to one directory:
 
@@ -203,14 +201,13 @@ track. Commit or stash your changes, then run the same command again. A failed s
 changes nothing.
 
 Dev needs Git and JDK 25+. The launcher can install the Clojure CLI, and `VIS_NO_AUTO_INSTALL=1`
-prevents that installation. Dev does not build native images. To run local repository edits
-independently of the installed tracks, use `clojure -M:vis` in that checkout. To build those
-edits, use `clojure -T:build native`.
+prevents that installation. To run local repository edits independently of the installed tracks,
+use `clojure -M:vis` in that checkout. To build those edits, use `clojure -T:build native`.
 
 ### How you learn that a newer version is running
 
-The gateway is a daemon, so it can run a newer Vis than your client. An open TUI can stay alive
-through an update, and a client can connect to a gateway on a different machine.
+The gateway can run a newer Vis than your client. An open TUI can stay alive through an update, and
+a client can connect to a gateway on a different machine.
 
 When the client and the gateway run different releases, Vis tells you in three places:
 
@@ -218,13 +215,12 @@ When the client and the gateway run different releases, Vis tells you in three p
 - The TUI shows a notice in its header.
 - `vis-agent gateway status` names both releases.
 
-Vis refuses nothing, because both sides still use the same wire protocol. To remove the
-difference, run `vis-agent update` on the machine with the older release.
+Vis refuses nothing. To remove the difference, run `vis-agent update` on the machine with the older
+release.
 
 ## Switching between versions
 
-`update` follows a track forward. `switch` names the build that you want to run. Use it to move to
-a published beta for a fix, and then back to the stable release.
+`update` follows a track forward. `switch` names the build that you want to run.
 
 ```bash
 vis-agent switch list                     # installed build, tracks and published versions
@@ -239,9 +235,9 @@ vis-agent switch dev                      # newest main source, always JVM
 releases, and the published betas, and marks the entry of the installed build. It needs GitHub
 only for the published lists. If Vis cannot read them, you can still name a version.
 
-A switch installs the bundle that it names through the installer of `update`, and records the
-selection for later launches. All versions share configuration, sessions, and extensions, so a
-switch back costs only the download. `--keep-gateway` works as it does for `update`.
+A switch records the selection for later launches. All versions share configuration, sessions, and
+extensions, so a switch back costs only the download. `--keep-gateway` works as it does for
+`update`.
 
 ## One-launch JVM override
 
@@ -258,35 +254,32 @@ vis-agent gateway start --jvm
 vis-agent --jvm gateway start
 ```
 
-The launcher consumes the flag, not the engine or the terminal client. JVM execution needs
-JDK 25+. The launcher selects the source in this order:
+JVM execution needs JDK 25+. The launcher selects the source in this order:
 
 1. The managed source in `~/.vis/install/src`.
 2. For a launcher in a checkout, its own source tree: `./bin/vis-agent tui --jvm`.
 
 An installed launcher with no source tells you to install it with `vis-agent update --track dev`.
-It does not download source or change tracks itself.
+It does not download source or change tracks itself. `--jvm` is not an update option.
 
 For the gateway inspection and control commands, `--jvm` selects the runtime of the local command.
-It does not change the runtime of a running or remote daemon. `--jvm` is not an update option. To
-install or update JVM source, use `--track dev`. Vis passes the arguments after `--` or
-`python uv` through unchanged.
+It does not change the runtime of a running or remote daemon. Vis passes the arguments after `--`
+or `python uv` through unchanged.
 
 ## Terminal gateway lifecycle
 
-`vis-agent tui` finds the local gateway and starts one when none runs. A native installation starts a native gateway. Dev or a `--jvm` launch starts the gateway
-with the same JVM and engine classpath. If a compatible gateway already serves other clients, the
-TUI uses it. Vis never stops such a gateway to change its runtime.
+`vis-agent tui` finds the local gateway and starts one when none runs. A native installation starts
+a native gateway. Dev or a `--jvm` launch starts a JVM gateway. If a compatible gateway already
+serves other clients, the TUI uses it. Vis never stops such a gateway to change its runtime.
 
-A gateway start takes time, most of all with `--jvm`. `vis-agent tui` waits for it. After
+`vis-agent tui` waits for the gateway start, which is longest with `--jvm`. After
 15 seconds, it prints the path of the gateway boot log under `~/.vis/logs/`. If the gateway exits
 before it is ready, or is not ready after 10 minutes, `vis-agent tui` stops. It then shows the
 last lines of that boot log.
 
-The launcher holds a client lease until the TUI exits. The TUI also registers its local PID, so
-that Vis can remove crashed clients and their event streams. A managed gateway stops after its
-last client disconnects and no work remains. To close one TUI does not stop a second TUI, the
-Companion app, or an active turn. A gateway that you started by hand stays yours.
+A managed gateway stops after its last client disconnects and no work remains. To close one TUI
+does not stop a second TUI, the Companion app, or an active turn. A gateway that you started by
+hand stays yours.
 
 `--gateway` or `VIS_GATEWAY_URL` selects an explicit gateway. The TUI then only connects to it,
 and never starts or stops a local gateway. If your shell profile sets `VIS_GATEWAY_URL`, unset it
@@ -390,8 +383,7 @@ The Windows installer downloads Microsoft Edge WebView2 if needed. The installat
 network access and administrator approval. To update the app, close Vis and install the newer
 package from the same release page.
 
-Each published beta has the same installers, so a desktop fix can reach a beta before a stable
-release. Download them from the prerelease of that beta on the
+Each published beta has the same installers. Download them from the prerelease of that beta on the
 [releases page](https://github.com/Blockether/vis/releases). A beta package installs as the same
 Vis app as the stable package. To keep your stable app on macOS or Linux, use
 [`vis-agent desktop --track beta`](#beta-the-newest-published-beta).
@@ -404,14 +396,14 @@ local addresses and remote pairing.
 ### Notifications on the desktop
 
 The desktop app shows a system alert when a session on a connected machine answers you or asks you
-a question. The alert has the name of the session and the text from Vis, as the alert on your
-phone does. Turn alerts on for each machine in **Settings** > **Notifications**. On macOS, the
+a question. The alert has the name of the session and the text from Vis. Turn alerts on for each
+machine in **Settings** > **Notifications**. On macOS, the
 system asks for permission the first time. **System Settings** > **Notifications** controls how
 the alerts appear.
 
-Alerts arrive only while the desktop app is open, because it cannot receive push notifications. To
-get alerts while the desktop app is closed, keep a different connection to that machine open. Use
-the Companion app on your phone or a browser tab.
+Alerts arrive only while the desktop app is open. To get alerts while the desktop app is closed,
+keep a different connection to that machine open. Use the Companion app on your phone or a browser
+tab.
 
 ### Microphone and camera on the desktop
 
@@ -455,8 +447,7 @@ built-in extraction, so you need no FUSE. You still need a graphical desktop and
 libraries of the app.
 
 Later release launches use the cached app and do not contact GitHub. `vis-agent update` updates an
-installed release app together with the engine, so the desktop app matches the installed runtime.
-It never installs an app that you do not have.
+installed release app together with the engine. It never installs an app that you do not have.
 
 `--update` checks for a newer stable version and downloads it only when it is not in the cache. If
 a download or an installation step fails, the app that you had stays as it was, and an engine
@@ -516,8 +507,8 @@ to the front.
 The launch then deletes the other versions in the folder of that track, so one app stays on disk.
 The other tracks keep their files. A deleted release or beta app downloads again when you need it.
 
-A desktop launch does not change your engine track. If no local gateway runs, the launch starts
-one in the background through your installed engine. That gateway runs while the app runs. After
+If no local gateway runs, the launch starts one in the background through your installed engine.
+That gateway runs while the app runs. After
 you quit the app, it stops when no other client or work remains. A gateway that you started with
 `vis-agent gateway start` keeps running.
 
@@ -531,10 +522,8 @@ token. For a gateway on a different machine, use its URL and bearer token.
 
 ## Automatic native betas
 
-The Beta Native workflow starts after a successful push CI run on `main`. It verifies that CI
-passed for the exact commit in this repository, and selects the latest successful `main` run. A
-newer successful run cancels an older beta build. A new commit with pending or failed CI does not
-block the publication of a beta whose CI passed.
+The Beta Native workflow starts after a successful push CI run on `main` and builds the latest
+commit whose CI passed. A newer successful run cancels an older beta build.
 
 Beta uses the native build and test workflow of stable releases on Linux x86-64, Linux ARM64, and
 macOS ARM64. It also uses the same desktop packaging for macOS, Windows, and Linux. Each build has
@@ -573,13 +562,13 @@ The command stops the gateway and closes the desktop app. Then it removes these 
 
 These items stay:
 
-- A launcher in a source checkout, because Git owns that file.
+- A launcher in a source checkout.
 - A desktop app that you installed from a `.deb` or `.msi` package. Remove it with your package
   manager.
 - A gateway service that you set up, for example a systemd unit. Disable it and remove its unit
   file, or it fails at the next start.
 
-A script or a CI job must give `--yes`, because no terminal can confirm.
+A script or a CI job must give `--yes`.
 
 ## Files
 

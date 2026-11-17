@@ -39,17 +39,16 @@ A preset has one sound for each of three events:
 
 Only a turn that you sent plays a sound. These turns are silent:
 
-- Subagent turns. A team of subagents does not play a sound for each child.
+- Subagent turns.
 - Council messages that wake the leader.
 - Automation runs.
 
-One sound plays at a time. When two sessions finish together, you hear one sound.
+One sound plays at a time, so when two sessions finish together, you hear one sound.
 
 ## Choose a preset
 
-Vis has five built-in presets: **Classic**, **Glass**, **Soft**, **Minimal**, and **Bright**. Each
-preset has its own finish, question, and error sound. The sounds come from the Kenney Interface
-Sounds pack, which has the CC0 license.
+Vis has five built-in presets: **Classic**, **Glass**, **Soft**, **Minimal**, and **Bright**. The
+sounds come from the Kenney Interface Sounds pack, which has the CC0 license.
 
 1. In the **Sounds** section, open **Sound preset**.
 2. To hear a sound first, use the play control next to it.
@@ -72,10 +71,10 @@ Your own preset has a name and one value for each sound:
 
 These limits apply:
 
-- The name cannot be the name of a built-in preset. Two presets cannot have the same name. Case
-  does not matter.
+- The name cannot be the name of a built-in preset. Two presets cannot have the same name. Case does
+  not matter.
 - You can keep up to 50 presets.
-- Vis refuses a file path that names no file on the gateway computer. Vis then saves nothing.
+- Vis refuses a file path that names no file on the gateway computer and saves nothing.
 - Every platform plays WAV files, so use short WAV files. macOS also plays MP3, M4A, and AIFF files.
 - A sound stops after 10 seconds.
 
@@ -98,9 +97,8 @@ The slot names are `finish`, `input`, and `error`. The `input` slot holds the qu
 
 ## Where the sound plays
 
-The gateway plays the sound on its own computer, the computer that runs Vis. With a gateway on a
-server, the sound plays on the server, not on your computer. The play control in the settings also
-plays the sound on the gateway computer.
+The gateway plays the sound on its own computer. With a gateway on a server, the sound plays on the
+server, not on your computer. The play control in the settings also plays there.
 
 Vis uses the sound program of the computer:
 
@@ -114,11 +112,10 @@ Vis uses the sound program of the computer:
 
 - **No sound plays.** Check that **Sounds** is on and that the sound of the active preset is not
   empty. On Linux, install the PipeWire, PulseAudio, or ALSA tools.
-- **Your own file stopped playing.** The file moved after you saved the preset. Vis writes a
-  `Sound file not found` warning to the gateway log. [Logging](logging.md) explains that log. Set
-  the path again.
-- **You hear the sound on the wrong computer.** The gateway plays it. Read
-  [Where the sound plays](#where-the-sound-plays).
+- **Your own file stopped playing.** The file moved after you saved the preset. Vis writes a `Sound
+  file not found` warning to the [gateway log](logging.md). Set the path again.
+- **You hear the sound on the wrong computer.** Read [Where the sound
+  plays](#where-the-sound-plays).
 
 ## See also
 

@@ -17,9 +17,6 @@ reproduces the Vis problem.
 If your own extension does not load, start with
 [Extension troubleshooting](extension-troubleshooting.md).
 
-[Sessions](sessions.md#export-a-session) explains the transcript export. [Configuration](configuration.md)
-holds the settings that you report.
-
 ## Security issues
 
 Do not open a public issue for a vulnerability, such as a sandbox escape, a credential leak, or
@@ -53,9 +50,6 @@ If only a transcript shows the bug, export it:
 ```bash
 vis-agent sessions export <SESSION-ID> --md > /tmp/report.md
 ```
-
-To export from your own code, read [Export a session](sessions-api.md#export-a-session) in the
-Sessions API.
 
 Vis does not redact an export. Before you share one, do these steps:
 

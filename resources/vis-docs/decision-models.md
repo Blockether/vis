@@ -112,13 +112,13 @@ option text, and the structural tokens share it. An object or list state counts 
 | Laya | `max_len` in the installed `config.json`, 512 by default | Laya truncates the input |
 
 For GLiNER, the budget also holds the criterion text and the action labels. Its limit of 2,048
-applies also when the encoder accepts more, so the memory for one question stays predictable. For
+applies also when the encoder accepts more. For
 Decision 2.0 and D3, the budget also holds the option keys, the option descriptions, and the
 prompt text.
 
 The gateway rejects a longer sequence before model inference, and accepts one exactly at the
 limit. It counts tokens with the installed tokenizer, so your application needs no tokenizer. A
-character count cannot predict the limit, because each model has its own tokenizer.
+character count cannot predict the limit.
 
 For a rejected input, `Decisions.infer` raises `GatewayError` with `status == 400` and
 `code == "input-too-long"`. Its `input_tokens` attribute gives the token count of the rejected
@@ -249,11 +249,10 @@ the memory of your gateway:
 | `gliner2.5-multi` | Many languages | Multilingual multi-task model | 1.13 GB | 960 MB |
 | `gliner2.5-multi-decide` | Many languages | Multilingual classification model | 1.13 GB | 998 MB |
 
-Fastino trained the Decide models for classification. The multi-task models can also extract
-entities, but Vis uses each model only for decisions. The small model needs the least memory and
+Fastino trained the Decide models for classification. Vis uses each model only for decisions. The small model needs the least memory and
 CPU. Evaluate your candidates on your own held-out labels before you choose one.
 
-`gliner2.5-decide-1b` is much larger than the other models and needs these resources:
+`gliner2.5-decide-1b` needs these resources:
 
 - While the model is loaded, the gateway reserves about 6 GB of memory. The default
   `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for this model alone.
@@ -327,8 +326,7 @@ autonomous actions without representative, held-out validation.
 
 ### Choose and train Decision 2.0
 
-Decision 2.0 has two decision models from vLLM Semantic Router. Each model reads the state, the
-instructions, and each option with its description. Then it selects one option.
+Decision 2.0 has two decision models from vLLM Semantic Router.
 
 | Model | Model ID | FP32 bundle download | Checkpoint download |
 | --- | --- | --- | --- |
@@ -381,8 +379,7 @@ the model ID as `model_id`, as [Train on the gateway instead](#train-on-the-gate
 
 ### Choose and train D3
 
-D3 (Decision 3.0) has two text decision models from vLLM Semantic Router. Each model reads the
-state, the instructions, and all options in one pass. Then it gives each option a probability.
+D3 (Decision 3.0) has two text decision models from vLLM Semantic Router. Each model gives each option a probability.
 
 | Model | Model ID | FP32 bundle download | Checkpoint download |
 | --- | --- | --- | --- |
@@ -582,7 +579,7 @@ physical core, or for each performance core on Apple silicon. To change the numb
 
 To continue from the checkpoint of a job, pass the `job_id` of that completed or failed job as
 `source_job_id`, with the same `model_id`. Do not delete that job first. A resume across model
-families fails. It does not use a different checkpoint.
+families fails.
 
 `checkpoint_steps` also saves partial checkpoints on the gateway. A job that fails or reaches the
 time limit keeps its last saved step. To resume, start a new job with that `job_id` as

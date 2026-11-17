@@ -28,23 +28,19 @@ Python tools, read [Extending Vis](extending.md).
 - 16 GB of RAM or more for the builder JVM, plus room for the operating system, the dependency
   cache, and the build outputs. Do not build on a small production VPS. `VIS_NATIVE_BUILDER_HEAP`
   limits the builder heap, for example `12g`. A smaller heap does not replace memory.
-- A build machine with the target operating system and architecture. A macOS binary does not run
-  on Linux.
+- A build machine with the target operating system and architecture.
 
 `vis-agent update --track dev` updates the managed JVM source. It compiles no native image.
 
 ## Add and test your JVM capability
 
 1. Add your code to the matching domain under `src/com/blockether/vis/internal/`, and each library
-   that it needs to `deps.edn`. A Java library must be on the build classpath. A JAR next to a
-   built binary loads no new code.
+   that it needs to `deps.edn`. A JAR next to a built binary loads no new code.
 2. Register the tool bindings through `com.blockether.vis.internal.extension.core`. A Clojure
    binding can call your Java API. Give each exported tool an explicit input and output contract,
    and an Activity presentation that a person can read.
 3. For a module initializer, add its qualified registration symbol to the ordered
-   `:initialization` vector of `resources/META-INF/vis/manifest.edn`, after its dependencies. This
-   manifest registers the built-in modules and gives the native build its entry points. It does
-   not load Python extensions.
+   `:initialization` vector of `resources/META-INF/vis/manifest.edn`, after its dependencies.
 4. Add tests under `test/` for registration and for real calls, failure cases included. Run them
    with `clojure -M:test --namespace your.test-ns`. Test the same calls under `test-native/` for
    the compiled engine.
@@ -52,7 +48,7 @@ Python tools, read [Extending Vis](extending.md).
 Native compilation cannot find a class that code loads dynamically at run time. Check the
 reflection, resource, and foreign-function needs of your library in
 [Native-image configuration](#native-image-configuration). Build again after each change to JVM
-code or dependencies. A change to a Python extension needs no build.
+code or dependencies.
 
 ## Build and test the image
 
@@ -63,8 +59,7 @@ eval "$(bin/require-graalvm --export)"
 clojure -T:build native
 ```
 
-The build compiles Clojure ahead of time, then runs GraalVM Native Image. It takes a long time and
-writes these files:
+The build takes a long time and writes these files:
 
 | Output | Purpose |
 | --- | --- |
@@ -99,14 +94,14 @@ HOME="$VIS_TEST_HOME" target/release-bundle/vis-agent \
 
 The helper renames `target/vis` to `vis-agent-native`. It adds the `vis-agent` launcher, the build
 stamp, the embedded Python runtime (`vis-agent-python/`), and the installer. Ship these files
-together. The bundle is enough for a gateway and for SDK stdio use. The terminal client is a
-separate release component, so the bundle is not a complete TUI installation.
+together. The bundle is enough for a gateway and for SDK stdio use. It holds no terminal client.
 
 `VIS_HOME` keeps the launcher away from your installed Vis. `-Duser.home` moves the state of the
 engine, and `HOME` moves the state of child processes.
 
-Add the provider configuration and the credentials to the test home before you start a gateway. For a deployment, use the permanent home of a service account. Do not replace or
-stop a shared gateway for this test. Choose an unused port and run:
+Add the provider configuration and the credentials to the test home before you start a gateway.
+For a deployment, use the permanent home of a service account. Do not replace or stop a shared
+gateway for this test. Choose an unused port and run:
 
 ```bash
 unset VIS_GATEWAY_URL VIS_GATEWAY_TOKEN VIS_DB_PATH
@@ -118,16 +113,15 @@ HOME="$VIS_TEST_HOME" target/release-bundle/vis-agent \
 The gateway keeps its state under `$VIS_TEST_HOME/.vis`. Separate state is not a security sandbox.
 The process can still use the permitted project files and its inherited environment variables.
 
-To use the new capability, connect an SDK client to this gateway. The client needs no native
-compilation. For a Python job that owns its engine, pass the absolute path of the staged launcher
-as `Agent(executable=...)` or `LocalEngine(executable=...)`. Both use a temporary session
-database. [Python SDK](python-sdk.md) has the details.
+To use the new capability, connect an SDK client to this gateway. For a Python job that owns its
+engine, pass the absolute path of the staged launcher as `Agent(executable=...)` or
+`LocalEngine(executable=...)`. Both use a temporary session database. [Python SDK](python-sdk.md)
+has the details.
 
 ## Native-image configuration
 
-The build uses the AOT classes and the original dependency jars. A flattened uberjar is not its
-only input. At build time, GraalVM finds the `META-INF/native-image/<group>/<artifact>/` directory
-of each jar. Each library supplies its own configuration:
+At build time, GraalVM finds the `META-INF/native-image/<group>/<artifact>/` directory of each
+dependency jar. Each library supplies its own configuration:
 
 - `reachability-metadata.json` declares reflection, resources, and FFM downcalls.
 - The build initializes Clojure-generated classes at build time. You need no

@@ -9,11 +9,10 @@ requests, select **HTTP** at the top of the page.
 ## When to use
 
 - **Your program must run a saved prompt template or a skill.**
-  [Run a prompt template or a skill](#run-a-prompt-template-or-a-skill) with one message.
+  [Run a prompt template or a skill](#run-a-prompt-template-or-a-skill).
 - **A script must show the commands that a session accepts.**
   [List slash commands](#list-slash-commands).
-- **A batch job must continue until a result is verified.** [Set a goal](#set-a-goal) with an
-  iteration budget.
+- **A batch job must continue until a result is verified.** [Set a goal](#set-a-goal).
 - **A dashboard must show the progress of a goal.** [Read the goal state](#read-the-goal-state).
 - **A program must stop or continue a goal.**
   [Pause, resume or cancel a goal](#pause-resume-or-cancel-a-goal).
@@ -153,13 +152,12 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/turns" -H 'content-typ
 ```
 
 A goal is a message with the `/goal` command. `--budget` limits the model iterations of the goal.
-Read the turn, or follow the event stream as in [Follow progress](sessions-api.md#follow-progress).
 
 </div>
 
-A session has one goal at a time, and a new goal replaces it. Without a budget, the goal has no
-limit of its own. [Explicit goals](project-instructions.md#explicit-goals-goal) explains how a goal
-runs and ends.
+A new goal replaces the current goal. Without a budget, the goal has no limit of its own. To
+follow the work, read [Follow progress](sessions-api.md#follow-progress).
+[Explicit goals](project-instructions.md#explicit-goals-goal) explains how a goal runs and ends.
 
 ## Read the goal state
 
@@ -212,8 +210,7 @@ session.send("/goal --clear")
 ```
 
 To stop the work at once, cancel the running turn as in
-[Queue and cancel messages](sessions-api.md#queue-and-cancel-messages). The SDK has no other
-methods to read or change a goal.
+[Queue and cancel messages](sessions-api.md#queue-and-cancel-messages).
 
 </div>
 

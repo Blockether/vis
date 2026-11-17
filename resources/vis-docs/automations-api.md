@@ -55,8 +55,7 @@ The next examples are calls on this `client` inside the `with` block.
 <div data-variant="http">
 
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
-examples use it. The webhook route is the exception. It uses a webhook secret, not the gateway
-token.
+examples use it, except for the webhook route.
 
 </div>
 
@@ -64,8 +63,8 @@ token.
 
 <div data-variant="python">
 
-`GatewayClient` has one method for each automation route. A method sends the same request as the
-[HTTP API](http-api.md). Give a body or a query as a Python `dict` with the same fields.
+`GatewayClient` has one method for each automation route of the [HTTP API](http-api.md). Give a body
+or a query as a `dict`.
 
 | Task | Method |
 |---|---|
@@ -373,8 +372,8 @@ An error answer has this body:
 
 <div data-variant="python">
 
-The webhook route is public, because the signature replaces the gateway token. `GatewayClient` has
-no method for it. This example sends a `generic` request with the standard library:
+The webhook route is public, because the signature replaces the gateway token. This example sends a
+`generic` request with the standard library:
 
 ```python
 import hashlib

@@ -30,8 +30,7 @@ The gateway serves its OpenAPI 3.1 document without a token:
 curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 ```
 
-The document has the routes, the request formats, and the answers. The feature pages explain when
-to use each request.
+The document has the routes, the request formats, and the answers.
 
 ## Authenticate requests
 
@@ -42,8 +41,8 @@ Each request needs these headers:
 - `Authorization: Bearer <token>` when the gateway requires a token.
   [Tokens and HTTP 401](gateway-service.md#tokens-and-http-401) tells when it does.
 
-Do not print or commit the token. This setup reads the token and the protocol number one time. The
-`vis_api` function then sends both headers. The examples on the feature pages use this function.
+Do not print or commit the token. This setup reads the token and the protocol number one time, and
+the `vis_api` function sends both headers. The examples on the feature pages use this function.
 
 ```bash
 export VIS_GATEWAY_URL=http://127.0.0.1:7890

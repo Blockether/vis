@@ -33,23 +33,19 @@ with vis.live("Deploy", [vis.ui.status("state", "Waiting", tone="idle"),
 ```
 
 - A form returns the input values when the person submits it.
-- A live view keeps each input `value` while it is open. Read the values with `view.values()`, and
-  read each change with `view.events()`.
+- In a live view, read the values with `view.values()`, and read each change with `view.events()`.
 - The engine validates each component against the `component` schema in
   `packages/vis-contract/resources/vis-contract/schema/view.json`. It refuses an unknown key.
-- Each client draws a component in its own style. The terminal and the Companion app show the same
-  text, values, and state.
+- Each client draws a component in its own style, with the same text, values, and state.
 
-Text and status fields accept inline Markdown: `` `code` ``, `**bold**`, `_italic_`, and links. A
-`tone` is one of `idle`, `running`, `ok`, `warn`, and `error`.
+Text and status fields accept [inline Markdown](live-views.md#layout-and-text). A `tone` is one of
+`idle`, `running`, `ok`, `warn`, and `error`.
 
 ## Text
 
-Text components show content and take no input.
-
 ### Heading
 
-`vis.ui.heading(id, text, level=2)` shows a title. `level` is 1 to 6. A form also accepts
+`vis.ui.heading(id, text, level=2)` shows a title at `level` 1 to 6. A form also accepts
 `vis.ui.heading(text)` without an id.
 
 ### Paragraph
@@ -65,12 +61,10 @@ runs the code.
 ### Divider
 
 `vis.ui.divider(id)` draws a rule across its container, like an HTML `<hr>`. It has no text and no
-options. Directly inside a `vis.ui.wrap` group, it draws a vertical separator between the items of
-that line.
+options. [Layout and text](live-views.md#layout-and-text) describes a divider inside a
+`vis.ui.wrap` group.
 
 ## State
-
-State components show the progress of work. A live view changes them while the work runs.
 
 ### Status
 
@@ -80,7 +74,8 @@ Change it with `view[id].set(text, tone=...)`.
 ### Spinner
 
 `vis.ui.spinner(id, text, variant="braille", is_active=True)` shows activity without a known end.
-The variants are `braille`, `dots`, `line`, and `pulse`. A completed view never animates.
+[Add spinners and buttons](live-views.md#add-spinners-and-buttons) lists the variants. A completed
+view never animates.
 
 ### Progress
 
@@ -118,8 +113,6 @@ with `view[id].write(...)` and an optional line `tone`. [Add severity to streami
 output](live-views.md#add-severity-to-streaming-output) explains windows, search, and severity.
 
 ## Data
-
-Data components show records that a person can read, open, or select.
 
 ### Table
 
@@ -187,7 +180,7 @@ vis.ui.badge("labels", badges=[{"id": "stable", "label": "Stable", "tone": "ok"}
 
 `vis.ui.listing(id, items=[...])` shows a list of points. Each item has `id`, `text`, and an
 optional `detail` and `tone`. `is_ordered=True` numbers the items. A node holds 200 items at most.
-Its type on the wire is `list`. The builder name keeps the Python built-in `list` free.
+Its type on the wire is `list`.
 
 Add or change one item with `view[id].set(item_id, text, detail=None, tone=None)`. Change the
 numbers with `view[id].order(True)`.
@@ -202,11 +195,10 @@ vis.ui.listing("todo", is_ordered=True,
 
 `vis.ui.chart(id, series=[...], kind="bar", categories=[...])` shows numbers as bars or as lines.
 Each series has `id`, `label`, `values`, and an optional `tone`. `categories` names the values of
-every series in order, such as the days of a week. `kind` is `bar`, the default, or `line`.
+every series in order. `kind` is `bar`, the default, or `line`.
 
 - A chart holds 8 series at most, and each series holds 64 values at most.
-- A bar chart always shows zero, so the length of a bar is in proportion to its value. A negative
-  value runs to the left of zero.
+- A bar chart always shows zero. A negative value runs to the left of zero.
 - The terminal draws the same numbers with block characters. Each bar ends with its number.
 - Add or change one series with `view[id].set(series_id, label, values, tone=None)`. Change the
   kind or the categories with `view[id].configure(kind="line")`.
@@ -219,9 +211,9 @@ vis.ui.chart("load", categories=["Mon", "Tue", "Wed"],
 
 ## Inputs
 
-An input takes a value from a person. Each input has a `name`, a `label`, and optional
-`description`, `placeholder`, `default`, `is_required`, and `validate` keys. In a form, the answer
-holds each value under its `name`. In a live view, the input keeps its `value`.
+Each input has a `name`, a `label`, and optional `description`, `placeholder`, `default`,
+`is_required`, and `validate` keys. In a form, the answer holds each value under its `name`. In a
+live view, the input keeps its `value`.
 
 | Builder | Type | Value |
 | --- | --- | --- |
@@ -248,13 +240,13 @@ holds each value under its `name`. In a live view, the input keeps its `value`.
 ### Password
 
 `vis.ui.password(name, label="Token")` masks the text. The value is an opaque `vis-secret:` handle.
-Read the text on the trusted side with `vis.reveal(handle)`. A live view never shows or stores the
-text, and a `change` event gives only `is_set`.
+Read the text on the trusted side with `vis.reveal(handle)`. A live view never shows or stores the text, and a `change` event gives only
+`is_set`.
 
 ### Otp
 
-`vis.ui.otp(name, label="Code")` shows one box for each digit. `min_length` and `max_length` set
-the length, 6 by default and 12 at most. The value is a `vis-secret:` handle.
+`vis.ui.otp(name, label="Code")` shows one box for each digit. The value is a `vis-secret:` handle.
+[Fields](human-input.md#fields) lists its length limits.
 
 ### Select
 
@@ -276,8 +268,7 @@ required checkbox.
 
 ### Range
 
-`vis.ui.slider(name, min=0, max=100, step=5)` takes a number on a track. Its type is `range`. The
-builder name keeps the Python built-in `range` free.
+`vis.ui.slider(name, min=0, max=100, step=5)` takes a number on a track. Its type is `range`.
 
 ### Datetime
 
@@ -310,9 +301,8 @@ the client. The extension decides what a press does.
   tabs. Each client marks the selected choice, and the terminal marks it with `•`.
 - `variant` sets the rank of the button. It is `primary`, `secondary`, or `destructive`, and
   `secondary` is the default. Give the main action of a group `variant="primary"`. Give an action
-  that deletes or discards data `variant="destructive"`. The terminal fills a primary button, so
-  its rank needs no colour. Vis refuses an unknown variant and names the allowed variants in the
-  error.
+  that deletes or discards data `variant="destructive"`. The terminal fills a primary button. Vis
+  refuses an unknown variant and names the allowed variants in the error.
 
 A form has its own submit and cancel buttons. Use buttons in live views.
 
@@ -323,10 +313,9 @@ A form has its own submit and cancel buttons. Use buttons in live views.
 `vis.ui.group(id, *children, direction="column")` arranges its children. A group has no value.
 
 - `direction="row"` puts the children side by side. They stack when the space is too narrow.
-- `direction="grid"` puts the children in equal columns that continue on new rows. Use it for many
-  cards. `max_columns`, 1 to 12, sets the most columns. Only a grid accepts `max_columns`.
-- `direction="wrap"` puts the children side by side at their own width. A child that does not fit
-  starts a new line. Use it for buttons, stats, and statuses.
+- `direction="grid"` and `direction="wrap"` arrange the children as [Layout](human-input.md#layout)
+  describes. Only a grid accepts `max_columns`. Use a grid for many cards, and a wrap for buttons,
+  stats, and statuses.
 - `label` and `description` show a title and a short text above the children.
 - `is_collapsible=True` lets a person fold the group. `default_expanded` sets the first state.
 - A submit button collects only the inputs of its own group, so one view can hold several small

@@ -8,8 +8,7 @@ in the terminal or the Companion app, waits, and returns the answer to your Pyth
 - **A tool is about to do something that needs the approval of a person**, such as a deployment.
   [Ask for confirmation](#ask-and-handle-cancellation) and stop if the person cancels.
 - **The tool needs a token or a one-time code that must not appear in the conversation.** A
-  `password` or `otp` field returns [a handle, not the value](#the-answer). The transcript and the
-  model get only the handle.
+  `password` or `otp` field returns [a handle, not the value](#the-answer).
 - **Only a person can make the choice**, such as the environment for a deployment. Offer the
   options as [fields](#fields).
 - **The input must be valid before the tool continues.** Add [validation](#validation) that
@@ -27,9 +26,9 @@ from a passive provider callback. Outside Vis, the SDK uses terminal input, as
 
 ## Ask and handle cancellation
 
-The form does not deploy anything. Call your operation only after a submitted answer, and handle
-cancellation in your code. This fragment belongs in your tool. The module imports
-`blockether.vis.extension as vis` and supplies its own `deploy` function.
+Call your operation only after a submitted answer, and handle cancellation in your code. This
+fragment belongs in your tool. The module imports `blockether.vis.extension as vis` and supplies its
+own `deploy` function.
 
 ```python
 answer = vis.ask("Deploy", [
@@ -45,12 +44,9 @@ else:
     vis.log("info", "deploy skipped: " + answer.reason)
 ```
 
-The request opens this form in the Vis terminal, with the password masked. After you submit, the
-extension continues with the answer. Select the image to view it full size.
+The request opens this form in the Vis terminal, with the password masked.
 
 [![Vis terminal form with Target, Release notes and a masked Deploy token field](assets/screenshots/ask.png)](assets/screenshots/ask.png)
-
-The request takes these options:
 
 | Option | Meaning |
 | --- | --- |
@@ -59,9 +55,8 @@ The request takes these options:
 | `is_cancellable` | `False` removes the cancel button. |
 | `timeout_ms` | 5 minutes by default. `0` waits until the person answers or cancels. |
 
-Every key is a snake_case string, such as `is_required`, `max_length`, and `timeout_ms`. Vis
-refuses a camelCase or kebab-case key with an error that names the right spelling. It refuses an
-unknown key by name.
+Every key is a snake_case string, such as `timeout_ms`. Vis refuses a camelCase or kebab-case key
+with an error that names the right spelling. It refuses an unknown key by name.
 
 ## The answer
 
@@ -75,12 +70,10 @@ confirmed:
 | `answer.reveal(name)` | Resolves a secret handle in process. |
 
 A `password` or `otp` field returns an opaque `vis-secret:` handle. The transcript, the logs, and
-the model get only the handle. To get the value, call `answer.reveal(name)` or
-`vis.reveal(handle)`. `vis.forget(handle)` removes the value. Do not print or log the revealed
-value.
+the model get only the handle. To get the value, call `answer.reveal(name)` or `vis.reveal(handle)`.
+`vis.forget(handle)` removes the value. Do not print or log the revealed value.
 
-If no client can show the form, the request logs an error and returns `undeliverable` at once,
-before the timeout.
+If no client can show the form, the request logs an error and returns `undeliverable` at once.
 
 ## Fields
 
@@ -104,26 +97,24 @@ The common keys are `placeholder`, `default`, `is_required`, `min_length`, `max_
 `{"value": ..., "label": ...}` when the stored value and the shown text differ. Vis refuses an
 answer that names an undeclared option.
 
-The engine enforces `is_required`. On confirmation, it rejects a blank required field in an answer
-from a form or from an HTTP request.
+On confirmation, the engine rejects a blank `is_required` field in an answer from a form or from an
+HTTP request.
 
 ## Layout
 
-Forms and [live views](live-views.md#layout-and-text) share the layouts `row`, `column`, `grid`,
-and `wrap`. A `group` arranges its `children` in one of them, `column` by default. Groups can nest.
-A nested group uses the width inside its parent, not the full screen width.
+Forms and [live views](live-views.md#layout-and-text) share the layouts `row`, `column`, `grid`, and
+`wrap`. A `group` arranges its `children` in one of them, `column` by default. Groups can nest.
 
 | Direction | Arrangement | On a narrow screen |
 | --- | --- | --- |
 | `row` | Children side by side in equal columns. | The children stack. Companion stacks them one by one, and the TUI stacks the whole row. |
-| `column` | Children one under the other. | No change. Columns always stack. |
+| `column` | Children one under the other. | No change. |
 | `grid` | Children in equal columns that continue on new rows, in their order. `max_columns` (1 to 12) limits the columns. | Fewer columns, then a stack on the narrowest screens. |
 | `wrap` | Children side by side at their own width. | A child that does not fit starts a new line. |
 
-A group in a form can have a `label` and a plain-text `description`. A `heading` shows plain text.
-A `paragraph` shows Markdown, including emphasis, inline code, and lists, as does the `description`
-of the request. The shared layout does not change the validation of a form. A form does not get
-the collapse and interaction behavior of a live view.
+A group in a form can have a `label` and a plain-text `description`. A `heading` shows plain text. A
+`paragraph` shows Markdown, including emphasis, inline code, and lists, as does the `description` of
+the request. A form does not get the collapse and interaction behavior of a live view.
 
 ```python
 vis.ask("Where should the pool connect?", [
@@ -166,11 +157,10 @@ answer = vis.ask("Deploy", [form], submit_label="Deploy")
 
 The builders are `plaintext`, `password`, `multiline`, `select`, `multiselect`, `checkbox`,
 `slider`, `datetime`, `otp`, `option`, `row`, `column`, `group`, `heading`, and `paragraph`.
-`slider` builds the `range` field under a name that avoids the Python builtin. The keyword
-arguments are the keys of [Fields](#fields).
+`slider` builds the `range` field. The keyword arguments are the keys of [Fields](#fields).
 
 A form takes the same [components](components.md) as a live view, such as a `status`, a `table`, or
-a `card` above the inputs. A form has its own submit and cancel buttons, so it needs no `button`.
+a `card` above the inputs. A form needs no `button`.
 
 ## Validation
 
@@ -203,7 +193,6 @@ answer = vis.ask("Sign up", [
   `could not be validated: <exception>`.
 - Validators do not run on blank answers. To reject a blank answer, use `is_required`.
 - Validation runs in the engine on confirmation. The form shows the error message of each field.
-  Vis does not send validator functions to clients.
 
 ## See also
 

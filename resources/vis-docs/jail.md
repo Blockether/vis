@@ -37,8 +37,8 @@ rules, the network rules, and `changes_require`. One list,
 `session["workspace"]["filesystem_roots"]`, holds each path with its mode, description, and search
 setting.
 
-Shell availability is separate. `toggles.shell: false` removes `shell(...)`. It does not change the
-policy of other managed processes.
+`toggles.shell: false` removes `shell(...)`. It does not change the policy of other managed
+processes.
 
 ## What is confined
 
@@ -49,17 +49,16 @@ policy of other managed processes.
 | Python extension code and its ordinary `subprocess` calls | Trusted host code, outside the session jail |
 
 A trusted extension can start a jailed child with `vis.jailed_shell(...)`. That call reads the
-merged configuration at each spawn. The `allow_read_write` and `unix_connect` options give the
-child exact paths in addition to the session roots. An extension declares its fixed toolchain
-paths, such as a JDK or a package cache, as `vis.Grant` values. Vis gives those paths only to the
-jailed children of that extension. Read
-[Toolchain grants](extension-api.md#toolchain-grants) in the Extension API.
+merged configuration at each spawn. The `allow_read_write` and `unix_connect` options give the child exact paths in addition to the session roots. An extension
+declares its fixed toolchain paths, such as a JDK or a package cache, as `vis.Grant` values. Vis
+gives those paths only to the jailed children of that extension. Read [Toolchain
+grants](extension-api.md#toolchain-grants) in the Extension API.
 
 Project extension files are executable plugins. Review them as you review build scripts.
 
 ## Filesystem access
 
-Declare more roots under `workspace.filesystem`. Then allow them by id under
+Declare more roots under `workspace.filesystem`, then allow them by id under
 `jail.filesystem.allow`:
 
 ```yaml
@@ -108,27 +107,24 @@ Vis gives jailed processes read-only access to two sets of host files.
   the files that their `include` sections name. It respects `XDG_CONFIG_HOME` and
   `GIT_CONFIG_GLOBAL`. Git credential files stay closed.
 
-Vis freezes these grants in the policy snapshot of the session. They show in
-`session["workspace"]["filesystem_roots"]` with a description, `"mode": "read"`, and
-`"no_search": true`. Default searches skip them, and they give Python filesystem tools no extra
-access. Explicit catalog grants keep their access mode and search setting. Deny rules still win.
-After the host toolchain changes, an existing session gets access only after `/reload`.
+These grants show in `session["workspace"]["filesystem_roots"]` with a description, `"mode":
+"read"`, and `"no_search": true`. Default searches skip them, and they give Python filesystem tools
+no extra access. Explicit catalog grants keep their access mode and search setting. Deny rules still
+win. After the host toolchain changes, an existing session gets access only after `/reload`.
 
 A language call or an `environment:` declaration can select `JAVA_HOME`. Vis then puts the `bin`
 directory of that JDK first on the `PATH` of the child. It also gives the jailed child read-only
-access to that directory. The launcher and each JVM that it starts then run the JDK that you
-chose. So does the dependency preparation of `tools.deps`, which starts a bare `java` and never
-reads `JAVA_HOME`.
+access to that directory. The launcher, each JVM that it starts, and the dependency preparation of
+`tools.deps` then run the JDK that you chose.
 
-If the environment also sets or unsets `PATH`, that setting wins, and Vis does not change the
-search order. A `JAVA_HOME` whose `bin` has no executable `java` selects nothing. Other environment
-overrides of a call add no runtime grant. A different or unrecognized toolchain needs an explicit
-grant.
+If the environment also sets or unsets `PATH`, that setting wins. A `JAVA_HOME` whose `bin` has no
+executable `java` selects nothing. Other environment overrides of a call add no runtime grant. A
+different or unrecognized toolchain needs an explicit grant.
 
 ### Deny specific files
 
-Deny rules remove single files from every grant. List patterns under `jail.filesystem.deny_read`
-and `jail.filesystem.deny_write`:
+To remove single files from every grant, list patterns under `jail.filesystem.deny_read` and
+`jail.filesystem.deny_write`:
 
 ```yaml
 jail:
@@ -148,17 +144,17 @@ segment, and `**` crosses directories. A rule that names a directory covers ever
 `deny_read` blocks read and write. `deny_write` blocks write only.
 
 A deny rule wins over allow lists, workspace roots, and runtime grants. Vis matches a rule against
-the normalized path, with symlinks resolved. So a denied file stays denied through a different
-root, a relative path, or a link.
+the normalized path, with symlinks resolved. So a denied file stays denied through a different root,
+a relative path, or a link.
 
 The rules cover the host tools (`ls`, `grep`, and the other readers and writers),
-`python_execution`, and each child process that Vis starts. When a call names many paths and one
-is denied, Vis refuses the whole call. It reads and writes no path of that call.
+`python_execution`, and each child process that Vis starts. When a call names many paths and one is
+denied, Vis refuses the whole call.
 
-A rule also covers files that appear later. On macOS, the pattern itself is in the sandbox
-profile. So a secret that is written after the session started is denied when it exists. On Linux,
-bubblewrap works with mount points, not patterns. A child cannot open the files that the pattern
-matched when the session started. The tools of Vis still refuse every path that the rule covers.
+A rule also covers files that appear later. On macOS, a secret that is written after the session
+started is denied when it exists. On Linux, bubblewrap works with mount points, not patterns. A
+child cannot open the files that the pattern matched when the session started. The tools of Vis
+still refuse every path that the rule covers.
 
 The deny rules are separate from `jail.enabled`, which turns the OS sandbox on and off. With the
 jail off, the tools of Vis still refuse each denied path. But nothing confines the commands and
@@ -183,13 +179,11 @@ environment:
   BUILD_TOKEN: {keychain: vis-build}
 ```
 
-Vis refuses variables such as `LD_*`, `DYLD_*`, `BASH_ENV`, and `PERL*`. They can run code before
-the jail is in place.
-
 With the jail disabled, children inherit the host environment, and project values override it.
 
-Children never inherit `NODE_OPTIONS` from the environment that started Vis. A terminal tool can
-set it to a preload file and delete that file later. Then every Node command fails. If your
+Vis always refuses the variables that can run code before the jail is in place. Children never
+inherit `NODE_OPTIONS` from the environment that started Vis.
+[Environment](configuration.md#environment) lists the variables. If your
 project needs Node options, declare `NODE_OPTIONS` under `environment:` or in `.env`.
 
 ## Network egress
@@ -262,8 +256,7 @@ until you restart the gateway.
 
 When the gateway stops, it ends the programs that it started in the jail. On macOS, it also ends a
 program that left its parent process, such as a server that a script started in the background.
-After a gateway crash, the next gateway start ends these programs. So a program from an earlier
-gateway run cannot use the proxy ports of the new run.
+After a gateway crash, the next gateway start ends these programs.
 
 ### Inbound development ports
 
@@ -286,8 +279,7 @@ jail:
 
 ### Local servers and child processes
 
-A jailed command can start a server on a loopback port and connect to it directly, without the
-proxy.
+A jailed command can start a server on a loopback port and connect to it without the proxy.
 
 - On macOS, direct loopback connections are allowed only when the proxy also allows loopback. So
   there is no `allowed_domains` list, or the list includes `localhost` and `127.0.0.1`. And no
@@ -309,8 +301,8 @@ cannot send signals to other processes. On Linux, this limit needs kernel 6.12 o
 ABI 6). On an older kernel, a jailed command can send signals to all processes of your user. The
 gateway log then shows a warning at the gateway start.
 
-On macOS, `ps` does not run in the jail, because it is a setuid program. To learn if a process
-that you started still runs, use `kill -0 <pid>`.
+On macOS, `ps` does not run in the jail. To learn if a process that you started still runs, use
+`kill -0 <pid>`.
 
 ### Project network filters
 
@@ -331,18 +323,18 @@ filters do not change the gateway network policy.
 
 You install no system package, helper executable, or `PATH` entry. Vis loads the platform library
 next to `libvispython`. The library applies Seatbelt or bubblewrap before the child command starts.
-On Linux, a filtered proxy policy uses a private network namespace with no route. If the proxy
-fails, the child has no network. It never gets direct egress.
+On Linux, a filtered proxy policy uses a private network namespace with no
+route. If the proxy fails, the child has no network and never gets direct egress.
 
 Vis never starts an unconfined process. It refuses the child when the host cannot enforce an
 enabled jail, or when the session policy is missing or unknown.
 
 ## Run Vis inside your own sandbox
 
-An evaluation runner or a container can confine Vis itself, for example to one task directory. By
-default, Vis keeps its temporary files and the control socket of each Python worker in the system
-temporary directory. On most systems, that directory is `/tmp`. If your sandbox denies `/tmp`, set
-`VIS_RUNTIME_DIR` to a directory in the task directory:
+An evaluation runner or a container can confine Vis itself. By default, Vis keeps its temporary
+files and the control socket of each Python worker in the system temporary directory, on most
+systems `/tmp`. If your sandbox denies `/tmp`, set `VIS_RUNTIME_DIR` to a directory in the task
+directory:
 
 ```bash
 mkdir -m 700 "$TASK/runtime"
@@ -371,8 +363,8 @@ such as `git` and `uv` keep the environment that you give Vis. Set `TMPDIR` for 
 
 A socket path has at most 102 bytes. If the full path is longer, Vis uses a path relative to its
 working directory. For a long path, start Vis in the directory that `-Duser.dir` names, or do not
-set `-Duser.dir`. If the relative path is also too long, the worker does not start. Then use a
-shorter directory.
+set `-Duser.dir`. If the relative path is also too long, the worker does not start, so use a shorter
+directory.
 
 ## Executables and the credential store
 
@@ -411,9 +403,9 @@ Keyring or KWallet) can respond.
 4. If startup reports a missing enforcer, check that the selected Python runtime has the
    `libvisjail` library of your platform.
 
-The policy snapshot resolves paths and symlinks when Vis builds the session environment. Live
-workspace roots can change in that snapshot. An edit of `vis.yml` cannot widen an existing
-environment until `/reload` invalidates the snapshot.
+Vis resolves paths and symlinks when it builds the session environment. Live workspace roots can
+change in that policy snapshot. An edit of `vis.yml` cannot widen an existing environment until
+`/reload`.
 
 ## See also
 

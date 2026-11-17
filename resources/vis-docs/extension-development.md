@@ -98,26 +98,24 @@ vis.register_extension(vis.Extension(
 ))
 ```
 
-The status lookup is local, so its Activity is end-only. Declare the [Activity
-presentation](extension-api.md#activity-presentation) at the binding, even though the implementation
-is in a separate package.
+Declare the [Activity presentation](extension-api.md#activity-presentation) at the binding, also
+when the implementation is in a separate package.
 
 `project` is relative to the entry file, not to the working directory. An absolute path also works.
 The directory must contain `pyproject.toml` and `uv.lock`. Project mode rejects nonempty script
 dependencies, so declare them in `pyproject.toml`. Do not add the `src` of the same package to
-`source_paths`, because the editable install already supplies the import root.
+`source_paths`.
 
-The build backend installs the package of the project. Without `[build-system]`, or when uv is
-configured not to package the project, preparation does not install its source. For a local
-dependency, declare the requirement in `project.dependencies` and make its source editable:
+Without `[build-system]`, or when uv is configured not to package the project, preparation does not
+install its source. For a local dependency, declare the requirement in `project.dependencies` and
+make its source editable:
 
 ```toml
 [tool.uv.sources]
 shared-tools = { path = "../shared-tools", editable = true }
 ```
 
-That sibling needs packaging metadata too. `editable = true` imports its live source. A published
-wheel stays an ordinary installed dependency.
+That sibling needs packaging metadata too. `editable = true` imports its live source.
 
 ## Prepare the project environment
 
@@ -148,8 +146,8 @@ Run these steps from `project/`.
    `await status()`. The tool returns `ready`. `vis-agent extension list` checks registration only.
 
 Vis also prepares a declared uv project when you open the project or run `/reload`. It uses the
-embedded Python of the gateway, so compiled dependencies match the worker. Preparation can download
-dependencies and update `uv.lock`. Review those changes before you share them.
+embedded Python of the gateway. Preparation can download dependencies and update `uv.lock`. Review
+those changes before you share them.
 
 ### What preparation installs
 
@@ -163,8 +161,7 @@ configuration of uv, never in a committed URL. When automatic preparation fails,
 status of uv and removes credentials from the output.
 
 The CLI does not force the embedded Python. If you choose an interpreter, use a version that is
-compatible with the embedded Python. Project dependencies stay in the project
-environment and do not become sandbox imports.
+compatible with the embedded Python.
 
 ## Reload after changes
 
@@ -185,15 +182,13 @@ Vis runs uv only when it must:
 
 - For an unchanged extension, Vis does not run uv. For a changed extension, `uv sync --check`
   decides whether its environment is ready.
-- After `vis-agent python uv sync` succeeds, Vis records the ready environment in its `.venv`, and
-  the next start skips uv for that project. Vis checks uv again when `pyproject.toml`, `uv.lock`, a
-  local path source, or the installed packages change.
-- With `python.environment: shared`, the gateway keeps the last passed shared check in memory. A
-  later reload skips uv for that project until the same inputs or the shared packages change.
+- After `vis-agent python uv sync` succeeds, the next start skips uv for that project. Vis checks uv
+  again when `pyproject.toml`, `uv.lock`, a local path source, or the installed packages change.
+- With `python.environment: shared`, a later reload skips uv for that project until the same inputs
+  or the shared packages change.
 
-The `/reload` result ends with a `Time` line that gives the duration of each part. Examples are the
-wait for another reload, the Python environments, and the extension loads. The gateway log has the
-same times in the `reload-phases` event.
+The `/reload` result ends with a `Time` line that gives the duration of each part. The gateway log
+has the same times in the `reload-phases` event.
 
 A reload switches live sessions at the next turn boundary. A call that already runs can finish with
 old code. Vis then restarts each worker that ran the old code, and the restart ends its threads and
@@ -222,19 +217,19 @@ After the first sync, run the package tests from `project/` with its environment
 vis-agent python uv run --project ./einmal --no-sync --with pytest python -m pytest einmal/tests/ -q
 ```
 
-The command uses the editable install of the project. `--with pytest` supplies pytest for this
-command and changes neither the dependencies nor the lockfile. `--no-sync` keeps the prepared
-environment unchanged. You need no `PYTHONPATH` and no extra `source_paths`.
+`--with pytest` supplies pytest for this command and changes neither the dependencies nor the
+lockfile. `--no-sync` keeps the prepared environment unchanged. You need no `PYTHONPATH` and no
+extra `source_paths`.
 
 `vis-agent python` runs embedded CPython. `sys._base_executable` is the bundled CPython launcher.
-`sys.executable` is the Python of the active environment, and it runs the same launcher. So a
-subprocess takes ordinary `-c` and `-m` arguments.
+`sys.executable` is the Python of the active environment. A subprocess of each takes ordinary `-c`
+and `-m` arguments.
 
-A child process of `sys.executable` imports the packages of the project environment, or the shared
-packages when there is no project. A child process of `sys._base_executable` is standalone Python.
-Each child process uses the working directory and the inherited `PYTHONPATH`. It does not inherit
-Vis bindings or other `sys.path` changes made in memory. The subprocess restrictions of the agent
-sandbox do not change.
+A child process of `sys.executable` imports the packages of its environment, as [Run programs with
+`vis-agent python`](python-sandbox.md#run-programs-with-vis-agent-python) describes. A child
+process of `sys._base_executable` is standalone Python. Each child process uses the working
+directory and the inherited `PYTHONPATH`. It does not inherit Vis bindings or other `sys.path`
+changes made in memory. The subprocess restrictions of the agent sandbox do not change.
 
 Then make a representative call in Vis. An import or a registration does not prove that the trusted
 session worker can use the dependencies. For a native library, test the real calculation through
@@ -244,8 +239,7 @@ process.
 ## Project and shared environments
 
 `uv sync` installs project dependencies, editable `.pth` files, and backend import hooks into the
-project environment, `.venv` by default. Before Vis starts its trusted worker, it checks that this
-environment uses the embedded Python. The check applies to registration and to session calls.
+project environment, `.venv` by default.
 
 The worker loads no shared Vis packages and none of their startup hooks. If a project dependency is
 missing, the call fails and does not fall back to a shared installation. Preparation does not
@@ -256,7 +250,7 @@ The kind of project selects the environment:
 
 - **A declared uv project, or an extension with its own `pyproject.toml`.** The first session in
   its Vis project prepares the missing environment before registration, and `/reload` prepares
-  dependency changes. Vis reports a preparation failure and does not use shared packages silently.
+  dependency changes.
 - **No declared project.** The extension uses `~/.vis/python/packages` and the [shared sync
   workflow](#install-a-project-into-shared-packages).
 - **A source-only project, where uv selects no dependency beyond the bundled Vis SDK.** It uses
@@ -270,8 +264,8 @@ project extensions](#use-shared-packages-for-project-extensions).
 
 Automatic preparation ignores `UV_PROJECT_ENVIRONMENT` and uses `.venv` of the workspace. Manual
 validation honors that variable. If the selected environment is incomplete or uses another Python,
-Vis reports an error. Run the exact sync command in that error, then `/reload`. The command selects
-the embedded Python and blocks interpreter downloads.
+Vis reports an error. Run the exact sync command in that error, then `/reload`. Read
+[Package manifest](extension-packages.md#package-manifest) for the interpreter rules.
 
 Shared storage also serves the sandbox of the model and standalone `vis-agent python --shared`
 commands. A sandbox import still needs its checkout in an allowed [workspace
@@ -305,8 +299,7 @@ vis-agent python --shared uv sync --project ./einmal --locked
 
 The command installs into `~/.vis/python/packages`, or into `VIS_PYTHON_PACKAGES`, with the embedded
 Python. uv resolves the project and its sources, honors `uv.lock`, and includes the default
-dependency groups. The project and its local editable dependencies stay editable. You keep no
-exported requirements file.
+dependency groups. The project and its local editable dependencies stay editable.
 
 After the installation, run `/reload` to refresh the Vis workers. To run a shared package from the
 CLI, also inside a project, use `vis-agent python --shared -m your_package`. Shared sync creates no
@@ -366,13 +359,12 @@ vis-agent python --shared uv pip uninstall requests
 - `uv add` and `uv remove` take the options of upstream uv, but not `--python`. `--group` and
   `--optional` also select that group or extra for the install. `--frozen`, `--no-sync`, and
   `--script` change the files and install nothing.
-- `uv remove` keeps the package in shared packages, because other projects can use it. To delete
-  the package, use `uv pip uninstall`.
+- `uv remove` keeps the package in shared packages. To delete the package, use `uv pip uninstall`.
 - `uv pip install`, `uninstall`, `list`, `freeze`, and `show` work on shared packages. `uv pip sync`
   is not available, because it deletes the packages of other projects.
 - `uv lock`, `uv export`, and `uv tree` use only project files. They run with the embedded Python.
 - `vis-agent python --shared -m pip` also installs into shared packages. It does not install or
-  uninstall pip, which belongs to the Python runtime of Vis.
+  uninstall pip.
 
 `vis-agent python --shared uv --help` lists these commands. Without `--shared`,
 `vis-agent python uv ...` is ordinary upstream uv.
