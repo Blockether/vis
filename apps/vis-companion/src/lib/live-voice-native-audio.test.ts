@@ -26,6 +26,7 @@ function harness(allowed = true) {
     play: vi.fn(async () => undefined),
     stopOutput: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
+    setStatus: vi.fn(async (_status: object): Promise<void> => undefined),
     addListener: vi.fn(async (name: string, callback: (event: unknown) => void) => {
       listeners.set(name, callback);
       const remove = vi.fn(async () => { listeners.delete(name); });
@@ -63,6 +64,34 @@ beforeEach(() => {
 afterEach(() => { for (const audio of adapters.splice(0)) audio.close(); });
 
 describe('native live voice bridge', () => {
+  it('obeys a lock-screen control for its own session and sends each new state one time', async () => {
+    const h = harness();
+    const control = vi.fn();
+    const status = { state: 'listening', muted: false, speaking: false, task: null } as const;
+    h.audio.remote(control);
+    h.audio.present(status);
+    expect(h.plugin.setStatus).not.toHaveBeenCalled();
+    await h.audio.prepare(h.fail);
+    h.emit('control', { control: 'mute' });
+    h.emit('control', { control: 'restart' });
+    h.emit('control', { sessionId: 'another', control: 'end' });
+    expect(control.mock.calls).toEqual([['mute']]);
+    h.audio.present(status);
+    h.audio.present({ ...status });
+    h.audio.present({ ...status, state: 'muted', muted: true });
+    expect(h.plugin.setStatus.mock.calls).toEqual([
+      [{ sessionId: h.sessionId(), ...status }],
+      [{ sessionId: h.sessionId(), ...status, state: 'muted', muted: true }],
+    ]);
+    // A build without lock-screen controls must not end the voice session.
+    h.plugin.setStatus.mockRejectedValueOnce(new Error('not implemented'));
+    h.audio.present(status);
+    await Promise.resolve();
+    expect(h.fail).not.toHaveBeenCalled();
+    h.audio.close();
+    h.emit('control', { control: 'end' });
+    expect(control).toHaveBeenCalledTimes(1);
+  });
   // Regression: native capture stopped while the panel still showed Listening.
   it('reports a capture stall instead of remaining silently connected', async () => {
     vi.useFakeTimers();
@@ -128,7 +157,7 @@ describe('native live voice bridge', () => {
     h.plugin.addListener.mockRejectedValueOnce(new Error('Listener unavailable.'));
     await expect(h.audio.prepare(h.fail)).rejects.toThrow('Listener unavailable.');
     expect(h.plugin.prepare).not.toHaveBeenCalled();
-    expect(h.removers).toHaveLength(2);
+    expect(h.removers).toHaveLength(3);
     expect(h.removers.every((remove) => remove.mock.calls.length === 1)).toBe(true);
     expect(output.release).toHaveBeenCalledTimes(1);
   });

@@ -1,5 +1,6 @@
 import type { PluginListenerHandle } from '@capacitor/core';
-import type { LiveVoiceAudio } from './live-voice-audio';
+import { LIVE_VOICE_CONTROLS } from './live-voice-audio';
+import type { LiveVoiceAudio, LiveVoiceControl, LiveVoiceStatus } from './live-voice-audio';
 import { LIVE_VOICE_LIMITS as L } from './live-voice-protocol';
 import { speechOutput } from './speech';
 import { nativeLiveVoice } from './live-voice-native-bridge';
@@ -60,6 +61,8 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
   private ready = false;
   private onFailure: ((message: string) => void) | null = null;
   private onFrame: ((samples: Int16Array) => void) | null = null;
+  private onControl: ((control: LiveVoiceControl) => void) | null = null;
+  private presented = '';
   private captureId = 0;
   private captureStarting = false;
   private captureWatchdog: ReturnType<typeof setTimeout> | null = null;
@@ -91,6 +94,11 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
         this.bridge.addListener('failure', (event) => {
           if (event.sessionId === this.sessionId) this.fail(event.message);
         }),
+        this.bridge.addListener('control', (event) => {
+          const control = LIVE_VOICE_CONTROLS.find((name) => name === event.control);
+          if (!this.closed && event.sessionId === this.sessionId && control)
+            this.onControl?.(control);
+        }),
       ];
       await Promise.all(
         listeners.map(async (pending) => {
@@ -117,6 +125,22 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
       this.close();
       throw error;
     }
+  }
+
+  remote(onControl: (control: LiveVoiceControl) => void): void {
+    this.onControl = onControl;
+  }
+
+  present(status: LiveVoiceStatus): void {
+    if (!this.ready || this.closed) return;
+    const { state, muted, speaking, task } = status;
+    const next = JSON.stringify([state, muted, speaking, task]);
+    if (next === this.presented) return;
+    this.presented = next;
+    // Display only. A build without these controls must not end the session.
+    void this.bridge
+      .setStatus({ sessionId: this.sessionId, state, muted, speaking, task })
+      .catch(() => undefined);
   }
 
   async capture(onFrame: (samples: Int16Array) => void): Promise<void> {
@@ -277,6 +301,7 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
     this.captureWatchdog = null;
     this.onFrame = null;
     this.onFailure = null;
+    this.onControl = null;
     this.playing.clear();
     this.captureId++;
     this.outputId++;

@@ -138,9 +138,33 @@ public class LiveVoicePlugin extends Plugin {
         boolean microphone = getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
         if (held && heldMicrophone == microphone) return;
-        LiveVoiceService.start(getContext(), microphone);
+        LiveVoiceService.start(getContext(), microphone, this::control);
         held = true;
         heldMicrophone = microphone;
+    }
+
+    /**
+     * A control on the voice notice. The web session owns the voice state and answers the event.
+     * Mute and End stop the microphone here first, so that they work when the web view is slow.
+     */
+    private synchronized void control(String control) {
+        if (sessionId == null) return;
+        JSObject event = new JSObject();
+        event.put("sessionId", sessionId);
+        event.put("control", control);
+        notifyListeners("control", event);
+        if (control.equals("mute")) releaseCapture();
+        else if (control.equals("end")) release();
+    }
+
+    @PluginMethod
+    public synchronized void setStatus(PluginCall call) {
+        try {
+            owner(call);
+            LiveVoiceService.show(getContext(), new LiveVoiceState.Display(
+                    call.getString("state"), call.getBoolean("muted", false), call.getString("task")));
+            call.resolve();
+        } catch (Exception error) { call.reject(error.getMessage()); }
     }
 
     private void audioSession() {

@@ -66,6 +66,7 @@ const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const appBundleId = JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
 const shareBundleId = `${appBundleId}.share`;
 const notifyBundleId = `${appBundleId}.notify`;
+const voiceBundleId = `${appBundleId}.voice`;
 
 const iosDir = join(appDir, 'ios');
 const projectDir = join(iosDir, 'App');
@@ -327,7 +328,7 @@ if (identity) {
       keyId,
       issuerId,
       privateKey: readFileSync(keyPath, 'utf8'),
-      bundleIds: [appBundleId, shareBundleId, notifyBundleId],
+      bundleIds: [appBundleId, shareBundleId, notifyBundleId, voiceBundleId],
       log: (message) => console.log(message),
     });
     for (const [id, profile] of Object.entries(profiles)) {
@@ -356,7 +357,7 @@ if (identity) {
 // after the profiles above are resolved, so export reuses exactly what the archive
 // was signed with.
 const signing = signingPlan({
-  bundleIds: [appBundleId, shareBundleId, notifyBundleId],
+  bundleIds: [appBundleId, shareBundleId, notifyBundleId, voiceBundleId],
   profileNames,
 });
 if (signing.unnamed.length > 0) {

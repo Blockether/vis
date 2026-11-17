@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent } from 'storybook/test';
 import { LiveVoicePanelContent } from './LiveVoicePanel';
 import type { LiveVoiceView } from '../lib/live-voice';
+import type { LiveVoiceState } from '../lib/live-voice-protocol';
 
 const listening: LiveVoiceView = {
   phase: 'live',
@@ -33,19 +34,40 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+const state: LiveVoiceState = {
+  voice_session_id: 'v',
+  capture_generation: 1,
+  output_epoch: 1,
+  capture: 'live',
+  utterance: 'idle',
+  agent: 'running',
+  output: 'playing',
+};
+const speaking: LiveVoiceView = { ...listening, final: true, state };
+
 export const Ready: Story = {};
-export const Listening: Story = {
-  args: { view: listening },
+export const Connecting: Story = { args: { connecting: true } };
+export const Listening: Story = { args: { view: listening } };
+export const Speaking: Story = {
+  args: { view: speaking },
   play: async ({ canvas, args }) => {
     await userEvent.click(canvas.getByRole('button', { name: 'Stop speech' }));
     await expect(args.onStopSpeech).toHaveBeenCalled();
     await expect(args.onCancelTask).not.toHaveBeenCalled();
     await userEvent.click(canvas.getByRole('button', { name: 'Mute microphone' }));
     await expect(args.onMute).toHaveBeenCalledWith(true);
-    await expect(canvas.getByLabelText('Provisional transcript')).toBeVisible();
+    await expect(canvas.getByLabelText('Final transcript')).toBeVisible();
   },
 };
 export const Muted: Story = { args: { view: { ...listening, muted: true, outputMuted: true } } };
+export const Waiting: Story = {
+  args: {
+    view: {
+      ...speaking,
+      state: { ...state, agent: 'waiting_for_input', output: 'idle' },
+    },
+  },
+};
 export const Disconnected: Story = {
   args: {
     view: {

@@ -4,9 +4,24 @@ import { NativeLiveVoiceAudio } from './live-voice-native-audio';
 import captureWorkletUrl from './live-voice-worklet?worker&url';
 import { LIVE_VOICE_LIMITS as L } from './live-voice-protocol';
 
+/** A control from outside the app, such as a lock screen. */
+export const LIVE_VOICE_CONTROLS = ['mute', 'unmute', 'stop_speech', 'end'] as const;
+export type LiveVoiceControl = (typeof LIVE_VOICE_CONTROLS)[number];
+/** What a surface outside the app shows. It holds no transcript and no session name. */
+export type LiveVoiceStatus = {
+  state: 'connecting' | 'listening' | 'speaking' | 'muted' | 'waiting';
+  muted: boolean;
+  speaking: boolean;
+  task: 'running' | 'queued' | 'cancelling' | null;
+};
+
 export interface LiveVoiceAudio {
   readonly captureRestartsOutput?: boolean;
   readonly outputReferenceStartMs?: number;
+  /** Receive controls from outside the app. Absent where the platform has none. */
+  remote?(onControl: (control: LiveVoiceControl) => void): void;
+  /** Show the state outside the app. */
+  present?(status: LiveVoiceStatus): void;
   prepare(onFailure: (message: string) => void): Promise<void>;
   capture(onFrame: (samples: Int16Array) => void): Promise<void>;
   stopCapture(): void;

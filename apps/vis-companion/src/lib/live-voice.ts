@@ -1,4 +1,4 @@
-import type { LiveVoiceAudio } from './live-voice-audio';
+import type { LiveVoiceAudio, LiveVoiceControl, LiveVoiceStatus } from './live-voice-audio';
 import { VoiceEchoGuard, VoiceEndpoint } from './live-voice-dsp';
 import {
   LIVE_VOICE_LIMITS as L,
@@ -34,6 +34,27 @@ export type LiveVoiceView = {
   reconciled: boolean;
   receipts: VoiceAdmissionReceipt[];
 };
+/** One state for each surface: the panel, a lock screen and a notice. Null when voice is not active. */
+export function liveVoiceStatus(view: LiveVoiceView): LiveVoiceStatus | null {
+  if (view.phase !== 'starting' && view.phase !== 'live') return null;
+  const agent = view.state?.agent;
+  const speaking = view.state?.output === 'playing' && !view.outputMuted;
+  return {
+    state:
+      view.phase === 'starting'
+        ? 'connecting'
+        : agent === 'waiting_for_input'
+          ? 'waiting'
+          : view.muted
+            ? 'muted'
+            : speaking
+              ? 'speaking'
+              : 'listening',
+    muted: view.muted,
+    speaking,
+    task: agent === 'running' || agent === 'queued' || agent === 'cancelling' ? agent : null,
+  };
+}
 type Segment = {
   epoch: number;
   id: number;
@@ -120,16 +141,28 @@ export class LiveVoiceSession {
   private update(patch: Partial<LiveVoiceView>): void {
     this.view = { ...this.view, ...patch };
     this.changed(this.view);
+    this.present();
+  }
+  private present(): void {
+    const status = liveVoiceStatus(this.view);
+    if (status) this.audio.present?.(status);
+  }
+  private control(control: LiveVoiceControl): void {
+    if (control === 'end') void this.stop();
+    else if (control === 'stop_speech') this.interrupt();
+    else this.setMuted(control === 'mute');
   }
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
     this.update({ phase: 'starting' });
     try {
+      this.audio.remote?.((control) => this.control(control));
       await this.audio.prepare((message) => {
         void this.stop(message, true);
       });
       if (this.stopped) return;
+      this.present();
       const capabilities = await this.gateway.liveVoiceCapabilities();
       if (this.stopped) return;
       if (!capabilities.enabled || !capabilities.available)
@@ -497,10 +530,20 @@ export class LiveVoiceSession {
     this.update({ muted });
     this.minimumCaptureGeneration = (this.view.state?.capture_generation ?? -1) + 1;
     this.releaseCapture();
+    const generation = this.captureGeneration;
     this.captureGeneration = null;
-    this.endpoint.reset();
+    const open = this.endpoint.finish();
     if (!this.ready || this.stopped) return;
     try {
+      // The speech before a mute counts. The mute ends its utterance.
+      if (open && generation !== null) {
+        this.uncertainAdmissions.add(this.utteranceId);
+        this.send({
+          type: 'utterance.end',
+          capture_generation: generation,
+          utterance_id: this.utteranceId,
+        });
+      }
       this.send({ type: 'capture.mute', muted });
     } catch {
       void this.stop('Voice mute failed.', true);

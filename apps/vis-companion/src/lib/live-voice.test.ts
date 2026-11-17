@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LiveVoiceSession } from './live-voice';
 import type { LiveVoiceGateway, LiveVoiceView } from './live-voice';
-import type { LiveVoiceAudio } from './live-voice-audio';
+import type { LiveVoiceAudio, LiveVoiceControl } from './live-voice-audio';
 import { encodeVoiceFrame, LIVE_VOICE_LIMITS as L } from './live-voice-protocol';
 import type { LiveVoiceState } from './live-voice-protocol';
 
@@ -750,6 +750,57 @@ describe('hands-free live session', () => {
     await h.session.stop();
     expect(h.controls().filter((event) => event.type === 'task.cancel')).toHaveLength(1);
     expect(h.gateway.endLiveVoice).toHaveBeenCalledWith('s', vid);
+  });
+  it('obeys controls from outside the app and reports each state for display', async () => {
+    const h = harness();
+    let control!: (control: LiveVoiceControl) => void;
+    const present = vi.fn();
+    Object.assign(h.audio, {
+      remote: (handler: (control: LiveVoiceControl) => void) => { control = handler; },
+      present,
+    });
+    await h.session.start();
+    expect(present).toHaveBeenLastCalledWith(
+      { state: 'connecting', muted: false, speaking: false, task: null });
+    h.ready();
+    h.commit();
+    h.emit({ type: 'session.state', state: { ...state, agent: 'running', output: 'playing' } });
+    expect(present).toHaveBeenLastCalledWith(
+      { state: 'speaking', muted: false, speaking: true, task: 'running' });
+    control('stop_speech');
+    expect(h.controls().at(-1)).toMatchObject({ type: 'output.interrupt', reason: 'stop_speech' });
+    control('mute');
+    expect(h.controls().at(-1)).toEqual({ type: 'capture.mute', muted: true });
+    expect(h.audio.stopCapture).toHaveBeenCalled();
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'muted', muted: true }));
+    control('unmute');
+    expect(h.controls().at(-1)).toEqual({ type: 'capture.mute', muted: false });
+    h.emit({ type: 'session.state', state: { ...state, agent: 'waiting_for_input' } });
+    expect(present).toHaveBeenLastCalledWith(
+      { state: 'waiting', muted: false, speaking: false, task: null });
+    const shown = present.mock.calls.length;
+    control('end');
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.views.at(-1)).toMatchObject({ phase: 'closed' });
+    expect(h.gateway.endLiveVoice).toHaveBeenCalledWith('s', vid);
+    expect(h.controls().some((event) => event.type === 'task.cancel')).toBe(false);
+    expect(present).toHaveBeenCalledTimes(shown);
+  });
+  it('ends the open utterance at a mute, so that the speech before it counts', async () => {
+    const h = harness();
+    await h.session.start();
+    h.ready();
+    h.frames(6, 3000);
+    const { utterance_id, capture_generation } = h
+      .controls()
+      .find((event) => event.type === 'utterance.start')!;
+    h.session.setMuted(true);
+    expect(h.controls().slice(-2)).toEqual([
+      { type: 'utterance.end', capture_generation, utterance_id },
+      { type: 'capture.mute', muted: true },
+    ]);
+    h.session.setMuted(false);
+    expect(h.controls().filter((event) => event.type === 'utterance.end')).toHaveLength(1);
   });
   it('does not substitute device speech when local engines are unavailable', async () => {
     const h = harness();

@@ -1,13 +1,26 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Capacitor } from '@capacitor/core';
-import { Checkbox, TextButton } from './ui';
+import {
+  CircleAlertIcon,
+  CircleXIcon,
+  CloseIcon,
+  LoadingIcon,
+  MicIcon,
+  MicOffIcon,
+  MoreIcon,
+  SpeakerIcon,
+  StopIcon,
+} from './icons';
+import { Menu, MenuItem, MENU_WIDTH } from './Menu';
+import { Button, Checkbox, IconButton } from './ui';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import {
   createLiveVoiceAudio,
   liveVoiceDeviceReason,
   liveVoiceNeedsVerification,
 } from '../lib/live-voice-audio';
-import { LiveVoiceSession } from '../lib/live-voice';
+import { LiveVoiceSession, liveVoiceStatus } from '../lib/live-voice';
 import type { LiveVoiceView, LiveVoiceGateway } from '../lib/live-voice';
 
 /** Start voice only after an explicit microphone action. */
@@ -83,6 +96,8 @@ export function LiveVoicePanel({
           if (session.current !== next) return;
           setView(state);
           const active = state.phase === 'starting' || state.phase === 'live';
+          // A lock-screen control can mute. A retry starts with the same microphone state.
+          if (active) setMuted(state.muted);
           onActive(active);
           if (!active) setConsent(false);
         },
@@ -110,18 +125,24 @@ export function LiveVoicePanel({
   if (!requested) return null;
   if (loading) {
     return renderControls(
-      <div className="flex items-center gap-3 px-2 py-1 text-chip">
-        <span role="status">Connecting…</span>
-        <TextButton onClick={() => {
+      <LiveVoicePanelContent
+        view={null}
+        connecting
+        disabled={disabled}
+        reason={null}
+        onStart={() => undefined}
+        onMute={() => undefined}
+        onOutputMute={() => undefined}
+        onStopSpeech={() => undefined}
+        onCancelTask={() => undefined}
+        onEnd={() => {
           attempt.current += 1;
           pending.current = false;
           setLoading(false);
           setRequested(false);
           onActive(false);
-        }}>
-          End voice mode
-        </TextButton>
-      </div>
+        }}
+      />,
     );
   }
   if (view?.phase === 'closed' && view.reconciled && !view.message) return null;
@@ -151,6 +172,7 @@ export function LiveVoicePanel({
 /** Present media state without acquiring a device or opening a connection. */
 export function LiveVoicePanelContent({
   view,
+  connecting = false,
   disabled,
   reason,
   onStart,
@@ -164,6 +186,8 @@ export function LiveVoicePanelContent({
   onAllowMobileTest,
 }: {
   view: LiveVoiceView | null;
+  /** The gateway has no session yet. Only End is available. */
+  connecting?: boolean;
   disabled: boolean;
   reason: string | null;
   onStart: () => void;
@@ -176,17 +200,165 @@ export function LiveVoicePanelContent({
   allowMobileTest?: boolean;
   onAllowMobileTest?: (allowed: boolean) => void;
 }) {
-  const active = view?.phase === 'starting' || view?.phase === 'live';
+  const [menu, setMenu] = useState<MenuPosition | null>(null);
+  const status = connecting
+    ? ({ state: 'connecting', muted: false, speaking: false, task: null } as const)
+    : view
+      ? liveVoiceStatus(view)
+      : null;
+  const stopped = !status && (view !== null || reason !== null);
+  const output = view?.state?.output;
+  const speech =
+    view?.outputMuted || output === 'muted'
+      ? 'Speech muted'
+      : output === 'playing'
+        ? 'Speaking'
+        : output === 'committed' || output === 'synthesizing'
+          ? 'Preparing speech'
+          : null;
+  const face = status
+    ? {
+        connecting: { title: 'Connecting…', Icon: LoadingIcon, edge: 'border-l-muted' },
+        listening: { title: 'Listening', Icon: MicIcon, edge: 'border-l-white' },
+        speaking: { title: 'Speaking', Icon: SpeakerIcon, edge: 'border-l-accent' },
+        muted: { title: 'Microphone muted', Icon: MicOffIcon, edge: 'border-l-muted' },
+        waiting: {
+          title: 'Waiting for you',
+          Icon: CircleAlertIcon,
+          edge: 'border-l-warn-edge',
+          // The controls stay on the usual surface: their colours are made for it.
+          head: '-mx-3 -mt-2 mb-2 bg-warn-surface px-3 py-2',
+        },
+      }[status.state]
+    : stopped
+      ? { title: 'Voice stopped', Icon: CircleXIcon, edge: 'border-l-err' }
+      : null;
+  // The headline shows one state. The line below shows the task and the speech.
+  const details = status
+    ? [
+        status.state === 'waiting'
+          ? 'Use the session input controls.'
+          : status.task &&
+            { running: 'Task running', queued: 'Task queued', cancelling: 'Cancellation requested' }[
+              status.task
+            ],
+        speech === face?.title ? null : speech,
+      ].filter((detail): detail is string => Boolean(detail))
+    : [];
+  const live = status !== null && status.state !== 'connecting';
+  const stoppable =
+    live && !view?.outputMuted && (output === 'playing' || output === 'committed' || output === 'synthesizing');
+  // The labels stay on one line. A narrow panel drops the marks, not the words.
+  const cell = 'flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap';
+  const mark = 'shrink-0 @max-[21rem]:hidden';
   return (
     <section
       aria-label="Hands-free voice"
-      className="border-b border-dialog-edge px-2 py-1 font-mono text-chip"
+      className={`@container border border-l-[3px] border-field-edge px-3 py-2 font-mono ${face?.edge ?? 'border-l-white'}`}
     >
-      {!active ? (
-        <div>
+      {face && (
+        <div role="status" className={`flex items-start gap-2 ${'head' in face ? face.head : ''}`}>
+          <face.Icon className="mt-0.5 size-[18px] shrink-0" />
+          <div className="min-w-0">
+            <p className="text-subhead font-bold">{face.title}</p>
+            {details.length > 0 && (
+              <p className="flex flex-wrap gap-x-3 text-ui text-muted">
+                {details.map((detail) => (
+                  <span key={detail}>{detail}</span>
+                ))}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {view?.transcript && (
+        <p
+          aria-label={view.final ? 'Final transcript' : 'Provisional transcript'}
+          className={`mt-1 truncate text-body ${view.final ? '' : 'text-muted'}`}
+        >
+          {view.transcript}
+        </p>
+      )}
+      {reason && (
+        <p role="status" className="mt-1 text-ui">
+          {reason}
+        </p>
+      )}
+      {view?.message && (
+        <p role="status" className="mt-1 text-ui">
+          {view.message}
+        </p>
+      )}
+      {view && !status && !view.reconciled && (
+        <p role="status" className="mt-1 text-ui text-muted">
+          Check the session before repeating a request. Its admission may be uncertain.
+        </p>
+      )}
+      {status ? (
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            variant={status.muted ? 'primary' : 'secondary'}
+            className={cell}
+            disabled={!live}
+            aria-label={status.muted ? 'Unmute microphone' : 'Mute microphone'}
+            aria-pressed={status.muted}
+            onClick={() => onMute(!status.muted)}
+          >
+            {status.muted ? (
+              <MicIcon className={`size-3.5 ${mark}`} />
+            ) : (
+              <MicOffIcon className={`size-3.5 ${mark}`} />
+            )}
+            {status.muted ? 'Unmute' : 'Mute'}
+          </Button>
+          <Button variant="secondary" className={cell} disabled={!stoppable} onClick={onStopSpeech}>
+            <StopIcon className={`size-3 ${mark}`} />
+            Stop speech
+          </Button>
+          <Button variant="danger" className={cell} aria-label="End voice mode" onClick={onEnd}>
+            <CloseIcon className={`size-3.5 ${mark}`} />
+            End
+          </Button>
+          <IconButton
+            label="More voice controls"
+            variant="quiet"
+            disabled={!live}
+            aria-haspopup="dialog"
+            aria-expanded={menu !== null}
+            onClick={(event) =>
+              setMenu(menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH))
+            }
+          >
+            <MoreIcon className="size-3.5" />
+          </IconButton>
+          {menu && view && (
+            <Menu label="More voice controls" at={menu} onDismiss={() => setMenu(null)}>
+              <MenuItem
+                title={view.outputMuted ? 'Unmute speech' : 'Mute speech'}
+                icon={<SpeakerIcon className="size-3.5" />}
+                onSelect={() => {
+                  setMenu(null);
+                  onOutputMute(!view.outputMuted);
+                }}
+              />
+              <MenuItem
+                title="Cancel voice task"
+                icon={<CloseIcon className="size-3.5" />}
+                tone="danger"
+                disabled={!view.turnId}
+                onSelect={() => {
+                  setMenu(null);
+                  if (view.turnId) onCancelTask(view.turnId);
+                }}
+              />
+            </Menu>
+          )}
+        </div>
+      ) : (
+        <div className={face ? 'mt-2' : ''}>
           {mobile && (
             <>
-              <p className="text-muted">
+              <p className="text-ui text-muted">
                 Mobile audio is unverified. Use low volume. Test speaker echo before relying on
                 hands-free voice.
               </p>
@@ -198,60 +370,10 @@ export function LiveVoicePanelContent({
               </Checkbox>
             </>
           )}
-          <TextButton disabled={disabled || (mobile && !allowMobileTest)} onClick={onStart}>
-            {view || reason ? 'Retry voice' : 'Start voice'}
-          </TextButton>
+          <Button disabled={disabled || (mobile && !allowMobileTest)} onClick={onStart}>
+            {stopped ? 'Retry voice' : 'Start voice'}
+          </Button>
         </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-3">
-          <span role="status">
-            {view.phase === 'starting'
-              ? 'Connecting…'
-              : view.muted
-                ? 'Microphone muted'
-                : 'Listening'}
-          </span>
-          {view.state?.agent === 'running' && <span role="status">Task running</span>}
-          {view.state?.agent === 'queued' && <span role="status">Task queued</span>}
-          {view.state?.agent === 'cancelling' && <span role="status">Cancellation requested</span>}
-          {view.state?.agent === 'waiting_for_input' && (
-            <span role="status">Waiting for you · Use the session input controls</span>
-          )}
-          {view.state?.output === 'playing' && !view.outputMuted && (
-            <span role="status">Speaking</span>
-          )}
-          {(view.state?.output === 'committed' || view.state?.output === 'synthesizing') &&
-            !view.outputMuted && <span role="status">Preparing speech</span>}
-          {(view.outputMuted || view.state?.output === 'muted') && (
-            <span role="status">Speech muted</span>
-          )}
-          <TextButton aria-pressed={view.muted} onClick={() => onMute(!view.muted)}>
-            {view.muted ? 'Unmute microphone' : 'Mute microphone'}
-          </TextButton>
-          <TextButton
-            aria-pressed={view.outputMuted}
-            onClick={() => onOutputMute(!view.outputMuted)}
-          >
-            {view.outputMuted ? 'Unmute speech' : 'Mute speech'}
-          </TextButton>
-          <TextButton onClick={onStopSpeech}>Stop speech</TextButton>
-          {view.turnId && (
-            <TextButton onClick={() => onCancelTask(view.turnId!)}>Cancel voice task</TextButton>
-          )}
-          <TextButton onClick={onEnd}>End voice mode</TextButton>
-        </div>
-      )}
-      {reason && <p role="status">{reason}</p>}
-      {view?.transcript && (
-        <p aria-label={view.final ? 'Final transcript' : 'Provisional transcript'}>
-          {view.transcript}
-        </p>
-      )}
-      {view?.message && <p role="status">{view.message}</p>}
-      {view && !active && !view.reconciled && (
-        <p role="status">
-          Check the session before repeating a request. Its admission may be uncertain.
-        </p>
       )}
     </section>
   );

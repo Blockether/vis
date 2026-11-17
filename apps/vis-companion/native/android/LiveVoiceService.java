@@ -8,6 +8,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -15,26 +16,87 @@ import android.os.PowerManager;
 /**
  * Keeps the process, its microphone and the processor while a voice session
  * continues behind a locked screen. It holds no audio. The plugin starts it in
- * the foreground.
+ * the foreground. Its notice shows the session state and three controls.
  */
 public class LiveVoiceService extends Service {
+    /** The plugin that owns the voice session. This service has no session. */
+    interface Controls { void control(String control); }
+
     private static final String CHANNEL = "live-voice";
     private static final String MICROPHONE = "microphone";
+    private static final String CONTROL = "live-voice.control.";
     private static final int ID = 7701;
+    // The class lock guards these. Never call the plugin while it is held.
+    private static Controls controls;
+    private static LiveVoiceState.Display display = LiveVoiceState.Display.CONNECTING;
+    private static long startedAt;
+    private static boolean shown;
     private PowerManager.WakeLock awake;
 
     /** A plain start. A stop before the first command must not crash the process. */
-    static void start(Context context, boolean microphone) {
+    static synchronized void start(Context context, boolean microphone, Controls owner) {
+        if (controls == null) {
+            display = LiveVoiceState.Display.CONNECTING;
+            startedAt = System.currentTimeMillis();
+        }
+        controls = owner;
         context.startService(new Intent(context, LiveVoiceService.class).putExtra(MICROPHONE, microphone));
     }
 
-    static void stop(Context context) {
+    static synchronized void stop(Context context) {
+        controls = null;
+        shown = false;
         context.stopService(new Intent(context, LiveVoiceService.class));
+    }
+
+    /** Display only. A notice that is not in the foreground stays hidden. */
+    static synchronized void show(Context context, LiveVoiceState.Display next) {
+        display = next;
+        if (shown) context.getSystemService(NotificationManager.class).notify(ID, notice(context));
+    }
+
+    private static Notification notice(Context context) {
+        Notification.Builder notice = new Notification.Builder(context, CHANNEL)
+                .setSmallIcon(context.getApplicationInfo().icon)
+                .setContentTitle(display.title())
+                .setContentText(display.text())
+                .setWhen(startedAt)
+                .setShowWhen(true)
+                .setUsesChronometer(true)
+                .setOnlyAlertOnce(true)
+                // The text has no transcript and no session name, so a locked screen can show it.
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setOngoing(true);
+        Intent open = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+        if (open != null)
+            notice.setContentIntent(PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE));
+        for (String control : display.controls()) {
+            // A service intent needs no unlock. Each control has its own action name.
+            PendingIntent press = PendingIntent.getService(context, 0,
+                    new Intent(context, LiveVoiceService.class).setAction(CONTROL + control),
+                    PendingIntent.FLAG_IMMUTABLE);
+            notice.addAction(new Notification.Action.Builder(
+                    (Icon) null, LiveVoiceState.Display.label(control), press).build());
+        }
+        return notice.build();
     }
 
     // The plugin stops this service when the session ends, which releases the lock.
     @android.annotation.SuppressLint("WakelockTimeout")
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        String action = intent == null ? null : intent.getAction();
+        if (action != null && action.startsWith(CONTROL)) {
+            Controls owner;
+            boolean active;
+            synchronized (LiveVoiceService.class) {
+                owner = controls;
+                active = shown;
+            }
+            if (owner != null) owner.control(action.substring(CONTROL.length()));
+            // A control with no session must not leave a service behind.
+            if (!active) stopSelf();
+            return START_NOT_STICKY;
+        }
         if (awake == null) {
             // A muted session has no audio stream to keep the processor on.
             awake = getSystemService(PowerManager.class)
@@ -43,27 +105,23 @@ public class LiveVoiceService extends Service {
         }
         getSystemService(NotificationManager.class).createNotificationChannel(
                 new NotificationChannel(CHANNEL, "Voice session", NotificationManager.IMPORTANCE_LOW));
-        Notification.Builder notice = new Notification.Builder(this, CHANNEL)
-                .setSmallIcon(getApplicationInfo().icon)
-                .setContentTitle("Voice session is active")
-                .setContentText("Open the app to mute or end voice.")
-                .setOngoing(true);
-        Intent open = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        if (open != null)
-            notice.setContentIntent(PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE));
-        if (Build.VERSION.SDK_INT >= 30) {
-            int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
-            // Android 14 rejects the microphone type before the permission is granted.
-            if (intent != null && intent.getBooleanExtra(MICROPHONE, false))
-                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-            startForeground(ID, notice.build(), types);
-        } else {
-            startForeground(ID, notice.build());
+        synchronized (LiveVoiceService.class) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
+                // Android 14 rejects the microphone type before the permission is granted.
+                if (intent != null && intent.getBooleanExtra(MICROPHONE, false))
+                    types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+                startForeground(ID, notice(this), types);
+            } else {
+                startForeground(ID, notice(this));
+            }
+            shown = true;
         }
         return START_NOT_STICKY;
     }
 
     @Override public void onDestroy() {
+        synchronized (LiveVoiceService.class) { shown = false; }
         if (awake != null) awake.release();
         awake = null;
         super.onDestroy();

@@ -108,19 +108,20 @@ describe('hands-free opt-in panel', () => {
   });
 
   it.each([
-    ['running', 'playing', false, 'Task running', 'Speaking'],
+    ['running', 'playing', false, 'Speaking', 'Task running', 'Speaking'],
     [
       'waiting_for_input',
       'playing',
       false,
-      'Waiting for you · Use the session input controls',
+      'Waiting for you',
+      'Use the session input controls.',
       'Speaking',
     ],
-    ['queued', 'synthesizing', true, 'Task queued', 'Preparing speech'],
-    ['cancelling', 'muted', false, 'Cancellation requested', 'Speech muted'],
+    ['queued', 'synthesizing', true, 'Microphone muted', 'Task queued', 'Preparing speech'],
+    ['cancelling', 'muted', false, 'Listening', 'Cancellation requested', 'Speech muted'],
   ] as const)(
     'shows %s and %s independently of capture',
-    (agent, output, muted, taskLabel, outputLabel) => {
+    (agent, output, muted, headline, taskLabel, outputLabel) => {
       const action = vi.fn();
       render(
         <LiveVoicePanelContent
@@ -146,7 +147,14 @@ describe('hands-free opt-in panel', () => {
           onEnd={action}
         />,
       );
-      expect(screen.getByText(muted ? 'Microphone muted' : 'Listening')).toBeInTheDocument();
+      // One headline: the state that the person must know first.
+      for (const other of ['Speaking', 'Waiting for you', 'Microphone muted', 'Listening']) {
+        expect(screen.queryAllByText(other, { selector: 'p' })).toHaveLength(other === headline ? 1 : 0);
+      }
+      expect(screen.getByRole('button', { name: 'Stop speech' })).toHaveProperty(
+        'disabled',
+        output === 'muted',
+      );
       expect(screen.getByText(taskLabel)).toBeInTheDocument();
       expect(screen.getByText(outputLabel)).toBeInTheDocument();
       expect(screen.getByText('Choose a task with the task controls.')).toBeInTheDocument();
@@ -242,6 +250,7 @@ describe('hands-free opt-in panel', () => {
     await act(async () => {
       Socket.last.onmessage?.({ data: JSON.stringify({ type: 'utterance.admitted', utterance_id: 1, turn_id: 't', idempotency_key: 'v:1', status: 'running' }) });
     });
+    fireEvent.click(screen.getByRole('button', { name: 'More voice controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel voice task' }));
     expect(Socket.last.send).toHaveBeenCalledWith(JSON.stringify({ type: 'task.cancel', turn_id: 't' }));
     fireEvent.click(screen.getByRole('button', { name: 'End voice mode' }));

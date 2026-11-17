@@ -280,6 +280,11 @@ const plistEntries = [
 \t</array>`,
   ],
   [
+    'NSSupportsLiveActivities',
+    `\t<key>NSSupportsLiveActivities</key>
+\t<true/>`,
+  ],
+  [
     'NSAppTransportSecurity',
     `\t<key>NSAppTransportSecurity</key>
 \t<dict>
@@ -1075,6 +1080,48 @@ const liveVoiceFileOk = fileOk(liveVoiceSwift, liveVoiceSource);
 const pasteSwift = join(appDir, 'PasteMenu.swift');
 const pasteSource = readFileSync(join(root, 'native/ios/PasteMenuPlugin.swift'), 'utf8');
 const pasteFileOk = fileOk(pasteSwift, pasteSource);
+// The Live Activity of a voice session: one file that the app and the widget
+// extension share, and the extension's views.
+const voiceDir = join(root, 'ios', 'App', 'VisVoice');
+const voiceActivitySwift = join(appDir, 'VisVoiceActivity.swift');
+const voiceActivitySource = readFileSync(join(root, 'native/ios/VisVoiceActivity.swift'), 'utf8');
+const voiceWidgetSwift = join(voiceDir, 'VisVoiceWidget.swift');
+const voiceWidgetSource = readFileSync(join(root, 'native/ios/VisVoiceWidget.swift'), 'utf8');
+const voicePlist = join(voiceDir, 'Info.plist');
+const voicePlistSource = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>CFBundleDevelopmentRegion</key>
+\t<string>$(DEVELOPMENT_LANGUAGE)</string>
+\t<key>CFBundleDisplayName</key>
+\t<string>Vis</string>
+\t<key>CFBundleExecutable</key>
+\t<string>$(EXECUTABLE_NAME)</string>
+\t<key>CFBundleIdentifier</key>
+\t<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+\t<key>CFBundleInfoDictionaryVersion</key>
+\t<string>6.0</string>
+\t<key>CFBundleName</key>
+\t<string>$(PRODUCT_NAME)</string>
+\t<key>CFBundlePackageType</key>
+\t<string>XPC!</string>
+\t<key>CFBundleShortVersionString</key>
+\t<string>$(MARKETING_VERSION)</string>
+\t<key>CFBundleVersion</key>
+\t<string>$(CURRENT_PROJECT_VERSION)</string>
+\t<key>NSExtension</key>
+\t<dict>
+\t\t<key>NSExtensionPointIdentifier</key>
+\t\t<string>com.apple.widgetkit-extension</string>
+\t</dict>
+</dict>
+</plist>
+`;
+const voiceFilesOk =
+  fileOk(voiceActivitySwift, voiceActivitySource) &&
+  fileOk(voiceWidgetSwift, voiceWidgetSource) &&
+  fileOk(voicePlist, voicePlistSource);
 // `cap sync` rewrites this file from the INSTALLED packages, so plugin classes
 // that live in the app target are dropped from it every time. Putting them back
 // is exactly what this hook is for — it runs as `postsync`.
@@ -1190,7 +1237,7 @@ const notifyTarget = { name: 'VisNotify', bundleSuffix: 'notify' };
 // aps-environment on an app extension is rejected outright, and that extension is
 // entitled by the notification it is handed, not by push.
 const extensionSettings = (
-  { name, bundleSuffix, entitlements },
+  { name, bundleSuffix, entitlements, deployment = '15.0' },
   configId,
   configName,
   extra,
@@ -1201,7 +1248,7 @@ ${entitlements ? `\t\t\t\tCODE_SIGN_ENTITLEMENTS = ${entitlements};\n` : ''}\t\t
 \t\t\t\tCURRENT_PROJECT_VERSION = ${buildVersion};
 \t\t\t\tGENERATE_INFOPLIST_FILE = NO;
 \t\t\t\tINFOPLIST_FILE = ${name}/Info.plist;
-\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.0;
+\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = ${deployment};
 \t\t\t\tLD_RUNPATH_SEARCH_PATHS = (
 \t\t\t\t\t"$(inherited)",
 \t\t\t\t\t"@executable_path/Frameworks",
@@ -1720,7 +1767,206 @@ if (!liveVoiceProjectOk) {
     `\t\t${liveVoiceIds.swiftRef} /* LiveVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoice.swift; sourceTree = "<group>"; };\n`,
   );
 }
+// The Live Activity of a voice session is a widget extension. The app and the
+// extension both compile VisVoiceActivity.swift; the views are in the extension.
+// The lock-screen buttons need iOS 17, so that is the extension's minimum.
+const voiceIds = {
+  activityRef: objectId(46),
+  activityBuild: objectId(47),
+  activityWidgetBuild: objectId(48),
+  widgetRef: objectId(49),
+  widgetBuild: objectId(50),
+  plistRef: objectId(51),
+  appexRef: objectId(52),
+  group: objectId(53),
+  sources: objectId(54),
+  frameworks: objectId(55),
+  resources: objectId(56),
+  target: objectId(57),
+  configList: objectId(58),
+  debug: objectId(59),
+  release: objectId(60),
+  embedBuild: objectId(61),
+  dependency: objectId(62),
+  proxy: objectId(63),
+};
+const voiceTarget = { name: 'VisVoice', bundleSuffix: 'voice', deployment: '17.0' };
+const voiceProjectOk = project.includes(voiceIds.target) && project.includes(voiceIds.activityRef);
+if (!voiceProjectOk) {
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${voiceIds.activityBuild} /* VisVoiceActivity.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${voiceIds.activityRef} /* VisVoiceActivity.swift */,`,
+    'App group',
+  );
+  after(
+    new RegExp(`\\n(\\s*)${ids.dependency} \\/\\* PBXTargetDependency \\*\\/,`),
+    `\n\t\t\t\t${voiceIds.dependency} /* PBXTargetDependency */,`,
+    'App dependencies list',
+  );
+  after(
+    new RegExp(
+      `\\n(\\s*)${ids.embedBuild} \\/\\* VisShare\\.appex in Embed Foundation Extensions \\*\\/,`,
+    ),
+    `\n\t\t\t\t${voiceIds.embedBuild} /* VisVoice.appex in Embed Foundation Extensions */,`,
+    'Embed Foundation Extensions phase',
+  );
+  after(
+    /\n(\s*)[0-9A-Fa-f]{24} \/\* App\.app \*\/,/,
+    `\n\t\t\t\t${voiceIds.appexRef} /* VisVoice.appex */,`,
+    'Products group',
+  );
+  after(/\n(\s*)targets = \(/, `\n\t\t\t\t${voiceIds.target} /* VisVoice */,`, 'targets list');
+  after(
+    /TargetAttributes = \{/,
+    `\n\t\t\t\t\t${voiceIds.target} = {\n\t\t\t\t\t\tProvisioningStyle = Automatic;\n\t\t\t\t\t};`,
+    'TargetAttributes',
+  );
+  before(
+    '/* End PBXGroup section */',
+    `\t\t${voiceIds.group} /* VisVoice */ = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\t${voiceIds.widgetRef} /* VisVoiceWidget.swift */,
+\t\t\t\t${voiceIds.plistRef} /* Info.plist */,
+\t\t\t);
+\t\t\tpath = VisVoice;
+\t\t\tsourceTree = "<group>";
+\t\t};
+`,
+  );
+  after(
+    /\n(\s*)[0-9A-Fa-f]{24} \/\* Products \*\/,/,
+    `\n\t\t\t\t${voiceIds.group} /* VisVoice */,`,
+    'main group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${voiceIds.activityBuild} /* VisVoiceActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${voiceIds.activityRef} /* VisVoiceActivity.swift */; };
+\t\t${voiceIds.activityWidgetBuild} /* VisVoiceActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${voiceIds.activityRef} /* VisVoiceActivity.swift */; };
+\t\t${voiceIds.widgetBuild} /* VisVoiceWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${voiceIds.widgetRef} /* VisVoiceWidget.swift */; };
+\t\t${voiceIds.embedBuild} /* VisVoice.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ${voiceIds.appexRef} /* VisVoice.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${voiceIds.appexRef} /* VisVoice.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VisVoice.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+\t\t${voiceIds.activityRef} /* VisVoiceActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisVoiceActivity.swift; sourceTree = "<group>"; };
+\t\t${voiceIds.widgetRef} /* VisVoiceWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisVoiceWidget.swift; sourceTree = "<group>"; };
+\t\t${voiceIds.plistRef} /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+`,
+  );
+  before(
+    '/* End PBXFrameworksBuildPhase section */',
+    `\t\t${voiceIds.frameworks} /* Frameworks */ = {
+\t\t\tisa = PBXFrameworksBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXNativeTarget section */',
+    `\t\t${voiceIds.target} /* VisVoice */ = {
+\t\t\tisa = PBXNativeTarget;
+\t\t\tbuildConfigurationList = ${voiceIds.configList} /* Build configuration list for PBXNativeTarget "VisVoice" */;
+\t\t\tbuildPhases = (
+\t\t\t\t${voiceIds.sources} /* Sources */,
+\t\t\t\t${voiceIds.frameworks} /* Frameworks */,
+\t\t\t\t${voiceIds.resources} /* Resources */,
+\t\t\t);
+\t\t\tbuildRules = (
+\t\t\t);
+\t\t\tdependencies = (
+\t\t\t);
+\t\t\tname = VisVoice;
+\t\t\tproductName = VisVoice;
+\t\t\tproductReference = ${voiceIds.appexRef} /* VisVoice.appex */;
+\t\t\tproductType = "com.apple.product-type.app-extension";
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXResourcesBuildPhase section */',
+    `\t\t${voiceIds.resources} /* Resources */ = {
+\t\t\tisa = PBXResourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXSourcesBuildPhase section */',
+    `\t\t${voiceIds.sources} /* Sources */ = {
+\t\t\tisa = PBXSourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t\t${voiceIds.widgetBuild} /* VisVoiceWidget.swift in Sources */,
+\t\t\t\t${voiceIds.activityWidgetBuild} /* VisVoiceActivity.swift in Sources */,
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXContainerItemProxy section */',
+    `\t\t${voiceIds.proxy} /* PBXContainerItemProxy */ = {
+\t\t\tisa = PBXContainerItemProxy;
+\t\t\tcontainerPortal = ${projectObject} /* Project object */;
+\t\t\tproxyType = 1;
+\t\t\tremoteGlobalIDString = ${voiceIds.target};
+\t\t\tremoteInfo = VisVoice;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXTargetDependency section */',
+    `\t\t${voiceIds.dependency} /* PBXTargetDependency */ = {
+\t\t\tisa = PBXTargetDependency;
+\t\t\ttarget = ${voiceIds.target} /* VisVoice */;
+\t\t\ttargetProxy = ${voiceIds.proxy} /* PBXContainerItemProxy */;
+\t\t};
+`,
+  );
+  before(
+    '/* End XCBuildConfiguration section */',
+    extensionSettings(
+      voiceTarget,
+      voiceIds.debug,
+      'Debug',
+      '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n',
+    ) +
+      extensionSettings(
+        voiceTarget,
+        voiceIds.release,
+        'Release',
+        '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n',
+      ),
+  );
+  before(
+    '/* End XCConfigurationList section */',
+    `\t\t${voiceIds.configList} /* Build configuration list for PBXNativeTarget "VisVoice" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\t${voiceIds.debug} /* Debug */,
+\t\t\t\t${voiceIds.release} /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+`,
+  );
+}
 const liveVoiceOk = liveVoiceFileOk && liveVoiceProjectOk && liveVoiceConfigOk;
+const voiceOk = voiceFilesOk && voiceProjectOk;
 const oauthOk = oauthFileOk && oauthProjectOk && oauthConfigOk;
 const pasteOk = pasteFileOk && pasteProjectOk && pasteConfigOk;
 const shareOk = shareFilesOk && projectOk;
@@ -1741,6 +1987,7 @@ if (check) {
     oauthOk &&
     pasteOk &&
     liveVoiceOk &&
+    voiceOk &&
     splashOk
   ) {
     console.log(
@@ -1770,9 +2017,11 @@ if (check) {
                       ? 'ios: no PasteMenu plugin — run `node scripts/ios-prepare.mjs`'
                       : !liveVoiceOk
                         ? 'ios: no live audio plugin — run `node scripts/ios-prepare.mjs`'
-                        : !splashOk
-                          ? "ios: launch screen still shows Capacitor's splash — run `node scripts/ios-prepare.mjs`"
-                          : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
+                        : !voiceOk
+                          ? 'ios: no VisVoice Live Activity extension — run `node scripts/ios-prepare.mjs`'
+                          : !splashOk
+                            ? "ios: launch screen still shows Capacitor's splash — run `node scripts/ios-prepare.mjs`"
+                            : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -1823,6 +2072,12 @@ if (!hostFileOk) writeFileSync(hostSwift, hostSource);
 if (!oauthFileOk) writeFileSync(oauthSwift, oauthSource);
 if (!pasteFileOk) writeFileSync(pasteSwift, pasteSource);
 if (!liveVoiceFileOk) writeFileSync(liveVoiceSwift, liveVoiceSource);
+if (!voiceFilesOk) {
+  mkdirSync(voiceDir, { recursive: true });
+  writeFileSync(voiceActivitySwift, voiceActivitySource);
+  writeFileSync(voiceWidgetSwift, voiceWidgetSource);
+  writeFileSync(voicePlist, voicePlistSource);
+}
 if (!capConfigOk && capConfigJson) {
   capConfigJson.packageClassList = Array.from(
     new Set([...(capConfigJson.packageClassList ?? []), ...appPluginClasses]),

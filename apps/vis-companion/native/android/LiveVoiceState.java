@@ -21,6 +21,57 @@ final class LiveVoiceState {
     long lastFrame = -1;
     final ArrayDeque<Frame> output = new ArrayDeque<>();
 
+    /** What the voice notice shows. It holds no transcript and no session name. */
+    static final class Display {
+        static final Display CONNECTING = new Display("connecting", false, null);
+        final String state;
+        final boolean muted;
+        final String task;
+
+        Display(String state, boolean muted, String task) {
+            if (!java.util.Arrays.asList("connecting", "listening", "speaking", "muted", "waiting").contains(state)
+                    || (task != null && !java.util.Arrays.asList("running", "queued", "cancelling").contains(task)))
+                throw new IllegalArgumentException("Invalid voice status.");
+            this.state = state;
+            this.muted = muted;
+            this.task = task;
+        }
+
+        String title() {
+            switch (state) {
+                case "listening": return "Listening";
+                case "speaking": return "Speaking";
+                case "muted": return "Microphone muted";
+                case "waiting": return "Needs your answer";
+                default: return "Connecting";
+            }
+        }
+
+        String text() {
+            if (state.equals("waiting")) return "Open Vis to answer";
+            if (state.equals("muted")) return "Vis cannot hear you";
+            if ("running".equals(task)) return "Voice session, task running";
+            if ("queued".equals(task)) return "Voice session, task queued";
+            if ("cancelling".equals(task)) return "Voice session, cancellation requested";
+            return "Voice session";
+        }
+
+        /** A fixed order. Only End works before the session is live. */
+        String[] controls() {
+            if (state.equals("connecting")) return new String[] {"end"};
+            return new String[] {muted ? "unmute" : "mute", "stop_speech", "end"};
+        }
+
+        static String label(String control) {
+            switch (control) {
+                case "mute": return "Mute";
+                case "unmute": return "Unmute";
+                case "stop_speech": return "Stop speech";
+                default: return "End";
+            }
+        }
+    }
+
     static final class RouteWatch {
         private final int expected;
         private boolean active = true;

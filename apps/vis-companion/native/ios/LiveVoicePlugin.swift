@@ -1,4 +1,5 @@
 import AVFoundation
+import ActivityKit
 import Capacitor
 import UIKit
 import WebKit
@@ -18,6 +19,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "stopOutput", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
+    CAPPluginMethod(name: "setStatus", returnType: CAPPluginReturnPromise),
   ]
   private var sessionId: String?
   private var state: LiveVoiceState?
@@ -25,7 +27,10 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
   private var player: AVAudioPlayerNode?
   private var observers: [NSObjectProtocol] = []
   private var permissionCall: CAPPluginCall?
+  /// A `VoiceActivity`. A stored property cannot name a type that needs iOS 17.
+  private var activity: AnyObject?
   private var hasTap = false
+  private var tapCaptureId = 0
   private var audioActive = false
   private var pipeline = UUID()
   private var capturePipeline = UUID()
@@ -72,11 +77,17 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
 
   private var appActive: Bool { UIApplication.shared.applicationState == .active }
 
+  /// A muted session keeps its capture graph. iOS can refuse a new microphone
+  /// start behind a locked screen, and an open microphone needs no start.
+  private var captureHeld: Bool { hasTap && engine?.isRunning == true }
+
   public override func load() {
     // The voice session logic runs in the web view. From iOS 17, WebKit suspends
     // web content that is not visible unless the policy says otherwise.
     if #available(iOS 17.0, *) {
       bridge?.webView?.configuration.preferences.inactiveSchedulingPolicy = .none
+      // An activity from a process that ended has no session.
+      VoiceActivity.endAll()
     }
   }
 
@@ -145,6 +156,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
   private func observeLifecycle() {
     let center = NotificationCenter.default
     let owner = state
+    VisVoiceControl.handler = { [weak self] control in self?.control(control) }
     for name in [
       AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification,
     ] {
@@ -225,7 +237,12 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             return
           }
           do {
-            try self.configure(capture: true, captureId: id)
+            if self.captureHeld {
+              self.diagnostic("capture resumed")
+              self.tapCaptureId = id
+            } else {
+              try self.configure(capture: true, captureId: id)
+            }
             self.awaitCaptureStart(owner: owner, state: state, captureId: id, call: call)
           } catch LiveVoiceState.Failure.voiceProcessingUnavailable {
             self.permissionCall = nil
@@ -314,7 +331,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         .playAndRecord, mode: .voiceChat,
         options: [.defaultToSpeaker, .allowBluetoothHFP])
     } else {
-      // Muting destroys the input graph rather than leaving a silent recording tap.
+      // A session that did not capture yet has no input graph.
       try audio.setCategory(.playback, mode: .default)
     }
     try audio.setPreferredSampleRate(24000)
@@ -410,6 +427,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     let owner = sessionId
     let token = UUID()
     capturePipeline = token
+    tapCaptureId = captureId
     // Bound callback work waiting for the main queue, independently of bridge credits.
     let credits = DispatchSemaphore(value: 4)
     let overflow = NSLock()
@@ -423,6 +441,13 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         if first {
           DispatchQueue.main.async { [weak self] in
             guard let self, self.sessionId == owner, self.capturePipeline == token else { return }
+            // A muted microphone drops its audio, so a full queue loses nothing.
+            guard self.state?.capturing == true else {
+              overflow.lock()
+              failed = false
+              overflow.unlock()
+              return
+            }
             self.fail("Microphone processing exceeded its queue limit.")
           }
         }
@@ -463,8 +488,9 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
       DispatchQueue.main.async { [weak self] in
         defer { credits.signal() }
         guard let self, self.sessionId == owner, self.capturePipeline == token,
-          let state = self.state, state.capturing, state.captureId == captureId
+          let state = self.state, state.capturing, state.captureId == self.tapCaptureId
         else { return }
+        let id = self.tapCaptureId
         do {
           guard let graph = self.engine else {
             throw LiveVoiceState.Failure.voiceProcessingUnavailable
@@ -477,7 +503,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             )
           }
           if conversionFailed { throw LiveVoiceState.Failure.invalid }
-          for (sequence, data) in try state.capture(samples, id: captureId) {
+          for (sequence, data) in try state.capture(samples, id: id) {
             if sequence == 0 {
               self.diagnostic("first PCM frame emitted")
               let pending = self.permissionCall
@@ -487,7 +513,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             self.notifyListeners(
               "capture",
               data: [
-                "sessionId": owner!, "captureId": captureId,
+                "sessionId": owner!, "captureId": id,
                 "sequence": sequence, "pcm": data.base64EncodedString(),
               ])
           }
@@ -506,8 +532,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         self.diagnostic("capture stop requested")
         self.permissionCall?.reject("Microphone capture stopped.")
         self.permissionCall = nil
-        self.stopEngine()
-        // In the foreground, output starts lazily with a playback-only graph.
+        // The capture graph stays, and its tap drops the audio of a stopped capture.
         if !self.appActive { self.holdAudio() }
       }
       call.resolve()
@@ -587,6 +612,52 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     }
   }
 
+  /// Shows the session state on the lock screen. Display only.
+  @objc public func setStatus(_ call: CAPPluginCall) {
+    command(call) {
+      _ = try self.owner(call)
+      if #available(iOS 17.0, *) {
+        guard
+          let status = VisVoiceAttributes.ContentState(
+            state: call.getString("state"), muted: call.getBool("muted") ?? false,
+            speaking: call.getBool("speaking") ?? false, task: call.getString("task"),
+            resumable: self.captureHeld)
+        else { throw LiveVoiceState.Failure.invalid }
+        let activity = self.activity as? VoiceActivity ?? VoiceActivity()
+        self.activity = activity
+        activity.show(status)
+      }
+      call.resolve()
+    }
+  }
+
+  /// A lock-screen button. The web session owns the protocol. Mute and end also
+  /// stop the capture here, so that they work when the web view is slow.
+  private func control(_ control: String) {
+    guard let id = sessionId, let state else { return }
+    // Without a held capture graph, unmute needs a microphone start that iOS can
+    // refuse behind a locked screen. A refusal ends the session, so do not try.
+    if control == "unmute", !appActive, !captureHeld { return }
+    notifyListeners("control", data: ["sessionId": id, "control": control])
+    guard control == "mute" || control == "end" else { return }
+    if state.capturing {
+      // The web session sends this same capture ID when it obeys the control.
+      _ = try? state.stopCapture(state.captureId + 1)
+      permissionCall?.reject("Microphone capture stopped.")
+      permissionCall = nil
+    }
+    guard control == "end" else { return }
+    // End releases the microphone at once.
+    stopEngine()
+    if !appActive { holdAudio() }
+    // The web session closes this plugin after it tells the gateway. Close here
+    // if it does not, and keep audio until then so that iOS does not suspend it.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+      guard let self, self.state === state else { return }
+      self.teardown()
+    }
+  }
+
   private func fail(_ message: String) {
     guard let owner = sessionId else { return }
     diagnostic("failure: \(message)")
@@ -602,6 +673,51 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     permissionCall = nil
     for observer in observers { NotificationCenter.default.removeObserver(observer) }
     observers.removeAll()
+    VisVoiceControl.handler = nil
+    if #available(iOS 17.0, *) { (activity as? VoiceActivity)?.end() }
+    activity = nil
     stopEngine(closing: true)
+  }
+}
+
+/// The Live Activity of one voice session. Use it on the main thread only.
+@available(iOS 17.0, *)
+private final class VoiceActivity {
+  private var activity: Activity<VisVoiceAttributes>?
+  private var pending: Task<Void, Never>?
+  private let startedAt = Date()
+
+  /// iOS starts an activity only for a foreground app. A refused start tries again
+  /// at the next state.
+  func show(_ state: VisVoiceAttributes.ContentState) {
+    let content = ActivityContent(state: state, staleDate: nil)
+    guard let activity else {
+      activity = try? Activity.request(
+        attributes: VisVoiceAttributes(startedAt: startedAt), content: content)
+      return
+    }
+    let previous = pending
+    pending = Task {
+      await previous?.value
+      await activity.update(content)
+    }
+  }
+
+  func end() {
+    guard let activity else { return }
+    self.activity = nil
+    let previous = pending
+    pending = Task {
+      await previous?.value
+      await activity.end(nil, dismissalPolicy: .immediate)
+    }
+  }
+
+  static func endAll() {
+    Task {
+      for activity in Activity<VisVoiceAttributes>.activities {
+        await activity.end(nil, dismissalPolicy: .immediate)
+      }
+    }
   }
 }

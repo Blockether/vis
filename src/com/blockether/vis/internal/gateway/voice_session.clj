@@ -170,21 +170,6 @@
       (when (= (:output-epoch state) (get-in state [:owned-turns turn-id :epoch]))
         (interrupt! session (:output-epoch state) reason)))))
 
-(defn mute!
-  "Invalidate input on mute. Unmute comes only from an authenticated client control."
-  [session muted]
-  #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-  (locking (:lock session)
-    (when (and (live? session) (not= muted (= "muted" (:capture @(:state session)))))
-      (swap! (:state session) #(-> %
-                                   (update :capture-generation inc)
-                                   (assoc :capture (if muted "muted" "live")
-                                          :current nil
-                                          :pending {}
-                                          :utterance "idle")))
-      (effect! session :abort-input)
-      (state! session))))
-
 (defn- reject-input!
   "Reject unfinished input on overload. Keep admitted tasks and output unchanged."
   [session]
@@ -224,6 +209,34 @@
        "Speech input fell behind. Unfinished requests were not admitted. Unmute to try again."})
     (state! session))
   false)
+
+(defn mute!
+  "Stop input on mute. Speech from before the mute stays valid, and the mute ends an
+   open utterance. Unmute invalidates unfinished input. It comes only from an
+   authenticated client control."
+  [session muted]
+  #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+  (locking (:lock session)
+    (when (and (live? session) (not= muted (= "muted" (:capture @(:state session)))))
+      (if muted
+        ;; The capture generation stays, so that queued input of this generation finishes.
+        (let [current (get-in @(:state session) [:current :id])]
+          (swap! (:state session) assoc :capture "muted" :current nil)
+          (if current
+            (swap! (:state session) assoc-in [:pending current :phase] :finishing)
+            (when (empty? (:pending @(:state session)))
+              (swap! (:state session) assoc :utterance "idle")))
+          (if (and current (false? (effect! session :finish-input current)))
+            (reject-input! session)
+            (state! session)))
+        (do (swap! (:state session) #(-> %
+                                         (update :capture-generation inc)
+                                         (assoc :capture "live"
+                                                :current nil
+                                                :pending {}
+                                                :utterance "idle")))
+            (effect! session :abort-input)
+            (state! session))))))
 
 (defn start-utterance!
   [session generation utterance-id]

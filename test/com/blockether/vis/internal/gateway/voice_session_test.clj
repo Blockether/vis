@@ -162,17 +162,28 @@
                                 :sequence 2
                                 :sample-offset 960))
           (expect (= "off" (:capture (voice/snapshot session))))))
-    (it "invalidates retained input on mute, including a late final"
-        (let [{:keys [session admitted aborts]} (fixture)]
+    (it "admits speech from before a mute and invalidates unfinished input on unmute"
+        (let [finished
+              (atom [])
+
+              {:keys [session admitted aborts]}
+              (fixture {:finish-input #(do (swap! finished conj %) true)})]
+
           (voice/start-utterance! session 0 1)
           (voice/end-utterance! session 0 1)
+          (voice/start-utterance! session 0 2)
           (voice/mute! session true)
-          (voice/final! session 1 {:text "A stale request" :revision 1})
-          (expect (empty? @admitted))
-          (expect (= [:input] @aborts))
+          (expect (= [1 2] @finished))
+          (expect (not-any? #{:input} @aborts))
           (expect (= "muted" (:capture (voice/snapshot session))))
+          (expect (false? (voice/start-utterance! session 0 3)))
+          (voice/final! session 1 {:text "Said before the mute" :revision 1})
+          (expect (= ["Said before the mute"] (mapv :request @admitted)))
           (voice/control! session {:type "capture.mute" :muted false})
-          (expect (= 2 (:capture-generation (voice/snapshot session))))))
+          (voice/final! session 2 {:text "A stale request" :revision 1})
+          (expect (= 1 (count @admitted)))
+          (expect (= [:input] (filterv #{:input} @aborts)))
+          (expect (= 1 (:capture-generation (voice/snapshot session))))))
     (it "preserves mute when the session starts muted"
         (let [{:keys [session admitted]} (fixture {:muted true})]
           (final! session 0 "Cannot hear this")

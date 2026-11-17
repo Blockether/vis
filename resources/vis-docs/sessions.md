@@ -74,7 +74,8 @@ Before regular use, check these behaviors on each device and audio route:
 
 - Check that speaker playback does not submit another request through the microphone.
 - Speak during playback and check that interruption works without losing your request.
-- Mute the microphone and check that its system indicator clears while new answers can still play.
+- Mute the microphone and check that Vis hears nothing while new answers can still play.
+  In the iPhone app, the system microphone indicator stays on until you end voice mode.
 - Change the audio route or leave the app and check that voice stops.
 
 Changing microphone state can interrupt current speech because the app rebuilds its audio path.
@@ -125,7 +126,7 @@ If you explicitly request a silent reply, Vis can show the result without speech
 
 | Action | Companion | TUI | Effect |
 |---|---|---|---|
-| Mute input | **Mute microphone** | `/hands-free mute` | Release capture and discard retained input. |
+| Mute input | **Mute microphone** | `/hands-free mute` | Stop capture. Speech from before the mute still becomes a request. |
 | Resume input | **Unmute microphone** | `/hands-free unmute` | Start capture again. |
 | Stop output | **Stop speech** | `/hands-free stop-speech` | Stop old speech, not the agent task. |
 | End conversation | **End voice mode** | `/hands-free end` | Close voice devices, not agent tasks. |

@@ -86,6 +86,9 @@ describe('iOS live voice preparation', () => {
         '\n' + readFileSync(join(root, 'native/ios/LiveVoicePlugin.swift'), 'utf8'),
       );
       expect(project.match(/LiveVoice.swift in Sources \*\/ =/g)).toHaveLength(1);
+      // The app and the widget extension both compile the Live Activity model.
+      expect(project.match(/VisVoiceActivity\.swift in Sources \*\/,/g)).toHaveLength(2);
+      expect(readFileSync(join(app, 'Info.plist'), 'utf8')).toContain('NSSupportsLiveActivities');
       expect(project).toContain('path = LiveVoice.swift;');
       const plugins = JSON.parse(readFileSync(config, 'utf8')).packageClassList;
       expect(plugins).toEqual(expect.arrayContaining(['ExistingPlugin', 'LiveVoicePlugin', 'OAuthLoopbackPlugin', 'PasteMenuPlugin']));
@@ -96,6 +99,12 @@ describe('iOS live voice preparation', () => {
       expect(run('--check').status).not.toBe(0);
       expect(run().status).toBe(0);
       expect(run('--check').status).toBe(0);
+      rmSync(join(ios, 'App/VisVoice'), { recursive: true });
+      expect(run('--check').status).not.toBe(0);
+      expect(run().status).toBe(0);
+      expect(readFileSync(join(ios, 'App/VisVoice/VisVoiceWidget.swift'), 'utf8')).toBe(
+        readFileSync(join(root, 'native/ios/VisVoiceWidget.swift'), 'utf8'),
+      );
       writeFileSync(join(app, 'LiveVoice.swift'), '// Outdated source.\n');
       expect(run('--check').status).not.toBe(0);
       expect(run().status).toBe(0);

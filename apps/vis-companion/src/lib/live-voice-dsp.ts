@@ -50,6 +50,12 @@ export class VoiceEndpoint {
     this.active = false;
     this.loudMs = this.quietMs = this.durationMs = 0;
   }
+  /** Ends an open utterance at once. Reports whether one was open. */
+  finish(): boolean {
+    const open = this.active;
+    this.reset();
+    return open;
+  }
   push(samples: Int16Array): VadEvent[] {
     const ms = (samples.length * 1000) / L.sample_rate;
     const energy = Math.sqrt(

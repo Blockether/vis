@@ -1,5 +1,6 @@
 import { registerPlugin } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
+import type { LiveVoiceStatus } from './live-voice-audio';
 
 /** Local PCM bridge. It does not perform speech recognition, TTS or network calls. */
 export type NativeVoiceCapabilities = {
@@ -30,6 +31,7 @@ export type NativeVoicePlayed = {
   playedSamples: number;
 };
 export type NativeVoiceFailure = { sessionId: string; message: string };
+export type NativeVoiceControl = { sessionId: string; control: string };
 
 /** Generations reject stale calls. PCM is mono signed 16-bit little-endian, encoded as base64. */
 export interface NativeLiveVoicePlugin {
@@ -50,6 +52,8 @@ export interface NativeLiveVoicePlugin {
   }): Promise<void>;
   stopOutput(options: { sessionId: string; outputId: number }): Promise<void>;
   close(options: { sessionId: string }): Promise<void>;
+  /** Display only. The lock screen and the voice notice show this state. */
+  setStatus(options: { sessionId: string } & LiveVoiceStatus): Promise<void>;
   addListener(
     event: 'capture',
     listener: (frame: NativeVoiceCapture) => void,
@@ -61,6 +65,10 @@ export interface NativeLiveVoicePlugin {
   addListener(
     event: 'failure',
     listener: (event: NativeVoiceFailure) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    event: 'control',
+    listener: (event: NativeVoiceControl) => void,
   ): Promise<PluginListenerHandle>;
 }
 

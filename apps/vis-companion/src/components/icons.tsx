@@ -67,6 +67,7 @@ import {
   Crop,
   Download,
   Upload,
+  Volume2,
   Ellipsis,
   EllipsisVertical,
   Eraser,
@@ -83,6 +84,7 @@ import {
   MessageSquareMore,
   Maximize2,
   Mic,
+  MicOff,
   Minus,
   PanelLeft,
   PanelRight,
@@ -318,6 +320,16 @@ export function ImageIcon({ className }: { className?: string }) {
 /** Dictation. */
 export function MicIcon({ className }: { className?: string }) {
   return <Mark icon={Mic} className={className} />;
+}
+
+/** A microphone that does not listen. */
+export function MicOffIcon({ className }: { className?: string }) {
+  return <Mark icon={MicOff} className={className} />;
+}
+
+/** Speech that plays now. */
+export function SpeakerIcon({ className }: { className?: string }) {
+  return <Mark icon={Volume2} className={className} />;
 }
 
 /** Take back what was just started — a drawing stroke, a line opened in a band. */
