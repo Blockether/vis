@@ -8,7 +8,7 @@ import { renderOpenSteps } from './trace-harness';
 import { activityHistoryPage } from '../dev/activity-history';
 import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
-import { dismissTopLayer, EDGE_BACK_PX, EDGE_SETTLE_MS } from '../lib/edge-back';
+import { dismissTopLayer, EDGE_SETTLE_MS } from '../lib/edge-back';
 import { drag } from '../lib/pull-to-search.fixture';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 
@@ -51,7 +51,8 @@ it('closes an opened run on a swipe in from its left edge', () => {
     act(() =>
       drag(dialog, at, [
         { x: at.x + 40, y: at.y },
-        { x: at.x + EDGE_BACK_PX + 20, y: at.y },
+        // Past the middle of the dialog: a lift there leaves it, however slow the finger.
+        { x: at.x + window.innerWidth / 2 + 20, y: at.y },
       ]),
     );
     act(() => {

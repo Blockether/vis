@@ -28,6 +28,8 @@ const PANE = { left: 0 };
 const AT: EdgePoint = { x: 6, y: 300 };
 const watching = { from: AT, phase: 'none' as EdgePhase, across: 0 };
 const across = (by: number) => ({ x: AT.x + by, y: AT.y });
+/** Past the middle of the page that the finger drags: a lift there leaves, however slow. */
+const FAR = window.innerWidth / 2 + 20;
 
 describe('reading a swipe in from the pane edge', () => {
 
@@ -188,7 +190,7 @@ describe('swiping back to the session list', () => {
     const onBack = vi.fn();
     const { getByTestId } = render(<OpenSession onBack={onBack} />);
 
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    act(() => swipeIn(getByTestId('line'), FAR));
     settle();
 
     expect(onBack).toHaveBeenCalledTimes(1);
@@ -198,7 +200,7 @@ describe('swiping back to the session list', () => {
     const onBack = vi.fn();
     const { getByTestId } = render(<OpenSession onBack={onBack} />);
 
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20, 'cancel'));
+    act(() => swipeIn(getByTestId('line'), FAR, 'cancel'));
     settle();
 
     expect(onBack).not.toHaveBeenCalled();
@@ -210,7 +212,7 @@ describe('swiping back to the session list', () => {
     expect(getByTestId('list')).toBeInTheDocument();
 
     rerender(<OpenSession onBack={onBack} open />);
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    act(() => swipeIn(getByTestId('line'), FAR));
     settle();
 
     expect(onBack).toHaveBeenCalledTimes(1);
@@ -224,7 +226,7 @@ describe('swiping back to the session list', () => {
     rerender(<OpenSession onBack={onBack} enabled={false} />);
     act(() => {
       fireTouch(line, 'touchstart', [AT]);
-      fireTouch(line, 'touchmove', [across(EDGE_BACK_PX + 20)]);
+      fireTouch(line, 'touchmove', [across(FAR)]);
       fireTouch(line, 'touchend', []);
     });
     settle();
@@ -358,7 +360,7 @@ describe('the pop the stroke draws', () => {
     expect(list.style.cssText).toBe('');
     expect(pane.style.cssText).toBe('');
 
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    act(() => swipeIn(getByTestId('line'), FAR));
     settle();
     expect(onBack).toHaveBeenCalledTimes(1);
     rerender(<OpenSession onBack={onBack} enabled={false} />);
@@ -405,7 +407,7 @@ describe('the pop the stroke draws', () => {
 
     act(() => swipeIn(getByTestId('line'), 20, 'cancel'));
     settle();
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    act(() => swipeIn(getByTestId('line'), FAR));
     flush();
     settle();
     expect(onBack).toHaveBeenCalledTimes(1);
@@ -453,7 +455,7 @@ describe('the pop the stroke draws', () => {
     const pane = getByTestId('pane');
     const list = getByTestId('list');
 
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    act(() => swipeIn(getByTestId('line'), FAR));
 
     expect(pane.style.transition).toContain(EDGE_EASING);
     expect(xOf(pane)).toBe(window.innerWidth);
@@ -477,7 +479,7 @@ describe('the pop the stroke draws', () => {
     const pane = getByTestId('pane');
     const list = getByTestId('list');
 
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    act(() => swipeIn(getByTestId('line'), FAR));
     settle();
     act(() => {
       vi.advanceTimersByTime(100);
@@ -501,7 +503,7 @@ describe('the pop the stroke draws', () => {
     const { getByTestId } = render(<OpenSession onBack={onBack} />);
     const pane = getByTestId('pane');
 
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    act(() => swipeIn(getByTestId('line'), FAR));
     settle();
     act(() => {
       vi.advanceTimersByTime(EDGE_STEP_WAIT_MS + 100);
@@ -525,6 +527,71 @@ describe('the pop the stroke draws', () => {
 
     settle();
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  // Regression, user report (paraphrased: the slide from a session back to the list does
+  // not feel native on iOS). A slow drag of a fifth of the screen left the session when the
+  // finger let go. UIKit sends a page home when it is let go before its middle.
+  it('sends a page home when a slow finger lets it go before its middle', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+
+    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+
+    expect(xOf(getByTestId('pane'))).toBe(0);
+    settle();
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  // Reported with the same, measured in WKWebView: a slanted stroke also scrolled the
+  // transcript, by up to 140 px, under the finger that dragged it out.
+  it('holds the transcript still while a sideways stroke drags it', () => {
+    const { getByTestId } = render(<OpenSession onBack={vi.fn()} />);
+    const line = getByTestId('line');
+    // A scroller with more content than its box, which jsdom does not lay out.
+    line.style.overflowY = 'auto';
+    Object.defineProperty(line, 'scrollHeight', { value: 900 });
+    Object.defineProperty(line, 'clientHeight', { value: 300 });
+
+    act(() => {
+      fireTouch(line, 'touchstart', [AT]);
+      // Up and down in the strip: the reader scrolls, and the scroller stays theirs.
+      fireTouch(line, 'touchmove', [{ x: AT.x + 4, y: AT.y + 12 }]);
+    });
+    expect(line.style.overflowY).toBe('auto');
+
+    act(() => {
+      fireTouch(line, 'touchmove', [{ x: AT.x + 40, y: AT.y + 14 }]);
+    });
+    expect(line.style.overflowY).toBe('hidden');
+
+    act(() => {
+      fireTouch(line, 'touchend', []);
+    });
+    settle();
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(line.style.overflowY).toBe('auto');
+  });
+
+  // Measured with the same report: the last tenth of the curve moves the page less than
+  // half a pixel, and the list stayed dead under it until the curve ended.
+  it('takes the step when the page has arrived, not when the tail of the curve ends', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+
+    act(() => swipeIn(getByTestId('line'), FAR));
+    act(() => {
+      vi.advanceTimersByTime(EDGE_SETTLE_MS * 0.6);
+    });
+    // Still on its way: the transcript must not leave the shell under a moving page.
+    expect(onBack).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(EDGE_SETTLE_MS * 0.4 - 40);
+    });
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the plain step for a reader who asked for less motion', () => {
@@ -592,7 +659,7 @@ describe('a dialog leaving by the same stroke', () => {
     expect(xOf(box)).toBe(60);
 
     act(() => {
-      fireTouch(run, 'touchmove', [across(EDGE_BACK_PX + 20)]);
+      fireTouch(run, 'touchmove', [across(FAR)]);
       fireTouch(run, 'touchend', []);
     });
     settle();

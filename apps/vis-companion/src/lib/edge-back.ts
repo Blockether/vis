@@ -19,8 +19,9 @@
  * The numbers are UIKit's, read off the implementation Apple's own shape is
  * measured against (`ios.transition.ts` and `swipe-back.ts` in Ionic): a 0.33
  * parallax, a 10% black veil over the page underneath, `cubic-bezier(0.32, 0.72,
- * 0, 1)` and at most 540ms for the rest of the way. A reader who asked for less
- * motion keeps the plain step, with no slide at all.
+ * 0, 1)` and at most 540ms for the rest of the way. A page let go before the middle
+ * goes home unless it was thrown, and it does not scroll while it is dragged. A
+ * reader who asked for less motion keeps the plain step, with no slide at all.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -41,9 +42,10 @@ export interface EdgeBox {
 export const EDGE_ZONE_PX = 24;
 
 /**
- * How far across the finger must carry before the lift leaves the session. It is
- * one unhurried thumb sweep on the narrowest phone this app runs on, and long
- * enough that a tap which slid a little is never a navigation.
+ * How far across the finger must carry before the lift leaves the session, when the
+ * stroke drags no page. It is one unhurried thumb sweep on the narrowest phone this
+ * app runs on, and long enough that a tap which slid a little is never a navigation.
+ * A dragged page shows its own middle, and that decides instead ({@link edgeCompletes}).
  */
 export const EDGE_BACK_PX = 64;
 
@@ -120,8 +122,11 @@ export function edgeIsFree(from: EventTarget | null, root: Element, isLayer = fa
   return true;
 }
 
+/** The control points of the curve a page rides on iOS: x1, y1, x2, y2. */
+const EDGE_CURVE = [0.32, 0.72, 0, 1] as const;
+
 /** The curve a page rides on iOS, in and out of the stack. */
-export const EDGE_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)';
+export const EDGE_EASING = `cubic-bezier(${EDGE_CURVE.join(', ')})`;
 
 /** The longest the rest of the way back ever takes, in ms. */
 export const EDGE_SETTLE_MS = 540;
@@ -151,7 +156,10 @@ export const EDGE_DIM = 0.1;
  * {@link EDGE_EASING} at 0, `0.72 / 0.32`. The rest of the stroke is timed so that
  * the page leaves the finger at the finger's own speed instead of lurching ahead.
  */
-const EDGE_LAUNCH = 0.72 / 0.32;
+const EDGE_LAUNCH = EDGE_CURVE[1] / EDGE_CURVE[0];
+
+/** Nearer to its end than this, in px, the page has arrived: the eye sees no more motion. */
+const EDGE_ARRIVED_PX = 0.5;
 
 /** A finger held still this long before the lift was not thrown, in ms. */
 const EDGE_STILL_MS = 80;
@@ -166,8 +174,17 @@ export const EDGE_FLICK_PX_MS = 0.2;
  */
 const EDGE_TOP_PX_MS = 4;
 
-/** The shadow the leading edge of the page being left casts on the list behind it. */
-const EDGE_SHADOW = '-12px 0 24px rgba(0, 0, 0, 0.28)';
+/**
+ * The shadow the leading edge of the page being left casts on the list behind it: a
+ * thin line of shade at the edge, as UIKit draws it, not a glow across the list.
+ */
+const EDGE_SHADOW = '-2px 0 8px rgba(0, 0, 0, 0.16)';
+
+/**
+ * Sideways past this, and further than it has gone up or down, the stroke holds the
+ * page still. It is the distance at which the phone itself decides that a drag began.
+ */
+const EDGE_HOLD_PX = 10;
 
 /** How far across the stroke has to come before the panes are set up to be dragged. */
 const EDGE_OPEN_PX = 4;
@@ -177,10 +194,15 @@ const EDGE_OPEN_PX = 4;
  * swipe: has the page come far enough to stay gone, or was it THROWN — a flick
  * completes from anywhere, and a finger travelling back toward the edge never
  * completes, however far out it had already carried the page.
+ *
+ * Far enough is the middle of the page that the finger drags, `width` px wide: UIKit
+ * sends a page home when it is let go before its middle. A stroke that drags no page
+ * (`width` 0, for a reader who asked for less motion) has no middle to show, so
+ * {@link EDGE_BACK_PX} decides.
  */
-export function edgeCompletes(across: number, velocity: number): boolean {
+export function edgeCompletes(across: number, velocity: number, width = 0): boolean {
   if (velocity < 0) return false;
-  if (across >= EDGE_BACK_PX) return true;
+  if (across >= (width > 0 ? width / 2 : EDGE_BACK_PX)) return true;
   return velocity > EDGE_FLICK_PX_MS && across > HOMEWARD_PX;
 }
 
@@ -198,6 +220,29 @@ export function edgeSettleMs(remainingPx: number, velocity: number): number {
   return Math.min(Math.round((EDGE_LAUNCH * remainingPx) / speed), EDGE_SETTLE_MS);
 }
 
+/** One coordinate of a cubic Bézier curve from 0 to 1, with control values `a` and `b`. */
+const bezier = (a: number, b: number, s: number): number =>
+  3 * (1 - s) ** 2 * s * a + 3 * (1 - s) * s ** 2 * b + s ** 3;
+
+/**
+ * When the page ARRIVES, in ms: the time at which a settle of `ms` over `remainingPx`
+ * on {@link EDGE_EASING} is within {@link EDGE_ARRIVED_PX} of its end. The curve has a
+ * long tail, and the last fifth or more of it moves the page less than a pixel. The
+ * step is taken on arrival, so the list is live again while the tail runs out unseen.
+ */
+export function edgeArrivalMs(remainingPx: number, ms: number): number {
+  if (ms <= 0 || remainingPx <= EDGE_ARRIVED_PX) return 0;
+  const done = 1 - EDGE_ARRIVED_PX / remainingPx;
+  let low = 0;
+  let high = 1;
+  for (let i = 0; i < 20; i += 1) {
+    const mid = (low + high) / 2;
+    if (bezier(EDGE_CURVE[1], EDGE_CURVE[3], mid) < done) low = mid;
+    else high = mid;
+  }
+  return Math.round(ms * bezier(EDGE_CURVE[0], EDGE_CURVE[2], high));
+}
+
 /**
  * The two panes for the length of one stroke: the transcript being dragged out
  * and the list waiting under it, each with the inline styles it had before, so
@@ -212,6 +257,8 @@ interface EdgeStage {
   readonly width: number;
   readonly paneStyle: string;
   readonly underStyle: string;
+  /** The scrollers that the stroke holds still, each with the inline `overflow-y` it had. */
+  readonly held: Array<readonly [HTMLElement, string]>;
 }
 
 /**
@@ -244,6 +291,7 @@ function edgeOpen(pane: HTMLElement, under: HTMLElement | null, isLayer: boolean
     width,
     paneStyle: pane.style.cssText,
     underStyle: under?.style.cssText ?? '',
+    held: [],
   };
 
   if (frame && !isLayer) {
@@ -284,6 +332,36 @@ function edgeVeil(pane: HTMLElement): HTMLElement {
   return veil;
 }
 
+/**
+ * What a finger that landed on `from` can scroll up and down: each ancestor of the
+ * touch, up to the pane, that scrolls and has content taller than its box.
+ */
+export function edgeScrollers(from: EventTarget | null, root: Element): HTMLElement[] {
+  const found: HTMLElement[] = [];
+  let node = from instanceof Element ? from : null;
+  while (node) {
+    if (node instanceof HTMLElement && node.scrollHeight > node.clientHeight + 1) {
+      const overflow = getComputedStyle(node).overflowY;
+      if (overflow === 'auto' || overflow === 'scroll') found.push(node);
+    }
+    if (node === root) break;
+    node = node.parentElement;
+  }
+  return found;
+}
+
+/**
+ * Hold still what the finger could scroll up and down. The listeners only watch, so
+ * they cannot refuse a scroll. A scroller with `overflow-y: hidden` keeps its place
+ * and does not follow the finger. {@link edgeClose} gives each one its own value back.
+ */
+function edgeHoldScroll(stage: EdgeStage, from: EventTarget | null, root: Element): void {
+  for (const scroller of edgeScrollers(from, root)) {
+    stage.held.push([scroller, scroller.style.overflowY]);
+    scroller.style.overflowY = 'hidden';
+  }
+}
+
 /** Stand both panes where a stroke this far across puts them. */
 function edgePaint(stage: EdgeStage, across: number): void {
   const travelled = Math.max(0, Math.min(across, stage.width));
@@ -308,6 +386,8 @@ function edgeSettle(stage: EdgeStage, completes: boolean, ms: number): void {
 
 /** Give both panes back exactly the inline styles they arrived with. */
 function edgeClose(stage: EdgeStage): void {
+  for (const [scroller, overflowY] of stage.held) scroller.style.overflowY = overflowY;
+  stage.held.length = 0;
   stage.pane.style.cssText = stage.paneStyle;
   if (stage.under) stage.under.style.cssText = stage.underStyle;
   stage.veil?.remove();
@@ -475,6 +555,9 @@ export function useEdgeBack(
     let landing: EdgeStage | null = null;
     // This stroke has already taken the keyboard down.
     let isKeyboardDropped = false;
+    // What the finger landed on, and whether this stroke already holds its scrollers.
+    let from: EventTarget | null = null;
+    let isScrollHeld = false;
 
     const pointOf = (event: TouchEvent): EdgePoint | null => {
       const touch = event.touches[0];
@@ -539,7 +622,8 @@ export function useEdgeBack(
     /**
      * End the stroke: carry the panes the rest of the way, and only once they are
      * there take the step. Leaving is announced AFTER the slide so the transcript
-     * is gone from the glass before it is gone from the shell.
+     * is gone from the glass before it is gone from the shell. There is where the
+     * page arrives ({@link edgeArrivalMs}), not where the tail of the curve ends.
      *
      * The step can come later than the call. A session that the list opened is a
      * history entry, so the shell leaves it by a pop, and the pop arrives as a later
@@ -556,7 +640,8 @@ export function useEdgeBack(
       }
       landing = closing;
       const travelled = Math.max(0, Math.min(across, closing.width));
-      const ms = edgeSettleMs(completes ? closing.width - travelled : travelled, velocity);
+      const remaining = completes ? closing.width - travelled : travelled;
+      const ms = edgeSettleMs(remaining, velocity);
       edgeSettle(closing, completes, ms);
       const land = () => {
         timer = null;
@@ -568,7 +653,7 @@ export function useEdgeBack(
         if (landing) timer = view?.setTimeout(release, EDGE_STEP_WAIT_MS) ?? null;
       };
       if (ms <= 0) land();
-      else timer = view?.setTimeout(land, ms) ?? null;
+      else timer = view?.setTimeout(land, edgeArrivalMs(remaining, ms)) ?? null;
     };
 
     const onStart = (event: Event) => {
@@ -590,6 +675,8 @@ export function useEdgeBack(
       gesture = started && edgeIsFree(touchEvent.target, pane, isLayer) ? started : null;
       velocity = 0;
       isKeyboardDropped = false;
+      from = touchEvent.target;
+      isScrollHeld = false;
       lastAt = event.timeStamp;
       lastX = at?.x ?? 0;
       // THE STAGE IS SET UNDER THE FINGER, BEFORE IT MOVES. Bringing the app bar and the
@@ -626,6 +713,14 @@ export function useEdgeBack(
       if (!stage && next.across >= EDGE_OPEN_PX && wantsMotion(view)) {
         stage = open();
       }
+      // THE PAGE DOES NOT SCROLL WHILE IT IS DRAGGED OUT. The browser scrolled the
+      // transcript by the up and down part of a slanted stroke, under the finger that
+      // carried it away. UIKit holds a page still for the whole pop.
+      const vertical = Math.abs((at?.y ?? next.from.y) - next.from.y);
+      if (stage && !isScrollHeld && next.across >= EDGE_HOLD_PX && next.across > vertical) {
+        isScrollHeld = true;
+        edgeHoldScroll(stage, from, pane);
+      }
       if (stage) edgePaint(stage, next.across);
     };
 
@@ -634,7 +729,7 @@ export function useEdgeBack(
       if (!gesture) return;
       // A finger that stopped before it let go throws nothing, whatever it did before.
       if (event.timeStamp - lastAt > EDGE_STILL_MS) velocity = 0;
-      const completes = edgeCompletes(gesture.across, velocity);
+      const completes = edgeCompletes(gesture.across, velocity, stage?.width ?? 0);
       finish(completes, gesture.across);
     };
 

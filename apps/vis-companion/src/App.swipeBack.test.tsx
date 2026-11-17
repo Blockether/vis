@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderApp } from './app-harness';
 import { listSession } from './screens/sessions-screen-harness';
 import { drag } from './lib/pull-to-search.fixture';
-import { EDGE_BACK_PX } from './lib/edge-back';
 
 let restore = () => {};
 afterEach(() => {
@@ -26,6 +25,9 @@ const fleet = () => [
     ],
   },
 ];
+
+/** Past the middle of the transcript: a lift there leaves it, however slow the finger. */
+const FAR = window.innerWidth / 2 + 20;
 
 /** Carry a finger in from `x` by `distance`, and lift. */
 const swipe = (element: Element, x: number, distance: number) =>
@@ -50,7 +52,7 @@ describe('swiping in from the edge of a transcript', () => {
     const pane = (view.baseElement.querySelector('main') as HTMLElement)
       .lastElementChild as HTMLElement;
 
-    swipe(pane, 6, EDGE_BACK_PX + 20);
+    swipe(pane, 6, FAR);
 
     await waitFor(() => expect(screen.queryByLabelText('Message Vis')).toBeNull());
     expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();
@@ -67,7 +69,7 @@ describe('swiping in from the edge of a transcript', () => {
     const pane = (view.baseElement.querySelector('main') as HTMLElement)
       .lastElementChild as HTMLElement;
 
-    swipe(pane, 200, EDGE_BACK_PX + 120);
+    swipe(pane, 200, FAR);
 
     expect(screen.getByLabelText('Message Vis')).toBeVisible();
     view.unmount();
@@ -95,7 +97,7 @@ describe('swiping in from the edge of a transcript', () => {
     const list = main.firstElementChild as HTMLElement;
     const pane = main.lastElementChild as HTMLElement;
 
-    swipe(pane, 6, EDGE_BACK_PX + 20);
+    swipe(pane, 6, FAR);
     await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
     // Frames go by before the pop.
     await act(() => new Promise((done) => setTimeout(done, 50)));

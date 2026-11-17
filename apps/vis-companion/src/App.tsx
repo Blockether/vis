@@ -283,7 +283,15 @@ const PHONE_LIST_CLASS = 'isolate h-full';
  */
 const PARKED_LIST_CLASS =
   'absolute inset-0 -z-10 [content-visibility:hidden] not-supports-[content-visibility:hidden]:invisible';
-const PHONE_PANE_CLASS = 'absolute inset-0 bg-ink';
+/**
+ * THE PHONE'S PANE IS A LAYER BEFORE A FINGER COMES DOWN. The edge swipe gives the
+ * pane a `z-index` when a touch starts in the edge strip. That made the pane a
+ * stacking context in the middle of the touch, and WebKit then dropped the scroll
+ * that the same finger had started: a transcript scrolled from the edge moved a few
+ * pixels and stopped. `isolate` makes the pane that context from the start, and it
+ * changes no paint order: the pane's own overlays go through the overlay layer.
+ */
+const PHONE_PANE_CLASS = 'isolate absolute inset-0 bg-ink';
 const DESK_PANE_CLASS = 'h-full min-h-0 min-w-0 flex-1 bg-ink';
 
 const MemoSessionsScreen = memo(SessionsScreen);
