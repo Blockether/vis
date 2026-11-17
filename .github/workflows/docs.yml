@@ -64,7 +64,7 @@ jobs:
       - run: node --test ../../scripts/cloudflare-https.test.mjs
       - run: apps/vis-docs/node_modules/.bin/eslint --config apps/vis-docs/eslint.config.js scripts/cloudflare-https*.mjs
         working-directory: .
-      - run: npm audit --audit-level=high
+      - run: node audit.mjs
       - run: npx --no-install wrangler deploy --dry-run
 
   deploy:
