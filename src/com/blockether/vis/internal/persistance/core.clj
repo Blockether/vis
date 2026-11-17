@@ -227,6 +227,8 @@
   (db-council-replay [db-info sid key])
   (db-council-insert! [db-info row recipients infer-reply?])
   (db-council-bind-wake! [db-info entry-id sid activation])
+  (db-council-hold! [db-info entry-id sid held?])
+  (db-council-held [db-info])
   (db-council-page [db-info gid thread roots? after limit])
   (db-council-pending [db-info sid activation gid after limit])
   (db-council-unanswered [db-info sid ids])

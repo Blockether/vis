@@ -6412,6 +6412,8 @@
   "Keep Council `entry` for `sid` while its rate limit hold lasts. The first held entry schedules
    the one release at the end of the hold. Answers a true value: the session takes the entry later."
   [db sid entry hold-ms]
+  ;; The mark outlives this process: see [[restore-held-wakes!]].
+  (persistance/db-council-hold! db (:entry_id entry) (str sid) true)
   (let [first? (volatile! false)]
     (update-existing-session! sid
                               (fn [e]
@@ -6470,10 +6472,26 @@
                          {:error (:error result)})))
        result))))
 
+(defn- wake-held!
+  "Give the held Council `entries` of `sid` to the wake path, oldest first. One turn
+   takes them all: the first entry starts it or joins the running turn, and the others
+   join it as Council input. While a hold lasts, they are held again. An entry that
+   the wake path refuses loses its hold mark and stays in its thread."
+  [db sid entries]
+  (doseq [[n entry] (map-indexed vector entries)]
+    (try (council-wake! db sid entry (when (zero? (long n)) (subvec entries 1)))
+         (catch Throwable t
+           (try (persistance/db-council-hold! db (:entry_id entry) (str sid) false)
+                (catch Throwable _ nil))
+           (tel/log! {:level :warn
+                      :id ::held-wake-skipped
+                      :data {:session-id sid
+                             :entry-id (:entry_id entry)
+                             :error-class (.getName (class t))}})))))
+
 (defn- release-held-wakes!
-  "Give the Council entries that a rate limit held for `sid` to the wake path, oldest first.
-   One turn takes them all: the first entry starts it or joins the running turn, and the others
-   join it as Council input. While the hold lasts, they are held again."
+  "Give the Council entries that a rate limit held for `sid` to the wake path: see
+   [[wake-held!]]."
   [sid]
   (let [held (volatile! nil)]
     (update-existing-session! sid
@@ -6481,14 +6499,22 @@
                                 (vreset! held (:council-held e))
                                 (dissoc e :council-held)))
     (when-let [{:keys [db entries]} @held]
-      (doseq [[n entry] (map-indexed vector entries)]
-        (try (council-wake! db sid entry (when (zero? (long n)) (subvec entries 1)))
-             (catch Throwable t
-               (tel/log! {:level :warn
-                          :id ::held-wake-skipped
-                          :data {:session-id sid
-                                 :entry-id (:entry_id entry)
-                                 :error-class (.getName (class t))}})))))))
+      (wake-held! db sid entries))))
+
+(defn restore-held-wakes!
+  "Give the Council entries that a stopped gateway held during a rate limit to their
+   sessions. The hold was in the memory of that gateway, so each session takes its
+   entries now. Returns the number of entries."
+  []
+  (let [db
+        (lp/db-info)
+
+        held
+        (persistance/db-council-held db)]
+
+    (doseq [[sid rows] (group-by :session-id held)]
+      (wake-held! db sid (mapv :entry rows)))
+    (count held)))
 
 (defn- parked-turn-ids
   "The ids of the parked gateway turns in `db` that a start can still resume."

@@ -2698,3 +2698,52 @@
               (expect (= "unavailable"
                          (get-in (publish w {:content "Evidence?" :ping [b] :reply_required true})
                                  [:replies 0 :state])))))))))
+
+;; Review 2026-11-17: an entry that a rate limit held was only in the memory of the
+;; gateway. A gateway that started again never gave it to its session.
+(defdescribe
+  held-ping-survives-the-gateway-test
+  (it
+    "keeps the hold mark of a ping until a turn takes the entry"
+    (let [db
+          (h/store)
+
+          gid
+          (str (:id (ps/db-create-project! db {:name "Held"})))
+
+          [a b]
+          (mapv (fn [_]
+                  (str (h/store-session! db {:channel :api})))
+                (range 2))
+
+          _
+          (doseq [sid [a b]]
+            (ps/db-set-session-project! db sid gid))
+
+          entry-id
+          (get-in (ps/db-council-insert! db
+                                         {:group_id gid
+                                          :author_sid a
+                                          :activation_id "a"
+                                          :source "host"
+                                          :title "Result"
+                                          :content "Result"
+                                          :created_at 1
+                                          :idempotency_key "held"
+                                          :fingerprint "held"}
+                                         [[b "council-wake"]]
+                                         false)
+                  [:entry :entry_id])
+
+          held
+          #(mapv (juxt :session-id (comp :entry_id :entry)) (ps/db-council-held db))]
+
+      (expect (= [] (held)))
+      (ps/db-council-hold! db entry-id b true)
+      (expect (= [[b entry-id]] (held)))
+      (ps/db-council-hold! db entry-id b false)
+      (expect (= [] (held)))
+      (ps/db-council-hold! db entry-id b true)
+      (ps/db-council-bind-wake! db entry-id b "turn-1")
+      (expect (= [] (held)))
+      (expect (= [entry-id] (mapv :entry_id (ps/db-council-pending db b "turn-1" gid 0 20)))))))

@@ -4312,17 +4312,33 @@
                 (atom [])
 
                 scheduled
-                (atom [])]
+                (atom [])
+
+                ;; The hold marks of the store: entry id to session id.
+                marks
+                (atom (sorted-map))]
 
             (with-redefs-fn {#'state/registry (atom {"lead" {:turns {}}})
                              #'toggles/enabled? (constantly true)
                              #'state/council-wake-eligible? (constantly true)
                              #'council/default-group (constantly "g")
+                             #'lp/db-info (constantly ::db)
                              #'persistance/db-agent-info (constantly agent)
+                             #'persistance/db-council-hold!
+                             (fn [_ id sid held?]
+                               (if held? (swap! marks assoc id sid) (swap! marks dissoc id)))
+                             #'persistance/db-council-held (fn [_]
+                                                             (mapv (fn [[id sid]]
+                                                                     {:session-id sid
+                                                                      :entry (entry id)})
+                                                                   @marks))
                              #'state/schedule-held-wakes! (fn [sid ms]
                                                             (swap! scheduled conj [sid ms]))
+                             ;; The turn that takes an entry binds its ping.
                              #'state/submit-turn! (fn [_ opts]
                                                     (swap! submitted conj opts)
+                                                    (swap! marks dissoc
+                                                      (get-in opts [:council-ping :entry-id]))
                                                     {:turn {}})}
               #(f submitted scheduled))))
 
@@ -4353,6 +4369,20 @@
                (expect (= "result 1\n\nresult 2\n\nresult 3\n\nresult 4"
                           (:display-request (first @submitted))))
                (expect (nil? (:council-held (get @@#'state/registry "lead")))))))
+    ;; Review 2026-11-17: the held entries were only in the registry of the gateway.
+    (it "gives the held notifications to their session after the gateway starts again"
+        (run nil
+             (fn [submitted _]
+               (#'state/note-rate-limit! "lead" limited)
+               (doseq [id [1 2]]
+                 (state/council-wake! ::db "lead" (entry id)))
+               ;; A new process has no registry entry of the hold.
+               (reset! @#'state/registry {"lead" {:turns {}}})
+               (expect (= 2 (state/restore-held-wakes!)))
+               (expect (= [1 2] (mapv #(get-in % [:council-ping :entry-id]) @submitted)))
+               (expect (str/includes? (:request (first @submitted))
+                                      "Council notifications #1, #2."))
+               (expect (= 0 (state/restore-held-wakes!)) "a turn took the entries"))))
     (it "holds them again when the release comes before the end of the hold"
         (run nil
              (fn [submitted scheduled]

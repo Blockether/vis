@@ -7698,7 +7698,32 @@
                                 {:update :council_ping
                                  :set {:activation_id activation}
                                  :where [:and [:= :entry_id entry-id] [:= :recipient_sid sid]
-                                         [:= :activation_id "council-wake"]]}))))
+                                         [:in :activation_id ["council-wake" "council-held"]]]}))))
+
+(defn db-council-hold!
+  "Mark the idle ping of `entry-id` to `sid` as held (`held?`), or take the mark away.
+   A held ping waits for the end of a rate limit hold. The mark is in the database,
+   so a gateway that starts again finds the ping: see [[db-council-held]]."
+  [db entry-id sid held?]
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (execute! tx
+                                {:update :council_ping
+                                 :set {:activation_id (if held? "council-held" "council-wake")}
+                                 :where [:and [:= :entry_id entry-id] [:= :recipient_sid sid]
+                                         [:= :activation_id
+                                          (if held? "council-wake" "council-held")]]}))))
+
+(defn db-council-held
+  "The idle pings that a rate limit holds, oldest first: `{:session-id sid :entry entry}`."
+  [db]
+  (mapv (fn [row]
+          {:session-id (:recipient_sid row) :entry (db-council-get db (:entry_id row))})
+        (query! db
+                {:select [:entry_id :recipient_sid]
+                 :from [:council_ping]
+                 :where [:and [:= :activation_id "council-held"] [:= :state "pending"]]
+                 :order-by [:entry_id]})))
 
 (defn db-council-page
   "Keyset pages. A thread uses a root PK seek and an indexed continuation seek, never a group scan."
