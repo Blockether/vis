@@ -63,6 +63,7 @@ export function ThisComputer({
   onStart,
   onStop,
   onCheck,
+  onConnect,
 }: {
   engine: LocalEngine;
   /** A check for a newer release is in flight. */
@@ -76,6 +77,8 @@ export function ThisComputer({
   /** Stop the task in progress. */
   onStop: () => void;
   onCheck: () => void;
+  /** Pair with the gateway. Present when it runs without a token and is not paired. */
+  onConnect?: () => void;
 }) {
   if (engine.kind === 'absent') {
     return (
@@ -141,7 +144,9 @@ export function ThisComputer({
   const note = !isRunning
     ? 'The gateway does not run.'
     : !isUpdateShown
-      ? 'The gateway runs.'
+      ? onConnect
+        ? 'The gateway runs.'
+        : 'The gateway asks for a pairing link.'
       : hasUpdate
         ? `Vis ${engine.latest} is available.`
         : isCheckFailed
@@ -161,9 +166,17 @@ export function ThisComputer({
           Start
         </Button>
       )}
+      {isRunning && onConnect && (
+        <Button variant="primary" onClick={onConnect}>
+          Connect
+        </Button>
+      )}
       {isUpdateShown &&
         (hasUpdate || !isRelease ? (
-          <Button variant={isRunning && hasUpdate ? 'primary' : 'secondary'} onClick={onUpdate}>
+          <Button
+            variant={isRunning && hasUpdate && !onConnect ? 'primary' : 'secondary'}
+            onClick={onUpdate}
+          >
             Update
           </Button>
         ) : (

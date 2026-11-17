@@ -52,6 +52,7 @@ import {
   LOCAL_GATEWAY_URL,
   bootLocalEngine,
   clearLocalPairing,
+  isLocalPaired,
   useLocalEngine,
 } from './lib/local-engine';
 import { isIosNativeApp } from './lib/host';
@@ -527,7 +528,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // The desktop app alone: start the gateway of Vis on this computer, then pair with
   // it. With other machines paired, pair only when the person asked for this one.
   // One time for each page load, so a machine that the person removes stays removed.
-  const { isGatewayOpen, wantsPairing } = useLocalEngine();
+  const { isGatewayOpen, wantsPairing, gatewayId } = useLocalEngine();
   const hasPairedLocal = useRef(false);
   useEffect(() => {
     void bootLocalEngine();
@@ -537,9 +538,13 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     if (!wantsPairing && (conns.length > 0 || hasPairedLocal.current)) return;
     hasPairedLocal.current = true;
     clearLocalPairing();
-    if (conns.some((conn) => reachOf(conn.url) === 'loopback')) return;
-    void addConnection({ url: LOCAL_GATEWAY_URL, label: hostOf(LOCAL_GATEWAY_URL) });
-  }, [isGatewayOpen, wantsPairing, conns, addConnection]);
+    if (isLocalPaired(conns, gatewayId)) return;
+    void addConnection({
+      url: LOCAL_GATEWAY_URL,
+      label: hostOf(LOCAL_GATEWAY_URL),
+      ...(gatewayId ? { id: gatewayId } : {}),
+    });
+  }, [isGatewayOpen, wantsPairing, gatewayId, conns, addConnection]);
 
   // The tap must paint the session on the frame it happens on. Remembering the
   // active gateway and the watch list are Capacitor Preferences writes — bridge

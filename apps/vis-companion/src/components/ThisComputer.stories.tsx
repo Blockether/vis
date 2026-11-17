@@ -78,6 +78,15 @@ export const UpdateAvailable: Story = {
   },
 };
 
+/** The gateway runs, and the app is not paired with it. */
+export const NotConnected: Story = {
+  args: {
+    engine: { kind: 'running', version: '0.5.21', track: 'release' },
+    isUpdateShown: false,
+    onConnect: fn(),
+  },
+};
+
 export const GatewayStopped: Story = {
   args: { engine: { kind: 'stopped', version: '0.5.21', track: 'release', latest: '0.5.21' } },
 };

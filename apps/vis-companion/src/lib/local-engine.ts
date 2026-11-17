@@ -7,7 +7,9 @@
  */
 import { useSyncExternalStore } from 'react';
 import { desktopInvoke } from './desktop';
+import { normalizeAddress } from './endpoints';
 import { GatewayClient, GatewayError } from './gateway';
+import type { GatewayConn } from './types';
 
 export type EngineTask = 'install' | 'update' | 'start';
 
@@ -25,6 +27,8 @@ export interface LocalEngineState {
   engine: LocalEngine | null;
   /** The gateway answers without a token, so the app can pair with it. */
   isGatewayOpen: boolean;
+  /** The id that the gateway of this computer reports, when it answers. */
+  gatewayId: string | null;
   isChecking: boolean;
   /** The last check for a newer release got no answer. */
   isCheckFailed: boolean;
@@ -56,6 +60,7 @@ type Probe = 'open' | 'locked' | 'down';
 let state: LocalEngineState = {
   engine: null,
   isGatewayOpen: false,
+  gatewayId: null,
   isChecking: false,
   isCheckFailed: false,
   wantsPairing: false,
@@ -119,11 +124,14 @@ async function settle(mine: number): Promise<void> {
     host<HostStatus | null>('engine_status'),
     probeGateway(),
   ]);
+  // The gateway reports its id to each client, also to one that it refuses.
+  const gatewayId =
+    probe === 'down' ? null : await new GatewayClient({ url: LOCAL_GATEWAY_URL }).identify();
   if (mine !== turn) return;
   if (!status?.supported) return set({ engine: null });
   const isGatewayOpen = probe === 'open';
   if (!status.installed || status.version === null) {
-    return set({ engine: { kind: 'absent' }, isGatewayOpen });
+    return set({ engine: { kind: 'absent' }, isGatewayOpen, gatewayId });
   }
   set({
     engine: {
@@ -133,6 +141,7 @@ async function settle(mine: number): Promise<void> {
       ...(latest ? { latest } : {}),
     },
     isGatewayOpen,
+    gatewayId,
   });
 }
 
@@ -224,6 +233,23 @@ export async function checkEngineUpdate(): Promise<void> {
     isCheckFailed: found === null,
     ...(isInstalled && latest ? { engine: { ...engine, latest } } : {}),
   });
+}
+
+/** Pair the app with the gateway of this computer, which runs already. */
+export function connectEngine(): void {
+  set({ wantsPairing: true });
+}
+
+/**
+ * A paired machine is the gateway of this computer: it has the address, or it has
+ * the id. Another loopback port is another gateway.
+ */
+export function isLocalPaired(conns: readonly GatewayConn[], gatewayId: string | null): boolean {
+  return conns.some(
+    (conn) =>
+      (gatewayId !== null && conn.id === gatewayId) ||
+      [conn.url, ...(conn.alts ?? [])].some((url) => normalizeAddress(url) === LOCAL_GATEWAY_URL),
+  );
 }
 
 export function clearLocalPairing(): void {

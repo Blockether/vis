@@ -26,7 +26,12 @@ import { AUTO_THEME_PREF, THEMES } from '../lib/themes.generated';
 import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
 import { ThisComputer } from '../components/ThisComputer';
-import { ENGINE_VERBS, useLocalEngine } from '../lib/local-engine';
+import {
+  ENGINE_VERBS,
+  connectEngine,
+  isLocalPaired,
+  useLocalEngine,
+} from '../lib/local-engine';
 import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
 import { MachineSettings } from './settings/MachineSettings';
 import { SettingsColumn, SettingsPanel } from './settings/SettingsLayout';
@@ -349,6 +354,11 @@ export function SettingsDialog({
                     isChecking={local.isChecking}
                     isCheckFailed={local.isCheckFailed}
                     {...ENGINE_VERBS}
+                    onConnect={
+                      local.isGatewayOpen && !isLocalPaired(gateways, local.gatewayId)
+                        ? connectEngine
+                        : undefined
+                    }
                   />
                 </div>
               )}
