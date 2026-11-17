@@ -80,5 +80,5 @@ Keep the modules of `resources/vis-docs/site.edn` in this order:
 - Link the `X-api` page from the concept page's `When to use` and `See also`.
 - Inside a group, give a page a sidebar `:label` without the group name, for example `Sessions` under **Feature APIs**. Keep the full name in `:title`.
 - On the public site, show the Extension Center link at the end of the **Extensions & SDK** module.
-- In the README, call the introduction `Rationale` and list the manual in module order.
+- In the README, link to the manual and Curated Terminal Benchmark. Keep the manual contents on the documentation site.
 - `docs-modules-test` and `packages/vis-agent/tests/test_api_guides.py` check these rules.

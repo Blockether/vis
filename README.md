@@ -57,15 +57,7 @@ for the desktop app.
 
 ## Documentation
 
-Read the manual at [vis.blockether.com](https://vis.blockether.com/).
-
-- [Intro](https://vis.blockether.com/index.html#intro)
-- [Config](https://vis.blockether.com/index.html#config)
-- [CLI](https://vis.blockether.com/index.html#cli)
-- [Companion](https://vis.blockether.com/index.html#companion)
-- [TUI](https://vis.blockether.com/index.html#tui)
-- [Extensions & SDK](https://vis.blockether.com/index.html#extensions-sdk)
-- [References](https://vis.blockether.com/index.html#references)
+[Documentation](https://vis.blockether.com/) · [Curated Terminal Benchmark](https://blockether.github.io/curated-terminal-benchmark/)
 
 ## License
 
