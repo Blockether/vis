@@ -1350,7 +1350,8 @@ class ExecutionLayer(ABC):
         report follows the provider limits schema. A failed read gives an
         error report, not an exception.
         """
-        report = self.get_provider_limits(provider, timeout=timeout)
+        answer = self.get_provider_limits(provider, timeout=timeout)
+        report = answer.get("report") if isinstance(answer, dict) else None
         if not isinstance(report, dict):
             raise ProtocolError("provider limits must be an object")
         validate("provider", "report", report)

@@ -58,7 +58,7 @@ def respond(method, path, body):
     if path.startswith("/v1/models"):
         return 200, CATALOG
     if path.startswith("/v1/providers/alpha/limits"):
-        return 200, report("alpha", "unauthenticated")
+        return 200, {"report": report("alpha", "unauthenticated")}
     return 404, {"error": "missing"}
 
 
