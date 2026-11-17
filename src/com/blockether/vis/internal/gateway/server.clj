@@ -1679,6 +1679,15 @@
       (not origin)
       (assoc "Access-Control-Allow-Origin" "*"))))
 
+(defn- wrap-request-codings
+  "Tell each client that a request body can come with `Content-Encoding: gzip`:
+   [[gzip-handler]] inflates it. A client that does not see this header sends plain
+   bodies, so it also works with a gateway that cannot inflate."
+  [handler]
+  (fn [request]
+    (some-> (handler request)
+            (assoc-in [:headers "Accept-Encoding"] "gzip"))))
+
 (defn- wrap-cors
   "Outermost middleware. A cross-origin browser client (the Companion web/mobile
    app hitting a Tailscale/cloudflared gateway URL) sends a CORS preflight
@@ -1936,6 +1945,7 @@
       (ring-cookies/wrap-cookies)
       (wrap-errors)
       (wrap-timing)
+      (wrap-request-codings)
       (wrap-cors)))
 
 (defonce ^:private live-app
@@ -2065,6 +2075,10 @@
    header it adds."
   1024)
 
+(def ^:private GZIP_INFLATE_BUFFER_BYTES
+  "The buffer that inflates a gzip request body (8 KiB)."
+  8192)
+
 (defn- gzip-handler
   "A `GzipHandler` wrapping the gateway's handler, so JSON bodies cross the wire
    compressed.
@@ -2088,11 +2102,13 @@
    client advertises `gzip` ([[sse-gzip?]], [[sse-stream]]), because that stream
    SYNC-flushes every frame and this handler cannot.
 
-   Note this also enables REQUEST inflation for `Content-Encoding: gzip` uploads,
-   which the gateway simply did not accept before."
+   The handler also inflates a request body that has `Content-Encoding: gzip`. Jetty
+   does this only with an inflate buffer size above zero; its default is no inflation.
+   [[wrap-request-codings]] tells the clients."
   []
   (doto (GzipHandler.)
     (.setMinGzipSize (int GZIP_MIN_BYTES))
+    (.setInflateBufferSize (int GZIP_INFLATE_BUFFER_BYTES))
     (.addExcludedMimeTypes (into-array String ["text/event-stream"]))))
 
 (defn- jailed-peer-guard

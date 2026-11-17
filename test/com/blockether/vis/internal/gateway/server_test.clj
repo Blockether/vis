@@ -4026,10 +4026,13 @@
   the-web-app-reads-its-brand-before-it-connects
   (it "the web app reads its brand before it connects"
       ;; The connect screen has no token yet. Only a holder of the token changes the brand.
-      (let [base (.toFile (java.nio.file.Files/createTempDirectory
-                            "vis-web-brand"
-                            (make-array java.nio.file.attribute.FileAttribute 0)))
-            brand {"name" "Acme" "href" "https://acme.example"}]
+      (let [base
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-web-brand"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            brand
+            {"name" "Acme" "href" "https://acme.example"}]
 
         (with-redefs [web/brand-file (constantly (io/file base "web-brand.json"))]
           (with-server-state!
@@ -4041,9 +4044,8 @@
                     protocol {"X-Vis-Protocol" (str gateway-contract/protocol-version)}
                     put (fn [headers]
                           (http/put url
-                                    {:headers (merge protocol
-                                                     {"Content-Type" "application/json"}
-                                                     headers)
+                                    {:headers
+                                     (merge protocol {"Content-Type" "application/json"} headers)
                                      :body (wire/json-str brand)
                                      :throw false}))
                     read (fn []
@@ -7250,6 +7252,47 @@
   ;; guarding our own `addExcludedMimeTypes` call so much as the invariant itself —
   ;; it fails whether the regression comes from our configurator or from a Jetty
   ;; default changing under us.
+(defdescribe
+  gzip-request-bodies-reach-the-handler-plain
+  ;; Report: the SDK sends 924 KB of JSON for each change of a large app text. A body
+  ;; with `Content-Encoding: gzip` reached the handler compressed and got a 400.
+  (it
+    "inflates a gzip request body and tells the client that it can"
+    (let [server
+          (jetty/run-jetty ((rv 'wrap-request-codings)
+                             (fn [request]
+                               {:status 200 :headers {} :body (slurp (:body request))}))
+                           {:port 0
+                            :host "127.0.0.1"
+                            :join? false
+                            :configurator (fn [^org.eclipse.jetty.server.Server server]
+                                            (.insertHandler server ((rv 'gzip-handler))))})
+
+          text
+          (apply str (repeat 400 "{\"owner\": \"rig\"} "))
+
+          packed
+          (let [bytes (java.io.ByteArrayOutputStream.)]
+            (with-open [out (java.util.zip.GZIPOutputStream. bytes)]
+              (.write out (.getBytes ^String text "UTF-8")))
+            (.toByteArray bytes))
+
+          answer
+          (try (.send (java.net.http.HttpClient/newHttpClient)
+                      (-> (java.net.http.HttpRequest/newBuilder
+                            (java.net.URI. (str "http://127.0.0.1:" (bound-port server) "/")))
+                          (.header "Content-Encoding" "gzip")
+                          (.POST (java.net.http.HttpRequest$BodyPublishers/ofByteArray packed))
+                          .build)
+                      (java.net.http.HttpResponse$BodyHandlers/ofString))
+               (finally (.stop ^org.eclipse.jetty.server.Server server)))]
+
+      (expect (= text (.body ^java.net.http.HttpResponse answer)))
+      (expect (= "gzip"
+                 (-> (.headers ^java.net.http.HttpResponse answer)
+                     (.firstValue "Accept-Encoding")
+                     (.orElse nil)))))))
+
 (defdescribe
   gzip-handler-never-compresses-the-live-stream-test
   (it "gzip handler never compresses the live stream"
