@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Gateway: a JSON request body has a limit of 64 Mi characters, the same limit as an inflated gzip body. A larger body gets the answer 413. Before, only a gzip body had a limit.
+- Gateway: `PATCH /v1/sessions/:sid/workspace/root` answers 400 for no path, a blank path and a path that is no directory, and 409 for a session without a workspace. Before, it answered 500.
+- MCP: a saved OAuth token goes only to the origin (scheme, host and port) of the server URL of the sign-in. After you change the URL of a server to another origin, the server asks for a new sign-in. Before, the token of the old host went to the new host.
+- MCP: the error for a server that does not connect shows the URL without user info, query and fragment. Before, a key in the query of the URL went to the model.
+- Council: a notification that a rate limit holds stays held when the gateway stops. The gateway that starts gives it to its session. Before, the session never got it.
+- Apps: a reader gets the changes of an app whose one frame adds a node and then changes it. Before, the reader read the whole app again.
+- TUI: a tab that opens reads the body of each app one time. Before, the list of live views gave each body a second time.
+
 ## [v0.5.20] - 2026-11-17
 
 ### Added
