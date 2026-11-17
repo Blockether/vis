@@ -33,12 +33,13 @@ export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
 export const LIVE_RECORD_EDGE = 1_250_000;
 
 /**
- * The engine's closed `live-reasons`, in the words a person uses for them. An
+ * The engine's closed `live-reasons`, in the words a person uses for them. A normal
+ * finish says nothing: the view already shows its end. An
  * unknown reason is shown VERBATIM rather than swallowed: a vocabulary that grew
  * in the engine must not read as "ended" on the phone.
  */
 const REASON_WORDS: Record<string, string> = {
-  completed: 'finished',
+  completed: '',
   interrupted: 'stopped by hand',
   timeout: 'timed out',
   undeliverable: 'lost its surface',
@@ -52,9 +53,10 @@ export function liveVerdictLine(record: LiveRecord): string {
   const word = reason
     ? (REASON_WORDS[reason] ?? reason)
     : record.is_completed
-      ? 'finished'
+      ? ''
       : 'still recording';
-  return record.note ? `${word} — ${record.note}` : word;
+  if (!record.note) return word;
+  return word ? `${word} — ${record.note}` : record.note;
 }
 
 /** The first COMPLETE line of a slice taken from the head of a record. */

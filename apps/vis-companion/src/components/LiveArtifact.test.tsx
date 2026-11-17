@@ -79,7 +79,8 @@ describe('the artifact on screen', () => {
       />,
     );
     await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeVisible());
-    expect(screen.getByText('finished')).toBeVisible();
+    // A normal finish adds no verdict word: the picture already shows the end.
+    expect(screen.queryByText('finished')).toBeNull();
     // A record cannot change again: no live region, and nothing to interrupt.
     expect(document.querySelector('[role="status"]')).toBeNull();
     expect(document.querySelector('[aria-live]')).toBeNull();

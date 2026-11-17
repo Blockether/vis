@@ -301,21 +301,24 @@ function rowInk(tone: LiveTone): string {
 }
 
 /**
- * The HEADLINE: the run's one sentence at reading size. Its state stands over it as
- * a word, and its detail sits under it one size down, so the sentence owns the
+ * The HEADLINE: the run's one sentence at reading size. Its state is the mark before
+ * it, never a word on screen, and its detail sits under it one size down, so the sentence owns the
  * whole column on a phone. An `action` stands under the sentence and its detail, so it
  * never takes width from the sentence (user report: Interrupt beside a wrapped headline).
  */
 function StatusRow({ node, action }: { node: LiveStatusNode; action?: ReactNode }) {
   return (
     <div className="min-w-0 space-y-1 font-mono">
-      <ToneWord tone={node.tone} />
       <p
-        className={`min-w-0 text-left text-subhead font-bold text-pretty [overflow-wrap:anywhere] ${
+        className={`flex min-w-0 items-start gap-2 text-left text-subhead font-bold ${
           node.tone === 'error' ? 'text-err' : 'text-white'
         }`}
       >
-        <InlineMarkdown>{node.text}</InlineMarkdown>
+        <LineMark tone={node.tone} />
+        <span className="sr-only">{TONE_WORD[node.tone]}</span>
+        <span className="min-w-0 text-pretty [overflow-wrap:anywhere]">
+          <InlineMarkdown>{node.text}</InlineMarkdown>
+        </span>
       </p>
       {node.detail && (
         <p className="min-w-0 text-body text-dialog-hint [overflow-wrap:anywhere]">
@@ -1771,14 +1774,11 @@ function TableRows({
   );
 }
 
-/** What a target opens, in words, so a link says where it goes before it is pressed. */
-const TARGET_WORD = { url: 'Web page', path: 'File', attachment: 'Attachment' } as const;
-
 /**
  * Where the work also lives. A `url` is reachable from the phone and opens; a path
  * or an attachment names a place on the MACHINE, so it is stated as text, with the
- * place under its name, rather than dressed as a link that does nothing. What a
- * link opens follows as a word, never an arrow glued to the label.
+ * place under its name, rather than dressed as a link that does nothing. A web link
+ * ends with an arrow and no word.
  */
 function LinkRows({ node }: { node: LiveLinkNode }) {
   if (node.links.length === 0) return <Empty>{EMPTY_LINE.link}</Empty>;
@@ -1811,10 +1811,11 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
               </>
             )}
           </span>
-          <span className="flex h-[1lh] shrink-0 items-center gap-1.5 text-dialog-hint">
-            <span className="text-meta">{TARGET_WORD[link.target_kind]}</span>
-            {link.target_kind === 'url' && <ArrowOutIcon className="size-3" />}
-          </span>
+          {link.target_kind === 'url' && (
+            <span className="flex h-[1lh] shrink-0 items-center text-dialog-hint">
+              <ArrowOutIcon className="size-3" />
+            </span>
+          )}
         </li>
       ))}
     </ul>
