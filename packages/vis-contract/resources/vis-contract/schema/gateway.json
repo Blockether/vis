@@ -710,7 +710,7 @@
         "patch": {
           "request": "json",
           "response": "json",
-          "response_schema": "router_fleet"
+          "response_schema": "router_patch"
         }
       },
       "path": "/v1/router"
@@ -727,7 +727,7 @@
         "post": {
           "request": "json",
           "response": "json",
-          "response_schema": "session",
+          "response_schema": "session_created",
           "extension": "callback"
         }
       },
@@ -2449,11 +2449,30 @@
     },
     "session": {
       "type": "object",
-      "description": "Session metadata. goal is null until an explicit /goal or SDK request creates it. Other session fields are not yet constrained here.",
+      "additionalProperties": false,
+      "description": "The wire soul of one session: its stored record and its live gateway status. goal is null until an explicit /goal or SDK request creates it. List rows also carry unread_answers and is_unread. Search rows also carry match. GET with include=queued adds queued_turns and queue_paused.",
       "properties": {
         "id": {
           "type": "string",
           "minLength": 1
+        },
+        "channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Coding-agent name resolved by the gateway from the session workspace configuration."
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "goal": {
           "anyOf": [
@@ -2465,19 +2484,229 @@
             }
           ]
         },
-        "agent_name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 80,
-          "description": "Coding-agent name resolved by the gateway from the session workspace configuration."
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_position": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "group_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "favorite_rank": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "A rank to compare, never to show. Null when the session has no star."
+        },
+        "archived_at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "origin": {
+          "$ref": "#/$defs/session_origin"
+        },
+        "status": {
+          "enum": [
+            "idle",
+            "running",
+            "suspended"
+          ]
+        },
+        "live": {
+          "type": "boolean"
+        },
+        "is_awaiting_input": {
+          "type": "boolean"
+        },
+        "awaiting_input_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "answer_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "was_interrupted": {
+          "type": "boolean"
+        },
+        "was_failed": {
+          "type": "boolean"
         },
         "team": {
           "$ref": "#/$defs/session_team"
+        },
+        "agent": {
+          "$ref": "#/$defs/session_agent"
+        },
+        "server_time_ms": {
+          "type": "integer"
+        },
+        "model_pref": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ]
+            }
+          ]
+        },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "root": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "root",
+            "label"
+          ]
+        },
+        "modified_at": {
+          "type": "integer"
+        },
+        "running_request": {
+          "type": "string"
+        },
+        "running_request_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "running_council": {
+          "$ref": "#/$defs/turn/properties/council"
+        },
+        "running_started_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "running_position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "running_created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "queued_turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/turn"
+          }
+        },
+        "queue_paused": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/queue_paused_marker"
+            }
+          ]
+        },
+        "unread_answers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "is_unread": {
+          "type": "boolean"
+        },
+        "match": {
+          "type": "object",
+          "description": "Why a search row matched the query. Only search rows carry it."
         }
       },
       "required": [
         "id",
-        "goal"
+        "channel",
+        "agent_name",
+        "title",
+        "goal",
+        "model",
+        "created_at",
+        "project_id",
+        "project_name",
+        "project_position",
+        "group_id",
+        "favorite_rank",
+        "archived_at",
+        "origin",
+        "status",
+        "live",
+        "is_awaiting_input",
+        "awaiting_input_count",
+        "current_turn_id",
+        "turn_count",
+        "answer_count",
+        "was_interrupted",
+        "was_failed",
+        "team",
+        "agent",
+        "server_time_ms"
       ]
     },
     "session_team": {
@@ -4973,10 +5202,46 @@
           ]
         },
         "tokens": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "cache_created": {
+              "type": "integer"
+            },
+            "cached": {
+              "type": "integer"
+            },
+            "input": {
+              "type": "integer"
+            },
+            "input_regular": {
+              "type": "integer"
+            },
+            "output": {
+              "type": "integer"
+            },
+            "reasoning": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cache_created",
+            "cached",
+            "input",
+            "input_regular",
+            "output",
+            "reasoning"
+          ]
         },
         "cost": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "total_cost": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total_cost"
+          ]
         }
       },
       "required": [
@@ -4997,7 +5262,14 @@
           }
         },
         "queue_paused": {
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/queue_paused_marker"
+            }
+          ]
         }
       },
       "required": [
@@ -5041,11 +5313,31 @@
       "properties": {
         "marked": {
           "type": "array",
-          "items": {}
+          "items": {
+            "type": "string"
+          }
         },
         "skipped": {
           "type": "array",
-          "items": {}
+          "items": {
+            "type": "object",
+            "properties": {
+              "turn_id": {
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "not_steerable",
+                  "held_by_cancel"
+                ]
+              }
+            },
+            "required": [
+              "turn_id",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -5111,11 +5403,107 @@
       "type": "object",
       "properties": {
         "usage": {
-          "description": "The usage rollup, or null when the session has no turns.",
           "type": [
             "object",
             "null"
-          ]
+          ],
+          "properties": {
+            "cost_usd": {
+              "type": "number"
+            },
+            "duration_ms": {
+              "type": "integer"
+            },
+            "first_turn_at": {
+              "type": "integer"
+            },
+            "fold_count": {
+              "type": "integer"
+            },
+            "input_cache_read_tokens": {
+              "type": "integer"
+            },
+            "input_cache_write_tokens": {
+              "type": "integer"
+            },
+            "input_regular_tokens": {
+              "type": "integer"
+            },
+            "input_tokens": {
+              "type": "integer"
+            },
+            "iteration_count": {
+              "type": "integer"
+            },
+            "last_turn_at": {
+              "type": "integer"
+            },
+            "output_reasoning_tokens": {
+              "type": "integer"
+            },
+            "output_tokens": {
+              "type": "integer"
+            },
+            "prompt_cache_estimated_sample_count": {
+              "type": "integer"
+            },
+            "prompt_cache_expired_count": {
+              "type": "integer"
+            },
+            "prompt_cache_rebuild_count": {
+              "type": "integer"
+            },
+            "prompt_cache_reusable_tokens": {
+              "type": "integer"
+            },
+            "prompt_cache_reused_tokens": {
+              "type": "integer"
+            },
+            "prompt_cache_sample_count": {
+              "type": "integer"
+            },
+            "reusable_prefix_estimated": {
+              "type": "boolean"
+            },
+            "tool_call_count": {
+              "type": "integer"
+            },
+            "tool_failure_count": {
+              "type": "integer"
+            },
+            "total_cost_usd": {
+              "type": "number"
+            },
+            "turn_count": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cost_usd",
+            "duration_ms",
+            "first_turn_at",
+            "fold_count",
+            "input_cache_read_tokens",
+            "input_cache_write_tokens",
+            "input_regular_tokens",
+            "input_tokens",
+            "iteration_count",
+            "last_turn_at",
+            "output_reasoning_tokens",
+            "output_tokens",
+            "prompt_cache_estimated_sample_count",
+            "prompt_cache_expired_count",
+            "prompt_cache_rebuild_count",
+            "prompt_cache_reusable_tokens",
+            "prompt_cache_reused_tokens",
+            "prompt_cache_sample_count",
+            "reusable_prefix_estimated",
+            "tool_call_count",
+            "tool_failure_count",
+            "total_cost_usd",
+            "turn_count"
+          ],
+          "description": "The usage rollup, or null when the session has no turns."
         }
       },
       "required": [
@@ -5260,8 +5648,12 @@
     "session_model": {
       "type": "object",
       "properties": {
-        "model": {},
-        "default": {}
+        "model": {
+          "$ref": "#/$defs/session_model_pair"
+        },
+        "default": {
+          "$ref": "#/$defs/session_model_pair"
+        }
       },
       "required": [
         "model",
@@ -5438,7 +5830,12 @@
         "has_more": {
           "type": "boolean"
         },
-        "next_cursor": {}
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "required": [
         "sessions",
@@ -5605,7 +6002,50 @@
         "projects": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "awaiting_count": {
+                "type": "integer"
+              },
+              "last_activity_ms": {
+                "type": "integer"
+              },
+              "live_count": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "project_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "root": {
+                "type": "string"
+              },
+              "session_count": {
+                "type": "integer"
+              },
+              "stopped_count": {
+                "type": "integer"
+              },
+              "unread_count": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "awaiting_count",
+              "last_activity_ms",
+              "live_count",
+              "name",
+              "project_id",
+              "root",
+              "session_count",
+              "stopped_count",
+              "unread_count"
+            ]
           }
         },
         "server_time_ms": {
@@ -5779,7 +6219,7 @@
           "type": "integer"
         },
         "protocol": {
-          "type": "object"
+          "$ref": "#/$defs/protocol_info"
         },
         "addresses": {
           "type": "array",
@@ -5788,7 +6228,70 @@
           }
         },
         "compatibility": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "behind": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "client_min_gateway": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "client_name": {
+              "type": "string"
+            },
+            "client_protocol": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "client_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "gateway_min_client": {
+              "type": "integer"
+            },
+            "gateway_protocol": {
+              "type": "integer"
+            },
+            "gateway_version": {
+              "type": "string"
+            },
+            "is_compatible": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "upgrade": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "behind",
+            "client_min_gateway",
+            "client_name",
+            "client_protocol",
+            "client_version",
+            "gateway_min_client",
+            "gateway_protocol",
+            "gateway_version",
+            "is_compatible",
+            "reason",
+            "upgrade"
+          ]
         },
         "features": {
           "type": "object"
@@ -5835,7 +6338,7 @@
           ]
         },
         "protocol": {
-          "type": "object"
+          "$ref": "#/$defs/protocol_info"
         },
         "running_turns": {
           "type": "integer"
@@ -5897,7 +6400,21 @@
         "status": {
           "$ref": "#/$defs/gateway_status"
         },
-        "extensions": {}
+        "extensions": {
+          "type": "object",
+          "properties": {
+            "packages": {
+              "type": "array"
+            },
+            "stage": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "packages",
+            "stage"
+          ]
+        }
       },
       "required": [
         "client_id",
@@ -6170,7 +6687,19 @@
       "type": "object",
       "properties": {
         "status": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "auth_state": {
+              "type": "string"
+            },
+            "is_authenticated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "auth_state",
+            "is_authenticated"
+          ]
         }
       },
       "required": [
@@ -6193,23 +6722,95 @@
       ]
     },
     "provider_auth": {
-      "type": "object",
-      "description": "A provider sign-in step: start gives flow_id, kind and url; the other steps give status.",
-      "properties": {
-        "status": {
-          "type": "string"
+      "description": "A provider sign-in step. `auth/start` answers the flow; `auth/poll` answers its verdict; `auth/complete`, `auth/cancel` and `logout` answer only a status.",
+      "oneOf": [
+        {
+          "type": "object",
+          "title": "provider_auth_flow",
+          "description": "The flow that `auth/start` starts. `kind` is pkce, device or api-key.",
+          "properties": {
+            "flow_id": {
+              "type": "string"
+            },
+            "provider_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "pkce",
+                "device",
+                "api-key"
+              ]
+            },
+            "expires_at": {
+              "type": "integer"
+            },
+            "url": {
+              "type": "string"
+            },
+            "redirect_uri": {
+              "type": "string"
+            },
+            "callback_mode": {
+              "type": "string"
+            },
+            "user_code": {
+              "type": "string"
+            },
+            "verification_uri": {
+              "type": "string"
+            },
+            "interval_ms": {
+              "type": "integer"
+            },
+            "instructions": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "flow_id",
+            "provider_id",
+            "kind",
+            "expires_at"
+          ]
         },
-        "flow_id": {
-          "type": "string"
-        },
-        "kind": {
-          "type": "string"
-        },
-        "url": {
-          "type": "string"
+        {
+          "type": "object",
+          "title": "provider_auth_status",
+          "description": "The status of a sign-in step, with the poll message and the sign-in lines.",
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "instructions": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": []
+      ]
     },
     "council_members": {
       "type": "array",
@@ -6219,6 +6820,7 @@
     },
     "agents_route": {
       "type": "object",
+      "description": "The model that a subagent uses from its next request.",
       "properties": {
         "provider": {
           "type": "string"
@@ -6230,10 +6832,17 @@
           "type": "string"
         },
         "effective": {
-          "type": "string"
+          "type": "string",
+          "const": "next_request"
         }
       },
-      "required": []
+      "required": [
+        "provider",
+        "model",
+        "session_id",
+        "effective"
+      ],
+      "additionalProperties": false
     },
     "app_list": {
       "type": "object",
@@ -6490,12 +7099,23 @@
     },
     "agent_note": {
       "type": "object",
+      "description": "The page note that the model sees, or null when the note is blank.",
       "properties": {
         "id": {
           "type": "string"
+        },
+        "agent_note": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "required": []
+      "required": [
+        "id",
+        "agent_note"
+      ],
+      "additionalProperties": false
     },
     "council_binding": {
       "$ref": "council.json#/$defs/binding"
@@ -8118,6 +8738,311 @@
         "is_live",
         "server_time_ms",
         "goal"
+      ]
+    },
+    "session_origin": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The program that created the session.",
+          "properties": {
+            "kind": {
+              "const": "extension"
+            },
+            "extension": {
+              "type": "string",
+              "minLength": 1
+            },
+            "session_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "extension",
+            "session_id"
+          ]
+        }
+      ]
+    },
+    "session_agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The agent context of the session: a leader, or a subagent with its task, budget and file grant.",
+      "properties": {
+        "role": {
+          "enum": [
+            "leader",
+            "subagent"
+          ]
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "leader_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "interactive": {
+          "type": "boolean"
+        },
+        "routing_locked": {
+          "type": "boolean"
+        },
+        "parent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "team_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string"
+        },
+        "iteration_budget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "iterations_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "agents.json#/$defs/agent/properties/status"
+        },
+        "allowed_models": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "agents.json#/$defs/model_pair"
+              }
+            }
+          ]
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "budget_notice": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "role",
+        "session_id",
+        "leader_id",
+        "interactive",
+        "routing_locked"
+      ]
+    },
+    "queue_paused_marker": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The live hold of the turn queue: held turns wait for reason.",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "held": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gen": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "reason",
+        "held"
+      ]
+    },
+    "session_created": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The answer of POST /v1/sessions: the new session id and the values that made it. Read GET /v1/sessions/:sid for the full session.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/session_goal"
+            }
+          ]
+        },
+        "external_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "origin": {
+          "$ref": "#/$defs/session_origin"
+        }
+      },
+      "required": [
+        "id",
+        "channel",
+        "title",
+        "goal",
+        "external_id",
+        "workspace_id",
+        "group_id",
+        "origin"
+      ]
+    },
+    "router_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Both router tags. A role is null where it has no tag.",
+      "properties": {
+        "default_provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback_provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "default_provider",
+        "default_model",
+        "fallback_provider",
+        "fallback_model"
+      ]
+    },
+    "router_patch": {
+      "description": "The answer of PATCH /v1/router: both router tags for the primary and fallback roles, or the provider fleet for the thinking role.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/router_selection"
+        },
+        {
+          "$ref": "#/$defs/router_fleet"
+        }
+      ]
+    },
+    "protocol_info": {
+      "type": "object",
+      "properties": {
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "min_client": {
+          "type": "integer"
+        },
+        "min_gateway": {
+          "type": "integer"
+        },
+        "protocol": {
+          "type": "integer"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "build",
+        "min_client",
+        "min_gateway",
+        "protocol",
+        "version"
+      ],
+      "description": "The protocol numbers and build of the gateway."
+    },
+    "session_model_pair": {
+      "description": "A provider and model pair, or null when the session follows the router default.",
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ]
+        }
       ]
     }
   }

@@ -141,15 +141,19 @@
   (it "exposes the canonical goal on detail, creation, mutation and list responses"
       (doseq [[path method shape]
               [["/v1/sessions/{sid}" "get" "session"] ["/v1/sessions/{sid}" "patch" "session"]
-               ["/v1/sessions" "post" "session"] ["/v1/sessions" "get" "session_list"]]]
+               ["/v1/sessions" "post" "session_created"] ["/v1/sessions" "get" "session_list"]]]
         (expect (= {"$ref" (str "#/components/schemas/" shape)}
                    (get-in @encoded
                            ["paths" path method "responses" "200" "content" "application/json"
                             "schema"]))))
-      (expect (= ["id" "goal"] (get-in @encoded ["components" "schemas" "session" "required"])))
-      (expect (= {"$ref" "#/components/schemas/session_goal"}
-                 (get-in @encoded
-                         ["components" "schemas" "session" "properties" "goal" "anyOf" 1])))
+      (doseq [shape ["session" "session_created"]]
+        (expect (every? (set (get-in @encoded ["components" "schemas" shape "required"]))
+                        ["id" "goal"])
+                shape)
+        (expect (= {"$ref" "#/components/schemas/session_goal"}
+                   (get-in @encoded
+                           ["components" "schemas" shape "properties" "goal" "anyOf" 1]))
+                shape))
       (expect (= (set (keys contract/session-goal-labels))
                  (set (map #(get % "const")
                            (get-in @encoded

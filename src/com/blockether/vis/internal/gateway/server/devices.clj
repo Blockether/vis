@@ -30,7 +30,9 @@
 
                         (assoc raw "machine_order" (into known added)))))]
 
-        (http/json-response {:machine-ids (get saved "machine_order")})))))
+        ;; An update that changes nothing answers nil: the order is then the stored one.
+        (http/json-response {:machine-ids (get (or saved (config/load-global-config-raw))
+                                               "machine_order")})))))
 
 (defn- device-wire
   "One registered device in wire shape — the raw token and the relay grant NEVER

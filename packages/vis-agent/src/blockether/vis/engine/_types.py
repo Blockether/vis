@@ -59,13 +59,23 @@ class OpenapiDocument(TypedDict):
     paths: dict[str, JSONValue]
 
 
+class ProtocolInfo(TypedDict):
+    """The protocol numbers and build of the gateway."""
+
+    build: str | None
+    min_client: int
+    min_gateway: int
+    protocol: int
+    version: str
+
+
 class GatewayStatus(TypedDict):
     """The gateway status map. The engine adds fields."""
 
     id: NotRequired[str | None]
     pid: NotRequired[int | None]
     port: NotRequired[int | None]
-    protocol: dict[str, JSONValue]
+    protocol: ProtocolInfo
     running_turns: NotRequired[int]
     sse_clients: NotRequired[int]
     managed: NotRequired[bool]
@@ -159,18 +169,37 @@ class ViewOutcome(TypedDict):
     reason: NotRequired[str | None]
 
 
+class CapabilitiesCompatibility(TypedDict):
+    behind: int | None
+    client_min_gateway: int | None
+    client_name: str
+    client_protocol: int | None
+    client_version: str | None
+    gateway_min_client: int
+    gateway_protocol: int
+    gateway_version: str
+    is_compatible: bool
+    reason: str
+    upgrade: str | None
+
+
 class Capabilities(TypedDict):
     version: int
-    protocol: dict[str, JSONValue]
+    protocol: ProtocolInfo
     addresses: NotRequired[list[str]]
-    compatibility: NotRequired[dict[str, JSONValue]]
+    compatibility: NotRequired[CapabilitiesCompatibility]
     features: dict[str, JSONValue]
+
+
+class ClientLeaseExtensions(TypedDict):
+    packages: list[JSONValue]
+    stage: str
 
 
 class ClientLease(TypedDict):
     client_id: str
     status: GatewayStatus
-    extensions: NotRequired[JSONValue]
+    extensions: NotRequired[ClientLeaseExtensions]
 
 
 class ClientRelease(TypedDict):
@@ -369,6 +398,17 @@ class SessionGoal(TypedDict):
     iterations_used: int
 
 
+class SessionOriginVariant2(TypedDict):
+    """The program that created the session."""
+
+    kind: Literal["extension"]
+    extension: str
+    session_id: str
+
+
+SessionOrigin: TypeAlias = None | SessionOriginVariant2
+
+
 class SessionTeam(TypedDict):
     """The subagents of a leader session. active counts the queued and running
     children; total counts all children. A subagent session has zero of each.
@@ -378,15 +418,131 @@ class SessionTeam(TypedDict):
     total: int
 
 
+class AgentsModelPair(TypedDict):
+    provider: str
+    model: str
+
+
+class SessionAgent(TypedDict):
+    """The agent context of the session: a leader, or a subagent with its task, budget
+    and file grant.
+    """
+
+    role: Literal["leader", "subagent"]
+    session_id: str
+    leader_id: str
+    interactive: bool
+    routing_locked: bool
+    parent_id: NotRequired[str]
+    team_id: NotRequired[str]
+    task: NotRequired[str]
+    iteration_budget: NotRequired[int]
+    iterations_used: NotRequired[int]
+    status: NotRequired[JSONValue]
+    allowed_models: NotRequired[None | list[AgentsModelPair]]
+    files: NotRequired[dict[str, JSONValue]]
+    budget_notice: NotRequired[str]
+
+
+class SessionModelPref2(TypedDict):
+    provider: str
+    model: str
+
+
+class SessionWorkspace(TypedDict):
+    root: str
+    label: str | None
+
+
+class TurnTokens(TypedDict):
+    cache_created: int
+    cached: int
+    input: int
+    input_regular: int
+    output: int
+    reasoning: int
+
+
+class TurnCost(TypedDict):
+    total_cost: float
+
+
+class Turn(TypedDict):
+    """One turn of a session as the turn routes answer it. The engine can add fields."""
+
+    turn_id: str
+    session_id: str
+    status: str
+    request: NotRequired[str | None]
+    request_kind: str
+    role: NotRequired[str]
+    content: NotRequired[list[dict[str, JSONValue]]]
+    created_at: int
+    position: NotRequired[int]
+    completed_at: NotRequired[int | None]
+    duration_ms: NotRequired[int | None]
+    iteration_count: NotRequired[int]
+    council: NotRequired[dict[str, JSONValue] | None]
+    tokens: NotRequired[TurnTokens]
+    cost: NotRequired[TurnCost]
+
+
+class QueuePausedMarker(TypedDict):
+    """The live hold of the turn queue: held turns wait for reason."""
+
+    reason: str
+    held: int
+    gen: NotRequired[int]
+    at: NotRequired[int]
+
+
 class Session(TypedDict):
-    """Session metadata. goal is null until an explicit /goal or SDK request creates
-    it. Other session fields are not yet constrained here.
+    """The wire soul of one session: its stored record and its live gateway status.
+    goal is null until an explicit /goal or SDK request creates it. List rows also
+    carry unread_answers and is_unread. Search rows also carry match. GET with
+    include=queued adds queued_turns and queue_paused.
     """
 
     id: str
+    channel: str | None
+    agent_name: str
+    title: str | None
     goal: None | SessionGoal
-    agent_name: NotRequired[str]
-    team: NotRequired[SessionTeam]
+    model: str | None
+    created_at: int | None
+    project_id: str | None
+    project_name: str | None
+    project_position: int | None
+    group_id: str | None
+    favorite_rank: float | None
+    archived_at: int | None
+    origin: SessionOrigin
+    status: Literal["idle", "running", "suspended"]
+    live: bool
+    is_awaiting_input: bool
+    awaiting_input_count: int
+    current_turn_id: str | None
+    turn_count: int
+    answer_count: int
+    was_interrupted: bool
+    was_failed: bool
+    team: SessionTeam
+    agent: SessionAgent
+    server_time_ms: int
+    model_pref: NotRequired[None | SessionModelPref2]
+    workspace: NotRequired[SessionWorkspace]
+    modified_at: NotRequired[int]
+    running_request: NotRequired[str]
+    running_request_kind: NotRequired[str]
+    running_council: NotRequired[JSONValue]
+    running_started_at: NotRequired[int]
+    running_position: NotRequired[int]
+    running_created_at: NotRequired[int]
+    queued_turns: NotRequired[list[Turn]]
+    queue_paused: NotRequired[None | QueuePausedMarker]
+    unread_answers: NotRequired[int]
+    is_unread: NotRequired[bool]
+    match: NotRequired[dict[str, JSONValue]]
 
 
 class SessionRead(TypedDict):
@@ -396,6 +552,18 @@ class SessionRead(TypedDict):
     is_unread: bool
 
 
+class ProjectOverviewProjectsItem(TypedDict):
+    awaiting_count: int
+    last_activity_ms: int
+    live_count: int
+    name: str
+    project_id: str | None
+    root: str
+    session_count: int
+    stopped_count: int
+    unread_count: int
+
+
 class ProjectOverview(TypedDict):
     project_count: NotRequired[int]
     session_count: NotRequired[int]
@@ -403,7 +571,7 @@ class ProjectOverview(TypedDict):
     awaiting_count: NotRequired[int]
     unread_count: NotRequired[int]
     stopped_count: NotRequired[int]
-    projects: list[dict[str, JSONValue]]
+    projects: list[ProjectOverviewProjectsItem]
     server_time_ms: NotRequired[int]
 
 
@@ -419,15 +587,31 @@ class RouterFleet(TypedDict):
     providers: list[dict[str, JSONValue]]
 
 
-class ProviderAuth(TypedDict):
-    """A provider sign-in step: start gives flow_id, kind and url; the other steps give
-    status.
-    """
+class ProviderAuthVariant1(TypedDict):
+    """The flow that `auth/start` starts. `kind` is pkce, device or api-key."""
 
-    status: NotRequired[str]
-    flow_id: NotRequired[str]
-    kind: NotRequired[str]
+    flow_id: str
+    provider_id: str
+    kind: Literal["pkce", "device", "api-key"]
+    expires_at: int
     url: NotRequired[str]
+    redirect_uri: NotRequired[str]
+    callback_mode: NotRequired[str]
+    user_code: NotRequired[str]
+    verification_uri: NotRequired[str]
+    interval_ms: NotRequired[int]
+    instructions: NotRequired[list[str] | None]
+
+
+class ProviderAuthVariant2(TypedDict):
+    """The status of a sign-in step, with the poll message and the sign-in lines."""
+
+    status: str
+    message: NotRequired[str | None]
+    instructions: NotRequired[list[str] | None]
+
+
+ProviderAuth: TypeAlias = ProviderAuthVariant1 | ProviderAuthVariant2
 
 
 class ProviderReportStatic(TypedDict):
@@ -503,12 +687,44 @@ class ProviderResetOutcome(TypedDict):
     outcome: Literal["reset", "nothing_to_reset", "no_credit", "already_redeemed"]
 
 
+class ProviderStatusStatus(TypedDict):
+    auth_state: str
+    is_authenticated: bool
+
+
 class ProviderStatus(TypedDict):
-    status: dict[str, JSONValue]
+    status: ProviderStatusStatus
+
+
+class RouterSelection(TypedDict):
+    """Both router tags. A role is null where it has no tag."""
+
+    default_provider: str | None
+    default_model: str | None
+    fallback_provider: str | None
+    fallback_model: str | None
+
+
+RouterPatch: TypeAlias = RouterSelection | RouterFleet
 
 
 class SessionList(TypedDict):
     sessions: list[Session]
+
+
+class SessionCreated(TypedDict):
+    """The answer of POST /v1/sessions: the new session id and the values that made it.
+    Read GET /v1/sessions/:sid for the full session.
+    """
+
+    id: str
+    channel: str
+    title: str | None
+    goal: None | SessionGoal
+    external_id: str | None
+    workspace_id: str | None
+    group_id: str | None
+    origin: SessionOrigin
 
 
 ActivityPage: TypeAlias = dict[str, JSONValue]
@@ -536,11 +752,6 @@ class CouncilBinding(TypedDict):
 
 
 AgentsRole: TypeAlias = Literal["research", "implement", "verify"]
-
-
-class AgentsModelPair(TypedDict):
-    provider: str
-    model: str
 
 
 class AgentsAgentBudgetRequest(TypedDict):
@@ -689,10 +900,12 @@ AgentRecords: TypeAlias = AgentsRecords
 
 
 class AgentsRoute(TypedDict):
-    provider: NotRequired[str]
-    model: NotRequired[str]
-    session_id: NotRequired[str]
-    effective: NotRequired[str]
+    """The model that a subagent uses from its next request."""
+
+    provider: str
+    model: str
+    session_id: str
+    effective: Literal["next_request"]
 
 
 class AgentsTimelineItemsItem(TypedDict):
@@ -787,26 +1000,6 @@ class CouncilThreadPage(TypedDict):
     entries: list[CouncilThread]
     after: CouncilCursor
     has_more: bool
-
-
-class Turn(TypedDict):
-    """One turn of a session as the turn routes answer it. The engine can add fields."""
-
-    turn_id: str
-    session_id: str
-    status: str
-    request: NotRequired[str | None]
-    request_kind: str
-    role: NotRequired[str]
-    content: NotRequired[list[dict[str, JSONValue]]]
-    created_at: int
-    position: NotRequired[int]
-    completed_at: NotRequired[int | None]
-    duration_ms: NotRequired[int | None]
-    iteration_count: NotRequired[int]
-    council: NotRequired[dict[str, JSONValue] | None]
-    tokens: NotRequired[dict[str, JSONValue]]
-    cost: NotRequired[dict[str, JSONValue]]
 
 
 class TurnQueueStep(TypedDict):
@@ -967,17 +1160,33 @@ class AttachmentLink(TypedDict):
 
 
 class AgentNote(TypedDict):
-    id: NotRequired[str]
+    """The page note that the model sees, or null when the note is blank."""
+
+    id: str
+    agent_note: str | None
+
+
+class SessionModelPairVariant2(TypedDict):
+    provider: str
+    model: str
+
+
+SessionModelPair: TypeAlias = None | SessionModelPairVariant2
 
 
 class SessionModel(TypedDict):
-    model: JSONValue
-    default: JSONValue
+    model: SessionModelPair
+    default: SessionModelPair
+
+
+class QueueSendNowSkippedItem(TypedDict):
+    turn_id: str
+    reason: Literal["not_steerable", "held_by_cancel"]
 
 
 class QueueSendNow(TypedDict):
-    marked: list[JSONValue]
-    skipped: list[JSONValue]
+    marked: list[str]
+    skipped: list[QueueSendNowSkippedItem]
 
 
 class SessionResources(TypedDict):
@@ -1066,7 +1275,7 @@ class Transcript(TypedDict):
 
 class TurnList(TypedDict):
     turns: list[Turn]
-    queue_paused: NotRequired[bool]
+    queue_paused: NotRequired[None | QueuePausedMarker]
 
 
 class TurnAttachments(TypedDict):
@@ -1077,8 +1286,36 @@ class TurnTrace(TypedDict):
     iterations: list[dict[str, JSONValue]]
 
 
+class SessionUsageUsage(TypedDict):
+    """The usage rollup, or null when the session has no turns."""
+
+    cost_usd: float
+    duration_ms: int
+    first_turn_at: int
+    fold_count: int
+    input_cache_read_tokens: int
+    input_cache_write_tokens: int
+    input_regular_tokens: int
+    input_tokens: int
+    iteration_count: int
+    last_turn_at: int
+    output_reasoning_tokens: int
+    output_tokens: int
+    prompt_cache_estimated_sample_count: int
+    prompt_cache_expired_count: int
+    prompt_cache_rebuild_count: int
+    prompt_cache_reusable_tokens: int
+    prompt_cache_reused_tokens: int
+    prompt_cache_sample_count: int
+    reusable_prefix_estimated: bool
+    tool_call_count: int
+    tool_failure_count: int
+    total_cost_usd: float
+    turn_count: int
+
+
 class SessionUsage(TypedDict):
-    usage: dict[str, JSONValue] | None
+    usage: SessionUsageUsage | None
 
 
 class ViewRequests(TypedDict):
@@ -1086,18 +1323,6 @@ class ViewRequests(TypedDict):
 
 
 ViewLog: TypeAlias = dict[str, JSONValue]
-
-
-class SessionWorkspaceWorkspace(TypedDict):
-    id: str
-    root: str
-    agent_name: NotRequired[str]
-    label: NotRequired[str | None]
-    git: NotRequired[dict[str, JSONValue]]
-
-
-class SessionWorkspace(TypedDict):
-    workspace: SessionWorkspaceWorkspace
 
 
 class SessionArchive(TypedDict):
@@ -1112,7 +1337,7 @@ class SessionSearch(TypedDict):
     total: NotRequired[int]
     limit: NotRequired[int]
     has_more: bool
-    next_cursor: NotRequired[JSONValue]
+    next_cursor: NotRequired[str | None]
 
 
 ToggleScope: TypeAlias = Literal["global", "project", "group", "session"]
@@ -2591,7 +2816,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "PATCH /v1/automations/:automation-id": "AutomationsAutomation",
     "PATCH /v1/projects/:pid": "Project",
     "PATCH /v1/projects/:pid/sessions": "ProjectSessionsMoved",
-    "PATCH /v1/router": "RouterFleet",
+    "PATCH /v1/router": "RouterPatch",
     "PATCH /v1/session-groups/:gid": "SessionGroup",
     "PATCH /v1/sessions/:sid": "Session",
     "PATCH /v1/sessions/:sid/model": "SessionModel",
@@ -2641,7 +2866,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/providers/:provider-id/logout": "ProviderAuth",
     "POST /v1/providers/:provider-id/reset-credits/consume": "ProviderResetOutcome",
     "POST /v1/session-groups": "SessionGroup",
-    "POST /v1/sessions": "Session",
+    "POST /v1/sessions": "SessionCreated",
     "POST /v1/sessions/:sid/agents": "AgentSpawned",
     "POST /v1/sessions/:sid/agents/answer": "AgentRecords",
     "POST /v1/sessions/:sid/agents/cancel": "AgentRecords",

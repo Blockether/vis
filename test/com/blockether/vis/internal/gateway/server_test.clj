@@ -24,6 +24,7 @@
     [com.blockether.vis.internal.gateway.discovery :as discovery]
     [com.blockether.vis.internal.gateway.server :as server]
     [com.blockether.vis.internal.gateway.response-check :as response-check]
+    [com.blockether.vis.internal.gateway.fixture-answers :as fixture]
     [com.blockether.vis.internal.gateway.server.council :as council-api]
     [com.blockether.vis.internal.gateway.server.fs :as fs-api]
     [com.blockether.vis.internal.gateway.server.http :as gw-http]
@@ -143,8 +144,11 @@
                        (random-uuid)
 
                        event
-                       (wire/canonical {:seq 1
-                                        :type "content.delta"
+                       (wire/canonical {:schema 1
+                                        :seq 1
+                                        :ts 1
+                                        :session_id (str sid)
+                                        :type "turn.progress"
                                         :nested {:tool-name "shell" :ratio (/ 0.0 0.0)}})
 
                        handler
@@ -391,14 +395,26 @@
                                                                            "transport" "stdio"
                                                                            "enabled" true
                                                                            "is_connected" false
+                                                                           "status" "disconnected"
+                                                                           "is_managed" false
                                                                            "tools" 0}]})
                        #'mcp-core/save-gateway-server!
                        (fn [name spec]
                          (reset! saved [name spec])
-                         {"name" name "transport" "stdio" "enabled" true})
+                         {"name" name
+                          "transport" "stdio"
+                          "enabled" true
+                          "is_connected" false
+                          "status" "disconnected"
+                          "is_managed" true})
                        #'mcp-core/set-gateway-server-enabled! (fn [name value]
                                                                 (reset! enabled [name value])
-                                                                {"name" name "enabled" value})
+                                                                {"name" name
+                                                                 "transport" "stdio"
+                                                                 "enabled" value
+                                                                 "is_connected" false
+                                                                 "status" "disconnected"
+                                                                 "is_managed" true})
                        #'mcp-core/delete-gateway-server! (fn [name]
                                                            (reset! deleted name)
                                                            {"name" name "is_deleted" true})
@@ -460,7 +476,7 @@
                    (with-redefs-fn {#'gw-http/body-json (constantly body)
                                     #'state/submit-turn! (fn [actual opts]
                                                            (reset! submitted [actual opts])
-                                                           {:turn {:turn_id "turn-1"}})}
+                                                           {:turn (fixture/turn {:turn_id "turn-1"})})}
                      #(let [response
                             (#'turns-api/submit-turn-handler {:path-params {:sid (str sid)}})]
                         (expect (= 202 (:status response))) (expect (= sid (first @submitted)))
@@ -480,10 +496,10 @@
           submitted
           (atom nil)]
 
-      (with-redefs-fn {#'state/soul (constantly {:id sid})
+      (with-redefs-fn {#'state/soul (constantly (fixture/soul {:id sid}))
                        #'state/submit-turn! (fn [_ opts]
                                               (reset! submitted opts)
-                                              {:turn {:turn_id "turn-1"}})}
+                                              {:turn (fixture/turn {:turn_id "turn-1"})})}
         #(let [uploaded
                (#'turns-api/upload-attachment-handler
                 {:path-params {:sid (str sid)}
@@ -523,10 +539,10 @@
             submitted
             (atom nil)]
 
-        (with-redefs-fn {#'state/soul (constantly {:id sid})
+        (with-redefs-fn {#'state/soul (constantly (fixture/soul {:id sid}))
                          #'state/submit-turn! (fn [_ opts]
                                                 (reset! submitted opts)
-                                                {:turn {:turn_id "turn-1"}})}
+                                                {:turn (fixture/turn {:turn_id "turn-1"})})}
           #(let [response
                  (#'turns-api/submit-turn-handler
                   {:path-params {:sid (str sid)}
@@ -558,12 +574,12 @@
           prepared
           (atom nil)]
 
-      (with-redefs-fn {#'state/soul (constantly {:id sid})
+      (with-redefs-fn {#'state/soul (constantly (fixture/soul {:id sid}))
                        #'state/submit-turn! (fn [_ opts]
                                               (reset! prepared
                                                 (attachments/prepare-inline-attachments
                                                   (:attachments opts)))
-                                              {:turn {:turn_id "turn-markdown"}})
+                                              {:turn (fixture/turn {:turn_id "turn-markdown"})})
                        #'state/turn-attachments (fn [actual-sid tid]
                                                   (expect (= sid actual-sid))
                                                   (expect (= "turn-markdown" tid))
@@ -625,7 +641,7 @@
           submitted
           (atom nil)]
 
-      (with-redefs-fn {#'state/soul (constantly {:id sid})
+      (with-redefs-fn {#'state/soul (constantly (fixture/soul {:id sid}))
                        #'audio-transcribe/request-attachments!
                        (fn [rows]
                          (let [n (swap! calls inc)]
@@ -634,7 +650,7 @@
                                  rows)))
                        #'state/submit-turn! (fn [_ opts]
                                               (reset! submitted opts)
-                                              {:turn {:turn_id "turn-audio"}})}
+                                              {:turn (fixture/turn {:turn_id "turn-audio"})})}
         #(let [uploaded
                (#'turns-api/upload-attachment-handler
                 {:path-params {:sid (str sid)}
@@ -691,7 +707,7 @@
           (atom [])
 
           answer
-          (atom {:turn {"turn_id" "q1" "deliver" "next_iteration"}})
+          (atom {:turn (fixture/turn {"turn_id" "q1" "deliver" "next_iteration"})})
 
           patch-turn
           (fn [body]
@@ -796,8 +812,8 @@
                        request
                        {:path-params {:sid (str sid)} :query-params {"status" "queued"}}]
 
-                   (with-redefs-fn {#'state/soul (constantly {:id sid})
-                                    #'state/list-queued-turns (constantly [{:turn_id "waiting"}])
+                   (with-redefs-fn {#'state/soul (constantly (fixture/soul {:id sid}))
+                                    #'state/list-queued-turns (constantly [(fixture/turn {:turn_id "waiting"})])
                                     #'state/queue-paused-info (constantly {:reason "turn_failed"
                                                                            :held 1})}
                      #(let [body (:body (#'turns-api/list-turns-handler request))]
@@ -818,10 +834,10 @@
           {:path-params {:sid (str sid)}}]
 
       (with-redefs-fn {#'state/soul (fn [actual]
-                                      (when (= sid actual) {:id sid}))
+                                      (when (= sid actual) (fixture/soul {:id sid})))
                        #'state/list-queued-turns (fn [actual]
                                                    (swap! calls conj actual)
-                                                   [{:turn_id "queued-1"}])
+                                                   [(fixture/turn {:turn_id "queued-1"})])
                        #'state/queue-paused-info (constantly {:reason "turn_failed" :held 1})}
         #(do (let [response (#'sessions-api/soul-handler
                              (assoc request :query-params {"include" "queued"}))]
@@ -3362,7 +3378,8 @@
                        #'state/set-session-model! (fn [_sid p m]
                                                     (reset! wrote [p m]))
                        #'state/session-model (fn [_sid]
-                                               @wrote)}
+                                               (let [[provider model] (when (vector? @wrote) @wrote)]
+                                                 (when provider {:provider provider :model model})))}
         (fn []
           ;; a configured provider is accepted
           (let [resp (#'sessions-api/set-session-model-handler
@@ -4987,7 +5004,10 @@
                            (throw (ex-info "Another project already uses /taken"
                                            {:type :project/root-taken}))
 
-                           {"id" (str pid) "name" "vis" "workspace_root" (:workspace-root opts)}))}
+                           {"id" (str pid)
+                            "name" "vis"
+                            "workspace_root" (:workspace-root opts)
+                            "created_at" 1}))}
         (fn []
           (let [response (patch! {"workspace_root" "/new/vis"})]
             (expect (= 200 (:status response)))
@@ -5066,15 +5086,16 @@
                                                                                               sid)]
                                                                       :session_count 1})
                        #'state/soul (fn [s]
-                                      {"id" (str s)})
+                                      (fixture/soul {"id" (str s)}))
                        #'state/assign-session-group! (fn [s g]
                                                        (swap! assigned conj [s g])
-                                                       {"id" (str s) "group_id" (when g (str g))})
+                                                       (fixture/soul {"id" (str s) "group_id" (when g (str g))}))
                        #'state/create-session! (fn [opts]
                                                  (swap! minted conj opts)
-                                                 {"id" (str sid)
-                                                  "group_id" (some-> (:group-id opts)
-                                                                     str)})}
+                                                 (fixture/created-session
+                                                   {"id" (str sid)
+                                                    "group_id" (some-> (:group-id opts)
+                                                                       str)}))}
         (fn []
           (let [list-groups
                 #'projects-api/list-session-groups-handler
@@ -5481,7 +5502,7 @@
   (it
     "sessions head carries project overview in the same answer"
     (let [page
-          {:sessions [{"id" "a" "server_time_ms" 1}]
+          {:sessions [(fixture/session-row {"id" "a" "server_time_ms" 1})]
            :awaiting []
            :total 1
            :limit 20
@@ -5542,7 +5563,7 @@
       (let [answer
             (fn [awaiting]
               (with-redefs [state/list-sessions-page (fn [_ _]
-                                                       {:sessions [{"id" "a" "server_time_ms" 1}]
+                                                       {:sessions [(fixture/session-row {"id" "a" "server_time_ms" 1})]
                                                         :awaiting awaiting
                                                         :total 1
                                                         :limit 20
@@ -5554,7 +5575,7 @@
             (answer [])
 
             parked
-            (answer [{"id" "p" "is_awaiting_input" true "server_time_ms" 2}])]
+            (answer [(fixture/session-row {"id" "p" "is_awaiting_input" true "server_time_ms" 2})])]
 
         ;; the parked sessions travel outside the window
         (expect (= ["p"] (mapv #(get % "id") (get (wire/parse-json (:body parked)) "awaiting"))))
@@ -5573,7 +5594,7 @@
     (let [seen (atom nil)]
       (with-redefs [state/list-sessions-page (fn [channel opts]
                                                (reset! seen [channel opts])
-                                               {:sessions [{"id" "b" "server_time_ms" 1}]
+                                               {:sessions [(fixture/session-row {"id" "b" "server_time_ms" 1})]
                                                 :awaiting []
                                                 :total 9
                                                 :limit 20
@@ -5631,8 +5652,9 @@
       (with-redefs [state/search-sessions (fn [channel opts]
                                             (swap! seen conj [channel opts])
                                             {:query (:query opts)
-                                             :sessions [{"id" "b"
-                                                         "match" {"rank" 0 "is_in_title" true}}]
+                                             :sessions [(fixture/session-row
+                                                         {"id" "b"
+                                                          "match" {"rank" 0 "is_in_title" true}})]
                                              :total 3
                                              :limit 50
                                              :next-cursor "0:-3000:b"
@@ -5669,7 +5691,7 @@
       (let [seen (atom [])]
         (with-redefs [state/search-sessions (fn [_ opts]
                                               (swap! seen conj opts)
-                                              {:sessions []})]
+                                              {:sessions [] :has-more false})]
           (#'sessions-api/search-sessions-handler
            {:query-params {"q" "needle" "project_id" "p1" "group_ids" "g1,g2" "root" "/work"}})
           (expect (= {:project-id "p1" :group-ids #{"g1" "g2"} :root "/work"}
@@ -5697,7 +5719,7 @@
 
       (with-redefs [state/list-sessions-page (fn [channel opts]
                                                (reset! seen [channel opts])
-                                               {:sessions [{"id" "loose"}]
+                                               {:sessions [(fixture/session-row {"id" "loose"})]
                                                 :awaiting []
                                                 :grouped [{"id" "filed"}]
                                                 :total 1
@@ -6725,7 +6747,7 @@
           (fn [rank]
             (fn [_sid favorite?]
               (swap! asked conj favorite?)
-              {"id" sid "favorite_rank" (when favorite? rank)}))
+              (fixture/soul {"id" sid "favorite_rank" (when favorite? rank)})))
 
           patch-session
           (fn [body]
@@ -6777,7 +6799,7 @@
           (fn [stamp]
             (fn [_sid archived?]
               (swap! asked conj archived?)
-              {"id" sid "archived_at" (when archived? stamp)}))
+              (fixture/soul {"id" sid "archived_at" (when archived? stamp)})))
 
           patch-session
           (fn [body]
@@ -6827,7 +6849,7 @@
           (with-redefs [state/session-archived? (constantly false)
                         state/set-tools! (fn [id tools]
                                            (reset! seen [id tools])
-                                           {"id" id})]
+                                           (fixture/soul {"id" id}))]
 
             (expect (= 200 (:status (patch-session {:tools ["-py.repl_stop"]}))))
             (expect (= [(parse-uuid sid) ["-py.repl_stop"]] @seen)))))
@@ -7018,11 +7040,11 @@
       (with-redefs-fn {#'state/session-archived? (fn [_sid]
                                                    @archived?)
                        #'state/submit-turn! (fn [_sid _opts]
-                                              {:turn {:turn_id "turn-1"}})
+                                              {:turn (fixture/turn {:turn_id "turn-1"})})
                        #'state/set-session-model! (fn [& _]
                                                     nil)
                        #'state/session-model (fn [_sid]
-                                               {:model "glm-5.3"})}
+                                               {:provider "zai-coding-plan" :model "glm-5.3"})}
         (fn []
           (expect (= 202 (:status (submit))))
           (expect (= 200 (:status (pin))))))
@@ -7081,7 +7103,7 @@
       (with-redefs-fn {#'state/session-working? (constantly true)
                        #'state/set-archived! (fn [_sid archived?]
                                                (swap! asked conj archived?)
-                                               {"id" sid "archived_at" nil})}
+                                               (fixture/soul {"id" sid "archived_at" nil}))}
         (fn []
           (expect (= 200 (:status (patch-session {:archived false}))))
           (expect (= [false] @asked))))
@@ -7110,7 +7132,9 @@
                        (fn [& _]
                          (throw (ex-info "asked about work while unarchiving" {})))
                        #'state/update-session-group! (fn [_g _opts]
-                                                       {"id" (str gid) "archived_at" nil})}
+                                                       {"id" (str gid)
+                                                        "name" "Release apps"
+                                                        "archived_at" nil})}
         (fn []
           (expect (= 200 (:status (patch-group {:archived false})))))))))
 
@@ -9060,7 +9084,7 @@
         (let [seen (atom nil)]
           (with-redefs [state/create-session! (fn [opts]
                                                 (reset! seen opts)
-                                                {"id" "s1"})]
+                                                (fixture/created-session))]
             (expect (= 201
                        (:status (handler (request {"sources" ["project"]
                                                    "extensions" ["-spel"]
@@ -9092,7 +9116,7 @@
           (with-redefs [state/create-session!
                         (fn [_]
                           (swap! created inc)
-                          {"id" "s1"})
+                          (fixture/created-session))
 
                         state/set-session-model!
                         (fn [sid provider model]
@@ -9195,7 +9219,7 @@
         (let [seen (atom nil)]
           (with-redefs [state/create-session! (fn [opts]
                                                 (reset! seen opts)
-                                                {"id" "s1"})]
+                                                (fixture/created-session))]
             (expect (= 201 (:status (handler (request {"idempotency_key" "create-1"})))))
             (expect (= "create-1" (:idempotency-key @seen)))
             (expect (= 400 (:status (handler (request {"idempotency_key" 7})))))
@@ -9297,7 +9321,7 @@
                        (fn [request]
                          (with-redefs [state/create-session! (fn [opts]
                                                                (swap! created conj (:origin opts))
-                                                               {"id" "s1"})]
+                                                               (fixture/created-session))]
                            (#'sessions-api/create-session-handler
                             (merge {:request-method :post
                                     :body (java.io.ByteArrayInputStream.

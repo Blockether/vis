@@ -74,6 +74,10 @@ def answer(session: Session) -> str | None:
     assert_type(rows, list[Turn])
     assert_type(rows[0]["turn_id"], str)
     assert_type(rows[0]["created_at"], int)
+    record = session.read()
+    assert_type(record["title"], str | None)
+    assert_type(record["created_at"], int | None)
+    assert_type(record["turn_count"], int)
     session.send("Hello", provider="p", model="m", attachments=["upload-1"])
     return final_answer(rows[0])
 

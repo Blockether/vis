@@ -4,6 +4,7 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.server]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -67,43 +68,140 @@
                            (pr-str [method path response-schema])))))
 
 (def ^:private open-answers
-  "The JSON answers whose schema does not yet list fields. This set can only get
-   smaller: the test fails when an entry has fields or when a new open answer comes."
+  "The places in the JSON answers whose schema does not list fields, each with its
+   reason. A place is a schema name and a path: `.field`, `[]` for array items and
+   `|n` for a `oneOf`, `anyOf` or `allOf` branch. This map can only get smaller: the
+   test fails when an entry has fields or when a new open place comes."
   {"activity_page" "The page shape comes from the activity history store. It is not mapped yet."
    "app_door_answer" "The live seam answer changes with the live operation in the envelope."
+   "app_list.views[]" "An extension declares the view fields."
+   "app_view|0.view" "An extension declares the view fields."
+   "capabilities.features" "Each feature has its own shape, and extensions add features."
+   "client_calls.calls[].kwargs" "The arguments of a client extension call. The client extension declares them."
+   "decision_answer.answers" "The keys are the question names that the caller sends."
+   "decision_answer.usage" "The decision model runtime reports this usage. It is not mapped yet."
+   "device_registered.device" "The device record of the push relay. It is not mapped yet."
+   "device_registered.push" "The push transport status. It is not mapped yet."
+   "device_test.results[]" "The push relay sends one result for each device. It is not mapped yet."
+   "devices.devices[]" "The device record of the push relay. It is not mapped yet."
+   "devices.push" "The push transport status has one entry for each transport. It is not mapped yet."
+   "models_catalog.models[]" "Each provider adds its own model fields."
+   "openapi_document.info" "The OpenAPI Info object. The OpenAPI 3.1 schema defines it."
+   "openapi_document.paths" "The OpenAPI Paths object. The OpenAPI 3.1 schema defines it."
+   "provider_models.models[]" "Each provider adds its own model fields."
+   "provider_presets.presets[]" "Each provider preset adds its own fields."
+   "router_fleet.providers[]" "Each provider adds its own fields to its router entry."
+   "session.match" "The search match comes from the search index. It is not mapped yet."
+   "session_artifacts.artifacts[]" "Each tool writes its own artifact fields."
    "session_context" "The session mirror that the model sees. Extensions add open keys."
-   "view_log" "The log page shape comes from the view sink. It is not mapped yet."})
+   "session_fork_turns.turns[].council|0" "The Council data of a turn. It is not mapped yet."
+   "session_resources.resources[]" "Each extension declares its own resource fields."
+   "session_suggestions[]" "Each extension declares its own suggestion fields."
+   "session_workspace.workspace.git" "The git status has different fields for a repository and for a folder. It is not mapped yet."
+   "setting.editor_options" "Each setting editor declares its own options."
+   "setting.own_value" "A setting value has the type of its setting."
+   "setting_value" "A setting value has the type of its setting."
+   "settings.lineage[]" "Each configuration layer adds its own fields."
+   "speech_voice.voice" "Each speech engine declares its own voice fields."
+   "transcript.turns[]" "The transcript turn row comes from the store. It is not mapped yet."
+   "turn.content[]" "The content blocks have one shape for each block type. They are not mapped yet."
+   "turn.council|0" "The Council data of a turn. It is not mapped yet."
+   "turn_attachments.attachments[]" "Each attachment kind adds its own fields."
+   "turn_trace.iterations[]" "The trace row comes from the store. It is not mapped yet."
+   "view_log" "The log page shape comes from the view sink. It is not mapped yet."
+   "view_requests.requests[]" "An extension declares the request fields."})
+
+(def ^:private shape-keys
+  "Keys that give a schema a shape other than an object with listed fields."
+  ["$ref" "oneOf" "anyOf" "allOf" "enum" "const" "items" "prefixItems"])
 
 (defn- open-schema?
-  "True when `schema` constrains no field: `{}`, `true`, or only `type: object`."
+  "True when `schema` accepts any object: `{}`, `true`, or an object type without
+   listed fields. An empty `properties` without `additionalProperties: false` is open."
   [schema]
   (or (true? schema)
+      (= {} schema)
       (and (map? schema)
-           (not-any? #(contains? schema %)
-                     ["properties" "required" "$ref" "oneOf" "anyOf" "allOf" "items" "enum"
-                      "const"])
-           (contains? #{nil "object"} (get schema "type")))))
+           (not-any? #(contains? schema %) shape-keys)
+           (let [types (get schema "type")
+                 types (if (sequential? types) (set types) #{types})
+                 extra (get schema "additionalProperties")]
+             (and (or (contains? types nil) (contains? types "object"))
+                  (empty? (get schema "properties"))
+                  (not (false? extra))
+                  (not (and (map? extra) (seq extra))))))))
+
+(defn- all-optional?
+  "True when `schema` lists fields but requires none and allows other fields."
+  [schema]
+  (and (map? schema)
+       (seq (get schema "properties"))
+       (empty? (get schema "required"))
+       (not (false? (get schema "additionalProperties")))))
+
+(defn- constraint-only?
+  "True when `schema` only adds a `required` or `not` rule to its parent shape."
+  [schema]
+  (and (map? schema)
+       (every? #{"required" "not" "description" "title"} (keys schema))
+       (some #(contains? schema %) ["required" "not"])))
+
+(defn- loose-places
+  "The `[kind place]` pairs of the open and all-optional schemas under `schema`.
+   Each local `$ref` is followed once, and named by its schema name."
+  [defs schema place seen]
+  (cond
+    (true? schema) [[:open place]]
+    (or (not (map? schema)) (constraint-only? schema)) []
+    (str/starts-with? (str (get schema "$ref")) "#/$defs/")
+    (let [ref-name (subs (get schema "$ref") (count "#/$defs/"))]
+      (if (contains? @seen ref-name)
+        []
+        (do (swap! seen conj ref-name) (loose-places defs (get defs ref-name) ref-name seen))))
+    :else
+    (concat
+      (cond (open-schema? schema) [[:open place]]
+            (all-optional? schema) [[:optional place]])
+      (mapcat (fn [[k v]] (loose-places defs v (str place "." k) seen)) (get schema "properties"))
+      (when (or (map? (get schema "items")) (true? (get schema "items")))
+        (loose-places defs (get schema "items") (str place "[]") seen))
+      (when (map? (get schema "additionalProperties"))
+        (loose-places defs (get schema "additionalProperties") (str place ".*") seen))
+      (mapcat (fn [k]
+                (apply concat
+                       (map-indexed (fn [i v] (loose-places defs v (str place "|" i) seen))
+                                    (get schema k))))
+              ["oneOf" "anyOf" "allOf"]))))
+
+(defn- answer-loose-places
+  [defs]
+  (let [names (set (for [{:keys [operations]} gateway-contract/route-table
+                         [_ {:keys [response-schema]}] operations
+                         :when response-schema]
+                     (name response-schema)))
+        seen (atom names)]
+    (set (mapcat #(loose-places defs (get defs %) % seen) (sort names)))))
 
 (defdescribe every-response-schema-lists-its-fields
-             (it "lists fields for each JSON answer, except the shrinking allowlist"
-                 (let [defs
-                       (get (document/schema-document "gateway") "$defs")
-
-                       open
-                       (set (for [{:keys [operations]}
-                                  gateway-contract/route-table
-
-                                  [_ {:keys [response-schema]}]
-                                  operations
-
-                                  :when response-schema
-                                  :let [schema-name
-                                        (name response-schema)]
-                                  :when (open-schema? (get defs schema-name))]
-
-                              schema-name))]
-
-                   (expect (= (set (keys open-answers)) open) (pr-str open)))))
+             (it "lists fields for each JSON answer and its nested objects, except the shrinking allowlist"
+                 (let [defs (get (document/schema-document "gateway") "$defs")
+                       places (answer-loose-places defs)]
+                   (expect (= (set (keys open-answers)) (set (map second places)))
+                           (pr-str (sort (map second places))))
+                   (expect (empty? (filter (comp #{:optional} first) places))
+                           (pr-str (filter (comp #{:optional} first) places)))))
+             (it "treats an empty field list and an all-optional object as loose"
+                 (let [defs {"empty" {"type" "object" "properties" {}}
+                             "closed" {"type" "object" "properties" {} "additionalProperties" false}
+                             "optional" {"type" "object" "properties" {"a" {"type" "string"}} "required" []}
+                             "nested" {"type" "object"
+                                       "properties" {"inner" {"type" ["object" "null"]}}
+                                       "required" ["inner"]}}
+                       places #(set (loose-places defs (get defs %) % (atom #{})))]
+                   (expect (= #{[:open "empty"]} (places "empty")))
+                   (expect (empty? (places "closed")))
+                   (expect (= #{[:optional "optional"]} (places "optional")))
+                   (expect (= #{[:open "nested.inner"]} (places "nested"))))))
 
 (defdescribe
   real-answers-match-their-response-schema
@@ -200,7 +298,9 @@
 (defdescribe
   response-check-refuses-a-changed-answer
   (it "passes a matching answer and refuses one without a required field"
-      (let [good {"version" 1 "protocol" {"current" 1} "features" {}}]
+      (let [good (get-in (wire/parse-json (slurp (io/resource
+                                                   "vis-contract/fixtures/gateway-answers.json")))
+                         ["answers" "GET /v1/capabilities"])]
         (expect (= 200 (:status (call (capabilities-handler good) :get "/v1/capabilities"))))
         (expect (throws?
                   clojure.lang.ExceptionInfo
