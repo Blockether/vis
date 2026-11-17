@@ -143,6 +143,9 @@
    An optional `idempotency_key` makes a retry return the session that the
    first create with the same key made.
 
+   A `root` that is not an existing directory refuses the create with a 400
+   `not-a-directory` answer (`state/create-session!`, #484).
+
    Optional `provider` and `model` pin the session model before the answer, as
    `PATCH /v1/sessions/:sid/model` does. Give both or neither.
 
@@ -257,7 +260,8 @@
   20)
 
 (defn- list-sessions-handler
-  "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=&grouped=] — sessions in
+  "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=&grouped=&include_empty=] —
+   sessions in
    navigator order, WINDOWED, with a validator so a poller can revalidate instead of
    re-downloading.
 
@@ -310,6 +314,11 @@
    `group_id` cuts the same list to ONE group's sessions: with `archived=only` it
    answers the rows a human archived INSIDE a group that is still active, which is
    what a group's own reveal asks for.
+
+   `include_empty=true` also lists the sessions with no title, no turns and nothing
+   running. A navigator leaves them out, but an SDK caller must find the session it
+   just created (#484). `total`, `next_cursor` and `has_more` count the same rows.
+   A value other than `true` or `false` is a 400.
 
    The companion refreshes this on a timer and the payload is BIG while the
    content is identical until a turn moves. With `If-None-Match` the steady state
@@ -403,10 +412,18 @@
         archived
         (http/query-archived request)
 
-        ;; The two ways this read is refused before it costs anything: an archive
-        ;; view this gateway does not have, and a window nobody can cut.
+        ;; The rows a navigator does not paint: no title, no turns, nothing running.
+        include-empty
+        (some-> (http/query-str request "include_empty")
+                str/lower-case)
+
+        ;; The ways this read is refused before it costs anything: an archive view
+        ;; this gateway does not have, a flag that is not a boolean, and a window
+        ;; nobody can cut.
         refusal
         (cond (= :invalid archived) (http/archived-400)
+              (not (contains? #{nil "true" "false"} include-empty))
+              (http/error-response 400 :invalid-request "include_empty must be true or false")
               (or (and (given? "limit") (nil? limit))
                   (and (some? after) (nil? (state/parse-session-cursor after))))
               (http/error-response
@@ -445,7 +462,8 @@
                                        :ids ids
                                        :dirty dirty
                                        :grouped grouped
-                                       :archived archived})
+                                       :archived archived
+                                       :include-empty (= "true" include-empty)})
 
             payload
             (cond-> {:sessions (:sessions page)

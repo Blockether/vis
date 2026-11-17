@@ -7336,6 +7336,12 @@
 
 (defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root group-id sources extensions tools origin]}]
+  ;; The store cannot make a workspace in a folder that does not exist. Without this
+  ;; refusal the create failed later and the caller read 500 engine-error (#484).
+  (when (and (not (str/blank? (str root)))
+             (not (.isDirectory (java.io.File. ^String (workspace/normalize-root root)))))
+    (throw (ex-info (str "root must be an existing directory: " root)
+                    {:status 400 :type :not-a-directory :root root})))
   (let [channel
         (or channel :api)
 
@@ -7408,6 +7414,9 @@
    up. The wait belongs to whoever asks for a session.
 
    `:group-id` starts the session INSIDE that session group (BLO-167).
+
+   A `:root` that is not an existing directory throws `ex-info` with `:status 400`
+   and `:type :not-a-directory`, before the store changes.
 
    `:idempotency-key` makes a retry safe. For SESSION_CREATE_KEY_TTL_MS, the
    same key answers with the session that the first create made, also while that
@@ -8624,45 +8633,49 @@
 
    The recency travels WITH the id because it is what a client's header counts and
    what `projects-overview` tallies; the cursor is built from the band and the sort
-   key beside it."
-  [channel stats live dirty]
-  (->> (lp/by-channel channel)
-       (into
-         []
-         (keep
-           (fn [record]
-             (let [id
-                   (str (:id record))
+   key beside it.
 
-                   st
-                   (get stats id)
+   `include-empty?` keeps the rows `session-listed?` leaves out. An SDK caller that
+   just created a session must find it in the list before its first turn (#484)."
+  ([channel stats live dirty] (session-ranking channel stats live dirty false))
+  ([channel stats live dirty include-empty?]
+   (->> (lp/by-channel channel)
+        (into
+          []
+          (keep
+            (fn [record]
+              (let [id
+                    (str (:id record))
 
-                   pin
-                   (:favorite-rank record)]
+                    st
+                    (get stats id)
 
-               (when (session-listed? id record st live dirty)
-                 (let [recency (record-recency-ms record st)]
-                   {:id id
-                    :band (cond (some? pin) favorite-band
-                                (contains? dirty id) dirty-band
-                                (contains? live id) live-band
-                                :else rest-band)
-                    :sort-key (if (some? pin) (long pin) (unchecked-negate (long recency)))
-                    :recency-ms recency
-                    ;; A project's tab set is a QUESTION about this list, so the id
-                    ;; travels with the row and `list-sessions-page` cuts to one
-                    ;; project BEFORE the window instead of after it.
-                    :project-id (some-> (:project-id record)
-                                        str)
-                    ;; A filed session is painted BESIDE the window (`:grouped
-                    ;; :aside`), so which group holds it has to be known before
-                    ;; the page is cut, exactly like the project id above.
-                    :group-id (some-> (:group-id record)
-                                      str)
-                    ;; The ARCHIVE cut lands on the RANKING, like the ids above.
-                    :archived-at (:archived-at record)}))))))
-       (sort-by (juxt :band :sort-key :id))
-       vec))
+                    pin
+                    (:favorite-rank record)]
+
+                (when (or include-empty? (session-listed? id record st live dirty))
+                  (let [recency (record-recency-ms record st)]
+                    {:id id
+                     :band (cond (some? pin) favorite-band
+                                 (contains? dirty id) dirty-band
+                                 (contains? live id) live-band
+                                 :else rest-band)
+                     :sort-key (if (some? pin) (long pin) (unchecked-negate (long recency)))
+                     :recency-ms recency
+                     ;; A project's tab set is a QUESTION about this list, so the id
+                     ;; travels with the row and `list-sessions-page` cuts to one
+                     ;; project BEFORE the window instead of after it.
+                     :project-id (some-> (:project-id record)
+                                         str)
+                     ;; A filed session is painted BESIDE the window (`:grouped
+                     ;; :aside`), so which group holds it has to be known before
+                     ;; the page is cut, exactly like the project id above.
+                     :group-id (some-> (:group-id record)
+                                       str)
+                     ;; The ARCHIVE cut lands on the RANKING, like the ids above.
+                     :archived-at (:archived-at record)}))))))
+        (sort-by (juxt :band :sort-key :id))
+        vec)))
 
 (defn- recency-ranking
   "`session-ranking` rows keyed by RECENCY alone - the order of the recents and
@@ -8902,6 +8915,12 @@
    names a row, so a client walks those answers with the same keyset. Without it the
    list keeps the navigator's bands.
 
+   `:include-empty` also lists the sessions with no title, no turns and nothing
+   running, which a navigator does not paint. An SDK caller asks for them to find
+   the session it just created (#484). The cut lands on the ranking, so `total`,
+   `:next-cursor` and `:has-more` describe the same rows. The overview keeps the
+   navigator's count, so these facts do not give it their ranking.
+
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started in one channel
    is visible in the others and vice-versa. Pass a specific channel keyword only when a
    caller genuinely needs a single-channel slice (e.g. resolving a chat by external-id).
@@ -8914,7 +8933,7 @@
   ([opts] (list-sessions-page :all opts))
   ([channel
     {:keys [limit after root project-id group-id group-ids id-prefix ids dirty grouped reader
-            archived order]}]
+            archived order include-empty]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -8961,7 +8980,7 @@
          (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))
 
          ranking
-         (session-ranking channel stats live unsent)
+         (session-ranking channel stats live unsent (boolean include-empty))
 
          ranked
          (cond->> (session-scope-rows db
@@ -9105,7 +9124,7 @@
                       :reader-id reader-id
                       :stats stats
                       :live live
-                      :ranking ranking
+                      :ranking (when-not include-empty ranking)
                       :marks marks}}
        ;; OMITTED on a tail window, never an empty vector: the shelves belong to the
        ;; head answer, and a reader that cannot tell "not shipped here" from "this

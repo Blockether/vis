@@ -3883,27 +3883,43 @@
                 (expect (zero? (:total (state/search-sessions (assoc opts :group-ids #{})))))))))
         (finally (sqlite/db-close! store))))))
 
-(defdescribe gateway-owns-the-navigator-list-test
-             "Which sessions are in the list, and where each one sits, is the GATEWAY's answer."
-             (it "leaves out the taps nobody ever used, and counts what is left"
-                 ;; "New session" creates the row before the first message exists, so an
-                 ;; abandoned tap is a session with no title, no turns and nothing running.
-                 (expect (= ["starred" "busy" "used"] (navigator-ids {})))
-                 (expect (= 3 (:total (navigator-page {})))))
-             (it "lists an empty session the reader marked, and bands it above the rest"
-                 ;; A star is the gateway's own fact; unsent words are the device's, and the
-                 ;; only part of this list it has to be told about.
-                 (expect (= ["starred" "typed" "busy" "used"] (navigator-ids {:dirty ["typed"]})))
-                 (expect (= 4 (:total (navigator-page {:dirty ["typed"]})))))
-             (it "walks the bands with ONE cursor, so a page boundary inside them holds"
-                 (let [head (navigator-page {:limit 1 :dirty ["typed"]})]
-                   (expect (= ["starred"] (mapv #(get % "id") (:sessions head))))
-                   (expect (= "0:1:starred" (:next-cursor head)))
-                   (let [second-page (navigator-page
-                                       {:limit 2 :after (:next-cursor head) :dirty ["typed"]})]
-                     ;; Across the band boundary: no row served twice, none skipped.
-                     (expect (= ["typed" "busy"] (mapv #(get % "id") (:sessions second-page))))
-                     (expect (= "2:-100:busy" (:next-cursor second-page)))))))
+(defdescribe
+  gateway-owns-the-navigator-list-test
+  "Which sessions are in the list, and where each one sits, is the GATEWAY's answer."
+  (it "leaves out the taps nobody ever used, and counts what is left"
+      ;; "New session" creates the row before the first message exists, so an
+      ;; abandoned tap is a session with no title, no turns and nothing running.
+      (expect (= ["starred" "busy" "used"] (navigator-ids {})))
+      (expect (= 3 (:total (navigator-page {})))))
+  (it "lists an empty session the reader marked, and bands it above the rest"
+      ;; A star is the gateway's own fact; unsent words are the device's, and the
+      ;; only part of this list it has to be told about.
+      (expect (= ["starred" "typed" "busy" "used"] (navigator-ids {:dirty ["typed"]})))
+      (expect (= 4 (:total (navigator-page {:dirty ["typed"]})))))
+  (it "walks the bands with ONE cursor, so a page boundary inside them holds"
+      (let [head (navigator-page {:limit 1 :dirty ["typed"]})]
+        (expect (= ["starred"] (mapv #(get % "id") (:sessions head))))
+        (expect (= "0:1:starred" (:next-cursor head)))
+        (let [second-page (navigator-page {:limit 2 :after (:next-cursor head) :dirty ["typed"]})]
+          ;; Across the band boundary: no row served twice, none skipped.
+          (expect (= ["typed" "busy"] (mapv #(get % "id") (:sessions second-page))))
+          (expect (= "2:-100:busy" (:next-cursor second-page))))))
+  ;; Issue #484: an SDK caller created a session and did not find it in the
+  ;; list, because a session with no title and no turns is not painted.
+  (it "lists the empty sessions when the caller asks, and pages and counts them"
+      (expect (= ["starred" "busy" "used" "blank" "typed"] (navigator-ids {:include-empty true})))
+      (let [head
+            (navigator-page {:limit 3 :include-empty true})
+
+            tail
+            (navigator-page {:limit 3 :include-empty true :after (:next-cursor head)})]
+
+        (expect (= 5 (:total head)))
+        (expect (:has-more head))
+        (expect (= ["blank" "typed"] (mapv #(get % "id") (:sessions tail))))
+        (expect (not (:has-more tail)))
+        (expect (nil? (:next-cursor tail))))
+      (expect (= ["starred" "busy" "used"] (navigator-ids {:include-empty false})))))
 
 ;; Regression, reported in this Vis session ("po co my w ogóle wysyłamy wiersze ... to
 ;; powinny być najpotrzebniejsze rzeczy"): every listed session carried the prose it

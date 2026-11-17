@@ -5589,7 +5589,8 @@
                        :ids #{}
                        :dirty #{}
                        :grouped nil
-                       :archived :exclude}]
+                       :archived :exclude
+                       :include-empty false}]
                      @seen))
           (expect (= "2:-3000:b" (get body "next_cursor")))
           (expect (true? (get body "has_more")))
@@ -9104,6 +9105,71 @@
             (expect (= 400 (:status (handler (request {"model" "large"})))))
             (expect (= 2 @created))
             (expect (nil? @pinned)))))))
+
+;; Issue #484: a create with a folder that does not exist answered 500 engine-error,
+;; so an SDK caller could not tell its own mistake from a gateway failure.
+(defdescribe
+  create-session-root-test
+  (let [request
+        (fn [body]
+          {:body (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str body) "UTF-8"))})
+
+        handler
+        #'sessions-api/create-session-handler]
+
+    (it "refuses a root that is not an existing directory with a 400 answer"
+        (let [writes
+              (atom 0)
+
+              missing
+              (str (System/getProperty "java.io.tmpdir") "/vis-no-such-root-" (random-uuid))
+
+              file
+              (java.io.File/createTempFile "vis-root" ".txt")]
+
+          (try (with-redefs [lp/create!
+                             (fn [& _]
+                               (swap! writes inc)
+                               (throw (ex-info "the store must not change" {})))
+
+                             workspace/create-trunk-at!
+                             (fn [& _]
+                               (swap! writes inc)
+                               (throw (ex-info "the store must not change" {})))]
+
+                 (doseq [root [missing (.getPath file)]]
+                   (let [response (handler (request {"root" root}))]
+                     (expect (= 400 (:status response)) root)
+                     (expect (= {"type" "not-a-directory"
+                                 "message" (str "root must be an existing directory: " root)}
+                                (get (wire/parse-json (:body response)) "error")))))
+                 (expect (zero? @writes)))
+               (finally (.delete file)))))))
+
+;; Issue #484: an SDK caller created a session and did not find it in the list. The
+;; navigators leave out sessions with no title and no turns, so the caller asks for them.
+(defdescribe list-sessions-include-empty-test
+             (it "passes include_empty to the list and refuses a value that is not a boolean"
+                 (let [seen (atom [])]
+                   (with-redefs [state/list-sessions-page
+                                 (fn [_ opts]
+                                   (swap! seen conj (:include-empty opts))
+                                   {:sessions [] :total 0 :limit 20 :has-more false})
+                                 state/projects-overview (constantly {})]
+
+                     (doseq [value ["true" "TRUE" "false" nil]]
+                       (expect (= 200
+                                  (:status (#'sessions-api/list-sessions-handler
+                                            {:query-params (cond-> {"limit" "20"}
+                                                             value
+                                                             (assoc "include_empty" value))})))))
+                     (expect (= [true true false false] @seen))
+                     (let [response (#'sessions-api/list-sessions-handler
+                                     {:query-params {"include_empty" "yes"}})]
+                       (expect (= 400 (:status response)))
+                       (expect (= "invalid-request"
+                                  (get-in (wire/parse-json (:body response)) ["error" "type"]))))
+                     (expect (= 4 (count @seen)))))))
 
 (defdescribe
   create-session-idempotency-test
