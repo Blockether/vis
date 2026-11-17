@@ -1480,7 +1480,8 @@
     "tells \"sign in\" apart from \"it is down\", in ctx and in every refusal"
     (let [store
           (atom {"mcp" {"servers" {"down" {"transport" "streamable_http"
-                                           "url" "https://down.example.test/mcp"}
+                                           "url"
+                                           "https://me:pw@down.example.test/mcp?api_key=k1#top"}
                                    "signed-out" {"transport" "streamable_http"
                                                  "url" "https://signed-out.example.test/mcp"}}}})
 
@@ -1551,6 +1552,9 @@
             ;; Configured but unreachable is a transport problem: calling it "not
             ;; configured" while listing it as enabled in the same breath is a lie.
             (expect (str/includes? (msg (unavailable-err env "down")) "unreachable"))
+            ;; Review 2026-11-17: the key in the query of the URL went to the model.
+            (expect (= "https://down.example.test/mcp"
+                       (get-in (unavailable-err env "down") [:error "target"])))
             (expect (str/includes? (msg (unavailable-err env "ghost")) "not configured"))
             ;; Nothing below the extension may escape as a throw: an exception
             ;; ends the turn, an envelope leaves the model free to react.

@@ -282,6 +282,28 @@
   (paths/spit-private! (token-file server-name) (util/content-str m))
   m)
 
+(defn- tokens-for
+  "The saved tokens of `server-name` when they are for the origin of `server-url`,
+   else nil. The file has the name of the server only, so after the URL of that
+   name changes, the token of the old host must not go to the new host. The origin
+   of the sign-in is `:server-origin`, or the origin of `:resource`, which a sign-in
+   takes only from the same origin. Tokens with neither are from an older Vis and
+   from a server without resource metadata: they stay, and a refresh binds them."
+  [server-name server-url]
+  (let [creds
+        (read-tokens server-name)
+
+        saved
+        (or (:server-origin creds)
+            (some-> (:resource creds)
+                    origin-of))]
+
+    (when (or (nil? saved)
+              (nil? server-url)
+              (try (= (str/lower-case saved) (str/lower-case (origin-of server-url)))
+                   (catch Exception _ false)))
+      creds)))
+
 (defn- expired?
   "Skew the reported expiry by 60s so we refresh proactively, never at the
    exact instant of the 401. A token whose server gave no expiry is good until a
@@ -539,6 +561,7 @@
      :challenge (util/base64url (util/sha256 (util/utf8 verifier)))
      :state (util/base64url (util/random-bytes 16))
      :resource (get rmeta "resource")
+     :server-origin (origin-of server-url)
      :dpop? (wants-dpop? auth-hint www-auth rmeta asmeta)
      ;; The configured scope, then the scope that the server asked for, then every
      ;; scope of the resource. With none of them the request names no scope.
@@ -680,8 +703,8 @@
    secret is never persisted; only the method that a refresh must use again. A
    secret that registration issued exists nowhere else, so it stays with the tokens.
    So does the key of a DPoP-bound token: each later request needs its proof."
-  [{:keys [server as-url asmeta verifier resource registered-secret scope dpop?]} client-id
-   client-secret code redirect-uri]
+  [{:keys [server as-url asmeta verifier resource server-origin registered-secret scope dpop?]}
+   client-id client-secret code redirect-uri]
   (let [token-url
         (get asmeta "token_endpoint")
 
@@ -716,7 +739,8 @@
                                       :token-auth-method method
                                       :token-endpoint token-url
                                       :authorization-server as-url
-                                      :resource resource}
+                                      :resource resource
+                                      :server-origin server-origin}
                                registered-secret
                                (assoc :client-secret registered-secret)
 
@@ -904,13 +928,15 @@
 
     (when-not (and (< (long status) 400) (map? body) (string? (get body "access_token")))
       (throw (token-failure server-name "token request" response)))
-    (write-tokens!
-      server-name
-      (->tokens
-        (dissoc body "refresh_token")
-        (cond-> {:grant grant :client-id client-id :authorization-server as-url :resource resource}
-          (and dpop (dpop-bound? body))
-          (assoc :dpop dpop))))))
+    (write-tokens! server-name
+                   (->tokens (dissoc body "refresh_token")
+                             (cond-> {:grant grant
+                                      :client-id client-id
+                                      :authorization-server as-url
+                                      :resource resource
+                                      :server-origin (origin-of server-url)}
+                               (and dpop (dpop-bound? body))
+                               (assoc :dpop dpop))))))
 
 ;; Public: a 0/1-arg `bearer-fn` for the HTTP transport
 
@@ -963,14 +989,18 @@
          usable?
          #(and (:token %) (not (expired? %)))
 
+         ;; Tokens of another origin are no tokens: that server needs its own sign-in.
+         saved
+         #(tokens-for server-name server-url)
+
          refresh
          (oauth/make-file-refresher
            {:store (str "mcp/" server-name)
-            :load #(read-tokens server-name)
+            :load saved
             :usable? usable?
             :refresh-token :refresh-token
-            :exchange! #(refresh-exchange! server-name (read-tokens server-name) client-secret %)
-            :persist! #(write-tokens! server-name %)
+            :exchange! #(refresh-exchange! server-name (saved) client-secret %)
+            :persist! #(write-tokens! server-name (assoc % :server-origin (origin-of server-url)))
             :on-rejected! (fn [_]
                             (forget! server-name))
             :->token #(select-keys % [:token])
@@ -981,7 +1011,7 @@
          (fn [rejected]
            ;; Nothing on file is a server that nobody signed in to, often a public
            ;; one: no exchange and no refresh record.
-           (let [creds (or (read-tokens server-name) (throw (required nil)))]
+           (let [creds (or (saved) (throw (required nil)))]
              (if (and (usable? creds) (not= rejected (:token creds)))
                (:token creds)
                (try (:token (refresh rejected))
@@ -994,7 +1024,7 @@
          machine
          (fn [rejected refused?]
            (locking grant-lock
-             (let [creds (read-tokens server-name)]
+             (let [creds (saved)]
                (cond (and (usable? creds) (not= rejected (:token creds))) (:token creds)
                      refused? (:token
                                 (machine-grant! server-name server-url @www-auth-atom auth-hint))
@@ -1017,15 +1047,17 @@
 (defn token-status
   "Non-secret view of the persisted OAuth tokens for `server-name`. Never returns
    the token itself: a client may render it, and a client is never trusted with
-   credentials."
-  [server-name]
-  (let [creds (read-tokens server-name)]
-    {"server" server-name
-     "is_authorized" (boolean (:token creds))
-     "is_expired" (boolean (and (:token creds) (expired? creds)))
-     "has_refresh_token" (boolean (:refresh-token creds))
-     "expires_at_ms" (:expires-at-ms creds)
-     "scope" (:scope creds)}))
+   credentials. With `server-url`, tokens of another origin count as no tokens, as
+   the bearer of that URL sees them."
+  ([server-name] (token-status server-name nil))
+  ([server-name server-url]
+   (let [creds (tokens-for server-name server-url)]
+     {"server" server-name
+      "is_authorized" (boolean (:token creds))
+      "is_expired" (boolean (and (:token creds) (expired? creds)))
+      "has_refresh_token" (boolean (:refresh-token creds))
+      "expires_at_ms" (:expires-at-ms creds)
+      "scope" (:scope creds)})))
 
 (defn- mcp-view!
   [{:keys [ok? flow message error]}]

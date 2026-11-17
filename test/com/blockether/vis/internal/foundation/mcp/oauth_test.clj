@@ -231,6 +231,60 @@
                               (try (bearer "test-access")
                                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
              (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
+  (it "gives the token only to the origin of the sign-in"
+      ;; Review 2026-11-17: the token file has only the name of the server. After the
+      ;; URL of that name changed, the token of the old host went to the new host.
+      (let [file
+            (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")
+
+            posts
+            (atom 0)
+
+            cases
+            [[{:server-origin "https://gateway.example.com"} "https://gateway.example.com/v2/mcp"
+              true]
+             [{:server-origin "https://gateway.example.com"} "https://other.example.net/mcp" false]
+             [{:resource "https://gateway.example.com/"} "https://GATEWAY.example.com/mcp" true]
+             [{:resource "https://gateway.example.com/"} "http://gateway.example.com/mcp" false]
+             ;; Tokens of an older Vis, from a server without resource metadata.
+             [{} "https://other.example.net/mcp" true]]
+
+            save!
+            #(spit file
+                   (pr-str (merge {:token "test-access"
+                                   :refresh-token "test-refresh"
+                                   :expires-at-ms Long/MAX_VALUE}
+                                  %)))
+
+            answer
+            (fn [f]
+              (try (f) (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+        (try (with-redefs-fn {#'oauth/token-file (constantly file)
+                              #'oauth/http-post-form (fn [& _]
+                                                       (swap! posts inc)
+                                                       {:status 200
+                                                        :body {"access_token" "new-access"}})}
+               (fn []
+                 (doseq [[saved url sent?] cases]
+                   (save! saved)
+                   (reset! posts 0)
+                   (let [bearer (oauth/make-bearer-fn "remote" url (atom nil))]
+                     (expect (= (if sent? "test-access" :mcp/oauth-required) (answer #(bearer))))
+                     (expect (= (if sent? ["new-access" 1] [:mcp/oauth-required 0])
+                                [(answer #(bearer "test-access")) @posts]))))
+                 (doseq [[saved url sent?] cases]
+                   (save! saved)
+                   (expect (= sent? (get (oauth/token-status "remote" url) "is_authorized"))))
+                 ;; A refresh keeps the tokens of an older Vis for the URL that used them.
+                 (save! {})
+                 ((oauth/make-bearer-fn "remote" "https://gateway.example.com/mcp" (atom nil))
+                   "test-access")
+                 (expect (= :mcp/oauth-required
+                            (answer (oauth/make-bearer-fn "remote"
+                                                          "https://other.example.net/mcp"
+                                                          (atom nil)))))))
+             (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
   (it "asks for sign-in and logs no-refresh-token when nothing can be refreshed"
       ;; Regression: a missing refresh token was logged as a failed exchange.
       (let [file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]

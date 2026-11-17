@@ -841,7 +841,7 @@
       ;; "Sign in" instead of letting the user stare at a server that 401s.
       (assoc "url"
         (:url spec) "is_authorized"
-        (get (mcp-oauth/token-status name) "is_authorized")))))
+        (get (mcp-oauth/token-status name (:url spec)) "is_authorized")))))
 
 (defn gateway-servers
   "Sanitized MCP inventory for gateway management. Secrets (env and header values)
@@ -1158,7 +1158,8 @@
 (defn gateway-server-auth-status
   "Non-secret OAuth state for `name`: whether tokens exist, whether they expired."
   [name]
-  (mcp-oauth/token-status (server-name name)))
+  (let [name (server-name name)]
+    (mcp-oauth/token-status name (:url (get (configured-servers) name)))))
 
 (defn logout-gateway-server-auth!
   "Forget the persisted OAuth tokens for `name` and drop the connection that was
@@ -1248,7 +1249,7 @@
                          deref))
 
         status
-        (when challenged? (mcp-oauth/token-status server))]
+        (when challenged? (mcp-oauth/token-status server (:url spec)))]
 
     (boolean (and challenged?
                   ;; No person can sign in for a grant that needs none.
@@ -1264,6 +1265,15 @@
   (str "Authorize it in Settings -> MCP Servers, or POST /v1/mcp/servers/"
        server
        "/auth/start, which answers with the URL to open."))
+
+(defn- shown-url
+  "`url` for a message: without user info, query and fragment. The query of an MCP
+   URL can hold a key, also one that `${VAR}` put there."
+  [url]
+  (let [plain (-> (str url)
+                  (str/split #"[?#]" 2)
+                  first)]
+    (str/replace plain #"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@" "$1")))
 
 (defn- unavailable-err
   "The refusal for a server ctx advertises but the pool cannot reach. Four very
@@ -1300,7 +1310,9 @@
         :mcp/call
         (str "MCP server '" server "' is configured but unreachable - the connection failed.")
         :server server
-        :target (or (:url spec) (:command spec))
+        :target (or (some-> (:url spec)
+                            shown-url)
+                    (:command spec))
         :hint
         "Check its url/command and that the server is up; the daemon retries on its own, so a later call may work.")
       :else (err :mcp/call
