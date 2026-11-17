@@ -2550,7 +2550,7 @@ class Routes:
 
     def get_voice_live_capabilities(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.VoiceLiveCapabilities:
         """GET /v1/voice/live/capabilities — json response."""
         response = self._client._request(
             "GET", "/v1/voice/live/capabilities", path={}, query=query, timeout=timeout
@@ -2564,7 +2564,7 @@ class Routes:
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.VoiceLiveStart:
         """POST /v1/sessions/:sid/voice/live — json response."""
         response = self._client._request(
             "POST",
@@ -2583,7 +2583,7 @@ class Routes:
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.VoiceLiveSnapshot:
         """GET /v1/sessions/:sid/voice/live/:vid — json response."""
         response = self._client._request(
             "GET",
@@ -2601,7 +2601,7 @@ class Routes:
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.VoiceLiveClosed:
         """DELETE /v1/sessions/:sid/voice/live/:vid — json response."""
         response = self._client._request(
             "DELETE",
@@ -2619,7 +2619,7 @@ class Routes:
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> Response:
         """GET /v1/sessions/:sid/voice/live/:vid/media — WebSocket media is not supported by this SDK."""
         response = self._client._request(
             "GET",
@@ -2628,7 +2628,7 @@ class Routes:
             query=query,
             timeout=timeout,
         )
-        return response.json()
+        return response
 
     def get_voice_job(
         self, job_id: str, *, query: Query | None = None, timeout: float | None = None

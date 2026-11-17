@@ -8,6 +8,9 @@
       "deleted_session_ids": [],
       "session_count": 1
     },
+    "DELETE /v1/sessions/:sid/voice/live/:vid": {
+      "closed": true
+    },
     "GET /v1/admin/status": {
       "client_replacements_total": 0,
       "extensions": {
@@ -1584,6 +1587,28 @@
     "GET /v1/sessions/:sid/views/live": {
       "views": []
     },
+    "GET /v1/sessions/:sid/voice/live/:vid": {
+      "state": {
+        "voice_session_id": "578d6e4b-a831-4458-b286-bcf2a336e03f",
+        "capture_generation": 0,
+        "output_epoch": 0,
+        "capture": "live",
+        "utterance": "admitted",
+        "agent": "running",
+        "output": "idle"
+      },
+      "receipts": [
+        {
+          "voice_session_id": "578d6e4b-a831-4458-b286-bcf2a336e03f",
+          "utterance_id": 0,
+          "idempotency_key": "voice/578d6e4b-a831-4458-b286-bcf2a336e03f/0",
+          "text": "Explain the test.",
+          "revision": 2,
+          "turn_id": "5f0c1a52-2d7b-4a6e-9a55-0c6f3d1b7e10",
+          "status": "running"
+        }
+      ]
+    },
     "GET /v1/sessions/:sid/workspace": {
       "workspace": {
         "id": "335d4075-8512-4cb0-8062-fdce5a444441",
@@ -1714,6 +1739,72 @@
           }
         }
       ]
+    },
+    "GET /v1/voice/live/capabilities": {
+      "enabled": true,
+      "available": true,
+      "reason": null,
+      "limits": {
+        "sample_rate": 24000,
+        "frame_ms": 20,
+        "frame_samples": 480,
+        "header_bytes": 32,
+        "input_buffer_ms": 2000,
+        "output_credit_ms": 1000,
+        "preroll_ms": 200,
+        "max_utterance_ms": 30000,
+        "endpoint_silence_ms": 1100,
+        "min_speech_ms": 120,
+        "lease_ms": 15000,
+        "heartbeat_ms": 5000,
+        "ticket_ms": 15000,
+        "max_control_bytes": 8192,
+        "max_sessions": 1,
+        "max_pending_utterances": 2,
+        "max_pending_segments": 8,
+        "max_projection_chars": 65536,
+        "max_speech_segment_chars": 400,
+        "max_speech_segments": 256,
+        "max_admissions": 1024,
+        "max_retained_sessions": 16,
+        "retention_ms": 300000,
+        "max_pending_inputs": 32
+      },
+      "engines": {
+        "available": true,
+        "asr": {
+          "available": true,
+          "engine": "vibevoice-asr-local",
+          "sample_rate": 24000,
+          "max_samples": 720000,
+          "concurrency": 1,
+          "languages": [
+            "en"
+          ],
+          "abort_bound_ms": null
+        },
+        "tts": {
+          "available": true,
+          "engine": "pocket-tts-local",
+          "sample_rate": 24000,
+          "max_characters": 600,
+          "concurrency": 1,
+          "abort_bound_ms": null
+        }
+      },
+      "profile": {
+        "language": "en",
+        "privacy": "local_speech",
+        "concurrency": 1,
+        "clients": [
+          "companion_desktop",
+          "companion_ios_test",
+          "companion_android_test",
+          "tui_headset"
+        ],
+        "mobile_qualified": false,
+        "playback_precision": "rendered_minus_latency"
+      }
     },
     "GET /v1/voice/model": {
       "status": "absent",
@@ -1888,6 +1979,113 @@
     },
     "POST /v1/sessions/:sid/resume-queue": {
       "turn": null
+    },
+    "POST /v1/sessions/:sid/voice/live": {
+      "voice_session_id": "578d6e4b-a831-4458-b286-bcf2a336e03f",
+      "client_id": "cfdcf062-ee7c-44e7-87cb-369bc687e77d",
+      "media_path": "/v1/sessions/31d34262-789a-43bb-82e3-6e8531b32000/voice/live/578d6e4b-a831-4458-b286-bcf2a336e03f/media",
+      "ticket": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "state": {
+        "voice_session_id": "578d6e4b-a831-4458-b286-bcf2a336e03f",
+        "capture_generation": 0,
+        "output_epoch": 0,
+        "capture": "live",
+        "utterance": "idle",
+        "agent": "idle",
+        "output": "idle"
+      },
+      "limits": {
+        "sample_rate": 24000,
+        "frame_ms": 20,
+        "frame_samples": 480,
+        "header_bytes": 32,
+        "input_buffer_ms": 2000,
+        "output_credit_ms": 1000,
+        "preroll_ms": 200,
+        "max_utterance_ms": 30000,
+        "endpoint_silence_ms": 1100,
+        "min_speech_ms": 120,
+        "lease_ms": 15000,
+        "heartbeat_ms": 5000,
+        "ticket_ms": 15000,
+        "max_control_bytes": 8192,
+        "max_sessions": 1,
+        "max_pending_utterances": 2,
+        "max_pending_segments": 8,
+        "max_projection_chars": 65536,
+        "max_speech_segment_chars": 400,
+        "max_speech_segments": 256,
+        "max_admissions": 1024,
+        "max_retained_sessions": 16,
+        "retention_ms": 300000,
+        "max_pending_inputs": 32
+      },
+      "capabilities": {
+        "enabled": true,
+        "available": true,
+        "reason": null,
+        "limits": {
+          "sample_rate": 24000,
+          "frame_ms": 20,
+          "frame_samples": 480,
+          "header_bytes": 32,
+          "input_buffer_ms": 2000,
+          "output_credit_ms": 1000,
+          "preroll_ms": 200,
+          "max_utterance_ms": 30000,
+          "endpoint_silence_ms": 1100,
+          "min_speech_ms": 120,
+          "lease_ms": 15000,
+          "heartbeat_ms": 5000,
+          "ticket_ms": 15000,
+          "max_control_bytes": 8192,
+          "max_sessions": 1,
+          "max_pending_utterances": 2,
+          "max_pending_segments": 8,
+          "max_projection_chars": 65536,
+          "max_speech_segment_chars": 400,
+          "max_speech_segments": 256,
+          "max_admissions": 1024,
+          "max_retained_sessions": 16,
+          "retention_ms": 300000,
+          "max_pending_inputs": 32
+        },
+        "engines": {
+          "available": true,
+          "asr": {
+            "available": true,
+            "engine": "vibevoice-asr-local",
+            "sample_rate": 24000,
+            "max_samples": 720000,
+            "concurrency": 1,
+            "languages": [
+              "en"
+            ],
+            "abort_bound_ms": null
+          },
+          "tts": {
+            "available": true,
+            "engine": "pocket-tts-local",
+            "sample_rate": 24000,
+            "max_characters": 600,
+            "concurrency": 1,
+            "abort_bound_ms": null
+          }
+        },
+        "profile": {
+          "language": "en",
+          "privacy": "local_speech",
+          "concurrency": 1,
+          "clients": [
+            "companion_desktop",
+            "companion_ios_test",
+            "companion_android_test",
+            "tui_headset"
+          ],
+          "mobile_qualified": false,
+          "playback_precision": "rendered_minus_latency"
+        }
+      }
     },
     "POST /v1/sessions/actions/archive": {
       "archived": [

@@ -1569,7 +1569,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_live_start"
         }
       },
       "path": "/v1/sessions/:sid/voice/live"
@@ -1579,11 +1580,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_live_closed"
         },
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_live_snapshot"
         }
       },
       "path": "/v1/sessions/:sid/voice/live/:vid"
@@ -1954,7 +1957,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_live_capabilities"
         }
       },
       "path": "/v1/voice/live/capabilities"
@@ -3847,10 +3851,12 @@
           "x-vis-payload": "settings_changed_payload"
         },
         {
-          "const": "speech.committed"
+          "const": "speech.committed",
+          "x-vis-payload": "speech_committed_payload"
         },
         {
-          "const": "speech.invalidated"
+          "const": "speech.invalidated",
+          "x-vis-payload": "speech_invalidated_payload"
         },
         {
           "const": "subscription.ready",
@@ -3923,16 +3929,24 @@
           "x-vis-payload": "view_patch_payload"
         },
         {
-          "const": "voice.admission"
+          "const": "voice.admission",
+          "x-vis-payload": "voice_admission_payload"
         },
         {
-          "const": "voice.playback"
+          "const": "voice.input_overflow",
+          "x-vis-payload": "voice_input_overflow_payload"
         },
         {
-          "const": "voice.speech"
+          "const": "voice.playback",
+          "x-vis-payload": "voice_playback_payload"
         },
         {
-          "const": "voice.utterance"
+          "const": "voice.speech",
+          "x-vis-payload": "voice_speech_payload"
+        },
+        {
+          "const": "voice.utterance",
+          "x-vis-payload": "voice_utterance_payload"
         }
       ],
       "description": "The closed vocabulary of session events. x-vis-payload names the $defs schema of the fields that an event of that type has after its envelope (schema, seq, ts, session_id and type)."
@@ -7831,6 +7845,10 @@
         "block_id": {
           "type": "string",
           "minLength": 1
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -7887,7 +7905,7 @@
     },
     "content_block_started_payload": {
       "type": "object",
-      "description": "The payload of content.block.started: a new empty block of the turn.",
+      "description": "The payload of content.block.started: a new block of the turn. A presentation block arrives complete and names its iteration.",
       "additionalProperties": false,
       "properties": {
         "turn_id": {
@@ -7904,6 +7922,10 @@
         },
         "block": {
           "$ref": "content.json#/$defs/block"
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -7941,7 +7963,7 @@
     },
     "iteration_completed_payload": {
       "type": "object",
-      "description": "The payload of iteration.completed: the settled thinking and prose of one iteration.",
+      "description": "The payload of iteration.completed: the settled thinking and prose of one iteration. presentation_content holds the typed records of a presentation iteration.",
       "additionalProperties": false,
       "properties": {
         "turn_id": {
@@ -7977,6 +7999,9 @@
         "iteration": {
           "type": "integer",
           "minimum": 0
+        },
+        "presentation_content": {
+          "$ref": "content.json#/$defs/content"
         }
       },
       "required": [
@@ -9105,6 +9130,783 @@
             "model"
           ]
         }
+      ]
+    },
+    "voice_live_limits": {
+      "type": "object",
+      "description": "The bounds of a live voice session. Each client reads them from the gateway.",
+      "additionalProperties": false,
+      "properties": {
+        "sample_rate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frame_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frame_samples": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "header_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "input_buffer_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output_credit_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "preroll_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_utterance_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endpoint_silence_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_speech_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lease_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "heartbeat_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ticket_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_control_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_sessions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_pending_utterances": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_pending_segments": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_projection_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_speech_segment_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_speech_segments": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_admissions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_retained_sessions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retention_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_pending_inputs": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "sample_rate",
+        "frame_ms",
+        "frame_samples",
+        "header_bytes",
+        "input_buffer_ms",
+        "output_credit_ms",
+        "preroll_ms",
+        "max_utterance_ms",
+        "endpoint_silence_ms",
+        "min_speech_ms",
+        "lease_ms",
+        "heartbeat_ms",
+        "ticket_ms",
+        "max_control_bytes",
+        "max_sessions",
+        "max_pending_utterances",
+        "max_pending_segments",
+        "max_projection_chars",
+        "max_speech_segment_chars",
+        "max_speech_segments",
+        "max_admissions",
+        "max_retained_sessions",
+        "retention_ms",
+        "max_pending_inputs"
+      ]
+    },
+    "voice_live_capabilities": {
+      "type": "object",
+      "description": "The answer of the live voice capabilities route. reason says why voice is not available. engines is null when hands-free voice is off.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/voice_live_limits"
+        },
+        "engines": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "available": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "asr": {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "type": "boolean"
+                },
+                "engine": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sample_rate": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_samples": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "languages": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "concurrency": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "abort_bound_ms": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "available"
+              ]
+            },
+            "tts": {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "type": "boolean"
+                },
+                "engine": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sample_rate": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_characters": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "concurrency": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "abort_bound_ms": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "available"
+              ]
+            }
+          },
+          "required": [
+            "available"
+          ]
+        },
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "language": {
+              "type": "string",
+              "minLength": 1
+            },
+            "privacy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "clients": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "mobile_qualified": {
+              "type": "boolean"
+            },
+            "playback_precision": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "language",
+            "privacy",
+            "concurrency",
+            "clients",
+            "mobile_qualified",
+            "playback_precision"
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "available",
+        "reason",
+        "limits",
+        "engines",
+        "profile"
+      ]
+    },
+    "voice_live_receipt": {
+      "type": "object",
+      "description": "The result of one spoken request. turn_id and status name the admitted turn. error says why there is no turn.",
+      "additionalProperties": false,
+      "properties": {
+        "voice_session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "voice_session_id",
+        "utterance_id",
+        "idempotency_key",
+        "text",
+        "revision"
+      ]
+    },
+    "voice_live_start": {
+      "type": "object",
+      "description": "The answer to a live voice start. ticket opens media_path one time.",
+      "additionalProperties": false,
+      "properties": {
+        "voice_session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "media_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ticket": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "voice.json#/$defs/state"
+        },
+        "limits": {
+          "$ref": "#/$defs/voice_live_limits"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/voice_live_capabilities"
+        }
+      },
+      "required": [
+        "voice_session_id",
+        "client_id",
+        "media_path",
+        "ticket",
+        "state",
+        "limits",
+        "capabilities"
+      ]
+    },
+    "voice_live_snapshot": {
+      "type": "object",
+      "description": "The state of one live voice session and the result of each spoken request.",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "$ref": "voice.json#/$defs/state"
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/voice_live_receipt"
+          }
+        }
+      },
+      "required": [
+        "state",
+        "receipts"
+      ]
+    },
+    "voice_live_closed": {
+      "type": "object",
+      "description": "The answer to a live voice close.",
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "const": true
+        }
+      },
+      "required": [
+        "closed"
+      ]
+    },
+    "voice_utterance_payload": {
+      "type": "object",
+      "description": "The payload of voice.utterance: the final transcript of one utterance, before admission.",
+      "additionalProperties": false,
+      "properties": {
+        "voice_session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "voice_session_id",
+        "utterance_id",
+        "idempotency_key",
+        "text",
+        "revision"
+      ]
+    },
+    "voice_admission_payload": {
+      "type": "object",
+      "description": "The payload of voice.admission: the result of one spoken request.",
+      "additionalProperties": false,
+      "properties": {
+        "voice_session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "voice_session_id",
+        "utterance_id",
+        "idempotency_key",
+        "text",
+        "revision"
+      ]
+    },
+    "voice_speech_payload": {
+      "type": "object",
+      "description": "The payload of voice.speech: one speech segment of a turn starts. The sample counts start at zero.",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sent": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "received": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decoded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scheduled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "played": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finished": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "epoch",
+        "turn_id",
+        "source",
+        "sequence",
+        "generated",
+        "sent",
+        "received",
+        "decoded",
+        "scheduled",
+        "played",
+        "finished"
+      ]
+    },
+    "voice_playback_payload": {
+      "type": "object",
+      "description": "The payload of voice.playback: the sample counts of one speech segment when it ends. reason says why it ended.",
+      "additionalProperties": false,
+      "properties": {
+        "voice_session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "segment_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "received": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decoded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scheduled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "played": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "voice_session_id",
+        "segment_id",
+        "turn_id",
+        "output_epoch",
+        "generated",
+        "received",
+        "decoded",
+        "scheduled",
+        "played",
+        "reason"
+      ]
+    },
+    "voice_input_overflow_payload": {
+      "type": "object",
+      "description": "The payload of voice.input_overflow: the gateway refused one input operation because its queue was full.",
+      "additionalProperties": false,
+      "properties": {
+        "voice_session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "capture_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "active_operation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "active_duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "queue_depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "buffered_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "audio_frames": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "voice_session_id",
+        "capture_generation",
+        "operation",
+        "active_operation",
+        "active_duration_ms",
+        "queue_depth",
+        "buffered_ms",
+        "audio_frames"
+      ]
+    },
+    "speech_committed_payload": {
+      "type": "object",
+      "description": "The payload of speech.committed: one conversation block of a turn is final text for speech. source_start and source_end are its range in the answer.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "segment_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "source_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id",
+        "iteration",
+        "segment_index",
+        "source",
+        "block_id",
+        "text",
+        "source_start",
+        "source_end"
+      ]
+    },
+    "speech_invalidated_payload": {
+      "type": "object",
+      "description": "The payload of speech.invalidated: the speech text of a turn is not valid because the answer changed.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "turn_id",
+        "reason"
       ]
     }
   }

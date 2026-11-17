@@ -4,6 +4,7 @@
             [com.blockether.vis.contract.voice :as contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]
             [com.blockether.vis.internal.gateway.server :as gateway]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.voice :as voice]
@@ -243,6 +244,7 @@
 
                   state/append-event!
                   (fn [_ type payload]
+                    (event-check/check! type (wire/canonical payload))
                     (swap! durable conj [type payload]))
 
                   state/submit-turn!
@@ -398,6 +400,7 @@
           (expect (await! #(some (fn [[type _]]
                                    (= "voice.playback" type))
                                  @durable)))
+          (expect (= 200 (:status (request "GET" "/v1/voice/live/capabilities" nil))))
           (let [path (str "/v1/sessions/" session-id "/voice/live/" (:voice-session-id data))]
             (expect (= 200 (:status (request "GET" path nil))))
             (expect (= 200 (:status (request "DELETE" path nil)))))

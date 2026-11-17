@@ -1032,6 +1032,8 @@ SessionEventType: TypeAlias = Literal[
     "session.team_updated",
     "session.title_updated",
     "settings.changed",
+    "speech.committed",
+    "speech.invalidated",
     "subscription.ready",
     "turn.cancelled",
     "turn.completed",
@@ -1047,6 +1049,11 @@ SessionEventType: TypeAlias = Literal[
     "view.close",
     "view.open",
     "view.patch",
+    "voice.admission",
+    "voice.input_overflow",
+    "voice.playback",
+    "voice.speech",
+    "voice.utterance",
 ]
 
 
@@ -1323,6 +1330,148 @@ class ViewRequests(TypedDict):
 
 
 ViewLog: TypeAlias = dict[str, JSONValue]
+
+
+class VoiceState(TypedDict):
+    voice_session_id: str
+    capture_generation: int
+    output_epoch: int
+    capture: Literal["off", "muted", "live", "device_lost"]
+    utterance: Literal["idle", "open", "provisional", "final", "admitted", "rejected"]
+    agent: Literal[
+        "idle",
+        "queued",
+        "running",
+        "waiting_for_input",
+        "cancelling",
+        "terminal",
+    ]
+    output: Literal[
+        "idle",
+        "committed",
+        "synthesizing",
+        "playing",
+        "interrupted",
+        "drained",
+        "muted",
+    ]
+
+
+class VoiceLiveLimits(TypedDict):
+    """The bounds of a live voice session. Each client reads them from the gateway."""
+
+    sample_rate: int
+    frame_ms: int
+    frame_samples: int
+    header_bytes: int
+    input_buffer_ms: int
+    output_credit_ms: int
+    preroll_ms: int
+    max_utterance_ms: int
+    endpoint_silence_ms: int
+    min_speech_ms: int
+    lease_ms: int
+    heartbeat_ms: int
+    ticket_ms: int
+    max_control_bytes: int
+    max_sessions: int
+    max_pending_utterances: int
+    max_pending_segments: int
+    max_projection_chars: int
+    max_speech_segment_chars: int
+    max_speech_segments: int
+    max_admissions: int
+    max_retained_sessions: int
+    retention_ms: int
+    max_pending_inputs: int
+
+
+class VoiceLiveCapabilitiesEnginesAsr(TypedDict):
+    available: bool
+    engine: NotRequired[str]
+    sample_rate: NotRequired[int]
+    max_samples: NotRequired[int]
+    languages: NotRequired[list[str]]
+    concurrency: NotRequired[int]
+    abort_bound_ms: NotRequired[int | None]
+
+
+class VoiceLiveCapabilitiesEnginesTts(TypedDict):
+    available: bool
+    engine: NotRequired[str]
+    sample_rate: NotRequired[int]
+    max_characters: NotRequired[int]
+    concurrency: NotRequired[int]
+    abort_bound_ms: NotRequired[int | None]
+
+
+class VoiceLiveCapabilitiesEngines(TypedDict):
+    available: bool
+    reason: NotRequired[str]
+    asr: NotRequired[VoiceLiveCapabilitiesEnginesAsr]
+    tts: NotRequired[VoiceLiveCapabilitiesEnginesTts]
+
+
+class VoiceLiveCapabilitiesProfile(TypedDict):
+    language: str
+    privacy: str
+    concurrency: int
+    clients: list[str]
+    mobile_qualified: bool
+    playback_precision: str
+
+
+class VoiceLiveCapabilities(TypedDict):
+    """The answer of the live voice capabilities route. reason says why voice is not
+    available. engines is null when hands-free voice is off.
+    """
+
+    enabled: bool
+    available: bool
+    reason: str | None
+    limits: VoiceLiveLimits
+    engines: VoiceLiveCapabilitiesEngines | None
+    profile: VoiceLiveCapabilitiesProfile
+
+
+class VoiceLiveStart(TypedDict):
+    """The answer to a live voice start. ticket opens media_path one time."""
+
+    voice_session_id: str
+    client_id: str
+    media_path: str
+    ticket: str
+    state: VoiceState
+    limits: VoiceLiveLimits
+    capabilities: VoiceLiveCapabilities
+
+
+class VoiceLiveClosed(TypedDict):
+    """The answer to a live voice close."""
+
+    closed: JSONValue
+
+
+class VoiceLiveReceipt(TypedDict):
+    """The result of one spoken request. turn_id and status name the admitted turn.
+    error says why there is no turn.
+    """
+
+    voice_session_id: str
+    utterance_id: int
+    idempotency_key: str
+    text: str
+    revision: int
+    turn_id: NotRequired[str]
+    status: NotRequired[str]
+    error: NotRequired[str]
+
+
+class VoiceLiveSnapshot(TypedDict):
+    """The state of one live voice session and the result of each spoken request."""
+
+    state: VoiceState
+    receipts: list[VoiceLiveReceipt]
 
 
 class SessionArchive(TypedDict):
@@ -2197,6 +2346,7 @@ class ContentBlockCompletedData(TypedDict):
     position: NotRequired[int]
     created_at: NotRequired[int]
     block_id: str
+    iteration: NotRequired[int]
     schema: int
     ts: int
 
@@ -2215,33 +2365,55 @@ class ContentBlockDeltaData(TypedDict):
     ts: int
 
 
+VoiceSpeechText: TypeAlias = str
+
+
 class ContentBlockVariant1(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["conversation"]
+    phase: Literal["progress", "answer"]
+    text: VoiceSpeechText
+
+
+class ContentBlockVariant2(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["visual"]
+    markdown: str
+
+
+class ContentBlockVariant3(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["silence"]
+    reason: Literal["user_requested"]
+
+
+class ContentBlockVariant4(TypedDict):
     id: CommonNonBlankString
     type: Literal["prose"]
     markdown: str
 
 
-class ContentBlockVariant2(TypedDict):
+class ContentBlockVariant5(TypedDict):
     id: CommonNonBlankString
     type: Literal["speech"]
     text: CommonNonBlankString
 
 
-class ContentBlockVariant3(TypedDict):
+class ContentBlockVariant6(TypedDict):
     id: CommonNonBlankString
     type: Literal["code"]
     text: str
     language: NotRequired[CommonNonBlankString]
 
 
-class ContentBlockVariant4(TypedDict):
+class ContentBlockVariant7(TypedDict):
     id: CommonNonBlankString
     type: Literal["tool"]
     tool: CommonNonBlankString
     status: Literal["cancelled", "completed", "failed", "pending", "running"]
 
 
-class ContentBlockVariant5(TypedDict):
+class ContentBlockVariant8(TypedDict):
     id: CommonNonBlankString
     type: Literal["reasoning"]
     text: str
@@ -2251,7 +2423,7 @@ class ContentBlockVariant5(TypedDict):
 CommonSnakeCaseId: TypeAlias = str
 
 
-class ContentBlockVariant6(TypedDict):
+class ContentBlockVariant9(TypedDict):
     id: CommonNonBlankString
     type: Literal["error"]
     code: CommonSnakeCaseId
@@ -2259,7 +2431,7 @@ class ContentBlockVariant6(TypedDict):
     retryable: NotRequired[bool]
 
 
-class ContentBlockVariant7(TypedDict):
+class ContentBlockVariant10(TypedDict):
     id: CommonNonBlankString
     type: Literal["attachment"]
     attachment_id: CommonNonBlankString
@@ -2267,7 +2439,7 @@ class ContentBlockVariant7(TypedDict):
     media_type: CommonNonBlankString
 
 
-class ContentBlockVariant8(TypedDict):
+class ContentBlockVariant11(TypedDict):
     id: CommonNonBlankString
     type: Literal["notice"]
     code: CommonSnakeCaseId
@@ -2283,6 +2455,9 @@ ContentBlock: TypeAlias = (
     | ContentBlockVariant6
     | ContentBlockVariant7
     | ContentBlockVariant8
+    | ContentBlockVariant9
+    | ContentBlockVariant10
+    | ContentBlockVariant11
 )
 
 
@@ -2292,6 +2467,7 @@ class ContentBlockStartedData(TypedDict):
     position: NotRequired[int]
     created_at: NotRequired[int]
     block: ContentBlock
+    iteration: NotRequired[int]
     schema: int
     ts: int
 
@@ -2312,6 +2488,9 @@ class ExtensionsReloadedData(TypedDict):
     ts: int
 
 
+ContentContent: TypeAlias = list[ContentBlock]
+
+
 class IterationCompletedData(TypedDict):
     """The `data` of an event of type `iteration.completed`."""
 
@@ -2322,6 +2501,7 @@ class IterationCompletedData(TypedDict):
     assistant_prose: NotRequired[str]
     attachments: NotRequired[list[dict[str, JSONValue]]]
     iteration: NotRequired[int]
+    presentation_content: NotRequired[ContentContent]
     schema: int
     ts: int
 
@@ -2526,6 +2706,33 @@ class SettingsChangedData(TypedDict):
     ts: int
 
 
+class SpeechCommittedData(TypedDict):
+    """The `data` of an event of type `speech.committed`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    iteration: int
+    segment_index: int
+    source: str
+    block_id: str
+    phase: NotRequired[str | None]
+    text: str
+    source_start: int
+    source_end: int
+    schema: int
+    ts: int
+
+
+class SpeechInvalidatedData(TypedDict):
+    """The `data` of an event of type `speech.invalidated`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    reason: str
+    schema: int
+    ts: int
+
+
 class SubscriptionReadyData(TypedDict):
     """The `data` of an event of type `subscription.ready`."""
 
@@ -2724,6 +2931,87 @@ class ViewPatchData(TypedDict):
     ts: int
 
 
+class VoiceAdmissionData(TypedDict):
+    """The `data` of an event of type `voice.admission`."""
+
+    voice_session_id: str
+    utterance_id: int
+    idempotency_key: str
+    text: str
+    revision: int
+    status: NotRequired[str]
+    error: NotRequired[str]
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class VoiceInputOverflowData(TypedDict):
+    """The `data` of an event of type `voice.input_overflow`."""
+
+    voice_session_id: str
+    capture_generation: int
+    operation: str
+    active_operation: str | None
+    active_duration_ms: int
+    queue_depth: int
+    buffered_ms: int
+    audio_frames: int
+    schema: int
+    ts: int
+
+
+class VoicePlaybackData(TypedDict):
+    """The `data` of an event of type `voice.playback`."""
+
+    voice_session_id: str
+    segment_id: int
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    output_epoch: int
+    generated: int
+    received: int
+    decoded: int
+    scheduled: int
+    played: int
+    reason: str
+    schema: int
+    ts: int
+
+
+class VoiceSpeechData(TypedDict):
+    """The `data` of an event of type `voice.speech`."""
+
+    id: int
+    epoch: int
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    source: str
+    sequence: int
+    generated: int
+    sent: int
+    received: int
+    decoded: int
+    scheduled: int
+    played: int
+    finished: bool
+    schema: int
+    ts: int
+
+
+class VoiceUtteranceData(TypedDict):
+    """The `data` of an event of type `voice.utterance`."""
+
+    voice_session_id: str
+    utterance_id: int
+    idempotency_key: str
+    text: str
+    revision: int
+    schema: int
+    ts: int
+
+
 RESPONSE_TYPES: dict[str, str] = {
     "DELETE /v1/automations/:automation-id": "AutomationsDeleted",
     "DELETE /v1/clients/:cid": "ClientRelease",
@@ -2736,6 +3024,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "DELETE /v1/sessions/:sid/speech/jobs/:job-id": "Forgotten",
     "DELETE /v1/sessions/:sid/turns/:tid": "TurnCancel",
     "DELETE /v1/sessions/:sid/voice/jobs/:job-id": "Forgotten",
+    "DELETE /v1/sessions/:sid/voice/live/:vid": "VoiceLiveClosed",
     "DELETE /v1/speech/jobs/:job-id": "Forgotten",
     "DELETE /v1/speech/voices/:voice-id": "Forgotten",
     "DELETE /v1/voice/jobs/:job-id": "Forgotten",
@@ -2803,6 +3092,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/views/live/:view-id": "AppView",
     "GET /v1/sessions/:sid/views/live/:view-id/log": "ViewLog",
     "GET /v1/sessions/:sid/voice/jobs/:job-id": "VoiceJob",
+    "GET /v1/sessions/:sid/voice/live/:vid": "VoiceLiveSnapshot",
     "GET /v1/sessions/:sid/workspace": "SessionWorkspace",
     "GET /v1/sessions/actions/search": "SessionSearch",
     "GET /v1/settings": "Settings",
@@ -2811,6 +3101,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/speech/model": "VoiceModel",
     "GET /v1/speech/voices": "SpeechVoices",
     "GET /v1/voice/jobs/:job-id": "VoiceJob",
+    "GET /v1/voice/live/capabilities": "VoiceLiveCapabilities",
     "GET /v1/voice/model": "VoiceModel",
     "GET /v1/web/brand": "WebBrand",
     "PATCH /v1/automations/:automation-id": "AutomationsAutomation",
@@ -2895,6 +3186,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/turns/:tid/cancel": "TurnCancel",
     "POST /v1/sessions/:sid/views/:view-id/actions": "ViewOutcome",
     "POST /v1/sessions/:sid/voice": "VoiceJob",
+    "POST /v1/sessions/:sid/voice/live": "VoiceLiveStart",
     "POST /v1/sessions/actions/archive": "SessionArchive",
     "POST /v1/sessions/actions/import": "SessionRecord",
     "POST /v1/settings": "Setting",
@@ -3109,6 +3401,22 @@ if TYPE_CHECKING:
         seq: int
         data: SettingsChangedData
 
+    class SpeechCommittedEvent(Event):
+        """An event of type `speech.committed`."""
+
+        type: Literal["speech.committed"]
+        seq: int
+        turn_id: str
+        data: SpeechCommittedData
+
+    class SpeechInvalidatedEvent(Event):
+        """An event of type `speech.invalidated`."""
+
+        type: Literal["speech.invalidated"]
+        seq: int
+        turn_id: str
+        data: SpeechInvalidatedData
+
     class SubscriptionReadyEvent(Event):
         """An event of type `subscription.ready`."""
 
@@ -3228,6 +3536,43 @@ if TYPE_CHECKING:
         data: ViewPatchData
         view: ViewEvent
 
+    class VoiceAdmissionEvent(Event):
+        """An event of type `voice.admission`."""
+
+        type: Literal["voice.admission"]
+        seq: int
+        data: VoiceAdmissionData
+
+    class VoiceInputOverflowEvent(Event):
+        """An event of type `voice.input_overflow`."""
+
+        type: Literal["voice.input_overflow"]
+        seq: int
+        data: VoiceInputOverflowData
+
+    class VoicePlaybackEvent(Event):
+        """An event of type `voice.playback`."""
+
+        type: Literal["voice.playback"]
+        seq: int
+        turn_id: str
+        data: VoicePlaybackData
+
+    class VoiceSpeechEvent(Event):
+        """An event of type `voice.speech`."""
+
+        type: Literal["voice.speech"]
+        seq: int
+        turn_id: str
+        data: VoiceSpeechData
+
+    class VoiceUtteranceEvent(Event):
+        """An event of type `voice.utterance`."""
+
+        type: Literal["voice.utterance"]
+        seq: int
+        data: VoiceUtteranceData
+
     StreamEvent: TypeAlias = (
         BlockActivityEvent
         | BlockOutputEvent
@@ -3254,6 +3599,8 @@ if TYPE_CHECKING:
         | SessionTeamUpdatedEvent
         | SessionTitleUpdatedEvent
         | SettingsChangedEvent
+        | SpeechCommittedEvent
+        | SpeechInvalidatedEvent
         | SubscriptionReadyEvent
         | TurnCancelledEvent
         | TurnCompletedEvent
@@ -3269,5 +3616,10 @@ if TYPE_CHECKING:
         | ViewCloseEvent
         | ViewOpenEvent
         | ViewPatchEvent
+        | VoiceAdmissionEvent
+        | VoiceInputOverflowEvent
+        | VoicePlaybackEvent
+        | VoiceSpeechEvent
+        | VoiceUtteranceEvent
     )
     """An event of a session stream. Check `type` to narrow `data`."""

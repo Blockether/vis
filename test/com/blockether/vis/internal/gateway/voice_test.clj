@@ -3,6 +3,7 @@
             [com.blockether.vis.contract.voice :as contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]
             [com.blockether.vis.internal.gateway.server.voice :as media]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.voice :as voice]
@@ -83,6 +84,7 @@
                     state/unsubscribe! (fn [_ _]
                                          (reset! subscriber nil))
                     state/append-event! (fn [_ type payload]
+                                          (event-check/check! type (wire/canonical payload))
                                           (swap! durable conj [type payload]))
                     state/submit-turn! (fn [_ request]
                                          (swap! admitted conj request)
