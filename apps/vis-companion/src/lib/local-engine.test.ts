@@ -12,6 +12,10 @@ function computer(start: {
   token?: string;
   /** The token that the host reads on this computer. */
   saved?: string;
+  /** The commit of the installed dev build. */
+  build?: string;
+  /** The newest build that a check finds. */
+  newest?: { track: string; build: string };
 }) {
   const world = { isInstalled: start.isInstalled, isUp: false, calls: [] as string[] };
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -35,8 +39,10 @@ function computer(start: {
     }
     if (command === 'engine_status') {
       const version = world.isInstalled ? '0.5.21' : null;
-      return { supported: true, installed: world.isInstalled, version, track: 'dev' };
+      const build = start.build ?? null;
+      return { supported: true, installed: world.isInstalled, version, track: 'dev', build };
     }
+    if (command === 'engine_latest') return start.newest ?? null;
     return null;
   };
   (window as DesktopWindow).__TAURI__ = { core: { invoke: host } };
@@ -113,6 +119,19 @@ describe('Vis on this computer', () => {
       isGatewayOpen: false,
       gatewayToken: null,
     });
+  });
+
+  // Report: a dev build at the newest commit of main showed the Update button.
+  it('finds an update for a dev build only when main has a newer commit', async () => {
+    const installed = { isInstalled: true, installs: true, build: 'c0ffee' };
+
+    computer({ ...installed, newest: { track: 'dev', build: 'c0ffee' } });
+    let engine = await bootedEngine();
+    expect(engine.hasEngineUpdate(engine.localEngineState().engine)).toBe(false);
+
+    computer({ ...installed, newest: { track: 'dev', build: 'decade' } });
+    engine = await bootedEngine();
+    expect(engine.hasEngineUpdate(engine.localEngineState().engine)).toBe(true);
   });
 
   it('compares versions by number', async () => {

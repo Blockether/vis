@@ -14,14 +14,15 @@ import type { GatewayConn } from './types';
 export type EngineTask = 'install' | 'update' | 'start';
 
 /**
- * `log` holds the lines that the task printed, oldest first. `latest` is the newest
- * release that a check found; it is absent before a check.
+ * `log` holds the lines that the task printed, oldest first. `build` is the commit
+ * of a beta or dev build. `latest` is the newest build of the track that a check
+ * found: a version on the release track, else a commit. It is absent before a check.
  */
 export type LocalEngine =
   | { kind: 'absent' }
   | { kind: 'working'; task: EngineTask; log: string[] }
   | { kind: 'failed'; task: EngineTask; reason: string; log: string[] }
-  | { kind: 'stopped' | 'running'; version: string; track: string; latest?: string };
+  | { kind: 'stopped' | 'running'; version: string; track: string; build?: string; latest?: string };
 
 export interface LocalEngineState {
   engine: LocalEngine | null;
@@ -50,6 +51,12 @@ interface HostStatus {
   installed: boolean;
   version: string | null;
   track: string;
+  build: string | null;
+}
+/** The newest build of the track that the host read it for. */
+interface HostLatest {
+  track: string;
+  build: string;
 }
 interface HostProgress {
   task: string;
@@ -76,7 +83,7 @@ let state: LocalEngineState = {
 const listeners = new Set<() => void>();
 /** Each verb takes a new turn. The loop of an earlier turn ends when it sees the change. */
 let turn = 0;
-let latest: string | undefined;
+let latest: HostLatest | undefined;
 let hasBooted = false;
 
 function set(patch: Partial<LocalEngineState>): void {
@@ -134,6 +141,18 @@ export function isNewerVersion(a: string, b: string): boolean {
   return false;
 }
 
+/**
+ * A check found a build that is newer than the installed one. Commits have no
+ * order, so the newest commit of the track is newer than each other commit.
+ */
+export function hasEngineUpdate(engine: LocalEngine | null): boolean {
+  if (engine?.kind !== 'stopped' && engine?.kind !== 'running') return false;
+  if (engine.latest === undefined) return false;
+  return engine.track === 'release'
+    ? isNewerVersion(engine.latest, engine.version)
+    : engine.latest !== engine.build;
+}
+
 function fail(task: EngineTask, reason: string, log: string[]): void {
   set({ engine: { kind: 'failed', task, reason, log } });
 }
@@ -159,7 +178,8 @@ async function settle(mine: number): Promise<void> {
       kind: probe.state === 'down' ? 'stopped' : 'running',
       version: status.version,
       track: status.track,
-      ...(latest ? { latest } : {}),
+      ...(status.build ? { build: status.build } : {}),
+      ...(latest?.track === status.track ? { latest: latest.build } : {}),
     },
     ...gateway,
   });
@@ -220,6 +240,8 @@ export function installEngine(): Promise<void> {
 /** Update the engine and this app, then start the new gateway. */
 export function updateEngine(): Promise<void> {
   return run('update', async (mine) => {
+    // The update changes the installed build, so the answer of the last check is old.
+    latest = undefined;
     await host('engine_run', { task: 'update' });
     await follow(mine, 'update');
   });
@@ -241,17 +263,19 @@ export async function stopEngineTask(): Promise<void> {
   }
 }
 
-/** Ask for the newest release. */
+/** Ask for the newest build of the installed track. */
 export async function checkEngineUpdate(): Promise<void> {
   set({ isChecking: true, isCheckFailed: false });
-  const found = await host<string | null>('engine_latest').catch(() => null);
+  const found = await host<HostLatest | null>('engine_latest').catch(() => null);
   latest = found ?? latest;
   const engine = state.engine;
   const isInstalled = engine?.kind === 'stopped' || engine?.kind === 'running';
   set({
     isChecking: false,
     isCheckFailed: found === null,
-    ...(isInstalled && latest ? { engine: { ...engine, latest } } : {}),
+    ...(isInstalled && latest?.track === engine.track
+      ? { engine: { ...engine, latest: latest.build } }
+      : {}),
   });
 }
 
@@ -294,8 +318,7 @@ export async function bootLocalEngine(): Promise<void> {
   await settle(mine).catch(() => {});
   if (mine !== turn) return;
   if (state.engine?.kind === 'stopped') await start();
-  const engine = state.engine;
-  if (engine?.kind === 'running' && engine.track === 'release') await checkEngineUpdate();
+  if (state.engine?.kind === 'running') await checkEngineUpdate();
 }
 
 /** The verbs in the shape that the `ThisComputer` view takes. */

@@ -13,6 +13,11 @@ use std::time::Duration;
 const INSTALLER: &str =
     "https://github.com/Blockether/vis/releases/download/installer/install-vis-agent";
 const LATEST: &str = "https://github.com/Blockether/vis/releases/latest";
+/// The file that names the newest published beta: `beta-<commit>`.
+const LATEST_BETA: &str =
+    "https://github.com/Blockether/vis/releases/download/installer/native-beta";
+/// The references that the repository shows to a Git client.
+const REFERENCES: &str = "https://github.com/Blockether/vis.git/info/refs?service=git-upload-pack";
 
 /// The newest lines of a task that the page can read.
 const LOG_LINES: usize = 200;
@@ -98,20 +103,33 @@ fn track() -> String {
     .into()
 }
 
-/// The version that the track runs: the source version for dev, else the first word
-/// of the stamp beside the native engine. An earlier native stamp can stay beside a
-/// dev installation.
-fn version(track: &str) -> Option<String> {
-    if track == "dev" {
-        return first_line(&vis_home().join("install").join("src").join("VIS_VERSION"));
-    }
+/// The stamp beside the native engine: `<version> <commit> <track> <metadata>`.
+fn stamp() -> Option<String> {
     [
         bin_dir().join("vis-agent-native.build"),
         vis_home().join("install").join("vis-agent-native.build"),
     ]
     .iter()
     .find_map(|stamp| first_line(stamp))
-    .and_then(|line| line.split_whitespace().next().map(String::from))
+}
+
+/// The version that the track runs: the source version for dev, else the first word
+/// of the stamp. An earlier native stamp can stay beside a dev installation.
+fn version(track: &str) -> Option<String> {
+    if track == "dev" {
+        return first_line(&vis_home().join("install").join("src").join("VIS_VERSION"));
+    }
+    stamp().and_then(|line| line.split_whitespace().next().map(String::from))
+}
+
+/// The commit that a beta or dev installation runs: the pin of the source for dev,
+/// the second word of the stamp for beta. A release has only its version.
+fn build(track: &str) -> Option<String> {
+    match track {
+        "dev" => first_line(&vis_home().join("install").join("ref")),
+        "beta" => stamp().and_then(|line| line.split_whitespace().nth(1).map(String::from)),
+        _ => None,
+    }
 }
 
 /// The saved optional parts, with the desktop app.
@@ -173,6 +191,7 @@ pub struct EngineStatus {
     installed: bool,
     version: Option<String>,
     track: String,
+    build: Option<String>,
 }
 
 /// What is installed on this computer. An installation is the command with an engine.
@@ -184,11 +203,13 @@ pub async fn engine_status() -> EngineStatus {
     } else {
         None
     };
+    let build = version.as_ref().and_then(|_| build(&track));
     EngineStatus {
         supported: SUPPORTED,
         installed: version.is_some(),
         version,
         track,
+        build,
     }
 }
 
@@ -350,28 +371,69 @@ pub async fn engine_gateway_token() -> Option<String> {
     first_line(&vis_home().join("gateway.token"))
 }
 
-/// The version of the newest published release, from the address that GitHub sends
-/// for `releases/latest`. This request does not count against the API limit.
-#[tauri::command]
-pub async fn engine_latest() -> Option<String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let output = Command::new("curl")
-            .args(["-sI", "--max-time", "10", LATEST])
-            .env("PATH", path_env())
-            .output()
-            .ok()?;
-        String::from_utf8_lossy(&output.stdout)
+/// What `curl` prints for `arguments`, within ten seconds.
+fn fetch(arguments: &[&str]) -> Option<String> {
+    let output = Command::new("curl")
+        .args(["--silent", "--max-time", "10"])
+        .args(arguments)
+        .env("PATH", path_env())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// `text` when it is the full name of a commit.
+fn commit(text: &str) -> Option<String> {
+    (text.len() == 40 && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| text.to_string())
+}
+
+/// The newest build of `track`: the version of the newest published release, the
+/// commit of the newest published beta, or the commit at the head of `main` for dev.
+/// None of these requests counts against the API limit.
+fn newest(track: &str) -> Option<String> {
+    match track {
+        // Each reference is one line: a length of four characters, the commit, the name.
+        "dev" => fetch(&["--fail", "--location", REFERENCES])?
             .lines()
-            .find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                if !name.eq_ignore_ascii_case("location") {
-                    return None;
-                }
-                value
-                    .trim()
-                    .rsplit_once("/releases/tag/v")
-                    .map(|(_, version)| version.to_string())
-            })
+            .find_map(|line| line.strip_suffix(" refs/heads/main"))
+            .and_then(|line| commit(line.get(line.len().checked_sub(40)?..)?)),
+        "beta" => commit(
+            fetch(&["--fail", "--location", LATEST_BETA])?
+                .trim()
+                .strip_prefix("beta-")?,
+        ),
+        // GitHub sends the address of the newest release for `releases/latest`.
+        _ => fetch(&["--head", LATEST])?.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if !name.eq_ignore_ascii_case("location") {
+                return None;
+            }
+            value
+                .trim()
+                .rsplit_once("/releases/tag/v")
+                .map(|(_, version)| version.to_string())
+        }),
+    }
+}
+
+#[derive(serde::Serialize)]
+pub struct EngineLatest {
+    track: String,
+    build: String,
+}
+
+/// The newest build of the installed track. The page compares it with the
+/// installed build of that track.
+#[tauri::command]
+pub async fn engine_latest() -> Option<EngineLatest> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let track = track();
+        let build = newest(&track)?;
+        Some(EngineLatest { track, build })
     })
     .await
     .ok()

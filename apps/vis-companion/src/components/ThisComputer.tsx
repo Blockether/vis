@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { isNewerVersion, type EngineTask, type LocalEngine } from '../lib/local-engine';
+import { hasEngineUpdate, type EngineTask, type LocalEngine } from '../lib/local-engine';
 import { Button, Spinner, Text } from './ui';
 import { CircleXIcon } from './icons';
 
@@ -138,7 +138,7 @@ export function ThisComputer({
 
   const isRunning = engine.kind === 'running';
   const isRelease = engine.track === 'release';
-  const hasUpdate = engine.latest !== undefined && isNewerVersion(engine.latest, engine.version);
+  const hasUpdate = hasEngineUpdate(engine);
   // A gateway that runs needs no words. Only a state that asks for an act has them.
   const state = !isRunning
     ? 'the gateway does not run'
@@ -147,11 +147,15 @@ export function ThisComputer({
         ? undefined
         : 'the gateway asks for a pairing link'
       : hasUpdate
-        ? `${engine.latest} is available`
+        ? isRelease
+          ? `${engine.latest} is available`
+          : 'a newer build is available'
         : isCheckFailed
           ? 'the check for updates got no answer'
           : engine.latest
-            ? 'the newest release'
+            ? isRelease
+              ? 'the newest release'
+              : 'the newest build'
             : undefined;
   const version = [`Vis ${engine.version}`, isRelease ? undefined : engine.track, state]
     .filter(Boolean)
@@ -169,7 +173,7 @@ export function ThisComputer({
         </Button>
       )}
       {isUpdateShown &&
-        (hasUpdate || !isRelease ? (
+        (hasUpdate ? (
           <Button
             variant={isRunning && hasUpdate && !onConnect ? 'primary' : 'secondary'}
             onClick={onUpdate}

@@ -78,6 +78,17 @@ export const UpdateAvailable: Story = {
   },
 };
 
+/** A dev build at the newest commit of main: there is no update to offer. */
+export const NewestDevBuild: Story = {
+  args: {
+    engine: { kind: 'running', version: '0.5.21', track: 'dev', build: 'c0ffee', latest: 'c0ffee' },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.queryByRole('button', { name: 'Update' })).toBeNull();
+    await expect(canvas.getByRole('button', { name: 'Check for updates' })).toBeVisible();
+  },
+};
+
 /** The gateway runs, and the app is not paired with it. */
 export const NotConnected: Story = {
   args: {
