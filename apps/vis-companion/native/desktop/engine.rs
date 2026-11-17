@@ -343,6 +343,13 @@ pub async fn engine_gateway_log() -> Vec<String> {
         .collect()
 }
 
+/// The bearer token of the gateway on this computer, from the file that its local
+/// clients read. The page uses it only for the loopback address.
+#[tauri::command]
+pub async fn engine_gateway_token() -> Option<String> {
+    first_line(&vis_home().join("gateway.token"))
+}
+
 /// The version of the newest published release, from the address that GitHub sends
 /// for `releases/latest`. This request does not count against the API limit.
 #[tauri::command]

@@ -114,6 +114,7 @@ export const ENGINE_COMMANDS = [
   'engine_stop',
   'engine_gateway_start',
   'engine_gateway_log',
+  'engine_gateway_token',
   'engine_latest',
 ];
 

@@ -996,6 +996,8 @@ export interface GatewayHealth {
   protocol?: GatewayProtocol;
   /** Name that the operator gave this machine. Absent without a name. */
   machine_name?: string | null;
+  /** The gateway serves only a request that has its token. */
+  require_token?: boolean;
 }
 
 /**

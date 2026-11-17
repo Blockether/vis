@@ -15,7 +15,7 @@ afterEach(() => {
 it('offers the running gateway of this computer beside a machine that is offline', async () => {
   vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
     if (!String(input).startsWith('http://127.0.0.1:7890/')) throw new TypeError('refused');
-    return Response.json({ id: 'gw-local' });
+    return Response.json({ id: 'gw-local', require_token: false });
   });
   const host = async (command: string) =>
     command === 'engine_status'

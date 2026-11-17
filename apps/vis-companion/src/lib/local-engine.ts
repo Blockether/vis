@@ -8,7 +8,7 @@
 import { useSyncExternalStore } from 'react';
 import { desktopInvoke } from './desktop';
 import { normalizeAddress } from './endpoints';
-import { GatewayClient, GatewayError } from './gateway';
+import { GatewayClient } from './gateway';
 import type { GatewayConn } from './types';
 
 export type EngineTask = 'install' | 'update' | 'start';
@@ -25,8 +25,10 @@ export type LocalEngine =
 
 export interface LocalEngineState {
   engine: LocalEngine | null;
-  /** The gateway answers without a token, so the app can pair with it. */
+  /** The gateway serves this app, so the app can pair with it. */
   isGatewayOpen: boolean;
+  /** The token that the gateway asks for, when it asks for one and this computer has it. */
+  gatewayToken: string | null;
   /** The id that the gateway of this computer reports, when it answers. */
   gatewayId: string | null;
   isChecking: boolean;
@@ -55,11 +57,17 @@ interface HostProgress {
   ok: boolean;
   log: string[];
 }
-type Probe = 'open' | 'locked' | 'down';
+/** `locked`: the gateway asks for a token that this computer does not have. */
+interface Probe {
+  state: 'open' | 'locked' | 'down';
+  id: string | null;
+  token: string | null;
+}
 
 let state: LocalEngineState = {
   engine: null,
   isGatewayOpen: false,
+  gatewayToken: null,
   gatewayId: null,
   isChecking: false,
   isCheckFailed: false,
@@ -95,12 +103,24 @@ async function host<T>(command: string, payload?: Record<string, unknown>): Prom
   return (await invoke(command, payload)) as T;
 }
 
+/**
+ * Ask the gateway of this computer if it serves this app. Its health route answers
+ * each client, so a gateway that asks for a token must also serve a real request
+ * with the token that the host reads on this computer.
+ */
 async function probeGateway(): Promise<Probe> {
-  try {
-    return (await new GatewayClient({ url: LOCAL_GATEWAY_URL }).ping()) ? 'open' : 'down';
-  } catch (e) {
-    return e instanceof GatewayError && e.status === 401 ? 'locked' : 'down';
-  }
+  const health = await new GatewayClient({ url: LOCAL_GATEWAY_URL }).health().catch(() => null);
+  if (!health) return { state: 'down', id: null, token: null };
+  const id = health.id ?? null;
+  if (health.require_token === false) return { state: 'open', id, token: null };
+  const token = await host<string | null>('engine_gateway_token').catch(() => null);
+  if (!token) return { state: 'locked', id, token: null };
+  return new GatewayClient({ url: LOCAL_GATEWAY_URL, token })
+    .capabilities(undefined, { force: true })
+    .then(
+      () => ({ state: 'open' as const, id, token }),
+      () => ({ state: 'locked' as const, id, token: null }),
+    );
 }
 
 /** `a` is a newer version than `b`. The parts compare as numbers: 0.5.9 is older than 0.5.10. */
@@ -124,34 +144,34 @@ async function settle(mine: number): Promise<void> {
     host<HostStatus | null>('engine_status'),
     probeGateway(),
   ]);
-  // The gateway reports its id to each client, also to one that it refuses.
-  const gatewayId =
-    probe === 'down' ? null : await new GatewayClient({ url: LOCAL_GATEWAY_URL }).identify();
   if (mine !== turn) return;
   if (!status?.supported) return set({ engine: null });
-  const isGatewayOpen = probe === 'open';
+  const gateway = {
+    isGatewayOpen: probe.state === 'open',
+    gatewayToken: probe.token,
+    gatewayId: probe.id,
+  };
   if (!status.installed || status.version === null) {
-    return set({ engine: { kind: 'absent' }, isGatewayOpen, gatewayId });
+    return set({ engine: { kind: 'absent' }, ...gateway });
   }
   set({
     engine: {
-      kind: probe === 'down' ? 'stopped' : 'running',
+      kind: probe.state === 'down' ? 'stopped' : 'running',
       version: status.version,
       track: status.track,
       ...(latest ? { latest } : {}),
     },
-    isGatewayOpen,
-    gatewayId,
+    ...gateway,
   });
 }
 
 /** Start the gateway when it does not answer, and wait until it answers. */
 async function open(mine: number, task: EngineTask, log: string[]): Promise<void> {
   set({ engine: { kind: 'working', task, log } });
-  if ((await probeGateway()) === 'down') {
+  if ((await probeGateway()).state === 'down') {
     await host('engine_gateway_start');
     const deadline = Date.now() + GATEWAY_WAIT_MS;
-    while ((await probeGateway()) === 'down') {
+    while ((await probeGateway()).state === 'down') {
       if (mine !== turn) return;
       if (Date.now() > deadline) {
         return fail('start', 'The gateway did not answer.', await host<string[]>('engine_gateway_log'));

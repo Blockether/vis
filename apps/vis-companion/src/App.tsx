@@ -528,13 +528,25 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // The desktop app alone: start the gateway of Vis on this computer, then pair with
   // it. With other machines paired, pair only when the person asked for this one.
   // One time for each page load, so a machine that the person removes stays removed.
-  const { isGatewayOpen, wantsPairing, gatewayId } = useLocalEngine();
+  const { isGatewayOpen, wantsPairing, gatewayId, gatewayToken } = useLocalEngine();
   const hasPairedLocal = useRef(false);
   useEffect(() => {
     void bootLocalEngine();
   }, []);
   useEffect(() => {
     if (!isGatewayOpen) return;
+    // The gateway refuses a saved pairing that has another token: give it the token
+    // of this computer. The machine that the person uses does not change.
+    const saved = conns.find((conn) => normalizeAddress(conn.url) === LOCAL_GATEWAY_URL);
+    if (saved && gatewayToken && saved.token !== gatewayToken) {
+      const repaired = { ...saved, token: gatewayToken };
+      void updateConnection(saved.url, { token: gatewayToken }).then((next) => {
+        setConns(next);
+        setPrimary((held) => (held?.url === saved.url ? repaired : held));
+        setActive((held) => (held?.url === saved.url ? repaired : held));
+      });
+      return;
+    }
     if (!wantsPairing && (conns.length > 0 || hasPairedLocal.current)) return;
     hasPairedLocal.current = true;
     clearLocalPairing();
@@ -543,8 +555,9 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
       url: LOCAL_GATEWAY_URL,
       label: hostOf(LOCAL_GATEWAY_URL),
       ...(gatewayId ? { id: gatewayId } : {}),
+      ...(gatewayToken ? { token: gatewayToken } : {}),
     });
-  }, [isGatewayOpen, wantsPairing, gatewayId, conns, addConnection]);
+  }, [isGatewayOpen, wantsPairing, gatewayId, gatewayToken, conns, addConnection]);
 
   // The tap must paint the session on the frame it happens on. Remembering the
   // active gateway and the watch list are Capacitor Preferences writes — bridge

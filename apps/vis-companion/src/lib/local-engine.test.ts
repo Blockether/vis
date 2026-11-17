@@ -5,15 +5,30 @@ type Host = (command: string) => Promise<unknown>;
 type DesktopWindow = Window & { __TAURI__?: unknown };
 
 /** This computer as the desktop host and the loopback gateway report it. */
-function computer(start: { isInstalled: boolean; installs: boolean }) {
+function computer(start: {
+  isInstalled: boolean;
+  installs: boolean;
+  /** The gateway serves only a request with this token. */
+  token?: string;
+  /** The token that the host reads on this computer. */
+  saved?: string;
+}) {
   const world = { isInstalled: start.isInstalled, isUp: false, calls: [] as string[] };
-  vi.stubGlobal('fetch', async () => {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     if (!world.isUp) throw new TypeError('connection refused');
-    return Response.json({});
+    // The health route answers each client, also one that the gateway refuses.
+    if (String(input).includes('/healthz')) {
+      return Response.json({ id: 'gw-local', require_token: Boolean(start.token) });
+    }
+    const sent = new Headers(init?.headers).get('Authorization');
+    return start.token && sent !== `Bearer ${start.token}`
+      ? new Response('{}', { status: 401 })
+      : Response.json({});
   });
   const host: Host = async (command) => {
     world.calls.push(command);
     if (command === 'engine_run') world.isInstalled = start.installs;
+    if (command === 'engine_gateway_token') return start.saved ?? null;
     if (command === 'engine_gateway_start') world.isUp = true;
     if (command === 'engine_progress') {
       return { task: 'install', running: false, ok: world.isInstalled, log: ['HTTP 503'] };
@@ -80,6 +95,23 @@ describe('Vis on this computer', () => {
       engine: { kind: 'running' },
       isGatewayOpen: true,
       wantsPairing: false,
+    });
+  });
+
+  // Report: the app paired with a gateway that asks for a token, and the gateway
+  // refused each request ("Token missing or invalid").
+  it('pairs with a gateway that asks for a token only with the token of this computer', async () => {
+    computer({ isInstalled: true, installs: true, token: 'secret', saved: 'secret' });
+    expect((await bootedEngine()).localEngineState()).toMatchObject({
+      isGatewayOpen: true,
+      gatewayToken: 'secret',
+    });
+
+    computer({ isInstalled: true, installs: true, token: 'secret' });
+    expect((await bootedEngine()).localEngineState()).toMatchObject({
+      engine: { kind: 'running' },
+      isGatewayOpen: false,
+      gatewayToken: null,
     });
   });
 
