@@ -69,6 +69,29 @@ def _failure(error):
     }
 
 
+def _gate(fn):
+    """Adapt an `OpHook` function to the client gate answer: None or a reason."""
+
+    def gate(data):
+        answer = fn(data)
+        if inspect.isawaitable(answer):
+            return _awaited_gate(answer)
+        return _gate_answer(answer)
+
+    return gate
+
+
+async def _awaited_gate(answer):
+    return _gate_answer(await answer)
+
+
+def _gate_answer(answer):
+    # `vis.block(reason)` is the refusal of a host gate; text is the short form.
+    if isinstance(answer, Mapping) and answer.get("marker") == "block":
+        return str(answer.get("reason") or "Refused by an application gate.")
+    return answer
+
+
 class ClientExtensions:
     """Hold one Agent's declarations and invocation receipts on its calling thread."""
 
@@ -92,7 +115,6 @@ class ClientExtensions:
                     "ctx",
                     "env",
                     "providers",
-                    "op_hooks",
                     "network_filters",
                     "slash_commands",
                     "keybindings",
@@ -104,6 +126,8 @@ class ClientExtensions:
             ]
             if callable(extension.prompt):
                 unsupported.append("prompt")
+            if any(hook.phase != "before" for hook in extension.op_hooks):
+                unsupported.append("op_hooks with phase 'after'")
             if unsupported:
                 raise ValueError(
                     "client extensions do not support host-only fields: "
@@ -149,12 +173,23 @@ class ClientExtensions:
                             if key not in ("fn", "marker")
                         }
                     )
+            gates = []
+            for number, hook in enumerate(extension.op_hooks):
+                # A gate callable is not a tool: the model never sees its name.
+                name = f"vis_gate_{len(self.manifest)}_{number}"
+                if name in self._functions:
+                    raise ValueError(f"client symbol collision: {name}")
+                self._functions[name] = _gate(hook.fn)
+                self._owners[name] = _owner_slug(extension.name)
+                gates.extend({"op": op, "symbol": name} for op in hook.ops)
             manifest = {
                 "name": extension.name,
                 "description": extension.description,
                 "alias": extension.alias,
                 "symbols": symbols,
             }
+            if gates:
+                manifest["gates"] = gates
             for key in ("prompt", "version", "kind"):
                 value = getattr(extension, key)
                 if value is not None:

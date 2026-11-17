@@ -586,6 +586,40 @@
                (finally (extension/unregister-op-hooks-for-owner! :after-once)))
           (expect (= 1 @calls))))
     (it
+      "a gate hook on a tool refuses the call, and neither the tool nor an after hook runs"
+      (let [ran
+            (atom [])
+
+            ext
+            {:ext/name "test.gate-tool"}
+
+            entry
+            {:ext.symbol/symbol 'guarded
+             :ext.symbol/tag :observation
+             :ext.symbol/fn (fn [& _]
+                              (swap! ran conj :tool)
+                              (extension/success {:result :done}))}
+
+            op
+            (keyword (#'extension/tool-call-name ext 'guarded))]
+
+        (extension/register-op-hook! {:op op
+                                      :owner :gate-tool
+                                      :phase :gate
+                                      :fn (fn [_ op-kw ctx]
+                                            (swap! ran conj [:gate op-kw ctx])
+                                            "Secrets stay private.")})
+        (extension/register-op-hook! {:op op
+                                      :owner :gate-tool
+                                      :fn (fn [_ _ _ r]
+                                            (swap! ran conj :after)
+                                            r)})
+        (try (let [failure (try (extension/invoke-symbol-wrapper ext entry ["secret"] {})
+                                (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+               (expect (= (str (name op) " blocked: Secrets stay private.") failure)))
+             (finally (extension/unregister-op-hooks-for-owner! :gate-tool)))
+        (expect (= [[:gate op {:op (name op) :args ["secret"]}]] @ran))))
+    (it
       "runs a pattern hook once and gives it the name that a block calls"
       (let [seen
             (atom [])

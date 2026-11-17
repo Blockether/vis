@@ -2084,6 +2084,22 @@
   [op-kw]
   (boolean (some #(= :gate (:phase %)) (environment-op-hooks op-kw *current-environment*))))
 
+(defn- ask-gates
+  "Ask the :gate hooks among `hooks` in order. The first refusal stands, and a hook
+   that throws refuses. A pattern hook gets the name of the call."
+  [op-kw env ctx hooks]
+  (let [gates (filterv #(= :gate (:phase %)) hooks)]
+    (when (and (seq gates) (not *in-gate*))
+      (binding [*in-gate* true]
+        (some (fn [{:keys [owner] hook-fn :fn :as hook}]
+                (some-> (try (gate-refusal (hook-fn env (or (::matched hook) op-kw) ctx))
+                             (catch Throwable e
+                               {:reason (str "the " (or owner "?")
+                                             " guard failed, and a boundary fails closed: "
+                                             (ex-message e))}))
+                        (assoc :owner owner)))
+              gates)))))
+
 (defn run-gate-hooks
   "Ask the gate hooks registered for `op-kw` whether the operation `ctx` describes
    may proceed. Each hook is `(fn [env op-kw ctx] -> nil | reason)`. Returns nil to
@@ -2091,17 +2107,15 @@
    contract the mechanism carries so the guard author does not have to."
   [op-kw env ctx]
   (when-not *in-gate*
-    (let [gates (filterv #(= :gate (:phase %)) (environment-op-hooks op-kw env))]
-      (when (seq gates)
-        (binding [*in-gate* true]
-          (some (fn [{:keys [owner] hook-fn :fn}]
-                  (some-> (try (gate-refusal (hook-fn env op-kw ctx))
-                               (catch Throwable e
-                                 {:reason (str "the " (or owner "?")
-                                               " guard failed, and a boundary fails closed: "
-                                               (ex-message e))}))
-                          (assoc :owner owner)))
-                gates))))))
+    (ask-gates op-kw env ctx (environment-op-hooks op-kw env))))
+
+(defn- tool-gate-failure
+  "The tool failure that the model reads when a :gate hook refuses a tool call. The
+   reason of the gate is the message and the hint."
+  [op-kw {:keys [reason owner]}]
+  (failure {:result nil
+            :metadata {:gate op-kw :owner owner}
+            :error {:message (str (op-text op-kw) " blocked: " reason) :hint reason}}))
 
 (defn invoke-operation
   "Invoke host operation `f` through the declarative :around hooks for `op-kw`,
@@ -2311,6 +2325,17 @@
               call-args
               (restore hook-args)
 
+              ;; A :gate hook on a tool is asked with the arguments that the tool
+              ;; gets, after the :before hooks. It can refuse the call, never change it.
+              refusal
+              (ask-gates op-kw
+                         call-env
+                         {:op (op-text op-kw)
+                          :args (if (and (not view) (:ext.symbol/inject-env? sym-entry))
+                                  (subvec hook-args 1)
+                                  hook-args)}
+                         hooks)
+
               hooked
               (if view
                 (fn [& as]
@@ -2318,28 +2343,36 @@
                 f)
 
               call-result
-              (let [ct0 (System/nanoTime)]
-                (try (let [r (run-op-around op-kw call-env hooked hook-args hooks)
-                           ms (elapsed-ms ct0)]
+              (when-not refusal
+                (let [ct0 (System/nanoTime)]
+                  (try (let [r (run-op-around op-kw call-env hooked hook-args hooks)
+                             ms (elapsed-ms ct0)]
 
-                       (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
-                       {:result r})
-                     (catch Throwable e
-                       (let [ms (elapsed-ms ct0)]
-                         ;; The caller gets the error, so a refused call is not a gateway warning.
-                         (log-hook! :info ::fn-threw ext-ns sym :call ms (ex-message e))
-                         (try (let [recovery (run-on-error ext sym-entry e call-env f call-args)]
-                                (cond (contains? recovery :result) recovery
-                                      (contains? recovery :error) (throw (:error recovery))
-                                      :else {:result (apply (get recovery :fn f)
-                                                       (vec (get recovery :args call-args)))}))
-                              (catch Throwable e2 (throw e2)))))))
+                         (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
+                         {:result r})
+                       (catch Throwable e
+                         (let [ms (elapsed-ms ct0)]
+                           ;; The caller gets the error, so a refused call is not a gateway warning.
+                           (log-hook! :info ::fn-threw ext-ns sym :call ms (ex-message e))
+                           (try (let [recovery (run-on-error ext sym-entry e call-env f call-args)]
+                                  (cond (contains? recovery :result) recovery
+                                        (contains? recovery :error) (throw (:error recovery))
+                                        :else {:result (apply (get recovery :fn f)
+                                                         (vec (get recovery :args call-args)))}))
+                                (catch Throwable e2 (throw e2))))))))
 
-              {:keys [result]}
-              (run-after ext-ns sym-entry call-env f call-args (:result call-result))
-
+              ;; A refused call has no result to observe, so no after hook sees it.
               result
-              (run-op-after-hooks op-kw call-env hook-args result hooks)
+              (if refusal
+                (do (log-hook! :info ::gate-refused ext-ns sym :gate nil (:reason refusal))
+                    (tool-gate-failure op-kw refusal))
+                (let [{:keys [result]} (run-after ext-ns
+                                                  sym-entry
+                                                  call-env
+                                                  f
+                                                  call-args
+                                                  (:result call-result))]
+                  (run-op-after-hooks op-kw call-env hook-args result hooks)))
 
               result
               (->> result

@@ -342,3 +342,86 @@ def test_wrong_thread_is_refused_and_clear_releases_callable_references():
     assert not bindings.declarations
     assert not bindings.manifest
     assert not bindings._functions
+
+
+def test_op_hook_becomes_a_deny_only_gate_that_the_model_cannot_call():
+    def lookup(key: str) -> str:
+        """Return the value of one application key."""
+        return key
+
+    def guard(data):
+        return (
+            vis.block("Secrets stay private.") if data["args"] == ["secret"] else None
+        )
+
+    bindings = ClientExtensions(
+        [extension(lookup, op_hooks=[vis.OpHook(["app/lookup"], guard)])]
+    )
+    assert bindings.manifest[0]["gates"] == [
+        {"op": "app/lookup", "symbol": "vis_gate_0_0"}
+    ]
+    assert [item["name"] for item in bindings.manifest[0]["symbols"]] == ["lookup"]
+
+    def ask(call_id, args):
+        call = {"id": call_id, "name": "vis_gate_0_0", "args": [args], "kwargs": {}}
+        return bindings.dispatch(call, Mock())
+
+    assert ask("one", {"op": "app/lookup", "args": ["secret"]}) == {
+        "status": "success",
+        "result": "Secrets stay private.",
+    }
+    assert ask("two", {"op": "app/lookup", "args": ["open"]}) == {
+        "status": "success",
+        "result": None,
+    }
+    with pytest.raises(ValueError, match="phase 'after'"):
+        ClientExtensions(
+            [extension(lookup, op_hooks=[vis.OpHook(["app/lookup"], guard, "after")])]
+        )
+
+
+GATE_CODE = """
+try:
+    print("LOOKUP_VALUE", await lookup("secret"))
+except Exception as error:
+    print("LOOKUP_REFUSED", error)
+print("OPEN_VALUE", await lookup("open"))
+"""
+
+
+@pytest.mark.parametrize("transport", ["http", "stdio"])
+def test_application_gate_denies_one_tool_call_end_to_end(
+    tmp_path, monkeypatch, transport
+):
+    from blockether.vis.engine import Agent
+    from test_client_extensions_engine import tool_output
+    from test_engine import sdk_fixture
+
+    calls, asked = [], []
+
+    def lookup(key: str) -> str:
+        """Return the value of one application key."""
+        calls.append(key)
+        return f"value of {key}"
+
+    def guard(data):
+        asked.append(data)
+        return "Secrets stay private." if "secret" in data["args"] else None
+
+    gated = extension(lookup, op_hooks=[vis.OpHook(["app/lookup"], guard)])
+    with sdk_fixture(tmp_path, monkeypatch, transport, tool_code=GATE_CODE) as (
+        client,
+        work,
+        requests,
+    ):
+        with Agent(work, execution_layer=client, extensions=[gated]) as agent:
+            result = agent.run("Read the application keys.", timeout=60)
+            assert result["status"] == "completed", result
+    text = tool_output(requests)
+    assert "LOOKUP_REFUSED app/lookup blocked: Secrets stay private." in text, text
+    assert "OPEN_VALUE value of open" in text, text
+    assert calls == ["open"]
+    assert asked == [
+        {"op": "app/lookup", "args": ["secret"]},
+        {"op": "app/lookup", "args": ["open"]},
+    ]

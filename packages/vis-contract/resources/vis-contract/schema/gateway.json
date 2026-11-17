@@ -2979,6 +2979,32 @@
                   ]
                 },
                 "maxItems": 128
+              },
+              "gates": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[A-Za-z*][A-Za-z0-9_./*-]*$"
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)*$"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "symbol"
+                  ]
+                }
               }
             },
             "required": [

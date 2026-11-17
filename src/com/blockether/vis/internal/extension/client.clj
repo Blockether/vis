@@ -121,6 +121,36 @@
                             (prune-completed (assoc-in calls [id :finished] (System/nanoTime)))
                             (dissoc calls id))))))))))
 
+(defn- gate-answer
+  "The refusal of a client gate answer, or nil to allow. Only JSON null allows and
+   only text is a reason: any other answer, a failure or a lost call refuses."
+  [gate-name result]
+  (let [answer (:result result)]
+    (cond (not (:success? result)) {:reason (str "the client gate " gate-name
+                                                 " failed, and a gate fails closed: "
+                                                 (get-in result [:error :message]))}
+          (nil? answer) nil
+          (and (string? answer) (not (str/blank? answer))) {:reason answer}
+          :else {:reason (str
+                           "the client gate "
+                           gate-name
+                           " gave an answer that is not null or text, and a gate fails closed")})))
+
+(defn- gate-hook
+  "A host :gate hook that asks the client callable `symbol` about one operation."
+  [sid owner generation {op "op" gate-name "symbol"}]
+  {:op (keyword op)
+   :phase :gate
+   :fn (fn [_env op-kw ctx]
+         (gate-answer gate-name
+                      (try (invoke! sid
+                                    owner
+                                    generation
+                                    gate-name
+                                    [(wire/->wire (merge {:op (subs (str op-kw) 1)} ctx))])
+                           (catch clojure.lang.ExceptionInfo e
+                             (extension/failure {:result nil :throwable e})))))})
+
 (defn- extension-declaration
   [sid owner generation spec]
   (let [active?
@@ -151,6 +181,10 @@
                                  (get spec "prompt")
                                  (assoc :ext/prompt-fn (get spec "prompt"))
 
+                                 (seq (get spec "gates"))
+                                 (assoc :ext/op-hooks
+                                   (mapv #(gate-hook sid owner generation %) (get spec "gates")))
+
                                  (get spec "version")
                                  (assoc :ext/version (get spec "version"))))))
 
@@ -174,12 +208,55 @@
 
 (defn- same-except-prompt? [a b] (= (dissoc a "prompt") (dissoc b "prompt")))
 
+(defn- broad-gate?
+  "True when the gate operation `op` is a pattern that can match every operation.
+   The text before the first `*` must name a family, such as `linear.` or `app/`."
+  [op]
+  (and (string? op)
+       (str/includes? op "*")
+       (not (re-find #"^[A-Za-z][A-Za-z0-9_-]*[./]" (subs op 0 (str/index-of op "*"))))))
+
+(defn- validate-gates!
+  "Refuse a gate that can match every operation, and a gate callable that is also a
+   tool: the model must never call a gate. One callable can guard many operations."
+  [payload]
+  (let [specs
+        (when (sequential? (get payload "extensions")) (get payload "extensions"))
+
+        gates
+        (for [spec
+              specs
+
+              :when (map? spec)
+              gate
+              (get spec "gates")
+
+              :when (map? gate)]
+
+          gate)]
+
+    (when (some (comp broad-gate? #(get % "op")) gates)
+      (refuse! 400
+               :client_gate_too_broad
+               "A client gate must name an operation or a narrow pattern, such as linear.*"))
+    (validate! "client_extensions" payload)
+    (let [tools (for [spec specs
+                      symbol (get spec "symbols")]
+
+                  (get symbol "name"))]
+      (when (some (fn [gate]
+                    (some #(names-conflict? (get gate "symbol") %) tools))
+                  gates)
+        (refuse! 400
+                 :invalid_client_gate
+                 "A gate callable must have its own name, not the name of a tool")))))
+
 (defn register!
   "Validate an append-only declaration set against an idle session's loaded tools.
    An existing declaration can change only its static prompt.
    The caller holds its turn lock through installation. live? checks the actual lease."
   [sid owner payload live? environment]
-  (validate! "client_extensions" payload)
+  (validate-gates! payload)
   (when-not (and (util/non-blank-string? owner) (live?))
     (refuse! 403 :client_extension_owner "A live client lease is required"))
   (locking registrations

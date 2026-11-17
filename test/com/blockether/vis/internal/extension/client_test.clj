@@ -299,3 +299,121 @@
                 (= :client_call_gone
                    (failure-code
                      #(client/complete! sid "owner" id {"status" "success" "result" nil}))))))))))
+
+(defn- gated
+  "A registration whose `guard` callable gates the `lookup` tool. Runs `run` with
+   the session id and a function that calls `lookup` on another thread."
+  [run]
+  (let [sid
+        (str (UUID/randomUUID))
+
+        env
+        {:extensions (atom [])}
+
+        entries
+        (client/register! sid
+                          "owner"
+                          (assoc-in (payload "lookup")
+                            ["extensions" 0 "gates"]
+                            [{"op" "app/lookup" "symbol" "guard"}])
+                          (constantly true)
+                          env)
+
+        ext
+        (first entries)
+
+        call
+        (fn [timeout-ms]
+          (future (binding [client/*call-timeout-ms* timeout-ms]
+                    (try (extension/invoke-symbol-wrapper ext
+                                                          (first (extension/ext-symbols ext))
+                                                          ["secret"]
+                                                          env)
+                         (catch clojure.lang.ExceptionInfo e (ex-message e))))))]
+
+    (reset! (:extensions env) entries)
+    (try (run sid call) (finally (client/detach! sid)))))
+
+(defn- answer-gate!
+  "Answer the pending gate call with `outcome` and return that call."
+  [sid outcome]
+  (let [gate (await-call sid)]
+    (client/complete! sid "owner" (:id gate) outcome)
+    gate))
+
+(defdescribe client-gate-asks-before-the-tool-runs
+             (it "allows the call on null and refuses it with the reason of a text answer"
+                 (gated
+                   (fn [sid call]
+                     (let [allowed
+                           (call 300000)
+
+                           gate
+                           (answer-gate! sid {"status" "success" "result" nil})
+
+                           tool
+                           (await-call sid)]
+
+                       (expect (= "guard" (:name gate)))
+                       (expect (= [{"op" "app/lookup" "args" ["secret"]}] (:args gate)))
+                       (expect (= "lookup" (:name tool)))
+                       (client/complete! sid "owner" (:id tool) {"status" "success" "result" 7})
+                       (expect (= 7 (deref allowed 2000 ::timeout))))
+                     (let [refused (call 300000)]
+                       (answer-gate! sid {"status" "success" "result" "Secrets stay private."})
+                       (expect (= "app/lookup blocked: Secrets stay private."
+                                  (deref refused 2000 ::timeout)))
+                       (expect (empty? (:calls (client/pending sid "owner")))))))))
+
+(defdescribe client-gate-fails-closed
+             (it "refuses the call when the gate fails, gives no text, times out or detaches"
+                 (doseq [mode [:failure :number :timeout :detach]]
+                   (gated
+                     (fn [sid call]
+                       (let [refused (call (if (= :timeout mode) 50 300000))]
+                         (case mode
+                           :failure
+                           (answer-gate! sid
+                                         {"status" "failure"
+                                          "error" {"type" "ValueError" "message" "Broken"}})
+
+                           :number
+                           (answer-gate! sid {"status" "success" "result" 1})
+
+                           :timeout
+                           nil
+
+                           :detach
+                           (do (await-call sid) (client/detach! sid)))
+                         (let [message (deref refused 2000 ::timeout)]
+                           (expect (re-find #"^app/lookup blocked: the client gate guard " message)
+                                   [mode message])
+                           (expect (re-find #"fails closed" message) [mode message]))))))))
+
+(defdescribe
+  client-gate-refuses-a-pattern-for-every-operation
+  (it
+    "refuses a match-all pattern and a gate callable that is also a tool"
+    (doseq [[op code] [["*" :client_gate_too_broad] ["*.read" :client_gate_too_broad]
+                       ["app*" :client_gate_too_broad] ["lookup" :invalid_client_gate]]]
+      (let [sid (str (UUID/randomUUID))
+            gate-name (if (= :invalid_client_gate code) "lookup" "guard")
+            body
+            (assoc-in (payload "lookup") ["extensions" 0 "gates"] [{"op" op "symbol" gate-name}])]
+
+        (expect (=
+                  code
+                  (failure-code
+                    #(client/register! sid "owner" body (constantly true) {:extensions (atom [])})))
+                op)
+        (expect (nil? (client/extensions-for sid)))))
+    (let [sid (str (UUID/randomUUID))]
+      (try (expect (= 1
+                      (count (client/register! sid
+                                               "owner"
+                                               (assoc-in (payload "lookup")
+                                                 ["extensions" 0 "gates"]
+                                                 [{"op" "linear.*" "symbol" "guard"}])
+                                               (constantly true)
+                                               {:extensions (atom [])}))))
+           (finally (client/detach! sid))))))
